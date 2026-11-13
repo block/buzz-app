@@ -86,7 +86,12 @@ import type {
   ChannelSummary,
   Profile,
 } from "../relay/contracts";
-import { readView, viewRevision, writeView } from "../../shared/view-state";
+import {
+  listDraftViews,
+  readView,
+  viewRevision,
+  writeView,
+} from "../../shared/view-state";
 import { clearDraft } from "../drafts-sent/drafts";
 import { followupDraft } from "./mention-draft";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
@@ -280,6 +285,7 @@ function mount(
   let pending: readonly OutgoingEvent[] = [];
   let rows: readonly ChannelMessage[] = [];
   let history: "idle" | "loading" | "ready" = "ready";
+  let freshness: "cached" | "verified" | undefined;
   const rowListeners = new Set<() => void>();
   const setPending = (next: readonly OutgoingEvent[]) => {
     pending = next;
@@ -388,7 +394,7 @@ function mount(
       ),
     },
     channels: {
-      window: () => ({ rows, status: history }),
+      window: () => ({ rows, status: history, freshness }),
       subscribeWindow(_id: string, listener: () => void) {
         rowListeners.add(listener);
         return () => rowListeners.delete(listener);
@@ -489,9 +495,10 @@ function mount(
         for (const listener of rowListeners) listener();
       });
     },
-    setHistory(next: typeof history) {
+    setHistory(next: typeof history, fresh?: typeof freshness) {
       act(() => {
         history = next;
+        freshness = fresh;
         for (const listener of rowListeners) listener();
       });
     },
@@ -939,6 +946,12 @@ it.each(["draft", "edit"])(
       await screen.findByText("Text copied", { exact: true }),
     ).toBeVisible();
     h.restore();
+    if (mode === "edit") {
+      // The unsaved edit reopens; cancelling it returns the saved draft.
+      expect(h.input()).toHaveAccessibleName("Edit message");
+      expect(h.input()).toHaveValue(text);
+      fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+    }
     expect(h.input()).toHaveValue("Saved draft");
   },
 );
@@ -1862,7 +1875,10 @@ function attachmentFile(name = "notes.txt", bytes = "notes") {
 }
 function attachByPaste(target: HTMLElement, file = attachmentFile()) {
   fireEvent.paste(target, {
-    clipboardData: { items: [{ kind: "file", getAsFile: () => file }] },
+    clipboardData: {
+      items: [{ kind: "file", getAsFile: () => file }],
+      getData: () => "",
+    },
   });
 }
 function attachByDrop(target: HTMLElement, file = attachmentFile()) {
@@ -2198,6 +2214,281 @@ it.each([attachByPaste, attachByDrop])(
     await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
     await act(() => h.uploadCalls[0]?.result.resolve(uploadDescriptor()));
     expect(trigger).toHaveFocus();
+  },
+);
+
+it("pastes text copied together with a picture as text, and attaches a file pasted alone", async () => {
+  const h = await mountUploadComposer();
+  // Excel, Numbers, Word and Keynote copy text, HTML and a picture together.
+  const text = "Q3 revenue\t$4.2M\nQ3 cost\t$3.1M";
+  const office: Record<string, string> = {
+    "text/plain": text,
+    "text/html":
+      "<table><tr><td>Q3 revenue</td><td>$4.2M</td></tr><tr><td>Q3 cost</td><td>$3.1M</td></tr></table>",
+  };
+  const picture = new File(["png"], "image.png", { type: "image/png" });
+  act(() => {
+    h.input().focus();
+    fireEvent.paste(h.input(), {
+      clipboardData: {
+        items: [{ kind: "file", getAsFile: () => picture }],
+        getData: (type: string) => office[type] ?? "",
+      },
+    });
+  });
+  expect(h.input()).toHaveValue(text);
+  expect(
+    within(h.form()).queryByRole("button", { name: "Remove image.png" }),
+  ).toBeNull();
+  // The lone file's upload is the first one: the text paste started none.
+  const alone = attachmentFile("alone.txt");
+  attachByPaste(h.input(), alone);
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(h.uploadCalls[0]?.file.name).toBe("alone.txt");
+  expect(
+    within(h.form()).getByRole("button", { name: "Remove alone.txt" }),
+  ).toBeInTheDocument();
+  expect(h.input()).toHaveValue(text);
+});
+
+/** Pastes a TextEdit copy of two paragraphs around a picture as WebKit hands
+ * it to the page: the picture is a blob: URL in the HTML and U+FFFC in the
+ * text, with no file item. The composer and its editor read the HTML once. Its
+ * fetch waits for `picture()`, which reads a PNG unless given another result.
+ * With `fetched: false` the paste need not fetch; the caller checks `fetch`.
+ * With `second: true` a second picture, Chart.png, follows the first; its read
+ * waits for `picture(result, 1)`. */
+function pasteTextEditCopy(
+  input: HTMLElement,
+  { fetched = true, second = false } = {},
+) {
+  const srcs = [
+    "blob:http://127.0.0.1:4873/ba90c5a8-7c1e-4d0b-9f2a-3e6d8b1c5f40",
+    "blob:http://127.0.0.1:4873/2f5c1e7a-9b3d-4c8e-a1f6-7d2b9c4e8a10",
+  ].slice(0, second ? 2 : 1);
+  const reads = srcs.map(() => deferred<Blob>());
+  const fetch = vi.fn(async (src: string) => {
+    const read = reads[srcs.indexOf(src)];
+    if (!read) throw new TypeError("Failed to fetch");
+    return { blob: () => read.promise } as Response;
+  });
+  vi.stubGlobal("fetch", fetch);
+  const image = (src: string, alt: string) =>
+    `<p><span><img src="${src}" alt="${alt}"></span></p>\n`;
+  const flavors: Record<string, string> = {
+    "text/plain": `Lunch budget notes for Q3.\n${"\uFFFC\n".repeat(srcs.length)}Venue costs went up twelve percent.\n`,
+    "text/html": `<p><span>Lunch budget notes for Q3.</span></p>\n${image(srcs[0] ?? "", "Attachment.png")}${second ? image(srcs[1] ?? "", "Chart.png") : ""}<p><span>Venue costs went up twelve percent.</span></p><br class="Apple-interchange-newline">`,
+  };
+  const getData = vi.fn((type: string) => flavors[type] ?? "");
+  act(() => {
+    input.focus();
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [],
+        types: ["text/html", "text/plain"],
+        getData,
+      },
+    });
+  });
+  expect(getData.mock.calls.filter(([type]) => type === "text/html")).toEqual([
+    ["text/html"],
+  ]);
+  if (fetched) expect(fetch.mock.calls.map(([src]) => src)).toEqual(srcs);
+  return (
+    result: Blob | Error = new Blob(["png"], { type: "image/png" }),
+    index = 0,
+  ) =>
+    act(async () => {
+      const read = reads[index];
+      if (!read) throw new Error(`No picture ${index}`);
+      if (result instanceof Error) read.reject(result);
+      else read.resolve(result);
+    });
+}
+const textEditText =
+  "Lunch budget notes for Q3.\nVenue costs went up twelve percent.\n";
+
+it("pastes rich text with its pictures as text and attaches the pictures WebKit hands over", async () => {
+  const h = await mountUploadComposer();
+  const picture = pasteTextEditCopy(h.input());
+  expect(h.input()).toHaveValue(textEditText);
+  expect(h.uploadCalls).toHaveLength(0);
+  await picture();
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(h.uploadCalls[0]?.file).toMatchObject({
+    name: "Attachment.png",
+    type: "image/png",
+  });
+  expect(
+    within(h.form()).getByRole("button", { name: "Remove Attachment.png" }),
+  ).toBeInTheDocument();
+  expect(h.input()).toHaveValue(textEditText);
+});
+
+it("holds Send while a pasted picture is read, so the paste sends as one message", async () => {
+  const h = await mountUploadComposer();
+  const picture = pasteTextEditCopy(h.input());
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  await act(async () => {});
+  expect(h.input()).toHaveValue(textEditText);
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.send()).toBeDisabled();
+  await picture();
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("Attachment.png"));
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+  expect(h.sign).toHaveBeenCalledOnce();
+  const content = h.publish.mock.calls[0]?.[0].content;
+  expect(content).toContain("Venue costs went up twelve percent.");
+  expect(content).toContain("[Attachment.png](<");
+});
+
+it.each([
+  ["is not an image", new Blob(["<p>"], { type: "text/html" })],
+  ["cannot be read", new Error("gone")],
+])("releases Send and says so when a pasted picture %s", async (_, result) => {
+  const h = await mountUploadComposer();
+  const picture = pasteTextEditCopy(h.input());
+  expect(h.send()).toBeDisabled();
+  await picture(result);
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  // The text stayed, so the notice says how to bring the picture along.
+  const notice = await screen.findByRole("dialog", {
+    name: "Could not attach file",
+  });
+  expect(notice).toHaveAccessibleDescription(
+    "A pasted picture could not be read. Copy it again, or attach it as a file.",
+  );
+  expect(h.uploadCalls).toHaveLength(0);
+  expect(h.input()).toHaveValue(textEditText);
+});
+
+it("attaches the pasted pictures it can read and counts the one it cannot", async () => {
+  const h = await mountUploadComposer();
+  const picture = pasteTextEditCopy(h.input(), { second: true });
+  expect(h.send()).toBeDisabled();
+  await picture(new Error("gone"), 1);
+  // Send waits for the whole read: the first picture is still being read.
+  expect(h.send()).toBeDisabled();
+  await picture();
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(h.uploadCalls[0]?.file.name).toBe("Attachment.png");
+  expect(
+    within(h.form()).getByRole("button", { name: "Remove Attachment.png" }),
+  ).toBeInTheDocument();
+  const notice = await screen.findByRole("dialog", {
+    name: "Could not attach 1 of 2 files",
+  });
+  expect(notice).toHaveAccessibleDescription(
+    "A pasted picture could not be read. Copy it again, or attach it as a file.",
+  );
+  expect(h.input()).toHaveValue(
+    "Lunch budget notes for Q3.\nVenue costs went up twelve percent.\n",
+  );
+});
+
+it("attaches no pasted picture that arrives after the composer unmounts", async () => {
+  const h = await mountUploadComposer();
+  const picture = pasteTextEditCopy(h.input());
+  h.unmount();
+  await picture();
+  await act(async () => {});
+  expect(h.uploadCalls).toHaveLength(0);
+});
+
+it("pastes rich text into a message edit and says its pictures cannot attach there", async () => {
+  const h = await mountUploadComposer({ editable: true });
+  const viewer = h.owner.session.viewer;
+  if (!viewer) throw new Error("Expected upload viewer");
+  h.rerender(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+      editMessages={[editableMessage({ authorId: viewer })]}
+    />,
+  );
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  await userEvent.clear(h.input());
+  pasteTextEditCopy(h.input(), { fetched: false });
+  expect(h.input()).toHaveValue(textEditText);
+  // Its pictures cannot attach to an edit, so they are refused unread and
+  // Save does not wait for them.
+  expect(
+    await screen.findByText("Finish editing before attaching new files."),
+  ).toBeInTheDocument();
+  expect(
+    within(h.form()).getByRole("button", { name: "Save changes" }),
+  ).toBeEnabled();
+  expect(fetch).not.toHaveBeenCalled();
+  expect(h.uploadCalls).toHaveLength(0);
+  expect(
+    within(h.form()).queryByRole("button", { name: "Remove Attachment.png" }),
+  ).toBeNull();
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  expect(h.input()).toHaveValue(textEditText);
+});
+
+it.each([["Save changes"], ["Cancel edit"]])(
+  "attaches nothing to the draft when %s closes an edit before its pasted picture is read",
+  async (close) => {
+    const h = await mountUploadComposer({ editable: true });
+    const viewer = h.owner.session.viewer;
+    if (!viewer) throw new Error("Expected upload viewer");
+    const row = editableMessage({ authorId: viewer });
+    // The outbox takes the edit at once, which closes it.
+    const edit = vi.fn(() => "e".repeat(64));
+    const session = {
+      ...h.owner.session,
+      messages: { ...h.owner.session.messages, edit },
+    };
+    let editScope: ReturnType<typeof useMessageEditScope> | undefined;
+    function Probe() {
+      editScope = useMessageEditScope();
+      return null;
+    }
+    h.rerender(
+      <MessageEditScope>
+        <Probe />
+        <MessageComposer
+          session={session}
+          scope={h.scope}
+          channelId="channel"
+          channelName="General"
+          editMessages={[row]}
+        />
+      </MessageEditScope>,
+    );
+    fireEvent.change(h.input(), { target: { value: "Keep my draft" } });
+    act(() => void editScope?.current?.(row));
+    expect(h.input()).toHaveAccessibleName("Edit message");
+    await userEvent.clear(h.input());
+    const picture = pasteTextEditCopy(h.input(), { fetched: false });
+    fireEvent.click(within(h.form()).getByRole("button", { name: close }));
+    await waitFor(() =>
+      expect(h.input()).toHaveAccessibleName("Message #General"),
+    );
+    expect(edit).toHaveBeenCalledTimes(close === "Save changes" ? 1 : 0);
+    expect(h.input()).toHaveValue("Keep my draft");
+    expect(h.send()).toBeEnabled();
+    // The read the edit's paste would have started finishes now.
+    await picture();
+    await act(async () => {});
+    expect(h.uploadCalls).toHaveLength(0);
+    expect(
+      within(h.form()).queryByRole("button", { name: "Remove Attachment.png" }),
+    ).toBeNull();
+    expect(h.input()).toHaveValue("Keep my draft");
+    expect(h.send()).toBeEnabled();
+    // Nothing was read, so nothing else can arrive.
+    expect(fetch).not.toHaveBeenCalled();
   },
 );
 
@@ -9607,6 +9898,611 @@ it.each([
       unregister();
       list.remove();
     }
+  },
+);
+
+/** Opens an edit of the viewer's message, rewrites it without saving, and
+ * leaves the channel. */
+function leaveUnsavedEdit() {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Rewritten message");
+  h.retarget({ channelId: "other" });
+  expect(h.input()).not.toHaveAccessibleName("Edit message");
+  return h;
+}
+
+it("keeps an unsaved edit across a channel switch, apart from the draft, and reopens it without taking focus", () => {
+  const h = leaveUnsavedEdit();
+  h.retarget({ channelId: "channel" });
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  expect(h.input()).toHaveValue("Rewritten message");
+  expect(screen.getByText("Editing message")).toBeVisible();
+  expect(h.input()).not.toHaveFocus();
+  expect(viewRevision("scope", "draft:channel")).toBeNull();
+  expect(listDraftViews("scope", () => true).entries).toEqual([]);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+  expect(h.input()).toHaveValue("");
+  h.retarget({ channelId: "other" });
+  h.retarget({ channelId: "channel" });
+  expect(h.input()).not.toHaveAccessibleName("Edit message");
+  expect(h.messages.edit).not.toHaveBeenCalled();
+});
+
+it("reopens a kept edit once its message loads after the composer mounts", () => {
+  const h = leaveUnsavedEdit();
+  // As after a reload, history loads after the channel's composer mounts.
+  h.setRows([]);
+  h.setHistory("loading");
+  h.retarget({ channelId: "channel" });
+  expect(h.input()).not.toHaveAccessibleName("Edit message");
+  h.setRows([editableMessage()]);
+  h.setHistory("ready");
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  expect(h.input()).toHaveValue("Rewritten message");
+});
+
+it("waits past a cached head without its message for refreshed history to reopen a kept edit", () => {
+  const h = leaveUnsavedEdit();
+  // As after a reload whose saved head predates the message.
+  h.setRows([]);
+  h.setHistory("ready", "cached");
+  h.retarget({ channelId: "channel" });
+  expect(h.input()).not.toHaveAccessibleName("Edit message");
+  h.setRows([editableMessage()]);
+  h.setHistory("ready", "verified");
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  expect(h.input()).toHaveValue("Rewritten message");
+});
+
+it("keeps a kept edit closed on later returns once a new message is started first, until Edit is chosen", () => {
+  const h = leaveUnsavedEdit();
+  const kept = readView<object>("scope", "edit:channel", {});
+  h.setRows([]);
+  h.setHistory("loading");
+  h.retarget({ channelId: "channel" });
+  h.fill("New message");
+  expect(readView("scope", "edit:channel", null)).toEqual({
+    ...kept,
+    resume: false,
+  });
+  h.setRows([editableMessage()]);
+  h.setHistory("ready");
+  h.retarget({ channelId: "other" });
+  h.retarget({ channelId: "channel" });
+  expect(h.input()).not.toHaveAccessibleName("Edit message");
+  expect(h.input()).toHaveValue("New message");
+  // Chosen again, the rewrite resumes and reopens on the next return.
+  h.fill("");
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveValue("Rewritten message");
+  h.retarget({ channelId: "other" });
+  h.retarget({ channelId: "channel" });
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  expect(h.input()).toHaveValue("Rewritten message");
+});
+
+it.each(["loads without its message", "has a new draft first"])(
+  "stops waiting to reopen a kept edit when the channel %s, until Edit is chosen",
+  (cause) => {
+    const h = leaveUnsavedEdit();
+    h.setRows([]);
+    if (cause === "has a new draft first") h.setHistory("loading");
+    h.retarget({ channelId: "channel" });
+    if (cause === "has a new draft first") {
+      h.fill("New message");
+      h.fill("");
+    }
+    h.setRows([editableMessage()]);
+    h.setHistory("ready");
+    expect(h.input()).not.toHaveAccessibleName("Edit message");
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    expect(h.input()).toHaveAccessibleName("Edit message");
+    expect(h.input()).toHaveValue("Rewritten message");
+  },
+);
+
+it("reopens a kept edit of a message changed elsewhere but refuses to save over the change", () => {
+  const h = leaveUnsavedEdit();
+  h.setRows([editableMessage({ content: "Changed elsewhere" })]);
+  h.retarget({ channelId: "channel" });
+  expect(h.input()).toHaveValue("Rewritten message");
+  h.submit();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "This message changed while you were editing. Copy your changes, then cancel and reopen it.",
+  );
+  expect(h.input()).toHaveValue("Rewritten message");
+  expect(h.messages.edit).not.toHaveBeenCalled();
+});
+
+it("forgets a kept edit once it is saved, leaving a failed save to the outbox", () => {
+  const h = leaveUnsavedEdit();
+  h.retarget({ channelId: "channel" });
+  h.submit();
+  expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+    "c".repeat(64),
+    "Rewritten message",
+    "c".repeat(64),
+  );
+  h.setDelivery("failed");
+  expect(h.input()).toHaveValue("Rewritten message");
+  h.retarget({ channelId: "other" });
+  h.retarget({ channelId: "channel" });
+  expect(h.input()).not.toHaveAccessibleName("Edit message");
+  expect(h.input()).toHaveValue("");
+});
+
+it("keeps a thread's unsaved edit under the thread and reopens it when its replies load", () => {
+  const root = "a".repeat(64);
+  const reply = editableMessage({ id: "b".repeat(64), threadRootId: root });
+  const thread = { threadRootId: root, editMessages: [reply] };
+  const h = mount({ ...thread, threadSeed: reply }, undefined, first.pubkey);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Rewritten reply");
+  h.unmount();
+  expect(readView("scope", `edit:channel:thread:${root}`, null)).toMatchObject({
+    id: reply.id,
+    base: "Original message",
+    draft: { text: "Rewritten reply" },
+  });
+  expect(viewRevision("scope", "edit:channel")).toBeNull();
+  expect(viewRevision("scope", `draft:channel:thread:${root}`)).toBeNull();
+  // The thread reopens before its replies load.
+  const again = mount({ ...thread, editMessages: [] }, undefined, first.pubkey);
+  expect(again.input()).toHaveAccessibleName("Reply to thread");
+  again.retarget({ editMessages: [reply], threadSeed: reply });
+  expect(again.input()).toHaveAccessibleName("Edit message");
+  expect(again.input()).toHaveValue("Rewritten reply");
+});
+
+it("waits for a thread's replies to reopen its kept edit without holding the channel window", () => {
+  const root = "a".repeat(64);
+  const reply = editableMessage({ id: "b".repeat(64), threadRootId: root });
+  const thread = {
+    threadRootId: root,
+    editMessages: [reply],
+    threadSeed: reply,
+  };
+  const h = mount(thread, undefined, first.pubkey);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Rewritten reply");
+  h.retarget({ threadRootId: "d".repeat(64), editMessages: [] });
+  const subscribe = vi.spyOn(h.session.channels, "subscribeWindow");
+  h.retarget({ threadRootId: root, threadSeed: undefined });
+  expect(h.input()).toHaveAccessibleName("Reply to thread");
+  h.retarget(thread);
+  expect(h.input()).toHaveValue("Rewritten reply");
+  expect(subscribe).not.toHaveBeenCalled();
+});
+
+it("leaves a kept edit closed while another composer in this window has it open", () => {
+  const root = "a".repeat(64);
+  const reply = editableMessage({ id: "b".repeat(64), threadRootId: root });
+  const thread = {
+    threadRootId: root,
+    editMessages: [reply],
+    threadSeed: reply,
+  };
+  const h = mount(thread, undefined, first.pubkey);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Rewritten reply");
+  const other = mount(thread, undefined, first.pubkey);
+  expect(other.input()).toHaveAccessibleName("Reply to thread");
+  expect(other.input()).toHaveValue("");
+  expect(h.input()).toHaveValue("Rewritten reply");
+  // An edit cancelled in one composer, or left by unmounting another, is no
+  // longer open, so the next composer reopens the kept one.
+  fireEvent.click(
+    within(h.container).getByRole("button", { name: "Cancel edit" }),
+  );
+  fireEvent.keyDown(other.input(), { key: "ArrowUp" });
+  other.fill("Rewritten elsewhere");
+  other.unmount();
+  const again = mount(thread, undefined, first.pubkey);
+  expect(again.input()).toHaveAccessibleName("Edit message");
+  expect(again.input()).toHaveValue("Rewritten elsewhere");
+});
+
+it("reopens a kept edit by itself after a new message is started while another composer had it open", () => {
+  const root = "a".repeat(64);
+  const reply = editableMessage({ id: "b".repeat(64), threadRootId: root });
+  const thread = {
+    threadRootId: root,
+    editMessages: [reply],
+    threadSeed: reply,
+  };
+  const h = mount(thread, undefined, first.pubkey);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Rewritten reply");
+  const other = mount(thread, undefined, first.pubkey);
+  other.fill("New reply");
+  expect(h.input()).toHaveValue("Rewritten reply");
+  other.unmount();
+  h.unmount();
+  const again = mount(thread, undefined, first.pubkey);
+  expect(again.input()).toHaveAccessibleName("Edit message");
+  expect(again.input()).toHaveValue("Rewritten reply");
+});
+
+it("refuses to edit another message while another composer has an edit open on its key", () => {
+  const root = "a".repeat(64);
+  const older = editableMessage({ id: "b".repeat(64), threadRootId: root });
+  const newer = editableMessage({
+    id: "d".repeat(64),
+    threadRootId: root,
+    createdAt: 11,
+  });
+  const h = mount(
+    { threadRootId: root, editMessages: [older, newer], threadSeed: newer },
+    undefined,
+    first.pubkey,
+  );
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Rewritten newer");
+  // Taking the edit over would close an editor whose text the next keystroke
+  // here replaces in the kept record.
+  const other = mount(
+    { threadRootId: root, editMessages: [older], threadSeed: older },
+    undefined,
+    first.pubkey,
+  );
+  fireEvent.keyDown(other.input(), { key: "ArrowUp" });
+  expect(other.input()).toHaveAccessibleName("Reply to thread");
+  expect(within(other.container).getByRole("alert")).toHaveTextContent(
+    "Finish or cancel your current edit first.",
+  );
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  expect(h.input()).toHaveValue("Rewritten newer");
+});
+
+/** Fills storage for one view key: a write that grows it fails, and clearing
+ * it does not. */
+function fillViewStorage(key: string) {
+  const setItem = Storage.prototype.setItem;
+  return vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+    this: Storage,
+    name,
+    value,
+  ) {
+    if (name === `buzz-view.v1:${JSON.stringify(["scope", key])}`)
+      if (value !== "null") throw Error("full");
+    setItem.call(this, name, value);
+  });
+}
+
+it("says when an edit cannot be kept on this device, and a return does not reopen its older text", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Rewritten message");
+  const full = fillViewStorage("edit:channel");
+  try {
+    h.fill("Rewritten message, then more");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not save this edit on this device. Your changes are kept here.",
+    );
+    expect(h.input()).toHaveValue("Rewritten message, then more");
+    expect(readView("scope", "edit:channel", null)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry edit save" }));
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    h.retarget({ channelId: "other" });
+    h.retarget({ channelId: "channel" });
+    expect(h.input()).not.toHaveAccessibleName("Edit message");
+    expect(h.input()).toHaveValue("");
+    // The notice ends with the edit, cancelled or saved.
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    h.fill("Cancelled rewrite");
+    fireEvent.keyDown(h.input(), { key: "Escape", keyCode: 27 });
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    expect(screen.queryByRole("alert")).toBeNull();
+    h.fill("Saved rewrite");
+    h.submit();
+    expect(h.messages.edit).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("alert")).toBeNull();
+  } finally {
+    full.mockRestore();
+  }
+});
+
+it("keeps an edit that cannot be kept on this device from moving to another composer until a retry saves it", () => {
+  const root = "a".repeat(64);
+  const reply = editableMessage({ id: "b".repeat(64), threadRootId: root });
+  const thread = {
+    threadRootId: root,
+    editMessages: [reply],
+    threadSeed: reply,
+  };
+  const h = mount(thread, undefined, first.pubkey);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Rewritten reply");
+  const full = fillViewStorage(`edit:channel:thread:${root}`);
+  const review = mount(
+    { ...thread, resumeEdit: false },
+    undefined,
+    first.pubkey,
+  );
+  try {
+    h.fill("Rewritten reply, then more");
+    fireEvent.keyDown(review.input(), { key: "ArrowUp" });
+    expect(review.input()).toHaveAccessibleName("Reply to thread");
+    expect(within(review.container).getByRole("alert")).toHaveTextContent(
+      "Finish or cancel your current edit first.",
+    );
+    expect(h.input()).toHaveValue("Rewritten reply, then more");
+  } finally {
+    full.mockRestore();
+  }
+  fireEvent.click(
+    within(h.container).getByRole("button", { name: "Retry edit save" }),
+  );
+  expect(within(h.container).queryByRole("alert")).toBeNull();
+  fireEvent.keyDown(review.input(), { key: "ArrowUp" });
+  expect(review.input()).toHaveValue("Rewritten reply, then more");
+  expect(h.input()).not.toHaveAccessibleName("Edit message");
+});
+
+/** Keeps an unsaved rewrite of an older thread reply, then mounts a media
+ * review's composer, which does not reopen it by itself, on that thread. */
+function reviewAfterKeptRewrite(shown: "both" | "newer") {
+  const root = "a".repeat(64);
+  const older = editableMessage({ id: "b".repeat(64), threadRootId: root });
+  const newer = editableMessage({
+    id: "d".repeat(64),
+    threadRootId: root,
+    createdAt: 11,
+    content: "Newer message",
+  });
+  const h = mount(
+    { threadRootId: root, editMessages: [older], threadSeed: older },
+    undefined,
+    first.pubkey,
+  );
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Rewritten older");
+  h.unmount();
+  const review = mount(
+    {
+      threadRootId: root,
+      editMessages: shown === "both" ? [older, newer] : [newer],
+      threadSeed: newer,
+      resumeEdit: false,
+    },
+    undefined,
+    first.pubkey,
+  );
+  expect(review.input()).toHaveAccessibleName("Reply to thread");
+  return { review, older, key: `edit:channel:thread:${root}` };
+}
+
+it("opens a kept rewrite of another message in place of the one chosen until it ends", () => {
+  const { review } = reviewAfterKeptRewrite("both");
+  fireEvent.keyDown(review.input(), { key: "ArrowUp" });
+  expect(review.input()).toHaveAccessibleName("Edit message");
+  expect(review.input()).toHaveValue("Rewritten older");
+  expect(review.input()).toHaveFocus();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Finish or cancel your current edit first.",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+  fireEvent.keyDown(review.input(), { key: "ArrowUp" });
+  expect(review.input()).toHaveValue("Newer message");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("discards a kept rewrite whose message is not here to open only when Edit is chosen again", () => {
+  const { review, older, key } = reviewAfterKeptRewrite("newer");
+  fireEvent.keyDown(review.input(), { key: "ArrowUp" });
+  expect(review.input()).toHaveAccessibleName("Reply to thread");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Your unsaved edit of another message can't be opened here. Choose Edit again to discard it.",
+  );
+  expect(readView("scope", key, null)).toMatchObject({
+    id: older.id,
+    draft: { text: "Rewritten older" },
+  });
+  fireEvent.keyDown(review.input(), { key: "ArrowUp" });
+  expect(review.input()).toHaveValue("Newer message");
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(readView("scope", key, null)).toBeNull();
+});
+
+it("asks again before discarding a kept rewrite once a send clears that notice", async () => {
+  const { review, older, key } = reviewAfterKeptRewrite("newer");
+  const notice =
+    "Your unsaved edit of another message can't be opened here. Choose Edit again to discard it.";
+  fireEvent.keyDown(review.input(), { key: "ArrowUp" });
+  expect(screen.getByRole("alert")).toHaveTextContent(notice);
+  review.fill("Comment");
+  review.submit();
+  await waitFor(() => expect(review.input()).toHaveValue(""));
+  expect(review.messages.reply).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("alert")).toBeNull();
+  fireEvent.keyDown(review.input(), { key: "ArrowUp" });
+  expect(review.input()).toHaveAccessibleName("Reply to thread");
+  expect(screen.getByRole("alert")).toHaveTextContent(notice);
+  expect(readView("scope", key, null)).toMatchObject({
+    id: older.id,
+    draft: { text: "Rewritten older" },
+  });
+});
+
+it("does not open a message by itself once its kept edit ends while the composer waits", () => {
+  const root = "a".repeat(64);
+  const reply = editableMessage({ id: "b".repeat(64), threadRootId: root });
+  const thread = {
+    threadRootId: root,
+    editMessages: [reply],
+    threadSeed: reply,
+  };
+  const h = mount(thread, undefined, first.pubkey);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Rewritten reply");
+  h.unmount();
+  const waiting = mount(
+    { threadRootId: root, editMessages: [] },
+    undefined,
+    first.pubkey,
+  );
+  const other = mount(thread, undefined, first.pubkey);
+  expect(other.input()).toHaveValue("Rewritten reply");
+  fireEvent.click(
+    within(other.container).getByRole("button", { name: "Cancel edit" }),
+  );
+  waiting.retarget(thread);
+  expect(waiting.input()).toHaveAccessibleName("Reply to thread");
+  expect(waiting.input()).toHaveValue("");
+});
+
+it("keeps a kept edit closed in a waiting composer once a new message elsewhere marks it", () => {
+  const root = "a".repeat(64);
+  const reply = editableMessage({ id: "b".repeat(64), threadRootId: root });
+  const thread = {
+    threadRootId: root,
+    editMessages: [reply],
+    threadSeed: reply,
+  };
+  const key = `edit:channel:thread:${root}`;
+  const h = mount(thread, undefined, first.pubkey);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Rewritten reply");
+  h.unmount();
+  const waiting = mount(
+    { threadRootId: root, editMessages: [] },
+    undefined,
+    first.pubkey,
+  );
+  const review = mount(
+    { ...thread, resumeEdit: false },
+    undefined,
+    first.pubkey,
+  );
+  review.fill("Comment");
+  expect(readView("scope", key, null)).toMatchObject({ resume: false });
+  waiting.retarget(thread);
+  expect(waiting.input()).toHaveAccessibleName("Reply to thread");
+  expect(waiting.input()).toHaveValue("Comment");
+  waiting.fill("");
+  fireEvent.keyDown(waiting.input(), { key: "ArrowUp" });
+  expect(waiting.input()).toHaveAccessibleName("Edit message");
+  expect(waiting.input()).toHaveValue("Rewritten reply");
+});
+
+it.each(["cancelled", "saved"] as const)(
+  "keeps a kept rewrite of a sent message while a queued follow-up's edit is %s",
+  async (finish) => {
+    const sent = editableMessage({ authorId: "viewer" });
+    const key = "edit:channel";
+    const kept = {
+      id: sent.id,
+      base: "Original message",
+      draft: { text: "Rewritten message" },
+    };
+    const earlier = mount({}, undefined, "viewer");
+    earlier.setRows([sent]);
+    fireEvent.keyDown(earlier.input(), { key: "ArrowUp" });
+    earlier.fill("Rewritten message");
+    earlier.unmount();
+    expect(readView("scope", key, null)).toMatchObject(kept);
+
+    // Back in the chat before its history has the message, a new follow-up
+    // keeps the rewrite closed and queues behind the working agent.
+    localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+    const h = mount();
+    h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+    const activity = {
+      status: "unavailable",
+      records: [],
+      turns: [],
+      typing: [],
+      local: [
+        {
+          agent: first.pubkey,
+          channelId: "channel",
+          messageId: "previous",
+          state: "working",
+          scope: "scope",
+          threadRootId: "",
+          startedAt: 1,
+        },
+      ],
+    };
+    const channelList = {
+      status: "ready",
+      channels: [{ id: "channel", channelType: "solo", creator: "viewer" }],
+    };
+    h.retarget({
+      ownSoloConversation: true,
+      requireMention: true,
+      session: {
+        ...h.session,
+        viewer: "viewer",
+        channels: { ...h.session.channels, list: () => channelList },
+        channelWrites: {
+          refreshMembership: async () => ({
+            id: "channel",
+            members: [first.pubkey],
+          }),
+          addAgents: vi.fn(),
+        },
+        agentActivity: {
+          activate: () => () => {},
+          snapshot: () => activity,
+          subscribe: () => () => {},
+        },
+      } as unknown as RelaySession,
+    });
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertText("Follow up");
+    });
+    await choicesLoaded();
+    h.submit();
+    const queue = await screen.findByRole("region", {
+      name: "Queued follow-ups",
+    });
+    expect(readView("scope", key, null)).toMatchObject({
+      ...kept,
+      resume: false,
+    });
+
+    fireEvent.click(
+      within(queue).getByRole("button", { name: "Edit queued message" }),
+    );
+    expect(h.input()).toHaveAccessibleName("Edit message");
+    h.fill("Edited follow up");
+    if (finish === "cancelled")
+      fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+    else {
+      h.submit();
+      await waitFor(() =>
+        expect(
+          within(queue).getByRole("button", { name: "Edited follow up" }),
+        ).toBeVisible(),
+      );
+    }
+    await waitFor(() =>
+      expect(h.input()).toHaveAccessibleName("Message #General"),
+    );
+    expect(readView("scope", key, null)).toMatchObject({
+      ...kept,
+      resume: false,
+    });
+
+    // Edit chosen on the sent message opens its rewrite, which saves against
+    // the text it opened from.
+    h.setRows([sent]);
+    h.fill("");
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    expect(h.input()).toHaveAccessibleName("Edit message");
+    expect(h.input()).toHaveValue("Rewritten message");
+    h.submit();
+    expect(h.messages.edit).toHaveBeenCalledOnce();
+    expect(h.messages.edit.mock.calls[0]?.slice(0, 2)).toEqual([
+      sent.id,
+      "Rewritten message",
+    ]);
   },
 );
 

@@ -58,6 +58,8 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
   const [operation, setOperation] = useState<string>();
   const submitted = useRef<string | undefined>(undefined);
   const initial = useRef<string | undefined>(undefined);
+  // The message text the edit opened from; a resumed edit keeps its own.
+  const base = useRef<string | undefined>(undefined);
   const [error, setError] = useState<string>();
   const pending = useSyncExternalStore(
     session.outbox?.subscribe ?? subscribe,
@@ -81,6 +83,7 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
     setOperation(undefined);
     submitted.current = undefined;
     initial.current = undefined;
+    base.current = undefined;
     setError(undefined);
   };
   const finish = useEffectEvent(close);
@@ -101,11 +104,14 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
     error: error ?? delivery?.error,
     close,
     clearError: () => setError(undefined),
+    base: () => base.current,
     start(
       row: ChannelMessage,
       normalize: (body: string) => string = (body) => body,
+      opened = source(row),
     ) {
       setTarget(row);
+      base.current = opened;
       setError(undefined);
       const body = messageEditText(
         row,
@@ -121,6 +127,7 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
       initial.current = draft.content;
       return draft.content;
     },
+    /** True once the outbox owns the edit. */
     save(body: string, current: ChannelMessage | undefined) {
       if (!target || submitted.current || draftSaving) return;
       if ("saveDraft" in target) {
@@ -138,7 +145,7 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
         setError("This message is no longer available to edit.");
         return;
       }
-      if (source(current) !== source(target)) {
+      if (source(current) !== base.current) {
         setError(
           "This message changed while you were editing. Copy your changes, then cancel and reopen it.",
         );
@@ -157,6 +164,7 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
         submitted.current = id;
         setOperation(id);
         setError(undefined);
+        return true;
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : String(reason));
       }

@@ -1312,12 +1312,34 @@ describe("Mod+Shift+V pastes plain text verbatim", () => {
       fireEvent.keyDown(h.input, chord);
       fireEvent.paste(h.input, {
         clipboardData: {
-          items: [{ kind: "file" }],
+          // A copied file carries its own name as text.
+          items: [{ kind: "file", getAsFile: () => new File([], "name.png") }],
           getData: (type: string) => (type === "text/plain" ? "name.png" : ""),
         },
       });
     });
     expect(h.markdown()).toBe("draft");
+  });
+
+  it("pastes text copied together with a picture", () => {
+    const h = mount("");
+    const text = "Q3 revenue\t$4.2M\nQ3 cost\t$3.1M";
+    act(() => {
+      h.input.focus();
+      fireEvent.keyDown(h.input, chord);
+      fireEvent.paste(h.input, {
+        clipboardData: {
+          items: [{ kind: "file", getAsFile: () => new File([], "image.png") }],
+          getData: (type: string) =>
+            type === "text/plain"
+              ? text
+              : type === "text/html"
+                ? "<table><tr><td>Q3 revenue</td><td>$4.2M</td></tr></table>"
+                : "",
+        },
+      });
+    });
+    expect(h.markdown()).toBe(text);
   });
 
   it("takes Apple chords on Apple platforms only", () => {
@@ -1380,6 +1402,24 @@ describe("Mod+Shift+V pastes plain text verbatim", () => {
     expect(h.markdown()).toBe(`Check the [release notes](${url})`);
   });
 });
+
+it.each([
+  ["a paste", paste],
+  ["Paste and Match Style", pasteRaw],
+])(
+  "drops the placeholders pictures leave in rich text from %s",
+  (_path, pasteWith) => {
+    const h = mount();
+    // RTF and RTFD put U+FFFC in the plain text where each picture was.
+    pasteWith(
+      h.input,
+      "Lunch budget notes for Q3.\n\uFFFC\r\n \uFFFC\uFFFC \nVenue \uFFFCcosts went up.\n\n\uFFFC",
+    );
+    expect(h.markdown()).toBe(
+      "Lunch budget notes for Q3.\nVenue costs went up.\n",
+    );
+  },
+);
 
 it("bolds a mention typed between delimiters and keeps its chip and recipient", async () => {
   const h = mount();

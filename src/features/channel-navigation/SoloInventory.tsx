@@ -5,6 +5,7 @@ import { useSoloNavigation } from "./solo-navigation-react";
 import { regionDraftKey, soloNavigationFor } from "./solo-navigation";
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -16,6 +17,7 @@ import {
 } from "react";
 import { useChannelNavigation } from "./ChannelNavigationState";
 import { eligibleSolo } from "../solo/labels";
+import { inactiveSoloChats } from "./solo-inactivity";
 import { conversationTarget, soloDraft, soloDraftTarget } from "./routes";
 import { ChannelActivityPopover } from "../../bundled/channels/ChannelActivityPopover";
 import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
@@ -272,6 +274,26 @@ export function SoloInventory({
   );
   const composing = !!regions.regions.find((region) => region.source)?.source
     ?.composeWorkspaces;
+  const pinned = (id: string) =>
+    selected === id || workingChannels.has(id) || unreadChats.has(id);
+  useEffect(
+    () =>
+      session.channels.retainActivity?.((channel) =>
+        eligibleSolo(channel, session.viewer),
+      ),
+    [session],
+  );
+  const [clock, tick] = useState(0);
+  const inactive = inactiveSoloChats(conversations, pinned, Date.now());
+  // One owned deadline folds a chat that goes quiet while the sidebar is idle.
+  useEffect(() => {
+    if (!Number.isFinite(inactive.nextAt)) return;
+    const timer = window.setTimeout(
+      () => tick(clock + 1),
+      Math.min(Math.max(0, inactive.nextAt - Date.now()), 2_147_483_647),
+    );
+    return () => window.clearTimeout(timer);
+  }, [inactive.nextAt, clock]);
   const empty =
     list.status === "ready" &&
     preferences.status === "ready" &&
@@ -412,10 +434,8 @@ export function SoloInventory({
         chats={conversations.map((item) => ({
           id: item.id,
           title: item.name,
-          pinned:
-            selected === item.id ||
-            workingChannels.has(item.id) ||
-            unreadChats.has(item.id),
+          pinned: pinned(item.id),
+          inactive: inactive.ids.has(item.id),
         }))}
         onNew={newChat}
         renderChat={renderChat}

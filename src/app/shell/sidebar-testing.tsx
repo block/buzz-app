@@ -111,7 +111,7 @@ export function fixture(
         name: `Newer ${index}`,
         channelType: "solo" as const,
         creator: viewer,
-        lastActivityAt: 1_000 - index,
+        lastActivityAt: Math.floor(Date.now() / 1000) - index,
       })),
     ],
   };

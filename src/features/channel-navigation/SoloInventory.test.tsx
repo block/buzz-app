@@ -10,7 +10,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
-import { writeView } from "../../shared/view-state";
+import { readView, writeView } from "../../shared/view-state";
 import { conversationTarget, soloDraftTarget } from "./routes";
 import type { Contribution } from "../../plugins/contributions";
 import type { ChatIcon, ChatMenu } from "../conversation/service";
@@ -106,6 +106,7 @@ it.each([false, true])(
       undefined,
       { sidebarRows: plugin.rows },
     );
+    const recent = Math.floor(Date.now() / 1000);
     const row = screen.getByRole("button", { name: /^Planning/ });
     expect(row.closest("[data-plugin-row]")).toHaveAttribute(
       "data-plugin-row",
@@ -121,12 +122,12 @@ it.each([false, true])(
     );
     f.roster((channels) =>
       channels.map((channel) =>
-        channel.id === id ? { ...channel, lastActivityAt: 123 } : channel,
+        channel.id === id ? { ...channel, lastActivityAt: recent } : channel,
       ),
     );
-    expect(screen.getByText("solo::123:2")).toBeInTheDocument();
+    expect(screen.getByText(`solo::${recent}:2`)).toBeInTheDocument();
     f.clearUnread();
-    expect(screen.getByText("solo::123:0")).toBeInTheDocument();
+    expect(screen.getByText(`solo::${recent}:0`)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Planning/ })).toBe(row);
     f.activity({
       ...f.activitySnapshot,
@@ -842,4 +843,59 @@ it("shows plugin actions in the primary sidebar right-click menu", async () => {
   expect(
     await screen.findByRole("menuitem", { name: "Unlink pull request" }),
   ).toBeVisible();
+});
+
+it("folds chats quiet for 72 hours into Inactive, keeping the open and unread ones listed", async () => {
+  const f = fixture(false, false, undefined, undefined, 2);
+  const quiet = Math.floor(Date.now() / 1000) - 4 * 86_400;
+  f.roster((channels) =>
+    channels.map((channel) =>
+      channel.id === "newer-0"
+        ? channel
+        : { ...channel, lastActivityAt: quiet },
+    ),
+  );
+  const listed = () =>
+    screen
+      .queryAllByRole("button")
+      .map((button) => button.getAttribute("data-solo-channel-id"))
+      .filter(Boolean);
+  const toggle = screen.getByRole("button", {
+    name: /^Inactive for 72 hours\s*\(1\)/,
+  });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(listed()).toEqual(["newer-0", id, other]);
+  f.clearUnread();
+  expect(
+    screen.getByRole("button", { name: /^Inactive for 72 hours\s*\(2\)/ }),
+  ).toBe(toggle);
+  expect(listed()).toEqual(["newer-0", other]);
+  await userEvent.setup().click(toggle);
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(listed()).toEqual(["newer-0", other, id, "newer-1"]);
+  expect(readView(scope, "solo:inactive-open", false)).toBe(true);
+});
+
+it("folds a chat into Inactive when it crosses 72 hours while the sidebar is idle", () => {
+  vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+  try {
+    const f = fixture(false, false, undefined, undefined, 1);
+    const almost = Math.floor(Date.now() / 1000) - 72 * 3600 + 60;
+    f.roster((channels) =>
+      channels.map((channel) =>
+        channel.id === "newer-0"
+          ? { ...channel, lastActivityAt: almost }
+          : channel,
+      ),
+    );
+    expect(
+      screen.queryByRole("button", { name: /^Inactive for 72 hours/ }),
+    ).toBeNull();
+    act(() => vi.advanceTimersByTime(61_000));
+    expect(
+      screen.getByRole("button", { name: /^Inactive for 72 hours\s*\(1\)/ }),
+    ).toBeVisible();
+  } finally {
+    vi.useRealTimers();
+  }
 });

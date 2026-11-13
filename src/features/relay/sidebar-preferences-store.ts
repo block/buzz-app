@@ -1,6 +1,7 @@
 import type { HeadPersistence } from "./persistence";
 import { isTransientFailure } from "./errors";
 import { projectSidebarPreferences } from "./sidebar-preferences";
+import { validSidebarLayout } from "./sidebar-registers";
 import type {
   SidebarAssignmentMutator,
   SidebarAssignmentIntent,
@@ -672,7 +673,11 @@ export function createSidebarPreferencesStore({
       publish({
         ...snapshot,
         cached: true,
-        data: retained(parsed),
+        data: retained(
+          validSidebarLayout(data.layout)
+            ? { ...parsed, layout: data.layout }
+            : parsed,
+        ),
       });
     })
     .catch(() => {});

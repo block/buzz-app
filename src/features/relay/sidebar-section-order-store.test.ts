@@ -149,3 +149,29 @@ it("stays gated until a full read succeeds and fences a late confirmation after 
     f.store.dispose();
   }
 });
+
+it("restores a saved section layout from the startup copy", async () => {
+  const layout = ["dms", "starred", "group:a", "channels", "forums"];
+  const read = gate<SidebarPreferences>();
+  const store = createSidebarPreferencesStore({
+    read: () => read.promise,
+    available: true,
+    persistence: {
+      readStartup: async () => ({
+        preferences: { savedAt: Date.now(), data: { ...data, layout } },
+      }),
+    } as never,
+  });
+  try {
+    void store.queries.ensure().catch(() => {});
+    await vi.waitFor(() =>
+      expect(store.queries.snapshot()).toMatchObject({
+        cached: true,
+        data: { layout },
+      }),
+    );
+  } finally {
+    read.resolve(data);
+    store.dispose();
+  }
+});

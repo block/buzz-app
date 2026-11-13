@@ -304,6 +304,28 @@ it("keeps each built-in section before the saved group that followed it", () => 
     "starred",
     "channels",
   ]);
+  // A group the layout doesn't list follows the group before it, or Starred.
+  const moved = ["dms", "starred", "group:a", "channels", "forums"];
+  expect(sidebarLayout(["a", "new"], moved)).toEqual([
+    "dms",
+    "starred",
+    "group:a",
+    "group:new",
+    "channels",
+    "forums",
+  ]);
+  expect(sidebarLayout(["new", "a"], moved)).toEqual([
+    "dms",
+    "starred",
+    "group:new",
+    "group:a",
+    "channels",
+    "forums",
+  ]);
+  // The first group of all goes just before Channels.
+  expect(
+    sidebarLayout(["new"], ["dms", "starred", "channels", "forums"]),
+  ).toEqual(["dms", "starred", "group:new", "channels", "forums"]);
   expect(
     sidebarSections(
       [

@@ -436,10 +436,13 @@ fn sidebar_registers_bind_legacy_projection_and_preserve_tombstones() {
         "forums"
     ]));
     assert!(super::validate_sidebar_payload("channel-sections", &layout).is_ok());
+    // A newer client's built-in key must not block later writes.
+    layout["sectionOrder"] = reg(json!(["threads", "dms", "starred", "channels", "forums"]));
+    assert!(super::validate_sidebar_payload("channel-sections", &layout).is_ok());
     for invalid in [
-        json!(["dms", "group:work", "starred", "channels"]),
         json!(["dms", "dms", "starred", "channels", "forums"]),
-        json!(["dms", "work", "starred", "channels", "forums"]),
+        json!(["dms", "", "starred", "channels", "forums"]),
+        json!(["dms", 1]),
         json!("dms"),
     ] {
         layout["sectionOrder"] = reg(invalid);

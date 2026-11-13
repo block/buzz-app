@@ -55,8 +55,9 @@ export function compareRecent(a: ChannelSummary, b: ChannelSummary) {
 }
 
 /** Every section key in display order. A built-in section stays just before
- * the saved group that followed it, so group order stays the groups' own and a
- * new group joins the others. */
+ * the saved group that followed it, so group order stays the groups' own. A
+ * group the layout doesn't list yet follows the group before it; a first one
+ * goes after the next group's built-ins, or just before Channels. */
 export function sidebarLayout(
   groupIds: readonly string[],
   layout?: readonly string[],
@@ -72,9 +73,25 @@ export function sidebarLayout(
       pending = [];
     } else if ((BUILT_IN_SIDEBAR_SECTIONS as readonly string[]).includes(key))
       pending.push(key);
+  const result: string[] = [];
+  let waiting: string[] = [];
+  for (const group of groups) {
+    const anchored = before.get(group);
+    if (!anchored) {
+      if (result.length && !waiting.length) result.push(group);
+      else waiting.push(group);
+      continue;
+    }
+    result.push(...anchored, ...waiting, group);
+    waiting = [];
+  }
+  if (!waiting.length) return [...result, ...pending];
+  const channels = pending.indexOf("channels");
   return [
-    ...groups.flatMap((group) => [...(before.get(group) ?? []), group]),
-    ...pending,
+    ...result,
+    ...pending.slice(0, Math.max(channels, 0)),
+    ...waiting,
+    ...pending.slice(Math.max(channels, 0)),
   ];
 }
 

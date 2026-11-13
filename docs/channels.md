@@ -166,7 +166,7 @@ preference writes and repeats a writer read invalidated by a concurrent write.
 Ordinary startup remains replica-eligible. Dragging a channel into
 the gap above the first custom section expands an **Add to new section** drop
 target inside the sidebar. With no custom sections, the target is above
-**Channels**; **Starred** keeps its pinned position. The created section appears
+**Channels**, wherever Channels sits. The created section appears
 at that same first position. The target stays revealed for the rest of that drag, with
 reduced motion opening it immediately; other section destinations remain available.
 Dropping there opens the existing create-and-move dialog; cancelling leaves the

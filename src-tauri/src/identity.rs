@@ -651,9 +651,9 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
     Ok(())
 }
 
-// One register listing every built-in section once, plus `group:<id>` keys.
+// One register of unique section keys. Readers ignore keys they don't know, so
+// only the shape is bounded here: a newer client's layout must not block writes.
 fn valid_sidebar_layout(value: &serde_json::Value) -> bool {
-    const BUILT_IN: [&str; 4] = ["starred", "channels", "forums", "dms"];
     let Some([version, device, keys]) = value.as_array().map(Vec::as_slice) else {
         return false;
     };
@@ -670,14 +670,9 @@ fn valid_sidebar_layout(value: &serde_json::Value) -> bool {
         && keys.len() <= 104
         && keys.iter().all(|key| {
             key.as_str().is_some_and(|key| {
-                seen.insert(key)
-                    && (BUILT_IN.contains(&key)
-                        || key.strip_prefix("group:").is_some_and(|id| {
-                            !id.trim().is_empty() && id.encode_utf16().count() <= 256
-                        }))
+                !key.trim().is_empty() && key.encode_utf16().count() <= 262 && seen.insert(key)
             })
         })
-        && BUILT_IN.iter().all(|key| seen.contains(key))
 }
 
 // The signer admits only the bounded Desktop register schema, not arbitrary

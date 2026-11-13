@@ -472,9 +472,10 @@ export function editSidebarLayout(
   if (!validSidebarLayout(layout)) throw new Error("Invalid sidebar layout");
   const previous = projectSidebarLayout(current.sectionOrder);
   if (previous?.join("\n") === layout.join("\n")) return current;
+  const saved = (current.sectionOrder as unknown[] | undefined)?.[0];
   const version = Math.max(
     now,
-    ((current.sectionOrder as SidebarRegister | undefined)?.[0] ?? 0) + 1,
+    (Number.isSafeInteger(saved) ? (saved as number) : 0) + 1,
   );
   if (!Number.isSafeInteger(version))
     throw new Error("Sidebar register clock exhausted");

@@ -1,4 +1,7 @@
 import {
+  Children,
+  cloneElement,
+  isValidElement,
   useState,
   useSyncExternalStore,
   type ComponentProps,
@@ -80,19 +83,27 @@ export function CodeFence({
   node,
   children,
   copy,
+  focusable = true,
   registry,
   classes = defaultClasses,
   ...props
 }: ComponentProps<"pre"> &
   ExtraProps & {
     copy: boolean | undefined;
+    focusable?: boolean | undefined;
     registry: ContributionReader<CodeBlockRenderer> | undefined;
     classes?: CodeClasses | undefined;
   }) {
   const code = labelText(children).replace(/\n$/, "");
   const plain = (
     <pre {...props}>
-      {children}
+      {Children.map(children, (child) =>
+        focusable &&
+        isValidElement<ComponentProps<"code">>(child) &&
+        child.type === "code"
+          ? cloneElement(child, { tabIndex: 0 })
+          : child,
+      )}
       {copy && <CodeActions code={code} className={classes.actions} />}
     </pre>
   );

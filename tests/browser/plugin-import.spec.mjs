@@ -2331,6 +2331,29 @@ test("installed documents reuse host Markdown, workspace tabs and persisted spli
     .toBe(320);
   await handle.dblclick();
   await expect(handle).toHaveAttribute("aria-valuenow", "448");
+  // Native focus/scrolling through the installed module needs a browser;
+  // the shared Markdown journey owns the theme/width/text-scale matrix.
+  const code = reader
+    .getByRole("tabpanel", { name: "Guide", exact: true })
+    .locator("pre code");
+  const precedingLink = reader.getByRole("link", { name: "the alpha room" });
+  await precedingLink.focus();
+  // The host link opens its keyboard preview before the code's Tab stop.
+  await expect(precedingLink).toHaveAttribute("data-popup-open", "");
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("link", { name: "Channel preview", exact: true }),
+  ).toHaveCount(0);
+  await expect(precedingLink).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(code).toBeFocused();
+  const initialScroll = await code.evaluate((el) => el.scrollTop);
+  await page.keyboard.press("End");
+  await expect
+    .poll(() => code.evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(initialScroll);
+  await page.keyboard.press("Tab");
+  await expect(code).not.toBeFocused();
   for (const mode of ["Dark", "Light"]) {
     await openSettings(page);
     await selectSettingsSection(page, "Appearance");

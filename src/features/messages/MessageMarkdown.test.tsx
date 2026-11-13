@@ -220,14 +220,16 @@ second
         "<ol><li><p>x</p></li><li><p>y</p></li></ol>" +
         "<blockquote><p>quote   here</p></blockquote>" +
         "<table><thead><tr><th>a     b</th></tr></thead><tbody><tr><td>c   d</td></tr></tbody></table>" +
-        "<p><code>a    b</code></p><pre><code>one\n  two\n</code>",
+        '<p><code>a    b</code></p><pre><code tabindex="0">one\n  two\n</code>',
     );
   });
 
   it("renders inline and fenced code without parsing markdown inside it", () => {
     const html = render("`**literal** :party:`\n\n```ts\nconst x = 1\n```");
     expect(html).toContain("<code>**literal** :party:</code>");
-    expect(html).toContain('<code class="language-ts">const x = 1');
+    expect(html).toContain(
+      '<code class="language-ts" tabindex="0">const x = 1',
+    );
     expect(html).not.toContain("<strong>literal</strong>");
   });
 
@@ -1282,6 +1284,9 @@ describe("code block copy", () => {
 
   it("omits the copy action in noninteractive previews", () => {
     expect(render(fenced, { interactive: false })).not.toContain("<button");
+    expect(render(fenced, { interactive: false })).not.toContain(
+      'tabindex="0"',
+    );
   });
 });
 

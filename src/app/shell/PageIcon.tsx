@@ -59,14 +59,15 @@ function oneColour(elements: readonly Element[]) {
         paints.add(paint);
     }
   }
-  return paints.size === 1;
+  return paints.size <= 1;
 }
 
 /**
- * The mask source for an SVG glyph: one that paints with `currentColor` or
- * declares a single colour. With `strokeWidth`, its strokes take that width on
- * a 24-unit grid, so a plugin's glyph matches the host icons beside it.
- * Other images draw as they are, so this returns undefined.
+ * The mask source for an SVG glyph: one that paints with `currentColor`, or,
+ * when `strokeWidth` is given, one painted in a single colour. With
+ * `strokeWidth`, its strokes take that width on a 24-unit grid, so a plugin's
+ * glyph matches the host icons beside it. Other images draw as they are, so
+ * this returns undefined.
  */
 export function glyphMask(
   image: string,
@@ -81,8 +82,9 @@ export function glyphMask(
   if (root.localName !== "svg" || root.querySelector("parsererror"))
     return undefined;
   const elements = [root, ...root.querySelectorAll("*")];
-  if (!paintsCurrentColor(image) && !oneColour(elements)) return undefined;
-  if (strokeWidth === undefined) return image;
+  const tinted = paintsCurrentColor(image);
+  if (strokeWidth === undefined) return tinted ? image : undefined;
+  if (!tinted && !oneColour(elements)) return undefined;
   for (const element of elements) {
     element.removeAttribute("stroke-width");
     const style = element

@@ -167,8 +167,11 @@ it("masks one-colour SVGs at the host stroke and leaves other images alone", () 
   expect(decoded(glyphMask(duotone, 2.5))).toContain('opacity="0.4"');
   const accented = `data:image/svg+xml;base64,${btoa(String.fromCharCode(...new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" stroke="#333"><title>café</title><path d="M1 1h9"/></svg>')))}`;
   expect(decoded(glyphMask(accented, 2.5))).toContain("café");
-  // Without a stroke width the source is masked unchanged.
-  expect(glyphMask(grey)).toBe(grey);
+  // Without a stroke width only currentColor SVGs are masked, unchanged.
+  expect(glyphMask(grey)).toBeUndefined();
+  expect(glyphMask(bag)).toBe(bag);
+  // Unpainted shapes fill black: still one colour.
+  expect(glyphMask(owl, 2.5)).toContain("data:image/svg+xml");
   expect(glyphMask(bag, 2.5)).toContain("stroke-width%3D%222.5%22");
 
   const twoColours = svgImage(
@@ -180,14 +183,7 @@ it("masks one-colour SVGs at the host stroke and leaves other images alone", () 
   const styled = svgImage(
     '<svg xmlns="http://www.w3.org/2000/svg" stroke="#000"><style>.b{fill:red}</style><path class="b"/></svg>',
   );
-  for (const image of [
-    twoColours,
-    gradient,
-    styled,
-    owl,
-    fox,
-    svgImage("<svg"),
-  ])
+  for (const image of [twoColours, gradient, styled, fox, svgImage("<svg")])
     expect(glyphMask(image, 2.5)).toBeUndefined();
 });
 

@@ -24,6 +24,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
 import { useMessageOpening } from "../../features/messages/use-message-opening";
+import { watchRevealRequest } from "../../features/messages/use-message-reveal";
 import { ChannelBody } from "./ChannelBody";
 import {
   entryPane,
@@ -678,6 +679,12 @@ function ChannelWorkspace({
     navigation?.target.kind === "conversation"
       ? navigation.target.threadRootId
       : undefined;
+  useLayoutEffect(() => {
+    // The message's reveal waits for its channel, timeline or thread to load.
+    // Focus the person moves or text they type meanwhile counts from now.
+    if (!requestedMessage || !navigation || navigation.signal.aborted) return;
+    return watchRevealRequest(navigation.signal);
+  }, [requestedMessage, navigation]);
   const membersRequested =
     navigation?.target.kind === "conversation" &&
     navigation.target.panel === "members";

@@ -13,6 +13,23 @@ test.use({
   historyCounts: { alpha: 3, beta: 1 },
 });
 
+// Polls `sample` until it read an open bar with no entrance transform, and
+// returns that sample. Waiting for animations first is not enough: a bar shown
+// again starts a new entrance after the wait, and a closed bar between hide and
+// re-show has no transform either. `sample` reads `open` (`:popover-open`) and
+// the computed `transform` with its geometry in one page call, so all of them
+// describe one frame.
+async function atRest(sample) {
+  let last;
+  await expect
+    .poll(async () => {
+      last = await sample();
+      return { open: last.open, transform: last.transform };
+    })
+    .toEqual({ open: true, transform: "none" });
+  return last;
+}
+
 // Every thread reply, nested or not, carries the same full action bar; on desktop
 // it is revealed by hover or focus.
 async function replyActions(row) {
@@ -960,18 +977,22 @@ for (const width of [1492, 1280, 1024, 700, 390])
       if (width >= 640) {
         // Headers and continuations both lift the bar over the bubble's top
         // corner by the same token-sized overlap.
-        const placement = await row.evaluate((node) => {
-          const bar = node.querySelector('[aria-label="Message actions"]');
-          const body = node.querySelector('[class*="_messageBubble_"]');
-          const rect = bar.getBoundingClientRect();
-          const anchor = body.getBoundingClientRect();
-          return {
-            actual: rect.bottom,
-            expected:
-              anchor.top +
-              parseFloat(getComputedStyle(bar).scrollMarginBlockStart),
-          };
-        });
+        const placement = await atRest(() =>
+          row.evaluate((node) => {
+            const bar = node.querySelector('[aria-label="Message actions"]');
+            const body = node.querySelector('[class*="_messageBubble_"]');
+            const rect = bar.getBoundingClientRect();
+            const anchor = body.getBoundingClientRect();
+            return {
+              open: bar.matches(":popover-open"),
+              transform: getComputedStyle(bar).transform,
+              actual: rect.bottom,
+              expected:
+                anchor.top +
+                parseFloat(getComputedStyle(bar).scrollMarginBlockStart),
+            };
+          }),
+        );
         expect(placement.actual).toBeCloseTo(placement.expected, 1);
         // Header anchoring must not wrap a full toolbar inside the narrower
         // body column before the row-width action reductions take effect.

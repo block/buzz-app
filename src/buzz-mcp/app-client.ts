@@ -39,6 +39,12 @@ export function appClient(
     captureProtectionContext?(): Promise<{ value: unknown; release(): void }>;
     /** The runtime reviews each tool call itself before Buzz dispatches it. */
     nativeToolGate?: boolean;
+    /** False when this client's `read` returns bytes from somewhere other than
+     * this desktop. Default true preserves existing local-reader behaviour.
+     * When false, publish drops managedAttachments hints before forwarding so
+     * a remote source cannot trigger local managed cleanup. Remote sends still
+     * publish normally; this option does not add remote deletion authority. */
+    localAttachments?: boolean;
     /** Set only by the native runtime for an active tool request. */
     nativeCall?: () => void;
   }>,
@@ -191,9 +197,19 @@ export function appClient(
       check();
       return agent.searchProfiles(query, limit);
     },
-    publish: (event) => {
+    publish: (event, publishOptions) => {
       check();
-      return agent.publish(event, check);
+      // When this client reads from somewhere other than the desktop
+      // (`localAttachments === false`), strip managedAttachments before
+      // forwarding so a remote source cannot trigger local managed cleanup.
+      const forwarded =
+        publishOptions && options.localAttachments === false
+          ? (({ managedAttachments: _, ...rest }) =>
+              Object.keys(rest).length ? rest : undefined)(publishOptions)
+          : publishOptions;
+      return forwarded
+        ? agent.publish(event, check, forwarded)
+        : agent.publish(event, check);
     },
     upload: async (data, mime) => {
       check();

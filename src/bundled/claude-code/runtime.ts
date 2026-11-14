@@ -1565,6 +1565,11 @@ export class ClaudeRuntime {
             // Its PreToolUse hook reviews every tool, Buzz's included.
             ...(!this.target && check ? { nativeCall: check } : {}),
             nativeToolGate: true,
+            // Execution-target reads come from somewhere other than this
+            // desktop; suppress managed-attachment hints at publish so a
+            // remote source cannot trigger local managed cleanup. No remote
+            // deletion is added.
+            localAttachments: !this.target,
             captureProtectionContext: async () => {
               if (!conversation)
                 throw new Error(

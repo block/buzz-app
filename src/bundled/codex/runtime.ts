@@ -2353,6 +2353,10 @@ export class CodexRuntime {
       // Its tool registry reviews every call, Buzz's dynamic tools included.
       ...(!this.target ? { nativeCall: check } : {}),
       nativeToolGate: true,
+      // Execution-target reads come from somewhere other than this desktop;
+      // suppress managed-attachment hints at publish so a remote source cannot
+      // trigger local managed cleanup. No remote deletion is added.
+      localAttachments: !this.target,
       protectionContext: async () => {
         const rpc =
           active?.rpc ??

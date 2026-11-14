@@ -6692,19 +6692,60 @@ it("runs bound Codex tools in the guest workspace, resumes, and stops on provide
       return target;
     });
     f = fixture([], undefined, false, {}, undefined, undefined, execution);
+    const bytes = Buffer.from("GUEST FILE");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    f.upload.mockImplementation(async (data, mime) => {
+      expect(data).toBe(bytes.toString("base64"));
+      return {
+        url: "https://files.test/file",
+        sha256,
+        size: bytes.length,
+        type: mime,
+      };
+    });
     await f.runtime.run(f.delivery("first"));
     await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
     expect(
       f.sent.find((wire) => wire.method === "thread/start")?.params,
     ).toMatchObject({ cwd: "/guest/project" });
     expect(
-      (await f.tool("send", { audience: "everyone", path: "answer.txt" }))
-        ?.result,
+      (
+        await f.tool("send", {
+          audience: "everyone",
+          path: "answer.txt",
+          // A managed-looking absolute path whose bytes match a hypothetical
+          // local save must not trigger managedAttachments forwarding when the
+          // reader is a remote execution target.
+          files: ["/managed/looking/path.bin"],
+        })
+      )?.result,
     ).toMatchObject({ success: true });
     expect(target.readFile).toHaveBeenCalledWith("answer.txt", {
       cwd: "/guest/project",
     });
+    expect(target.readFile).toHaveBeenCalledWith("/managed/looking/path.bin", {
+      cwd: "/guest/project",
+    });
     expect(f.fileReads).toEqual([]);
+    expect(f.upload).toHaveBeenCalledOnce();
+    expect(f.publish).toHaveBeenCalledOnce();
+    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+      content: expect.stringContaining("https://files.test/file"),
+      tags: expect.arrayContaining([
+        expect.arrayContaining([
+          "imeta",
+          `x ${sha256}`,
+          `size ${bytes.length}`,
+        ]),
+      ]),
+    });
+    // Target-bound runs publish normally but never forward managedAttachments
+    // hints: localAttachments: !this.target drops them in app-client.
+    for (const call of f.publish.mock.calls as unknown as unknown[][]) {
+      expect(
+        (call[2] as Record<string, unknown> | undefined) ?? {},
+      ).not.toHaveProperty("managedAttachments");
+    }
     expect(
       (
         await f.tool("send", { audience: "everyone", text: "wrong turn" }, 0, {

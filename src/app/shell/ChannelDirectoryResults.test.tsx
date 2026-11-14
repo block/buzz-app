@@ -252,16 +252,18 @@ const openSearch = async () => {
   return screen.findByRole("dialog", { name: "Search Buzz" });
 };
 /** What the sidebar's Browse channels asks for. */
-const browseChannels = async () => {
+const browse = async () => {
   act(() => {
     window.dispatchEvent(new Event("buzz:browse-channels"));
   });
-  return screen.findByRole("dialog", { name: "Search Buzz" });
+  return screen.findByRole("dialog", { name: "Browse channels" });
 };
-const toJoin = () => screen.queryByRole("group", { name: "Channels to join" });
+const field = () => screen.getByRole("combobox", { name: "Search channels" });
 const rows = () =>
   Array.from(
-    toJoin()?.querySelectorAll('[role="option"]') ?? [],
+    screen
+      .getByRole("listbox", { name: "Channels" })
+      .querySelectorAll('[role="option"]'),
     (row) => row.textContent,
   );
 const offered = [
@@ -270,41 +272,44 @@ const offered = [
   expect.stringContaining("release-notes"),
 ];
 
-it("Browse channels opens search on the open channels to join, A–Z", async () => {
+it("Browse channels lists the open channels to join A–Z, and nothing else of search", async () => {
   const t = connected();
   try {
     t.render();
-    await browseChannels();
+    const dialog = await browse();
     await waitFor(() => expect(rows()).toEqual(offered));
-    // Its first row is highlighted, ready for Enter.
+    expect(field()).toHaveFocus();
+    expect(field()).toHaveAttribute("placeholder", "Search channels");
     expect(
-      within(toJoin() as HTMLElement).getAllByRole("option")[0],
-    ).toHaveAttribute("aria-selected", "true");
-    // The rail says which group is shown.
-    expect(
-      screen.getByRole("button", { name: /Channels to join/, pressed: true }),
+      screen.getByRole("group", { name: "Channels you can join" }),
     ).toBeVisible();
+    // One plain list: no rail of result groups and no preview beside it.
+    expect(within(dialog).queryByRole("navigation")).toBeNull();
+    expect(within(dialog).queryByRole("complementary")).toBeNull();
     // Member counts fill in after the rows, in one read for the rows shown.
     await waitFor(() =>
       expect(rows()).toEqual([
-        expect.stringContaining("2 members · Questions and tips"),
-        expect.stringContaining("1 member"),
-        expect.stringContaining("1 member"),
+        "buzz-communityQuestions and tips2 members",
+        "design-crit1 member",
+        "release-notes1 member",
       ]),
     );
     expect(t.countReads()).toBe(1);
-    // Joined (guests included), archived and private channels aren't offered.
+    // Joined (guests included), archived and private channels aren't
+    // offered to join.
     for (const hidden of [
-      /^design( —|$)/,
+      /^design$/,
       /design-guests/,
       /design-private/,
       /old-news/,
       /secret-plans/,
     ])
-      expect(
-        within(toJoin() as HTMLElement).queryByRole("option", { name: hidden }),
-      ).toBeNull();
+      expect(screen.queryByRole("option", { name: hidden })).toBeNull();
     // The first row is ready for Enter, which opens its preview.
+    expect(screen.getAllByRole("option")[0]).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     await userEvent.keyboard("{Enter}");
     await waitFor(() =>
       expect(t.navigate).toHaveBeenCalledWith(
@@ -319,94 +324,144 @@ it("Browse channels opens search on the open channels to join, A–Z", async () 
   }
 });
 
-it("lists Channels to join in an empty search's rail, and Escape goes back", async () => {
+it("marks joined matches and says when nothing matches", async () => {
   const t = connected();
   try {
     t.render();
-    await openSearch();
-    // The overview doesn't list them; the rail does.
-    expect(toJoin()).toBeNull();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /Channels to join/ }),
+    await browse();
+    await userEvent.type(field(), "design");
+    await waitFor(() =>
+      expect(rows()).toEqual([
+        "designJoined1 member",
+        // Guests are members, open or private, so they're marked Joined.
+        "design-guestsJoined1 member",
+        "design-privateJoined1 member",
+        "design-crit1 member",
+      ]),
     );
-    await waitFor(() => expect(rows()).toEqual(offered));
-    // Typed text searches everything, open channels among Channels.
-    await userEvent.type(
-      screen.getByRole("combobox", { name: "Search Buzz" }),
-      "buzz",
-    );
-    await waitFor(() => expect(toJoin()).toBeNull());
-    await userEvent.clear(
-      screen.getByRole("combobox", { name: "Search Buzz" }),
-    );
-    await waitFor(() => expect(rows()).toEqual(offered));
-    // Escape returns to the overview before it closes search.
-    await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(toJoin()).toBeNull());
-    expect(screen.getByRole("dialog", { name: "Search Buzz" })).toBeVisible();
-    // The directory read search started was shared, not repeated.
-    expect(t.directoryReads()).toBe(1);
+    await userEvent.clear(field());
+    await userEvent.type(field(), "zzz");
+    expect(await screen.findByText("No matching channels.")).toBeVisible();
+    expect(
+      screen.getByText("Private channels show up once someone invites you."),
+    ).toBeVisible();
   } finally {
     await t.dispose();
   }
 });
 
-it("offers Retry when the directory read fails", async () => {
+it("leaves search as it was: ⌘K after browsing opens all of search, fresh", async () => {
+  const t = connected();
+  try {
+    t.render();
+    await browse();
+    await userEvent.type(field(), "design");
+    await waitFor(() => expect(rows()).toHaveLength(4));
+    await userEvent.click(screen.getByRole("option", { name: /^design-crit/ }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Browse channels" }),
+      ).toBeNull(),
+    );
+    await openSearch();
+    expect(screen.getByRole("combobox", { name: "Search Buzz" })).toHaveValue(
+      "",
+    );
+    // And browsing again starts from the whole list, not the last text.
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Search Buzz" })).toBeNull(),
+    );
+    await browse();
+    expect(field()).toHaveValue("");
+    await waitFor(() => expect(rows()).toEqual(offered));
+  } finally {
+    await t.dispose();
+  }
+});
+it("shows a failed directory read with a retry", async () => {
   const t = connected({ fail: true });
   try {
     t.render();
-    await browseChannels();
-    const retry = await screen.findByRole(
-      "option",
-      { name: /Retry loading channels/ },
-      { timeout: 5000 },
-    );
-    expect(retry).toHaveTextContent("Couldn’t load open channels.");
-    t.recover();
-    await userEvent.keyboard("{Enter}");
-    await waitFor(() => expect(rows()).toEqual(offered));
+    await browse();
     expect(
-      screen.queryByRole("option", { name: /Retry loading channels/ }),
-    ).toBeNull();
+      await screen.findByText("Couldn’t load channels.", undefined, {
+        timeout: 5000,
+      }),
+    ).toBeVisible();
+    t.recover();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Retry channels" }),
+    );
+    await waitFor(() =>
+      expect(rows()).toContainEqual(expect.stringContaining("buzz-community")),
+    );
+    expect(screen.queryByText("Couldn’t load channels.")).toBeNull();
   } finally {
     await t.dispose();
   }
 });
 
-it("keeps rows in place as later pages land, then is A–Z", async () => {
-  let release = () => {};
-  const later = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  // Pages of 10: the 10 newest fill the first, and the rest are one more.
-  const t = connected({ newer: 10, later, page: 10 });
+it("draws the first rows of a long list and more as its end nears, counting them all", async () => {
+  const observed = new Set<Element>();
+  let report: IntersectionObserverCallback = () => {};
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      constructor(callback: IntersectionObserverCallback) {
+        report = callback;
+      }
+      observe(row: Element) {
+        observed.add(row);
+      }
+      unobserve(row: Element) {
+        observed.delete(row);
+      }
+      disconnect() {
+        observed.clear();
+      }
+    },
+  );
+  const t = connected({ newer: 150 });
   try {
     t.render();
-    await browseChannels();
-    await waitFor(() => expect(rows()).toHaveLength(10));
-    expect(rows()[0]).toContain("team-000");
-    release();
-    // The older page joins below the rows shown, A–Z among itself.
-    await waitFor(() => expect(rows()).toHaveLength(13));
-    expect(rows()[0]).toContain("team-000");
-    expect(rows().slice(10)).toEqual(offered);
-    // Opened again on the finished read, the whole list is A–Z.
-    await userEvent.keyboard("{Escape}");
-    await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    await browseChannels();
-    await waitFor(() => expect(rows()[0]).toContain("buzz-community"));
+    await browse();
+    await waitFor(() => expect(rows()).toHaveLength(100));
+    const options = screen.getAllByRole("option");
+    // Assistive technology hears the whole list's size.
+    expect(options[0]).toHaveAttribute("aria-setsize", "153");
+    expect(options[99]).toHaveAttribute("aria-posinset", "100");
+    // A row well above the end coming into view draws nothing more.
+    const near = (index: number) =>
+      options[index]?.closest("[data-search-key]") ?? undefined;
+    const show = (row: Element | undefined) =>
+      act(() =>
+        report(
+          [{ target: row, isIntersecting: true } as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        ),
+      );
+    show(near(10));
+    expect(rows()).toHaveLength(100);
+    // Nearing the last drawn rows draws the rest.
+    show(near(90));
+    await waitFor(() => expect(rows()).toHaveLength(153));
+    expect(screen.getAllByRole("option")[152]).toHaveAttribute(
+      "aria-posinset",
+      "153",
+    );
+    // Every drawn row is watched once, the old ones still included.
+    expect(observed.size).toBe(153);
   } finally {
-    release();
     await t.dispose();
   }
 });
 
-it("reads the directory again when access changes while it shows", async () => {
+it("reads the directory again when access changes while Browse channels shows it", async () => {
   const t = connected();
   try {
     t.render();
-    await browseChannels();
+    await browse();
     await waitFor(() => expect(rows()).toEqual(offered));
     const reads = t.directoryReads();
     // Losing another channel drops this session's directory, not the session.
@@ -415,6 +470,112 @@ it("reads the directory again when access changes while it shows", async () => {
     await waitFor(() => expect(rows()).toEqual(offered));
     expect(screen.queryByText("You’ve joined every open channel.")).toBeNull();
   } finally {
+    await t.dispose();
+  }
+});
+it("shows the directory's first page while the rest loads", async () => {
+  let release = () => {};
+  const later = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // Pages of 10: the 10 newest fill the first, and the rest are one more.
+  const t = connected({ newer: 10, later, page: 10 });
+  try {
+    t.render();
+    await browse();
+    // The newest page arrives first and shows while the older page is held.
+    await waitFor(() => expect(rows()).toHaveLength(10));
+    expect(rows()[0]).toContain("team-000");
+    expect(screen.getByText("Loading more channels…")).toBeVisible();
+    expect(rows()).not.toContainEqual(
+      expect.stringContaining("buzz-community"),
+    );
+    release();
+    await waitFor(() =>
+      expect(screen.queryByText("Loading more channels…")).toBeNull(),
+    );
+    // The older page joins below them rather than reshuffling the rows
+    // already shown, A–Z among itself.
+    expect(rows()).toHaveLength(13);
+    expect(rows()[0]).toContain("team-000");
+    expect(rows().slice(10)).toEqual([
+      expect.stringContaining("buzz-community"),
+      expect.stringContaining("design-crit"),
+      expect.stringContaining("release-notes"),
+    ]);
+    // Opened again on the finished read, the whole list is A–Z.
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Browse channels" }),
+      ).toBeNull(),
+    );
+    await browse();
+    await waitFor(() => expect(rows()[0]).toContain("buzz-community"));
+  } finally {
+    release();
+    await t.dispose();
+  }
+});
+
+it("reads the directory again when access changes while its pages load", async () => {
+  let release = () => {};
+  const later = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const t = connected({ newer: 10, later, page: 10 });
+  try {
+    t.render();
+    await browse();
+    await waitFor(() => expect(rows()).toHaveLength(10));
+    const reads = t.directoryReads();
+    // The held page's read is now stale; a fresh read replaces it, unasked.
+    t.revoke("guest-private");
+    await waitFor(() => expect(t.directoryReads()).toBeGreaterThan(reads));
+    release();
+    await waitFor(() =>
+      expect(screen.queryByText("Loading more channels…")).toBeNull(),
+    );
+    expect(rows()).toHaveLength(13);
+    expect(screen.queryByText("Couldn’t load channels.")).toBeNull();
+  } finally {
+    release();
+    await t.dispose();
+  }
+});
+
+it("puts joined matches first among equal matches after later pages land", async () => {
+  let release = () => {};
+  const later = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // The 4 newest fill the first page; design-crit lands on a later one while
+  // Browse channels shows, and joined channels never land at all.
+  const t = connected({ newer: 4, prefix: "design-new", page: 4, later });
+  try {
+    t.render();
+    await browse();
+    await waitFor(() => expect(rows()).toHaveLength(4));
+    release();
+    await waitFor(() =>
+      expect(screen.queryByText("Loading more channels…")).toBeNull(),
+    );
+    await userEvent.type(field(), "design-");
+    await waitFor(() =>
+      expect(rows().map((row) => row?.split(/Joined|\d+ members?/)[0])).toEqual(
+        [
+          "design-guests",
+          "design-private",
+          "design-new-000",
+          "design-new-001",
+          "design-new-002",
+          "design-new-003",
+          "design-crit",
+        ],
+      ),
+    );
+  } finally {
+    release();
     await t.dispose();
   }
 });

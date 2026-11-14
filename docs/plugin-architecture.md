@@ -2917,39 +2917,12 @@ card's edits and recovery stay its own; `threadId` keeps panels opened from a
 card in that thread. Writes, mark read/unread and follow remain explicit menu
 actions.
 
-`conversation.ui.Tabs({ id, session, scope, label, icon, children })` makes the
-page's content the first main tab of the host's conversation tab workspace.
-`children(open, close, isOpen)` renders that tab; `open({ channelId, threadId?, messageId? }, { keep? })`
-shows a joined conversation in a host tab and returns false for any other. A
-thread opened with `messageId` reveals that message and keeps it in view. A
-thread opens as a side-pane thread tab and a whole conversation as a side-pane
-conversation tab, each with the same reader and composer as Channels tabs, so
-the page stays in view; any thread can then move to the main pane. A plain open
-replaces the tab the previous one added, and `keep: true` adds a tab beside it;
-an already-open conversation's tab is selected wherever it is. Each open moves
-keyboard focus to the opened tab's composer (a thread's reply box, keeping any
-reply target chosen in it) once it can take focus, unless the user clicks or
-types first; an open at a message reveals it instead, and a tab restored when
-the page remounts takes no focus. `close(target)` closes that conversation's tab, leaving focus to the page unless it opens a tab in the same update, and returns false when none is open; `isOpen(target)` says whether it has one, and a thread opened at a reply keeps its tab once its root resolves. `id` keys the page's tabs, which last for its community session as
-Channels tabs do; they keep no Back/Forward visits. Showing a tab enters its
-channel visit, as in Channels; `visits: false` leaves reading to the page, as
-Inbox does.
-The tab workspace belongs to Channels, which supplies it with
-`conversation.registerTabs(component)`; the conversation service only holds that
-slot. `ui.Tabs` is undefined while no enabled plugin provides it, so a page reads
-it at render and falls back to its own layout.
-
-`open({ channelId, messageId })` opens the conversation at that message. The
-shared `useMessageOpening` reader waits for verified history (cached rows
-decide nothing), reads older pages until the message loads (at most 25 pages
-of 20 top-level posts) and mounts the list once, at the message; a reply, or a
-message it does not find, opens as its thread in the same tab, scrolled to the
-message. Each open asks again, even for the same message, but a tab restored
-when the page remounts does not jump back to it. With `threadId` too, the
-thread tab opens and scrolls to that message, again on each open. `open(target, { markRead: false })` makes a
-conversation tab mark nothing read, so a page such as For You can keep the
-posts beside the one it opened unread and mark that one itself; threads read
-as they do in Channels.
+`conversation.ui.Tabs` and `conversation.ui.Workspace` are retired. The shell
+owns one reader beside every page, so a page opens a conversation, thread or
+message through `ctx.navigation` rather than hosting a tab workspace of its
+own. Both properties are always undefined, and `registerTabs` and
+`registerWorkspace` are accepted and ignored, so a plugin written against them
+loads and keeps the fallback layout it already needed.
 
 ### Composer ownership and mention tools
 

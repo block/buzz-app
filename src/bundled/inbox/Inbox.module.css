@@ -25,3 +25,17 @@
   flex-shrink: 0;
   white-space: nowrap;
 }
+
+/* The reader with nothing open, as Team shows it. */
+.reader {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  flex-direction: column;
+}
+.unselected {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  padding: var(--space-panel-inset);
+}

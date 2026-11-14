@@ -128,18 +128,10 @@ Add `"host"` to `inject`, then:
 
 ## UI
 
-- `ctx.conversation.ui.Workspace` shows a permanent conversation in a plugin page.
-  Check that it exists before use. Channels supplies it through
-  `registerWorkspace`, with the same provider lifetime as `ui.Tabs`.
-  Set the page's `layout` to `"workspace"`. Pass
-  `{ id, session, scope, target, label, intro?, actions?, detail? }`.
-  `target` is `{ channelId, threadId?, messageId? }`: omit `threadId` for the
-  channel timeline, or supply it for a thread. `messageId` selects a message.
-  `intro` supplies content at the start of history. It scrolls with the messages.
-  `actions` supplies
-  entries in the header's three-dot menu and the tab's context menu, with
-  `{ label, run() }`. `detail: { target, rootId? }` initially selects a panel
-  in the right pane. The host owns the reader, composer, tabs, and panel frame.
+- To show a conversation, open it with `ctx.navigation`; the shell's reader
+  hosts it for every page. `ctx.conversation.ui.Tabs` and `ui.Workspace` are
+  retired and always absent, and `registerTabs` and `registerWorkspace` are
+  accepted and ignored, so a page that checked for them keeps its own layout.
   The page owns its route, content lookup, labels, and actions.
   Set `conversationNavigation: true` on the page to keep the Messages sidebar
   and dock selection without adding a primary navigation row.

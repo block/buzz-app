@@ -6,7 +6,11 @@ import { useRelayConnection } from "../../features/relay/react";
 import { saveActivityView } from "../../features/conversation/ConversationList";
 import { BellIcon } from "../../shared/design-system/icons";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { ConversationListToggle } from "../../features/conversation/ConversationListToggle";
+import { NoConversationSelected } from "../../features/conversation/NoConversationSelected";
+import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { InboxPreview } from "./InboxPreview";
+import styles from "./Inbox.module.css";
 import {
   composingOf,
   detailOf,
@@ -132,7 +136,18 @@ function ActivityAddress({
       };
     });
   }, [navigation?.entryId, signedIn]);
-  return status === "ready" && signedIn ? null : (
+  return status === "ready" && signedIn ? (
+    <div className={styles.reader}>
+      <PanelHeader
+        variant="conversation"
+        title={null}
+        navigation={<ConversationListToggle />}
+      />
+      <div className={styles.unselected}>
+        <NoConversationSelected />
+      </div>
+    </div>
+  ) : (
     <EmptyState
       icon={<BellIcon />}
       title="Choose a community to see your activity"

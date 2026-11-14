@@ -101,17 +101,17 @@ export type Conversation = {
     ReplyBranch: typeof ReplyBranch;
     /** Native reply summary from the caller's count and participant facts. */
     ReplySummary: typeof ReplySummary;
-    /** The page's content as the first tab, beside conversations it opens;
-     * absent until a plugin provides the tab workspace, as Channels does. */
+    /** @deprecated Always absent. The shell's reader shows conversations for
+     * every page; open one with `ctx.navigation`. */
     readonly Tabs?: ((props: PageTabsProps) => ReactNode) | undefined;
-    /** A permanent conversation with a side pane; supplied by Channels. */
+    /** @deprecated Always absent, as `Tabs` is. */
     readonly Workspace?:
       | ((props: ConversationWorkspaceProps) => ReactNode)
       | undefined;
   };
-  /** Provides `ui.Tabs` while the providing plugin runs; the first one wins. */
+  /** @deprecated Accepted and ignored, so plugins that call it still load. */
   registerTabs(component: ComponentType<PageTabsProps>): void;
-  /** Provides `ui.Workspace` while the plugin runs; the first one wins. */
+  /** @deprecated Accepted and ignored, so plugins that call it still load. */
   registerWorkspace(component: ComponentType<ConversationWorkspaceProps>): void;
   /** Solo chat icons; the sidebar shows the first one. */
   chatIcons: ContributionReader<ChatIcon>;
@@ -188,8 +188,6 @@ export class ConversationService extends Service implements Conversation {
   private readonly actionEntries;
   readonly identityMarks;
   private readonly identityMarkEntries;
-  private readonly tabEntries;
-  private readonly workspaceEntries;
   readonly chatMenus;
   private readonly chatMenuEntries;
   readonly chatIcons;
@@ -257,16 +255,6 @@ export class ConversationService extends Service implements Conversation {
       snapshot: identityMarks.snapshot,
       subscribe: identityMarks.subscribe,
     };
-    const tabs = createContributions<{
-      id: string;
-      component: ComponentType<PageTabsProps>;
-    }>(ctx);
-    this.tabEntries = tabs;
-    const workspaces = createContributions<{
-      id: string;
-      component: ComponentType<ConversationWorkspaceProps>;
-    }>(ctx);
-    this.workspaceEntries = workspaces;
     const chatMenus = createContributions<ChatMenu>(ctx);
     this.chatMenuEntries = chatMenus;
     this.chatMenus = {
@@ -278,14 +266,6 @@ export class ConversationService extends Service implements Conversation {
     this.chatIcons = {
       snapshot: chatIcons.snapshot,
       subscribe: chatIcons.subscribe,
-    };
-    const Tabs = (props: PageTabsProps) => {
-      const Provided = tabs.snapshot()[0]?.component;
-      return Provided ? <Provided {...props} /> : null;
-    };
-    const Workspace = (props: ConversationWorkspaceProps) => {
-      const Provided = workspaces.snapshot()[0]?.component;
-      return Provided ? <Provided {...props} /> : null;
     };
     this.ui = {
       Thread: (props: EmbeddedThreadProps) => (
@@ -302,24 +282,10 @@ export class ConversationService extends Service implements Conversation {
       ),
       ReplyBranch,
       ReplySummary,
-      get Tabs() {
-        return tabs.snapshot().length ? Tabs : undefined;
-      },
-      get Workspace() {
-        return workspaces.snapshot().length ? Workspace : undefined;
-      },
     };
   }
-  registerTabs(component: ComponentType<PageTabsProps>) {
-    if (typeof component !== "function")
-      throw new Error("Page tabs need a component");
-    this.tabEntries.register(this.ctx, { id: "tabs", component });
-  }
-  registerWorkspace(component: ComponentType<ConversationWorkspaceProps>) {
-    if (typeof component !== "function")
-      throw new Error("A conversation workspace needs a component");
-    this.workspaceEntries.register(this.ctx, { id: "workspace", component });
-  }
+  registerTabs(_component: ComponentType<PageTabsProps>) {}
+  registerWorkspace(_component: ComponentType<ConversationWorkspaceProps>) {}
   registerChatMenu(component: ComponentType<ChatMenuProps>) {
     if (typeof component !== "function")
       throw new Error("A chat menu needs a component");

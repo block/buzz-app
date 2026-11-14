@@ -2207,6 +2207,21 @@ export function EditableInput({
               toggleFormat("code_block");
               return true;
             }
+            // Backspace at an item's start drops its marker one level, as
+            // Shift+Tab does. joinBackward would instead merge the item into
+            // the one above as an indented second paragraph.
+            if (
+              empty &&
+              !$from.parentOffset &&
+              event.key === "Backspace" &&
+              $from.depth > 1 &&
+              $from.node(-1).type === composerSchema.nodes.list_item &&
+              $from.index(-1) === 0 &&
+              liftListItem(composerSchema.nodes.list_item)(editor.state, (tr) =>
+                editor.dispatch(closeHistory(tr)),
+              )
+            )
+              return true;
             if (
               editable() &&
               (event.key === "Backspace" ? joinBackward : joinForward)(

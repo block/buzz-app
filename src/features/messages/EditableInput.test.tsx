@@ -1851,6 +1851,23 @@ it("starts an ordered list at the typed number and continues it with Shift+Enter
   expect(h.markdown()).toBe("3. third\n4. fourth\n\noutside");
 });
 
+it("takes an item out of its list with Backspace at its start instead of merging it into the item above", async () => {
+  for (const marker of ["- ", "1. "]) {
+    const h = mount();
+    await h.user.keyboard(`${marker}first{Shift>}{Enter}{/Shift}{Backspace}`);
+    expect(h.input.querySelectorAll("li")).toHaveLength(1);
+    expect(h.input.querySelector(":scope > p")).not.toBeNull();
+    await h.user.keyboard("outside");
+    expect(h.input.querySelector(":scope > p")).toHaveTextContent("outside");
+    expect(h.markdown()).toBe(`${marker}first\n\noutside`);
+  }
+  // A nested item moves out one level, to its parent list.
+  const nested = mount();
+  await nested.user.keyboard("- first{Shift>}{Enter}{/Shift}{Tab}{Backspace}");
+  expect(nested.input.querySelector("ul ul")).toBeNull();
+  expect(nested.input.querySelectorAll(":scope > ul > li")).toHaveLength(2);
+});
+
 it("opens a list from a marker typed on the second line, after the first line's paragraph", async () => {
   const h = mount("intro");
   await h.user.keyboard("{Shift>}{Enter}{/Shift}- item");

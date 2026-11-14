@@ -250,6 +250,51 @@ import type { createServices } from "@buzz/author";
 `,
     );
     await writeFile(
+      join(dir, "document-consumer.ts"),
+      `
+import type { Context, MarkdownProps, PanelWorkspaceItem, PanelWorkspaceProps, PanelSplit } from "@buzz/author";
+export const inject = ["react", "conversation", "panels"];
+export function apply(ctx: Context) {
+  const React = ctx.react;
+  const document: MarkdownProps = { content: "**Hello**", scale: "document", openLink: () => false };
+  function Reader() {
+    ctx.panels.ui.useTabTitle("A page");
+    return React.createElement(ctx.conversation.ui.Markdown, document);
+  }
+  function Workspace() {
+    const split: PanelSplit = ctx.panels.ui.useSplit(undefined, "example.plugin:reader", 448, 320);
+    const items: PanelWorkspaceItem[] = [{ id: "page", label: "Page", content: React.createElement(Reader), close: () => false }];
+    const props: PanelWorkspaceProps = { items, value: "page", select: () => {} };
+    return React.createElement("div", { ref: split.ref, style: split.style }, split.handle,
+      React.createElement(ctx.panels.ui.Workspace, props));
+  }
+  void Workspace;
+  // @ts-expect-error Channels tab menus are host-owned.
+  const tabMenu: PanelWorkspaceProps = { items: [], value: "", select: () => {}, tabMenu: undefined };
+  // @ts-expect-error Channels drag plumbing is host-owned.
+  const drag: PanelWorkspaceProps = { items: [], value: "", select: () => {}, drag: undefined };
+  // @ts-expect-error Conversation identity is host-owned.
+  const identity: PanelWorkspaceProps = { items: [], value: "", select: () => {}, identity: undefined };
+  // @ts-expect-error Native Close ownership is not a plugin option.
+  const main: PanelWorkspaceProps = { items: [], value: "", select: () => {}, main: true };
+  // @ts-expect-error Channels selection adoption is host-owned.
+  const adoption: PanelWorkspaceProps = { items: [], value: "", select: () => {}, adoptSelection: undefined };
+  // @ts-expect-error The injected component has the same narrow contract.
+  React.createElement(ctx.panels.ui.Workspace, { items: [], value: "", select: () => {}, main: true });
+  // @ts-expect-error Host opening identities are not plugin tab data.
+  const instance: PanelWorkspaceItem = { id: "page", label: "Page", content: null, instance: {} };
+  void [tabMenu, drag, identity, main, adoption, instance];
+  // @ts-expect-error Host link dispatch must synchronously report acceptance.
+  const bad: MarkdownProps = { content: "", openLink: async () => true };
+  // @ts-expect-error Only supported host heading scales are public.
+  const badScale: MarkdownProps = { content: "", scale: "custom" };
+  // @ts-expect-error Tab content is required.
+  const missing: PanelWorkspaceItem = { id: "page", label: "Page" };
+  void [bad, missing];
+}
+`,
+    );
+    await writeFile(
       join(dir, "plugin-status-consumer.ts"),
       `
 import type { Context } from "@buzz/author";
@@ -296,7 +341,11 @@ export function observePlugin(ctx: Context) {
             "@buzz/author": ["./author package/types/plugins/author.d.ts"],
           },
         },
-        files: ["consumer.ts", "plugin-status-consumer.ts"],
+        files: [
+          "consumer.ts",
+          "plugin-status-consumer.ts",
+          "document-consumer.ts",
+        ],
       }),
     );
     // Only generated declarations and the external consumer, never host source.

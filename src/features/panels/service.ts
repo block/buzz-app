@@ -1,15 +1,31 @@
 // FOUNDATION: Target-based panel contributions, independent of page layout.
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { ComponentType } from "react";
+import {
+  PanelWorkspace,
+  usePanelTabTitle,
+  type PanelWorkspaceProps as HostPanelWorkspaceProps,
+  type PanelWorkspaceItem as HostPanelWorkspaceItem,
+} from "./PanelWorkspace";
+import { usePluginPanelSplit } from "./usePanelSplit";
 import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
-import { usePanelTabTitle } from "./PanelWorkspace";
 import {
   createContributions,
   resolveMatch,
   type Contribution,
   type MatchOrder,
 } from "../../plugins/contributions";
+
+/** Plugin tab data; host opening, drag and menu lifetimes stay private. */
+export type PanelWorkspaceItem = Pick<
+  HostPanelWorkspaceItem,
+  "id" | "label" | "icon" | "content" | "close" | "toolbar"
+>;
+export type PanelWorkspaceProps = Pick<
+  HostPanelWorkspaceProps,
+  "value" | "select" | "actions" | "label" | "focusOnMount"
+> & { items: PanelWorkspaceItem[] };
 
 export type PanelContext = Readonly<{
   /** Originating conversation, not a claim of thread-level scope or access. */
@@ -116,6 +132,14 @@ export type PanelOpenRequest = Readonly<{
   rootId?: string;
 }>;
 export type Panels = {
+  /** Host presentation, available to installed modules through injection. */
+  ui: {
+    Workspace: ComponentType<PanelWorkspaceProps>;
+    /** Stable names should include the plugin ID; scope is the session workspace. */
+    useSplit: typeof usePluginPanelSplit;
+    /** Publish the selected document's title while inside a host workspace. */
+    useTabTitle: typeof usePanelTabTitle;
+  };
   register(panel: Panel): void;
   resolve(target: string): RegisteredPanel | undefined;
   snapshot(): readonly RegisteredPanel[];
@@ -138,6 +162,11 @@ declare module "@deepseek-ai/cordis" {
   }
 }
 export class PanelsService extends Service implements Panels {
+  readonly ui: Panels["ui"] = Object.freeze({
+    Workspace: PanelWorkspace,
+    useSplit: usePluginPanelSplit,
+    useTabTitle: usePanelTabTitle,
+  });
   private readonly panels;
   constructor(ctx: Context) {
     super(ctx, "panels");

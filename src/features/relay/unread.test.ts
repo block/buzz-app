@@ -7545,3 +7545,61 @@ it("inactive entry sees nothing until the open visit resumes", async () => {
     expect(h.journal()?.state.frontiers[`seen:msg:${mention.id}`]).toBe(100),
   );
 });
+
+it("a channel read prunes the row receipts of the messages it reads", async () => {
+  const h = setup();
+  h.grant("room");
+  const mention = message(h.alice, "room", "mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([mention]);
+  await h.session.unread.enterChannel("room");
+  h.session.unread.leaveChannel("room");
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers[`seen:msg:${mention.id}`]).toBe(100),
+  );
+  await h.session.unread.markChannelRead("room");
+  await vi.waitFor(() =>
+    expect(
+      h.journal()?.state.frontiers[`seen:msg:${mention.id}`],
+    ).toBeUndefined(),
+  );
+  expect(h.snapshot().row?.attentionCount).toBe(0);
+});
+
+it.each([
+  ["while its save is in flight", "held"],
+  ["after its save failed", "failed"],
+] as const)("background re-entry keeps the row quiet %s", async (_, mode) => {
+  const h = setup();
+  h.grant("room");
+  const mention = message(h.alice, "room", "mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([mention]);
+  await h.session.unread.enterChannel("room");
+  expect(h.snapshot().row?.attentionCount).toBe(0);
+  const held = mode === "held" ? h.holdSaveStarted() : undefined;
+  if (mode === "failed") h.failNextSave();
+  try {
+    h.session.unread.leaveChannel("room");
+    if (held) await held.started;
+    else await flush();
+    expect(
+      h.journal()?.state.frontiers[`seen:msg:${mention.id}`],
+    ).toBeUndefined();
+    // Navigation lands before the window takes focus.
+    await h.session.unread.enterChannel("room", false);
+    expect(h.snapshot().row?.attentionCount).toBe(0);
+    // What arrives in the background still lights it.
+    h.emit([message(h.alice, "room", "away", 200, [["p", h.viewer.pubkey]])]);
+    expect(h.snapshot().row?.attentionCount).toBe(1);
+  } finally {
+    held?.release();
+  }
+  // The held save lands once released.
+  if (held)
+    await vi.waitFor(() =>
+      expect(h.journal()?.state.frontiers[`seen:msg:${mention.id}`]).toBe(100),
+    );
+});

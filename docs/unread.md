@@ -131,7 +131,8 @@ viewport):
   not already hide writes nothing. These saves, from any window, do not
   advance `revision()` (the journal counts them apart as `quiet`), so a
   reader's entry evidence outlives them. A channel read covers the channel
-  mark and reading a message covers its receipt; retention keeps row marks
+  mark, and any read of a message (its own mark or a channel read) covers its
+  receipt; retention keeps row marks
   last and never treats them as override ancestry.
 - The channel snapshot's `oldestUnreadId` names the oldest unread message its
   timeline shows (a top-level post or broadcast reply), from the same bounded

@@ -34,6 +34,10 @@ import {
   useMessageAutocorrectPreference,
 } from "../features/messages/autocorrect-preference";
 import {
+  setMembershipRowsPreference,
+  useMembershipRowsPreference,
+} from "../features/messages/membership-preference";
+import {
   setUnreadFirstPreference,
   useUnreadFirstPreference,
 } from "../features/search/unread-first-preference";
@@ -78,6 +82,7 @@ export function AppearanceSettings({
 }) {
   const followUp = useFollowUpBehaviorPreference();
   const autocorrect = useMessageAutocorrectPreference();
+  const membership = useMembershipRowsPreference();
   const unreadFirst = useUnreadFirstPreference();
   const clock = useClockPreference();
   const names = useNamePreference();
@@ -474,6 +479,12 @@ export function AppearanceSettings({
                 />
               }
             />
+            <SwitchPreferenceRow
+              label="Show join and leave messages"
+              description="Shows when people and agents are added to or removed from a conversation."
+              checked={membership.enabled}
+              onCheckedChange={setMembershipRowsPreference}
+            />
             {autocorrectAvailable && (
               <SwitchPreferenceRow
                 label="Allow automatic spelling correction"
@@ -543,6 +554,20 @@ export function AppearanceSettings({
               }
             >
               Retry saving spelling correction
+            </Button>
+          </ToastNotice>
+        )}
+        {active && membership.unsaved && (
+          <ToastNotice
+            title="Join and leave preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setMembershipRowsPreference(membership.enabled)}
+            >
+              Retry saving join and leave preference
             </Button>
           </ToastNotice>
         )}

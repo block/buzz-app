@@ -36,6 +36,10 @@ import {
   setMessageAutocorrectPreference,
 } from "../features/messages/autocorrect-preference";
 import {
+  membershipRowsPreference,
+  setMembershipRowsPreference,
+} from "../features/messages/membership-preference";
+import {
   clockPreference,
   setClockPreference,
 } from "../shared/clock-preference";
@@ -56,6 +60,7 @@ afterEach(() => {
   setFollowUpBehaviorPreference("immediate");
   setMessageAutocorrectPreference(false);
   setUnreadFirstPreference(true);
+  setMembershipRowsPreference(true);
   setClockPreference({
     hourCycle: "system",
     seconds: false,
@@ -623,6 +628,28 @@ it("leads search with unread until this device turns it off", async () => {
     localStorage.setItem("buzz-search-unread-first.v1", "on");
     window.dispatchEvent(
       new StorageEvent("storage", { key: "buzz-search-unread-first.v1" }),
+    );
+  });
+  expect(toggle()).toBeChecked();
+});
+
+it("shows join and leave messages until this device turns them off", async () => {
+  const user = userEvent.setup();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  const toggle = () =>
+    screen.getByRole("switch", { name: "Show join and leave messages" });
+  render(<AppearanceSettings appearance={appearance} />, {
+    wrapper: ToastProvider,
+  });
+  expect(toggle()).toBeChecked();
+  await user.click(toggle());
+  expect(membershipRowsPreference()).toBe(false);
+  expect(localStorage.getItem("buzz-membership-rows.v1")).toBe("off");
+  act(() => {
+    localStorage.setItem("buzz-membership-rows.v1", "on");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "buzz-membership-rows.v1" }),
     );
   });
   expect(toggle()).toBeChecked();

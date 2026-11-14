@@ -787,6 +787,10 @@ and are asked to sign in again in Buzz.
   follows the language and region. Show seconds adds seconds to clock times. **Message timestamps** can hide the
   time beside each message everywhere or only in Solo chats; day dividers and
   screen-reader dates remain.
+- **Join and leave messages**: turn off **Settings → Appearance → Show join and
+  leave messages** to hide rows like "Sam was added by Alex" or "Sam was removed
+  by Alex" from conversations. A day that only had those rows then shows no day
+  divider. The choice applies on this device only.
 - **Back and Forward**: after following a channel or message link to another
   channel, Back and Forward restore the thread tab you last selected in the
   channel you left.
@@ -1433,7 +1437,8 @@ available rather than silently discarding it.
 - Any agent running on this device can read and change some Buzz settings
   here when you ask it to: appearance mode, interface size, accent color,
   vibe level, where new threads open, Solo follow-up behavior, automatic
-  spelling correction (Mac only) and remembering mentioned agents. It can
+  spelling correction (Mac only), showing join and leave messages and
+  remembering mentioned agents. It can
   also change your Bestie (see **Make my bestie**). There is no switch to turn
   on. A change shows as not saved when it is active but could not be saved on
   this device.

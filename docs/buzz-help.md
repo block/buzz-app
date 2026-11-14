@@ -1215,7 +1215,11 @@ available rather than silently discarding it.
   the confirmation offers another attempt. A Bestie on another device has no
   Bestie tab on this one. A hosted Bestie whose provider holds its instructions
   (Builderlab does) has the tab and can use **Remembers you**; hosted agents
-  cannot use Bestie's Attention check-ins.
+  cannot use Bestie's Attention check-ins. The tab's **Cost** row shows an
+  estimate of what a local Bestie's sessions on this computer cost over the
+  last 7 days, with **Open Usage** while the Usage plugin is on. It is not a
+  bill, and it says when the agent's type reports no usage or the agent runs
+  elsewhere.
 - An agent running on this device can also show, change or remove your Bestie
   when you ask it to. It saves to this device and your account, as the menu
   does, and accepts only your agents you can tag in this community. It also

@@ -1,5 +1,7 @@
 import {
   CaretDownIcon,
+  CaretRightIcon,
+  XIcon,
   StopIcon,
   ArrowsClockwiseIcon,
   TerminalWindowIcon,
@@ -10,31 +12,70 @@ import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type {
   PanelProps,
   ChannelPanelContext,
 } from "../../features/panels/service";
 import type { TerminalSessions } from "./sessions";
+import type { TerminalPlacement } from "./placement-preference";
+import type { TerminalScreen } from "./renderer";
 import styles from "./Terminal.module.css";
 
 export function TerminalPanel({
   channelContext,
   close,
   sessions,
-}: PanelProps & { sessions: TerminalSessions }) {
+  placement,
+  focusRequested,
+  requestFocus,
+}: PanelProps & {
+  sessions: TerminalSessions;
+  placement: TerminalPlacement;
+  focusRequested(context: ChannelPanelContext): boolean;
+  requestFocus(context: ChannelPanelContext): void;
+}) {
   if (!channelContext) throw new Error("Terminal requires a channel context");
-  return <Content context={channelContext} close={close} sessions={sessions} />;
+  return (
+    <Content
+      context={channelContext}
+      close={close}
+      sessions={sessions}
+      placement={placement}
+      focusRequested={focusRequested}
+      requestFocus={requestFocus}
+    />
+  );
 }
 function Content({
   context,
   close,
   sessions,
+  placement,
+  focusRequested,
+  requestFocus,
 }: {
   context: ChannelPanelContext;
   close(): void;
   sessions: TerminalSessions;
+  placement: TerminalPlacement;
+  focusRequested(context: ChannelPanelContext): boolean;
+  requestFocus(context: ChannelPanelContext): void;
 }) {
+  const HideIcon =
+    placement === "tab"
+      ? XIcon
+      : placement === "side"
+        ? CaretRightIcon
+        : CaretDownIcon;
+  const hideLabel =
+    placement === "tab" ? "Close terminal tab" : "Hide terminal";
   const version = useSyncExternalStore(
     sessions.subscribe,
     sessions.snapshot,
@@ -47,6 +88,10 @@ function Content({
   const [busy, setBusy] = useState(false);
   const attempted = useRef(false);
   const mounted = useRef(false);
+  const mounting = useRef<{ screen: TerminalScreen; focus: boolean } | null>(
+    null,
+  );
+  const takeFocus = useEffectEvent(() => focusRequested(context));
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -63,10 +108,20 @@ function Content({
     }
   }, [context, sessions]);
   useEffect(() => {
-    if (entry?.screen && host.current) return entry.screen.mount(host.current);
+    if (entry?.screen && host.current) {
+      // Restored panes leave focus with navigation; explicit opens retain it.
+      // Reuse the decision when StrictMode replays this mount effect.
+      if (mounting.current?.screen !== entry.screen)
+        mounting.current = {
+          screen: entry.screen,
+          focus: takeFocus(),
+        };
+      return entry.screen.mount(host.current, mounting.current.focus);
+    }
   }, [entry?.screen]);
   const end = async (restart: boolean) => {
     if (busy) return;
+    if (restart) requestFocus(context);
     setBusy(true);
     setError(undefined);
     try {
@@ -154,9 +209,9 @@ function Content({
               size="toolbar"
               ref={hide}
               onClick={close}
-              aria-label="Hide terminal"
-              title="Hide terminal (Cmd/Ctrl+J)"
-              icon={<CaretDownIcon size={16} aria-hidden="true" />}
+              aria-label={hideLabel}
+              title={`${hideLabel} (Cmd/Ctrl+J)`}
+              icon={<HideIcon size={16} aria-hidden="true" />}
             />
           </>
         }

@@ -1,4 +1,4 @@
-import { useLayoutEffect } from "react";
+import { useCallback, useEffect, useLayoutEffect } from "react";
 import { TerminalWindowIcon } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import type { PluginModule } from "../../plugins/api";
@@ -12,16 +12,23 @@ import { createSessions } from "./sessions";
 import { TerminalPanel } from "./TerminalPanel";
 import { createTerminalFontPreference } from "./font-preference";
 import {
+  createTerminalPlacementPreference,
+  type TerminalPlacement,
+} from "./placement-preference";
+import {
   createTerminalSettingsDraft,
   TerminalSettings,
 } from "./TerminalSettings";
 
 export const inject = ["panels", "shortcuts", "relay", "settingsCards"];
 const TOGGLE_BINDING = { key: "j", mod: true } as const;
+const focusTarget = (context: ChannelLauncherProps["context"]) =>
+  JSON.stringify([context.scope, context.channelId]);
 export const apply: PluginModule["apply"] = (ctx) => {
   // No unusable launcher or reserved shortcut in a browser-only host.
   if (!nativeBridge.available) return;
   const font = createTerminalFontPreference();
+  const placement = createTerminalPlacementPreference();
   const drafts = createTerminalSettingsDraft();
   const sessions = createSessions(
     nativeBridge,
@@ -31,10 +38,24 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
     ctx.relay.snapshot,
   );
-  let binding: { toggle(): void; available(): boolean } | undefined;
+  let binding:
+    | {
+        toggle(): void;
+        available(): boolean;
+        target: string;
+        focus: string;
+        pressed: boolean;
+      }
+    | undefined;
+  let reopen: string | undefined;
+  let focusRequest: string | undefined;
+  let registration = 0;
   ctx.effect(() => () => {
     binding = undefined;
+    reopen = undefined;
+    focusRequest = undefined;
     font.dispose();
+    placement.dispose();
     return sessions.dispose();
   });
   ctx.settingsCards.register({
@@ -43,7 +64,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     icon: TerminalWindowIcon,
     group: "Plugins",
     component: (props) => (
-      <TerminalSettings {...props} font={font} drafts={drafts} />
+      <TerminalSettings
+        {...props}
+        font={font}
+        placement={placement}
+        drafts={drafts}
+      />
     ),
   });
   ctx.shortcuts.register({
@@ -61,15 +87,59 @@ export const apply: PluginModule["apply"] = (ctx) => {
     toggle,
     pressed,
     available,
-  }: ChannelLauncherProps) {
+    revision,
+  }: ChannelLauncherProps & { revision: number }) {
     const target = JSON.stringify(context);
+    const focus = focusTarget(context);
+    const toggleWithFocus = useCallback(() => {
+      focusRequest = pressed ? undefined : focus;
+      toggle(target);
+    }, [pressed, target, toggle, focus]);
+    useLayoutEffect(
+      () => () => {
+        if (binding?.target === target && focusRequest === focus)
+          focusRequest = undefined;
+      },
+      [target, focus],
+    );
     useLayoutEffect(() => {
-      const current = { toggle: () => toggle(target), available };
+      const current = {
+        toggle: toggleWithFocus,
+        available,
+        target,
+        focus,
+        pressed,
+      };
       binding = current;
       return () => {
         if (binding === current) binding = undefined;
       };
-    }, [toggle, target, available]);
+    }, [toggleWithFocus, target, focus, available, pressed]);
+    useEffect(() => {
+      if (!pressed || focusRequest !== focus) return;
+      // A retained pane may reopen without mounting its screen again.
+      queueMicrotask(() => {
+        if (
+          binding?.target === target &&
+          binding.pressed &&
+          focusRequest === focus &&
+          sessions.get(context)?.screen?.focus()
+        )
+          focusRequest = undefined;
+      });
+    }, [pressed, target, focus, context]);
+    useEffect(() => {
+      const current = binding;
+      // Let the host retire the old opening before opening the new contribution.
+      queueMicrotask(() => {
+        if (revision !== registration || binding !== current || !available())
+          return;
+        if (reopen === undefined) return;
+        const requested = reopen;
+        reopen = undefined;
+        if (requested === target && !pressed) toggle(target);
+      });
+    }, [target, toggle, available, pressed, revision]);
     return (
       <IconButton
         size="toolbar"
@@ -79,16 +149,50 @@ export const apply: PluginModule["apply"] = (ctx) => {
         aria-expanded={pressed}
         onClick={(event) => {
           event.currentTarget.focus();
-          toggle(target);
+          toggleWithFocus();
         }}
       />
     );
   }
-  ctx.panels.register({
-    id: "terminal",
-    title: "Terminal",
-    matches: () => false,
-    channelLauncher: Launcher,
-    component: (props) => <TerminalPanel {...props} sessions={sessions} />,
-  });
+  const requestFocus = (context: ChannelLauncherProps["context"]) => {
+    if (binding?.focus === focusTarget(context)) focusRequest = binding.focus;
+  };
+  const focusRequested = (context: ChannelLauncherProps["context"]) => {
+    if (focusRequest !== focusTarget(context)) return false;
+    focusRequest = undefined;
+    return true;
+  };
+  const registerPanel = (value: TerminalPlacement) => {
+    const revision = ++registration;
+    return ctx.inject(["panels"], (scope) => {
+      scope.panels.register({
+        id: "terminal",
+        title: "Terminal",
+        matches: () => false,
+        channelPlacement: value,
+        channelLauncher: (props) => <Launcher {...props} revision={revision} />,
+        component: (props) => (
+          <TerminalPanel
+            {...props}
+            sessions={sessions}
+            placement={value}
+            focusRequested={focusRequested}
+            requestFocus={requestFocus}
+          />
+        ),
+      });
+    });
+  };
+  let current = placement.snapshot().placement;
+  let panel = registerPanel(current);
+  ctx.effect(() =>
+    placement.subscribe(() => {
+      const next = placement.snapshot().placement;
+      if (next === current) return;
+      if (binding?.pressed) reopen = binding.target;
+      current = next;
+      panel.dispose();
+      panel = registerPanel(next);
+    }),
+  );
 };

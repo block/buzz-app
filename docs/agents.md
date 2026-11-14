@@ -914,12 +914,22 @@ never gain local custody or template-management status from it. Library presence
 alone does not grant DM eligibility. Existing DMs can reopen without agent-control
 evidence, through the normal relay-confirmed DM open.
 
-A snapshot exposes `identities`, `selectable`, `archives`, `definitions`, `status`,
-`pending`, `complete` and a separate `templates` projection. `status: ready` means
-usable, not complete: automatic-recipient inference must honor `complete`, which
-requires a ready, error-free library and a local source that is ready or
-unavailable. A failed source contributes no stale candidates; another ready source
-stays usable, with partial failures surfaced through Retry.
+A snapshot exposes `identities`, `selectable`, `admissible`, `archives`, `definitions`, `status`,
+`pending`, `managedPending`, `complete` and a separate `templates` projection.
+`status: ready` means usable, not complete: automatic-recipient inference must
+honor `complete`, which requires a ready, error-free library and a local source
+that is ready or unavailable. The library's last read stays in `identities` and `selectable` while
+it refreshes, fails or is stale after a disconnect, with `pending` or an error and
+`complete` false; only `complete` certifies the evidence. A failed local source
+contributes no candidates. Partial failures are surfaced through Retry. An explicit
+action that finds its agent missing awaits the source that could supply it before
+refusing, rather than treating loading as absent: an action that needs a `managed`
+agent waits only while `managedPending`, through `refresh(false)`, since a library
+read cannot make an agent managed. A refresh that is not `fresh` joins a native list
+already in flight, and waits on any list that supersedes it. `admissible` is
+`selectable` limited to `managed` agents unless the library is ready: channel
+admission, Solo chat start and tagged sends admit from it, rereading once before
+refusing, so stale rows never admit on their own.
 
 Do not build another agent inventory in a plugin. `useAgentChoices(session,
 includeLegacy, archive)` retains the projection while mounted, which preserves
@@ -1790,6 +1800,9 @@ no polling or relay-directory startup scan. A connection's first establishment
 rereads retained inventory that failed, wholly or partly; a read already in flight
 is reused and reread once if it fails. Each failed source's reason is logged as a
 console warning.
+A refresh or failed read keeps the last inventory visible. A live disconnect marks
+it stale rather than emptying it, so reconnect rereads it while it is retained;
+sign-out and cache clearing empty it.
 Relay inventory uses foreground read capacity because Solo needs complete
 inventory to restore its recipients; it keeps the normal ten-second deadline.
 

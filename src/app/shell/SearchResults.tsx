@@ -1220,29 +1220,32 @@ export function SearchResults({
         (dmVisibility.status === "ready" && !sidebarHidden(existing)))
     )
       return openConversation(existing.id);
-    if (
-      !existing &&
-      // Whatever its profile says, by key.
-      (agentUnavailable(session, pubkey) ||
-        (agent &&
-          !session.agentChoices
-            .snapshot()
-            .identities.some(
-              (item) => canMessageAgent(item) && item.pubkey === pubkey,
-            )))
-    ) {
+    if (!existing && agentUnavailable(session, pubkey)) {
       setPersonOpen({
         name,
-        error: agentUnavailable(session, pubkey)
-          ? "This identity is archived or being deleted in this community."
-          : "This agent is not ready to message in this community.",
+        error: "This identity is archived or being deleted in this community.",
       });
       return;
     }
+    const controlled = () =>
+      session.agentChoices
+        .snapshot()
+        .identities.some(
+          (item) => canMessageAgent(item) && item.pubkey === pubkey,
+        );
     const controller = new AbortController();
     personAttempt.current = { key: personKey(pubkey), controller };
     setPersonOpen({ name });
     try {
+      if (agent && !existing && !controlled()) {
+        // Agents still loading are not missing: wait for the list first.
+        if (session.agentChoices.snapshot().managedPending)
+          await session.agentChoices.refresh(false);
+        if (!controlled())
+          throw new Error(
+            "This agent is not ready to message in this community.",
+          );
+      }
       const channelId = await session.directMessages.open(
         [pubkey],
         controller.signal,

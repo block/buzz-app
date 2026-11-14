@@ -414,6 +414,13 @@ export type EditableInputProps = Omit<
   onAnnotationMenu?: ((request: AnnotationMenuRequest) => void) | undefined;
 };
 
+/** Draws the focused editor's own caret. Mac WebKit can keep painting a stale
+ * native caret, so that one is cleared first; see insertLineBreak. */
+function resumeCaret(editor: EditorView) {
+  if (macWebKit()) editor.dom.ownerDocument.getSelection()?.removeAllRanges();
+  editor.focus();
+}
+
 /** ProseMirror owns native editing, composition, selection and a single history.
  * React owns only the noneditable token artwork and the surrounding composer. */
 export function EditableInput({
@@ -2685,7 +2692,12 @@ export function EditableInput({
     // committed props.
     current.current.placeholder = placeholder;
     current.current.autocorrect = autocorrect;
+    const held = !editor.editable && editor.hasFocus();
     editor.setProps({ editable: () => !disabled && !locked.current });
+    // A send disables the editor while it keeps focus, and a focused root
+    // that stops being editable stops painting its caret. Enabling it again
+    // brings no focus event, so resume the caret here.
+    if (held && editor.editable && !composing.current) resumeCaret(editor);
   }, [draft, disabled, placeholder, autocorrect]);
 
   const projection =
@@ -2765,9 +2777,7 @@ export function EditableInput({
             editor &&
             event.target === event.currentTarget
           ) {
-            if (macWebKit())
-              editor.dom.ownerDocument.getSelection()?.removeAllRanges();
-            editor.focus();
+            resumeCaret(editor);
           }
           events.onFocus?.(event as never);
         }}

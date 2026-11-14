@@ -168,9 +168,19 @@ to `~/.pi/agent`:
 }
 ```
 
-Buzz loads only packages in a local folder. It leaves out packages that
-`pi install` fetched from npm or git, and loads nothing from packages without
-a `pi.durable` entry.
+A package published to npm needs no path. Install it with `pi`, which adds
+it to the list:
+
+```sh
+pi install npm:@example/pi-guard
+```
+
+Buzz loads it from the folder `pi install` put it in,
+`~/.pi/agent/npm/node_modules/<name>`, and `pi update` updates it there. Buzz
+never installs or updates a package itself. A package listed twice, for example
+by its `npm:` source and by its folder's path, loads once. Buzz leaves out
+packages that `pi install` fetched from git, and loads nothing from packages
+without a `pi.durable` entry.
 
 ## 4. Restart Buzz
 
@@ -201,7 +211,8 @@ package fails when:
   isn't lowercase, or a name that's already taken.
 - A provider lacks an `id`, `name`, `auth` or `getModels`, which one made
   with `createProvider` always has, or lists no models.
-- Its source isn't a local folder, or its `pi.durable` isn't a list.
+- Its source is a git URL, an `npm:` package that `pi install` hasn't
+  installed, or its `pi.durable` isn't a list.
 
 When a provider is missing from the **Provider** list, its package didn't load.
 An agent set to use it fails its next turn, with an error that names each

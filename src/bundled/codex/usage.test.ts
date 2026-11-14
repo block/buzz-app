@@ -161,10 +161,83 @@ it("keeps only threads Buzz started for this agent", () => {
   expect(rolloutUsage("t", unscoped, [], there)).toBeUndefined();
 });
 
+it("counts a watch's or timer's thread, which names no conversation, only when its record lists it", () => {
+  // A standalone turn's prompt has no Buzz context naming a channel.
+  const once = [
+    instructions(),
+    message(1, "user", "<watch-task>\nTimer: daily\n</watch-task>"),
+    record(1000, 6, 2, 3),
+  ].join("\n");
+  expect(rolloutUsage("t", once, [], sol)).toBeUndefined();
+  const counted = rolloutUsage("t", once, [], sol, true);
+  expect(counted).toMatchObject({ id: "t", startedAt: hour, gaps: [] });
+  expect(counted).not.toHaveProperty("channelId");
+  expect(counted?.observations).toHaveLength(1);
+  // The record never makes a teammate's thread the agent's.
+  expect(
+    rolloutUsage(
+      "t",
+      once.replace(instructions(), instructions(other, agent)),
+      [],
+      sol,
+      true,
+    ),
+  ).toBeUndefined();
+});
+
 let home: string | undefined;
 afterEach(() => {
   if (home) rmSync(home, { recursive: true, force: true });
   home = undefined;
+});
+
+it("reads a standalone thread found by its name once its record lists it", async () => {
+  home = mkdtempSync(join(tmpdir(), "codex-usage-"));
+  const path = join(home, "once.jsonl");
+  writeFileSync(
+    path,
+    [
+      instructions(),
+      model(2, "gpt-6.1-sol"),
+      message(3, "user", "<watch-task>\nTimer: daily\n</watch-task>"),
+      record(1000, 4, 0, 2),
+    ].join("\n"),
+  );
+  const threads = [
+    {
+      id: "once",
+      name: "Buzz timer/daily · Sol",
+      path,
+      updatedAt: (hour + 1000) / 1000,
+    },
+  ];
+  const spawn = processes((params) => ({
+    data: params.parentThreadId
+      ? []
+      : threads.filter((thread) =>
+          thread.name.includes(String(params.searchTerm)),
+        ),
+    nextCursor: null,
+  }));
+  const host = {
+    spawn,
+    readFile: async (file: string) => new Uint8Array(await readFile(file)),
+  };
+  const read = (standalone?: ReadonlySet<string>) =>
+    readUsage(
+      host,
+      { ...sol, name: "Sol" },
+      hour - HOUR,
+      new AbortController().signal,
+      standalone,
+    );
+  expect(await read()).toEqual([]);
+  // Read again, though Codex didn't update the thread, once the record has it.
+  const [session] = await read(new Set(["once"]));
+  expect(session?.id).toBe("once");
+  expect(session?.observations.map((entry) => entry.tokens)).toEqual([
+    { input: 4, output: 2, cacheRead: 0, cacheWrite: 0 },
+  ]);
 });
 
 it("finds the agent's threads by name, reads their rollouts, and later only those Codex updated", async () => {

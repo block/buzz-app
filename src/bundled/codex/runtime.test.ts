@@ -18,6 +18,10 @@ import {
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import {
+  STANDALONE_PREFIX,
+  standaloneSessions,
+} from "../../features/agents/standalone-sessions";
+import {
   localStore,
   fileStore,
   type AgentStore,
@@ -4950,7 +4954,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
   await f.complete();
 });
 
-it("runs a watch or timer as a one-off ephemeral turn with the attention tools, and saves nothing", async () => {
+it("runs a watch or timer as a one-off turn with the attention tools, joining and saving no conversation", async () => {
   const f = fixture();
   f.attention.on = true;
   f.objects.set("interest/ops", {
@@ -4981,7 +4985,17 @@ it("runs a watch or timer as a one-off ephemeral turn with the attention tools, 
     ephemeral?: boolean;
     dynamicTools: { tools: { name: string }[] }[];
   };
-  expect(started.ephemeral).toBe(true);
+  // Codex keeps its rollout so Usage can count it, under a name Usage finds
+  // by the agent's name, recorded as this agent's, started by the watch.
+  expect(started.ephemeral).toBe(false);
+  expect(
+    f.sent.find((wire) => wire.method === "thread/name/set")?.params,
+  ).toEqual({ threadId: "thread-1", name: "Buzz watch/deploys · Codex" });
+  expect(
+    standaloneSessions(f.store, "codex", pubkey)
+      .list()
+      .map(({ id, wake }) => [id, wake]),
+  ).toEqual([["thread-1", "watch/deploys"]]);
   expect(started.dynamicTools[0]?.tools.map((tool) => tool.name)).toContain(
     "watch_update",
   );
@@ -5015,7 +5029,13 @@ it("runs a watch or timer as a one-off ephemeral turn with the attention tools, 
     ),
   );
   expect(f.runtime.sessions(pubkey)).toEqual([]);
-  expect([...f.storage.values()].join()).not.toContain("thread-1");
+  // No conversation binds the thread; only the record of one-off turns has it.
+  expect(
+    [...f.storage]
+      .filter(([key]) => !key.startsWith(STANDALONE_PREFIX))
+      .map(([, value]) => value)
+      .join(),
+  ).not.toContain("thread-1");
   // After the turn, its tools no longer answer.
   const late = await f.tool("interest_show", { id: "ops" }, 0);
   expect(JSON.stringify(late)).toContain("No active Buzz tool");
@@ -5050,6 +5070,14 @@ it("runs a watch or timer as a one-off ephemeral turn with the attention tools, 
   await expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toEqual({
     ok: true,
   });
+  expect(
+    standaloneSessions(f.store, "codex", pubkey)
+      .list()
+      .map(({ id, wake }) => [id, wake]),
+  ).toEqual([
+    ["thread-1", "watch/deploys"],
+    ["thread-2", "timer/daily"],
+  ]);
 });
 
 it("drops a wake that is no longer current", async () => {

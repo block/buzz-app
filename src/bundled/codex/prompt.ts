@@ -149,3 +149,9 @@ export function sessionName(
 ) {
   return `${sessionTitle(agent.name, conversation)} · ${sessionTag(agent.key, conversation)}`;
 }
+/** A standalone turn's thread name: the watch or timer that started it, then
+ * the agent's name, by which Usage finds the agent's threads. It never
+ * matches a conversation's name, which opens with `Buzz #`. */
+export function onceName(agent: Pick<AgentHandle, "name">, key: string) {
+  return `Buzz ${key.replace(/\s+/g, " ").slice(0, 100)} · ${agent.name}`;
+}

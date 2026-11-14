@@ -12,6 +12,8 @@ import { CodexRuntime } from "./runtime";
 import { CodexSetup, explainTurn, reviewHome, withScript } from "./setup";
 import { CodexProvider, createTabs } from "./tabs";
 import { readUsage } from "./usage";
+import { withWakes } from "../../features/agents/session-usage";
+import { standaloneSessions } from "../../features/agents/standalone-sessions";
 import { reviewModel } from "./security-review";
 import { AppServer, listModels } from "./rpc";
 /** How often Buzz's copy of Codex looks for a new release. */
@@ -230,7 +232,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
         usage: async (agent, { since, signal }) => {
           if (await ctx.agents.inspectExecution(agent.key))
             throw new Error("Usage is unavailable for remote Codex agents.");
-          return readUsage({ spawn, readFile }, agent, since, signal);
+          // A watch's or timer's turn started its thread outside any
+          // conversation; the record of those says so, and which one.
+          const starts = standaloneSessions(
+            ctx.agents.storage,
+            "codex",
+            agent.key,
+          ).list();
+          return withWakes(
+            await readUsage(
+              { spawn, readFile },
+              agent,
+              since,
+              signal,
+              new Set(starts.map(({ id }) => id)),
+            ),
+            starts,
+          );
         },
       }),
     provider: {

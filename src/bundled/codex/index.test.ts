@@ -6,10 +6,17 @@ import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { CodexRuntime } from "./runtime";
 import { CodexSetup } from "./setup";
 import { CodexProvider } from "./tabs";
+import { readUsage } from "./usage";
 import { apply } from "./index";
+import { standaloneSessions } from "../../features/agents/standalone-sessions";
+import { localStore } from "../../features/agents/store";
 
 const desktop = vi.hoisted(() => ({ tauri: true }));
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => desktop.tauri }));
+vi.mock("./usage", async (original) => ({
+  ...(await original<typeof import("./usage")>()),
+  readUsage: vi.fn(async () => []),
+}));
 
 beforeEach(() => {
   desktop.tauri = true;
@@ -21,7 +28,10 @@ afterEach(() => {
 });
 
 /** Applies the plugin to a stand-in context and returns the registered type. */
-function applied(binding?: AgentExecutionBinding) {
+function applied(
+  binding?: AgentExecutionBinding,
+  storage = localStore(localStorage),
+) {
   let type: AgentType | undefined;
   const subscribe = () => () => undefined;
   const ctx = {
@@ -38,6 +48,7 @@ function applied(binding?: AgentExecutionBinding) {
       snapshot: () => ({ status: "ready", agents: [], running: [] }),
       relay: () => undefined,
       subscribe,
+      storage,
     },
     effect: vi.fn(),
   };
@@ -310,4 +321,32 @@ it("reports remote usage as unavailable before reading desktop history", async (
       signal: new AbortController().signal,
     }),
   ).rejects.toThrow("Usage is unavailable for remote Codex agents");
+});
+
+it("names the watch or timer behind each one-off thread's usage", async () => {
+  const storage = localStore(localStorage);
+  const key = "a".repeat(64);
+  await standaloneSessions(storage, "codex", key).add("once", "timer/daily");
+  const session = {
+    id: "once",
+    revision: "r",
+    gaps: [],
+    startedAt: 1,
+    lastAt: 2,
+    observations: [],
+  };
+  const conversation = { ...session, id: "talk", channelId: "chan" };
+  vi.mocked(readUsage).mockResolvedValueOnce([session, conversation]);
+  const type = applied(undefined, storage);
+  if (!type?.usage) throw new Error("Codex usage is not registered");
+  const found = await type.usage({ key, pubkey: key, name: "Sol" } as never, {
+    since: 0,
+    signal: new AbortController().signal,
+  });
+  // Only the recorded thread is read as a one-off turn's.
+  expect(vi.mocked(readUsage).mock.calls[0]?.[4]).toEqual(new Set(["once"]));
+  expect(found.map(({ id, wake }) => [id, wake])).toEqual([
+    ["once", "timer/daily"],
+    ["talk", undefined],
+  ]);
 });

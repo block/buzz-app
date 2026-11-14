@@ -157,9 +157,9 @@ export interface UnreadCapability {
   /** Whether the viewer follows this canonical root: an explicit choice,
    * otherwise writing or replying anywhere in its thread. */
   following(channelId: string, rootId: string): boolean;
-  /** Saves an explicit choice on this device; throws, unchanged, if not saved.
-   * Wakes `subscribeSync` listeners. */
-  follow(channelId: string, rootId: string, following: boolean): void;
+  /** Saves an explicit choice; resolves once it is saved and rejects,
+   * unchanged, if not. Wakes `subscribeSync` listeners. */
+  follow(channelId: string, rootId: string, following: boolean): Promise<void>;
   /** Explicit prefix intent, unlike individual-message visibility observations. */
   markThrough(
     target: ReadTarget,
@@ -2661,10 +2661,16 @@ export function createUnread({
       // every reply under the root: the viewer wrote or replied in the thread.
       return ownThreads.has(key);
     },
-    follow(channelId, rootId, following) {
+    async follow(channelId, rootId, following) {
       if (closed || !allowed(channelId) || !/^[0-9a-f]{64}$/i.test(rootId))
         throw new Error("Thread unavailable");
       const key = conversationKey(channelId, rootId.toLowerCase());
+      if (follows.set) {
+        await follows.set(key, following);
+        saved = undefined;
+        followsChanged(new Set([channelId]));
+        return;
+      }
       const next = new Map(choices());
       next.delete(key);
       next.set(key, following);

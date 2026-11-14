@@ -126,7 +126,11 @@ import {
   type OutgoingEvent,
 } from "./outbox";
 import { relayPartition, transportPartition } from "./partition";
-import { browserThreadFollows } from "./thread-follows";
+import { createThreadFollowSync } from "./follow-manager";
+import {
+  browserThreadFollows,
+  type ThreadFollowStorage,
+} from "./thread-follows";
 import { createMessages } from "./messages";
 import { retryRead } from "./read-retry";
 import { messageAuthor } from "./fold";
@@ -199,11 +203,12 @@ function isOwnReadStateFilter(filter: ReadFilter, viewer: string | undefined) {
     filter.authors?.length === 1 &&
     filter.authors[0] === viewer &&
     (filter["#t"] === undefined ||
-      (filter["#t"].length === 1 && filter["#t"][0] === "read-state")) &&
+      (filter["#t"].length === 1 &&
+        ["read-state", "thread-follows"].includes(filter["#t"][0] ?? ""))) &&
     (filter["#d"] === undefined ||
       (filter["#d"].length > 0 &&
         filter["#d"].every((coordinate) =>
-          /^read-state:[0-9a-f]{32}$/.test(coordinate),
+          /^(read-state|thread-follows):[0-9a-f]{32}$/.test(coordinate),
         ))) &&
     Object.keys(filter).every((key) =>
       ["kinds", "authors", "limit", "#t", "#d"].includes(key),
@@ -221,6 +226,8 @@ export function createRelaySession(
     presenceActivity?: PresenceActivity;
     outboxStorage?: OutboxStorage;
     readStateStorage?: ReadStateStorage;
+    /** The device-local follow choices imported once into sync. */
+    threadFollows?: ThreadFollowStorage;
     readPublisherLock?: ReadPublisherLock;
     /** Overrides the 30-day read floor, for fixtures on a toy clock. */
     readStateFloor?: () => number;
@@ -937,6 +944,7 @@ export function createRelaySession(
         activity.messagesChanged(visible);
         if (closed || epoch !== accessEpoch) return;
         reads.accept(visible);
+        threadFollows.accept(visible);
         unread.accept(visible);
         // The outbox matches exact local IDs. An own workflow-deletion echo
         // can acknowledge delivery without entering retained views or watches.
@@ -1278,20 +1286,35 @@ export function createRelaySession(
   const readScope = transport
     ? transportPartition(transport)
     : relayPartition("offline", "");
+  const readStorage =
+    options.readStateStorage ??
+    browserReadStateStorage(readScope, transport?.viewer ?? "");
+  const readLock =
+    options.readPublisherLock ?? browserReadPublisherLock(readScope);
   const reads = createReadState({
     viewer: transport?.viewer ?? "",
     reader: requests.reader,
     host: transport?.readState,
-    storage:
-      options.readStateStorage ??
-      browserReadStateStorage(readScope, transport?.viewer ?? ""),
-    lock: options.readPublisherLock ?? browserReadPublisherLock(readScope),
+    storage: readStorage,
+    lock: readLock,
     floor: options.readStateFloor,
     notify,
     broadcastName: transport?.readState
       ? `buzz-read-state:${readScope}`
       : undefined,
   });
+  // Synced follow choices share the read-state journal and publisher lock;
+  // the device-local store is only the one-time legacy import.
+  const threadFollows = createThreadFollowSync({
+    viewer: transport?.viewer ?? "",
+    reader: requests.reader,
+    host: transport?.readState,
+    storage: readStorage,
+    lock: readLock,
+    legacy: options.threadFollows ?? browserThreadFollows(readScope),
+    notify,
+  });
+  void reads.ready.then(() => threadFollows.refresh());
   const unread = createUnread({
     profiles: profiles.queries,
     reads,
@@ -1306,7 +1329,7 @@ export function createRelaySession(
       ? { signingAuthority: transport.archiveAuthority }
       : {}),
     notify,
-    follows: browserThreadFollows(readScope),
+    follows: threadFollows,
   });
   const inboxFeed = createInboxFeed({
     reactionReader: {
@@ -4109,6 +4132,7 @@ export function createRelaySession(
       observations.clear();
       for (const timer of timers) clearTimeout(timer);
       for (const dispose of [...views.keys()]) dispose();
+      threadFollows.dispose();
       unread.dispose();
       inboxFeed.dispose();
       writes?.dispose();

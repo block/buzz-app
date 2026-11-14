@@ -1,4 +1,5 @@
 import { eventDto, type RelayEvent } from "./events";
+import { parseStoredFollows, type StoredFollows } from "./follow-manager";
 import {
   EMPTY_READ_STATE,
   contextId,
@@ -50,6 +51,8 @@ export type ReadJournal = Readonly<{
   acceptedRevision: number;
   lastCreatedAt: number;
   pending?: Readonly<{ event: RelayEvent; revision: number }>;
+  /** Synced thread follow choices, saved in these same transactions. */
+  follows?: StoredFollows;
 }>;
 /** Mutations run against the latest record in one strict transaction (including other tabs). */
 export interface ReadStateStorage {
@@ -252,6 +255,9 @@ export function readJournal(raw: unknown, viewer: string): ReadJournal {
     acceptedRevision: raw.acceptedRevision as number,
     lastCreatedAt: raw.lastCreatedAt,
     ...(pending ? { pending } : {}),
+    ...(raw.follows !== undefined && {
+      follows: parseStoredFollows(raw.follows, viewer),
+    }),
   };
 }
 function openDatabase() {

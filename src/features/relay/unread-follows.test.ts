@@ -420,8 +420,12 @@ it("keys choices by channel and canonical root and keeps them across reload", as
   });
   // A decided choice needs no conversation lookup.
   expect(second.reader.read).not.toHaveBeenCalled();
-  expect(() => second.unread.follow("missing", root.id, true)).toThrow();
-  expect(() => second.unread.follow("c0", "not-an-event", true)).toThrow();
+  await expect(
+    second.unread.follow("missing", root.id, true),
+  ).rejects.toThrow();
+  await expect(
+    second.unread.follow("c0", "not-an-event", true),
+  ).rejects.toThrow();
 });
 
 it("leaves the saved choice and every projection unchanged when saving fails", async () => {
@@ -439,7 +443,9 @@ it("leaves the saved choice and every projection unchanged when saving fails", a
   await settled(answer);
   const woken = vi.fn();
   const stop = unread.subscribeSync(woken);
-  expect(() => unread.follow("c0", root.id, true)).toThrow("Quota exceeded");
+  await expect(unread.follow("c0", root.id, true)).rejects.toThrow(
+    "Quota exceeded",
+  );
   expect(woken).not.toHaveBeenCalled();
   expect(unread.following("c0", root.id)).toBe(false);
   expect(unread.attention("c0", answer.id).category).toBeUndefined();

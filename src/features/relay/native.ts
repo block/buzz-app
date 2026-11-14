@@ -52,7 +52,12 @@ import { repoGitHost } from "../repos/git";
 import { PublishNotSent, PublishRejected } from "./outbox";
 
 import { readCoordinate, parseReadBlob } from "./read-state-model";
-import { readStateRefusal, type ReadStateSigning } from "./read-state-host";
+import {
+  followCoordinate,
+  readStateRefusal,
+  type ReadStateSigning,
+  type ThreadFollowsSigning,
+} from "./read-state-host";
 import {
   readSnapshotCommunity,
   readSnapshotFilter,
@@ -901,6 +906,49 @@ export async function connectNativeTransport(
               headers: Record<string, string>;
               body: string;
             }>("relay_publish_read_state", { community: origin, event });
+            return nativeResponse(result);
+          },
+          signal,
+          "foreground",
+          readStateRefusal,
+        );
+        signal.throwIfAborted();
+        await acceptReadStatePublish(response, event.id);
+      },
+      async decodeFollows(events: readonly RelayEvent[], signal: AbortSignal) {
+        signal.throwIfAborted();
+        const decoded = await nativeReadInvoke<
+          { eventId: string; payload: unknown }[]
+        >("relay_decode_thread_follows", { community: origin, events });
+        signal.throwIfAborted();
+        return decoded;
+      },
+      async signFollows(intent: ThreadFollowsSigning, signal: AbortSignal) {
+        signal.throwIfAborted();
+        const event = eventDto(
+          await nativeReadInvoke("relay_sign_thread_follows", {
+            community: origin,
+            intent,
+          }),
+        );
+        signal.throwIfAborted();
+        if (event.pubkey !== transport.viewer || !followCoordinate(event))
+          throw new Error("Invalid thread-follows event");
+        return event;
+      },
+      async publishFollows(event: RelayEvent, signal: AbortSignal) {
+        signal.throwIfAborted();
+        if (event.pubkey !== transport.viewer || !followCoordinate(event))
+          throw new Error("Invalid thread-follows event");
+        const response = await admitSignedRequest(
+          origin,
+          transport.viewer,
+          async () => {
+            const result = await nativeReadInvoke<{
+              status: number;
+              headers: Record<string, string>;
+              body: string;
+            }>("relay_publish_thread_follows", { community: origin, event });
             return nativeResponse(result);
           },
           signal,

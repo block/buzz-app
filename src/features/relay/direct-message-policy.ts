@@ -1,4 +1,4 @@
-import type { ChannelSummary } from "./contracts";
+import type { ChannelSummary } from "./contracts.ts";
 
 /** Participant-set policy shared by the app and the existing browser broker. */
 export function validDirectMessageParticipants(

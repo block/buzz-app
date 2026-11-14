@@ -7,7 +7,13 @@ import type { ReadFilter } from "../../features/relay/events";
 import { createRelaySession } from "../../features/relay/session";
 import { keypair } from "../../features/relay/testing";
 import type { GitHubCli } from "./gh";
-import { createPullStates, PULL_REFRESH_MS } from "./pull-states";
+import {
+  createPullStates,
+  PULL_REFRESH_MS,
+  type PullStates,
+} from "./pull-states";
+import { approvedPull } from "./solo-pull.fixtures";
+import { soloSignals } from "./solo-status";
 import {
   createSoloPulls,
   linkOf,
@@ -130,9 +136,9 @@ it("creates, replaces and unlinks a chat's pull request as one artifact", async 
     url: null,
   });
 
-  // Nothing to unlink writes nothing; without a writer it says why.
+  // An explicit unlink leaves a tombstone so a delayed announcement cannot restore it.
   await writeLink(empty.session, other, null);
-  expect(empty.sign).toHaveBeenCalledOnce();
+  expect(empty.sign).toHaveBeenCalledTimes(2);
   await expect(writeLink({} as RelaySession, chat, pull)).rejects.toThrow(
     "can't save pull request links",
   );
@@ -177,7 +183,7 @@ it("shows every shown chat's linked pull request from one shared read", async ()
   // Two chats linking one pull request cost one read of it.
   expect(gh).toHaveBeenCalledOnce();
   expect(gh.mock.calls[0]?.[1]).toEqual({ o0: "block", n0: "buzz-app", p0: 7 });
-  expect(pulls.get(chat)).toEqual({
+  expect(pulls.get(chat)).toMatchObject({
     url: pull,
     state: { state: "open", checks: "failure", conflicts: false },
   });
@@ -191,7 +197,7 @@ it("shows every shown chat's linked pull request from one shared read", async ()
   await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
   expect(gh).toHaveBeenCalledTimes(2);
   expect(pulls.get(chat)).toBe(view);
-  expect(changed).toHaveBeenCalledTimes(told);
+  expect(changed).toHaveBeenCalledTimes(told + 2);
   for (const unwatch of stop) unwatch();
   await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS * 3);
   expect(gh).toHaveBeenCalledTimes(2);
@@ -310,4 +316,52 @@ it("reads links again on the poll after a first read fails", async () => {
   // Once read, links are not read again on the poll.
   await vi.advanceTimersByTimeAsync(SOLO_REFRESH_MS);
   expect(relay.snapshotRead).toHaveBeenCalledTimes(2);
+});
+
+it("expires readiness without a read and rechecks it immediately on visibility return", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const approved = approvedPull();
+  const readAt = Date.now();
+  const states = {
+    watch: () => () => {},
+    get: () => approved.state,
+    readAt: () => ({ readAt }),
+  } as unknown as PullStates;
+  const pulls = createSoloPulls(session().session, states);
+  pulls.linked(chat, approved.url);
+  const changed = vi.fn();
+  const stop = pulls.watch(chat, changed);
+  expect(soloSignals(pulls.get(chat) ?? approved).at(-1)?.tone).toBe("success");
+  await vi.advanceTimersByTimeAsync(2 * PULL_REFRESH_MS + 1);
+  expect(changed).toHaveBeenCalledOnce();
+  expect(pulls.get(chat)?.stale).toBe(true);
+  expect(soloSignals(pulls.get(chat) ?? approved).at(-1)?.tone).toBe("unknown");
+  stop();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("notifies both consumers even if one renders stale before the expiry callback", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const approved = approvedPull();
+  const readAt = Date.now();
+  const states = {
+    watch: () => () => {},
+    get: () => approved.state,
+    readAt: () => ({ readAt }),
+  } as unknown as PullStates;
+  const pulls = createSoloPulls(session().session, states);
+  pulls.linked(chat, approved.url);
+  const one = vi.fn(),
+    two = vi.fn();
+  const stopOne = pulls.watch(chat, one),
+    stopTwo = pulls.watch(chat, two);
+  // Advance Date without running the delayed timer, as in a throttled window.
+  vi.setSystemTime(readAt + 2 * PULL_REFRESH_MS + 1);
+  expect(pulls.get(chat)?.stale).toBe(true);
+  document.dispatchEvent(new Event("visibilitychange"));
+  expect(one).toHaveBeenCalledOnce();
+  expect(two).toHaveBeenCalledOnce();
+  stopOne();
+  stopTwo();
+  expect(vi.getTimerCount()).toBe(0);
 });

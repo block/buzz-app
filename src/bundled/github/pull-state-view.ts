@@ -29,11 +29,13 @@ type Read = Readonly<{
   state?: PullState | undefined;
   /** It could not be read. */
   failed?: boolean | undefined;
+  stale?: boolean | undefined;
 }>;
 
 /** The words for what the icon shows. */
-export function describePull({ state, failed }: Read) {
+export function describePull({ state, failed, stale }: Read) {
   if (failed) return "Pull request, unavailable";
+  if (stale) return "Pull request, out of date";
   if (!state) return "Pull request";
   const notes = [state.state === "draft" ? "draft" : state.state];
   if (state.state === "open" || state.state === "draft") {
@@ -46,8 +48,8 @@ export function describePull({ state, failed }: Read) {
 
 /** The tone a pull request shows: its state, or whether an open one needs
  * attention. */
-export function pullTone({ state }: Read) {
-  if (!state) return "unknown";
+export function pullTone({ state, failed, stale }: Read) {
+  if (!state || failed || stale) return "unknown";
   if (state.state !== "open") return state.state;
   if (state.checks === "failure" || state.conflicts) return "failure";
   return state.checks === "pending" ? "pending" : "open";

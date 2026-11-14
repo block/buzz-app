@@ -1,3 +1,4 @@
+import React from "react";
 import { MenuRoot, MenuPopup } from "../../shared/design-system/ui/Menu";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
@@ -106,6 +107,7 @@ function relayWith(channels: { id: string; channelType: string }[]) {
     })),
   };
   const session = {
+    scope: "s",
     viewer,
     snapshotRead: vi.fn(async () => []),
     configArtifactWriter: { sign, publish },
@@ -138,18 +140,22 @@ it("links the pull request to the Solo chat it was opened from, and unlinks it",
     />,
   );
   await userEvent.click(
-    screen.getByRole("button", { name: "Link to this chat" }),
+    screen.getByRole("button", { name: "Link shared Solo PR" }),
   );
-  expect(await screen.findByRole("button", { name: "Unlink" })).toBeEnabled();
+  expect(
+    await screen.findByRole("button", { name: "Unlink shared Solo PR" }),
+  ).toBeEnabled();
   expect(pulls.linked).toHaveBeenCalledWith(chat, pull);
   expect(sign).toHaveBeenCalledOnce();
   expect(publish).toHaveBeenCalledOnce();
   expect(
-    screen.getByText("Shown in the sidebar for this chat."),
+    screen.getByText("Shared Solo link, visible to its members."),
   ).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "Unlink" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Unlink shared Solo PR" }),
+  );
   expect(
-    await screen.findByRole("button", { name: "Link to this chat" }),
+    await screen.findByRole("button", { name: "Link shared Solo PR" }),
   ).toBeInTheDocument();
   expect(pulls.linked).toHaveBeenLastCalledWith(chat, null);
 
@@ -173,6 +179,8 @@ it("gives agents a github_link_pr tool for the Solo chat they work in", async ()
   let tool: AddedTool | undefined;
   const inject = vi.fn();
   apply({
+    reflect: { get: () => undefined },
+    effect: () => {},
     host: {},
     panels: { register: () => {} },
     conversation: {
@@ -186,6 +194,11 @@ it("gives agents a github_link_pr tool for the Solo chat they work in", async ()
         if (added.name === "github_link_pr") tool = added;
       },
       relay: () => relay,
+      snapshot: () => ({
+        running: [
+          { key: "a".repeat(64), pubkey: "a".repeat(64), owner: viewer },
+        ],
+      }),
     },
     inject,
   } as never);
@@ -202,15 +215,15 @@ it("gives agents a github_link_pr tool for the Solo chat they work in", async ()
     tool?.call(client, { channel: chat }, { url: "https://github.com/block" }),
   ).rejects.toThrow("url must be a GitHub pull request URL");
   await expect(
-    tool?.call(client, { channel: team }, { url: pull }),
-  ).rejects.toThrow("Only a Solo chat can be linked");
-  expect(await tool?.call(client, { channel: chat }, { url: pull })).toBe(
-    `Linked ${pull}. The sidebar shows its state for this chat.`,
-  );
+    tool?.call(client, { channel: team }, { url: pull, shared: true }),
+  ).rejects.toThrow("Shared links require");
+  expect(
+    await tool?.call(client, { channel: chat }, { url: pull, shared: true }),
+  ).toBe(`Shared Solo link saved: ${pull}`);
   expect(sign).toHaveBeenCalledOnce();
-  expect(await tool?.call(client, { channel: chat }, { unlink: true })).toBe(
-    "Unlinked this chat's pull request.",
-  );
+  expect(
+    await tool?.call(client, { channel: chat }, { unlink: true, shared: true }),
+  ).toBe("Shared Solo link removed.");
 });
 
 it("offers unlink only for a linked owned chat and clears the link after publication", async () => {
@@ -354,14 +367,16 @@ it("keeps the linked PR shortcut usable in browser mode and switches back live",
   ).toBeEnabled();
 });
 
-it("only mounts the PR shortcut for a Solo in the current community", () => {
+it("mounts the PR shortcut for any conversation in the current community", () => {
   const { relay, session } = relayWith([
     { id: chat, channelType: "solo" },
     { id: team, channelType: "stream" },
   ]);
   const state = { ...relay.snapshot(), viewer };
   const activeRelay = { ...relay, snapshot: () => state };
-  const pullsFor = vi.fn(() => fakePulls({ [chat]: { url: pull } }));
+  const pullsFor = vi.fn(() =>
+    fakePulls({ [chat]: { url: pull }, [team]: { url: pull } }),
+  );
   const context = {
     scope: "s",
     viewer,
@@ -380,7 +395,8 @@ it("only mounts the PR shortcut for a Solo in the current community", () => {
     toggle() {},
   };
   const view = render(<SoloPullLauncher {...props} />);
-  expect(pullsFor).not.toHaveBeenCalled();
+  expect(pullsFor).toHaveBeenCalledWith(session);
+  pullsFor.mockClear();
   view.rerender(
     <SoloPullLauncher
       {...props}
@@ -395,4 +411,46 @@ it("only mounts the PR shortcut for a Solo in the current community", () => {
   expect(
     screen.getByRole("button", { name: "Open linked pull request" }),
   ).toBeVisible();
+});
+
+it("adds independently labelled status without remounting or replacing the native row", async () => {
+  const { SessionPullRow } = await import("./SoloPull");
+  const { approvedPull } = await import("./solo-pull.fixtures");
+  const pulls = fakePulls();
+  let mounts = 0;
+  const Native = () => {
+    React.useEffect(() => {
+      mounts++;
+    }, []);
+    return <button type="button">Native chat</button>;
+  };
+  const view = render(
+    <SessionPullRow pulls={pulls} channelId={chat}>
+      <Native />
+    </SessionPullRow>,
+  );
+  const button = screen.getByRole("button", { name: "Native chat" });
+  button.focus();
+  expect(screen.queryByRole("img")).toBeNull();
+  const linked = fakePulls({ [chat]: approvedPull() });
+  view.rerender(
+    <SessionPullRow pulls={linked} channelId={chat}>
+      <Native />
+    </SessionPullRow>,
+  );
+  expect(button).toHaveFocus();
+  expect(mounts).toBe(1);
+  expect(screen.getByRole("img", { name: /Review approved/ })).toBeVisible();
+  expect(
+    screen.getByRole("img", { name: /Ready to merge on GitHub/ }),
+  ).toBeVisible();
+  await userEvent.tab();
+  expect(screen.getByRole("img", { name: /Review approved/ })).toHaveFocus();
+  view.rerender(
+    <SessionPullRow pulls={pulls} channelId={chat}>
+      <Native />
+    </SessionPullRow>,
+  );
+  expect(screen.getByRole("button", { name: "Native chat" })).toBe(button);
+  expect(mounts).toBe(1);
 });

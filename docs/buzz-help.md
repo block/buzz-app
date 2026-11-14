@@ -1535,6 +1535,19 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   whether supported GitHub links and the linked-PR shortcut open in a side
   panel or your browser. It starts on and is saved on this device across all
   communities. Turning it off keeps pull request indicators and agent tools enabled.
+- The optional **GitHub** plugin can show a personal pull request on Team, DM
+  and Solo rows, including read-only channels. Open a PR from that conversation
+  and choose **Show for me**, or use `github_link_pr`. This changes only your
+  sidebar on this device, not the channel or its members. **Hide for me** blocks
+  automatic reassociation. An agent can call `github_announce_pr` after creating
+  the conversation’s own PR; GitHub verifies authorship and its exact head
+  branch. It does not publish a channel message or adopt ordinary PR links.
+  Existing personal choices and saved Solo links/unlinks take precedence.
+  Existing shared Solo links and their guarded shared actions remain supported.
+  Linked rows show lifecycle, checks, review, unresolved review threads and
+  GitHub merge readiness. Hover or focus the status icons for details. Failed,
+  stale or unavailable reads cannot show ready. GitHub readiness does not
+  replace your workflow’s approvals or grant permission to merge.
 - The **GitHub** plugin’s pull request panel offers **Queue for merge** when
   the target branch requires a merge queue. After confirmation, it queues the
   displayed commit and shows **Queued for merge**; GitHub controls when it merges.

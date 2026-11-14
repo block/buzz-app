@@ -5,6 +5,7 @@ import { GitHubRateLimited } from "./data";
 import {
   BODY_CHARS,
   createPullStates,
+  LINK_POLLING,
   PANEL_REFRESH_MS,
   PUBLIC_READS_PER_HOUR,
   PUBLIC_READS_PER_POLL,
@@ -92,7 +93,7 @@ it("reads every watched pull request together, once, then again each minute whil
   expect(gh).toHaveBeenCalledTimes(2);
 });
 
-it("keeps the state object, and tells no one, when a poll reads the same state", async () => {
+it("keeps the state object but notifies metadata readers when freshness changes", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   let checks = "PENDING";
   const gh = mockGh(async () => ({ r0: rollup("OPEN", {}, checks) }));
@@ -101,17 +102,17 @@ it("keeps the state object, and tells no one, when a poll reads the same state",
   states.watch(pull, changed);
   await vi.waitFor(() => expect(states.get(pull)).toBeDefined());
   const before = states.get(pull);
-  // GitHub answers the same each time, so the links and sidebar rows showing
-  // the pull request have nothing to re-render for.
+  // Data-only external-store readers keep their snapshot; metadata readers learn
+  // that the same data was successfully read again.
   await vi.advanceTimersByTimeAsync(2 * PULL_REFRESH_MS);
   expect(gh).toHaveBeenCalledTimes(3);
   expect(states.get(pull)).toBe(before);
-  expect(changed).toHaveBeenCalledOnce();
+  expect(changed).toHaveBeenCalledTimes(3);
   checks = "SUCCESS";
   await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
   expect(states.get(pull)).not.toBe(before);
   expect(states.get(pull)).toMatchObject({ checks: "success" });
-  expect(changed).toHaveBeenCalledTimes(2);
+  expect(changed).toHaveBeenCalledTimes(4);
 });
 
 it("keeps one reader that throws from failing the read, or keeping it from the rest", async () => {
@@ -300,7 +301,7 @@ it("reads an issue's state and title from the public API in the one read of the 
   expect(fetch).toHaveBeenCalledTimes(3);
   expect(states.get(issue)).toBe(before);
   expect(states.readAt(issue)?.error).toBeInstanceOf(Error);
-  expect(changed).toHaveBeenCalledTimes(2);
+  expect(changed).toHaveBeenCalledTimes(3);
 });
 
 it.each([
@@ -1604,7 +1605,7 @@ it("keeps the latest state, and when it was read, when a later read fails", asyn
   expect(read.error?.message).toMatch("couldn’t find this");
   expect(states.get(pull)).toBe(shown);
   expect(states.readAt(pull)).toMatchObject({ readAt });
-  expect(changed).toHaveBeenCalledOnce();
+  expect(changed).toHaveBeenCalledTimes(2);
   fail = false;
   await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS);
   await vi.waitFor(() => expect(states.readAt(pull)?.error).toBeUndefined());
@@ -1879,4 +1880,27 @@ it("reads a pull request a panel and a watch share without gh once, not again an
   // The pull request and its two kinds of checks, once; public data has no
   // feedback to read again for.
   expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+it("keeps details-level Solo rows within the shared public-read budget", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const fetch = vi.fn(
+    async () => new Response(JSON.stringify({ title: "A", state: "open" })),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const states = createPullStates(undefined);
+  const stops = Array.from({ length: 12 }, (_, index) =>
+    states.watch(
+      `https://github.com/example/project/pull/${index + 1}`,
+      () => {},
+      "details",
+      { polling: LINK_POLLING, interactive: false },
+    ),
+  );
+  await vi.advanceTimersByTimeAsync(60 * PULL_REFRESH_MS);
+  expect(fetch.mock.calls.length).toBeGreaterThan(0);
+  expect(fetch.mock.calls.length).toBeLessThanOrEqual(
+    PUBLIC_READS_PER_POLL + PUBLIC_READS_PER_HOUR,
+  );
+  for (const stop of stops) stop();
 });

@@ -29,6 +29,7 @@ export type PullChecklist = Readonly<{
     approved: readonly string[];
     changes: readonly string[];
     waiting: readonly string[];
+    complete?: boolean | undefined;
   }>;
   /** Unresolved review threads among the latest 100. */
   unresolved: number;
@@ -73,7 +74,7 @@ export const PANEL_PULL_FIELDS = `id title body bodyHTML createdAt updatedAt mer
       isMergeQueueEnabled isInMergeQueue
       viewerCanEnableAutoMerge viewerCanDisableAutoMerge
       autoMergeRequest{mergeMethod enabledBy{login}}
-      reviewRequests(first:20){nodes{requestedReviewer{__typename ... on User{login} ... on Team{name} ... on Bot{login} ... on Mannequin{login}}}}
+      reviewRequests(first:20){totalCount nodes{requestedReviewer{__typename ... on User{login} ... on Team{name} ... on Bot{login} ... on Mannequin{login}}}}
       latestOpinionatedReviews(first:50){nodes{author{login} state}}
       reviewThreads(last:100){totalCount nodes{isResolved}}
       commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){totalCount nodes{__typename
@@ -123,6 +124,7 @@ export type PullData = {
         enabledBy?: Login;
       } | null;
       reviewRequests?: {
+        totalCount?: number;
         nodes?: ({
           requestedReviewer?: { login?: string; name?: string } | null;
         } | null)[];
@@ -264,6 +266,13 @@ export function parsePull(
         nodes.length >= (contexts?.totalCount ?? 0),
       ),
       review: {
+        complete:
+          pull.reviewRequests?.totalCount !== undefined &&
+          pull.reviewRequests.totalCount ===
+            pull.reviewRequests.nodes?.length &&
+          pull.reviewRequests.nodes.every(
+            (request) => !!request?.requestedReviewer,
+          ),
         decision: pull.reviewDecision ?? null,
         approved: reviews
           .filter((review) => review.state === "APPROVED")
@@ -281,7 +290,10 @@ export function parsePull(
       },
       unresolved: threads.filter((thread) => thread && !thread.isResolved)
         .length,
-      moreThreads: (pull.reviewThreads?.totalCount ?? 0) > threads.length,
+      moreThreads:
+        pull.reviewThreads?.totalCount === undefined ||
+        pull.reviewThreads.totalCount > threads.length ||
+        threads.some((thread) => !thread),
       merge: pull.mergeStateStatus ?? "UNKNOWN",
       canUpdate: !!pull.viewerCanUpdate,
       canUpdateBranch: !!pull.viewerCanUpdateBranch,

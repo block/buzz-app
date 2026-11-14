@@ -1,3 +1,6 @@
+import type { SidebarRowContribution } from "../../features/channel-navigation/sidebar-rows-service";
+import { addConversationPullTools } from "./conversation-pull-tools";
+import { PersonalPullLink } from "./PersonalPull";
 import { ResolvePull } from "./ResolvePull";
 import type { PullChecklist as Checklist } from "./pull";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -36,8 +39,7 @@ import inlineStyles from "../../shared/InlineReference.module.css";
 import { GitHubBody } from "./GitHubBody";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { RelaySession } from "../../features/relay/session";
-import { ownSolo } from "../../features/solo/labels";
-import { createSoloPulls, writeLink, type SoloPulls } from "./solo-pull";
+import { createSoloPulls, type SoloPulls } from "./solo-pull";
 import {
   createPullStates,
   PANEL_REFRESH_MS,
@@ -50,6 +52,7 @@ import { stateIcons } from "./pull-state-view";
 import { GitHubLink } from "./GitHubLink";
 import {
   SoloPullIcon,
+  SoloPullRow,
   SoloPullLink,
   SoloPullMenu,
   SoloPullLauncher,
@@ -83,11 +86,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
     }
     return found;
   };
+  const personal = new WeakMap<RelaySession, SoloPulls>();
+  const personalFor = (session: RelaySession) => {
+    let found = personal.get(session);
+    if (!found) {
+      found = createSoloPulls(session, states, true);
+      personal.set(session, found);
+    }
+    return found;
+  };
   ctx.panels.register({
     id: "object",
     title: "GitHub",
     channelLauncher: (props) => (
-      <SoloPullLauncher {...props} relay={ctx.relay} pullsFor={pullsFor} />
+      <SoloPullLauncher {...props} relay={ctx.relay} pullsFor={personalFor} />
     ),
     deferUntilShown: true,
     matches: (target) =>
@@ -117,12 +129,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
               />
             ),
             chatLink: (url: string) => (
-              <SoloPullLink
-                relay={ctx.relay}
-                pullsFor={pullsFor}
-                channelId={channelId}
-                url={url}
-              />
+              <>
+                <PersonalPullLink
+                  relay={ctx.relay}
+                  pullsFor={personalFor}
+                  channelId={channelId}
+                  url={url}
+                />
+                <SoloPullLink
+                  relay={ctx.relay}
+                  pullsFor={pullsFor}
+                  channelId={channelId}
+                  url={url}
+                />
+              </>
             ),
           })}
         />
@@ -149,62 +169,29 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ));
   ctx.conversation.registerChatIcon(({ session, channelId, fallback }) => (
     <SoloPullIcon
-      pulls={pullsFor(session)}
+      pulls={personalFor(session)}
       channelId={channelId}
       fallback={fallback}
     />
   ));
-  ctx.agents.addTool({
-    name: "github_link_pr",
-    description:
-      "Links a GitHub pull request to this Solo chat, so the owner's sidebar shows its state (draft, checks, merged) in place of the chat's icon. A chat has one; linking another replaces it.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        url: {
-          type: "string",
-          description: "The pull request's https://github.com/… URL",
-        },
-        unlink: {
-          type: "boolean",
-          description: "Unlink the chat's pull request instead",
-        },
-      },
-      additionalProperties: false,
-    },
-    async call(client, context, args) {
-      const url =
-        args.unlink === true
-          ? null
-          : typeof args.url === "string"
-            ? parseGitHubReference(args.url)
-            : undefined;
-      if (url !== null && url?.kind !== "pull")
-        throw new Error("url must be a GitHub pull request URL");
-      const relay = ctx.agents.relay(client.key)?.snapshot();
-      const channel = context.channel;
-      const session = relay?.status === "ready" ? relay.session : undefined;
-      if (!session || !channel)
-        throw new Error("github_link_pr needs this conversation's community");
-      if (
-        !ownSolo(
-          session.channels.list().channels.find((item) => item.id === channel),
-          session.viewer,
-        )
-      )
-        throw new Error("Only a Solo chat can be linked to a pull request");
-      const link = url === null ? null : url.url;
-      await writeLink(session, channel, link);
-      pullsFor(session).linked(channel, link);
-      // The sidebar reads the selected community through its own session.
-      const shown = ctx.relay.snapshot();
-      if (shown.status === "ready" && shown.scope === relay?.scope)
-        pullsFor(shown.session).linked(channel, link);
-      return link
-        ? `Linked ${link}. The sidebar shows its state for this chat.`
-        : "Unlinked this chat's pull request.";
-    },
-  });
+  ctx.reflect.get("sidebarRows")?.register({
+    version: 1,
+    id: "solo-pull-status",
+    render: (row, Default) =>
+      Default ? (
+        <SoloPullRow
+          relay={ctx.relay}
+          pullsFor={personalFor}
+          channelId={row.id}
+          lifecycle={row.kind !== "solo"}
+        >
+          {Default}
+        </SoloPullRow>
+      ) : (
+        Default
+      ),
+  } satisfies SidebarRowContribution);
+  addConversationPullTools(ctx.agents, states, pullsFor, !!gh);
   addPullStateTool(ctx.agents, states);
   // Agents can watch pull requests where the app runs them.
   ctx.inject(["agents", "host", "navigation"], (scope) =>

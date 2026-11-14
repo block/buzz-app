@@ -438,8 +438,8 @@ To update Goose, verify every target archive against the exact release identity:
 ```sh
 gh attestation verify <archive> --repo aaif-goose/goose \
   --signer-workflow aaif-goose/goose/.github/workflows/release.yml \
-  --source-ref refs/tags/v1.59.0 \
-  --source-digest 5d03ef6ed07ba59826328f1aff18d9a754ff8ad2 \
+  --source-ref refs/tags/v1.59.1 \
+  --source-digest e62a656f460d6399b34c747014d810727ff70b05 \
   --cert-oidc-issuer https://token.actions.githubusercontent.com \
   --deny-self-hosted-runners
 ```
@@ -452,6 +452,15 @@ Never resolve
 `latest` at build time.
 The obsolete `target/goose-acp-src` and `target/goose-acp-build` caches are unused
 and can be removed locally when no old source build is running.
+Version 1.59.1 is v1.59.0 plus a release chore and two cherry-picks:
+aaif-goose/goose#13478 (adaptive thinking for Claude Fable 5.2, which rejects
+every request otherwise) and #13483 (unique ids for Gemini tool calls on the
+Databricks AI Gateway, where repeated calls to one tool otherwise never run).
+Its Release run failed on the macOS desktop build, before the step that
+attests the files, so the v1.59.1 archives have no attestations. Until they do,
+check each archive's SHA-256 against the `goose-acp-<target>`
+artifact of the tag's Release run (`gh run download 43553362910 --repo
+aaif-goose/goose -n goose-acp-<target>`); all five match the pinned values.
 Version 1.59.0 advances Goose 18 commits from v1.58.1; the four commits only on
 v1.58.1's release branch are release chores and cherry-picks of #13328 and
 #13340, both included in v1.59.0; distribution parity alone does not
@@ -462,7 +471,7 @@ packaged signing/installers.
 The candidate is known to fail the MCP credential non-persistence check: the
 client HTTP URL and bearer header are stored in session data and export.
 An isolated canary probe reproduced this in both the old source-built 1.56.0
-executable and v1.57.0; upstream #12908 was closed unmerged, so v1.59.0 does
+executable and v1.57.0; upstream #12908 was closed unmerged, so v1.59.1 does
 not include it either. This
 remains a separate existing acceptance failure, not a distribution regression.
 

@@ -872,17 +872,21 @@ export function shortTime(unixSeconds: number, nowSeconds = Date.now() / 1000) {
  * new message doesn't move a row out from under a click. New rows go at the end.
  */
 function useFrozenOrder(keys: readonly string[]) {
-  const [frozen, setFrozen] = useState(false);
+  // Either holds the order on its own: focus moving to the reader on a click
+  // must not release rows the pointer is still over.
+  const [pointed, setPointed] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const frozen = pointed || focused;
   const held = useRef<readonly string[]>([]);
   useEffect(() => {
-    const thaw = () => setFrozen(false);
-    const onPointer = (event: PointerEvent) =>
-      setFrozen(
-        event.target instanceof Element &&
-          !!event.target.closest("[data-activity-sidebar]"),
-      );
-    const onFocus = () =>
-      setFrozen(!!document.activeElement?.closest("[data-activity-sidebar]"));
+    const inList = (target: EventTarget | null) =>
+      target instanceof Element && !!target.closest("[data-activity-sidebar]");
+    const thaw = () => {
+      setPointed(false);
+      setFocused(false);
+    };
+    const onPointer = (event: PointerEvent) => setPointed(inList(event.target));
+    const onFocus = () => setFocused(inList(document.activeElement));
     document.addEventListener("pointerover", onPointer);
     document.addEventListener("focusin", onFocus);
     window.addEventListener("blur", thaw);

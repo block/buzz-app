@@ -1611,7 +1611,7 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   different place to report. Turning the plugin on does not grant new access.
   An event watch hears the channels its agent may read, including public channels
   the agent has not joined. A watch's delivery channel must be one the agent is
-  a member of; the relay decides where the agent may post. On macOS and Linux,
+  a member of; the relay decides where the agent may post. Agents cannot enable a watch for an unreadable listening channel or a delivery channel without confirmed membership. On macOS and Linux,
   watched commands stop when their Buzz process exits.
   During a handoff between Buzz builds, the new copy waits for the previous
   command to stop, then continues the watch.

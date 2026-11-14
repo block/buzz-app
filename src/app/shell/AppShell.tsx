@@ -24,6 +24,7 @@ import type { Communities } from "../../features/communities/service";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import { ResizableSidebar } from "../../features/channel-navigation/ResizableSidebar";
 import type { JoinRequest } from "../../features/communities/invite-intent";
+import type { JoinReports } from "../../features/communities/CommunityDialog";
 import type { OpenTarget } from "../../features/navigation/targets";
 import {
   CommunityPicker,
@@ -72,6 +73,9 @@ function AppShellContent({
   sidebar,
   communities,
   invite,
+  joinVisit,
+  onJoin,
+  joinReports,
   onInviteClose,
   settingsCards,
   federatedIdentity,
@@ -102,8 +106,12 @@ function AppShellContent({
   workspaceRef?: Ref<HTMLDivElement>;
   sidebar?: (pages: ReactNode, creationAction: ReactNode) => ReactNode;
   communities: Communities;
-  invite?: (JoinRequest & { requestId: number }) | undefined;
-  onInviteClose?: ((requestId: number) => void) | undefined;
+  invite?: (JoinRequest & { requestId: string }) | undefined;
+  joinVisit?: string | undefined;
+  onJoin?: (() => void) | undefined;
+  /** The open join dialog's reports to the app: writes and the typed address. */
+  joinReports?: JoinReports | undefined;
+  onInviteClose?: ((requestId: string) => void) | undefined;
   settingsCards?: SettingsCards | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
   accountActions: AccountActionsService;
@@ -374,6 +382,9 @@ function AppShellContent({
             <CommunityPicker
               communities={communities}
               invite={invite}
+              joinVisit={joinVisit}
+              onJoin={onJoin}
+              joinReports={joinReports}
               onInviteClose={onInviteClose}
               settingsCards={settingsCards}
               federatedIdentity={federatedIdentity}

@@ -65,7 +65,9 @@ an address typed on the welcome screen that the restore did not admit opens
 this dialog, prefilled, as the app opens. Builderlab's Settings **Create
 community** is the third: through the `communityJoin` capability it opens this
 dialog on the community just created, marked submitted, so it connects at once
-as first run's **Create a community** does, without Continue. The relay adds a member newly admitted
+as first run's **Create a community** does, without Continue. Each opening is a
+navigation visit over the current view; Back closes it and Forward restores the
+address without connecting again ([behavior](navigation-history-behavior.md)). The relay adds a member newly admitted
 by an invite claim to the community's starter channels, so they are already in
 the sidebar and Messages opens the first of them. An open community needs no
 claim: there the relay adds each person, though not agents, to the starter

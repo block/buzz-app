@@ -697,6 +697,20 @@ describe("github_watch_pr", () => {
     next.dispose();
   });
 
+  it("holds a wake the agent cannot take for as long as it cannot, then sends it", async () => {
+    const app = setup();
+    await app.call({ url });
+    app.runs(false);
+    app.gh(answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }));
+    await vi.advanceTimersByTimeAsync(45 * POLL_MS);
+    expect(app.woke).not.toHaveBeenCalled();
+    expect([...app.completed]).toEqual([]);
+    app.runs(true);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(app.texts()).toEqual([expect.stringContaining("CI passed")]);
+    app.dispose();
+  });
+
   it("reads, after a restart, the text of only the feedback the watch has not seen", async () => {
     const before = [{ id: "R1", login: "wes", body: "Looks off", inline: [] }];
     const app = setup(answer({ reviews: before }));
@@ -809,6 +823,56 @@ describe("github_watch_pr", () => {
     ]);
     expect([...app.completed]).toHaveLength(1);
     app.dispose();
+  });
+
+  it("ends an unreadable watch only once the agent hears when it was last read and what it held", async () => {
+    const app = setup();
+    await app.call({ url });
+    app.gh(
+      answer({
+        comments: [
+          { id: "I1", login: "wes", body: "held-body" },
+          { id: "I2", login: "stranger", body: "denied-body" },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    const read = app.states.readAt(url)?.readAt as number;
+    // Unreadable before the feedback has been quiet long enough to tell,
+    // and rules saved meanwhile still decide what is quoted.
+    app.gh(null);
+    app.runs(false);
+    savePolicy("allow author:wes");
+    await vi.advanceTimersByTimeAsync(35 * POLL_MS);
+    expect(app.woke).not.toHaveBeenCalled();
+    expect([...app.completed]).toEqual([]);
+    app.runs(true);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(app.texts()).toHaveLength(1);
+    expect(app.texts()[0]).toContain(
+      `Stopped watching ${url}: it could not be read with gh for 36 minutes.`,
+    );
+    expect(app.texts()[0]).toContain(new Date(read).toISOString());
+    expect(app.texts()[0]).toContain("held-body");
+    expect(app.texts()[0]).not.toContain("denied-body");
+    expect([...app.completed]).toHaveLength(1);
+    app.dispose();
+  });
+
+  it("counts the feedback it held when a restart left it unable to check the rules", async () => {
+    const app = setup();
+    await app.call({ url });
+    app.gh(
+      answer({ comments: [{ id: "I1", login: "wes", body: "held-body" }] }),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    app.dispose();
+    const next = setup(null);
+    await vi.advanceTimersByTimeAsync(30 * POLL_MS);
+    expect(next.texts()).toHaveLength(1);
+    expect(next.texts()[0]).toContain("It held 1 comment it had not told.");
+    expect(next.texts()[0]).not.toContain("held-body");
+    next.dispose();
   });
 
   it("lets a read still in flight when the plugin stops do nothing", async () => {

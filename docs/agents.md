@@ -515,7 +515,11 @@ comments, line by line, each clipped, with GitHub's links. Agents comment as the
 a comment of that account that starts with 🤖, as an agent's do, wakes nobody,
 and the owner's other comments wake the agent. A watch is saved in Attention on the device and respects its on/off switch. Device-local GitHub watches saved before Attention are dropped, not imported: they name no Interest. It ends when the
 pull request merges or closes, after 20 wakes, after 30 minutes without a
-successful read, or when the agent calls it with `stop: true`.
+successful read, or when the agent calls it with `stop: true`. A wake the agent
+cannot take yet, as when its queue is full, is held and tried again each minute;
+it never counts toward those 30 minutes. The message that ends an unreadable
+watch says when it was last read and quotes the feedback it held that the rules
+allow, and the watch ends only once that message is delivered.
 
 Settings → Plugins → GitHub decides whose feedback wakes agents,
 since anyone can comment on a public pull request. It holds rules, one per

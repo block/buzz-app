@@ -347,6 +347,8 @@ test("a dots-only activity bubble keeps Activity and Stop apart", async ({
   await page.mouse.move(0, 0);
   await animationsSettled(row.locator("section"), { subtree: true });
   const resting = [await activity.boundingBox(), await stop.boundingBox()];
+  // At rest Stop is hidden but keeps its place beside the bubble.
+  await expect(stop.locator("..")).toHaveCSS("opacity", "0");
   expect(separate(...resting)).toBe(true);
   const target = center(resting[0]);
   await page.mouse.move(target.x, target.y);

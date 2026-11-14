@@ -5,10 +5,11 @@ import {
   verifiedLabel,
   type NamePreference,
 } from "../profiles/name-preference";
-import type {
-  VerifiedProfileAuthority,
-  VerifiedProfileFilter,
-  VerifiedProfileSink,
+import {
+  verifiedProfileSubject,
+  type VerifiedProfileAuthority,
+  type VerifiedProfileFilter,
+  type VerifiedProfileSink,
 } from "./verified-profile";
 import { retryRead } from "./read-retry";
 import { attestedOwner } from "../agents/owner-attestation";
@@ -58,12 +59,13 @@ export interface ProfileQueries {
   /** The community's current verified-profile authority, or undefined while
    * it advertises none. Subscribers are notified when it changes. */
   verifiedAuthority?(): VerifiedProfileAuthority | undefined;
-  /** Whether the shared verified directory holds a head for `pubkey`. Its
+  /** Whether the published shared snapshot holds a head for `pubkey`. Its
    * profile's `verified`, present or not, then outranks a search's answer:
    * a newer inactive or malformed head revokes an older name. */
   verifiedHeld?(pubkey: string): boolean;
-  /** Moves with every change to the shared verified heads, including one that
-   * leaves every profile as it was (a first inactive head), and notifies. */
+  /** Moves with published authority/head evidence, including a first inactive
+   * head that leaves profiles unchanged. Checked/cached status alone does not
+   * move it; subscribers still receive those profile status updates. */
   verifiedRevision?(): number;
   /** Whether a `verifiedRevision()` after `revision` accepted a head for
    * `pubkey`, even one the cache evicted before publishing it. Past what it
@@ -139,6 +141,7 @@ export function createProfileDirectory(
   }
   const listeners = new Set<() => void>();
   let snapshot: ReadonlyMap<string, Profile> = new Map();
+  let publishedVerifiedHeads: ReadonlySet<string> = new Set();
   // Replaced, never mutated, so stores can compare it like `snapshot`.
   let unnamed: ReadonlySet<string> = new Set();
   // Absences this connection has read. Background enrichment does not
@@ -172,16 +175,6 @@ export function createProfileDirectory(
   function flushVerified() {
     clearTimeout(verifiedFlush);
     verifiedFlush = undefined;
-    verifiedRevision++;
-    for (const subject of verified?.takeAccepted() ?? []) {
-      acceptedAt.delete(subject);
-      acceptedAt.set(subject, verifiedRevision);
-    }
-    for (const [subject, revision] of acceptedAt) {
-      if (acceptedAt.size <= PROFILE_CACHE_MAX) break;
-      acceptedAt.delete(subject);
-      forgottenAt = revision;
-    }
     if (!closed) publish();
   }
   // A background read of many pages publishes once, when its pages settle:
@@ -236,6 +229,30 @@ export function createProfileDirectory(
    * `verifiedAuthority()`, `verifiedHeld()` and `verifiedRevision()`. */
   function publish(headChanged = false) {
     folded = false;
+    const authority = verified?.authority();
+    const held = new Set(
+      (verified?.heads(limit) ?? []).flatMap((event) => {
+        const subject = authority && verifiedProfileSubject(event, authority);
+        return subject ? [subject] : [];
+      }),
+    );
+    const headsChanged =
+      held.size !== publishedVerifiedHeads.size ||
+      [...held].some((pubkey) => !publishedVerifiedHeads.has(pubkey));
+    const accepted = verified?.takeAccepted() ?? [];
+    // Search retries follow evidence, not failure-only sync notifications or
+    // checked/cached status changes. Those still publish their profile state.
+    if (accepted.length || headsChanged || publishedAuthority !== authority)
+      verifiedRevision++;
+    for (const subject of accepted) {
+      acceptedAt.delete(subject);
+      acceptedAt.set(subject, verifiedRevision);
+    }
+    for (const [subject, revision] of acceptedAt) {
+      if (acceptedAt.size <= PROFILE_CACHE_MAX) break;
+      acceptedAt.delete(subject);
+      forgottenAt = revision;
+    }
     const next = foldProfiles([
       ...events.keys().flatMap((id) => {
         const event = events.peek(id);
@@ -322,10 +339,12 @@ export function createProfileDirectory(
         unnamed = new Set([...unnamed].filter((id) => !next.has(id)));
     } else if (
       !headChanged &&
+      !headsChanged &&
       publishedAuthority === verified?.authority() &&
       publishedRevision === verifiedRevision
     )
       return;
+    publishedVerifiedHeads = held;
     publishedAuthority = verified?.authority();
     publishedRevision = verifiedRevision;
     for (const listener of listeners) notify(listener);
@@ -548,7 +567,8 @@ export function createProfileDirectory(
     limit: () => limit,
     evictions: () => events.evictions + cancelled,
     verifiedAuthority: () => verified?.authority(),
-    verifiedHeld: (pubkey: string) => !!verified?.holds(pubkey),
+    // Held evidence and its projection become visible in the same publication.
+    verifiedHeld: (pubkey: string) => publishedVerifiedHeads.has(pubkey),
     verifiedRevision: () => verifiedRevision,
     verifiedSince: (pubkey: string, revision: number) =>
       (acceptedAt.get(pubkey) ?? (revision < forgottenAt ? Infinity : 0)) >

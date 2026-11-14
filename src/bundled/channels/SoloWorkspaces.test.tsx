@@ -100,9 +100,20 @@ function fixture(projectName = "Work") {
       write,
       writeStar: async () => [],
       removeSection: remove,
+      writeOrder: order,
       // Groups-only chats have no Messages sort coordinate.
       groupsOnly: true,
     });
+  const order = vi.fn(async (ids: readonly string[]) => {
+    saved = {
+      ...saved,
+      sections: ids.flatMap((id, order) => {
+        const section = saved.sections.find((section) => section.id === id);
+        return section ? [{ ...section, order }] : [];
+      }),
+    };
+    return saved;
+  });
   const onNew = vi.fn();
   const channels = {
     status: "ready",
@@ -149,10 +160,60 @@ function fixture(projectName = "Work") {
     view,
     write,
     remove,
+    order,
+    setSaved: (value: SidebarPreferences) => {
+      saved = value;
+    },
     onNew,
     saved: () => saved,
   };
 }
+
+it("moves workspaces with the section menu, keeps collapse and filing, and retries failed order", async () => {
+  const h = fixture();
+  h.setSaved({
+    ...h.saved(),
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id: "home", name: "Home", order: 1 },
+    ],
+    assignments: { chat: "work", other: "home" },
+  });
+  const first = h.store();
+  const user = userEvent.setup();
+  const mounted = render(h.view(first.queries));
+  const heading = await screen.findByRole("button", {
+    name: "Home",
+  });
+  await user.click(heading);
+  await user.click(screen.getByRole("button", { name: "Actions for Home" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Move down" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  h.order.mockRejectedValueOnce(new Error("Order was refused"));
+  await user.click(screen.getByRole("menuitem", { name: "Move up" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Order was refused",
+  );
+  expect(first.queries.snapshot().data?.sections.map(({ id }) => id)).toEqual([
+    "work",
+    "home",
+  ]);
+  await user.click(screen.getByRole("button", { name: "Retry move" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  expect(h.order).toHaveBeenCalledTimes(2);
+  expect(heading).toHaveFocus();
+  expect(first.queries.snapshot().data?.sections.map(({ id }) => id)).toEqual([
+    "home",
+    "work",
+  ]);
+  expect(heading).toHaveAttribute("aria-expanded", "false");
+  expect(h.write).not.toHaveBeenCalled();
+  mounted.unmount();
+  first.dispose();
+});
 
 it("creates and moves through the relay service, then restores in a fresh store", async () => {
   const h = fixture();

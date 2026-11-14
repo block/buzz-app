@@ -478,6 +478,9 @@ and are asked to sign in again in Buzz.
   channel does not grant access; inviting them requires an explicit decision
   from someone with permission.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
+  Drag a workspace header onto another workspace to reorder it, or use **Move up**
+  and **Move down** in its **…** menu. Escape cancels a drag; **Chats** stays below
+  the workspaces. A failed save restores the previous order and offers **Retry move**.
   Plugins can also group tasks under joined channels. On supported hosts, each
   channel group keeps the native channel actions and details. New task appears
   only when the channel permits starting a chat.

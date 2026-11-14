@@ -22,10 +22,13 @@ import { useDroppable } from "@dnd-kit/core";
 import {
   ChannelSidebarDnd,
   DraggableChannel,
+  useSidebarSectionDrag,
 } from "../../features/channel-navigation/ChannelSidebarDnd";
 import { WorkspaceSettings } from "../../features/solo/WorkspaceSettings";
 import {
   memo,
+  cloneElement,
+  isValidElement,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -50,9 +53,12 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuItem,
+  MenuIcon,
 } from "../../shared/design-system/ui/Menu";
 import {
   CaretDownIcon,
+  ArrowUpIcon,
+  ArrowDownIcon,
   DotsThreeIcon,
   PlusIcon,
 } from "../../shared/design-system/icons";
@@ -253,6 +259,22 @@ export function SoloWorkspaces({
     name: string;
   }>();
   const groups = snapshot.data?.sections ?? [];
+  const orderWritable = preferences.sectionOrderWritable;
+  const [orderFocus, setOrderFocus] = useState<string>();
+  useLayoutEffect(() => {
+    if (!orderFocus) return;
+    document
+      .querySelector<HTMLElement>(
+        `[data-solo-menu-id="project-${CSS.escape(orderFocus)}"] button`,
+      )
+      ?.focus({ preventScroll: true });
+    setOrderFocus(undefined);
+  }, [orderFocus]);
+  const moveProject = (id: string, to: number) => {
+    const ids = groups.map((group) => group.id).filter((key) => key !== id);
+    ids.splice(to, 0, id);
+    void preferences.reorderSections(id, ids).catch(() => {});
+  };
   const assigned = snapshot.data?.assignments ?? {};
   const assignmentFor = (item: ChatListItem) =>
     dormantAssignments?.has(item.id) ? undefined : assigned[item.id];
@@ -490,6 +512,8 @@ export function SoloWorkspaces({
       chats.some((item) => item.id === move.channelId),
     ) ?? [];
   const entries = visible.map((project) => {
+    const groupIndex = groups.findIndex((group) => group.id === project.id);
+    const reorderable = !!project.id && orderWritable;
     const open =
       !collapsed.includes(project.id) || renamingProject === project.id;
     const changeOpen = (open: boolean) =>
@@ -500,6 +524,9 @@ export function SoloWorkspaces({
     const frame = (children: ReactNode) => (
       <DropProject
         projectKey={DROP + project.id}
+        groupIndex={groupIndex}
+        reorderable={reorderable}
+        disabled={!preferences.writable}
         key={project.id}
         className={`${styles.project} ${channelStyles.channelSection}`}
         data-project={project.id ? "" : undefined}
@@ -530,6 +557,24 @@ export function SoloWorkspaces({
         content={
           <>
             {actions}
+            <MenuItem
+              disabled={!orderWritable || groupIndex <= 0}
+              onClick={() => moveProject(project.id, groupIndex - 1)}
+            >
+              <MenuIcon>
+                <ArrowUpIcon size={14} />
+              </MenuIcon>
+              Move up
+            </MenuItem>
+            <MenuItem
+              disabled={!orderWritable || groupIndex >= groups.length - 1}
+              onClick={() => moveProject(project.id, groupIndex + 1)}
+            >
+              <MenuIcon>
+                <ArrowDownIcon size={14} />
+              </MenuIcon>
+              Move down
+            </MenuItem>
             <MenuItem onClick={() => setSettingsFor(project)}>
               Workspace settings
             </MenuItem>
@@ -581,7 +626,13 @@ export function SoloWorkspaces({
               </>
             }
           >
-            {primary}
+            <WorkspaceDragHandle
+              sectionKey={DROP + project.id}
+              groupIndex={groupIndex}
+              reorderable={reorderable}
+            >
+              {primary}
+            </WorkspaceDragHandle>
           </NavigationSectionHeading>
         )}
       </ChatActionsMenu>
@@ -796,9 +847,23 @@ export function SoloWorkspaces({
       <ChannelSidebarDnd
         writable={preferences.writable}
         onMove={(id, key) => move(id, key.slice(DROP.length) || undefined)}
-        // Solo projects keep their saved order; only chats drag.
-        onReorder={() => {}}
-        overlay={(id) => {
+        onReorder={(key, over) => {
+          const id = key.slice(DROP.length);
+          const to = groups.findIndex((group) => DROP + group.id === over);
+          if (groups.some((group) => group.id === id) && to >= 0)
+            moveProject(id, to);
+        }}
+        overlay={(id, group) => {
+          if (group) {
+            const project = groups.find((project) => DROP + project.id === id);
+            return (
+              project && (
+                <div className={channelStyles.channelDragOverlay}>
+                  {project.name}
+                </div>
+              )
+            );
+          }
           const item = chats.find((item) => item.id === id);
           return (
             item && (
@@ -819,6 +884,37 @@ export function SoloWorkspaces({
             })
           : entries.map((entry) => entry.ordinary)}
       </ChannelSidebarDnd>
+      {snapshot.orderError && (
+        <div role="alert" className={styles.listMessage}>
+          <p>Couldn’t save workspace order. {snapshot.orderError.error}</p>
+          <p>
+            The previous order is shown. A partial save may already exist on the
+            relay.
+          </p>
+          <Button
+            disabled={!orderWritable}
+            onClick={() => {
+              const failed = preferences.snapshot().orderError;
+              if (failed) {
+                void preferences
+                  .reorderSections(failed.sectionId, failed.sectionIds)
+                  .catch(() => {});
+                setOrderFocus(failed.sectionId);
+              }
+            }}
+          >
+            Retry move
+          </Button>
+          <Button
+            onClick={() => {
+              setOrderFocus(snapshot.orderError?.sectionId);
+              preferences.dismissOrderError();
+            }}
+          >
+            Dismiss
+          </Button>
+        </div>
+      )}
       {converting && (
         <ConvertToChannel
           key={converting.id}
@@ -1119,18 +1215,58 @@ function ContributedSoloRow({
 /** A drop reports only its destination, so it saves exactly like Move to. */
 function DropProject({
   projectKey,
+  groupIndex,
+  reorderable,
+  disabled,
   ...props
-}: ComponentProps<typeof Collapsible.Root> & { projectKey: string }) {
-  const { setNodeRef, isOver, active } = useDroppable({ id: projectKey });
+}: ComponentProps<typeof Collapsible.Root> & {
+  projectKey: string;
+  groupIndex: number;
+  reorderable: boolean;
+  disabled: boolean;
+}) {
+  const { setNodeRef, isOver, active } = useDroppable({
+    id: projectKey,
+    data: { group: reorderable, groupIndex },
+    disabled,
+    resizeObserverConfig: { updateMeasurementsFor: [] },
+  });
+  const group = !!active?.data.current?.group;
   return (
     <Collapsible.Root
       {...props}
       ref={setNodeRef}
       data-drop-target={
-        (isOver && active?.data.current?.sectionKey !== projectKey) || undefined
+        (!group && isOver && active?.data.current?.sectionKey !== projectKey) ||
+        undefined
       }
+      data-drop-edge={
+        group && isOver && active?.id !== projectKey
+          ? active?.data.current?.groupIndex < groupIndex
+            ? "after"
+            : "before"
+          : undefined
+      }
+      data-section-dragging={(group && active?.id === projectKey) || undefined}
     />
   );
+}
+
+function WorkspaceDragHandle({
+  children,
+  ...options
+}: {
+  children: ReactNode;
+  sectionKey: string;
+  groupIndex: number;
+  reorderable: boolean;
+}) {
+  const drag = useSidebarSectionDrag(options);
+  // Preserve the heading recipe's direct trigger and the composed workspace's
+  // existing label/disclosure layout. Actions stay outside this handle.
+  return drag.handle && isValidElement<ComponentProps<"div">>(children)
+    ? cloneElement(children, { ref: drag.handle.ref, ...drag.handle.listeners })
+    : children;
 }
 
 /** Both entry points use one action list; right-click never selects the row. */

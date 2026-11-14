@@ -65,18 +65,9 @@ export function describe(
       (watch.expires_at === null || state.nextDue < watch.expires_at)
         ? ` · next ${when(state.nextDue)}`
         : "";
-    // A run sets the next one an interval after it started, so a one-shot
-    // the runner used ran an interval before its nextDue. Without saved
-    // state, its one run is the first occurrence.
-    const once =
-      state !== saved
-        ? watch.armed_at + watch.interval_secs
-        : state.used
-          ? state.nextDue - watch.interval_secs
-          : state.nextDue;
     const schedule =
       watch.max_occurrences === 1
-        ? `Once · ${when(once)}`
+        ? `Once · ${when(watch.armed_at + watch.interval_secs)}`
         : `Every ${interval}${runs}${next}`;
     return { title: schedule, spent };
   }

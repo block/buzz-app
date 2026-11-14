@@ -64,6 +64,7 @@ const backgrounds = [
   "#A16207",
   "#334155",
   "#18181B",
+  "transparent",
 ] as const;
 
 export type AvatarSelection =
@@ -336,7 +337,10 @@ export function AgentAvatarPicker({
         style={
           mode === "emoji"
             ? {
-                backgroundColor: `color-mix(in srgb, ${color} 14%, var(--surface-panel))`,
+                backgroundColor:
+                  color === "transparent"
+                    ? "var(--surface-panel)"
+                    : `color-mix(in srgb, ${color} 14%, var(--surface-panel))`,
               }
             : undefined
         }
@@ -554,7 +558,7 @@ export function AgentAvatarPicker({
                 {backgrounds.map((swatch) => (
                   <span key={swatch} className={styles.dockItem}>
                     <IconButton
-                      data-color-swatch=""
+                      data-color-swatch={swatch}
                       variant="primary"
                       shape="round"
                       size="sm"
@@ -570,7 +574,11 @@ export function AgentAvatarPicker({
                       }
                       aria-label={`Use ${swatch} background`}
                       aria-pressed={color === swatch}
-                      style={{ backgroundColor: swatch }}
+                      style={
+                        swatch === "transparent"
+                          ? undefined
+                          : { backgroundColor: swatch }
+                      }
                       onPointerDown={(event) => {
                         if (event.pointerType === "mouse")
                           event.preventDefault();

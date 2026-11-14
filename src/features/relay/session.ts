@@ -1874,6 +1874,20 @@ export function createRelaySession(
   const soloPreferences = createSoloPreferences(
     channelKit.capability,
     lifetime.signal,
+    (chats) => {
+      // Only a verified, uncapped roster proves a missing chat was deleted.
+      const list = channels.queries.list();
+      if (
+        channels.roster().state !== "verified" ||
+        list.status !== "ready" ||
+        list.coverage
+      )
+        return [];
+      const live = new Set(
+        list.channels.filter((c) => !c.archived).map((c) => c.id),
+      );
+      return chats.filter((chat) => !live.has(chat));
+    },
   );
   const reminders =
     transport?.reminders && writer

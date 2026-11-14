@@ -269,7 +269,12 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
     "aria-disabled": busy || undefined,
     disabled: addDisabled,
     onBlur: (event) => {
-      if (focusedAdd.current?.button === event.currentTarget)
+      // Replacing a pending Add can blur without a destination. Keep its return
+      // target; a deliberate move to another control retires it.
+      if (
+        event.relatedTarget &&
+        focusedAdd.current?.button === event.currentTarget
+      )
         focusedAdd.current = null;
     },
     onClick: (event) => {
@@ -1632,7 +1637,8 @@ export function ChannelMembersDialog({
   ])
     shownNames.set(name, (shownNames.get(name) ?? 0) + 1);
   // A confirmation can replace its Add button or retire another pending row.
-  // DOM removal does not emit blur, so restore focus only if it was not moved elsewhere.
+  // Native replacement may fall back to the body or the dialog's focus trap.
+  // Restore focus only if it was not moved to another control.
   useLayoutEffect(() => {
     const previous = focusedAdd.current;
     if (
@@ -1641,12 +1647,23 @@ export function ChannelMembersDialog({
         (offering || previous.button.isConnected))
     )
       return;
-    focusedAdd.current = null;
-    if (
-      document.activeElement === previous.button ||
-      document.activeElement === document.body
-    )
-      input.current?.focus();
+    const restore = () => {
+      if (
+        document.activeElement === previous.button ||
+        document.activeElement === document.body ||
+        document.activeElement === input.current?.closest('[role="dialog"]')
+      )
+        input.current?.focus();
+    };
+    restore();
+    // The trap may also react after this commit. Recheck ownership next frame
+    // so that a deliberate focus move still wins.
+    const frame = requestAnimationFrame(() => {
+      if (focusedAdd.current !== previous) return;
+      focusedAdd.current = null;
+      restore();
+    });
+    return () => cancelAnimationFrame(frame);
   }, [memberKey, offering]);
   const changeMember = useCallback(
     async (change: MemberChange, signal: AbortSignal) => {

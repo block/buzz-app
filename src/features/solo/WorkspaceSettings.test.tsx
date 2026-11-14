@@ -900,9 +900,13 @@ function project(entries: unknown[] = []) {
   return { close, rename, save, view, mounted };
 }
 
-it.each([false, true])(
-  "retries failed defaults with the current name (name already saved: %s)",
-  async (renamed) => {
+it.each([
+  { renamed: false, external: true },
+  { renamed: true, external: false },
+  { renamed: true, external: true },
+])(
+  "retries failed defaults with the current name ($renamed saved, $external external rename)",
+  async ({ renamed, external }) => {
     const h = project();
     fireEvent.change(await instructions(), {
       target: { value: "Keep these instructions" },
@@ -920,7 +924,7 @@ it.each([false, true])(
       "defaults offline",
     );
     h.mounted.unmount();
-    const currentName = renamed ? "Projects" : "Renamed elsewhere";
+    const currentName = external ? "Renamed elsewhere" : "Projects";
     render(h.view(currentName));
     expect(await instructions()).toHaveValue("Keep these instructions");
     expect(screen.getByRole("textbox", { name: "Workspace name" })).toHaveValue(
@@ -939,13 +943,9 @@ it.each([false, true])(
   },
 );
 
-it.each([
-  { baseline: true, nameSaved: false },
-  { baseline: false, nameSaved: false },
-  { baseline: true, nameSaved: true },
-])(
-  "keeps a conflicting name draft for review before saving ($baseline baseline, $nameSaved confirmed)",
-  async ({ baseline, nameSaved }) => {
+it.each([true, false])(
+  "keeps an unsaved conflicting name draft for review (recorded baseline: %s)",
+  async (baseline) => {
     const h = project();
     fireEvent.change(await instructions(), {
       target: { value: "Keep the conflicting draft" },
@@ -953,11 +953,10 @@ it.each([
     fireEvent.change(screen.getByRole("textbox", { name: "Workspace name" }), {
       target: { value: "Projects" },
     });
-    if (nameSaved) h.save.mockRejectedValueOnce(new Error("defaults offline"));
-    else h.rename.mockRejectedValueOnce(new Error("rename offline"));
+    h.rename.mockRejectedValueOnce(new Error("rename offline"));
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      nameSaved ? "defaults offline" : "rename offline",
+      "rename offline",
     );
     h.mounted.unmount();
     if (!baseline) {
@@ -974,7 +973,7 @@ it.each([
     expect(screen.getByRole("alert")).toHaveTextContent(/name.*review/i);
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
     expect(h.rename).toHaveBeenCalledTimes(1);
-    expect(h.save).toHaveBeenCalledTimes(nameSaved ? 1 : 0);
+    expect(h.save).not.toHaveBeenCalled();
     fireEvent.click(
       screen.getByRole("button", { name: "Review saved settings" }),
     );
@@ -1023,6 +1022,23 @@ it("validates workspace names and retains failed edits across remount and partia
   );
   expect(await instructions()).toHaveValue("Keep these instructions");
   h.save.mockRejectedValueOnce(new Error("defaults offline"));
+  let storage: ReturnType<typeof vi.spyOn> | undefined;
+  h.rename.mockImplementationOnce(async () => {
+    storage = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementationOnce(() => {
+        throw new Error("Device full");
+      });
+  });
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Workspace name saved. The confirmed workspace name couldn’t be retained",
+    );
+    expect(h.save).not.toHaveBeenCalled();
+  } finally {
+    storage?.mockRestore();
+  }
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Workspace name saved. defaults offline",

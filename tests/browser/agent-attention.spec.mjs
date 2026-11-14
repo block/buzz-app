@@ -440,3 +440,140 @@ test("empty Attention retains its card and sonar at both widths in the profile h
     });
   expect(maximumVisibleHints).toBe(1);
 });
+
+// Container-query geometry: the table needs a real browser at the pane's width.
+test("watch rows stack in a narrow pane and keep four columns in a wide one", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/agent-attention.html?crowded");
+  const interest = page.getByRole("region", {
+    name: /^Interest Platform reliability/,
+  });
+  const headings = interest.locator(".attention-column-headings");
+  const measure = () =>
+    interest.evaluate((card) => {
+      const rem = Number.parseFloat(
+        getComputedStyle(document.documentElement).fontSize,
+      );
+      const box = (el) => el.getBoundingClientRect();
+      const inside = (el) =>
+        box(el).left >= box(card).left - 0.5 &&
+        box(el).right <= box(card).right + 0.5;
+      const rows = [...card.querySelectorAll(".attention-table-row")];
+      const label = card.querySelector(".attention-column-headings h5");
+      const lineHeight = Number.parseFloat(getComputedStyle(label).lineHeight);
+      return {
+        rem,
+        rows: rows.length,
+        titles: rows.map(
+          (row) => box(row.querySelector(".attention-title")).width,
+        ),
+        // Every row child, the header status button and the interest header stay in the card.
+        contained: [
+          ...rows.flatMap((row) => [...row.children]),
+          card.querySelector(".attention-interest-head button"),
+        ].every(inside),
+        // The second line starts under the name text, not the icon.
+        aligned: rows.map((row) => {
+          const second = row.querySelector(
+            ".attention-reference, .attention-destination",
+          );
+          return (
+            Math.abs(
+              box(second).left -
+                box(row.querySelector(".attention-title")).left,
+            ) < 1
+          );
+        }),
+        stacked: rows.map((row) => {
+          const status = box(row.querySelector(".attention-status"));
+          const second = box(row.querySelector(".attention-destination"));
+          return second.top >= status.bottom - 0.5;
+        }),
+        // Space above line 1 (row top to the status button) and below line 2
+        // (the lower of source and destination to the row's bottom edge).
+        spacing: rows.map((row) => {
+          const top = box(row).top;
+          const bottom = Math.max(
+            ...[
+              ...row.querySelectorAll(
+                ".attention-reference, .attention-destination",
+              ),
+            ].map((el) => box(el).bottom),
+          );
+          return {
+            above: box(row.querySelector(".attention-status button")).top - top,
+            below: box(row).bottom - bottom,
+          };
+        }),
+        space: (() => {
+          const probe = document.createElement("div");
+          probe.style.height = "var(--space-2)";
+          card.append(probe);
+          const height = box(probe).height;
+          probe.remove();
+          return height;
+        })(),
+        textLines: rows.map((row) => {
+          const text = row.querySelector(".attention-destination > span");
+          return text
+            ? Math.round(
+                box(text).height /
+                  Number.parseFloat(getComputedStyle(text).lineHeight),
+              )
+            : 0;
+        }),
+        triggersLines: Math.round(box(label).height / lineHeight),
+        paneFits: document.documentElement.scrollWidth <= window.innerWidth,
+      };
+    });
+  // 242 and 238 are the real side pane: a 240px container, and a 236px Interest card.
+  // Their title floor is lower because the status button and icon take 108px of it.
+  for (const [width, fontSize, titleFloor] of [
+    [242, "16px", 5],
+    [238, "16px", 5],
+    [360, "16px", 6],
+    [360, "20px", 6],
+  ]) {
+    const at = `at ${width}px, ${fontSize} text`;
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate((size) => {
+      document.documentElement.style.fontSize = size;
+    }, fontSize);
+    await expect(
+      headings.getByRole("heading", { name: "Triggers" }),
+    ).toBeVisible();
+    // Only the section label remains; the column names have no columns to name.
+    for (const name of ["Sources", "Responds in", "Status"])
+      await expect(headings.getByText(name, { exact: true })).toBeHidden();
+    const narrow = await measure();
+    expect(narrow.rows, at).toBe(2);
+    for (const title of narrow.titles)
+      expect(title, at).toBeGreaterThanOrEqual(titleFloor * narrow.rem);
+    expect(narrow.contained, at).toBe(true);
+    expect(narrow.aligned, at).toEqual([true, true]);
+    expect(narrow.stacked, at).toEqual([true, true]);
+    // Both shapes (pills, and the timer's text) keep the row's vertical rhythm:
+    // line 2 clears the divider by the token, and as much as line 1 clears the top.
+    for (const { above, below } of narrow.spacing) {
+      expect(below, at).toBeGreaterThanOrEqual(narrow.space - 1);
+      expect(Math.abs(below - above), at).toBeLessThanOrEqual(2);
+    }
+    // Neither the label nor the destination text breaks across lines.
+    expect(narrow.triggersLines, at).toBe(1);
+    expect(narrow.textLines, at).toEqual([0, 1]);
+    expect(narrow.paneFits, at).toBe(true);
+  }
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "";
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  for (const name of ["Triggers", "Sources", "Responds in", "Status"])
+    await expect(headings.getByText(name, { exact: true })).toBeVisible();
+  const wide = await measure();
+  expect(wide.contained).toBe(true);
+  for (const width of wide.titles)
+    expect(width).toBeGreaterThanOrEqual(8 * wide.rem);
+  // Side by side in one line, as before.
+  expect(wide.stacked).toEqual([false, false]);
+});

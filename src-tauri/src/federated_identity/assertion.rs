@@ -951,6 +951,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sign_in_accepts_iat_120_s_ahead_and_names_clock_skew_at_121() {
+        let (viewer, relay, now) = ("a".repeat(64), "wss://relay.example", 1_000_000);
+        let check = |minted| {
+            let token = jwt(&viewer, relay, minted, now + 600);
+            validate_jwt(&token, &viewer, now + 600, &viewer, relay, now + 3600, now)
+        };
+        assert_eq!(check(now + 120), Ok(now + 120));
+        assert_eq!(check(now + 121).unwrap_err().code, "clock-skew");
+    }
+
+    #[test]
     fn token_deadline_counts_time_in_flight_whichever_way_the_clock_is_off() {
         let secs = std::time::Duration::from_secs;
         let start = Instant::now();

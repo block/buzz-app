@@ -2194,6 +2194,32 @@ fn left(admission: &Admission) -> Duration {
         .saturating_duration_since(tokio::time::Instant::now())
 }
 
+#[test]
+fn an_agent_assertion_may_be_minted_120_s_ahead_but_not_121() {
+    let f = fixture("http://unused".into());
+    let grant = Grant::new(
+        f.agent.owner.clone(),
+        f.agent.pubkey.clone(),
+        "a@example.com".into(),
+        "https://issuer.example".into(),
+        "g".into(),
+    );
+    let now = now().unwrap() as u64;
+    let check = |skew| {
+        let token = jwt(&f.agent, serde_json::json!({ "iat": now + skew }));
+        validate(
+            &token,
+            &f.agent,
+            &grant,
+            "wss://relay.example",
+            now + 300,
+            now,
+        )
+    };
+    assert!(check(120).is_ok());
+    assert_eq!(check(121).unwrap_err().code, "invalid-assertion");
+}
+
 #[tokio::test]
 async fn an_agent_on_a_slow_or_fast_clock_keeps_only_the_issued_lifetime() {
     for (skew, issued) in [(120, 150), (-120, 30)] {

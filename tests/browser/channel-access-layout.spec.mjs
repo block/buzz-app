@@ -22,7 +22,7 @@ test("general access starts the member list and footer actions stay reachable wi
   await page.route("**/query", async (route) => {
     const response = await route.fetch();
     // A refusal, such as a rate limit, carries no events to rewrite.
-    if (!response.ok) return route.fulfill({ response });
+    if (!response.ok()) return route.fulfill({ response });
     const events = await response.json();
     await route.fulfill({
       response,

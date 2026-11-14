@@ -14,6 +14,7 @@ import type {
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelView } from "../../features/panels/PanelView";
+import { isBundledContribution } from "../../plugins/provenance";
 import styles from "./Channels.module.css";
 import { focusDock } from "./useCoveredByDock";
 
@@ -161,7 +162,7 @@ export function useChannelPanels(
             if (!Launcher) return null;
             const tabbed = panel.channelPlacement === "tab";
             if (tabbed && !tabs) return null;
-            return (
+            const launcher = (
               <Launcher
                 key={`${panel.key}:${panel.revision}`}
                 context={context}
@@ -203,6 +204,16 @@ export function useChannelPanels(
                   }
                 }}
               />
+            );
+            return isBundledContribution(panel) ? (
+              launcher
+            ) : (
+              <span
+                key={`${panel.key}:${panel.revision}`}
+                className={styles.pluginLauncher}
+              >
+                {launcher}
+              </span>
             );
           })}
       </div>

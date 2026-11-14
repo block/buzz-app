@@ -710,6 +710,21 @@ ctx.reflect.get("sidebarSections")?.register({
 });
 ```
 
+### Filtering offscreen unread cues
+
+`sidebarRows` also accepts an optional `unreadCues: "mentions-and-dms"` on a
+version-1 contribution. Feature-check
+`ctx.reflect.get("sidebarRows")?.unreadCueModes?.includes("mentions-and-dms")`
+before registering; older hosts do not support this field.
+
+While any active contribution requests this mode, floating sidebar unread pills
+count and reveal only offscreen conversations with unread direct mentions
+(including mentions in replies) or unread DMs. Broadcasts and thread replies
+alone do not qualify. Existing mute exclusions still apply. Row indicators,
+message read state, and notifications are unchanged. Disable or replacement
+removes the contribution and restores the default when no restriction remains.
+See `examples/plugins/mentions-and-dms` for a single-file plugin.
+
 ### Solo-only sidebar
 
 `sidebarScope.restrict({ id, scope: "solo", banner })` shows only the Solo

@@ -25,6 +25,8 @@ export type SidebarRowSortMode = Readonly<{
 export type SidebarRowContribution = Readonly<{
   version: 1;
   id: string;
+  /** Limit offscreen unread cues without changing rows or read state. */
+  unreadCues?: "mentions-and-dms";
   render?: (
     row: SidebarRow,
     Default: ReactElement | null,
@@ -34,6 +36,8 @@ export type SidebarRowContribution = Readonly<{
 export type RegisteredSidebarRows = Contribution<SidebarRowContribution>;
 export type SidebarRows = Readonly<{
   version: 1;
+  /** Feature detection for hosts that support unread cue contributions. */
+  unreadCueModes?: readonly "mentions-and-dms"[];
   snapshot: () => readonly RegisteredSidebarRows[];
   subscribe: (listener: () => void) => () => void;
   settled?: () => boolean;
@@ -51,6 +55,7 @@ const idPattern = /^[a-z0-9][a-z0-9._-]*$/;
 
 export class SidebarRowsService extends Service implements SidebarRows {
   readonly version = 1 as const;
+  readonly unreadCueModes = Object.freeze(["mentions-and-dms"] as const);
   private readonly contributions;
   private source: readonly RegisteredSidebarRows[] = [];
   private ordered: readonly RegisteredSidebarRows[] = [];
@@ -91,6 +96,8 @@ export class SidebarRowsService extends Service implements SidebarRows {
     if (
       typeof value.id !== "string" ||
       !idPattern.test(value.id) ||
+      (value.unreadCues !== undefined &&
+        value.unreadCues !== "mentions-and-dms") ||
       (value.render !== undefined && typeof value.render !== "function") ||
       (value.sortModes !== undefined &&
         (!Array.isArray(value.sortModes) ||

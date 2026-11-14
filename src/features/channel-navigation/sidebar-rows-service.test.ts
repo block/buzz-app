@@ -50,6 +50,7 @@ it("orders active scopes by contribution key and removes registrations on disabl
     version: 1,
     id: "rows",
     render: (_, Default) => Default,
+    unreadCues: "mentions-and-dms",
   };
   const fibers = ["z.plugin", "a.plugin"].map((id) =>
     root
@@ -63,6 +64,12 @@ it("orders active scopes by contribution key and removes registrations on disabl
       "z.plugin/rows",
     ]);
     expect(registry.snapshot()).toBe(registry.snapshot());
+    expect(registry.unreadCueModes).toContain("mentions-and-dms");
+    expect(
+      registry
+        .snapshot()
+        .every((entry) => entry.unreadCues === "mentions-and-dms"),
+    ).toBe(true);
     active.delete("a.plugin");
     for (const listener of listeners) listener();
     expect(registry.snapshot().map((entry) => entry.key)).toEqual([
@@ -96,6 +103,7 @@ it.each([
     "example.plugin",
     { sortModes: [{ id: "one", label: "One", compare: null }] },
   ],
+  ["invalid unread cue mode", "example.plugin", { unreadCues: "all" }],
   ["non-function renderer", "example.plugin", { render: false }],
   [
     "incompatible owner id",

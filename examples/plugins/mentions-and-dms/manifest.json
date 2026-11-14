@@ -1,0 +1,6 @@
+{
+  "id": "local.mentions-and-dms",
+  "name": "Mentions and DMs only",
+  "apiVersion": 1,
+  "description": "Show sidebar unread pills only for direct mentions and unread DMs. Other messages keep their unread state."
+}

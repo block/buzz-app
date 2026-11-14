@@ -126,6 +126,7 @@ export function UnreadBadge({
   const hideUnreadDots = muted && labelUnread === "ordinary" && !preserveUnread;
   if (!unread && !threadCount && label === undefined) return null;
   const priority = dm || (attentionCount ?? 0) > 0;
+  const mentioned = (shown(snapshot).mentionCount ?? 0) > 0;
   const showUnreadDot =
     !hideUnreadDots &&
     priority &&
@@ -155,6 +156,7 @@ export function UnreadBadge({
         <span
           className={styles.unreadState}
           data-channel-unread=""
+          data-channel-mention={mentioned || undefined}
           data-channel-muted={muted || undefined}
           data-priority={priority}
           role="img"
@@ -179,6 +181,7 @@ export function UnreadBadge({
           <span
             className={styles.threadActivityDot}
             data-channel-activity=""
+            data-channel-mention={mentioned || undefined}
             data-channel-muted={muted || undefined}
             role="img"
             aria-label={activityLabel}

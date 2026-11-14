@@ -9,6 +9,10 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SidebarUnread, type UnreadDmPreview } from "./SidebarUnread";
+import { Context } from "@deepseek-ai/cordis";
+import { SidebarRowsService } from "../../features/channel-navigation/sidebar-rows-service";
+// @ts-expect-error External single-file plugin has no declaration file.
+import { apply as applyMentionsPlugin } from "../../../examples/plugins/mentions-and-dms/plugin.js";
 import { UnreadBadge } from "./UnreadBadge";
 import {
   createRelaySession,
@@ -385,6 +389,268 @@ it.each([
     } finally {
       cleanup();
       owner.dispose();
+    }
+  },
+);
+
+it("filters both edges through the installed plugin and restores default cues on disable", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const registry = new SidebarRowsService(root);
+  const plugin = root
+    .extend({ pluginOwner: { id: "local.mentions-and-dms", revision: "one" } })
+    .plugin(applyMentionsPlugin);
+  await plugin.await();
+  const destination = (
+    id: string,
+    top: number,
+    kind: "ordinary" | "broadcast" | "thread" | "mention" | "dm",
+  ) => (
+    <button
+      key={id}
+      type="button"
+      data-channel-id={id}
+      data-channel-type={kind === "dm" ? "dm" : "stream"}
+      data-top={top}
+    >
+      {id}
+      <span
+        data-channel-unread=""
+        data-channel-mention={kind === "mention" || undefined}
+        data-priority={kind === "broadcast" || kind === "dm"}
+      />
+      {kind === "thread" && <span data-channel-activity="" />}
+    </button>
+  );
+  try {
+    const children = [
+      destination("mention-above", 0, "mention"),
+      destination("ordinary-above", 70, "ordinary"),
+      destination("broadcast", 310, "broadcast"),
+      destination("thread", 340, "thread"),
+      destination("dm", 370, "dm"),
+    ];
+    render(<SidebarUnread sidebarRows={registry}>{children}</SidebarUnread>);
+    await measure();
+    const above = screen.getByRole("button", {
+      name: "1 unread conversation above",
+    });
+    const below = screen.getByRole("button", {
+      name: "1 unread conversation below",
+    });
+    fireEvent.click(above);
+    await measure();
+    expect(screen.getByRole("button", { name: "mention-above" })).toHaveFocus();
+    fireEvent.click(below);
+    await measure();
+    expect(screen.getByRole("button", { name: "dm" })).toHaveFocus();
+    // A live direct mention inside the thread becomes eligible independently
+    // of its broad attention marker, without changing the unread count.
+    await act(async () => {
+      screen
+        .getByRole("button", { name: "thread" })
+        .querySelector("[data-channel-activity]")
+        ?.setAttribute("data-channel-mention", "true");
+    });
+    await measure();
+    expect(
+      screen.getByRole("button", { name: "2 unread conversations below" }),
+    ).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: "2 unread conversations below" }),
+    );
+    await measure();
+    expect(screen.getByRole("button", { name: "thread" })).toHaveFocus();
+    await act(async () => {
+      screen
+        .getByRole("button", { name: "thread" })
+        .querySelector("[data-channel-activity]")
+        ?.removeAttribute("data-channel-mention");
+      screen
+        .getByRole("button", { name: "dm" })
+        .querySelector("[data-channel-unread]")
+        ?.remove();
+      screen
+        .getByRole("button", { name: "mention-above" })
+        .querySelector("[data-channel-unread]")
+        ?.remove();
+    });
+    await measure();
+    expect(
+      screen.queryByRole("button", { name: /unread conversation/ }),
+    ).toBeNull();
+    // Filtering never removes the ordinary unread evidence from the rows.
+    expect(
+      screen
+        .getByRole("button", { name: "ordinary-above" })
+        .querySelector("[data-channel-unread]"),
+    ).not.toBeNull();
+    await act(async () => {
+      await plugin.dispose();
+    });
+    await measure();
+    expect(
+      screen.getByRole("button", { name: "1 unread conversation above" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "2 unread conversations below" }),
+    ).toBeVisible();
+  } finally {
+    cleanup();
+    await root.fiber.dispose();
+  }
+});
+
+it("explains the required app update on hosts without unread cue support", () => {
+  expect(() =>
+    applyMentionsPlugin({ reflect: { get: () => undefined } }),
+  ).toThrow(/needs a Buzz version/);
+});
+
+it.each([
+  {
+    kind: "ordinary",
+    dm: false,
+    mentions: 0,
+    threads: 0,
+    attention: 0,
+    eligible: false,
+  },
+  {
+    kind: "broadcast",
+    dm: false,
+    mentions: 0,
+    threads: 0,
+    attention: 1,
+    eligible: false,
+  },
+  {
+    kind: "thread reply",
+    dm: false,
+    mentions: 0,
+    threads: 1,
+    attention: 1,
+    eligible: false,
+  },
+  {
+    kind: "top-level mention",
+    dm: false,
+    mentions: 1,
+    threads: 0,
+    attention: 1,
+    eligible: true,
+  },
+  {
+    kind: "mention in reply",
+    dm: false,
+    mentions: 1,
+    threads: 1,
+    attention: 1,
+    eligible: true,
+  },
+  {
+    kind: "DM",
+    dm: true,
+    mentions: 0,
+    threads: 0,
+    attention: 1,
+    eligible: true,
+  },
+  {
+    kind: "DM thread reply",
+    dm: true,
+    mentions: 0,
+    threads: 1,
+    attention: 1,
+    eligible: true,
+  },
+])(
+  "projects $kind from production badges into the filtered cue",
+  async ({ dm, mentions, threads, attention, eligible }) => {
+    const root = new Context();
+    root.provide("pluginStatus", {
+      isActive: () => true,
+      subscribe: () => () => {},
+    });
+    const registry = new SidebarRowsService(root);
+    const plugin = root
+      .extend({
+        pluginOwner: { id: "local.mentions-and-dms", revision: "one" },
+      })
+      .plugin(applyMentionsPlugin);
+    await plugin.await();
+    const owner = createRelaySession(null);
+    const base = owner.session;
+    let snapshot = {
+      ...base.unread.snapshot({ kind: "channel", channelId: "sample" }),
+      observedCount: 1,
+      attentionCount: attention,
+      mentionCount: mentions,
+      row: {
+        observedCount: 1,
+        attentionCount: attention,
+        mentionCount: mentions,
+        threadCount: threads,
+      },
+    };
+    const listeners = new Set<() => void>();
+    const session: RelaySession = {
+      ...base,
+      unread: {
+        ...base.unread,
+        snapshot: () => snapshot,
+        subscribe: (_target, listener) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+      },
+    };
+    try {
+      render(
+        <SidebarUnread sidebarRows={registry}>
+          <button
+            type="button"
+            data-channel-id="sample"
+            data-channel-type={dm ? "dm" : "stream"}
+            data-top="340"
+          >
+            Sample
+            <UnreadBadge session={session} channelId="sample" dm={dm} />
+          </button>
+        </SidebarUnread>,
+      );
+      await measure();
+      expect(
+        screen.queryByRole("button", {
+          name: "1 unread conversation below",
+        }) !== null,
+      ).toBe(eligible);
+      await act(async () => {
+        snapshot = {
+          ...snapshot,
+          row: {
+            observedCount: 0,
+            attentionCount: 0,
+            mentionCount: 0,
+            threadCount: 0,
+          },
+        };
+        for (const listener of listeners) listener();
+      });
+      await measure();
+      expect(
+        screen.queryByRole("button", { name: /unread conversation/ }),
+      ).toBeNull();
+      expect(snapshot.observedCount).toBe(1);
+    } finally {
+      cleanup();
+      owner.dispose();
+      await root.fiber.dispose();
     }
   },
 );

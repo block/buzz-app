@@ -1566,6 +1566,10 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   place: review the source change and choose **Update**, with no removal. It is
   refused before anything downloads when the plugin is installed from a folder;
   **Open plugin** shows it in Manage plugins, where you can delete it first.
+- An optional **Mentions and DMs only** folder plugin can limit the floating
+  sidebar unread pills to unread direct mentions and DMs. Other messages keep
+  their unread state. Disable it to restore the default pills. It requires a
+  Buzz build with support for filtering unread cues.
 - **Focus**, when its optional plugin is on, is in the profile menu. For a
   chosen time it shows only Solo chats in the sidebar and lets only Solo chats
   in the selected community show banners, play sounds or light the Dock dot. Links and search still open

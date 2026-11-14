@@ -308,7 +308,11 @@ function ScopedSidebar({
                   tryAgain={() => props.relay.tryAgain()}
                 />
                 {before}
-                <SidebarUnread listRef={sidebar.list} dmPreviews={dmPreviews}>
+                <SidebarUnread
+                  listRef={sidebar.list}
+                  dmPreviews={dmPreviews}
+                  sidebarRows={props.sidebarRows}
+                >
                   <section
                     aria-label={soloTitle}
                     className={styles.sidebarGroup}

@@ -1,8 +1,8 @@
-import { readView, subscribeView, viewRevision } from "../../shared/view-state";
 import { useSoloRowActivation } from "./useSoloRowActivation";
+import { useIsPresent } from "motion/react";
 import type { ComposeWorkspaces } from "./WorkspaceComposition";
 import { useSoloNavigation } from "./solo-navigation-react";
-import { regionDraftKey, soloNavigationFor } from "./solo-navigation";
+import { soloNavigationFor } from "./solo-navigation";
 import {
   useCallback,
   useLayoutEffect,
@@ -16,7 +16,13 @@ import {
 } from "react";
 import { useChannelNavigation } from "./ChannelNavigationState";
 import { eligibleSolo } from "../solo/labels";
-import { conversationTarget, soloDraft, soloDraftTarget } from "./routes";
+import {
+  conversationTarget,
+  soloDraft,
+  soloDraftTarget,
+  resumeSoloDraftTarget,
+} from "./routes";
+import { hasSoloDraft, useSoloDraftProjects } from "../solo/draft-projects";
 import { ChannelActivityPopover } from "../../bundled/channels/ChannelActivityPopover";
 import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
@@ -39,7 +45,7 @@ import { rosterRecovering } from "../relay/live-recovery";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import { buzzLinkTarget } from "../navigation/buzz-links";
-import { resetNewChatProject } from "../solo/SoloDraft";
+import { resetNewChatProject, soloDraftInput } from "../solo/SoloDraft";
 import { NewWorkspace } from "../solo/NewWorkspace";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -53,6 +59,7 @@ import creationStyles from "./SoloInventory.module.css";
 import {
   DotsThreeIcon,
   ChatCircleIcon,
+  PencilSimpleIcon,
   PlusIcon,
 } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
@@ -114,6 +121,7 @@ export function SoloInventory({
   const [menuOpen, setMenuOpen] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const [draftFocus, setDraftFocus] = useState<HTMLElement | null>(null);
   const rosterRecovers = useRecoveryOwns(session, (live) =>
     rosterRecovering(live.roster),
   );
@@ -125,22 +133,21 @@ export function SoloInventory({
     target.pageId === "channels"
       ? soloDraft(target.route?.params)
       : undefined;
-  // A lead draft leads only while it still targets the workspace it opened in.
-  const leadKey =
-    draft?.lead && draft.region && draft.project
-      ? `${regionDraftKey(draft.region, draft.project)}:new-project`
-      : undefined;
-  const subscribeDraft = useCallback(
-    (listener: () => void) => subscribeView(scope, listener),
-    [scope],
+  const draftProjects = useSoloDraftProjects(
+    session,
+    scope,
+    preferences.data?.sections.map((project) => project.id) ?? [],
   );
-  useSyncExternalStore(subscribeDraft, () =>
-    leadKey ? viewRevision(scope, leadKey) : null,
+  const listedDrafts = draftProjects.map((project) =>
+    soloDraftTarget(scope, project ? { project } : {}),
   );
-  const leadDraft =
-    leadKey && readView(scope, leadKey, draft?.project) === draft?.project
-      ? draft?.project
-      : undefined;
+  if (draft && !draft.region) {
+    const index = draft.linked
+      ? -1
+      : draftProjects.indexOf(draft.project ?? "");
+    if (index < 0) listedDrafts.push(target);
+    else listedDrafts[index] = target;
+  }
   const handoff = useChannelNavigation();
   const workingIds = useSyncExternalStore(
     session.agentActivity.subscribeWorking,
@@ -192,7 +199,7 @@ export function SoloInventory({
         channelId,
         agent,
         trigger: document.querySelector<HTMLElement>(
-          `[data-solo-channel-id="${CSS.escape(channelId)}"]`,
+          `[data-solo-channel-id="${CSS.escape(channelId)}"]:not([inert] *)`,
         ),
         // A Solo chat is one conversation, so its transcript is known.
         transcript: {},
@@ -270,18 +277,32 @@ export function SoloInventory({
     session.unread,
     JSON.stringify(conversations.map((item) => item.id)),
   );
-  const composing = !!regions.regions.find((region) => region.source)?.source
-    ?.composeWorkspaces;
+  const composing = !!regions.regions.find(
+    (region) => region.source && !region.hidden && region.reason !== "disabled",
+  )?.source?.composeWorkspaces;
   const empty =
     list.status === "ready" &&
     preferences.status === "ready" &&
     !conversations.length &&
+    !listedDrafts.length &&
     !preferences.data?.sections.length;
   const current = () => !handoff || handoff.session === session;
   const newChat = (project?: string) => {
     if (!current()) return;
-    if (project) resetNewChatProject(scope, project);
-    void navigator.open(soloDraftTarget(scope, project ? { project } : {}));
+    const destination = resumeSoloDraftTarget(scope, target, project);
+    const input = destination === target ? soloDraftInput() : null;
+    if (input) {
+      if (menuOpen) setDraftFocus(input);
+      else input.focus();
+      return;
+    }
+    if (
+      project &&
+      destination !== target &&
+      !hasSoloDraft(session, scope, project)
+    )
+      resetNewChatProject(scope, project);
+    void navigator.open(destination);
   };
   const creationItems = (
     <>
@@ -298,7 +319,13 @@ export function SoloInventory({
   );
   const actions = (
     <div className={creationStyles.actions}>
-      <MenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
+      <MenuRoot
+        open={menuOpen}
+        onOpenChange={(next) => {
+          if (next) setDraftFocus(null);
+          setMenuOpen(next);
+        }}
+      >
         <MenuTrigger
           render={
             <IconButton
@@ -318,7 +345,16 @@ export function SoloInventory({
             />
           }
         />
-        <MenuPopup align="end">{creationItems}</MenuPopup>
+        <MenuPopup
+          align="end"
+          finalFocus={
+            draftFocus
+              ? () => (draftFocus.isConnected ? draftFocus : false)
+              : undefined
+          }
+        >
+          {creationItems}
+        </MenuPopup>
       </MenuRoot>
     </div>
   );
@@ -363,38 +399,46 @@ export function SoloInventory({
       )}
       <SoloWorkspaces
         sidebarRows={rowEntries}
-        compose={
-          compose &&
-          ((parts) =>
-            compose({
-              ...parts,
-              ...(leadDraft ? { leadDraft } : {}),
-            }))
-        }
+        dormantAssignments={regions.managed}
+        compose={compose}
         renderChatMenu={renderChatMenu}
         navigator={navigator}
-        draft={
-          draft && !draft.region
-            ? {
-                projectId: draft.project,
-                content: (
-                  <NavigationItem
-                    label="New chat"
-                    selected
-                    icon={
-                      <span
-                        className={styles.conversationIcon}
-                        aria-hidden="true"
-                      >
-                        <ChatCircleIcon size={16} />
-                      </span>
-                    }
-                    onClick={() => void navigator.open(target)}
-                  />
-                ),
-              }
-            : undefined
-        }
+        drafts={listedDrafts.map((destination) => {
+          const route =
+            destination.kind === "page"
+              ? soloDraft(destination.route?.params)
+              : undefined;
+          const selected =
+            !!draft &&
+            !draft.region &&
+            draft.linked === route?.linked &&
+            draft.project === route?.project;
+          return {
+            id: route?.linked ?? route?.project ?? "solo",
+            projectId: route?.project,
+            selected,
+            content: (
+              <NavigationItem
+                label="New chat"
+                aria-description="Unsent draft"
+                selected={selected}
+                icon={
+                  <span className={styles.conversationIcon} aria-hidden="true">
+                    <PencilSimpleIcon size={16} />
+                  </span>
+                }
+                onClick={() => {
+                  const input = selected ? soloDraftInput() : null;
+                  if (input) {
+                    input.focus();
+                    return;
+                  }
+                  void navigator.open(destination);
+                }}
+              />
+            ),
+          };
+        })}
         visit={navigator.snapshot().attempt.signal}
         session={session}
         scope={scope}
@@ -429,7 +473,7 @@ export function SoloInventory({
   return (
     <nav
       className={styles.sidebarContents}
-      aria-label={`${regions.regions.find((region) => region.source)?.title ?? "Solo"} conversations`}
+      aria-label={`${regions.regions.find((region) => region.source && !region.hidden)?.title ?? "Solo"} conversations`}
     >
       {renderContents ? (
         renderContents(content(), header, pendingClick, content)
@@ -479,9 +523,10 @@ function SoloConversationRow({
   | "onOpenAgentActivity"
 >) {
   const selectRef = useRef<HTMLButtonElement>(null);
+  const present = useIsPresent();
   useLayoutEffect(() => {
     const button = selectRef.current;
-    if (!button) return;
+    if (!button || !present) return;
     const document = button.ownerDocument;
     const sidebar = button.closest("nav");
     const panel = button.closest<HTMLElement>("[data-solo-project]");
@@ -489,7 +534,7 @@ function SoloConversationRow({
       if (document.activeElement !== button) return;
       const rows = [
         ...(panel?.querySelectorAll<HTMLElement>(
-          "button[data-solo-channel-id]",
+          "button[data-solo-channel-id]:not([inert] *)",
         ) ?? []),
       ];
       const index = rows.indexOf(button);
@@ -509,7 +554,7 @@ function SoloConversationRow({
           return;
         const find = (id: string) =>
           sidebar.querySelector<HTMLElement>(
-            `button[data-solo-channel-id="${CSS.escape(id)}"]`,
+            `button[data-solo-channel-id="${CSS.escape(id)}"]:not([inert] *)`,
           );
         const candidates = [
           find(id),
@@ -526,7 +571,7 @@ function SoloConversationRow({
         }
       });
     };
-  }, [id]);
+  }, [id, present]);
   const activation = useSoloRowActivation(
     navigation,
     pendingClick,

@@ -44,6 +44,7 @@ import {
 import {
   CheckCircleIcon,
   CopyIcon,
+  RobotIcon,
 } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AgentAvatar } from "../../features/agents/AgentAvatar";
@@ -608,7 +609,10 @@ function ProfileDetails({
             />
           </div>
           <div className={styles.identity}>
-            <h2 className="text-body-lg">{name}</h2>
+            <h2 className="text-body-lg">
+              {displayAgent && <RobotIcon className={styles.agentIcon} />}
+              {name}
+            </h2>
             {profile?.verified && (
               <p
                 className={`${styles.verifiedName} text-body-sm text-secondary`}

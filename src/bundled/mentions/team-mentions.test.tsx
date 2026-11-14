@@ -379,7 +379,7 @@ it("teams retain installed membership through rerenders and stale acceptance unt
     h.notify();
     expect(menu.team()?.disabled).toContain("membership changed");
     expect(menu.team()?.canSelect?.("Enter")).toBe(false);
-    expect(menu.team()?.edit.mentions).toBeUndefined();
+    expect(menu.team()?.edit.group?.mentions).toBeUndefined();
     expect(
       menu.result().items.find((i) => i.id === h.agent.pubkey)?.disabled,
     ).toContain("membership changed");
@@ -466,7 +466,7 @@ it("the team picker disables a removed member until reopened", async () => {
     });
     expect(reopened).toBeEnabled();
     await user.click(reopened);
-    expect(selectTeam).toHaveBeenCalledWith([h.agent]);
+    expect(selectTeam).toHaveBeenCalledWith([h.agent], "Team");
   } finally {
     view.unmount();
     h.library.dispose();
@@ -488,7 +488,7 @@ it.each([false, true])(
       act(() => menu.result().retry?.());
       await waitFor(() => expect(h.read).toHaveBeenCalledTimes(2));
       await waitFor(() => expect(menu.team()?.canSelect?.("Enter")).toBe(true));
-      expect(menu.team()?.edit.mentions).toEqual([h.agent]);
+      expect(menu.team()?.edit.group?.mentions).toEqual([h.agent]);
     } finally {
       menu.view.unmount();
       h.library.dispose();
@@ -529,13 +529,93 @@ it.each([false, true])(
       });
       expect(team).toBeEnabled();
       await user.click(team);
-      expect(selectTeam).toHaveBeenCalledWith([h.agent]);
+      expect(selectTeam).toHaveBeenCalledWith([h.agent], "Team");
     } finally {
       view.unmount();
       h.library.dispose();
     }
   },
 );
+
+/** A team of the fixture's agent and one person, who is outside the channel. */
+function teamWithPerson(h: ReturnType<typeof fixture>) {
+  const person = h.people[1];
+  if (!person) throw new Error("Fixture needs a person");
+  h.update({ members: [h.agent.pubkey] });
+  h.catalog({
+    status: "ready",
+    entries: [
+      {
+        eventId: "head",
+        createdAt: 1,
+        record: {
+          version: 1,
+          community: "fixture",
+          deleted: false,
+          value: {
+            type: "team",
+            id: "team",
+            name: "Team",
+            agents: [h.agent.pubkey, person.pubkey],
+          },
+        },
+      },
+    ],
+  });
+  return person;
+}
+
+it("a team mentions a person outside the channel, as the individual chooser would", async () => {
+  const h = fixture({ count: 2, team: 1 });
+  const person = teamWithPerson(h);
+  const menu = inline(h.session);
+  try {
+    await waitFor(() => expect(menu.team()?.canSelect?.("Enter")).toBe(true));
+    expect(menu.team()?.edit.group?.mentions).toEqual([h.agent, person]);
+    expect(menu.team()?.detail).toBe(
+      "Saved team · 1 person, 1 agent · 1 not in channel",
+    );
+  } finally {
+    menu.view.unmount();
+    h.library.dispose();
+  }
+});
+
+it("a team person without a known name stays unavailable until their profile loads", async () => {
+  const h = fixture({ count: 2, team: 1 });
+  const person = teamWithPerson(h);
+  let names = new Map(h.session.profiles.snapshot());
+  names.delete(person.pubkey);
+  const listeners = new Set<() => void>();
+  const ensure = vi.fn(async () => {});
+  Object.assign(h.session.profiles, {
+    snapshot: () => names,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    ensure,
+  });
+  const menu = inline(h.session);
+  try {
+    await waitFor(() =>
+      expect(ensure).toHaveBeenCalledWith(
+        [h.agent.pubkey, person.pubkey].sort(),
+        "background",
+      ),
+    );
+    expect(menu.team()?.disabled).toContain("unavailable");
+    act(() => {
+      names = new Map(names).set(person.pubkey, { name: person.name });
+      for (const listener of listeners) listener();
+    });
+    await waitFor(() => expect(menu.team()?.canSelect?.("Enter")).toBe(true));
+    expect(menu.team()?.edit.group?.mentions).toEqual([h.agent, person]);
+  } finally {
+    menu.view.unmount();
+    h.library.dispose();
+  }
+});
 
 it("more members than the shown rows rank only the first rows", async () => {
   const h = fixture({ count: MENTION_ROWS + 1, team: 0 });
@@ -960,12 +1040,14 @@ it("offers a team created through Your teams in both mention choosers", async ()
     const choice = () =>
       completion(publish)?.items.find((item) => item.label === "ReviewCrew");
     await waitFor(() => expect(choice()?.canSelect?.("Enter")).toBe(true));
-    expect(choice()?.edit).toEqual({ mentions: h.people });
+    expect(choice()?.edit).toEqual({
+      group: { name: "ReviewCrew", mentions: h.people },
+    });
     await user.click(screen.getByRole("button", { name: "Mention a member" }));
     await user.click(
       await screen.findByRole("button", { name: /ReviewCrew.*Saved team/ }),
     );
-    expect(selectTeam).toHaveBeenCalledExactlyOnceWith(h.people);
+    expect(selectTeam).toHaveBeenCalledExactlyOnceWith(h.people, "ReviewCrew");
   } finally {
     view.unmount();
     h.library.dispose();
@@ -1019,7 +1101,9 @@ it.each(["loading", "error", "unavailable"] as const)(
       expect(choice()?.disabled).toContain("changed");
       view.rerender(content({ start: 0, end: 10, query: "Review Cr" }));
       await waitFor(() => expect(choice()?.canSelect?.("Enter")).toBe(true));
-      expect(choice()?.edit).toEqual({ mentions: h.people.slice(0, 1) });
+      expect(choice()?.edit).toEqual({
+        group: { name: expect.any(String), mentions: h.people.slice(0, 1) },
+      });
       const renamed = choice();
       await act(() => h.service.saveTeam({ ...team, name: "Renamed Crew" }));
       expect(renamed?.canSelect?.("Enter")).toBe(false);
@@ -1182,7 +1266,10 @@ it.each([true, false])(
       await waitFor(() => expect(completion(publish)?.items.length).toBe(1));
       const choice = completion(publish).items[0];
       expect(choice?.canSelect?.("Enter")).toBe(canAdd);
-      if (canAdd) expect(choice?.edit).toEqual({ mentions: h.people });
+      if (canAdd)
+        expect(choice?.edit).toEqual({
+          group: { name: expect.any(String), mentions: h.people },
+        });
       else expect(choice?.disabled).toContain("unavailable");
     } finally {
       view.unmount();
@@ -1435,8 +1522,12 @@ it("projects confirmed synced teams through the real service without colliding w
     const choices = completion(publish).items;
     const synced = choices.find((item) => item.label === "Synced Crew");
     const legacy = choices.find((item) => item.label === "Legacy Crew");
-    expect(synced?.edit).toEqual({ mentions: h.people });
-    expect(legacy?.edit).toEqual({ mentions: [h.agent] });
+    expect(synced?.edit).toEqual({
+      group: { name: "Synced Crew", mentions: h.people },
+    });
+    expect(legacy?.edit).toEqual({
+      group: { name: "Legacy Crew", mentions: [h.agent] },
+    });
     expect(synced?.id).not.toBe(legacy?.id);
     expect(synced?.canSelect?.("Enter")).toBe(true);
     expect(legacy?.canSelect?.("Enter")).toBe(true);

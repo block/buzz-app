@@ -266,7 +266,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
                 ),
               ),
           );
-          return found.flat().sort((a, b) => b.lastAt - a.lastAt);
+          return (await runtime.withWakes(agent.key, found.flat())).sort(
+            (a, b) => b.lastAt - a.lastAt,
+          );
         },
       }),
     provider: {

@@ -864,6 +864,32 @@ function Dashboard({
               )}
             </section>
           </div>
+          {!progress && result.routines.length > 0 && (
+            <section className={styles.section} aria-label="By routine">
+              <InlineHeader title="By routine" />
+              <ul className={styles.list}>
+                {result.routines.map(
+                  ({ agent, wake, cost: total, sessions }) => (
+                    <li
+                      key={agent && wake ? `${agent.pubkey}:${wake}` : "other"}
+                    >
+                      <div className={styles.staticRow}>
+                        <span className={styles.sessionText}>
+                          <span className={styles.name}>{wake ?? "Other"}</span>
+                          <span className={styles.label}>
+                            {[agent?.name, count(sessions, "session")]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        </span>
+                        <Amount total={total} />
+                      </div>
+                    </li>
+                  ),
+                )}
+              </ul>
+            </section>
+          )}
         </>
       )}
     </div>

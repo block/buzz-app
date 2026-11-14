@@ -36,9 +36,12 @@ import type {
   SessionPlace,
   SessionControlAction,
   SessionState,
+  SessionUsage,
 } from "../../features/agents/service";
 import { type AgentKey, pubkeyOf } from "../../features/agents/membership";
 import { sessionPrompts } from "../../features/agents/session-prompts";
+import { withWakes } from "../../features/agents/session-usage";
+import { standaloneSessions } from "../../features/agents/standalone-sessions";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
@@ -176,6 +179,15 @@ export class GooseRuntime {
     /** Agent storage, where what each session started with is kept. */
     private readonly agentStore: AgentStore = localStore(),
   ) {}
+
+  /** `sessions` with, for each a standalone turn started, the key it ran
+   * under. */
+  withWakes(agent: AgentKey, sessions: readonly SessionUsage[]) {
+    return withWakes(
+      sessions,
+      standaloneSessions(this.agentStore, "goose", agent).list(),
+    );
+  }
 
   /** What each of the agent's sessions started with. */
   prompts(agent: AgentKey) {
@@ -928,12 +940,19 @@ export class GooseRuntime {
       tools,
       process: { get },
       store: localSessions(this.storage, agent),
-      started: (session, text, title, conversation) =>
+      started: (session, text, title, conversation, wake) => {
         void this.prompts(agent).save(session, [{ label: "", text }], {
           at: Date.now(),
           title: title ?? "",
           conversation: conversation ?? null,
-        }),
+        });
+        // Kept apart from the saved prompts, which drop old sessions.
+        if (wake)
+          void standaloneSessions(this.agentStore, "goose", agent).add(
+            session,
+            wake,
+          );
+      },
       tags: (conversation) => sessionTags(agent, conversation),
       onChange: () => this.notify(),
       // Read as each turn starts, so a change needs no restart.

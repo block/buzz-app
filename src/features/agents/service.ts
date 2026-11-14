@@ -489,6 +489,10 @@ export type SessionUsage = Readonly<{
   channelId?: string;
   root?: string;
   title?: string;
+  /** The key of the standalone turn that started it (`timer/ID` or
+   * `watch/ID`), as `runOnce` was given it. Left out when it did not start
+   * from one, or the harness does not say. */
+  wake?: string;
   startedAt: number;
   lastAt: number;
   observations: readonly UsageObservation[];

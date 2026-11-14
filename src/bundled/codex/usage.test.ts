@@ -161,10 +161,184 @@ it("keeps only threads Buzz started for this agent", () => {
   expect(rolloutUsage("t", unscoped, [], there)).toBeUndefined();
 });
 
+it("counts a watch's or timer's thread, which names no conversation, only when its record lists it", () => {
+  // A standalone turn's prompt has no Buzz context naming a channel.
+  const once = [
+    instructions(),
+    message(1, "user", "<watch-task>\nTimer: daily\n</watch-task>"),
+    record(1000, 6, 2, 3),
+  ].join("\n");
+  expect(rolloutUsage("t", once, [], sol)).toBeUndefined();
+  const counted = rolloutUsage("t", once, [], sol, true);
+  expect(counted).toMatchObject({ id: "t", startedAt: hour, gaps: [] });
+  expect(counted).not.toHaveProperty("channelId");
+  expect(counted?.observations).toHaveLength(1);
+  // The record never makes a teammate's thread the agent's.
+  expect(
+    rolloutUsage(
+      "t",
+      once.replace(instructions(), instructions(other, agent)),
+      [],
+      sol,
+      true,
+    ),
+  ).toBeUndefined();
+});
+
 let home: string | undefined;
 afterEach(() => {
   if (home) rmSync(home, { recursive: true, force: true });
   home = undefined;
+});
+
+it("reads a standalone thread found by its name once its record lists it", async () => {
+  home = mkdtempSync(join(tmpdir(), "codex-usage-"));
+  const path = join(home, "once.jsonl");
+  writeFileSync(
+    path,
+    [
+      instructions(),
+      model(2, "gpt-6.1-sol"),
+      message(3, "user", "<watch-task>\nTimer: daily\n</watch-task>"),
+      record(1000, 4, 0, 2),
+    ].join("\n"),
+  );
+  const threads = [
+    {
+      id: "once",
+      name: "Buzz timer/daily · Sol",
+      path,
+      updatedAt: (hour + 1000) / 1000,
+    },
+  ];
+  const spawn = processes((params) => ({
+    data: params.parentThreadId
+      ? []
+      : threads.filter((thread) =>
+          thread.name.includes(String(params.searchTerm)),
+        ),
+    nextCursor: null,
+  }));
+  const host = {
+    spawn,
+    readFile: async (file: string) => new Uint8Array(await readFile(file)),
+  };
+  const read = (standalone?: ReadonlySet<string>) =>
+    readUsage(
+      host,
+      { ...sol, name: "Sol" },
+      hour - HOUR,
+      new AbortController().signal,
+      standalone,
+    );
+  expect(await read()).toEqual([]);
+  // Read again, though Codex didn't update the thread, once the record has it.
+  const [session] = await read(new Set(["once"]));
+  expect(session?.id).toBe("once");
+  expect(session?.observations.map((entry) => entry.tokens)).toEqual([
+    { input: 4, output: 2, cacheRead: 0, cacheWrite: 0 },
+  ]);
+});
+
+it("still counts a timer thread recorded as Sol once the agent is renamed Luna, looking each recorded id up once and only when it is the agent's", async () => {
+  home = mkdtempSync(join(tmpdir(), "codex-usage-"));
+  const rollout = (name: string, who: string) => {
+    const path = join(home ?? "", `${name}.jsonl`);
+    writeFileSync(
+      path,
+      [
+        instructions(who),
+        model(2, "gpt-6.1-sol"),
+        message(3, "user", "<watch-task>\nTimer: daily\n</watch-task>"),
+        record(1000, 4, 0, 2),
+      ].join("\n"),
+    );
+    return path;
+  };
+  const updatedAt = (hour + 1000) / 1000;
+  const threads = [
+    // Recorded while the agent was named Sol.
+    {
+      id: "before",
+      name: "Buzz timer/daily · Sol",
+      path: rollout("before", agent),
+      updatedAt,
+    },
+    // Recorded after it became Luna, so its name finds it too.
+    {
+      id: "after",
+      name: "Buzz watch/deploys · Luna",
+      path: rollout("after", agent),
+      updatedAt,
+    },
+    // A recorded id whose rollout names another agent's pubkey.
+    {
+      id: "theirs",
+      name: "Buzz timer/daily · Ra",
+      path: rollout("theirs", other),
+      updatedAt,
+    },
+  ];
+  const looked: string[] = [];
+  const spawn = processes(
+    (params) => ({
+      data: params.parentThreadId
+        ? []
+        : threads.filter((thread) =>
+            thread.name.includes(String(params.searchTerm)),
+          ),
+      nextCursor: null,
+    }),
+    ({ threadId }) => {
+      looked.push(String(threadId));
+      return threads.find((thread) => thread.id === threadId);
+    },
+  );
+  const sessions = await readUsage(
+    {
+      spawn,
+      readFile: async (file: string) => new Uint8Array(await readFile(file)),
+    },
+    { ...sol, name: "Luna" },
+    hour - HOUR,
+    new AbortController().signal,
+    // "gone" is a recorded thread Codex no longer has.
+    new Set(["before", "after", "theirs", "gone"]),
+  );
+  expect(sessions.map((session) => session.id).sort()).toEqual([
+    "after",
+    "before",
+  ]);
+  expect(sessions.map((session) => session.observations.length)).toEqual([
+    1, 1,
+  ]);
+  // Only the recorded ids the name search missed are looked up.
+  expect(looked.sort()).toEqual(["before", "gone", "theirs"]);
+});
+
+it("fails the read when Codex refuses a recorded thread for any reason but having no rollout of it", async () => {
+  // Codex 0.169's answers: a thread it keeps reads even when not loaded; one
+  // deleted, or never kept, is "thread not loaded: <id>".
+  const answers: Record<string, string> = {
+    locked: "database is locked",
+    other: "thread not loaded: another-id",
+    invalid: "invalid thread id: invalid character",
+  };
+  for (const [id, refusal] of Object.entries(answers)) {
+    const spawn = processes(
+      () => ({ data: [], nextCursor: null }),
+      ({ threadId }) => (threadId === id ? refusal : undefined),
+    );
+    await expect(
+      readUsage(
+        { spawn, readFile: async () => new Uint8Array() },
+        { ...sol, name: "Luna" },
+        hour - HOUR,
+        new AbortController().signal,
+        new Set([id, "gone"]),
+      ),
+    ).rejects.toThrow(refusal);
+  }
 });
 
 it("finds the agent's threads by name, reads their rollouts, and later only those Codex updated", async () => {
@@ -381,7 +555,13 @@ it("reads at most four rollouts at once, across agents and their subagents", asy
 
 /** `thread/list` as `list` answers it, from a fake app-server, and the
  * manifest's `read` for real. */
-function processes(list: (params: Record<string, unknown>) => unknown) {
+/** A Codex app-server answering `thread/list` with `list` and `thread/read`
+ * with `read`. A thread `read` gives none for is refused as Codex 0.169
+ * refuses one it has no rollout of; a string is refused with that message. */
+function processes(
+  list: (params: Record<string, unknown>) => unknown,
+  read: (params: Record<string, unknown>) => unknown = () => undefined,
+) {
   return async (id: string, options: HostProcessOptions = {}) => {
     let exit!: (code: number) => void;
     const exited = new Promise<number>((resolve) => {
@@ -405,10 +585,23 @@ function processes(list: (params: Record<string, unknown>) => unknown) {
       write: async (text: string) => {
         const wire: Wire = JSON.parse(text);
         if (wire.id == null) return;
-        const result =
-          wire.method === "thread/list"
-            ? list(wire.params as Record<string, unknown>)
-            : {};
+        const params = wire.params as Record<string, unknown>;
+        if (wire.method === "thread/read") {
+          const thread = read(params);
+          const refused =
+            typeof thread === "string"
+              ? thread
+              : `thread not loaded: ${String(params.threadId)}`;
+          options.onStdout?.(
+            `${JSON.stringify(
+              thread && typeof thread !== "string"
+                ? { id: wire.id, result: { thread } }
+                : { id: wire.id, error: { code: -32600, message: refused } },
+            )}\n`,
+          );
+          return;
+        }
+        const result = wire.method === "thread/list" ? list(params) : {};
         options.onStdout?.(`${JSON.stringify({ id: wire.id, result })}\n`);
       },
       end: async () => exit(0),

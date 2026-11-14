@@ -24,6 +24,7 @@ import {
   EACH_TURN,
   sessionPrompts,
 } from "../../features/agents/session-prompts";
+import { standaloneSessions } from "../../features/agents/standalone-sessions";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import {
   conversationFolder,
@@ -81,6 +82,7 @@ import { conversationHistory } from "./history";
 import { buzzHome } from "./setup";
 import {
   developerInstructions,
+  onceName,
   rootOf,
   sessionName,
   turnContext,
@@ -1969,11 +1971,16 @@ export class CodexRuntime {
       .catch((error) => console.warn("Codex handover failed", error));
   }
 
-  /** Runs a standalone turn, such as a watch's or a timer's: a new
-   * ephemeral thread that joins no conversation and is not saved, stopped
-   * when the turn's signal aborts. Asks for its prompt once the thread can
-   * start, and starts none when the turn is no longer wanted. A failure is
-   * logged, not posted. */
+  /** Runs a standalone turn, such as a watch's or a timer's: a new thread
+   * that joins no conversation and is never resumed, stopped when the turn's
+   * signal aborts. Asks for its prompt once the thread can start, and starts
+   * none when the turn is no longer wanted. A failure is logged, not posted.
+   *
+   * On this device Codex keeps the thread's rollout, in Buzz's own Codex
+   * home, so Usage can count the turn: the thread's name lets Usage find it,
+   * and the agent's standalone sessions record that it is the agent's and
+   * which watch or timer started it. On an execution target it stays
+   * ephemeral, since Usage reads only this device's threads. */
   async runOnce({
     delivery,
     key,
@@ -2063,17 +2070,31 @@ export class CodexRuntime {
       if (text === undefined) return { ok: true };
       const memory = await this.core(agent.key, signal);
       signal.throwIfAborted();
+      const kept = !this.target;
       const started = await rpc.request<{ thread: { id: string } }>(
         "thread/start",
         {
           ...params,
-          ephemeral: true,
+          ephemeral: !kept,
           dynamicTools: dynamicTools(this.added()),
         },
       );
       once.threadId = started.thread.id;
       bridge?.bind(once.threadId);
       server.threads.set(once.threadId, agent.key);
+      if (kept) {
+        // Recorded threads past keeping go with their day: Codex deletes
+        // their rollouts, which Usage no longer reads.
+        await standaloneSessions(this.storage, "codex", agent.key).add(
+          once.threadId,
+          key,
+          (ids) => forget(rpc, ids),
+        );
+        await rpc.request("thread/name/set", {
+          threadId: once.threadId,
+          name: onceName(agent, key),
+        });
+      }
       signal.throwIfAborted();
       if (!delivery.current()) return { ok: true };
       const turnStarted = await rpc.request<{ turn: { id: string } }>(
@@ -3101,6 +3122,24 @@ export class CodexRuntime {
       release();
     }
   }
+}
+/** Deletes the recorded one-off threads `ids` and their rollouts, a few at a
+ * time. A thread Codex no longer has is already gone. Rejects when any other
+ * delete fails, so their record stays for a later try. */
+async function forget(rpc: AppServer, ids: readonly string[]) {
+  const queue = [...ids];
+  const failed: unknown[] = [];
+  const worker = async () => {
+    for (let id = queue.shift(); id; id = queue.shift())
+      await rpc.request("thread/delete", { threadId: id }).catch((error) => {
+        if (
+          !(error instanceof Refused && /no rollout found/i.test(error.message))
+        )
+          failed.push(error);
+      });
+  };
+  await Promise.all(Array.from({ length: 4 }, worker));
+  if (failed.length) throw failed[0];
 }
 /** A started or completed item, as the app-server reports it. */
 type Item = {

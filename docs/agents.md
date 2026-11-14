@@ -570,7 +570,7 @@ Interest's turns one at a time, up to 8 Interests at once, beside the mention
 lane. For a wake in its lane, `src/features/agent-harness/wakes.ts` checks that
 it is still current before and while its prompt is built. A subscription with a delivery address runs in that conversation through the type's `run`, with an `attention` trigger and the Interest instructions outside plugin-data framing. It remains in its Interest lane. Without an address it passes to the type's optional `runOnce`, which runs one turn with
 no saved conversation (Claude: a
-one-off process; Codex: an ephemeral thread). Its signal aborts
+one-off process; Codex: a thread it never resumes). Its signal aborts
 `STANDALONE_DEADLINE_MS` after it starts, including any wait for the harness to
 be ready. The prompt text lives in `attention-prompt.ts`.
 
@@ -1903,15 +1903,31 @@ app's record of the session it started says it is the agent's. That record is
 kept apart from saved prompts, for 32 days from the session's start, longer than
 Usage reads back, with no limit on how many sessions it holds. Each day's starts
 are saved as one value, and a day's value is removed once all of it is past
-keeping. The snapshot has no `channelId`, and a session from before that
+keeping, by the next standalone turn of any agent of that type. Removing an
+agent removes its record, except a Codex agent's, which stays until then so
+its threads can still be deleted. The snapshot has no `channelId`, and a session from before that
 record was kept is not counted.
 
 Codex finds the agent's threads through app-server by the agent's name in their
 thread names, keeps those whose rollout's developer instructions name the agent's
 pubkey, and reads each rollout's per-response `token_usage_record` entries, adding
 the subagent threads each one spawned. Codex records no cost. A standalone turn
-runs on an ephemeral thread, which Codex keeps no rollout for, so Usage does not
-count it.
+runs on a thread of its own in Buzz's Codex home, named `Buzz <key> · <agent
+name>`, which Codex keeps a rollout for and Buzz never resumes. Its prompt names
+no conversation, so Codex counts it only when the agent's standalone sessions
+list its thread, recorded as the turn starts; the snapshot has no `channelId`.
+Usage reads each listed thread by its id (`thread/read`) when the name search
+misses it, as after the agent is renamed, and still keeps it only when its
+rollout names the agent's pubkey. When a later standalone turn removes a day
+of that record past keeping, it first deletes that day's threads with
+`thread/delete`, which removes their rollouts; a day whose delete fails stays,
+unlisted, for the next turn to try again. Every Codex agent here shares Buzz's
+one Codex home, so any agent's turn deletes the expired threads of another,
+removed ones included. Only threads the record lists are deleted, never a
+conversation's. On an execution target the thread stays
+ephemeral, and Usage reads none there.
+These threads stay out of the user's own Codex history, since Buzz's Codex home
+is its own, and out of conversation lookups, whose names open with `Buzz #`.
 
 Goose lists the agent's sessions in its workspace through `goose-acp`, as its
 Activity tab does, and reads the usage goose saves on each reply, with goose's
@@ -1926,8 +1942,8 @@ agent activity or turn metrics.
 A harness may also set `wake` on a session snapshot: the key of the standalone
 turn that started it (`timer/ID` or `watch/ID`), as `AgentType.runOnce` was given
 it. Claude, Goose and Pi take it from the key their `runOnce` recorded with the
-session in the agent's standalone sessions, never from the prompt; Codex keeps
-no session for such a turn, so it sets none. Setting it takes the session's
+session in the agent's standalone sessions, never from the prompt; Codex does
+the same with the thread its `runOnce` started. Setting it takes the session's
 `revision` again, so the revision covers it. The Usage page groups the period's
 cost by agent and key under "By routine", since each agent names its own timers
 and watches, with the sessions that have none under "Other", and shows no such

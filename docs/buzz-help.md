@@ -1297,8 +1297,12 @@ available rather than silently discarding it.
   Builderlab permissions are re-read at most once a minute while the app uses
   them, so a newly granted or removed permission applies without signing in
   again; a failed check keeps the previous permissions.
-  Claude runs with an Anthropic API key pasted under **Anthropic API key**
-  there, once for every local Claude agent. With the Claude plugin enabled,
+  Claude uses your own Claude setup when one already works on this computer,
+  such as Amazon Bedrock or Google Vertex AI, configured with the Claude CLI. Buzz never changes that setup or adds its
+  key to it. Without one, Claude runs with an Anthropic API key pasted under
+  **Anthropic API key** there, once for every local Claude agent. Key setup
+  offers **Refresh**, which looks again for a setup you made with the Claude
+  CLI meanwhile. With the Claude plugin enabled,
   **Settings → Claude → Set** opens **Connect Claude** to add a key. Back hides
   setup and Forward restores its draft while the Claude page remains open.
   The input keeps focus but is read-only while secure storage is checked. If the
@@ -1331,7 +1335,8 @@ available rather than silently discarding it.
   (Keychain on macOS) and
   gives it to every Claude process, security reviews included. Commands a
   Claude agent runs inherit it, so they can read the key. Until a key is
-  saved, Claude agents don't answer and Claude reviews fail closed.
+  saved or Claude has a setup of its own, Claude agents don't answer. Claude
+  security reviews always use the saved key, and fail closed without one.
   Codex security reviews for protected agents need a ChatGPT sign-in made
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace. Codex's harness defaults offer that sign-in while Codex is signed

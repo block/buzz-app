@@ -1,3 +1,4 @@
+import { setThreadOpeningPreference } from "./thread-opening-preference";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
@@ -125,6 +126,7 @@ vi.mock("./MessageComposer", () => ({
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  setThreadOpeningPreference("latest");
   vi.unstubAllGlobals();
   vi.useRealTimers();
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
@@ -2002,46 +2004,50 @@ it("a workspace diverts a wrong-root link without replacing its confirmed reader
   expect(next.complete).not.toHaveBeenCalled();
 });
 
-it("a retained reader reveals its exact selected message, again for each new request", async () => {
-  const h = messagesHarness();
-  const reply = { ...row, id: "d".repeat(64), content: "the reply" };
-  h.snapshot.replies = [reply];
-  h.snapshot.target = reply;
-  h.snapshot.targetStatus = "ready";
-  const props = h.props as ThreadPanelProps;
-  Object.assign(props, {
-    messageId: reply.id,
-    retainThread: true,
-    revealSelected: true,
-    revealRequest: 1,
-  });
-  h.render();
-  expect(h.thread).toHaveBeenCalledWith("channel", reply.id, { exact: true });
-  const revealedReply = () =>
-    vi
-      .mocked(HTMLElement.prototype.scrollIntoView)
-      .mock.contexts.some(
-        (context) => (context as HTMLElement).dataset.messageId === reply.id,
-      );
-  await waitFor(() => expect(revealedReply()).toBe(true));
-  vi.mocked(HTMLElement.prototype.scrollIntoView).mockClear();
-  // The same message again: the retained reader selects it and reveals anew.
-  props.revealRequest = 2;
-  h.rerenderProps();
-  await waitFor(() =>
-    expect(h.view.retarget).toHaveBeenCalledWith(
-      reply.id,
-      expect.any(AbortSignal),
-    ),
-  );
-  await waitFor(() => expect(revealedReply()).toBe(true));
-  expect(h.thread).toHaveBeenCalledOnce();
-  // A rerender without a new request does not reveal again.
-  vi.mocked(HTMLElement.prototype.scrollIntoView).mockClear();
-  h.rerenderProps();
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(revealedReply()).toBe(false);
-});
+it.each(["latest", "first"] as const)(
+  "a retained reader reveals its exact selected message with %s preference, again for each new request",
+  async (opening) => {
+    setThreadOpeningPreference(opening);
+    const h = messagesHarness();
+    const reply = { ...row, id: "d".repeat(64), content: "the reply" };
+    h.snapshot.replies = [reply];
+    h.snapshot.target = reply;
+    h.snapshot.targetStatus = "ready";
+    const props = h.props as ThreadPanelProps;
+    Object.assign(props, {
+      messageId: reply.id,
+      retainThread: true,
+      revealSelected: true,
+      revealRequest: 1,
+    });
+    h.render();
+    expect(h.thread).toHaveBeenCalledWith("channel", reply.id, { exact: true });
+    const revealedReply = () =>
+      vi
+        .mocked(HTMLElement.prototype.scrollIntoView)
+        .mock.contexts.some(
+          (context) => (context as HTMLElement).dataset.messageId === reply.id,
+        );
+    await waitFor(() => expect(revealedReply()).toBe(true));
+    vi.mocked(HTMLElement.prototype.scrollIntoView).mockClear();
+    // The same message again: the retained reader selects it and reveals anew.
+    props.revealRequest = 2;
+    h.rerenderProps();
+    await waitFor(() =>
+      expect(h.view.retarget).toHaveBeenCalledWith(
+        reply.id,
+        expect.any(AbortSignal),
+      ),
+    );
+    await waitFor(() => expect(revealedReply()).toBe(true));
+    expect(h.thread).toHaveBeenCalledOnce();
+    // A rerender without a new request does not reveal again.
+    vi.mocked(HTMLElement.prototype.scrollIntoView).mockClear();
+    h.rerenderProps();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(revealedReply()).toBe(false);
+  },
+);
 
 it("reopens collapsed activity for a new reveal of the same step", async () => {
   const h = messagesHarness();
@@ -2190,6 +2196,7 @@ it.each([
   ["the reply it was left at, reopening its branch", true],
   ["the nearest ancestor of a reply that is gone", false],
 ])("Back to a thread visit anchors on %s", (_, present) => {
+  setThreadOpeningPreference("first");
   const { places, visit } = visitPlaces();
   const parent = threadReply("d", row.id);
   const child = threadReply("e", parent.id);
@@ -2522,4 +2529,27 @@ it("reveals a completed step selected by an exact thread link", async () => {
   expect(
     screen.getByRole("button", { name: /Collapse activity history/ }),
   ).toBeVisible();
+});
+
+it("opens at the first message and keeps that position as live replies arrive", () => {
+  setThreadOpeningPreference("first");
+  const h = messagesHarness();
+  h.snapshot.status = "loading";
+  h.render();
+  h.snapshot.status = "ready";
+  h.render();
+  expect(h.element.scrollTop).toBe(0);
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  h.snapshot.replies = [{ ...row, id: "new", content: "live arrival" }];
+  h.resize(4800);
+  h.render();
+  expect(h.element.scrollTop).toBe(0);
+  expect(screen.getByRole("button", { name: /1 new message/ })).toBeVisible();
+  // Changing the preference must not reposition this mounted reader.
+  act(() => setThreadOpeningPreference("latest"));
+  h.render();
+  expect(h.element.scrollTop).toBe(0);
+  // Sending is explicit intent to follow the latest reply.
+  fireEvent.click(screen.getByRole("button", { name: "Send fixture reply" }));
+  expect(h.element.scrollTop).toBe(4200);
 });

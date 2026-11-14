@@ -66,6 +66,7 @@ import type { TeamResult, TeamSent } from "./team-ops";
 import type { Expected, SnapshotRead } from "./agent-config-artifacts";
 import type { revertTemplate, SettingsCheck } from "./agent-config-history";
 import type { RevertOutcome } from "./AgentConfigHistory";
+import type { RecommendedCandidate } from "./recommended";
 import { nativeRelayInfo } from "../relay/native";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
@@ -83,6 +84,11 @@ import {
   conversationFolder as storedFolder,
   conversationKey,
 } from "./conversation-folders";
+import {
+  conversationInstructions as storedInstructions,
+  forgetConversationInstructions,
+  setConversationInstructions as storeInstructions,
+} from "./conversation-instructions";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -132,12 +138,18 @@ import {
 } from "../host/service";
 import { avatarSource } from "../../shared/avatar-source";
 import { publicKeyLabels } from "../../shared/identity/public-key";
-import { newer, type EventData, type RelayEvent } from "../relay/events";
+import {
+  hasEventProof,
+  newer,
+  type EventData,
+  type RelayEvent,
+} from "../relay/events";
 import { relayPartition } from "../relay/partition";
 import { threadReference } from "../relay/thread-reference";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
+import type { ChannelSummary } from "../relay/contracts";
 import {
   parseSlug,
   type AttentionObject,
@@ -216,6 +228,8 @@ import { nameSoloChat } from "./solo-chat-name";
 import { visibleTeams } from "./visible-teams";
 import {
   clearDeletedDefaultAgent,
+  defaultAgentControl,
+  type DefaultAgentControl,
   forgetDefaultAgent,
 } from "../solo/default-agent";
 import type { AgentPlugins } from "../../plugins/requests";
@@ -408,6 +422,9 @@ export type AgentInstructions = Readonly<{
  * It goes with every turn, so this matches a watch classifier's true/false
  * text, not the once-a-session blocks such as agent instructions. */
 const INSTRUCTIONS_TEXT_LIMIT = 4 * 1024;
+/** Most UTF-8 bytes one conversation's instructions may have, after
+ * trimming: room for a role's text, still small enough to send each turn. */
+const CONVERSATION_INSTRUCTIONS_LIMIT = 8 * 1024;
 /** Instructions for one turn, with the plugin that gave them. */
 export type TurnInstructions = Readonly<{ plugin: string; text: string }>;
 /** One of an agent's conversation sessions on this device. Without `root` it
@@ -596,11 +613,21 @@ export type AgentHandle = Readonly<{
   }>;
   /** On a run's handle only: Buzz settings on this device. */
   settings?: DeviceSettings;
+  /** On a run's handle only: the owner's Bestie in its community; undefined
+   * while it is not connected. */
+  bestie?(): DefaultAgentControl | undefined;
   /** Takes notes for this conversation, oldest first. A thread session passes
    * its root; a channel session omits it and takes all notes in the channel. */
   notes?(channelId: string, root?: string): readonly string[];
   /** The instructions plugins give the agent's turns now, in a stable order. */
   instructions?(): readonly TurnInstructions[];
+  /** The instructions a plugin gave the agent's turns in one conversation,
+   * keyed as its session is: a thread session passes its root, a channel
+   * session omits it. Empty text means they were cleared. */
+  conversationInstructions?(
+    channelId: string,
+    root?: string,
+  ): TurnInstructions | undefined;
   /** Puts back notes taken for a turn that never began, ahead of any left
    * since, targeting the same conversation that took them. */
   restoreNotes?(
@@ -775,7 +802,7 @@ export type Delivery<Config = unknown> = Readonly<{
   /** The plugin declined this request; no work or successful outcome is implied. */
   ignored?(): void;
   /** The harness acknowledged this exact request. Not proof of model consumption. */
-  acknowledged?(): void;
+  acknowledged?(input?: Readonly<{ steering?: true }>): void;
   /** A newer acknowledged request owns this turn's activity; hide this message's
    * bubble without claiming success or changing the execution outcome. */
   superseded?(): void;
@@ -1026,6 +1053,11 @@ export type AgentType<Config = unknown> = {
       settings: Readonly<Record<string, string>>,
     ): Config;
   }>;
+  /** Whether `candidate`, a recommended setting for this type, can run on
+   * this computer now: installed, signed in and set up. A type with it
+   * follows Recommended (`recommended.ts`): an agent whose config is on it
+   * runs on the current candidate for its type. */
+  recommends?(candidate: RecommendedCandidate): Promise<boolean>;
   /** Runtime routes its supported security boundaries through AgentHandle.protection. */
   protection?: true;
   /** Uses the agent's saved execution target for native process and file I/O. */
@@ -1251,6 +1283,13 @@ export type TeamUpdateRequest = Readonly<{
   name?: string;
   instructions?: string;
 }>;
+/** A mention an interrupted agent was working on. */
+export type InterruptedTurn = Readonly<{
+  id: string;
+  /** Its channel, or "" without one. */
+  channelId: string;
+  channel?: ChannelSummary | undefined;
+}>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
   /** Whether a watch's classifier can run on this device now. */
@@ -1432,6 +1471,12 @@ export type Agents = {
   resumeInterrupted(): void;
   /** Forgets the turns `interrupted` agents were working on. */
   dismissInterrupted(): void;
+  /** Each mention an `interrupted` agent was working on, with its channel
+   * when this device knows it. */
+  interruptedTurns(agent: Agent): readonly InterruptedTurn[];
+  /** Reads an `interrupted` agent's mentions from the relay, as Resume reads
+   * them. Resume reads them again, so what it finds can differ. */
+  readInterrupted(agent: Agent, signal: AbortSignal): Promise<RelayEvent[]>;
   /** The agent of this pubkey in the selected community, if it is an agent. */
   find(pubkey: string): Agent | undefined;
   /** The agent as `run` holds it, outside any run: for one of the calling
@@ -1592,6 +1637,25 @@ export type Agents = {
   ): Promise<string>;
   /** The folder `assignConversationFolder` gave the conversation, if any. */
   conversationFolder(agent: AgentKey, place: SessionPlace): string | undefined;
+  /** Gives the owner's local agent standing instructions in one
+   * conversation: each of its turns there shows them, after the instructions
+   * plugins give every turn. Text replaces any the conversation had, and
+   * empty text clears them. At most 8 KiB (UTF-8, after trimming). `place`
+   * names the conversation as session controls do; a DM, a Solo chat or a
+   * channel-scoped agent has no root, and rejects one, as a huddle room
+   * rejects any instructions. Kept on this device for now, also when the
+   * agent leaves the community, and dropped when it is deleted. Plugins
+   * only. */
+  setConversationInstructions(
+    agent: AgentKey,
+    place: SessionPlace,
+    text: string,
+  ): Promise<void>;
+  /** The text `setConversationInstructions` gave the conversation, if any. */
+  conversationInstructions(
+    agent: AgentKey,
+    place: SessionPlace,
+  ): Promise<string | undefined>;
   /** Has a hosted agent's provider stop its turn in one conversation. False
    * when nothing there was running. */
   interrupt(
@@ -2581,6 +2645,8 @@ export class AgentsService extends Service implements Agents {
       handoff: (agent, { from, ...wake }) =>
         this.wakeIn(agent.key, wake, { from }),
       instructions: (agent) => this.turnInstructions(agent),
+      conversationInstructions: (agent, channelId, root) =>
+        this.turnConversationInstructions(agent, channelId, root),
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.
@@ -2734,6 +2800,10 @@ export class AgentsService extends Service implements Agents {
         return session && channelTabs(session, ctx.navigation);
       },
       settings: () => this.deviceSettings,
+      bestie: (agent) => {
+        const binding = this.bindingOf(agent);
+        return binding && defaultAgentControl(binding.session, binding.scope);
+      },
       classifier: () => this.classifier(),
       decisions: () => this.decisions,
       context: (agent, event) => this.context(agent, event),
@@ -3492,6 +3562,24 @@ export class AgentsService extends Service implements Agents {
   dismissInterrupted = () => {
     this.runners.dismissInterrupted(this.interruptedKeys());
     this.update();
+  };
+  interruptedTurns = (agent: Agent) =>
+    Object.entries(this.runners.interruptedTurns(agent.key)).map(
+      ([id, channelId]) => ({
+        id,
+        channelId,
+        channel: this.channelOf(agent, { tags: [["h", channelId]] }),
+      }),
+    );
+  readInterrupted = async (agent: Agent, signal: AbortSignal) => {
+    const session = this.bindingOf(agent)?.session;
+    if (!session) throw new Error(`${agent.name}'s community isn't connected`);
+    const ids = Object.keys(this.runners.interruptedTurns(agent.key));
+    const events = await session.readRemote([{ ids, limit: ids.length }], {
+      signal,
+      fresh: true,
+    });
+    return events.filter(hasEventProof) as RelayEvent[];
   };
   /** The agents the notice names, and only they, are resumed or forgotten. */
   private interruptedKeys() {
@@ -4810,15 +4898,7 @@ export class AgentsService extends Service implements Agents {
     const channel = await reads?.channel(place.channelId);
     if (isHuddleRoom(channel?.about))
       throw new Error("Conversation folders are unavailable in a huddle");
-    if (
-      place.root &&
-      (channel?.dm ||
-        (await reads?.soloChat(
-          agent.owner,
-          place.channelId,
-          new AbortController().signal,
-        )))
-    )
+    if (await this.rootInWhole(key, agent.owner, place))
       throw new Error(
         "A DM or Solo chat is one conversation: give its folder without a root",
       );
@@ -4847,6 +4927,99 @@ export class AgentsService extends Service implements Agents {
     } catch {
       return undefined;
     }
+  }
+  async setConversationInstructions(
+    key: AgentKey,
+    place: SessionPlace,
+    text: string,
+  ) {
+    const plugin = this.ctx.pluginOwner?.id;
+    if (!plugin)
+      throw new Error("Only a plugin sets conversation instructions");
+    if (typeof text !== "string")
+      throw new Error("Conversation instructions need text");
+    const trimmed = text.trim();
+    if (
+      new TextEncoder().encode(trimmed).length > CONVERSATION_INSTRUCTIONS_LIMIT
+    )
+      throw new Error(
+        `Conversation instructions are over ${CONVERSATION_INSTRUCTIONS_LIMIT} bytes`,
+      );
+    const { scope, conversation } = await this.instructionsPlace(key, place);
+    await storeInstructions(
+      this.storage,
+      scope,
+      key,
+      conversation,
+      plugin,
+      trimmed,
+    );
+  }
+  async conversationInstructions(key: AgentKey, place: SessionPlace) {
+    try {
+      const { scope, conversation } = await this.instructionsPlace(key, place);
+      return (
+        storedInstructions(this.storage, scope, key, conversation)?.text ||
+        undefined
+      );
+    } catch {
+      return undefined;
+    }
+  }
+  /** Where the owner's local agent keeps a conversation's instructions, as
+   * its folder. A root for a conversation its harness runs whole rejects:
+   * no turn would show them. So does a huddle room, whose conversations
+   * harnesses key differently. */
+  private async instructionsPlace(key: AgentKey, place: SessionPlace) {
+    const found = this.folderPlace(key, place);
+    const reads = ownerReads(this.relay(key), pubkeyOf(key));
+    if (isHuddleRoom((await reads?.channel(place.channelId))?.about))
+      throw new Error("Conversation instructions are unavailable in a huddle");
+    if (
+      place.root &&
+      (found.conversation === place.channelId ||
+        (await this.rootInWhole(key, found.agent.owner, place)))
+    )
+      throw new Error(
+        "This agent runs the channel as one conversation: give its instructions without a root",
+      );
+    return found;
+  }
+  /** The instructions a plugin gave the agent in the conversation its
+   * harness keys as `channelId` and `root`. One removed from that channel
+   * keeps none there: its turns say any it was shown no longer apply. */
+  private turnConversationInstructions(
+    agent: Agent,
+    channelId: string,
+    root?: string,
+  ) {
+    const scope = ownerReads(this.relay(agent.key), pubkeyOf(agent.key))?.scope;
+    const saved =
+      scope &&
+      storedInstructions(
+        this.storage,
+        scope,
+        agent.key,
+        conversationKey(channelId, root),
+      );
+    if (!saved) return undefined;
+    return this.member(agent, { tags: [["h", channelId]] }) === false
+      ? { ...saved, text: "" }
+      : saved;
+  }
+  /** Whether `place` has a root in a DM or Solo chat. Harnesses run each as
+   * one conversation, so the root would name one that never runs. */
+  private async rootInWhole(key: AgentKey, owner: string, place: SessionPlace) {
+    if (!place.root) return false;
+    const reads = ownerReads(this.relay(key), pubkeyOf(key));
+    return !!(
+      (await reads?.channel(place.channelId))?.dm ||
+      (await reads?.soloChat(
+        owner,
+        place.channelId,
+        new AbortController().signal,
+      ))
+    );
   }
   /** Where the owner's local agent keeps a conversation's folder: keyed as
    * its harness keys the conversation's session. */
@@ -5309,6 +5482,9 @@ export class AgentsService extends Service implements Agents {
       this.setArchiveUnchecked(member.key, false);
       this.unlist(binding.origin, pubkey);
       await native.forget(member);
+      // Left, its conversations stay here, and so do their instructions.
+      if (deleting)
+        await forgetConversationInstructions(this.storage, member.key);
     } finally {
       await native.releaseRemoval(member);
     }
@@ -5337,6 +5513,7 @@ export class AgentsService extends Service implements Agents {
       this.setArchiveUnchecked(key, false);
       this.unlist(originOf(member.relay) ?? "", member.pubkey);
       await native.forget(member);
+      await forgetConversationInstructions(this.storage, member.key);
     } finally {
       await native.releaseRemoval(member);
     }
@@ -6857,6 +7034,7 @@ export class AgentsService extends Service implements Agents {
       );
       this.unlist(originOf(relay) ?? "", pubkey);
       await this.native?.forget(member);
+      await forgetConversationInstructions(this.storage, member.key);
       await this.refresh();
       // So the community's agent choices no longer offer it.
       await binding.session.agentChoices.refresh(true, { fresh: true });

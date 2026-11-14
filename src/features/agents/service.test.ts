@@ -120,6 +120,7 @@ import {
   pastedMentionRecipient,
 } from "../messages/mention-admission";
 import type { ComposerSession } from "../messages/composer-session";
+import { setRuntimeRecommendation } from "./recommended";
 
 /** The tag that the echo type's default watch matches. */
 const DEPLOY = ["t", "deploy"];
@@ -230,6 +231,8 @@ async function setup({
   deviceSettings = undefined as DeviceSettings | undefined,
   /** The echo type's plugin revision: "bundled" for a bundled harness. */
   revision = "one",
+  /** The example type's id, "echo" unless a test needs a real harness's. */
+  typeId = "echo",
   conversationFolders = undefined as true | undefined,
   sessions = undefined as AgentType<Config>["sessions"],
 } = {}) {
@@ -281,7 +284,7 @@ async function setup({
   const run =
     vi.fn<(delivery: Delivery<Config>) => void | Promise<void>>(answer);
   const type: AgentType<Config> = {
-    id: "echo",
+    id: typeId,
     title: "Echo",
     timeoutMs,
     adopt: (carry, saved) => ({ reply: carry.instructions ?? saved.reply }),
@@ -1813,6 +1816,203 @@ describe("a conversation folder", () => {
   });
 });
 
+describe("a conversation's instructions", () => {
+  const root = "e".repeat(64);
+  const thread = { channelId: channel, root };
+  const ready = async (options: Parameters<typeof setup>[0] = {}) => {
+    const f = await setup(options);
+    const agent = await f.service.create({
+      type: "example/echo",
+      name: "Echo",
+    });
+    await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalledWith(bot, 0));
+    await settle();
+    return { ...f, agent };
+  };
+  /** The handle of the agent's first run. */
+  const handle = async (f: Awaited<ReturnType<typeof ready>>) => {
+    f.emit({
+      events: [
+        event("1", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    const [delivery] = f.run.mock.calls[0] ?? [];
+    if (!delivery) throw new Error("no run");
+    return delivery.agent;
+  };
+
+  it("are set, replaced and cleared by a plugin, and shown to the agent's turns there", async () => {
+    const f = await ready();
+    const { agents } = f.plugin;
+    await expect(
+      f.service.setConversationInstructions(f.agent.key, thread, "x"),
+    ).rejects.toThrow("Only a plugin");
+    await agents.setConversationInstructions(f.agent.key, thread, "  Review. ");
+    await expect(
+      agents.conversationInstructions(f.agent.key, thread),
+    ).resolves.toBe("Review.");
+    await expect(
+      agents.conversationInstructions(f.agent.key, { channelId: channel }),
+    ).resolves.toBeUndefined();
+    const agent = await handle(f);
+    // Read as each turn's prompt is built, keyed as the session is.
+    expect(agent.conversationInstructions?.(channel, root)).toEqual({
+      plugin: "example",
+      text: "Review.",
+    });
+    expect(agent.conversationInstructions?.(channel)).toBeUndefined();
+    await agents.setConversationInstructions(f.agent.key, thread, "Build.");
+    expect(agent.conversationInstructions?.(channel, root)?.text).toBe(
+      "Build.",
+    );
+    // Cleared, the turns say none apply now.
+    await agents.setConversationInstructions(f.agent.key, thread, " ");
+    await expect(
+      agents.conversationInstructions(f.agent.key, thread),
+    ).resolves.toBeUndefined();
+    expect(agent.conversationInstructions?.(channel, root)).toEqual({
+      plugin: "example",
+      text: "",
+    });
+    // Kept on this device, never published.
+    expect(JSON.stringify(f.native.publish.mock.calls)).not.toContain(
+      "Review.",
+    );
+  });
+
+  it("take at most 8 KiB of UTF-8 text, after trimming", async () => {
+    const f = await ready();
+    const { agents } = f.plugin;
+    for (const text of ["x".repeat(8193), "é".repeat(4097)])
+      await expect(
+        agents.setConversationInstructions(f.agent.key, thread, text),
+      ).rejects.toThrow(/over 8192 bytes/);
+    await expect(
+      agents.setConversationInstructions(f.agent.key, thread, null as never),
+    ).rejects.toThrow("need text");
+    await agents.setConversationInstructions(
+      f.agent.key,
+      thread,
+      ` ${"é".repeat(4096)} `,
+    );
+    await expect(
+      agents.conversationInstructions(f.agent.key, thread),
+    ).resolves.toHaveLength(4096);
+  });
+
+  it.each(["solo", "dm"] as const)(
+    "are given to a %s conversation whole, refusing a root",
+    async (channelType) => {
+      const f = await ready();
+      const list = f.session.channels.list();
+      vi.spyOn(f.session.channels, "list").mockReturnValue({
+        ...list,
+        channels: list.channels.map((row) =>
+          row.id === channel ? { ...row, channelType } : row,
+        ),
+      });
+      const { agents } = f.plugin;
+      await expect(
+        agents.setConversationInstructions(f.agent.key, thread, "x"),
+      ).rejects.toThrow("runs the channel as one conversation");
+      await agents.setConversationInstructions(
+        f.agent.key,
+        { channelId: channel },
+        "Whole.",
+      );
+      await expect(
+        agents.conversationInstructions(f.agent.key, { channelId: channel }),
+      ).resolves.toBe("Whole.");
+    },
+  );
+
+  it("refuse a root for a channel-scoped agent", async () => {
+    const f = await ready({
+      sessionControls: {
+        state: () => "idle",
+        run: async () => {},
+        scope: () => "channel",
+      } as never,
+    });
+    await expect(
+      f.plugin.agents.setConversationInstructions(f.agent.key, thread, "x"),
+    ).rejects.toThrow("runs the channel as one conversation");
+  });
+
+  it("are refused for an agent not here", async () => {
+    const f = await ready();
+    await expect(
+      f.plugin.agents.setConversationInstructions(sibling, thread, "x"),
+    ).rejects.toThrow("No such local agent on this device");
+    await expect(
+      f.plugin.agents.conversationInstructions(sibling, thread),
+    ).resolves.toBeUndefined();
+  });
+
+  it("are refused in a huddle room", async () => {
+    const f = await ready();
+    const list = f.session.channels.list();
+    vi.spyOn(f.session.channels, "list").mockReturnValue({
+      ...list,
+      channels: list.channels.map((row) =>
+        row.id === channel
+          ? { ...row, description: huddleDescription(crypto.randomUUID()) }
+          : row,
+      ),
+    });
+    for (const place of [thread, { channelId: channel }])
+      await expect(
+        f.plugin.agents.setConversationInstructions(f.agent.key, place, "Do."),
+      ).rejects.toThrow(
+        "Conversation instructions are unavailable in a huddle",
+      );
+  });
+
+  it("say none apply while the agent is not in the channel", async () => {
+    const f = await ready();
+    await f.plugin.agents.setConversationInstructions(
+      f.agent.key,
+      thread,
+      "Review.",
+    );
+    const agent = await handle(f);
+    f.confirm(channel, [viewer]);
+    // Any it was shown there no longer apply.
+    expect(agent.conversationInstructions?.(channel, root)).toEqual({
+      plugin: "example",
+      text: "",
+    });
+    f.confirm(channel, [viewer, bot]);
+    expect(agent.conversationInstructions?.(channel, root)?.text).toBe(
+      "Review.",
+    );
+  });
+
+  it("are dropped when the agent is deleted", async () => {
+    const f = await ready();
+    await f.plugin.agents.setConversationInstructions(
+      f.agent.key,
+      thread,
+      "Review.",
+    );
+    const saved = () =>
+      f.storage
+        .keys()
+        .filter((key) =>
+          key.startsWith("buzz.agents.conversation-instructions"),
+        );
+    expect(saved()).toHaveLength(1);
+    await f.service.remove(bot);
+    expect(saved()).toEqual([]);
+  });
+});
+
 describe("a plugin's wake", () => {
   const root = "e".repeat(64);
   /** Once this copy holds the agent. */
@@ -1858,6 +2058,7 @@ describe("a plugin's wake", () => {
           agent: bot,
           channelId: channel,
           threadRootId: root,
+          sourceRootId: channelType ? null : root,
           syntheticMessage: true,
           requestText: "Read the task request",
           state: "working",
@@ -1867,6 +2068,18 @@ describe("a plugin's wake", () => {
           channelType ? undefined : true,
         );
         const work = f.activity.reader.work()[0] as LocalWork;
+        expect(work.evidence).toMatchObject({
+          lifecycle: { phase: "wake" },
+          messages: [
+            {
+              role: "user",
+              author: "host",
+              synthetic: true,
+              text: "Read the task request",
+            },
+          ],
+          history: "local",
+        });
         const delivery = f.run.mock.calls[0]?.[0];
         expect(work.messageId).toBe(
           delivery?.trigger.type === "plugin" ? delivery.trigger.id : undefined,
@@ -2171,6 +2384,160 @@ it("publishes an agent's reply in a chat its owner is still starting once the st
   land();
   await vi.waitFor(() => expect(replied).toBe(true));
   expect(await published(native, 9)).toHaveLength(1);
+});
+
+it.each(["dm", "huddle"] as const)(
+  "retains supported %s reply placement in local evidence",
+  async (kind) => {
+    const f = await setup();
+    const destination = kind === "dm" ? dm : channel;
+    const root = "e".repeat(64);
+    if (kind === "huddle") {
+      const list = f.session.channels.list();
+      vi.spyOn(f.session.channels, "list").mockReturnValue({
+        ...list,
+        channels: list.channels.map((row) =>
+          row.id === channel
+            ? {
+                ...row,
+                huddle: true,
+                description: huddleDescription(crypto.randomUUID()),
+              }
+            : row,
+        ),
+      });
+    }
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    f.run.mockImplementationOnce(async ({ agent, acknowledged }) => {
+      acknowledged?.();
+      await agent.publish({
+        kind: 9,
+        content: "Reply",
+        tags: [
+          ["h", destination],
+          ...(kind === "dm" ? [["e", root, "", "reply"]] : []),
+        ],
+      });
+    });
+    f.emit({
+      events: [
+        event("f".repeat(64), {
+          pubkey: viewer,
+          content: "Request",
+          tags: [
+            ["h", destination],
+            ["e", root, "", "reply"],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: destination,
+    });
+    try {
+      await vi.waitFor(() =>
+        expect(f.activity.reader.work()[0]?.evidence?.lifecycle.phase).toBe(
+          "handoff",
+        ),
+      );
+      expect(f.activity.reader.work()[0]?.sourceRootId).toBe(
+        kind === "dm" ? null : root,
+      );
+      expect(
+        f.activity.reader.work()[0]?.evidence?.messages.map(({ text }) => text),
+      ).toEqual(["Request", "Reply"]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  },
+);
+
+it("captures runner handoff with a pending publication and a background watch", async () => {
+  const f = await setup();
+  const sourceRootId = "a".repeat(64);
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const publication = runnerGate<RelayEvent>();
+  const turn = runnerGate();
+  const original = f.native.publish.getMockImplementation();
+  if (!original) throw new Error("Missing native publisher");
+  f.native.publish.mockImplementation((member, template) =>
+    template.kind === 9 && template.content === "Choose the next scope"
+      ? publication.promise
+      : original(member, template),
+  );
+  let reply: Promise<RelayEvent> | undefined;
+  f.run.mockImplementationOnce(
+    async ({ agent, acknowledged, workingUntil }) => {
+      acknowledged?.();
+      await agent.publish({
+        kind: 9,
+        content: "Other thread content",
+        tags: [
+          ["h", channel],
+          ["e", "d".repeat(64), "", "reply"],
+        ],
+      });
+      reply = agent.publish({
+        kind: 9,
+        content: "Choose the next scope",
+        tags: [
+          ["h", channel],
+          ["e", sourceRootId, "", "reply"],
+        ],
+      });
+      workingUntil(turn.promise);
+    },
+  );
+  f.emit({
+    events: [
+      event(sourceRootId, {
+        pubkey: viewer,
+        content: "Test the change",
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  try {
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]?.publishing).toBe(1),
+    );
+    const wake = f.activity.reader.work()[0]?.evidence;
+    expect(wake).toMatchObject({
+      lifecycle: { phase: "wake" },
+      messages: [{ author: viewer, text: "Test the change" }],
+    });
+    turn.resolve();
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]?.evidence?.lifecycle.phase).toBe(
+        "handoff",
+      ),
+    );
+    const handoff = f.activity.reader.work()[0]?.evidence;
+    expect(f.activity.reader.work()[0]?.publishing).toBe(1);
+    expect(handoff?.messages.map(({ text }) => text)).toEqual([
+      "Test the change",
+      "Choose the next scope",
+    ]);
+    expect(handoff?.messages[1]?.delivery).toBe("pending");
+    expect(f.service.find(bot)?.attention["watch/channel"]).toBeDefined();
+    publication.resolve(
+      event("local-reply", {
+        pubkey: bot,
+        content: "Choose the next scope",
+        tags: [["h", channel]],
+      }),
+    );
+    await reply;
+    expect(f.activity.reader.work()[0]?.evidence).toBe(handoff);
+  } finally {
+    turn.resolve();
+    publication.resolve(event("local-reply"));
+    await reply;
+    await f.ctx.fiber.dispose();
+  }
 });
 
 it("confirms first-turn Solo metadata before its reply publish is acknowledged", async () => {
@@ -2610,6 +2977,44 @@ it("passes the model and effort its owner asked for, and no other", async () => 
     { model: "deep", effort: undefined },
     { model: undefined, effort: "low" },
   ]);
+});
+
+it("ignores the model and effort asked of an agent on Automatic", async () => {
+  // A synthetic recommendation for the example type.
+  setRuntimeRecommendation({
+    candidates: [
+      { harness: "codex", model: "deep", effort: "max", label: "Deep" },
+    ],
+  });
+  try {
+    const { service, run, emit } = await setup({ typeId: "codex" });
+    await service.create({
+      type: "example/codex",
+      name: "Echo",
+      config: { preset: "recommended" },
+    });
+    // As a Solo chat's pick saved before the agent switched to Automatic.
+    emit({
+      events: [
+        event("picked", {
+          pubkey: viewer,
+          tags: [
+            ["h", channel],
+            ["p", bot],
+            ["model", bot, "deep"],
+            ["effort", bot, "max"],
+          ],
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    const [delivery] = run.mock.calls[0] ?? [];
+    expect(delivery?.config).toMatchObject({ preset: "recommended" });
+    expect(delivery?.model).toBeUndefined();
+    expect(delivery?.effort).toBeUndefined();
+  } finally {
+    setRuntimeRecommendation(undefined);
+  }
 });
 
 it("ignores session tags even for a type with immediate session controls", async () => {
@@ -4475,12 +4880,14 @@ describe("an agent in several communities", () => {
   });
 
   it("leaves one community and stays in its others, never its last, and comes back with its key", async () => {
-    const { service, native, second, agent } = await joined();
+    const { service, native, second, agent, plugin } = await joined();
     await service.save(agent.key, {
       attention: {
         "interest/here": { type: "interest", instructions: "Only here." },
       },
     });
+    const thread = { channelId: channel, root: "e".repeat(64) };
+    await plugin.agents.setConversationInstructions(away, thread, "Here.");
     steps.length = 0;
     await service.leave(away);
     // Its share there goes with it: nothing there lists it to unshare after.
@@ -4511,6 +4918,10 @@ describe("an agent in several communities", () => {
     // attention to here is gone.
     const back = await service.join(bot);
     expect(back.agent.key).toBe(away);
+    // Its conversations' instructions stayed here with them.
+    await expect(
+      plugin.agents.conversationInstructions(away, thread),
+    ).resolves.toBe("Here.");
     expect(second.archives.request).toHaveBeenCalledWith(
       "unarchive",
       bot,
@@ -8107,6 +8518,47 @@ describe("a turn closing or reloading the app stopped", () => {
     third.service.resumeInterrupted();
     await settle();
     expect(third.run).not.toHaveBeenCalled();
+  });
+
+  it("previews its saved turns with Resume's fresh read, changing nothing", async () => {
+    const asked = mention();
+    const second = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    const [agent] = second.service.snapshot().interrupted;
+    if (!agent) throw new Error("Echo is not interrupted");
+    expect(second.service.interruptedTurns(agent)).toMatchObject([
+      { id: asked.id, channelId: channel },
+    ]);
+    const read = vi.mocked(second.session.readRemote);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    // An event the relay did not prove is never previewed.
+    const unproven = { ...asked, id: "f".repeat(64) } as RelayEvent;
+    read.mockImplementationOnce(async (filters, options) => [
+      ...(await original(filters, options)),
+      unproven,
+    ]);
+    const events = await second.service.readInterrupted(
+      agent,
+      new AbortController().signal,
+    );
+    expect(events.map((event) => event.id)).toEqual([asked.id]);
+    expect(read).toHaveBeenLastCalledWith(
+      [{ ids: [asked.id], limit: 1 }],
+      expect.objectContaining({ fresh: true }),
+    );
+    await settle();
+    expect(second.run).not.toHaveBeenCalled();
+    expect(names(second.service.snapshot().interrupted)).toEqual(["Echo"]);
+    expect(readInterrupted(second.storage)).toEqual({
+      [bot]: { [asked.id]: channel },
+    });
   });
 
   it("is forgotten when the owner does not resume it", async () => {
@@ -13769,6 +14221,110 @@ it.each(
   },
 );
 
+describe("a timer turn that fails before it starts", () => {
+  const timer = (max: number, root?: string) => ({
+    type: "timer" as const,
+    interest_id: "default",
+    prompt: "Draft the digest",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000,
+    max_occurrences: max,
+    expires_at: null,
+    channel,
+    ...(root ? { root } : {}),
+  });
+  let error: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    error = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => error.mockRestore());
+
+  it.each([undefined, "e".repeat(64)])(
+    "is reported once in its conversation (root: %s)",
+    async (root) => {
+      const { service, run, native } = await setup();
+      run.mockRejectedValue(new Error("no session key"));
+      await service.create({ type: "example/echo", name: "Echo" });
+      if (root)
+        native.query.mockResolvedValue([
+          event(root, { tags: [["h", channel]] }),
+        ]);
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: { "watch/weekly": timer(1, root) },
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      await vi.waitFor(async () =>
+        expect(await published(native, 9)).toHaveLength(1),
+      );
+      const [notice] = await published(native, 9);
+      expect(notice.content).toBe(
+        "⚠️ My timer weekly woke me but its turn couldn't start: no session key",
+      );
+      expect(notice.tags).toEqual([
+        ["h", channel],
+        ...(root ? [["e", root, "", "reply"]] : []),
+        ["p", viewer],
+      ]);
+      // The failed occurrence stays spent; nothing retries it.
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(await published(native, 9)).toHaveLength(1);
+      expect(service.find(bot)?.timers["watch/weekly"]?.used).toBe(1);
+    },
+  );
+
+  it("reports a repeat again only after one of its turns started", async () => {
+    const { service, run, native } = await setup();
+    run
+      .mockRejectedValueOnce(new Error("first"))
+      .mockRejectedValueOnce(new Error("second"))
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("fourth"));
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/weekly": timer(4) },
+    });
+    for (let occurrence = 1; occurrence <= 4; occurrence++) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(occurrence));
+    }
+    await vi.advanceTimersByTimeAsync(1_000);
+    const notices = (await published(native, 9)).map(({ content }) => content);
+    expect(notices).toEqual([
+      "⚠️ My timer weekly woke me but its turn couldn't start: first",
+      "⚠️ My timer weekly woke me but its turn couldn't start: fourth",
+    ]);
+  });
+
+  it("is reported at the channel level when its root is not in the channel", async () => {
+    const { service, run, native } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    native.query.mockResolvedValue([]);
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/weekly": timer(1, "e".repeat(64)) },
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(async () =>
+      expect(await published(native, 9)).toHaveLength(1),
+    );
+    expect(run).not.toHaveBeenCalled();
+    const [notice] = await published(native, 9);
+    expect(notice.content).toBe(
+      "⚠️ My timer weekly woke me but its turn couldn't start: The delivery root is not in its channel",
+    );
+    expect(notice.tags).toEqual([
+      ["h", channel],
+      ["p", viewer],
+    ]);
+  });
+});
+
 it("delivers matched events to their configured address rather than the listening channel", async () => {
   const runOnce = vi.fn(async () => ({ ok: true }));
   const { service, run, emit, native, session, activity } = await setup({
@@ -16218,37 +16774,77 @@ describe("full external agent access", () => {
     expect(readFile.mock.calls[0]?.[2].aborted).toBe(true);
   });
 
-  it("hands off as the app, never as the agent's own conversation or a watch", async () => {
-    const root = "e".repeat(64);
-    const f = await fixture();
-    f.native.query.mockImplementation(async (_member, filters) => {
-      const [filter] = filters as { kinds?: number[]; ids?: string[] }[];
-      if (filter?.kinds?.includes(39000))
-        return [event("meta", { kind: 39000, tags: [["d", channel]] })];
-      return filter?.ids?.includes(root) ? [event(root)] : [];
-    });
-    try {
-      expect(
-        await f.call("self_handoff", { channel, thread: root, text: "Look" }),
-      ).toHaveProperty(
-        "result.content.0.text",
-        `Handed off to thread ${root}.`,
-      );
-      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
-      const { trigger } = f.run.mock.calls[0]?.[0] ?? {};
-      expect(trigger).toMatchObject({
-        type: "plugin",
-        from: { external: true },
-        channel,
-        root,
-        text: "Look",
+  it.each([false, true])(
+    "hands off as the app without replaying self-posts (busy: %s)",
+    async (busy) => {
+      const root = "e".repeat(64);
+      const f = await fixture();
+      const active = runnerGate();
+      f.native.query.mockImplementation(async (_member, filters) => {
+        const [filter] = filters as { kinds?: number[]; ids?: string[] }[];
+        if (filter?.kinds?.includes(39000))
+          return [event("meta", { kind: 39000, tags: [["d", channel]] })];
+        return filter?.ids?.includes(root) ? [event(root)] : [];
       });
-      expect(trigger).not.toHaveProperty("plugin");
-      expect(trigger).not.toHaveProperty("from.channel");
-    } finally {
-      await f.cleanup();
-    }
-  });
+      try {
+        if (busy) {
+          f.run.mockImplementationOnce(async () => active.promise);
+          f.emit({
+            events: [
+              event("active", {
+                tags: [
+                  ["h", channel],
+                  ["p", bot],
+                ],
+              }),
+            ],
+            channelId: channel,
+          });
+          await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+        }
+        const own = event("own-correction", {
+          pubkey: bot,
+          tags: [
+            ["h", channel],
+            ["p", bot],
+            ["e", root, "", "reply"],
+          ],
+        });
+        f.emit({ events: [own, own], channelId: channel });
+        await settle();
+        expect(f.run).toHaveBeenCalledTimes(busy ? 1 : 0);
+        expect(
+          await f.call("self_handoff", { channel, thread: root, text: "Look" }),
+        ).toHaveProperty(
+          "result.content.0.text",
+          `Queued self-handoff to ${channel}, thread ${root}. No message was posted. Execution has not been confirmed.`,
+        );
+        if (busy) {
+          await settle();
+          expect(f.run).toHaveBeenCalledTimes(1);
+        }
+        active.resolve();
+        const count = busy ? 2 : 1;
+        await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(count));
+        const { trigger } = f.run.mock.calls[count - 1]?.[0] ?? {};
+        expect(trigger).toMatchObject({
+          type: "plugin",
+          from: { external: true },
+          channel,
+          root,
+          text: "Look",
+        });
+        expect(trigger).not.toHaveProperty("plugin");
+        expect(trigger).not.toHaveProperty("from.channel");
+        f.emit({ events: [own], channelId: channel });
+        await settle();
+        expect(f.run).toHaveBeenCalledTimes(count);
+      } finally {
+        active.resolve();
+        await f.cleanup();
+      }
+    },
+  );
 
   it("grants an older narrow approval nothing until the owner approves full access", async () => {
     const f = await fixture(["read", "post", "create"]);
@@ -18580,6 +19176,53 @@ describe("Buzz settings", () => {
       expect(write).not.toHaveBeenCalled();
     },
   );
+});
+
+it("gives a run its owner's Bestie in its community, and a plugin's handle none", async () => {
+  const f = await setup();
+  const chosen = "a".repeat(64);
+  const write = vi.fn(async (_agent: string | null) => {});
+  Object.assign(f.session, {
+    mainAgent: { read: async () => undefined, write },
+  });
+  Object.assign(f.session.agentChoices, {
+    ensure: vi.fn(),
+    snapshot: () => ({ selectable: [{ pubkey: chosen }] }),
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalledWith(bot, 0));
+  await settle();
+  const run = runnerGate<AgentHandle>();
+  f.run.mockImplementationOnce(async ({ agent }) => {
+    run.resolve(agent);
+  });
+  f.plugin.agents.wake(bot, { channel, root: "e".repeat(64), text: "hi" });
+  const agent = await run.promise;
+  expect(await agent.bestie?.()?.set(chosen)).toEqual({
+    device: chosen,
+    account: chosen,
+    here: true,
+  });
+  expect(write).toHaveBeenCalledExactlyOnceWith(chosen);
+  expect(f.plugin.agents.handle(bot)).not.toHaveProperty("bestie");
+  // A control kept past the run's end changes nothing, even one that was
+  // already reading the agents.
+  const control = agent.bestie?.();
+  const inventory = runnerGate();
+  // Only the set's read waits: removal rereads the agents too.
+  const { refresh } = f.session.agentChoices;
+  Object.assign(f.session.agentChoices, {
+    refresh: vi.fn(refresh).mockImplementationOnce(() => inventory.promise),
+  });
+  const setting = control?.set(chosen);
+  try {
+    await f.service.remove(bot);
+  } finally {
+    inventory.resolve();
+  }
+  await expect(setting).rejects.toThrow();
+  await expect(control?.clear()).rejects.toThrow();
+  expect(write).toHaveBeenCalledOnce();
 });
 
 describe("Retired owner-read tools", () => {

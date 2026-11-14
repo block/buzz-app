@@ -1472,9 +1472,7 @@ it("keeps an ordinary chat editor and pending save through layout changes and ta
     await waitFor(() => expect(input).toHaveFocus());
     await user.keyboard("Keep this name");
     change("ready", 2, "list");
-    expect(
-      screen.queryByRole("button", { name: "Work", exact: true }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Work" })).toBeNull();
     expect(screen.getByRole("textbox", { name: "Chat name" })).toBe(input);
     change("loading", 3);
     expect(screen.getByRole("textbox", { name: "Chat name" })).toBe(input);

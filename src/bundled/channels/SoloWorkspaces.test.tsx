@@ -456,7 +456,7 @@ it("lists filed and unfiled chats without workspace chrome while preserving fili
   const h = fixture();
   const store = h.store();
   const filed = Array.from({ length: SOLO_CHAT_CAP + 1 }, (_, index) => ({
-    id: `filed-${index}`,
+    id: index === 0 ? "chat" : `filed-${index}`,
     title: `Filed chat ${index}`,
   }));
   await store.queries.ensure();
@@ -487,20 +487,12 @@ it("lists filed and unfiled chats without workspace chrome while preserving fili
   render(<View />);
   const user = userEvent.setup();
   try {
-    await user.click(
-      await screen.findByRole("button", { name: "Work", exact: true }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Work" }));
     expect(screen.queryByRole("button", { name: "Filed chat 0" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Switch layout" }));
-    expect(
-      screen.queryByRole("button", { name: "Work", exact: true }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Chats", exact: true }),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Unfiled chat", exact: true }),
-    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Work" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Chats" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Unfiled chat" })).toBeVisible();
     expect(
       screen.getAllByRole("button", { name: /^Filed chat \d+$/ }),
     ).toHaveLength(SOLO_CHAT_CAP);
@@ -524,9 +516,10 @@ it("lists filed and unfiled chats without workspace chrome while preserving fili
     ).toBeVisible();
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Switch layout" }));
-    expect(
-      screen.getByRole("button", { name: "Work", exact: true }),
-    ).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "Work" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     expect(screen.queryByRole("button", { name: "Filed chat 0" })).toBeNull();
     expect(h.saved().assignments).toEqual(assignments);
     expect(h.write).not.toHaveBeenCalled();

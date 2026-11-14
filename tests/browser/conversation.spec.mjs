@@ -134,6 +134,7 @@ test("independent packed author consumer and native-installed contribution survi
     // The fixture loads every bundled plugin; compile it outside the
     // navigation budget, which parallel CI builds can otherwise exhaust.
     await warmUp(server, "/tests/fixtures/conversation.tsx");
+    await server.transformRequest("/src/shared/styles/globals.css");
     const errors = watchPageErrors(page);
     await page.route("**/proof-media/**", (route) =>
       route.fulfill({

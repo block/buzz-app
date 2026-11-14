@@ -265,6 +265,7 @@ export function useConversationAgents(
     .sort();
   return {
     activity,
+    channelThreadRoots: watchChannel ? channelThreadRoots : undefined,
     details,
     entries,
     replaced,
@@ -304,6 +305,7 @@ export function TypingIndicator({
 }) {
   const {
     activity,
+    channelThreadRoots,
     details,
     entries,
     replaced,
@@ -344,6 +346,7 @@ export function TypingIndicator({
         threadRootId,
         session.agentActivity,
         hostedAgents,
+        channelThreadRoots,
       ),
     ]),
   );
@@ -385,9 +388,10 @@ export function TypingIndicator({
   );
   const name = (pubkey: string) =>
     resolveName(pubkey, profiles.get(pubkey)?.name ?? pubkey.slice(0, 10));
-  const scopeLabel = (pubkey: string, workRoot?: string) => {
+  const scopeLabel = (pubkey: string, workRoot?: string | null) => {
     if (threadRootId) return undefined;
-    const roots = workRoot ? [workRoot] : (details.get(pubkey)?.roots ?? []);
+    const roots =
+      workRoot !== undefined ? [workRoot] : (details.get(pubkey)?.roots ?? []);
     const labels = roots.slice(0, 2).map((root) => {
       if (root === null) return "Channel conversation";
       if (!root) return "Work with unconfirmed thread";
@@ -422,9 +426,9 @@ export function TypingIndicator({
     : undefined;
   const agentStatus = (
     pubkey: string,
-    navigate: (target: string, origin?: MessageLinkOrigin) => void,
+    navigate: (target: string, origin?: MessageLinkOrigin | null) => void,
     work?: LocalWork,
-    workRoot?: string,
+    workRoot?: string | null,
   ) => {
     const detail = workRoot
       ? currentActivity(
@@ -438,14 +442,13 @@ export function TypingIndicator({
     if (!detail) return null;
     const target = profileActivityViewTarget(pubkey);
     const canOpen = !!target && !!openActivity && !!canOpenActivity?.(target);
-    const knownRoots = detail.roots.filter(
-      (value) => typeof value === "string",
-    );
     const conversationRoot =
       workRoot ??
-      (work ? localWorkRoot(work) : undefined) ??
-      threadRootId ??
-      (knownRoots.length === 1 ? knownRoots[0] : undefined);
+      (work?.soloChat && !work.thread
+        ? (threadRootId ?? null)
+        : ((work ? localWorkRoot(work) : undefined) ??
+          threadRootId ??
+          (detail.roots.length === 1 ? detail.roots[0] : undefined)));
     const conversation = conversationRoot
       ? `buzz://message?${new URLSearchParams({ channel: channelId, id: conversationRoot, thread: conversationRoot })}`
       : `buzz://channel/${encodeURIComponent(channelId)}`;
@@ -477,7 +480,11 @@ export function TypingIndicator({
           onOpen={() =>
             navigate(
               target,
-              workRoot ? { rootId: workRoot } : activityOrigin(pubkey),
+              workRoot !== undefined
+                ? workRoot
+                  ? { rootId: workRoot }
+                  : null
+                : activityOrigin(pubkey),
             )
           }
         />
@@ -590,8 +597,12 @@ export function TypingIndicator({
                   openActivity &&
                   ((target, origin) => {
                     const agent = profileActivityViewKey(target);
-                    const show = (next: string) => openActivity(next, origin);
-                    return agent && (origin?.rootId || knownConversation(agent))
+                    const show = (next: string) =>
+                      openActivity(next, origin ?? undefined);
+                    return agent &&
+                      (origin === null ||
+                        origin?.rootId ||
+                        knownConversation(agent))
                       ? openProfileTranscript(target, show)
                       : show(target);
                   })
@@ -652,6 +663,7 @@ export function TypingIndicator({
   );
 }
 
+// A null origin selects known channel work; undefined leaves scope inferred.
 function AgentChooser({
   label,
   content,
@@ -662,11 +674,11 @@ function AgentChooser({
   label: string;
   content: ReactNode;
   openTarget?:
-    | ((target: string, origin?: MessageLinkOrigin) => boolean)
+    | ((target: string, origin?: MessageLinkOrigin | null) => boolean)
     | undefined;
   directTarget?: string | undefined;
   children(
-    navigate: (target: string, origin?: MessageLinkOrigin) => void,
+    navigate: (target: string, origin?: MessageLinkOrigin | null) => void,
   ): ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -695,7 +707,7 @@ function AgentChooser({
     document.addEventListener("keydown", dismiss, true);
     return () => document.removeEventListener("keydown", dismiss, true);
   }, [open]);
-  const navigate = (target: string, origin?: MessageLinkOrigin) => {
+  const navigate = (target: string, origin?: MessageLinkOrigin | null) => {
     const previous = document.activeElement;
     // The popup action unmounts after navigation. Existing panel navigation
     // captures activeElement, so give it the retained avatar control instead.

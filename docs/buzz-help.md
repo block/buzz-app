@@ -1395,8 +1395,7 @@ available rather than silently discarding it.
   its activity; hover or focus the bubble to reveal **Stop** (always visible on
   touch screens). For several agents, open or hover the bubble to choose an
   agent’s activity or stop an individual request. Expand recorded work for its
-  activity controls. Stop availability
-  depends on the agent type.
+  activity controls. In a Solo chat, follow-ups share one live bubble per agent: the first working request carries it until it settles, then the next live request takes over. The fallback Activity chooser also groups these requests into one row per agent. Separate thread work and request failures keep their own indicators. Stop availability depends on the agent type.
   For native Claude, Codex and Goose, Stop also cancels pending plugin tool calls
   that use the host signal. It cannot undo a write already sent.
 - Agent-to-agent messages stay in the conversation as collapsed history after

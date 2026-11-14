@@ -54,6 +54,7 @@ import {
   type RequestWork,
 } from "../../features/agents/request-work";
 import {
+  localActivity,
   localWorkLabel,
   type WorkStep,
 } from "../../features/agents/local-activity";
@@ -72,6 +73,7 @@ const noSubscribe = () => () => {};
 export type ActivityAgents = WorkStopAgents;
 type ActivityProps = ComposerAccessoryProps & { agents?: ActivityAgents };
 const noWork: RequestWork[] = [];
+const noRows: readonly { id: string; replyCount: number }[] = [];
 /** Activity belongs to the exact triggering message, not the composer. Once an
  * agent has publicly replied, its outcome follows that reply instead. */
 export function ActivityAccessory(props: ActivityProps) {
@@ -126,6 +128,29 @@ function MessageActivity(
     hasWork ? session.agentActivity.subscribe : noSubscribe,
     session.agentActivity.snapshot,
   );
+  const threadScoped =
+    props.threadScoped ??
+    (props.messageLayout === "thread" || !!message?.threadRootId);
+  const subscribeChannel = useCallback(
+    (listener: () => void) =>
+      hasWork && !threadScoped
+        ? (session.channels?.subscribeWindow?.(channelId, listener) ??
+          noSubscribe())
+        : noSubscribe(),
+    [session, channelId, hasWork, threadScoped],
+  );
+  const channelRows = useSyncExternalStore(subscribeChannel, () =>
+    hasWork && !threadScoped
+      ? (session.channels?.window?.(channelId).rows ?? noRows)
+      : noRows,
+  );
+  const channelThreadRoots = useMemo(
+    () =>
+      new Set(
+        channelRows.filter((row) => row.replyCount > 0).map((row) => row.id),
+      ),
+    [channelRows],
+  );
   const work = useMemo(
     () =>
       messageId && hasWork
@@ -177,9 +202,6 @@ function MessageActivity(
   const visible = (entry: RequestWork) => {
     if (!canOpen(profileActivityViewTarget(entry.agent) ?? "")) return false;
     if (recorded.has(entry.agent)) return false;
-    const threadScoped =
-      props.threadScoped ??
-      (props.messageLayout === "thread" || !!message?.threadRootId);
     if (!threadScoped) {
       const local = (snapshot.local ?? []).filter(
         (work) =>
@@ -187,7 +209,26 @@ function MessageActivity(
           work.channelId === channelId &&
           work.messageId === messageId,
       );
-      if (local.length)
+      if (local.length) {
+        // Solo follow-ups steer one conversation. Keep the first working
+        // request visible until it settles; queued follow-ups add no copy.
+        if (
+          (entry.state === "working" || entry.state === "waiting") &&
+          local.some((work) => work.soloChat && !work.thread)
+        ) {
+          const current = localActivity(
+            {
+              local: (snapshot.local ?? []).filter(
+                (work) =>
+                  work.soloChat &&
+                  !work.thread &&
+                  !channelThreadRoots.has(work.threadRootId),
+              ),
+            },
+            channelId,
+          ).get(entry.agent);
+          if (current?.messageId !== messageId) return false;
+        }
         return local.some(
           (work) =>
             !work.thread &&
@@ -197,6 +238,7 @@ function MessageActivity(
               work.threadRootId === message.id
             ),
         );
+      }
       const turns = activityTranscript(entry.selected.records, {
         agent: entry.agent,
         channelId,

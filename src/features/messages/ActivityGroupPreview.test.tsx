@@ -549,6 +549,93 @@ it("keeps a dispatch readable after its sender finishes, while the helper works 
     f.dispose();
   }
 });
+it.each(["standalone", "grouped"] as const)(
+  "keeps unlinked %s Solo history idle during another request",
+  (surface) => {
+    const f = fixture();
+    const owner = createRelaySession({
+      viewer: keypair().pubkey,
+      relayAuthor: keypair().pubkey,
+      media: () => undefined,
+      query: async () => [],
+    });
+    const { threadRootId: _root, replyParentId: _parent, ...unlinked } = step;
+    const rows =
+      surface === "standalone"
+        ? [unlinked]
+        : [
+            { ...unlinked, id: "earlier-step", content: "Earlier update" },
+            unlinked,
+          ];
+    function Preview() {
+      const presentation = useActivityPresentation(
+        rows,
+        f.activity,
+        new Set(["agent"]),
+      );
+      const group = presentation.groups[0];
+      if (!group) throw new Error("Missing activity group");
+      expect(group.requestId).toBeUndefined();
+      const session = { ...owner.session, agentActivity: f.activity };
+      return surface === "standalone" ? (
+        <MessageRow
+          row={unlinked}
+          recordedActivity={presentation.byRow.get(unlinked.id)}
+          session={session}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />
+      ) : (
+        <ActivityGroupPreview
+          group={group}
+          session={session}
+          profiles={new Map()}
+          media={() => undefined}
+          expanded={false}
+          onToggle={() => {}}
+        />
+      );
+    }
+    try {
+      const unrelated = f.local.begin({
+        scope: "test",
+        agent: "agent",
+        channelId: "channel",
+        messageId: "other-request",
+        threadRootId: "other-request",
+        soloChat: true,
+      });
+      unrelated.started();
+      render(<Preview />);
+      const active = () =>
+        screen.getByText(unlinked.content).closest("[data-active]");
+      expect(active()).toBeNull();
+      act(() => unrelated.finish({ ok: true }));
+      let current: ReturnType<typeof f.local.begin>;
+      act(() => {
+        current = f.local.begin({
+          scope: "test",
+          agent: "agent",
+          channelId: "channel",
+          messageId: unlinked.id,
+          threadRootId: unlinked.id,
+          soloChat: true,
+        });
+        current.started();
+      });
+      expect(active()).not.toBeNull();
+      act(() => current.finish({ ok: true }));
+      expect(active()).toBeNull();
+    } finally {
+      owner.dispose();
+      f.dispose();
+    }
+  },
+);
+
 it("shimmers a standalone working step and stops when that request finishes", () => {
   const f = fixture();
   const owner = createRelaySession({

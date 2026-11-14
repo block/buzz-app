@@ -1,8 +1,7 @@
 import type { RelaySession } from "../relay/session";
 import type { Agents } from "./service";
 import type { RequestWork } from "./request-work";
-import type { LocalWork } from "./local-activity";
-import { localWorkRoot } from "./local-activity";
+import { localActivity, localWorkRoot, type LocalWork } from "./local-activity";
 import { activityTranscript } from "./activity-transcript";
 
 export type WorkStopAgents = Pick<Agents, "interruptible" | "interrupt">;
@@ -63,19 +62,37 @@ export function conversationWorkStops(
   threadRootId: string | undefined,
   activity: Activity | undefined,
   agents: WorkStopAgents | undefined,
+  channelThreadRoots?: ReadonlySet<string>,
 ): {
   control: WorkStop;
   work?: LocalWork;
-  threadRootId?: string | undefined;
+  threadRootId?: string | null | undefined;
 }[] {
   if (!snapshot) return [];
   const local = (snapshot.local ?? []).filter(
     (work) =>
       work.agent === agent &&
       work.channelId === channelId &&
-      (!threadRootId || work.threadRootId === threadRootId),
+      (!threadRootId || work.threadRootId === threadRootId) &&
+      (threadRootId ||
+        !channelThreadRoots ||
+        (!work.thread && !channelThreadRoots.has(work.threadRootId))),
   );
+  // Top-level Solo messages steer one conversation, so they share one control.
+  const solo = localActivity(
+    {
+      local: local.filter(
+        (work) =>
+          work.soloChat &&
+          !work.thread &&
+          (work.state === "working" || work.state === "waiting"),
+      ),
+    },
+    channelId,
+  ).get(agent);
   const result = local.flatMap((work) => {
+    const continuous = work.soloChat && !work.thread && !threadRootId;
+    if (continuous && work !== solo) return [];
     const control = workStop(
       { ...work, lifecycle: true, working: work.state === "working" },
       work,
@@ -83,7 +100,15 @@ export function conversationWorkStops(
       agents,
     );
     return control
-      ? [{ control, work, threadRootId: localWorkRoot(work) }]
+      ? [
+          {
+            control: continuous
+              ? { ...control, key: JSON.stringify([agent, channelId, null]) }
+              : control,
+            work,
+            threadRootId: continuous ? null : localWorkRoot(work),
+          },
+        ]
       : [];
   });
   // Local lifecycle evidence owns this agent's state, including settled work.

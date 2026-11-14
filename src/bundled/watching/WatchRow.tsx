@@ -102,13 +102,7 @@ export function createWatchComponents({
     const command =
       watch.type === "source" && watch.provider === "attention/command";
     const timer = agent.timers[slug];
-    const description = describe(
-      watch,
-      Date.now() / 1000,
-      watch.type === "timer" && timer?.armedAt === watch.armed_at
-        ? timer.used
-        : undefined,
-    );
+    const description = describe(watch, Date.now() / 1000, timer);
     // Timers have no name; a nameless watch is labelled by its Interest.
     const ownName = "name" in watch && watch.name;
     const label = heading(ownName || title(watch.interest_id ?? slug.slice(6)));

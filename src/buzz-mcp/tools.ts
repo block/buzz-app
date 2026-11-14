@@ -24,6 +24,7 @@ import {
 import {
   communityEmoji,
   contentEmojiTags,
+  CUSTOM_REACTION,
   EMOJI_SET,
   EMOJI_SET_KIND,
   referencedEmoji,
@@ -179,7 +180,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "send",
-    "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread.",
+    "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread. To wake yourself in another conversation, use self_handoff; self-mentions are refused.",
     {
       text: str,
       path: str,
@@ -210,7 +211,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "self_handoff",
-    "Hand off to yourself in another of your conversations, waking that session with text. thread: any of its messages, outside a Solo chat.",
+    "Queue work for yourself in another conversation. Use this instead of sending yourself a mention. The receipt confirms queue admission, not execution or completion. thread: any of its messages, outside a Solo chat.",
     { channel: str, thread: str, text: str },
     ["channel", "text"],
   ),
@@ -551,7 +552,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ...(fromRoot && { root: fromRoot }),
       },
     });
-    return root ? `Handed off to thread ${root}.` : `Handed off to ${channel}.`;
+    return `Queued self-handoff to ${channel}${root ? `, thread ${root}` : ""}. No message was posted. Execution has not been confirmed.`;
   },
   async agent_update({ client }, args) {
     if (!client.updateAgent)
@@ -706,6 +707,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const emoji = required(args, "emoji");
     if (args.off !== true) {
       const target = await tools.event(id);
+      // A `:shortcode:` reaction renders only with its NIP-30 tag, so one
+      // outside the community palette is refused rather than published bare.
+      const isCustom = CUSTOM_REACTION.test(emoji);
+      const custom = isCustom ? await tools.emoji(emoji) : [];
+      if (isCustom && !custom.length)
+        throw new Error(`unknown custom emoji ${emoji}`);
       await client.publish({
         kind: 7,
         content: emoji,
@@ -718,6 +725,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
               client.signingAuthority,
             ),
           ],
+          ...custom,
         ],
       });
       return "reacted";
@@ -1626,6 +1634,12 @@ async function post(
   const files = await tools.attach(list(args.files));
   const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
   const mentions = await tools.mentions(channel, content, list(args.mentions));
+  // The runner suppresses every relay event authored by this agent. A post
+  // receipt must not suggest that a self-mention scheduled another session.
+  if (mentions.includes(tools.client.pubkey))
+    throw new Error(
+      "Self-mentions do not wake your other sessions. Nothing was posted. Use self_handoff with channel, text, and thread outside a Solo chat.",
+    );
   const event = await tools.client.publish({
     kind: 9,
     content,

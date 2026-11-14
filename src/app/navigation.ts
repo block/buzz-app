@@ -8,7 +8,11 @@ import {
 } from "react";
 import type { AppServices } from "./services";
 import { communityDestination } from "../features/communities/destination";
-import { targetKey, type OpenTarget } from "../features/navigation/targets";
+import {
+  targetKey,
+  type NavigationScope,
+  type OpenTarget,
+} from "../features/navigation/targets";
 import type { PageNavigation } from "../features/navigation/service";
 import type {
   OpenAttempt,
@@ -273,10 +277,22 @@ export function useAppNavigation(
     () => ({ attempt: state.attempt, page, waiting, failure }),
     [state.attempt, page, waiting, failure],
   );
-  const [presentation, setPresentation] = useState<{
-    owner: typeof owner;
-    request: PageNavigation;
-  }>();
+  // The page's request reaches only its subscribers, not the whole shell.
+  const [presented] = useState(() => {
+    let value: { owner: typeof owner; request: PageNavigation } | undefined;
+    const listeners = new Set<() => void>();
+    return {
+      get: () => value,
+      set(next: NonNullable<typeof value>) {
+        value = next;
+        for (const listener of listeners) listener();
+      },
+      subscribe(listener: () => void) {
+        listeners.add(listener);
+        return () => void listeners.delete(listener);
+      },
+    };
+  });
   const workspace = useRef<{
     owner: typeof owner;
     presentation: ReturnType<AppServices["navigationHost"]["request"]>;
@@ -286,7 +302,7 @@ export function useAppNavigation(
     if (owner.waiting || owner.failure) return;
     const previous = workspace.current;
     if (!settings && previous?.presentation.resume(owner.attempt)) {
-      setPresentation({ owner, request: previous.presentation.request });
+      presented.set({ owner, request: previous.presentation.request });
       previous.owner = owner;
       return;
     }
@@ -329,10 +345,10 @@ export function useAppNavigation(
       },
       !settings && !!owner.page,
     );
-    setPresentation({ owner, request: next.request });
+    presented.set({ owner, request: next.request });
     if (settings) return next.dispose;
     workspace.current = { owner, presentation: next };
-  }, [services, owner, settings]);
+  }, [services, owner, settings, presented]);
   const retained = workspace.current;
   const sameWorkspaceVisit =
     retained &&
@@ -342,7 +358,7 @@ export function useAppNavigation(
     retained && !retained.presentation.request.signal.aborted
       ? retained.presentation.request
       : undefined;
-  const request =
+  const requestFor = (presentation: ReturnType<typeof presented.get>) =>
     presentation?.owner === owner
       ? presentation.request
       : !settings && sameWorkspaceVisit
@@ -355,7 +371,9 @@ export function useAppNavigation(
     settings && retainedRequest && retained
       ? retained.owner.attempt.entry.target
       : target;
-  const workspaceRequest = settings ? retainedRequest : request;
+  const workspaceRequestFor = (
+    presentation: ReturnType<typeof presented.get>,
+  ) => (settings ? retainedRequest : requestFor(presentation));
   useEffect(() => {
     if (state.attempt.signal.aborted) return;
     if (failure) {
@@ -459,7 +477,9 @@ export function useAppNavigation(
     target,
     pages,
     page,
-    request,
+    presented,
+    requestFor,
+    workspaceRequestFor,
     select,
     waiting,
     failure,
@@ -475,7 +495,9 @@ export function useAppNavigation(
     workspace: {
       page: workspacePage || undefined,
       target: workspaceTarget,
-      request: workspaceRequest,
+      /** The retained page's request under Settings; a page's own request
+       * reaches only subscribers of `presented`, through `workspaceRequestFor`. */
+      request: settings ? retainedRequest : undefined,
       selected:
         workspacePage?.key ?? (settings ? "home" : (pageKey ?? target.kind)),
       attempt:
@@ -521,47 +543,35 @@ export function useAppNavigation(
     leaveSettings() {
       const current = navigation.snapshot().entry.target;
       if (current.kind !== "settings") return;
-      const {
-        route: _route,
-        section: _section,
-        provider: _provider,
-        pluginId: _pluginId,
-        ...dialog
-      } = current;
-      const dialogKey = targetKey(dialog);
+      const selectedClient = services.communities.snapshot();
+      const here =
+        selectedClient.viewer && selectedClient.selected
+          ? {
+              viewer: selectedClient.viewer,
+              communityOrigin: communityDestination(selectedClient.selected)
+                .url,
+            }
+          : null;
+      const dialogKey = settingsDialogKey(current, here);
       const dismiss = (fallback: OpenTarget) =>
-        navigation.dismiss((target) => {
-          if (target.kind !== "settings") return false;
-          const {
-            route: _route,
-            section: _section,
-            provider: _provider,
-            pluginId: _pluginId,
-            ...dialog
-          } = target;
-          return targetKey(dialog) === dialogKey;
-        }, fallback);
+        navigation.dismiss(
+          (target) =>
+            target.kind === "settings" &&
+            settingsDialogKey(target, here) === dialogKey,
+          fallback,
+        );
       const previous = lastNonSettings.current;
       if (previous) {
         dismiss(previous.target);
         return;
       }
-      const selectedClient = services.communities.snapshot();
       if (!selectedClient.viewer) return;
       dismiss({
         version: 1,
         kind: "page",
         pluginId: "buzz.channels",
         pageId: "channels",
-        ...(selectedClient.selected
-          ? {
-              scope: {
-                viewer: selectedClient.viewer,
-                communityOrigin: communityDestination(selectedClient.selected)
-                  .url,
-              },
-            }
-          : { scope: null }),
+        scope: here,
       });
     },
     retry() {
@@ -584,6 +594,17 @@ export function useAppNavigation(
       void navigation.retry();
     },
   };
+}
+
+/** Which Settings dialog `target` shows: Settings for its community, or for
+ * Personal space, whatever section or part within. A visit that names no
+ * community, as every link to Settings does, shows the one selected, `here`. */
+function settingsDialogKey(
+  target: Extract<OpenTarget, { kind: "settings" }>,
+  here: NavigationScope | null,
+) {
+  const scope = target.scope === undefined ? here : target.scope;
+  return targetKey({ version: 1, kind: "settings", ...(scope && { scope }) });
 }
 
 /** Retired page addresses resolve in place, retaining their account/community scope. */

@@ -465,6 +465,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         ))
         .expect("bundled link previews manifest"),
         serde_json::from_str(include_str!(
+            "../../../src/bundled/file-viewer/manifest.json"
+        ))
+        .expect("bundled file viewer manifest"),
+        serde_json::from_str(include_str!(
             "../../../src/bundled/identity-naming/manifest.json"
         ))
         .expect("identity naming manifest"),

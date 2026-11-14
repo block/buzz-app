@@ -19,6 +19,8 @@ export type UserStatus = Readonly<{
   expiresAt?: number;
 }>;
 export type StatusInput = Pick<UserStatus, "text" | "emoji" | "expiresAt">;
+/** Recently shown authors kept after their last row unmounts. */
+const RETAINED_AUTHORS = 512;
 
 function parse(event: RelayEvent): UserStatus | undefined {
   if (
@@ -65,6 +67,11 @@ export function createUserStatuses(
   >();
   const watched = new Map<string, number>();
   const loaded = new Set<string>();
+  // Loaded authors no row shows now, oldest first. A virtualized timeline
+  // unmounts rows far from the reader and mounts them again on return; keeping
+  // their status (live traffic still updates it) shows it in the returning
+  // row's first frame instead of reading it again and widening the byline.
+  const retained = new Set<string>();
   const listeners = new Set<() => void>();
   let snapshot: ReadonlyMap<string, UserStatus> = new Map();
   let controller = new AbortController();
@@ -110,6 +117,7 @@ export function createUserStatuses(
       // Live traffic for offscreen people need not grow this session's cache.
       if (
         !watched.has(event.pubkey) &&
+        !retained.has(event.pubkey) &&
         event.pubkey !== viewer &&
         !records.has(event.pubkey)
       )
@@ -191,9 +199,18 @@ export function createUserStatuses(
       });
     });
   }
+  // Evict the whole coordinate, never only its latest replacement evidence.
+  function forget(id: string) {
+    retained.delete(id);
+    loaded.delete(id);
+    records.delete(id);
+  }
   function watch(ids: readonly string[]) {
     const unique = [...new Set(ids)].filter((id) => /^[0-9a-f]{64}$/.test(id));
-    for (const id of unique) watched.set(id, (watched.get(id) ?? 0) + 1);
+    for (const id of unique) {
+      watched.set(id, (watched.get(id) ?? 0) + 1);
+      retained.delete(id);
+    }
     schedule();
     return () => {
       for (const id of unique) {
@@ -201,12 +218,14 @@ export function createUserStatuses(
         if (count) watched.set(id, count);
         else {
           watched.delete(id);
-          // Evict the whole coordinate, never only its latest replacement evidence.
-          if (id !== viewer) {
-            loaded.delete(id);
-            records.delete(id);
-          }
+          if (id === viewer) continue;
+          if (loaded.has(id)) retained.add(id);
+          else forget(id);
         }
+      }
+      for (const oldest of retained) {
+        if (retained.size <= RETAINED_AUTHORS) break;
+        forget(oldest);
       }
       if (!watched.size) {
         clearTimeout(retryTimer);
@@ -318,6 +337,7 @@ export function createUserStatuses(
     controller = new AbortController();
     pending = undefined;
     loaded.clear();
+    retained.clear();
     records.clear();
     publish();
     schedule();

@@ -1079,6 +1079,11 @@ available rather than silently discarding it.
   that Builderlab server's site, where the account's usage and billing are.
   The **Remote agent** hint in a signed-in Builderlab agent's **Identity** tab
   also links to **See usage and billing** on that site.
+- Remote agents use the Builderlab server of the community you're viewing when
+  your build signs in to more than one, such as a staging server; elsewhere they
+  use the build's own Builderlab. **Settings → Plugins → Builderlab** names
+  that server beside **Remote agents** when it isn't the build's own. Manage
+  such an agent from one of its server's communities.
 - Builderlab sign-in is needed to create or delete a hosted agent and to edit its
   model or instructions. Sign in to the same Builderlab account that created the
   agent; another account cannot manage it. Chat, Memory, and Activity use the

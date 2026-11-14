@@ -39,6 +39,8 @@ import {
   NoteIcon,
   InfoIcon,
 } from "../../shared/design-system/icons";
+import { Select } from "../../shared/design-system/ui/Select";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -63,6 +65,7 @@ import {
   emptyNotePage,
   readNotePage,
   noteHeads,
+  noteGroups,
   noteKey,
   noteTag,
   noteTitle,
@@ -358,6 +361,7 @@ function NoteCollection({
     );
   }, [ownedAgents, result.notes, profiles, resolveName]);
   const [author, setAuthor] = useState("");
+  const [grouping, setGrouping] = useState<"agent" | "tag">("agent");
   const [opened, setOpened] = useState<EventData[]>([]);
   const [selected, setSelected] = useState("");
   const split = usePanelSplit(session.scope, "notes", 448, 320);
@@ -498,10 +502,16 @@ function NoteCollection({
       navigator.snapshot().entry.id !== navigation.entryId
     )
       return;
-    void navigator.open(notesTarget(navigation.target, route), {
-      replace,
-      focus: "preserve",
-    });
+    void navigator.open(
+      notesTarget(navigation.target, {
+        ...(grouping === "tag" ? { grouping } : {}),
+        ...route,
+      }),
+      {
+        replace,
+        focus: "preserve",
+      },
+    );
   };
   useEffect(() => {
     if (
@@ -526,6 +536,7 @@ function NoteCollection({
       return;
     }
     setAuthor(route?.author ?? "");
+    setGrouping(route?.grouping ?? "agent");
     if (route?.profile) {
       if (!agents.some((agent) => agent.pubkey === route.profile)) {
         setRouteError("This agent profile is unavailable.");
@@ -708,7 +719,34 @@ function NoteCollection({
           refreshRef={refreshRef}
           loading={result.loading}
         >
-          {author && (
+          <Select
+            label="Group by"
+            value={grouping}
+            groups={[
+              {
+                label: "Group notes",
+                options: [
+                  { value: "agent", label: "Agent" },
+                  { value: "tag", label: "Package / tag" },
+                ],
+              },
+            ]}
+            onValueChange={(value) => {
+              const next = value === "tag" ? "tag" : "agent";
+              visit({
+                author: "",
+                grouping: next,
+                ...(active === profileKey && profilePanel
+                  ? { profile }
+                  : active
+                    ? { note: active }
+                    : {}),
+              });
+              setAuthor("");
+              setGrouping(next);
+            }}
+          />
+          {grouping === "agent" && author && (
             <div className={styles.folderHeader}>
               <IconButton
                 hint="familiar"
@@ -775,7 +813,19 @@ function NoteCollection({
                 }
               />
             )}
-          {!author ? (
+          {grouping === "tag" ? (
+            <section
+              className={styles.folderGroups}
+              aria-label="Packages and tags"
+            >
+              {noteGroups(result.notes).map((group) => (
+                <section key={group.tag} aria-label={group.tag || "Untagged"}>
+                  <InlineHeader level={2} title={group.tag || "Untagged"} />
+                  {renderNoteGrid(group.notes)}
+                </section>
+              ))}
+            </section>
+          ) : !author ? (
             <section
               className={styles.folderGroups}
               aria-label="Agent folders"

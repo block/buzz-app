@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import type { ChannelMessage } from "../../features/relay/contracts";
@@ -14,6 +15,8 @@ import { foldMessages } from "../../features/relay/fold";
 import type { RelaySession } from "../../features/relay/session";
 import { keypair, signed } from "../../features/relay/testing";
 import userEvent from "@testing-library/user-event";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { formatDue } from "./model";
 import { RemindDialog } from "./RemindDialog";
 
 afterEach(() => {
@@ -284,6 +287,69 @@ it("reveals labelled custom fields and saves a future time with the note", async
     expect.any(Object),
     new Date("2099-06-20T14:30").getTime() / 1000,
     "Follow up",
+  );
+});
+
+it("starts Custom date & time at the next 9am, so it never opens on a past time", async () => {
+  for (const [clock, date] of [
+    ["2026-11-04T08:30", "2026-11-04"],
+    ["2026-11-04T09:00", "2026-11-05"],
+    ["2026-11-04T17:45", "2026-11-05"],
+  ] as const) {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date(clock) });
+    try {
+      cleanup();
+      const user = userEvent.setup();
+      const create = vi.fn(async (..._args: unknown[]) => {});
+      dialog(create);
+      await user.click(screen.getByRole("combobox", { name: "When" }));
+      await user.click(
+        await screen.findByRole("option", { name: "Custom date & time" }),
+      );
+      expect(screen.getByLabelText("Reminder date")).toHaveValue(date);
+      expect(screen.getByLabelText("Reminder time")).toHaveValue("09:00");
+      expect(screen.queryByRole("status")).toBeNull();
+      const save = screen.getByRole("button", { name: "Set reminder" });
+      expect(save).toBeEnabled();
+      await user.click(save);
+      expect(create).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ eventId: "m" }),
+        new Date(`${date}T09:00`).getTime() / 1000,
+        "",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+});
+
+it("confirms a saved reminder with its due time", async () => {
+  const create = vi.fn(async (..._args: unknown[]) => {});
+  const close = vi.fn();
+  render(
+    <ToastProvider>
+      <RemindDialog
+        message={
+          {
+            id: "m",
+            channelId: "c",
+            authorId: "a",
+            content: "hello",
+          } as unknown as ChannelMessage
+        }
+        session={{ reminders: { create } } as unknown as RelaySession}
+        close={close}
+      />
+    </ToastProvider>,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Set reminder" }));
+  expect(close).toHaveBeenCalledOnce();
+  const at = create.mock.calls[0]?.[1] as number;
+  // Sonner mounts a toast transparent, then fades it in.
+  await waitFor(() =>
+    expect(screen.getByText(`Reminder set for ${formatDue(at)}`)).toBeVisible(),
   );
 });
 

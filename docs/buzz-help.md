@@ -736,6 +736,10 @@ and are asked to sign in again in Buzz.
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip. A chosen or picked emoji is followed
   by a space, unless one already follows, so you can keep typing.
+- **Reminders**, in the desktop app when the plugin is on: choose **Remind me**
+  in a sent message's ⋯ menu. A confirmation names the due time, and the message
+  shows an alarm mark while the reminder is pending. A reminder's note can't be
+  edited once set.
 - **Reminder counts** show how many reminders are due in a small capsule on the
   app tile's corner. It shows `99+` above 99; its accessible label keeps the
   exact count.

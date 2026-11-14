@@ -1695,7 +1695,9 @@ type Visit = {
   entryId?: string;
   traversal?: true;
   pluginId?: string;
-  pluginImport?: { repository: string; reference: string };
+  pluginImport?:
+    | { repository: string; reference: string }
+    | { id: string; url: string; sha256: string };
 };
 
 it("links a plugin's details to the Settings sections it adds", async () => {
@@ -1989,6 +1991,57 @@ it("records the plugin Open in Buzz shows on the visit replacing its import", as
   visit("appearance", { entryId: "s3" });
   visit("plugins", { entryId: "p2", traversal: true });
   expect(shown()).toBe("Codex");
+});
+
+it("keeps the plugin a URL link's Open plugin shows when its dismissal lands later", async () => {
+  const fromFolder = {
+    manifest: { id: "example.artifact", name: "Artifact", apiVersion: 1 },
+    source: "external",
+    enabled: true,
+    revision: "git",
+    previous: null,
+    reloadable: false,
+    error: null,
+    updateSource: { root: "/plugins/artifact", path: "." },
+  };
+  const snapshot = {
+    configuration: {
+      status: "ready",
+      externalPluginsPaused: false,
+      catalog: { profile: "test", location: "test", plugins: [fromFolder] },
+    },
+    activation: {},
+    busy: false,
+    error: null,
+    refreshError: null,
+  };
+  const url = vi.fn();
+  const { visit, land, entry, shown, stored, onPluginImportClosed } =
+    pluginHost(
+      { snapshot: () => snapshot, imports: { url, discard: vi.fn() } },
+      { entryId: "p1" },
+    );
+  visit("plugins", {
+    entryId: "p2",
+    pluginImport: {
+      id: "example.artifact",
+      url: "https://plugins.example.org/artifact.json",
+      sha256: "a".repeat(64),
+    },
+  });
+  onPluginImportClosed.mockImplementation(() =>
+    setTimeout(() => land("plugins", { entryId: "p1", traversal: true })),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Open plugin" }));
+  await waitFor(() => expect(entry()).toBe("p1"));
+  expect(shown()).toBe("Artifact");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Close plugin details" }),
+    ).toHaveFocus(),
+  );
+  expect(stored("p1")).toBe("example.artifact");
+  expect(url).not.toHaveBeenCalled();
 });
 
 it("keeps an earlier visit's details when an import finishes after Back", async () => {
@@ -3003,6 +3056,77 @@ it("retires contributed identity rows and their stale actions with the owning re
   expect(stillActive()).toBe(false);
 });
 
+it.each([true, false])(
+  "opens Identity at Community sign-ins, heading focused, only when the open asks for it (%s)",
+  async (part) => {
+    const { cards } = registry([]);
+    const organization = federatedFixture();
+    organization.publish({ status: "signed-in" });
+    const scrollIntoView = vi.fn();
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    try {
+      render(
+        <ToastProvider>
+          <Settings
+            {...host}
+            cards={cards}
+            identity={
+              {
+                exportKey: vi.fn(),
+                backup: {
+                  subscribe: () => () => {},
+                  snapshot: () => undefined,
+                  ready: () => new Promise(() => {}),
+                },
+              } as unknown as Parameters<typeof Settings>[0]["identity"]
+            }
+            federatedIdentity={organization.service}
+            navigation={
+              {
+                entryId: "identity-visit",
+                target: {
+                  version: 1,
+                  kind: "settings",
+                  section: "identity",
+                  ...(part && { part: "organization-sign-in" }),
+                },
+                complete: vi.fn(),
+                savePosition: vi.fn(),
+              } as unknown as Parameters<typeof Settings>[0]["navigation"]
+            }
+          />
+        </ToastProvider>,
+      );
+      const heading = await screen.findByRole("heading", {
+        name: "Community sign-ins",
+      });
+      // The section keeps its place below the identity badge (#1424).
+      const badge = screen.getByRole("region", { name: "Your Buzz ID" });
+      expect(
+        badge.compareDocumentPosition(heading) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      if (part) {
+        expect(heading).toHaveFocus();
+        expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({
+          block: "start",
+          behavior: "instant",
+        });
+        expect(scrollIntoView.mock.contexts[0]).toBe(heading);
+      } else {
+        expect(heading).not.toHaveFocus();
+        expect(scrollIntoView).not.toHaveBeenCalled();
+      }
+      // Arriving never focuses the section's sign-out.
+      expect(
+        screen.getByRole("button", { name: "Sign out of organization" }),
+      ).not.toHaveFocus();
+    } finally {
+      Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    }
+  },
+);
+
 it("offers Retry beside a failed installed revision without changing saved state", () => {
   const fixture = reviewPluginFixture();
   const retryPlugin = vi.fn(() => true);
@@ -3264,7 +3388,7 @@ it("recommends managed plugins in Settings and points to them from navigation", 
     "https://example.com/plugins",
     "v1",
     undefined,
-    pinned,
+    { commit: pinned, path: "dist" },
   );
 });
 
@@ -3382,7 +3506,7 @@ it("routes a managed plugin's updates through the managed review instead of the 
     "https://example.com/plugins",
     "v1",
     undefined,
-    pinned,
+    { commit: pinned, path: "dist" },
   );
   expect(checkGit).not.toHaveBeenCalled();
 });

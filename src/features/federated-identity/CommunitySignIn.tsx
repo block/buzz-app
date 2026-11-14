@@ -23,13 +23,17 @@ export function recoveryMessage(code: string) {
     return "Sign-in could not access secure storage. Check your system’s credential permissions and try again.";
   if (code === "sign-in-canceled")
     return "Sign-in was canceled. Sign in when you’re ready.";
+  if (code === "sign-in-link-unavailable")
+    return "Couldn’t copy the sign-in link. Try again.";
   if (code === "reauthentication-required")
     return "Your sign-in has expired. Sign in again to continue.";
   return "Sign-in did not finish. Try again.";
 }
 
 /** Issuer refusals native keeps for the session revision (`refused()` in
- * assertion.rs) until the app restarts; signing in or retrying repeats them. */
+ * assertion.rs). An automatic retry repeats them; a person's Try again
+ * (`askAgain`), a sign-in that installs a new session, or a restart asks the
+ * issuer again. */
 const ISSUER_REFUSALS = new Set([
   "adapter-refused",
   "grant-refused",
@@ -77,6 +81,16 @@ export function useExplainedRefusal(
   return !!error && explained.current === error;
 }
 
+/** Refusals the sign-in server may answer differently when asked again, for
+ * example once an administrator fixes access or the identity link. */
+export function issuerMayAnswerAgain(error: string | undefined) {
+  return (
+    !!error &&
+    (ISSUER_REFUSALS.has(error) ||
+      /authorization[-_]denied|binding[-_]mismatch/.test(error))
+  );
+}
+
 /** Explicit recovery from native protected-community admission; never automatic login. */
 export function CommunitySignIn({
   identity,
@@ -84,10 +98,14 @@ export function CommunitySignIn({
   retry,
   relay,
   memberships = [],
+  asksAgain = false,
 }: {
   identity?: FederatedIdentity | undefined;
   error?: string | undefined;
   retry: () => void;
+  /** The caller shows its own Try again that asks the issuer again
+   * (`askAgain`), so an issuer refusal needn't wait for a restart. */
+  asksAgain?: boolean | undefined;
   /** The refusing community, so a switch names the others it affects. */
   relay?: string | undefined;
   memberships?: readonly Membership[] | undefined;
@@ -100,6 +118,7 @@ export function CommunitySignIn({
       retry={retry}
       relay={relay}
       memberships={memberships}
+      asksAgain={asksAgain}
     />
   );
 }
@@ -109,12 +128,14 @@ function Action({
   retry,
   relay,
   memberships,
+  asksAgain,
 }: {
   identity: FederatedIdentity;
   error?: string | undefined;
   retry: () => void;
   relay?: string | undefined;
   memberships: readonly Membership[];
+  asksAgain: boolean;
 }) {
   const state = useSyncExternalStore(
     identity.subscribe,
@@ -171,9 +192,9 @@ function Action({
   if (ISSUER_REFUSALS.has(refusal))
     return (
       <p role="alert" className="text-body-sm text-danger">
-        Buzz couldn’t confirm your organization sign-in for this community.
-        Restart Buzz to try again. If it keeps happening, contact your
-        administrator.
+        Buzz couldn’t confirm your organization sign-in for this community.{" "}
+        {asksAgain ? "Try again." : "Restart Buzz to try again."} If it keeps
+        happening, contact your administrator.
       </p>
     );
   // What remains is a sign-in the community requires.

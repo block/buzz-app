@@ -103,6 +103,7 @@ import {
 import { SettingsSectionLink } from "../features/navigation/SettingsSectionLink";
 
 import { pluginCategoryDefinitions } from "./plugin-categories";
+import { scrollport } from "./scrollport";
 
 // Exit animations retain DOM briefly; retired results must stop accepting focus.
 const PluginListEntry = forwardRef<HTMLDivElement, HTMLMotionProps<"div">>(
@@ -289,12 +290,6 @@ function accessMessage(plugin: PluginInfo, state: AdminAccessState) {
 /** Narrow containers cover the catalog with details (Settings.module.css). */
 function covered(element: Element | null) {
   return !!element && getComputedStyle(element).visibility === "hidden";
-}
-
-function scrollport(element: Element) {
-  for (let node = element.parentElement; node; node = node.parentElement)
-    if (/auto|scroll/.test(getComputedStyle(node).overflowY)) return node;
-  return null;
 }
 
 /** Whether any scrollport around `element` has scrolled past its start. */
@@ -821,6 +816,13 @@ export function Settings({
     navigation?.target.kind === "settings"
       ? (navigation.target.section ?? defaultSection)
       : undefined;
+  // A visit naming a part lands on it as its section mounts. That wins over
+  // any scroll place Settings restores for the section, so a restore must
+  // skip such a visit.
+  const landing =
+    navigation?.target.kind === "settings" && navigation.target.part
+      ? navigation.entryId
+      : undefined;
   useEffect(() => {
     if (
       requestedSection &&
@@ -1019,6 +1021,27 @@ export function Settings({
       navigation?.savePosition(PLUGIN_DETAILS, null);
     }
   }, [catalog, navigation, selectedPlugin, selectedPluginId]);
+  const closePluginImport = () => {
+    // "Open in Buzz" and "Open plugin" show their plugin before this dismissal
+    // lands. An install finishing after Back closes nothing.
+    if (
+      navigation?.target.kind === "settings" &&
+      navigation.target.pluginImport &&
+      navigation.entryId === currentNavigation.current?.entryId
+    )
+      closingVisit.current = true;
+    onPluginImportClosed?.();
+  };
+  const openInstalledPlugin = (id: string) => {
+    pluginTrigger.current =
+      [
+        ...(pluginSection.current?.querySelectorAll<HTMLButtonElement>(
+          "button[data-plugin-id]",
+        ) ?? []),
+      ].find((button) => button.dataset.pluginId === id) ?? null;
+    setActivationAttempt(undefined);
+    showPluginDetails(id);
+  };
   const closePluginDetails = () => {
     holdPluginRow(pluginTrigger.current);
     restorePluginFocus.current = true;
@@ -1523,6 +1546,7 @@ export function Settings({
                   )
                 : undefined
             }
+            landing={landing}
           />
         )}
         {selected === "security" && (
@@ -1615,6 +1639,7 @@ export function Settings({
                 catalog={catalog}
                 busy={busy}
                 returnFocus={() => pluginSection.current}
+                onOpenInstalled={openInstalledPlugin}
               />
             )}
             {catalog && linkedPlugin && "url" in linkedPlugin && (
@@ -1627,7 +1652,8 @@ export function Settings({
                 requester="A link"
                 holdReview={installRequests?.holdReview}
                 returnFocus={() => pluginSection.current}
-                onClose={() => onPluginImportClosed?.()}
+                onOpenInstalled={openInstalledPlugin}
+                onClose={closePluginImport}
               />
             )}
             {catalog ? (
@@ -1643,17 +1669,7 @@ export function Settings({
                     : undefined
                 }
                 requestSignal={navigation?.signal}
-                onClosed={() => {
-                  // "Open in Buzz" shows its plugin before this dismissal
-                  // lands. An install finishing after Back closes nothing.
-                  if (
-                    navigation?.target.kind === "settings" &&
-                    navigation.target.pluginImport &&
-                    navigation.entryId === currentNavigation.current?.entryId
-                  )
-                    closingVisit.current = true;
-                  onPluginImportClosed?.();
-                }}
+                onClosed={closePluginImport}
                 actionTarget={pluginImportActions}
                 request={
                   installRequest && !isUrlInstallSource(installRequest.source)
@@ -1669,16 +1685,7 @@ export function Settings({
                 catalog={catalog}
                 busy={busy}
                 authorizeGit={authorizePluginGit}
-                onOpenInstalled={(id) => {
-                  pluginTrigger.current =
-                    [
-                      ...(pluginSection.current?.querySelectorAll<HTMLButtonElement>(
-                        "button[data-plugin-id]",
-                      ) ?? []),
-                    ].find((button) => button.dataset.pluginId === id) ?? null;
-                  setActivationAttempt(undefined);
-                  showPluginDetails(id);
-                }}
+                onOpenInstalled={openInstalledPlugin}
                 returnFocus={() => detailsClose.current ?? visibleReturn(null)}
               />
             ) : configuration.status === "recovery" ? (

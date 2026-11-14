@@ -421,6 +421,43 @@ it("expands fallback Solo when navigation selects an ordinary chat", async () =>
   }
 });
 
+it.each(["Solo", "All"])(
+  "preserves %s for a source opening and selects Team on its next explicit open",
+  async (filter) => {
+    const f = fixture(true);
+    f.roster((channels) => [
+      ...channels,
+      {
+        id: "source",
+        name: "Source channel",
+        channelType: "stream",
+        cached: true,
+      },
+    ]);
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-channel-id="source"]'),
+      ).not.toBeNull(),
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: filter }));
+    const target = conversationTarget(scope, "source");
+    await act(() => f.open(target, { sidebar: "preserve" }));
+    expect(screen.getByRole("tab", { name: filter })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    const teamRow = document.querySelector('[data-channel-id="source"]');
+    expect(teamRow).not.toBeNull();
+    expect(teamRow).not.toHaveAttribute("aria-current");
+    await act(() => f.open(target));
+    expect(
+      screen.getByRole("tab", { name: filter === "All" ? "All" : "Team" }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(teamRow).toHaveAttribute("aria-current", "page");
+  },
+);
+
 it.each([
   ["New workspace", "New workspace", "Cancel"],
   ["New channel", "Create a channel", "Close channel creation"],
@@ -1067,9 +1104,44 @@ it("moves a refusal's recovery from the sidebar to its one notice", async () => 
   expect(within(sidebar()).queryByText(/sign-in/)).toBeNull();
 });
 
+// NIP-FA: an issuer refusal is not retried automatically, but the user's
+// Try again asks the issuer again rather than repeating it from the cache.
+it("makes Try again a person's retry, which asks the issuer again", async () => {
+  const h = federatedFixture();
+  const f = fixture(
+    true,
+    false,
+    undefined,
+    undefined,
+    0,
+    undefined,
+    undefined,
+    {
+      federatedIdentity: h.service,
+    },
+  );
+  const retry = vi.spyOn(f.relay, "retry");
+  const tryAgain = vi.spyOn(f.relay, "tryAgain");
+  const sidebar = () => screen.getByRole("complementary", { name: "Sidebar" });
+  f.connection({
+    status: "error",
+    error: "grant-refused",
+    origin: "wss://relay.example",
+  });
+  // So its issuer-refusal advice is that Try again, not a restart.
+  expect(within(sidebar()).getByRole("alert")).toHaveTextContent(
+    "Buzz couldn’t confirm your organization sign-in for this community. Try again. If it keeps happening, contact your administrator.",
+  );
+  await userEvent
+    .setup()
+    .click(within(sidebar()).getByRole("button", { name: "Try again" }));
+  expect(tryAgain).toHaveBeenCalledOnce();
+  expect(retry).not.toHaveBeenCalled();
+});
+
 it("shows Try again beside a settled failure, and Connecting while the connection retries", async () => {
   const f = fixture(true);
-  const retry = vi.spyOn(f.relay, "retry");
+  const retry = vi.spyOn(f.relay, "tryAgain");
   const sidebar = () => screen.getByRole("complementary", { name: "Sidebar" });
   const error = "ReadError: Relay read failed (502)";
   f.connection({ status: "error", error });
@@ -1302,7 +1374,73 @@ it.each(["New"])(
   },
 );
 
-it("keeps an ordinary chat editor and pending save through task-source recovery", async () => {
+it.each(["neighbor", "heading", "moved"])(
+  "recovers plain-list focus after the last chat in a workspace disappears (%s)",
+  async (destination) => {
+    const h = createSoloRegionFixture(viewer);
+    const preferences = createSidebarPreferencesStore({
+      available: true,
+      groupsOnly: true,
+      read: async () => ({
+        sections: [{ id: "work", name: "Work", order: 0 }],
+        assignments: { chat: "work" },
+        starred: [],
+        muted: [],
+      }),
+    });
+    await preferences.queries.ensure();
+    Object.assign(h.session, { soloPreferences: preferences.queries });
+    h.roster([
+      { id: "chat", name: "Chat", channelType: "solo", creator: viewer },
+      { id: "other", name: "Other", channelType: "solo", creator: viewer },
+    ]);
+    await h.register({
+      composeWorkspaces: true,
+      component: ({ ui }) => (ui.ChatList ? <ui.ChatList /> : null),
+    });
+    const view = render(
+      <ToastProvider>
+        <PrimarySidebar
+          relay={h.relay}
+          navigator={h.navigator}
+          target={conversationTarget(h.scope, "chat")}
+        >
+          <button type="button">Elsewhere</button>
+        </PrimarySidebar>
+      </ToastProvider>,
+    );
+    try {
+      const heading = screen.getByLabelText("Work", { selector: "summary" });
+      const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+      const chat = screen.getByRole("button", { name: "Chat" });
+      chat.focus();
+      await act(async () => {
+        h.roster(
+          destination === "heading"
+            ? []
+            : h.session.channels
+                .list()
+                .channels.filter(({ id }) => id !== "chat"),
+        );
+        if (destination === "moved") elsewhere.focus();
+      });
+      await waitFor(() => expect(chat).not.toBeInTheDocument());
+      expect(
+        destination === "neighbor"
+          ? screen.getByRole("button", { name: "Other" })
+          : destination === "heading"
+            ? heading
+            : elsewhere,
+      ).toHaveFocus();
+    } finally {
+      view.unmount();
+      preferences.dispose();
+      await h.dispose();
+    }
+  },
+);
+
+it("keeps an ordinary chat editor and pending save through layout changes and task-source recovery", async () => {
   const h = createSoloRegionFixture(viewer);
   const preferences = createSidebarPreferencesStore({
     available: true,
@@ -1354,11 +1492,13 @@ it("keeps an ordinary chat editor and pending save through task-source recovery"
   h.roster([...h.session.channels.list().channels]);
   const source = await h.register({
     composeWorkspaces: true,
-    component: ({ ui }) => {
+    component: ({ ui, snapshot }) => {
       const Workspace = ui.Workspace;
       const Chats = ui.Chats;
-      if (!Workspace || !Chats)
+      const ChatList = ui.ChatList;
+      if (!Workspace || !Chats || !ChatList)
         throw new Error("Missing workspace composition");
+      if (snapshot.model === "list") return <ChatList />;
       return (
         <>
           <Workspace id="work">{null}</Workspace>
@@ -1379,24 +1519,38 @@ it("keeps an ordinary chat editor and pending save through task-source recovery"
     </ToastProvider>,
   );
   const user = userEvent.setup();
-  const change = (status: "loading" | "ready", revision: number) =>
-    act(() => source.update({ status, binding: source.binding(), revision }));
+  const change = (
+    status: "loading" | "ready",
+    revision: number,
+    model?: string,
+  ) =>
+    act(() =>
+      source.update({
+        status,
+        binding: source.binding(),
+        revision,
+        ...(model ? { model } : {}),
+      }),
+    );
   try {
     await user.dblClick(await screen.findByRole("button", { name: /^Chat$/ }));
     const input = await screen.findByRole("textbox", { name: "Chat name" });
     await waitFor(() => expect(input).toHaveFocus());
     await user.keyboard("Keep this name");
-    change("loading", 2);
+    change("ready", 2, "list");
+    expect(screen.queryByRole("button", { name: "Work" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Chat name" })).toBe(input);
+    change("loading", 3);
     expect(screen.getByRole("textbox", { name: "Chat name" })).toBe(input);
     expect(input).toHaveValue("Keep this name");
-    change("ready", 3);
+    change("ready", 4, "list");
     expect(screen.getByRole("textbox", { name: "Chat name" })).toBe(input);
     await user.keyboard("{Enter}");
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
-    change("loading", 4);
+    change("loading", 5);
     expect(savingSignal?.aborted).toBe(false);
     expect(screen.getByRole("textbox", { name: "Chat name" })).toBe(input);
-    change("ready", 5);
+    change("ready", 6, "list");
     expect(savingSignal?.aborted).toBe(false);
     await act(async () => {
       release();

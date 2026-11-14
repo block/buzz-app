@@ -2,6 +2,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -47,6 +48,7 @@ import {
 import type { RelaySession } from "../features/relay/session";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import styles from "./IdentitySettings.module.css";
+import { useLanding } from "./landing";
 import { writeClipboardText } from "../shared/clipboard";
 import { IdentityBadge } from "./IdentityBadge";
 import { IdentityReflection } from "./IdentityReflection";
@@ -137,6 +139,7 @@ export function IdentitySettings({
   profileSession,
   community,
   memberships = [],
+  landing,
 }: {
   viewer?: string | undefined;
   identity?: Identity | undefined;
@@ -154,7 +157,10 @@ export function IdentitySettings({
   profileSession?: RelaySession | undefined;
   community?: Membership | undefined;
   memberships?: readonly Membership[];
+  /** The visit that opened Identity at Community sign-ins. */
+  landing?: string | undefined;
 }) {
+  const land = useLanding(landing, "#community-sign-ins-title");
   const [signingOut, setSigningOut] = useState(false);
   const [offered, setOffered] = useState(false);
   useEffect(() => {
@@ -401,8 +407,13 @@ export function IdentitySettings({
               )}
             </IdentityBadge>
             {federatedIdentity && (
-              <div className={styles.accounts}>
+              <section
+                ref={land}
+                className={styles.accounts}
+                aria-labelledby="community-sign-ins-title"
+              >
                 <Header
+                  id="community-sign-ins-title"
                   level={3}
                   title="Community sign-ins"
                   subtitle="Accounts you use to verify who you are and access your communities."
@@ -413,7 +424,7 @@ export function IdentitySettings({
                   accountRows={accountRows}
                   memberships={memberships}
                 />
-              </div>
+              </section>
             )}
           </div>
           {copyStatus?.failed && (
@@ -831,17 +842,63 @@ function OrganizationSignIn({
   const trigger = useRef<HTMLButtonElement>(null);
   const [errorOpen, setErrorOpen] = useState(false);
   const [confirmRevision, setConfirmRevision] = useState<string | null>(null);
+  // The session a browser renewal started from, while that renewal runs.
+  // Native's `renewing` says so too, after this page was left and reopened.
+  const [renewal, setRenewal] = useState<string | null>(null);
+  // Renew and Cancel replace each other, on a click or when a renewal fails,
+  // times out or finishes. The one that had focus hands it to its
+  // replacement, unless the person has moved focus elsewhere.
+  const handoff = useRef<Element | null>(null);
+  const actions = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const from = handoff.current;
+    if (!from || from.isConnected) return;
+    handoff.current = null;
+    const active = document.activeElement;
+    if (!active || active === document.body || active.contains(actions.current))
+      trigger.current?.focus();
+  });
   useEffect(() => setErrorOpen(!!problem), [problem]);
+  // Cancel shows as soon as Renew is chosen, but native records the renewal
+  // only once it starts the browser step. A Cancel before then waits for it,
+  // so the click ends that step instead of finding nothing to cancel.
+  const [cancelPending, setCancelPending] = useState<string | null>(null);
+  useEffect(() => {
+    if (!cancelPending || !state.renewing) return;
+    setCancelPending(null);
+    if (cancelPending === state.revision)
+      void run(() => identity.cancelSignIn());
+  });
   if (!state.authority || state.status === "unconfigured") return null;
-  // Preserve unavailable-host feedback without offering an unusable sign-in.
+  // A failed restore keeps its stored session, which may still be valid: no
+  // sign-in or sign-out, only a check that retries the restore.
+  // An unreachable server means no browser step ever ran: say what Check
+  // again does instead of the generic sign-in advice.
+  const explanation =
+    problem &&
+    (state.status === "unavailable" &&
+    identity.recheck &&
+    /^network-(unavailable|timeout)$/.test(problem)
+      ? "Buzz couldn’t check your saved sign-in. Check your connection, then choose Check again."
+      : recoveryMessage(problem));
+  const recheck = state.status === "unavailable" && identity.recheck && (
+    <Button
+      size="sm"
+      type="button"
+      onClick={() => run(() => identity.recheck?.())}
+    >
+      Check again
+    </Button>
+  );
   if (state.status === "unavailable" && !listed)
     return (
       <>
         {problem && (
           <p role="alert" className="mt-6 text-body-sm text-danger">
-            {recoveryMessage(problem)}
+            {explanation}
           </p>
         )}
+        {recheck && <div className={styles.accountActions}>{recheck}</div>}
       </>
     );
   const organization =
@@ -853,10 +910,10 @@ function OrganizationSignIn({
   const signOutLabel = listed
     ? `Sign out of ${new URL(state.authority.identityOrigin).host}`
     : "Sign out of organization";
-  function run(operation: () => Promise<unknown>) {
+  function run(operation: () => Promise<unknown> | undefined) {
     setFailure(null);
     setErrorOpen(false);
-    void Promise.resolve()
+    return Promise.resolve()
       .then(operation)
       .then(() => {
         // Native can return the same retained refusal on a retry.
@@ -871,14 +928,22 @@ function OrganizationSignIn({
         setErrorOpen(true);
       });
   }
-  const renew = () =>
-    run(() => {
+  // The current session stays live while the browser step runs; Cancel ends
+  // only that step.
+  const renew = () => {
+    const revision = state.revision;
+    setRenewal(revision);
+    void run(() => {
       const current = identity.snapshot();
-      return current.status === "signed-in" &&
-        current.revision === state.revision
+      return current.status === "signed-in" && current.revision === revision
         ? identity.signIn()
         : Promise.resolve();
+    }).finally(() => {
+      setRenewal((pending) => (pending === revision ? null : pending));
+      // A renewal that ended before native recorded it has nothing to cancel.
+      setCancelPending((pending) => (pending === revision ? null : pending));
     });
+  };
   const content = (
     <>
       <PopoverRoot
@@ -888,13 +953,43 @@ function OrganizationSignIn({
           if (details.reason !== "trigger-press") setErrorOpen(open);
         }}
       >
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: observes focus within its buttons, so a swap can hand it on. */}
         <div
+          onFocus={(event) => {
+            handoff.current = event.target;
+          }}
+          onBlur={(event) => {
+            // Focus lost to removal has no next target; a move elsewhere has one.
+            if (
+              event.relatedTarget &&
+              !actions.current?.contains(event.relatedTarget)
+            )
+              handoff.current = null;
+          }}
           ref={(element) => {
+            actions.current = element;
             // The primary action owns return focus, including SplitButton’s first half.
             trigger.current = element?.querySelector("button") ?? null;
           }}
         >
-          {renewing ? (
+          {signedIn && (state.renewing || renewal === state.revision) ? (
+            <span className="flex items-center gap-3">
+              <span className="text-body-sm text-subtle" role="status">
+                Finish in your browser
+              </span>
+              <Button
+                variant="subtle"
+                size="sm"
+                type="button"
+                onClick={() => {
+                  if (state.renewing) void run(() => identity.cancelSignIn());
+                  else setCancelPending(state.revision);
+                }}
+              >
+                Cancel
+              </Button>
+            </span>
+          ) : renewing ? (
             <SplitButton
               variant="prominent"
               size="sm"
@@ -908,41 +1003,39 @@ function OrganizationSignIn({
             >
               Renew sign-in
             </SplitButton>
+          ) : state.status === "unavailable" ? (
+            recheck
           ) : (
-            state.status !== "unavailable" && (
-              <PopoverTrigger
-                render={
-                  <Button
-                    variant={signedIn || signingIn ? "subtle" : "prominent"}
-                    size="sm"
-                    type="button"
-                    disabled={state.status === "restoring"}
-                    aria-label={signedIn ? signOutLabel : undefined}
-                    onClick={() => {
-                      if (signedIn) setConfirmRevision(state.revision);
-                      else
-                        run(() =>
-                          signingIn
-                            ? identity.cancelSignIn()
-                            : identity.signIn(),
-                        );
-                    }}
-                  >
-                    {signedIn
-                      ? listed
-                        ? "Sign out"
-                        : "Sign out of organization"
-                      : signingIn
-                        ? "Cancel sign-in"
-                        : "Sign in"}
-                  </Button>
-                }
-              />
-            )
+            <PopoverTrigger
+              render={
+                <Button
+                  variant={signedIn || signingIn ? "subtle" : "prominent"}
+                  size="sm"
+                  type="button"
+                  disabled={state.status === "restoring"}
+                  aria-label={signedIn ? signOutLabel : undefined}
+                  onClick={() => {
+                    if (signedIn) setConfirmRevision(state.revision);
+                    else
+                      run(() =>
+                        signingIn ? identity.cancelSignIn() : identity.signIn(),
+                      );
+                  }}
+                >
+                  {signedIn
+                    ? listed
+                      ? "Sign out"
+                      : "Sign out of organization"
+                    : signingIn
+                      ? "Cancel sign-in"
+                      : "Sign in"}
+                </Button>
+              }
+            />
           )}
           {listed && problem && (
             <p role="alert" className="text-body-sm text-danger">
-              {recoveryMessage(problem)}
+              {explanation}
             </p>
           )}
         </div>
@@ -955,7 +1048,7 @@ function OrganizationSignIn({
           aria-label="Account sign-in error"
         >
           <p role="alert" className="m-0 text-body-sm">
-            {problem && recoveryMessage(problem)}
+            {explanation}
           </p>
         </PopoverPopup>
       </PopoverRoot>

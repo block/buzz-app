@@ -697,15 +697,23 @@ async fn cancel_releases_the_native_callback_before_a_replacement_login() {
         let mut state = owner.state();
         state.restored = true;
         state.snapshot.status = Status::SigningIn;
-        state.callback = Some(guard.clone());
+        state.callback = Some((guard.clone(), url.into()));
     }
+    assert_eq!(owner.sign_in_link().as_deref(), Some(url));
     owner.cancel_sign_in();
+    assert_eq!(owner.sign_in_link(), None);
     let replacement = callbacks
         .begin_federated(server, url.into(), |_| Ok(()), None)
         .unwrap();
-    owner.state().callback = Some(CallbackGuard(callbacks.clone(), replacement.id.clone()));
+    owner.state().callback = Some((
+        CallbackGuard(callbacks.clone(), replacement.id.clone()),
+        url.into(),
+    ));
     owner.clear_callback(&attempt.id);
-    assert_eq!(owner.state().callback.as_ref().unwrap().1, replacement.id);
+    assert_eq!(
+        owner.state().callback.as_ref().unwrap().0 .1,
+        replacement.id
+    );
     drop(guard); // The old future's cleanup cannot cancel the replacement.
     assert!(callbacks
         .begin_federated(server, url.into(), |_| Ok(()), None)
@@ -728,6 +736,17 @@ async fn cancel_releases_the_native_callback_before_a_replacement_login() {
     .unwrap();
     let parameters = callbacks.wait(&peer.id).await.unwrap().parameters;
     assert_eq!(parameters, [("code".to_string(), "peer".to_string())]);
+}
+
+#[test]
+fn a_reported_browser_failure_stops_sign_in_but_a_hung_browser_does_not() {
+    let ample = std::time::Duration::from_secs(10);
+    assert_eq!(open_within(ample, || true), Ok(()));
+    assert_eq!(open_within(ample, || false), Err("browser-unavailable"));
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let brief = std::time::Duration::from_millis(50);
+    assert_eq!(open_within(brief, move || held.recv().is_err()), Ok(()));
+    drop(release);
 }
 
 #[tokio::test]
@@ -812,7 +831,7 @@ async fn corrupt_storage_is_unavailable_and_public_snapshots_have_no_secret() {
         state.snapshot.status = Status::SignedIn;
     }
     let public = serde_json::to_value(host.snapshot()).unwrap();
-    assert_eq!(public.as_object().unwrap().len(), 8);
+    assert_eq!(public.as_object().unwrap().len(), 9);
     assert!(!public.to_string().contains("fixture-session-token"));
 }
 
@@ -1126,7 +1145,7 @@ async fn received_callback(owner: &FederatedIdentity) -> CallbackGuard {
         )
         .unwrap();
     let guard = CallbackGuard(callbacks.clone(), attempt.id.clone());
-    owner.state().callback = Some(guard.clone());
+    owner.state().callback = Some((guard.clone(), String::new()));
     let url = url::Url::parse(&attempt.callback_url).unwrap();
     let browser = async {
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", url.port().unwrap()))
@@ -1172,7 +1191,7 @@ async fn native_exchange_verification_persistence_and_restart_use_the_standard_c
         )
         .await
         .unwrap();
-    assert_eq!(owner.state().callback.as_ref().unwrap().1, guard.1);
+    assert_eq!(owner.state().callback.as_ref().unwrap().0 .1, guard.1);
     owner.clear_callback(&guard.1);
     assert!(owner.state().callback.is_none());
     let signed_in = owner.snapshot();
@@ -1685,9 +1704,10 @@ async fn signing_in_again_keeps_the_session_until_the_new_one_is_installed() {
     let cancel = {
         let mut state = host.state();
         let cancel = state.cancellation.child_token();
-        state.renewal = Some(cancel.clone());
+        host.set_renewal(&mut state, Some(cancel.clone()));
         cancel
     };
+    assert!(host.snapshot().renewing);
     // The old session still lends its token while the browser flow runs.
     assert_eq!(
         host.with_session(|token, _, _| token.to_string())
@@ -1703,7 +1723,8 @@ async fn signing_in_again_keeps_the_session_until_the_new_one_is_installed() {
     assert_ne!(snapshot.revision, revision);
     assert_eq!(snapshot.expires_at.as_deref(), Some("2099-02-01T00:00:00Z"));
     assert!(host.state().renewal.is_none());
-    assert_eq!(host.state().callback.as_ref().unwrap().1, guard.1);
+    assert!(!snapshot.renewing);
+    assert_eq!(host.state().callback.as_ref().unwrap().0 .1, guard.1);
     assert_eq!(
         host.with_session(|token, _, _| token.to_string())
             .as_deref(),
@@ -1727,25 +1748,33 @@ async fn a_canceled_or_failed_renewal_leaves_the_session_intact() {
     let renew = || {
         let mut state = host.state();
         let cancel = state.cancellation.child_token();
-        state.renewal = Some(cancel.clone());
+        host.set_renewal(&mut state, Some(cancel.clone()));
         cancel
     };
+    let changes = host.0.changes.subscribe();
 
     let canceled = renew();
+    // The snapshot says the renewal is waiting, so a remounted page can too.
+    assert!(host.snapshot().renewing);
+    assert!(changes.borrow().renewing);
     host.cancel_sign_in();
     assert!(canceled.is_cancelled());
+    assert!(!host.snapshot().renewing);
+    assert!(!changes.borrow().renewing);
     let result = host
         .finish_login("code", "secret", &revision, &canceled)
         .await;
     assert_eq!(host.renewed(&revision, &canceled, result), Ok(()));
 
     let failed = renew();
+    assert!(host.snapshot().renewing);
     let result = host
         .finish_login("code", "secret", &revision, &failed)
         .await;
     assert!(result.is_err());
     // Only the caller hears about it; the snapshot's failure is for others.
     assert!(host.renewed(&revision, &failed, result).is_err());
+    assert!(!host.snapshot().renewing);
 
     let snapshot = host.snapshot();
     assert!(snapshot.status == Status::SignedIn);

@@ -417,7 +417,7 @@ export function harnessKit(sources: Sources): HarnessKit {
         text: [
           resumed ? `${text}\n\n${RESUMED_PROMPT}` : text,
           ...notes,
-          turnNote(agent),
+          turnNote(agent, channelId, noteRoot),
         ]
           .filter(Boolean)
           .join("\n\n"),

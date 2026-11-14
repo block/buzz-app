@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -99,4 +108,47 @@ test("every release job checks that its packaged buzz exists and runs", () => {
     release,
     /codesign --verify --strict --verbose=2 \\\n[^\n]*"\$cli"/,
   );
+});
+
+// With the real pin but no cargo on PATH, a build fails, so a test fails if the
+// script ignores BUZZ_CLI_BINARY.
+function stageWithPrebuilt(t, writePrebuilt) {
+  const directory = mkdtempSync(join(tmpdir(), "buzz-cli-prebuilt-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  mkdirSync(join(directory, "scripts"));
+  mkdirSync(join(directory, "src-tauri"));
+  for (const path of ["scripts/build-buzz-cli.mjs", "src-tauri/Cargo.toml"])
+    copyFileSync(
+      new URL(`../../${path}`, import.meta.url),
+      join(directory, path),
+    );
+  const prebuilt = join(directory, "prebuilt-buzz");
+  if (writePrebuilt) writeFileSync(prebuilt, "packager's buzz");
+  const result = spawnSync(
+    process.execPath,
+    [join(directory, "scripts/build-buzz-cli.mjs")],
+    {
+      encoding: "utf8",
+      env: {
+        PATH: "",
+        TAURI_ENV_TARGET_TRIPLE: "x86_64-unknown-linux-gnu",
+        BUZZ_CLI_BINARY: prebuilt,
+      },
+    },
+  );
+  return { result, staged: join(directory, "src-tauri/resources/bin/buzz") };
+}
+
+test("buzz staging uses a packager's prebuilt binary without building", (t) => {
+  const { result, staged } = stageWithPrebuilt(t, true);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(staged, "utf8"), "packager's buzz");
+});
+
+test("buzz staging fails on a missing prebuilt binary instead of building", (t) => {
+  const { result, staged } = stageWithPrebuilt(t, false);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /ENOENT[^\n]*prebuilt-buzz/);
+  assert.doesNotMatch(result.stderr, /spawnSync cargo/);
+  assert.equal(existsSync(staged), false);
 });

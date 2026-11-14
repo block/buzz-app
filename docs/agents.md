@@ -505,17 +505,30 @@ Interest through the same attention tool code, and refuses an Interest that does
 not exist. The plugin never writes an Interest. While the app is open the watch asks the store to
 follow the pull request's feedback, which it reads through the signed-in `gh`
 CLI once a minute, also while the window is hidden. It wakes the agent when CI
-settles on the head commit, once per commit and result, or when new feedback has
-been quiet for 90 seconds, and once more when the pull request merges or closes,
-so the agent can finish and retire its Interest. Attention delivers the wake
+settles on the head commit, once per commit and result and again when a failure
+is run again, or when new feedback has been quiet for 90 seconds, and once more
+when the pull request merges or closes, so the agent can finish and retire its
+Interest. It also wakes for what nothing else would on the way to merging:
+merge conflicts; checks pending on one commit for 3 hours; an approved, green
+pull request that must catch up with its base; auto-merge turned off, or the
+pull request leaving the merge queue, while it is open; and looking ready to
+merge (approved, checks that block merging passed, no conflicts or unresolved
+review threads, not a draft, auto-merge off). Recovering wakes nothing, a merge
+state GitHub is still working out keeps the last one known, and checks run
+again on the same commit do not make it ready anew. A pull request with no
+checks, or in a repository that requires no review, never looks ready. Wakes
+come at least 5 minutes apart, with news in between joining the next, and at
+most 48 a day; each wake about the open pull request ends with where it
+stands. Attention delivers the wake
 in the conversation where it called the tool: no message is sent, and the agent
 is told its text is data. It quotes the failed checks' names and the new
 comments, line by line, each clipped, with GitHub's links. Agents comment as the
 `gh` account, as their owner does, so GitHub cannot tell them apart: by default
 a comment of that account that starts with 🤖, as an agent's do, wakes nobody,
 and the owner's other comments wake the agent. A watch is saved in Attention on the device and respects its on/off switch. Device-local GitHub watches saved before Attention are dropped, not imported: they name no Interest. It ends when the
-pull request merges or closes, after 20 wakes, after 30 minutes without a
-successful read, or when the agent calls it with `stop: true`.
+pull request merges or closes, after a day without a successful read, or when
+the agent calls it with `stop: true`. After an hour without one, it tells the
+agent once that it keeps trying.
 
 Settings → Plugins → GitHub decides whose feedback wakes agents,
 since anyone can comment on a public pull request. It holds rules, one per

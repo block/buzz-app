@@ -3562,7 +3562,24 @@ export class AgentRunners {
       lifetime.throwIfAborted();
     }
     check?.();
-    return this.require().publish(runner.member, event);
+    const native = this.require();
+    try {
+      return await native.publish(runner.member, event);
+    } catch (error) {
+      // A lost receipt leaves the event's fate unknown; the relay knows it.
+      const id = unconfirmedAgentEvent(error);
+      if (!id || lifetime.aborted) throw error;
+      const landed = (
+        await native
+          .query(runner.member, [
+            { ids: [id], limit: 1, consistency: "strong" },
+          ])
+          .catch(() => [])
+      ).find((found) => found.id === id);
+      if (!landed) throw error;
+      console.warn("Agent event confirmed after its receipt was lost", id);
+      return landed;
+    }
   }
 }
 

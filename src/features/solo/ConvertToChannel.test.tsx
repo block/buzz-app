@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { AgentChoicesSnapshot } from "../agents/choices";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -14,6 +15,7 @@ import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { createChannelDetails } from "../relay/channel-details";
 import { createRelaySession } from "../relay/session";
 import { PublishRejected } from "../relay/outbox";
+import type { Profile } from "../relay/contracts";
 import { SOLO_LABEL } from "./labels";
 import { chatConversion, conversionLabel } from "./conversion";
 import { ConvertToChannel, canConvertToChannel } from "./ConvertToChannel";
@@ -32,6 +34,8 @@ function setup(
   solo = true,
   initialVisibility: "private" | "public" = "private",
   initialJoinRole: "member" | "guest" | undefined = undefined,
+  members?: string[],
+  profilesLoaded = true,
 ) {
   let clock = 100,
     role = "owner",
@@ -101,8 +105,57 @@ function setup(
     return { sections: [], assignments: {}, starred: [], muted: [] };
   });
   const projectsRefresh = vi.fn(async () => {});
+  const listed = members && {
+    ...owner.session.channels.list(),
+    channels: [{ id, name, channelType: "solo" as const, members }],
+  };
+  const channels = listed
+    ? { ...owner.session.channels, list: () => listed }
+    : owner.session.channels;
+  // Every listed member other than the viewer has a person's loaded profile.
+  const others = (members ?? []).filter((m) => m !== viewer);
+  const person = (pubkey: string): [string, Profile] => [
+    pubkey,
+    { name: "Morgan" },
+  ];
+  let people = new Map<string, Profile>(
+    profilesLoaded ? others.map(person) : [],
+  );
+  const owners = new Map<string, string>();
+  const profileListeners = new Set<() => void>();
+  let inventory: AgentChoicesSnapshot = Object.freeze({
+    ...owner.session.agentChoices.snapshot(),
+    identities: [],
+    complete: true,
+    pending: false,
+  });
+  const inventoryListeners = new Set<() => void>();
   const session = {
     ...owner.session,
+    ...(members && {
+      viewer,
+      profiles: {
+        ...owner.session.profiles,
+        snapshot: () => people,
+        owner: (pubkey: string) => owners.get(pubkey),
+        subscribe: (listener: () => void) => {
+          profileListeners.add(listener);
+          return () => profileListeners.delete(listener);
+        },
+        ensure: async () => {},
+      },
+      agentChoices: {
+        ...owner.session.agentChoices,
+        snapshot: () => inventory,
+        subscribe: (listener: () => void) => {
+          inventoryListeners.add(listener);
+          return () => inventoryListeners.delete(listener);
+        },
+        retain: () => () => {},
+        ensure: () => {},
+      },
+    }),
+    channels,
     channelDetails: details.capability,
     soloPreferences: {
       ...owner.session.soloPreferences,
@@ -125,6 +178,21 @@ function setup(
   );
   return {
     session,
+    loadProfiles: (profile?: Profile) => {
+      people = new Map(
+        others.map((pubkey) => (profile ? [pubkey, profile] : person(pubkey))),
+      );
+      for (const listener of profileListeners) listener();
+    },
+    /** Verification lands without a new profile snapshot. */
+    verifyOwner: (pubkey: string, by: string) => {
+      owners.set(pubkey, by);
+      for (const listener of profileListeners) listener();
+    },
+    setInventoryComplete: (complete: boolean) => {
+      inventory = Object.freeze({ ...inventory, complete });
+      for (const listener of inventoryListeners) listener();
+    },
     close,
     convertedCallback: converted,
     unfile,
@@ -679,4 +747,80 @@ it("serializes conversion completion across two mounted forms", async () => {
     });
   }
   await waitFor(() => expect(h.convertedCallback).toHaveBeenCalledOnce());
+});
+
+it.each([
+  ["someone else is a member", true],
+  ["only the owner is a member", false],
+] as const)(
+  "offers opening a private chat only when nobody else is a member: %s",
+  async (_, blocked) => {
+    setup(true, "private", undefined, [
+      viewer,
+      ...(blocked ? ["d".repeat(64)] : []),
+    ]);
+    await ready();
+    const user = userEvent.setup();
+    await user.click(accessControl());
+    for (const name of ["Public", "View only"]) {
+      const option = await screen.findByRole("option", { name });
+      if (blocked) {
+        expect(option).toHaveAttribute("aria-disabled", "true");
+        expect(option).toHaveAccessibleDescription(
+          "Has other members. Create a new public channel instead.",
+        );
+      } else expect(option).not.toHaveAttribute("aria-disabled", "true");
+    }
+    await user.click(screen.getByRole("option", { name: "View only" }));
+    expect(accessControl()).toHaveTextContent(
+      blocked ? "Private" : "View only",
+    );
+  },
+);
+
+it("closes opening once a member's profile shows a person", async () => {
+  const h = setup(true, "private", undefined, [viewer, "d".repeat(64)], false);
+  await ready();
+  const user = userEvent.setup();
+  await user.click(accessControl());
+  expect(
+    await screen.findByRole("option", { name: "View only" }),
+  ).not.toHaveAttribute("aria-disabled", "true");
+  await user.keyboard("{Escape}");
+  act(() => h.loadProfiles());
+  await user.click(accessControl());
+  expect(
+    await screen.findByRole("option", { name: "View only" }),
+  ).toHaveAttribute("aria-disabled", "true");
+});
+
+async function viewOnlyDisabled(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(accessControl());
+  const option = await screen.findByRole("option", { name: "View only" });
+  const disabled = option.getAttribute("aria-disabled") === "true";
+  await user.keyboard("{Escape}");
+  return disabled;
+}
+
+it("closes opening once another owner is verified for a member agent", async () => {
+  const agent = "d".repeat(64);
+  const h = setup(true, "private", undefined, [viewer, agent], false);
+  act(() =>
+    h.loadProfiles({ name: "Bot", isAgent: true, ownerPubkey: "e".repeat(64) }),
+  );
+  await ready();
+  const user = userEvent.setup();
+  expect(await viewOnlyDisabled(user)).toBe(false);
+  act(() => h.verifyOwner(agent, "e".repeat(64)));
+  expect(await viewOnlyDisabled(user)).toBe(true);
+});
+
+it("leaves an untagged member to the relay until the agent inventory is complete", async () => {
+  const h = setup(true, "private", undefined, [viewer, "d".repeat(64)]);
+  act(() => h.setInventoryComplete(false));
+  await ready();
+  const user = userEvent.setup();
+  expect(await viewOnlyDisabled(user)).toBe(false);
+  act(() => h.setInventoryComplete(true));
+  expect(await viewOnlyDisabled(user)).toBe(true);
 });

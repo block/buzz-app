@@ -243,3 +243,31 @@ it("escapes a chat name while retaining its ordinary link", () => {
     `[Chat: My \\[chat\\] name](buzz://channel/${id})`,
   );
 });
+
+it("refuses to share a private chat that has other members", async () => {
+  const f = fixture();
+  const person = "d".repeat(64);
+  const ownAgent = "b".repeat(64);
+  Object.assign(f.session, {
+    profiles: {
+      snapshot: () =>
+        new Map([
+          [ownAgent, { isAgent: true, ownerPubkey: viewer }],
+          [person, {}],
+        ]),
+      owner: (pubkey: string) => (pubkey === ownAgent ? viewer : undefined),
+    },
+    agentChoices: { snapshot: () => ({ identities: [], complete: true }) },
+  });
+  const [chat] = f.channels;
+  if (!chat) throw new Error("missing chat");
+  chat.members = [viewer, ownAgent];
+  expect(await shareSoloChatAccess(f.session, id, f)).toMatchObject({
+    visibility: "private",
+  });
+  chat.members = [viewer, ownAgent, person];
+  await expect(shareSoloChatAccess(f.session, id, f)).rejects.toThrow(
+    "This chat has other members, so it can’t be shared. Create a new channel instead.",
+  );
+  expect(f.save).not.toHaveBeenCalled();
+});

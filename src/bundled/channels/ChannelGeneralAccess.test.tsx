@@ -583,3 +583,37 @@ it.each([true, false])(
     expect(h.save).not.toHaveBeenCalled();
   },
 );
+
+it.each([true, false])(
+  "offers opening a private channel only when nobody else is a member (blocked: %s)",
+  async (blocked) => {
+    const h = harness();
+    const user = userEvent.setup();
+    h.load.mockResolvedValue({ ...base, visibility: "private" });
+    render(
+      <ChannelGeneralAccess
+        capability={h.capability}
+        channelId="alpha"
+        openingBlocked={blocked}
+      />,
+    );
+    const control = screen.getByRole("combobox", { name: "General access" });
+    await waitFor(() => expect(control).toBeEnabled());
+    await user.click(control);
+    for (const name of ["Public", "View only"]) {
+      const option = await screen.findByRole("option", { name });
+      if (blocked) {
+        expect(option).toHaveAttribute("aria-disabled", "true");
+        expect(option).toHaveAccessibleDescription(
+          "Has other members. Create a new public channel instead.",
+        );
+      } else expect(option).not.toHaveAttribute("aria-disabled", "true");
+    }
+    await user.click(screen.getByRole("option", { name: "View only" }));
+    if (blocked) {
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(h.load).toHaveBeenCalledTimes(1);
+    } else expect(await screen.findByRole("alertdialog")).toBeVisible();
+    expect(h.save).not.toHaveBeenCalled();
+  },
+);

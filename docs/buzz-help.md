@@ -637,7 +637,10 @@ and are asked to sign in again in Buzz.
 - **Manage members** shows **General** access first in the member list. **Public**
   lets people in the community read and new people participate; **View only**
   lets them read; **Private** limits access to people added to the channel.
-  Changing this choice does not change existing members' roles. Ordinary
+  Changing this choice does not change existing members' roles. A Private
+  channel or chat with members besides you and your own agents can't be made
+  Public or View only, and such a chat can't be shared; create a new channel
+  instead. Ordinary
   participants have no role caption; Owner, Admin, and Viewing only mark
   exceptions. Use a person's actions menu to change their role when permitted.
 - **Message search** treats the last word you type as the start of a word, so

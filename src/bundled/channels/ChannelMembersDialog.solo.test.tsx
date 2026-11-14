@@ -1427,7 +1427,8 @@ it("shows Shared on cold render from verified members and cached human evidence 
 });
 
 it("offers matching people and channels as labelled results without public keys", async () => {
-  const t = fixture(true);
+  // Another person is in the chat only after it was shared as View only.
+  const t = fixture(true, { visibility: "public", joinRole: "guest" });
   const planningPerson = keypair();
   t.addProfile(planningPerson, "Planning Person");
   t.members.set(source, [t.viewer.pubkey, t.aria.pubkey]);

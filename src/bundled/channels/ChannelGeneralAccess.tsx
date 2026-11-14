@@ -34,6 +34,7 @@ import {
   generalAccessOptions,
   generalAccessPolicy,
   generalAccessValue,
+  OPENING_BLOCKED_REASON,
 } from "../../features/channels/general-access";
 
 /** General access uses the same signed save/readback owner as channel details.
@@ -44,6 +45,7 @@ export function ChannelGeneralAccess({
   channelId,
   channel,
   mayHaveGuestMembers = true,
+  openingBlocked = false,
 }: {
   capability: ChannelDetailsCapability;
   recovery?: RelayRecovery | undefined;
@@ -51,6 +53,8 @@ export function ChannelGeneralAccess({
   channel?: ChannelSummary;
   /** False only when the signed member-role snapshot verifies no Guests. */
   mayHaveGuestMembers?: boolean;
+  /** The relay will refuse to open it: someone else is a member. */
+  openingBlocked?: boolean;
 }) {
   const place = channel?.channelType === "solo" ? "chat" : "channel";
   const Icon =
@@ -102,6 +106,7 @@ export function ChannelGeneralAccess({
       channelId={channelId}
       mayHaveGuestMembers={mayHaveGuestMembers}
       autoJoin={channel?.autoJoin ?? false}
+      openingBlocked={openingBlocked}
     />
   );
 }
@@ -112,12 +117,14 @@ function ChannelGeneralAccessEditor({
   channelId,
   mayHaveGuestMembers,
   autoJoin,
+  openingBlocked,
 }: {
   capability: ChannelDetailsCapability;
   recovery: RelayRecovery | undefined;
   channelId: string;
   mayHaveGuestMembers: boolean;
   autoJoin: boolean;
+  openingBlocked: boolean;
 }) {
   const attempt = useSyncExternalStore(capability.subscribe, () =>
     capability.snapshot(channelId),
@@ -175,6 +182,7 @@ function ChannelGeneralAccessEditor({
   const solo = soloLabels(base?.labels);
   const place = solo ? "chat" : "channel";
   const access = base ? generalAccessValue(base) : "";
+  const closed = access === "private" && openingBlocked;
   const Icon =
     access === "public"
       ? GlobeIcon
@@ -186,7 +194,13 @@ function ChannelGeneralAccessEditor({
     const option = Object.values(generalAccessOptions).find(
       (option) => option.value === value,
     );
-    if (value === access || !option || (solo && value === "public")) return;
+    if (
+      value === access ||
+      !option ||
+      (solo && value === "public") ||
+      (closed && value !== "private")
+    )
+      return;
     origin.current =
       section.current?.querySelector<HTMLElement>('[role="combobox"]') ?? null;
     setError("");
@@ -318,7 +332,17 @@ function ChannelGeneralAccessEditor({
                       ...generalAccessOptions["view-only"],
                       leading: <EyeIcon size={20} />,
                     },
-                  ].filter((option) => !solo || option.value !== "public"),
+                  ]
+                    .filter((option) => !solo || option.value !== "public")
+                    .map((option) =>
+                      closed
+                        ? {
+                            ...option,
+                            disabled: true,
+                            description: OPENING_BLOCKED_REASON,
+                          }
+                        : option,
+                    ),
                 },
                 {
                   label: "",

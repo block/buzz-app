@@ -161,10 +161,10 @@ test.describe("View only channel share", () => {
     historyCounts: { alpha: 2, [sharedChatId]: 2 },
     channelWriteKinds: [9, 9000, 9002, 9007],
   });
-  test("shares View only links with accessible disclosure", async ({
+  test("refuses to share a chat that has other people in it", async ({
     page,
     app,
-  }, info) => {
+  }) => {
     // Pre-existing grants have no device-local provenance. Keep the large fallback
     // collapsed, and prove real scrolling cannot push the fixed footer away.
     const legacyPeople = Array.from({ length: 14 }, (_, index) =>
@@ -308,7 +308,8 @@ test.describe("View only channel share", () => {
         await expect(copy).toBeFocused();
       }
     }
-    // A channel's search-result action opens the confirmation directly.
+    // This chat has other people in it, so the relay refuses to open it: a
+    // channel's search-result action stops before any confirmation.
     await search.fill("Alpha");
     const share = dialog.getByRole("button", {
       name: "Share #Alpha",
@@ -316,19 +317,14 @@ test.describe("View only channel share", () => {
     });
     await reachable(share);
     await share.press("Enter");
-    const confirmation = page.getByRole("alertdialog", {
-      name: "Share this chat?",
-    });
-    await expect(confirmation).toContainText(
-      "full history, Canvas, workspace folders, and agent instructions",
-    );
-    await confirmation
-      .getByRole("button", { name: "Cancel", exact: true })
-      .click();
-    await expect(share).toBeFocused();
-    await expect(search).toHaveValue("Alpha");
     await expect(
-      dialog.getByRole("region", { name: "Selected channel" }),
+      dialog.getByText(
+        "This chat has other members, so it can’t be shared. Create a new channel instead.",
+        { exact: false },
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("alertdialog", { name: "Share this chat?" }),
     ).toHaveCount(0);
     expect(app.report.detailsPublications ?? []).toHaveLength(0);
     expect(
@@ -337,383 +333,418 @@ test.describe("View only channel share", () => {
     // Close retires this dialog visit before testing persisted appearance reloads.
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
     await expect(dialog).not.toBeVisible();
-    // Keep actual appearance settings, nested modal focus, and action reachability
-    // in this browser journey; service and role matrices live in Vitest.
-    for (const [mode, width, scale] of [
-      ["dark", 1280, 1],
-      ["light", 1280, 1],
-      ["dark", 390, 1.5],
-      ["light", 390, 1.5],
-    ]) {
-      await page.setViewportSize({ width, height: width === 390 ? 720 : 850 });
-      await page.evaluate(
-        ({ mode, scale }) => {
-          localStorage.setItem("buzz-appearance.v1", mode);
-          localStorage.setItem("buzz-font-scale.v1", String(scale));
-        },
-        { mode, scale },
-      );
-      await page.reload();
-      await expect(page.locator("html")).toHaveAttribute(
-        "data-color-mode",
-        mode,
-      );
-      await expect(page.locator("html")).toHaveCSS(
-        "--buzz-text-scale",
-        String(scale),
-      );
-      // The cached header has only Share. Live Chat actions shifts Share left;
-      // wait for that header before pointer hit-testing can straddle the change.
-      await expect(
-        page.getByRole("button", { name: "Chat actions", exact: true }),
-      ).toBeVisible();
-      await trigger.click();
-      await expect(search).toBeFocused();
-      await search.fill("Alpha");
-      await reachable(share);
-      await expect(
-        dialog.getByRole("status").filter({ hasText: "Searching…" }),
-      ).toHaveCount(0);
-      if (info.project.name === "chromium")
-        await dialog.screenshot({
-          path: info.outputPath(`SOLO_SHARE_RESULTS_${mode}_${width}.png`),
-        });
-      await share.click();
-      const cancel = confirmation.getByRole("button", {
-        name: "Cancel",
-        exact: true,
-      });
-      await expect(cancel).toBeFocused();
-      const confirmShare = confirmation.getByRole("button", {
-        name: "Share",
-        exact: true,
-      });
-      await reachable(confirmShare);
-      await expect(confirmShare).toBeInViewport({ ratio: 1 });
-      if (info.project.name === "chromium")
-        await confirmation.screenshot({
-          path: info.outputPath(`SOLO_SHARE_CONFIRM_${mode}_${width}.png`),
-        });
-      await page.keyboard.press("Escape");
-      await expect(confirmation).not.toBeVisible();
-      await expect(share).toBeFocused();
-      if (mode !== "light" || width !== 390) {
-        await dialog
-          .getByRole("button", { name: "Close", exact: true })
-          .click();
-        await expect(dialog).not.toBeVisible();
-      }
-    }
-    await share.press("Enter");
-    await confirmation
-      .getByRole("button", { name: "Share", exact: true })
-      .click();
-    await expect(dialog).not.toBeVisible();
-    const changedToast = page.getByRole("dialog", {
-      name: "Chat changed to View only. Shared in #Alpha",
-      exact: true,
-    });
-    await expect(changedToast).toBeVisible();
-    await expect(
-      changedToast.getByRole("button", { name: "View", exact: true }),
-    ).toBeVisible();
-    expect(
-      await page.evaluate(
-        () => window.fixtureNavigation.snapshot().entry.target.channelId,
-      ),
-    ).toBe(sharedChatId);
-    await changedToast.hover();
-    if (info.project.name === "chromium")
-      await changedToast.screenshot({
-        path: info.outputPath("SHARE_ACCESS_CHANGED_TOAST_390.png"),
-      });
-    expect(app.report.detailsPublications).toHaveLength(1);
-    expect(app.report.detailsPublications[0].tags).toContainEqual([
-      "visibility",
-      "open",
-    ]);
-    expect(app.report.detailsPublications[0].tags).toContainEqual([
-      "join_role",
-      "guest",
-    ]);
-    expect(
-      app.report.publications.filter(({ event }) => event.kind === 9000),
-    ).toHaveLength(0);
-    await page.setViewportSize({ width: 1280, height: 850 });
-    await page.evaluate(() =>
-      document.documentElement.style.setProperty("--buzz-text-scale", "1"),
-    );
-    await expect
-      .poll(
-        () =>
-          app.report.publications.filter(({ event }) => event.kind === 9)
-            .length,
-      )
-      .toBe(1);
-    const links = app.report.publications.filter(
-      ({ event }) => event.kind === 9,
-    );
-    expect(links[0].event.content).toBe(
-      `[Chat: Beta](buzz://channel/${sharedChatId})`,
-    );
-    expect(links[0].event.tags).toContainEqual(["h", "alpha"]);
-    expect(links[0].event.tags.filter(([key]) => key === "p")).toHaveLength(0);
-    expect(
-      links[0].event.tags.some(([key]) => key === "t" || key === "s"),
-    ).toBe(false);
-    await changedToast
-      .getByRole("button", { name: "View", exact: true })
-      .click();
-    await expect
-      .poll(() =>
-        page.evaluate(() => window.fixtureNavigation.snapshot().entry.target),
-      )
-      .toMatchObject({ channelId: "alpha", messageId: links[0].event.id });
-    await openChat(page, app, sharedChatId);
-    // Sharing again confirms delivery while retaining the existing View only policy.
-    await trigger.click();
-    await search.fill("Alpha");
-    await share.click();
-    await expect(confirmation).toContainText(
-      "This chat is already View only. Its link will be posted in #Alpha.",
-    );
-    expect(app.report.detailsPublications).toHaveLength(1);
-    expect(
-      app.report.publications.filter(({ event }) => event.kind === 9),
-    ).toHaveLength(1);
-    if (info.project.name === "chromium")
-      await confirmation.screenshot({
-        path: info.outputPath("VIEW_ONLY_SHARE_CONFIRM_1280.png"),
-      });
-    await confirmation
-      .getByRole("button", { name: "Cancel", exact: true })
-      .click();
-    await expect(share).toBeFocused();
-    await expect(search).toHaveValue("Alpha");
-    expect(
-      app.report.publications.filter(({ event }) => event.kind === 9),
-    ).toHaveLength(1);
-    await share.click();
-    await confirmation
-      .getByRole("button", { name: "Share", exact: true })
-      .click();
-    await expect(dialog).not.toBeVisible();
-    await expect(
-      page.getByRole("dialog", { name: "Shared in #Alpha", exact: true }),
-    ).toBeVisible();
-    await expect
-      .poll(
-        () =>
-          app.report.publications.filter(({ event }) => event.kind === 9)
-            .length,
-      )
-      .toBe(2);
-    expect(app.report.detailsPublications).toHaveLength(1);
-    expect(
-      app.report.publications.filter(({ event }) => event.kind === 9000),
-    ).toHaveLength(0);
   });
 
   // Browser-only: clipboard -> Solo card -> real composer consent/focus -> one
   // original message through the broker. Policy/failure matrices stay in Vitest.
-  test("pasted owned chats confirm Private and View only while preserving Public access", async ({
-    page,
-    app,
-  }, info) => {
-    await open(page, app);
-    const input = page.getByRole("textbox", {
-      name: "Message #Alpha",
-      exact: true,
-    });
-    const pasteLink = async () => {
-      // A visible cold composer can still be disabled until signed membership loads.
-      await expect(input).toBeEditable();
-      await expect(input).toBeEnabled();
-      await input.focus();
-      await input.evaluate((element, link) => {
-        const clipboardData = new DataTransfer();
-        clipboardData.setData("text/plain", `${link}\n\nPlease look at this`);
-        element.dispatchEvent(
-          new ClipboardEvent("paste", {
-            bubbles: true,
-            cancelable: true,
-            clipboardData,
-          }),
+  // Only the viewer and its agents are members, so the chat may be opened.
+  test.describe("with no other people", () => {
+    test.use({ agentPeers: false });
+    test("shares View only links and confirms each reshare", async ({
+      page,
+      app,
+    }, info) => {
+      await page.goto(app.origin);
+      await openChat(page, app, sharedChatId);
+      const trigger = page.getByRole("button", {
+        name: /^Share access to /,
+        exact: true,
+      });
+      const dialog = page.getByRole("dialog", { name: "Share access" });
+      const search = dialog.getByRole("searchbox", {
+        name: "Search people and channels",
+      });
+      const share = dialog.getByRole("button", {
+        name: "Share #Alpha",
+        exact: true,
+      });
+      const confirmation = page.getByRole("alertdialog", {
+        name: "Share this chat?",
+      });
+      // Keep actual appearance settings, nested modal focus, and action reachability
+      // in this browser journey; service and role matrices live in Vitest.
+      for (const [mode, width, scale] of [
+        ["dark", 1280, 1],
+        ["light", 1280, 1],
+        ["dark", 390, 1.5],
+        ["light", 390, 1.5],
+      ]) {
+        await page.setViewportSize({
+          width,
+          height: width === 390 ? 720 : 850,
+        });
+        await page.evaluate(
+          ({ mode, scale }) => {
+            localStorage.setItem("buzz-appearance.v1", mode);
+            localStorage.setItem("buzz-font-scale.v1", String(scale));
+          },
+          { mode, scale },
         );
-      }, `buzz://channel/${sharedChatId}`);
-      await expect(input).toContainText("Please look at this");
-    };
-    await pasteLink();
-    const send = page.getByRole("button", {
-      name: "Send message",
-      exact: true,
-    });
-    const confirmation = page.getByRole("alertdialog", {
-      name: "Share this chat?",
-    });
-    const primary = confirmation.getByRole("button", {
-      name: "Share",
-      exact: true,
-    });
-    for (const [mode, width, scale] of [
-      ["dark", 1280, 1],
-      ["light", 390, 1.5],
-    ]) {
-      await page.setViewportSize({ width, height: width === 390 ? 720 : 850 });
-      await page.evaluate(
-        ({ mode, scale }) => {
-          localStorage.setItem("buzz-appearance.v1", mode);
-          localStorage.setItem("buzz-font-scale.v1", String(scale));
-        },
-        { mode, scale },
+        await page.reload();
+        await expect(page.locator("html")).toHaveAttribute(
+          "data-color-mode",
+          mode,
+        );
+        await expect(page.locator("html")).toHaveCSS(
+          "--buzz-text-scale",
+          String(scale),
+        );
+        // The cached header has only Share. Live Chat actions shifts Share left;
+        // wait for that header before pointer hit-testing can straddle the change.
+        await expect(
+          page.getByRole("button", { name: "Chat actions", exact: true }),
+        ).toBeVisible();
+        await trigger.click();
+        await expect(search).toBeFocused();
+        await search.fill("Alpha");
+        await reachable(share);
+        await expect(
+          dialog.getByRole("status").filter({ hasText: "Searching…" }),
+        ).toHaveCount(0);
+        if (info.project.name === "chromium")
+          await dialog.screenshot({
+            path: info.outputPath(`SOLO_SHARE_RESULTS_${mode}_${width}.png`),
+          });
+        await share.click();
+        const cancel = confirmation.getByRole("button", {
+          name: "Cancel",
+          exact: true,
+        });
+        await expect(cancel).toBeFocused();
+        const confirmShare = confirmation.getByRole("button", {
+          name: "Share",
+          exact: true,
+        });
+        await reachable(confirmShare);
+        await expect(confirmShare).toBeInViewport({ ratio: 1 });
+        if (info.project.name === "chromium")
+          await confirmation.screenshot({
+            path: info.outputPath(`SOLO_SHARE_CONFIRM_${mode}_${width}.png`),
+          });
+        await page.keyboard.press("Escape");
+        await expect(confirmation).not.toBeVisible();
+        await expect(share).toBeFocused();
+        if (mode !== "light" || width !== 390) {
+          await dialog
+            .getByRole("button", { name: "Close", exact: true })
+            .click();
+          await expect(dialog).not.toBeVisible();
+        }
+      }
+      await share.press("Enter");
+      await confirmation
+        .getByRole("button", { name: "Share", exact: true })
+        .click();
+      await expect(dialog).not.toBeVisible();
+      const changedToast = page.getByRole("dialog", {
+        name: "Chat changed to View only. Shared in #Alpha",
+        exact: true,
+      });
+      await expect(changedToast).toBeVisible();
+      await expect(
+        changedToast.getByRole("button", { name: "View", exact: true }),
+      ).toBeVisible();
+      expect(
+        await page.evaluate(
+          () => window.fixtureNavigation.snapshot().entry.target.channelId,
+        ),
+      ).toBe(sharedChatId);
+      await changedToast.hover();
+      if (info.project.name === "chromium")
+        await changedToast.screenshot({
+          path: info.outputPath("SHARE_ACCESS_CHANGED_TOAST_390.png"),
+        });
+      expect(app.report.detailsPublications).toHaveLength(1);
+      expect(app.report.detailsPublications[0].tags).toContainEqual([
+        "visibility",
+        "open",
+      ]);
+      expect(app.report.detailsPublications[0].tags).toContainEqual([
+        "join_role",
+        "guest",
+      ]);
+      expect(
+        app.report.publications.filter(({ event }) => event.kind === 9000),
+      ).toHaveLength(0);
+      await page.setViewportSize({ width: 1280, height: 850 });
+      await page.evaluate(() =>
+        document.documentElement.style.setProperty("--buzz-text-scale", "1"),
       );
-      await page.reload();
-      await expect(page.locator("html")).toHaveAttribute(
-        "data-color-mode",
-        mode,
+      await expect
+        .poll(
+          () =>
+            app.report.publications.filter(({ event }) => event.kind === 9)
+              .length,
+        )
+        .toBe(1);
+      const links = app.report.publications.filter(
+        ({ event }) => event.kind === 9,
       );
-      await expect(input).toBeVisible();
-      await send.click();
+      expect(links[0].event.content).toBe(
+        `[Chat: Beta](buzz://channel/${sharedChatId})`,
+      );
+      expect(links[0].event.tags).toContainEqual(["h", "alpha"]);
+      expect(links[0].event.tags.filter(([key]) => key === "p")).toHaveLength(
+        0,
+      );
+      expect(
+        links[0].event.tags.some(([key]) => key === "t" || key === "s"),
+      ).toBe(false);
+      await changedToast
+        .getByRole("button", { name: "View", exact: true })
+        .click();
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.fixtureNavigation.snapshot().entry.target),
+        )
+        .toMatchObject({ channelId: "alpha", messageId: links[0].event.id });
+      await openChat(page, app, sharedChatId);
+      // Sharing again confirms delivery while retaining the existing View only policy.
+      await trigger.click();
+      await search.fill("Alpha");
+      await share.click();
       await expect(confirmation).toContainText(
-        "full history, Canvas, workspace folders, and agent instructions",
+        "This chat is already View only. Its link will be posted in #Alpha.",
       );
-      await expect(primary).toBeFocused();
-      await reachable(primary);
-      await expect(primary).toBeInViewport({ ratio: 1 });
+      expect(app.report.detailsPublications).toHaveLength(1);
+      expect(
+        app.report.publications.filter(({ event }) => event.kind === 9),
+      ).toHaveLength(1);
       if (info.project.name === "chromium")
         await confirmation.screenshot({
-          path: info.outputPath(`SOLO_PASTE_CONFIRM_${mode}_${width}.png`),
+          path: info.outputPath("VIEW_ONLY_SHARE_CONFIRM_1280.png"),
         });
-      await page.keyboard.press("Escape");
+      await confirmation
+        .getByRole("button", { name: "Cancel", exact: true })
+        .click();
+      await expect(share).toBeFocused();
+      await expect(search).toHaveValue("Alpha");
+      expect(
+        app.report.publications.filter(({ event }) => event.kind === 9),
+      ).toHaveLength(1);
+      await share.click();
+      await confirmation
+        .getByRole("button", { name: "Share", exact: true })
+        .click();
+      await expect(dialog).not.toBeVisible();
+      await expect(
+        page.getByRole("dialog", { name: "Shared in #Alpha", exact: true }),
+      ).toBeVisible();
+      await expect
+        .poll(
+          () =>
+            app.report.publications.filter(({ event }) => event.kind === 9)
+              .length,
+        )
+        .toBe(2);
+      expect(app.report.detailsPublications).toHaveLength(1);
+      expect(
+        app.report.publications.filter(({ event }) => event.kind === 9000),
+      ).toHaveLength(0);
+    });
+
+    test("pasted owned chats confirm Private and View only while preserving Public access", async ({
+      page,
+      app,
+    }, info) => {
+      await open(page, app);
+      const input = page.getByRole("textbox", {
+        name: "Message #Alpha",
+        exact: true,
+      });
+      const pasteLink = async () => {
+        // A visible cold composer can still be disabled until signed membership loads.
+        await expect(input).toBeEditable();
+        await expect(input).toBeEnabled();
+        await input.focus();
+        await input.evaluate((element, link) => {
+          const clipboardData = new DataTransfer();
+          clipboardData.setData("text/plain", `${link}\n\nPlease look at this`);
+          element.dispatchEvent(
+            new ClipboardEvent("paste", {
+              bubbles: true,
+              cancelable: true,
+              clipboardData,
+            }),
+          );
+        }, `buzz://channel/${sharedChatId}`);
+        await expect(input).toContainText("Please look at this");
+      };
+      await pasteLink();
+      const send = page.getByRole("button", {
+        name: "Send message",
+        exact: true,
+      });
+      const confirmation = page.getByRole("alertdialog", {
+        name: "Share this chat?",
+      });
+      const primary = confirmation.getByRole("button", {
+        name: "Share",
+        exact: true,
+      });
+      for (const [mode, width, scale] of [
+        ["dark", 1280, 1],
+        ["light", 390, 1.5],
+      ]) {
+        await page.setViewportSize({
+          width,
+          height: width === 390 ? 720 : 850,
+        });
+        await page.evaluate(
+          ({ mode, scale }) => {
+            localStorage.setItem("buzz-appearance.v1", mode);
+            localStorage.setItem("buzz-font-scale.v1", String(scale));
+          },
+          { mode, scale },
+        );
+        await page.reload();
+        await expect(page.locator("html")).toHaveAttribute(
+          "data-color-mode",
+          mode,
+        );
+        await expect(input).toBeVisible();
+        await send.click();
+        await expect(confirmation).toContainText(
+          "full history, Canvas, workspace folders, and agent instructions",
+        );
+        await expect(primary).toBeFocused();
+        await reachable(primary);
+        await expect(primary).toBeInViewport({ ratio: 1 });
+        if (info.project.name === "chromium")
+          await confirmation.screenshot({
+            path: info.outputPath(`SOLO_PASTE_CONFIRM_${mode}_${width}.png`),
+          });
+        await page.keyboard.press("Escape");
+        await expect(confirmation).not.toBeVisible();
+        await expect(input).toBeFocused();
+        await expect(input).toContainText("Please look at this");
+        expect(app.report.detailsPublications ?? []).toHaveLength(0);
+      }
+      await send.click();
+      await primary.click();
       await expect(confirmation).not.toBeVisible();
+      await expect
+        .poll(
+          () =>
+            app.report.publications.filter(({ event }) => event.kind === 9)
+              .length,
+        )
+        .toBe(1);
+      expect(app.report.detailsPublications).toHaveLength(1);
+      expect(app.report.detailsPublications[0].tags).toContainEqual([
+        "visibility",
+        "open",
+      ]);
+      expect(app.report.detailsPublications[0].tags).toContainEqual([
+        "join_role",
+        "guest",
+      ]);
+      const message = app.report.publications.find(
+        ({ event }) => event.kind === 9,
+      ).event;
+      expect(message.content).toContain(`buzz://channel/${sharedChatId}`);
+      expect(message.content).toContain("Please look at this");
+      expect(
+        app.report.publications.filter(({ event }) => event.kind === 9000),
+      ).toHaveLength(0);
+
+      await pasteLink();
+      await send.click();
+      const viewOnlyConfirmation = page.getByRole("alertdialog", {
+        name: "Share this chat?",
+      });
+      await expect(viewOnlyConfirmation).toContainText(
+        "This chat is already View only.",
+      );
+      expect(app.report.detailsPublications).toHaveLength(1);
+      expect(
+        app.report.publications.filter(({ event }) => event.kind === 9),
+      ).toHaveLength(1);
+      if (info.project.name === "chromium")
+        await viewOnlyConfirmation.screenshot({
+          path: info.outputPath("VIEW_ONLY_PASTE_CONFIRM_390.png"),
+        });
+      await viewOnlyConfirmation
+        .getByRole("button", { name: "Cancel", exact: true })
+        .click();
       await expect(input).toBeFocused();
       await expect(input).toContainText("Please look at this");
-      expect(app.report.detailsPublications ?? []).toHaveLength(0);
-    }
-    await send.click();
-    await primary.click();
-    await expect(confirmation).not.toBeVisible();
-    await expect
-      .poll(
-        () =>
-          app.report.publications.filter(({ event }) => event.kind === 9)
-            .length,
-      )
-      .toBe(1);
-    expect(app.report.detailsPublications).toHaveLength(1);
-    expect(app.report.detailsPublications[0].tags).toContainEqual([
-      "visibility",
-      "open",
-    ]);
-    expect(app.report.detailsPublications[0].tags).toContainEqual([
-      "join_role",
-      "guest",
-    ]);
-    const message = app.report.publications.find(
-      ({ event }) => event.kind === 9,
-    ).event;
-    expect(message.content).toContain(`buzz://channel/${sharedChatId}`);
-    expect(message.content).toContain("Please look at this");
-    expect(
-      app.report.publications.filter(({ event }) => event.kind === 9000),
-    ).toHaveLength(0);
+      await send.click();
+      await viewOnlyConfirmation
+        .getByRole("button", { name: "Share", exact: true })
+        .click();
+      await expect(viewOnlyConfirmation).not.toBeVisible();
+      await expect
+        .poll(
+          () =>
+            app.report.publications.filter(({ event }) => event.kind === 9)
+              .length,
+        )
+        .toBe(2);
+      expect(app.report.detailsPublications).toHaveLength(1);
 
-    await pasteLink();
-    await send.click();
-    const viewOnlyConfirmation = page.getByRole("alertdialog", {
-      name: "Share this chat?",
+      // Renewed consent must remount the real alert, return focus to Cancel and
+      // keep the original composer message unsent until a second explicit Share.
+      await pasteLink();
+      await send.click();
+      await expect(viewOnlyConfirmation).toBeVisible();
+      app.setChannelMetadata(sharedChatId, [
+        ["t", "stream"],
+        ["t", "buzz.solo"],
+        ["P", app.viewer],
+        ["name", "Beta"],
+        ["private"],
+        ["join_role", "guest"],
+      ]);
+      await viewOnlyConfirmation
+        .getByRole("button", { name: "Share", exact: true })
+        .click();
+      await expect(confirmation).toContainText("from Private to View only");
+      await expect(primary).toBeFocused();
+      expect(app.report.detailsPublications).toHaveLength(1);
+      expect(
+        app.report.publications.filter(({ event }) => event.kind === 9),
+      ).toHaveLength(2);
+      if (info.project.name === "chromium")
+        await confirmation.screenshot({
+          path: info.outputPath("RENEWED_PASTE_CONSENT_390.png"),
+        });
+      await primary.click();
+      await expect(confirmation).not.toBeVisible();
+      await expect
+        .poll(
+          () =>
+            app.report.publications.filter(({ event }) => event.kind === 9)
+              .length,
+        )
+        .toBe(3);
+      expect(app.report.detailsPublications).toHaveLength(2);
+
+      app.setChannelMetadata(sharedChatId, [
+        ["t", "stream"],
+        ["t", "buzz.solo"],
+        ["P", app.viewer],
+        ["name", "Beta"],
+        ["public"],
+        ["join_role", "member"],
+      ]);
+      await page.reload();
+      await expect(input).toBeVisible();
+      await pasteLink();
+      await send.click();
+      await expect
+        .poll(
+          () =>
+            app.report.publications.filter(({ event }) => event.kind === 9)
+              .length,
+        )
+        .toBe(4);
+      await expect(confirmation).not.toBeVisible();
+      expect(app.report.detailsPublications).toHaveLength(2);
+      expect(
+        app.report.publications.filter(({ event }) => event.kind === 9000),
+      ).toHaveLength(0);
     });
-    await expect(viewOnlyConfirmation).toContainText(
-      "This chat is already View only.",
-    );
-    expect(app.report.detailsPublications).toHaveLength(1);
-    expect(
-      app.report.publications.filter(({ event }) => event.kind === 9),
-    ).toHaveLength(1);
-    if (info.project.name === "chromium")
-      await viewOnlyConfirmation.screenshot({
-        path: info.outputPath("VIEW_ONLY_PASTE_CONFIRM_390.png"),
-      });
-    await viewOnlyConfirmation
-      .getByRole("button", { name: "Cancel", exact: true })
-      .click();
-    await expect(input).toBeFocused();
-    await expect(input).toContainText("Please look at this");
-    await send.click();
-    await viewOnlyConfirmation
-      .getByRole("button", { name: "Share", exact: true })
-      .click();
-    await expect(viewOnlyConfirmation).not.toBeVisible();
-    await expect
-      .poll(
-        () =>
-          app.report.publications.filter(({ event }) => event.kind === 9)
-            .length,
-      )
-      .toBe(2);
-    expect(app.report.detailsPublications).toHaveLength(1);
-
-    // Renewed consent must remount the real alert, return focus to Cancel and
-    // keep the original composer message unsent until a second explicit Share.
-    await pasteLink();
-    await send.click();
-    await expect(viewOnlyConfirmation).toBeVisible();
-    app.setChannelMetadata(sharedChatId, [
-      ["t", "stream"],
-      ["t", "buzz.solo"],
-      ["P", app.viewer],
-      ["name", "Beta"],
-      ["private"],
-      ["join_role", "guest"],
-    ]);
-    await viewOnlyConfirmation
-      .getByRole("button", { name: "Share", exact: true })
-      .click();
-    await expect(confirmation).toContainText("from Private to View only");
-    await expect(primary).toBeFocused();
-    expect(app.report.detailsPublications).toHaveLength(1);
-    expect(
-      app.report.publications.filter(({ event }) => event.kind === 9),
-    ).toHaveLength(2);
-    if (info.project.name === "chromium")
-      await confirmation.screenshot({
-        path: info.outputPath("RENEWED_PASTE_CONSENT_390.png"),
-      });
-    await primary.click();
-    await expect(confirmation).not.toBeVisible();
-    await expect
-      .poll(
-        () =>
-          app.report.publications.filter(({ event }) => event.kind === 9)
-            .length,
-      )
-      .toBe(3);
-    expect(app.report.detailsPublications).toHaveLength(2);
-
-    app.setChannelMetadata(sharedChatId, [
-      ["t", "stream"],
-      ["t", "buzz.solo"],
-      ["P", app.viewer],
-      ["name", "Beta"],
-      ["public"],
-      ["join_role", "member"],
-    ]);
-    await page.reload();
-    await expect(input).toBeVisible();
-    await pasteLink();
-    await send.click();
-    await expect
-      .poll(
-        () =>
-          app.report.publications.filter(({ event }) => event.kind === 9)
-            .length,
-      )
-      .toBe(4);
-    await expect(confirmation).not.toBeVisible();
-    expect(app.report.detailsPublications).toHaveLength(2);
-    expect(
-      app.report.publications.filter(({ event }) => event.kind === 9000),
-    ).toHaveLength(0);
   });
 });
 
@@ -934,6 +965,8 @@ test.describe("Messages Share navigation", () => {
   const firstChat = "55555555-5555-4555-8555-555555555555";
   const secondChat = "66666666-6666-4666-8666-666666666666";
   test.use({
+    // Only the viewer and its agents are members, so the chats may be opened.
+    agentPeers: false,
     soloChannels: [firstChat, secondChat],
     ownSoloChannels: [firstChat, secondChat],
     channelIds: [firstChat, secondChat, "gamma"],

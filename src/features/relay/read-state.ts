@@ -606,8 +606,7 @@ export function createReadState({
       if (!old || newer(old.event, item.event) === item.event) {
         slots.set(coordinate, item);
         // Every observation keeps the capacity basis current, not only refresh.
-        snapshotSizes?.set(coordinate, encodedBytes(item.event));
-        sizeVersions.set(coordinate, item.event);
+        noteSize(item.event);
       }
     }
     if (slots.size > 4096) {
@@ -624,13 +623,33 @@ export function createReadState({
       lifetime.signal,
       AbortSignal.timeout(10000 + (snapshot ? LARGE_READ_DEADLINE_MS : 0)),
     ]);
+  /** Counts a coordinate's newest version only: a stale echo never shrinks it. */
+  function noteSize(event: RelayEvent) {
+    const coordinate = dTag(event);
+    const prior = sizeVersions.get(coordinate);
+    if (!snapshotSizes || (prior && newer(prior, event) !== event)) return;
+    sizeVersions.set(coordinate, event);
+    snapshotSizes.set(coordinate, encodedBytes(event));
+  }
   // Sizes of a complete snapshot, kept current by every later observation.
   function basis(events: readonly RelayEvent[]) {
-    snapshotSizes = new Map(
-      events.map((event) => [dTag(event), encodedBytes(event)]),
-    );
+    // An observation newer than the snapshot's cut (for example a follow
+    // that arrived during the fetch) outranks the snapshot's version.
+    const observed = new Map(sizeVersions);
+    snapshotSizes = new Map();
     sizeVersions.clear();
-    for (const event of events) sizeVersions.set(dTag(event), event);
+    for (const event of events) {
+      const coordinate = dTag(event);
+      const prior = observed.get(coordinate);
+      const kept = prior ? newer(prior, event) : event;
+      sizeVersions.set(coordinate, kept);
+      snapshotSizes.set(coordinate, encodedBytes(kept));
+      observed.delete(coordinate);
+    }
+    for (const [coordinate, event] of observed) {
+      sizeVersions.set(coordinate, event);
+      snapshotSizes.set(coordinate, encodedBytes(event));
+    }
   }
   // A local projection, not a reservation: other devices can still grow the
   // snapshot concurrently. Checked before every send, replays included. A gap
@@ -1195,11 +1214,7 @@ export function createReadState({
     admit,
     /** Keeps the capacity basis current for an accepted own event. */
     observeSize(event: RelayEvent) {
-      const coordinate = dTag(event);
-      const prior = sizeVersions.get(coordinate);
-      if (!snapshotSizes || (prior && newer(prior, event) !== event)) return;
-      sizeVersions.set(coordinate, event);
-      snapshotSizes.set(coordinate, encodedBytes(event));
+      noteSize(event);
     },
     /** Every own-author read this owner completes: `complete` when it was
      * the full authenticated snapshot. */

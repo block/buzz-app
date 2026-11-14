@@ -395,6 +395,8 @@ export function createThreadFollowSync({
   const unreadable = () =>
     peers().some((head) => !head.payload) || ownUnreadable();
   const UNREADABLE = "Follow choices are unreadable on this device";
+  const INCOMPLETE =
+    "Follow choices can't sync without a complete read of this account";
   /** Merged choices of every coordinate (rules: greater `at`, unfollow ties). */
   function choices(): ThreadFollows {
     if (merged) return merged;
@@ -508,7 +510,10 @@ export function createThreadFollowSync({
     const signal = budget(snapshotted());
     const run = async () => {
       // Read before write, from the same complete snapshot as recovery.
-      if (await recover(signal, "foreground")) complete = !unreadable();
+      // Without it the bounded read only displays: nothing is published and
+      // every edit and packet is kept (NIP-RS, §7).
+      if (!(await recover(signal, "foreground"))) throw new Error(INCOMPLETE);
+      complete = !unreadable();
       // Any unreadable or conflicting own head holds all follow publication
       // and keeps every edit and packet (§5, §7).
       if (ownUnreadable()) throw new Error(UNREADABLE);
@@ -556,6 +561,8 @@ export function createThreadFollowSync({
     // Capture and reserve in one transaction with the shared allocator.
     let frozen: NonNullable<ReturnType<typeof capture>>[1] | undefined;
     await save((current, journal) => {
+      // Another window may have stored an unreadable owned head (§5).
+      if (ownUnreadable(current)) throw new Error(UNREADABLE);
       const base = shared(current, journal);
       const captured = capture(
         base.state,
@@ -613,6 +620,12 @@ export function createThreadFollowSync({
     signal: AbortSignal,
   ) {
     if (!host?.publishFollows) return;
+    // Recheck the latest journal: an unreadable owned head stored by another
+    // window since this flush began holds every slot (§5).
+    await save((current) => {
+      if (ownUnreadable(current)) throw new Error(UNREADABLE);
+      return current;
+    });
     // Preflight: never publish what would make the next snapshot impossible.
     capacity?.admit([event]);
     try {

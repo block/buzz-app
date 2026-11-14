@@ -2061,6 +2061,26 @@ describe("publication fences", () => {
     ).toThrow("capacity reached");
   }, 30000);
 
+  it("a snapshot installed after a newer observation keeps the newer size", async () => {
+    const f = fixture(T);
+    const half = 4 * 1024 * 1024;
+    const filler = foreignAt(f.key.pubkey, 1, "x".repeat(half - 3000));
+    const owner = snapshotted(f, [foreignAt(f.key.pubkey, 0), filler])();
+    await owner.ready;
+    await owner.refresh();
+    // A larger, newer version arrives live while the next snapshot's cut
+    // still holds the small one.
+    owner.observeSize({
+      ...foreignAt(f.key.pubkey, 0, "x".repeat(half)),
+      id: "e".repeat(64),
+      created_at: T + 1,
+    });
+    await owner.refresh();
+    expect(() =>
+      owner.admit([foreignAt(f.key.pubkey, 2, "x".repeat(4000))]),
+    ).toThrow("capacity reached");
+  }, 30000);
+
   it("takes a complete snapshot before the first send, and again after a gap", async () => {
     const f = fixture(T);
     const full = snapshotted(f, foreign(f.key.pubkey, READ_SNAPSHOT_EVENTS))();

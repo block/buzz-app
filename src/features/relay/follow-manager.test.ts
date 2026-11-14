@@ -847,3 +847,83 @@ it("D9: other devices' slots never count against our 16", async () => {
   await sync.set(K, true);
   expect(sync.read().get(K)).toBe(true);
 });
+
+it("D1: without a complete snapshot, flush publishes nothing and keeps the work", async () => {
+  const r = relay();
+  const disk = memoryStorage();
+  const sync = setup(
+    r,
+    { now: 1000 },
+    { storage: disk.storage, snapshot: false },
+  );
+  await sync.refresh();
+  await sync.set(K, true);
+  await sync.flush();
+  expect(r.published).toHaveLength(0);
+  expect(sync.snapshot()).toMatchObject({ status: "failed" });
+  expect(sync.snapshot().error).toContain("complete read");
+  expect(disk.backup().follows?.state.edits[K]).toBeDefined();
+  expect(sync.read().get(K)).toBe(true);
+});
+
+for (const retry of [false, true])
+  it(`D5: an unreadable owned head stored between two slot publications stops the second${retry ? " (retained packets)" : ""}`, async () => {
+    const { r, disk, clock, clientId } = await installed();
+    r.put(head(slotOf(1), 1000, { [K]: { follow: true, at: 5 } }, clientId));
+    r.put(
+      head(slotOf(2), 1000, { [keyOf(2)]: { follow: true, at: 5 } }, clientId, {
+        pad: "x".repeat(40 * 1024 - 200),
+      }),
+    );
+    r.put(
+      head(slotOf(3), 1000, { [keyOf(4)]: { follow: true, at: 5 } }, clientId),
+    );
+    let other = false;
+    let down = retry;
+    const sync = setup(r, clock, {
+      storage: disk.storage,
+      publish: async (event) => {
+        if (down) throw new Error("Relay delivery could not be confirmed");
+        r.put(event);
+        r.published.push(event);
+        if (other) return;
+        other = true;
+        // Another window stores an unreadable head for a third, idle slot.
+        const rest = slotOf(3);
+        await disk.storage.update((journal) => {
+          const follows = journal?.follows;
+          if (!journal || !follows) throw new Error("no journal");
+          return {
+            ...journal,
+            follows: {
+              ...follows,
+              state: {
+                ...follows.state,
+                heads: {
+                  ...follows.state.heads,
+                  [rest]: {
+                    id: "9".repeat(64),
+                    created_at: 1200,
+                    payload: undefined,
+                  },
+                },
+              },
+            },
+          };
+        });
+      },
+    });
+    await sync.refresh();
+    await sync.set(K, false);
+    await sync.set(keyOf(2), false);
+    if (retry) {
+      await sync.flush();
+      expect(
+        Object.keys(disk.backup().follows?.state.packets ?? {}),
+      ).toHaveLength(2);
+      down = false;
+    }
+    await sync.flush();
+    expect(r.published).toHaveLength(1);
+    expect(sync.snapshot().error).toContain("unreadable");
+  });

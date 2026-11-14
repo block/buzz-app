@@ -23,6 +23,12 @@ export type PluginInfo = {
 };
 export type PluginRelease = Pick<PluginInfo, "revision" | "publisher">;
 
+/** Inert package content, base64-encoded, read on demand rather than polled. */
+export type PluginContent = {
+  readme: string | null;
+  iconPng: string | null;
+  iconJpg: string | null;
+};
 export type Catalog = {
   profile: string;
   location: string;

@@ -183,6 +183,11 @@ function managedFixture() {
     recoverSettings: vi.fn(async () => configuration),
     reloadPlugin: vi.fn(async () => configuration),
     readModule: vi.fn(async () => ""),
+    readContent: vi.fn(async () => ({
+      readme: null,
+      iconPng: null,
+      iconJpg: null,
+    })),
   };
   const manager = createPluginManager(root, { bundled: [], storage });
   return {

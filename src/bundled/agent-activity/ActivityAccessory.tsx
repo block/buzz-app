@@ -3,6 +3,7 @@ import { useRecordedActivityAgents } from "../../features/conversation/typing-pr
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useProfileGeneration } from "../../features/relay/react";
 import {
+  type ComponentProps,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -306,41 +307,40 @@ function MessageActivity(
       aria-label="Agent activity on this message"
       aria-hidden={shown.length ? undefined : true}
     >
-      <AgentResponsePreview
-        name={primary.name}
-        bylineHint={
-          <RemoteAgentHint
-            session={session}
-            viewer={session.viewer}
-            pubkey={primary.agent}
-          />
-        }
-        participants={bubble.map((entry) => ({
-          id: entry.agent,
-          name: entry.name,
-          picture: avatarMedia(entry.picture, session.media),
-        }))}
-        picture={avatarMedia(primary.picture, session.media)}
-        layout={props.messageLayout}
-      >
-        {shown.map((entry) => (
-          <TypingReplacement
-            // A settled outcome is not working, so it leaves the cue alone.
-            shared={entry.working || entry.state === "waiting"}
-            key={entry.agent}
-            {...props}
-            agent={entry.agent}
-          />
-        ))}
-        <ActivityBubble
-          key={`${channelId}:${message?.id ?? ""}`}
+      {shown.map((entry) => (
+        <TypingReplacement
+          // A settled outcome is not working, so it leaves the cue alone.
+          shared={entry.working || entry.state === "waiting"}
+          key={entry.agent}
           {...props}
-          entries={bubble}
-          compact={compact}
-          interactive={shown.length > 0}
-          onRetried={focusAfterRetry}
+          agent={entry.agent}
         />
-      </AgentResponsePreview>
+      ))}
+      <ActivityBubble
+        key={`${channelId}:${message?.id ?? ""}`}
+        {...props}
+        preview={{
+          name: primary.name,
+          bylineHint: (
+            <RemoteAgentHint
+              session={session}
+              viewer={session.viewer}
+              pubkey={primary.agent}
+            />
+          ),
+          participants: bubble.map((entry) => ({
+            id: entry.agent,
+            name: entry.name,
+            picture: avatarMedia(entry.picture, session.media),
+          })),
+          picture: avatarMedia(primary.picture, session.media),
+          layout: props.messageLayout,
+        }}
+        entries={bubble}
+        compact={compact}
+        interactive={shown.length > 0}
+        onRetried={focusAfterRetry}
+      />
     </section>
   );
 }
@@ -368,8 +368,13 @@ function ActivityBubble({
   compact = false,
   onRetried,
   agents,
+  preview,
   ...props
 }: ActivityProps & {
+  preview: Omit<
+    ComponentProps<typeof AgentResponsePreview>,
+    "children" | "bubbleAction"
+  >;
   entries: Entry[];
   interactive: boolean;
   compact?: boolean;
@@ -420,7 +425,7 @@ function ActivityBubble({
   };
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
-  const controlsRoot = useRef<HTMLDivElement>(null);
+  const stopRoot = useRef<HTMLElement | null>(null);
   const restoreFocusOnRemoval = useCallback((node: HTMLElement | null) => {
     if (!node) return;
     return () => {
@@ -428,6 +433,17 @@ function ActivityBubble({
         trigger.current?.focus({ preventScroll: true });
     };
   }, []);
+  const singleStopRoot = useCallback(
+    (node: HTMLElement | null) => {
+      stopRoot.current = node;
+      const restore = restoreFocusOnRemoval(node);
+      return () => {
+        restore?.();
+        stopRoot.current = null;
+      };
+    },
+    [restoreFocusOnRemoval],
+  );
   const stoppedFocus = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     const source = stoppedFocus.current;
@@ -457,7 +473,7 @@ function ActivityBubble({
       const focused = trigger.current?.ownerDocument.activeElement;
       if (
         focused &&
-        (controlsRoot.current?.contains(focused) ||
+        (stopRoot.current?.contains(focused) ||
           trigger.current?.contains(focused) ||
           popup.current?.contains(focused))
       )
@@ -468,20 +484,20 @@ function ActivityBubble({
   useLayoutEffect(() => {
     if (interactive) return;
     const source = popup.current;
-    const button = controlsRoot.current ?? trigger.current;
+    const button = trigger.current;
     const document = (source ?? button)?.ownerDocument;
     const active = document?.activeElement;
+    const roots = [button, stopRoot.current, source];
+    const owned = (node: Node | null | undefined) =>
+      !!node && roots.some((root) => root?.contains(node));
     setExpanded(false);
-    if (active && (button?.contains(active) || source?.contains(active))) {
+    if (owned(active)) {
       // Commit closure before handing off: its overlay currently hides the
       // host's target. DOM observers release that target at this checkpoint.
       // Keep the retired nodes so unmount does not erase focus ownership.
       queueMicrotask(() => {
         const current = document?.activeElement;
-        if (
-          current === document?.body ||
-          (current && (button?.contains(current) || source?.contains(current)))
-        )
+        if (current === document?.body || owned(current))
           props.onFocusedRemoval?.();
       });
     }
@@ -733,28 +749,40 @@ function ActivityBubble({
   );
   if (compact)
     return (
-      <ActivityDisclosure
-        expanded={expanded}
-        onToggle={() => setExpanded((open) => !open)}
-        trigger={trigger}
-        container={popup}
-        interactive={interactive}
-        label={`${expanded ? "Collapse" : "Show"} activity history: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
-        summary={content}
-        expandedSummary={content}
-      >
-        {details}
-      </ActivityDisclosure>
+      <AgentResponsePreview {...preview}>
+        <ActivityDisclosure
+          expanded={expanded}
+          onToggle={() => setExpanded((open) => !open)}
+          trigger={trigger}
+          container={popup}
+          interactive={interactive}
+          label={`${expanded ? "Collapse" : "Show"} activity history: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
+          summary={content}
+          expandedSummary={content}
+        >
+          {details}
+        </ActivityDisclosure>
+      </AgentResponsePreview>
     );
   return (
-    <PopoverRoot
-      open={!single && expanded}
-      onOpenChange={(open) => setExpanded(!single && interactive && open)}
+    <AgentResponsePreview
+      {...preview}
+      bubbleAction={
+        single &&
+        singleControl && (
+          <span
+            ref={singleStopRoot}
+            className={styles.inlineStop}
+            data-stopping={singleStopping || undefined}
+          >
+            {stopAction(single)}
+          </span>
+        )
+      }
     >
-      <div
-        ref={controlsRoot}
-        className={`${messageStyles.activityBubbleControls} ${singleControl ? styles.overlayControls : ""}`}
-        data-activity-controls=""
+      <PopoverRoot
+        open={!single && expanded}
+        onOpenChange={(open) => setExpanded(!single && interactive && open)}
       >
         <PopoverTrigger
           openOnHover={!single && interactive && "preview"}
@@ -786,42 +814,27 @@ function ActivityBubble({
               data-activity-summary=""
               aria-label={activityLabel}
             >
-              {singleControl ? (
-                <span className={styles.overlayContent}>
-                  {singleStopping ? (
-                    <ShimmerText active>Stopping…</ShimmerText>
-                  ) : (
-                    content
-                  )}
-                </span>
+              {singleStopping ? (
+                <ShimmerText active>Stopping…</ShimmerText>
               ) : (
                 content
               )}
             </button>
           }
         />
-        {single && singleControl && (
-          <span
-            ref={restoreFocusOnRemoval}
-            className={styles.inlineStop}
-            data-stopping={singleStopping || undefined}
-          >
-            {stopAction(single)}
-          </span>
-        )}
-      </div>
-      <PopoverPopup
-        ref={popup}
-        finalFocus={() =>
-          retirement.current.interactive ? trigger.current : false
-        }
-        side="top"
-        padding="list"
-        aria-label="Agent activity"
-      >
-        {expanded && details}
-      </PopoverPopup>
-    </PopoverRoot>
+        <PopoverPopup
+          ref={popup}
+          finalFocus={() =>
+            retirement.current.interactive ? trigger.current : false
+          }
+          side="top"
+          padding="list"
+          aria-label="Agent activity"
+        >
+          {expanded && details}
+        </PopoverPopup>
+      </PopoverRoot>
+    </AgentResponsePreview>
   );
 }
 

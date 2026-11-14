@@ -13,8 +13,11 @@ export function AgentResponsePreview({
   children,
   stackPrevious = false,
   bylineHint,
+  bubbleAction,
 }: {
   bylineHint?: ReactNode;
+  /** A control beside the bubble, outside the bubble's own interaction. */
+  bubbleAction?: ReactNode;
   stackPrevious?: boolean;
   name: string;
   picture?: string | undefined;
@@ -85,7 +88,11 @@ export function AgentResponsePreview({
               </div>
             </div>
           )}
-          <div className={styles.messageBubble}>{children}</div>
+          {/* One tree whether or not an action shows, so the bubble keeps focus. */}
+          <div className={styles.previewBubbleRow}>
+            <div className={styles.messageBubble}>{children}</div>
+            {bubbleAction}
+          </div>
         </div>
       </div>
     </div>

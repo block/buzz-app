@@ -247,6 +247,7 @@ test("Stop in a message's activity ends its local work quietly", async ({
     exact: true,
   });
   await page.mouse.move(0, 0);
+  await animationsSettled(row.locator("section"), { subtree: true });
   const restingBox = await activity.boundingBox();
   await row
     .getByRole("region", { name: "Agent activity on this message" })
@@ -286,6 +287,114 @@ test("Stop in a message's activity ends its local work quietly", async ({
   await expect(
     page.locator('[data-channel-id="alpha"] [data-channel-working]'),
   ).toHaveCount(0);
+});
+
+// The shortest live label is the dots alone. Opening Activity and Stop keep
+// their own targets there: neither covers the other, and hover moves nothing.
+async function dotsOnlyActivity(page, app) {
+  await open(page, app);
+  await expect
+    .poll(() => page.evaluate(() => !!window.localAgentFixture))
+    .toBe(true);
+  const request = app.sign({
+    kind: 9,
+    content: "Start working on this",
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ["h", "alpha"],
+      ["p", localAgentKey],
+    ],
+  });
+  app.histories.get("primary/alpha").push(request);
+  app.relay.publish("primary", request);
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${request.id}"]`,
+  );
+  const activity = row.getByRole("button", { name: /^View agent activity:/ });
+  const stop = row.getByRole("button", {
+    name: "Stop Local tester",
+    exact: true,
+  });
+  await expect(activity).toBeVisible();
+  await expect(stop).toBeVisible();
+  await expect(activity).toHaveText("");
+  await activity.scrollIntoViewIfNeeded();
+  return { request, row, activity, stop };
+}
+const center = (box) => ({
+  x: box.x + box.width / 2,
+  y: box.y + box.height / 2,
+});
+const separate = (a, b) =>
+  a.x + a.width <= b.x ||
+  b.x + b.width <= a.x ||
+  a.y + a.height <= b.y ||
+  b.y + b.height <= a.y;
+async function hitsOwnTarget(locator) {
+  const point = center(await locator.boundingBox());
+  return locator.evaluate(
+    (node, { x, y }) =>
+      node.contains(node.ownerDocument.elementFromPoint(x, y)),
+    point,
+  );
+}
+
+test("a dots-only activity bubble keeps Activity and Stop apart", async ({
+  page,
+  app,
+}) => {
+  const { request, row, activity, stop } = await dotsOnlyActivity(page, app);
+  await page.mouse.move(0, 0);
+  await animationsSettled(row.locator("section"), { subtree: true });
+  const resting = [await activity.boundingBox(), await stop.boundingBox()];
+  expect(separate(...resting)).toBe(true);
+  const target = center(resting[0]);
+  await page.mouse.move(target.x, target.y);
+  await animationsSettled(row.locator("section"), { subtree: true });
+  expect([await activity.boundingBox(), await stop.boundingBox()]).toEqual(
+    resting,
+  );
+  expect(await hitsOwnTarget(activity)).toBe(true);
+  expect(await hitsOwnTarget(stop)).toBe(true);
+  await page.mouse.click(target.x, target.y);
+  await expect(
+    page.getByRole("tab", { name: "Activity", selected: true }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => window.localAgentFixture.stopped())).toEqual(
+    [],
+  );
+  await stop.click();
+  await expect
+    .poll(() => page.evaluate(() => window.localAgentFixture.stopped()))
+    .toEqual([request.id]);
+});
+
+test.describe("touch", () => {
+  test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
+  test("a dots-only activity bubble keeps Activity and Stop apart", async ({
+    page,
+    app,
+  }) => {
+    const { request, activity, stop } = await dotsOnlyActivity(page, app);
+    expect(
+      separate(await activity.boundingBox(), await stop.boundingBox()),
+    ).toBe(true);
+    // Touch has no hover: Stop is already showing and tappable.
+    expect(await hitsOwnTarget(activity)).toBe(true);
+    expect(await hitsOwnTarget(stop)).toBe(true);
+    await activity.tap();
+    await expect(
+      page.getByRole("tab", { name: "Activity", selected: true }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() => window.localAgentFixture.stopped()),
+    ).toEqual([]);
+    await page.getByRole("button", { name: /^Close (?!Thread).* tab$/ }).tap();
+    await stop.tap();
+    await expect
+      .poll(() => page.evaluate(() => window.localAgentFixture.stopped()))
+      .toEqual([request.id]);
+  });
 });
 
 // The channel's thread summary is host-owned; its activity popup offers Stop.

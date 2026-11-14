@@ -1356,8 +1356,8 @@ available rather than silently discarding it.
   Otherwise dots remain at the end of the conversation while agents work,
   alongside current step details when available. With Reduce Motion enabled,
   the dots stay still. For one agent, click the live activity bubble to open
-  its activity; hover or focus the bubble to reveal **Stop** (always visible on
-  touch screens). For several agents, open or hover the bubble to choose an
+  its activity; hover or focus it to reveal **Stop** beside the bubble (always
+  visible on touch screens). For several agents, open or hover the bubble to choose an
   agent’s activity or stop an individual request. Expand recorded work for its
   activity controls. Stop availability
   depends on the agent type.

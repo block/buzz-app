@@ -3985,45 +3985,49 @@ html[data-keyboard-navigation] .activityExpansion {
 }
 
 /* The painted bubble and its interactive area must have the same bounds. */
-.messageBubble:has(> :is(.activityBubbleTrigger, .activityBubbleControls)) {
+.messageBubble:has(> .activityBubbleTrigger) {
   padding: 0;
 }
 :where(html[data-message-density="compact"])
   .message[data-agent-response-preview]
-  .messageBubble:has(> :is(.activityBubbleTrigger, .activityBubbleControls)) {
+  .messageBubble:has(> .activityBubbleTrigger) {
   @apply text-caption;
   border-radius: var(--radius-capsule);
   background: var(--reaction-surface, var(--affordance-reaction));
   box-shadow: none;
 }
-.messageBubble > .activityBubbleTrigger,
-.activityBubbleControls > .activityBubbleTrigger {
+.messageBubble > .activityBubbleTrigger {
   width: 100%;
   padding: var(--space-2) var(--space-4);
   border-radius: inherit;
 }
 :where(html[data-message-density="compact"])
   .messageBubble
-  > .activityBubbleTrigger,
-:where(html[data-message-density="compact"])
-  .activityBubbleControls
   > .activityBubbleTrigger {
   min-height: calc(var(--space-6) + var(--space-half));
   padding: calc(var(--space-1) + var(--space-half) / 2)
     calc(var(--space-1h) + var(--space-half) / 2);
 }
 
-.activityBubbleControls {
+/* A preview's bubble action sits beside the bubble, never over it. */
+.previewBubbleRow {
   display: flex;
   align-items: center;
-  width: 100%;
-  max-width: 100%;
-  border-radius: inherit;
-}
-.activityBubbleControls > .activityBubbleTrigger {
+  gap: var(--space-1);
   min-width: 0;
-  flex: 1;
-  align-self: stretch;
+  max-width: 100%;
+  margin-top: var(--space-1);
+}
+.previewBubbleRow > :where(.messageBubble) {
+  margin-top: 0;
+}
+:where(html[data-message-density="compact"]) .previewBubbleRow,
+.message:is([data-layout="continuation"], [data-stack-previous])
+  .previewBubbleRow {
+  margin-top: 0;
+}
+.previewBubbleRow > :not(.messageBubble) {
+  flex-shrink: 0;
 }
 
 /* Activity interactions paint their shared bubble, never a second pill inside it. */

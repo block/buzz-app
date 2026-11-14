@@ -2,6 +2,7 @@ import { afterEach, assert, expect, it, vi } from "vitest";
 import { createWorkflows } from "./capability";
 import {
   createOutbox,
+  PublishNotSent,
   PublishRejected,
   type OutgoingEvent,
 } from "../relay/outbox";
@@ -56,7 +57,8 @@ function setup(
     },
     {
       needsReceipt: (event) => [30620, 46020, 5].includes(event.kind),
-      onReceipt: (event, message) => workflows.receipt(event, message),
+      onReceipt: (event, message, refusal) =>
+        workflows.receipt(event, message, refusal),
     },
   );
   const read = vi.fn(async () => [] as RelayEvent[]);
@@ -389,6 +391,50 @@ it("explicit rejection is rejected, not unknown; revocation fences late receipts
   expect(h.saved().some((row) => row.event.id === id)).toBe(true);
   expect(JSON.stringify(h.saved())).not.toContain("PRIVATE");
 });
+it.each([
+  [
+    "the relay's reason for a refusal",
+    new PublishRejected(
+      "Workflow is disabled or inactive",
+      "forbidden: workflow is disabled or inactive",
+    ),
+    "Workflow is disabled or inactive",
+  ],
+  [
+    "fixed copy for a not-sent failure",
+    new PublishNotSent("Relay unreachable"),
+    "Workflow command rejected; retain the draft and refresh the saved configuration.",
+  ],
+  [
+    "fixed copy for a status summary",
+    new PublishRejected(
+      "Relay rejected the message (403)",
+      "Forbidden by proxy",
+    ),
+    "Workflow command rejected; retain the draft and refresh the saved configuration.",
+  ],
+  [
+    "fixed copy for a refusal without a relay reason",
+    new PublishRejected("Relay rejected the message"),
+    "Workflow command rejected; retain the draft and refresh the saved configuration.",
+  ],
+])(
+  "a rejected run shows %s; the journal never holds relay text",
+  async (_, error, shown) => {
+    const h = setup();
+    const operation = h.capability.trigger(h.definition);
+    await flush();
+    h.reject(error);
+    await flush();
+    expect(h.capability.operations.snapshot()[0]).toMatchObject({
+      eventId: operation,
+      outcome: "rejected",
+      error: shown,
+    });
+    // The journal keeps fixed copy; the relay's text lives in memory only.
+    expect(JSON.stringify(h.saved())).not.toContain(error.message);
+  },
+);
 it("a secret-bearing save receipt succeeds; the secret is taken once and never journaled or surfaced", async () => {
   const h = setup("https://relay.test");
   const operation = h.capability.save({
@@ -794,9 +840,20 @@ it.each(["clear", "interrupt"] as const)(
   },
 );
 
-it.each([true, false])(
-  "fresh exact saved configuration resolves a lost save receipt without replay (echo=%s)",
-  async (echo) => {
+it.each([
+  [false, new Error("lost receipt")],
+  [true, new Error("lost receipt")],
+  // The relay already has an echoed save, so its refusal leaves it unknown.
+  [
+    true,
+    new PublishRejected(
+      "Workflow is disabled or inactive",
+      "forbidden: workflow is disabled or inactive",
+    ),
+  ],
+])(
+  "fresh exact saved configuration resolves a lost save receipt without replay (echo=%s, %s)",
+  async (echo, error) => {
     const h = setup();
     const operation = h.capability.save({
       channelId,
@@ -807,7 +864,7 @@ it.each([true, false])(
     const event = h.publish.mock.calls[0]?.[0];
     if (!event) throw new Error("missing publication");
     if (echo) h.outbox.observe([event]);
-    h.reject(new Error("lost receipt"));
+    h.reject(error);
     await flush();
     expect(h.capability.operations.snapshot()[0]?.outcome).toBe("unknown");
     h.read.mockResolvedValue([event]);

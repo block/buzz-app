@@ -9,12 +9,17 @@ import {
   renderHook,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ApiPaused } from "../relay/http-admission";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { RelaySession } from "../relay/session";
+import {
+  ChannelLifecycleStale,
+  ChannelLifecycleUnconfirmed,
+} from "../relay/channel-lifecycle";
 import { PanelWorkspace } from "../panels/PanelWorkspace";
 import {
   ChannelNavigationProvider,
@@ -34,11 +39,16 @@ function fixture(
   ) => Promise<void> = async () => {},
 ) {
   let ids = ["existing"];
+  const refreshList = vi.fn();
+  const refreshVisibility = vi.fn(async () => {});
   const session = () =>
     ({
-      channels: { list: () => ({ channels: ids.map((id) => ({ id })) }) },
+      channels: {
+        list: () => ({ channels: ids.map((id) => ({ id })) }),
+        refreshList,
+      },
       sidebarPreferences: { setMute: async () => [] },
-      channelLifecycle: { run },
+      channelLifecycle: { run, refreshVisibility },
     }) as unknown as RelaySession;
   let snapshot: RelaySnapshot = {
     status: "ready",
@@ -59,6 +69,8 @@ function fixture(
   } as RelayData;
   return {
     relay,
+    refreshList,
+    refreshVisibility,
     roster: (next: string[]) => {
       ids = next;
     },
@@ -404,4 +416,98 @@ it("keeps a paused delete's confirmation open in place of the failure toast, the
   await screen.findByRole("dialog", { name: "Channel deleted: Plans" });
   expect(run).toHaveBeenCalledTimes(2);
   expect(view.result.current.lifecycleDialog).toBeUndefined();
+});
+
+it("offers Refresh channels when a lifecycle action failed on stale state", async () => {
+  const stale = new ChannelLifecycleStale(
+    "This action is no longer permitted. Refresh channels to see what you can do now.",
+  );
+  const h = fixture(async () => {
+    throw stale;
+  });
+  const view = mount(h.relay, true);
+  act(() =>
+    view.result.current.openLifecycle(
+      { id: "channel", name: "Channel" },
+      "archive",
+    ),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Archive channel" }),
+  );
+  const toast = await screen.findByRole("dialog", {
+    name: "Archive channel failed",
+  });
+  expect(toast).toHaveAccessibleDescription(stale.message);
+  const refresh = within(toast).getByRole("button", {
+    name: "Refresh channels",
+  });
+  // The shared card puts its dismiss control first, then the actions.
+  expect(within(toast).getAllByRole("button")).toEqual([
+    within(toast).getByRole("button", { name: "Dismiss notification" }),
+    refresh,
+  ]);
+  fireEvent.click(refresh);
+  expect(h.refreshList).toHaveBeenCalledExactlyOnceWith({
+    consistency: "strong",
+  });
+  expect(h.refreshVisibility).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Archive channel failed" }),
+    ).toBeNull(),
+  );
+});
+
+it("also rereads DM visibility from the writer after an unconfirmed Hide", async () => {
+  const unconfirmed = new ChannelLifecycleUnconfirmed(
+    new Error("Relay connection lost"),
+  );
+  const h = fixture(async () => {
+    throw unconfirmed;
+  });
+  const view = mount(h.relay, true);
+  act(() =>
+    view.result.current.openLifecycle({ id: "dm", name: "Alice" }, "hide"),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Hide conversation" }),
+  );
+  const toast = await screen.findByRole("dialog", {
+    name: "Hide conversation failed",
+  });
+  expect(toast).toHaveAccessibleDescription(unconfirmed.message);
+  fireEvent.click(
+    within(toast).getByRole("button", { name: "Refresh channels" }),
+  );
+  expect(h.refreshList).toHaveBeenCalledExactlyOnceWith({
+    consistency: "strong",
+  });
+  // Whether the DM was hidden is in its visibility, not the channel list.
+  expect(h.refreshVisibility).toHaveBeenCalledExactlyOnceWith(undefined, {
+    consistency: "strong",
+  });
+});
+
+it("keeps other lifecycle failures' toasts to Dismiss", async () => {
+  const h = fixture(async () => {
+    throw new Error("Archive check unavailable. Try again.");
+  });
+  const view = mount(h.relay, true);
+  act(() =>
+    view.result.current.openLifecycle(
+      { id: "channel", name: "Channel" },
+      "archive",
+    ),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Archive channel" }),
+  );
+  const toast = await screen.findByRole("dialog", {
+    name: "Archive channel failed",
+  });
+  expect(within(toast).getAllByRole("button")).toEqual([
+    within(toast).getByRole("button", { name: "Dismiss notification" }),
+  ]);
+  expect(h.refreshList).not.toHaveBeenCalled();
 });

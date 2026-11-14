@@ -647,12 +647,16 @@ export function createWorkflows({
           "Only the author or their verified agent owner can delete this workflow",
         );
     },
-    receipt(event: EventData, message: string | undefined) {
+    receipt(event: EventData, message: string | undefined, refusal?: string) {
       if (closed || !receiptInterest.delete(event.id)) return;
       if (event.kind !== 46020) invalidateDefinitionCache();
       if (message === undefined) {
-        if (results.get(event.id)?.outcome !== "succeeded")
-          results.delete(event.id);
+        // The relay's reason lives here for this session; the journal keeps fixed copy.
+        if (results.get(event.id)?.outcome !== "succeeded") {
+          if (refusal)
+            results.set(event.id, { outcome: "rejected", error: refusal });
+          else results.delete(event.id);
+        }
         rebuild();
         return;
       }

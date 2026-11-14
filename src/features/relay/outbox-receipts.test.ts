@@ -125,7 +125,31 @@ it("echo plus lost receipt remains seen but settles command result as unavailabl
   h.reject(new Error("connection lost"));
   await flush();
   expect(h.local.snapshot()[0]?.delivery).toBe("seen");
-  expect(h.onReceipt).toHaveBeenCalledExactlyOnceWith(h.published(), undefined);
+  expect(h.onReceipt).toHaveBeenCalledExactlyOnceWith(
+    h.published(),
+    undefined,
+    undefined,
+  );
+});
+it("echo plus a relay refusal remains seen and forwards no refusal", async () => {
+  const h = setup();
+  h.send();
+  await flush();
+  h.observe([h.published()]);
+  h.reject(
+    new PublishRejected(
+      "Workflow is disabled or inactive",
+      "forbidden: workflow is disabled or inactive",
+    ),
+  );
+  await flush();
+  // The relay has the event, so its result stays unknown, not refused.
+  expect(h.local.snapshot()[0]?.delivery).toBe("seen");
+  expect(h.onReceipt).toHaveBeenCalledExactlyOnceWith(
+    h.published(),
+    undefined,
+    undefined,
+  );
 });
 it("receipt waits are bounded and late results after disposal never publish", async () => {
   vi.useFakeTimers();
@@ -135,7 +159,11 @@ it("receipt waits are bounded and late results after disposal never publish", as
   h.observe([h.published()]);
   await vi.advanceTimersByTimeAsync(101);
   expect(h.signal().aborted).toBe(true);
-  expect(h.onReceipt).toHaveBeenCalledExactlyOnceWith(h.published(), undefined);
+  expect(h.onReceipt).toHaveBeenCalledExactlyOnceWith(
+    h.published(),
+    undefined,
+    undefined,
+  );
   const late = setup();
   late.send();
   await vi.advanceTimersByTimeAsync(0);
@@ -207,16 +235,36 @@ it.each([30620, 46020, 5])(
     const h = setup();
     const id = h.send(kind);
     await flush();
-    h.reject(new PublishRejected("PRIVATE"));
+    h.reject(new PublishRejected("PRIVATE", "blocked: PRIVATE"));
     await flush();
     expect(h.outbox.snapshot()[0]?.delivery).toBe("failed");
     expect(JSON.stringify(h.saved())).not.toContain("PRIVATE");
+    // The refusal text reaches the in-memory result owner only.
+    expect(h.onReceipt).toHaveBeenCalledWith(
+      expect.anything(),
+      undefined,
+      "PRIVATE",
+    );
     h.outbox.retry(id);
     await flush();
     expect(h.publish).toHaveBeenCalledTimes(1);
     expect(h.outbox.snapshot()[0]?.delivery).toBe("failed");
   },
 );
+
+it("forwards a long relay refusal clipped for display", async () => {
+  const h = setup();
+  h.send();
+  await flush();
+  const words = `Disabled ${"x".repeat(1000)}`;
+  h.reject(new PublishRejected(words, `forbidden: ${words}`));
+  await flush();
+  expect(h.onReceipt).toHaveBeenCalledWith(
+    expect.anything(),
+    undefined,
+    words.slice(0, 256),
+  );
+});
 
 it.each([30620, 46020, 5])(
   "unknown kind %s is inspect-only while dismissal remains available",

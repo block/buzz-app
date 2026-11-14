@@ -3,13 +3,17 @@ import { createRelaySession } from "./session";
 import {
   PublishNotSent,
   PublishRejected,
+  authRefusal,
   createOutbox,
+  isRelayRefusal,
+  relayRefusal,
   type OutboxStorage,
   type OutgoingEvent,
 } from "./outbox";
 import type { EventTemplate } from "nostr-tools";
 import type { RelayEvent } from "./events";
 import { byteSize } from "./budget";
+import { formatItemTimestamp } from "../../shared/datetime";
 import { LIVE_CANVAS_BYTES } from "../channel-templates/canvas-limits.ts";
 import {
   bounds,
@@ -1407,3 +1411,94 @@ it("admits a live Canvas up to its own limits, persists it, and retries the same
   expect(second.sign).not.toHaveBeenCalled();
   expect(second.publications[0]?.event).toEqual(event);
 });
+
+it.each([
+  [
+    "the relay's own words",
+    true,
+    new PublishRejected("Bad tag", "invalid: bad tag"),
+  ],
+  // The reason's prefix decides, whatever the transport made of the message.
+  [
+    "a kept prefix",
+    false,
+    new PublishRejected("Sign in", "auth-required: sign in"),
+  ],
+  [
+    "a prefixed message",
+    true,
+    new PublishRejected("invalid: bad tag", "invalid: bad tag"),
+  ],
+  [
+    "no relay reason",
+    false,
+    new PublishRejected("Relay rejected the message (403)"),
+  ],
+  [
+    "a write that was not sent",
+    false,
+    new PublishNotSent("Bad tag", "invalid: bad tag"),
+  ],
+])("%s is a relay refusal: %s", (_, refused, error) => {
+  expect(isRelayRefusal(error)).toBe(refused);
+  expect(relayRefusal(error)).toBe(refused ? error.message : undefined);
+});
+it("shows a timeout refusal's expiry as a local date and time", () => {
+  vi.useFakeTimers();
+  // At :10 past the hour, the local clock is nowhere near midnight in any zone,
+  // so a minute later is still today and reads as a bare clock time.
+  const now = Date.UTC(2026, 10, 7, 12, 10);
+  vi.setSystemTime(now);
+  const until = now / 1000 + 60;
+  const refusal = (reason: string) =>
+    relayRefusal(
+      new PublishRejected(
+        reason.replace(/^\w+(?:-\w+)?:\s*(.)/, (_, c: string) =>
+          c.toUpperCase(),
+        ),
+        reason,
+      ),
+    );
+  const shown = refusal(`restricted: you are timed out until ${until}`);
+  expect(shown).toMatch(/^You are timed out until \d{1,2}:\d{2}(?: [AP]M)?$/);
+  expect(shown).toBe(
+    `You are timed out until ${formatItemTimestamp(until, { withTime: true })}`,
+  );
+  // Only the relay's exact form is a timeout; other text is shown as sent.
+  expect(refusal("restricted: you are timed out until soon")).toBe(
+    "You are timed out until soon",
+  );
+  expect(refusal(`restricted: timed out until ${until}`)).toBe(
+    `Timed out until ${until}`,
+  );
+  expect(refusal(`blocked: you are timed out until ${until}`)).toBe(
+    `You are timed out until ${until}`,
+  );
+});
+it.each([
+  [
+    "a refused sign-in",
+    new PublishRejected("auth-required: sign in", "auth-required: sign in"),
+    "Sign in",
+  ],
+  [
+    "a sign-in refusal without words",
+    new PublishRejected("auth-required: ", "auth-required: "),
+    undefined,
+  ],
+  [
+    "another relay refusal",
+    new PublishRejected("Bad tag", "invalid: bad tag"),
+    undefined,
+  ],
+  [
+    "a write that was not sent",
+    new PublishNotSent("auth-required: sign in", "auth-required: sign in"),
+    undefined,
+  ],
+])(
+  "shows the relay's sign-in words only for its sign-in refusal: %s",
+  (_, error, words) => {
+    expect(authRefusal(error)).toBe(words);
+  },
+);

@@ -10,8 +10,9 @@ import {
 } from "./emoji";
 import { createRelaySession } from "./session";
 import { foldMessages } from "./fold";
-import { PublishRejected } from "./outbox";
+import { PublishNotSent, PublishRejected } from "./outbox";
 import { ReadError } from "./errors";
+import { formatItemTimestamp } from "../../shared/datetime";
 import {
   flush,
   keypair,
@@ -730,17 +731,67 @@ it("rejects invalid names before any read and maps publish failure to reference 
     /Invalid emoji name/,
   );
   expect(h.wire.pending).toHaveLength(0);
-  h.publish.mockRejectedValueOnce(new PublishRejected("blocked: no"));
+  // A relay refusal adds the relay's reason to the reference copy.
+  h.publish.mockRejectedValueOnce(
+    new PublishRejected("You are banned", "blocked: you are banned"),
+  );
   const adding = h.emoji.add?.("party", url);
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   h.ownRead().respond([]);
-  await expect(adding).rejects.toThrow("Failed to add emoji.");
+  await expect(adding).rejects.toThrow(
+    /^Failed to add emoji\. You are banned$/,
+  );
   expect(h.emoji.snapshot().mine).toEqual([]);
+  // The relay's timeout refusal carries its expiry in unix seconds, which is
+  // shown as a local date and time.
+  const until = 1794000000;
+  h.publish.mockRejectedValueOnce(
+    new PublishRejected(
+      `You are timed out until ${until}`,
+      `restricted: you are timed out until ${until}`,
+    ),
+  );
+  const timedOut = h.emoji.add?.("party", url);
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().respond([]);
+  await expect(timedOut).rejects.toThrow(
+    new Error(
+      `Failed to add emoji. You are timed out until ${formatItemTimestamp(until, { withTime: true })}`,
+    ),
+  );
+  await expect(timedOut).rejects.not.toThrow(/1794000000/);
+  // A long reason is clipped as the outbox clips it.
+  const words = `You are banned ${"x".repeat(1000)}`;
+  h.publish.mockRejectedValueOnce(
+    new PublishRejected(words, `blocked: ${words}`),
+  );
+  const long = h.emoji.add?.("party", url);
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().respond([]);
+  await expect(long).rejects.toThrow(
+    new Error(`Failed to add emoji. ${words.slice(0, 256)}`),
+  );
+  // A write that never reached the relay, or a refusal without the relay's
+  // own words, has no reason to show.
+  for (const error of [
+    new PublishNotSent("Relay unreachable"),
+    new PublishRejected(
+      "Relay rejected the message (403)",
+      "Forbidden by proxy",
+    ),
+    new PublishRejected("Relay rejected the message"),
+  ]) {
+    h.publish.mockRejectedValueOnce(error);
+    const unexplained = h.emoji.add?.("party", url);
+    await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+    h.ownRead().respond([]);
+    await expect(unexplained).rejects.toThrow(/^Failed to add emoji\.$/);
+  }
   const failedRead = h.emoji.add?.("party", url);
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   h.ownRead().fail(new Error("offline"));
-  await expect(failedRead).rejects.toThrow("Failed to add emoji.");
-  expect(h.publish).toHaveBeenCalledTimes(1);
+  await expect(failedRead).rejects.toThrow(/^Failed to add emoji\.$/);
+  expect(h.publish).toHaveBeenCalledTimes(6);
 });
 it("removes only from the fresh own set and preserves another member's colliding emoji", async () => {
   const h = authoring();
@@ -825,12 +876,16 @@ it("serializes additions and removals despite a stale own-set read", async () =>
 });
 it("keeps the own set after rejected removal and recovers on retry", async () => {
   const h = authoring();
-  h.publish.mockRejectedValueOnce(new PublishRejected("blocked: no"));
+  h.publish.mockRejectedValueOnce(
+    new PublishRejected("You are banned", "blocked: you are banned"),
+  );
   const own = set(viewer);
   const removing = h.emoji.remove?.("party");
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   h.ownRead().respond([own]);
-  await expect(removing).rejects.toThrow("Failed to remove emoji.");
+  await expect(removing).rejects.toThrow(
+    /^Failed to remove emoji\. You are banned$/,
+  );
   expect(h.emoji.snapshot().mine).toEqual([{ shortcode: "party", url }]);
   const retry = h.emoji.remove?.("party");
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));

@@ -19,6 +19,7 @@ import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { PublishRejected } from "./outbox";
 import {
   createChannelLifecycle,
+  ChannelLifecycleStale,
   ChannelLifecycleUnconfirmed,
 } from "./channel-lifecycle";
 import {
@@ -318,6 +319,41 @@ describe("bounded visibility recovery", () => {
     h.owner.dispose();
   });
 
+  it("a strong refresh reads the writer instead of joining a replica-backed one", async () => {
+    const h = harness("owner", "dm");
+    h.setVisible([
+      h.record(30622, [
+        ["d", viewer],
+        ["p", viewer],
+        ["h", id],
+      ]),
+    ]);
+    // The replica-backed read predates the hide.
+    const replica = deferred<RelayEvent[]>();
+    h.read.mockImplementationOnce(() => replica.promise);
+    const ordinary = h.owner.capability.refreshVisibility();
+    await vi.advanceTimersByTimeAsync(0);
+    const strong = h.owner.capability.refreshVisibility(undefined, {
+      consistency: "strong",
+    });
+    expect(strong).not.toBe(ordinary);
+    expect(h.read.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    // A later ordinary request joins the writer-backed refresh.
+    expect(h.owner.capability.refreshVisibility()).toBe(strong);
+    await strong;
+    expect(h.read.mock.calls.map(([filters]) => filters)).toEqual([
+      [expect.not.objectContaining({ consistency: expect.anything() })],
+      [expect.objectContaining({ kinds: [30622], consistency: "strong" })],
+    ]);
+    replica.resolve([]);
+    await ordinary;
+    expect(h.owner.capability.snapshot()).toEqual({
+      status: "ready",
+      hidden: [id],
+    });
+    h.owner.dispose();
+  });
+
   it.each(["caller", "cancel", "clear", "dispose"] as const)(
     "%s cancels backoff without a terminal error or another read",
     async (action) => {
@@ -405,9 +441,9 @@ it.each(["archive", "delete", "leave", "hide"] as const)(
       await h.owner.capability.refreshVisibility();
       expect(h.read.mock.calls[0]?.[0][0]).not.toHaveProperty("consistency");
       await h.owner.capability.run(action, id);
+      // The permission preflight, before signing and before publishing.
       for (const [filters] of h.read.mock.calls.slice(1, 3))
-        for (const filter of filters)
-          expect(filter).not.toHaveProperty("consistency");
+        for (const filter of filters) expect(filter.consistency).toBe("strong");
       expect(h.publish).toHaveBeenCalledOnce();
       expect(h.read.mock.calls.at(-1)?.[0][0]?.consistency).toBe("strong");
       if (action === "hide")
@@ -644,12 +680,53 @@ it("rereads authority after signing; a removed admin cannot publish", async () =
     ]);
     return finalizeEvent(event, key);
   });
-  await expect(h.owner.capability.run("archive", id)).rejects.toThrow(
-    "no longer permitted",
+  const run = h.owner.capability.run("archive", id);
+  // Stale state the viewer can refresh, and copy naming that control.
+  await expect(run).rejects.toBeInstanceOf(ChannelLifecycleStale);
+  await expect(run).rejects.toMatchObject({ name: "ChannelLifecycleStale" });
+  await expect(run).rejects.toThrow(
+    /^This action is no longer permitted\. Refresh channels to see what you can do now\.$/,
   );
   expect(h.publish).not.toHaveBeenCalled();
   h.owner.dispose();
 });
+it.each(["a direct role", "owner-agent evidence"] as const)(
+  "authorizes from the writer when a replica predates %s",
+  async (grant) => {
+    const h =
+      grant === "a direct role" ? harness("admin") : ownedAgent("member");
+    const [metadata, , members] = h.getEvents();
+    assert(metadata && members);
+    const replica =
+      grant === "a direct role"
+        ? [metadata, h.roles("member"), members]
+        : h.getEvents().filter((event) => event.kind !== 0);
+    const currentRead = h.read.getMockImplementation();
+    assert(currentRead);
+    h.read.mockImplementation(async (filters, options) =>
+      filters.every((filter) => filter.consistency === "strong")
+        ? currentRead(filters, options)
+        : replica.filter((event) =>
+            filters.some(
+              (filter) =>
+                filter.kinds?.includes(event.kind) &&
+                filter.authors?.includes(event.pubkey),
+            ),
+          ),
+    );
+    try {
+      // An ordinary load reads the replica, which denies Archive.
+      expect(await h.owner.capability.load(id)).toMatchObject({
+        canArchive: false,
+      });
+      await h.owner.capability.run("archive", id);
+      expect(h.publish).toHaveBeenCalledOnce();
+      expect(h.acceptDiscovery).toHaveBeenCalledOnce();
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
 it("fences access loss during signing and rejects a changed timestamp", async () => {
   const h = harness();
   h.sign.mockImplementationOnce(async (event) => {
@@ -939,9 +1016,14 @@ describe("Leave confirmation across access revocation", () => {
       h.read.mockRejectedValueOnce(cancelled());
     });
     try {
-      const rejected = expect(
-        h.owner.capability.run("leave", id),
-      ).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
+      const run = h.owner.capability.run("leave", id);
+      const rejected = Promise.all([
+        expect(run).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed),
+        // The wrapper names the recovery once; the readback reason adds none.
+        expect(run).rejects.toThrow(
+          /^The request may have taken effect\. Refresh channels before trying again\. The relay accepted the request, but the change is not confirmed\.$/,
+        ),
+      ]);
       // The retired read is reread after a real macrotask the fake clock
       // does not drive; start the poll budget once that reread is issued.
       while (h.read.mock.calls.length < 4)
@@ -1213,7 +1295,12 @@ it.each(
     assert(currentRead);
     let held = false;
     h.read.mockImplementation(async (filters, options) => {
-      if (held || !filters.every((filter) => filter.consistency === "strong"))
+      // The preflight also reads the writer; confirmation follows publication.
+      if (
+        held ||
+        !h.publish.mock.calls.length ||
+        !filters.every((filter) => filter.consistency === "strong")
+      )
         return currentRead(filters, options);
       held = true;
       started.resolve();
@@ -1275,7 +1362,10 @@ it.each(["after a macrotask", "without a macrotask"] as const)(
     let retired = 0;
     let unyielded = 0;
     h.read.mockImplementation(async (filters, options) => {
-      if (!filters.every((filter) => filter.consistency === "strong"))
+      if (
+        !h.publish.mock.calls.length ||
+        !filters.every((filter) => filter.consistency === "strong")
+      )
         return currentRead(filters, options);
       retired++;
       // A reread that never yields starves the clock; fail it rather than
@@ -1318,11 +1408,12 @@ it.each(["after a macrotask", "without a macrotask"] as const)(
     }
   },
 );
-it("reads exact relay-owned coordinates fresh both before sign and before publish", async () => {
+it("reads exact relay-owned coordinates fresh from the writer both before sign and before publish", async () => {
   const h = harness();
   await h.owner.capability.run("delete", id);
   const expected = [39000, 39001, 39002].map((kind) => ({
     kinds: [kind],
+    consistency: "strong",
     authors: [relayAuthor],
     "#d": [id],
     limit: 1,
@@ -1417,7 +1508,9 @@ describe("channel owner-agent Archive and Delete eligibility", () => {
       );
       expect(ownershipReads).toHaveLength(2);
       for (const [filters, options] of ownershipReads) {
-        expect(filters).toEqual([{ kinds: [0], authors: [other], limit: 1 }]);
+        expect(filters).toEqual([
+          { kinds: [0], consistency: "strong", authors: [other], limit: 1 },
+        ]);
         expect(options).toMatchObject({ fresh: true, priority: "foreground" });
       }
       expect(h.removed).toHaveBeenCalledWith(id);

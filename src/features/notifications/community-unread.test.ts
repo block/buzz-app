@@ -202,7 +202,7 @@ it("stops observing every channel when disposed", () => {
   expect(publish).not.toHaveBeenCalled();
 });
 
-it("keys every joined community's unread, opening its session and repair once", () => {
+it("keys every joined community's unread, opening its session and repair once", async () => {
   const [first, second] = [fakeSession(), fakeSession()];
   const sessions = new Map<string, { relay: RelayData }>(
     (
@@ -233,10 +233,12 @@ it("keys every joined community's unread, opening its session and repair once", 
     snapshot: () => snapshot,
     subscribe: client.subscribe,
     open: opened,
-    relay: { subscribe: () => () => {} },
+    relay: { snapshot: () => ({ status: "ready" }), subscribe: () => () => {} },
   } as unknown as Communities;
   const unreads = createCommunityUnreads(communities);
   cleanups.push(unreads.dispose);
+  // Badges wait for the selected community's first repair.
+  expect(opened).not.toHaveBeenCalledWith(two, true);
   // Repair reads the roster's channels, so it waits for one it can read.
   expect(first.ensure).not.toHaveBeenCalled();
   first.loadUnreadable({ id: "a", members: [viewer], cached: true });
@@ -245,6 +247,8 @@ it("keys every joined community's unread, opening its session and repair once", 
   expect(first.ensure).not.toHaveBeenCalled();
   first.load("a");
   expect(first.ensure).toHaveBeenCalledTimes(1);
+  expect(opened).not.toHaveBeenCalledWith(two, true);
+  await vi.waitFor(() => expect(opened).toHaveBeenCalledWith(two, true));
   first.join("a");
   first.set("a", { observedCount: 1, attentionCount: 1 });
   expect([...unreads.snapshot()]).toEqual([
@@ -357,7 +361,8 @@ it("opens at most the background limit, plus communities selected this launch", 
     snapshot: () => snapshot,
     subscribe: client.subscribe,
     open: opened,
-    relay: { subscribe: () => () => {} },
+    // The selected community's session is unavailable, so badges do not wait.
+    relay: { snapshot: () => ({ status: "error" }), subscribe: () => () => {} },
   } as unknown as Communities;
   const unreads = createCommunityUnreads(communities);
   cleanups.push(unreads.dispose);

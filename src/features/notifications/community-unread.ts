@@ -113,7 +113,11 @@ export function observeCommunityUnread(
 /** Starts `session`'s unread repair once its roster has loaded or failed, or
  * already lists a fresh channel `viewer` belongs to: repair reads only those,
  * and the roster's later channels start another itself. */
-function repairOnRoster(session: RelaySession, viewer: string) {
+function repairOnRoster(
+  session: RelaySession,
+  viewer: string,
+  repaired: () => void,
+) {
   const settled = () => {
     const { status, channels } = session.channels.list();
     return (
@@ -128,7 +132,10 @@ function repairOnRoster(session: RelaySession, viewer: string) {
   const check = () => {
     if (!settled()) return;
     stop();
-    void session.unread.ensure().catch(() => {});
+    void session.unread
+      .ensure()
+      .catch(() => {})
+      .then(repaired);
   };
   stop = session.channels.subscribeList(check);
   check();
@@ -162,6 +169,14 @@ export function createCommunityUnreads(
   const listeners = new Set<() => void>();
   let states: ReadonlyMap<string, CommunityUnread> = new Map();
   let closed = false;
+  // Badges wait for the selected community's first repair: they share its
+  // host's connections, so loading them alongside would delay its own unread.
+  let foreground = false;
+  const yieldDone = () => {
+    if (foreground) return;
+    foreground = true;
+    update();
+  };
   const set = (id: string, state: CommunityUnread | undefined) => {
     const previous = states.get(id);
     if (
@@ -195,7 +210,11 @@ export function createCommunityUnreads(
     // Repair reads the roster's channels, so it waits for them: one started
     // earlier would settle with no channels read.
     if (session && viewer) {
-      entry.stopRoster = repairOnRoster(session, viewer);
+      entry.stopRoster = repairOnRoster(
+        session,
+        viewer,
+        id === communities.snapshot().selected ? yieldDone : () => {},
+      );
       entry.stop = observeCommunityUnread(
         session,
         viewer,
@@ -217,6 +236,15 @@ export function createCommunityUnreads(
     if (closed) return;
     const { viewer, memberships, selected } = communities.snapshot();
     if (selected) visited.add(selected);
+    // Nothing to yield to when the selected community has no session coming.
+    const status = selected && communities.relay.snapshot().status;
+    if (
+      !status ||
+      status === "error" ||
+      status === "disconnected" ||
+      !memberships.some((m) => m.id === selected)
+    )
+      foreground = true;
     const ids = viewer ? memberships.map((m) => m.id) : [];
     const joined = new Set(
       ids.filter(
@@ -227,6 +255,7 @@ export function createCommunityUnreads(
       if (!joined.has(id) || communities.open(id, true) !== entry.relay)
         drop(id, entry);
     for (const id of joined) {
+      if (!foreground && id !== selected) continue;
       let entry = entries.get(id);
       if (!entry) {
         const relay = communities.open(id, true);

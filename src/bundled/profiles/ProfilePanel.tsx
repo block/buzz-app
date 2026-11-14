@@ -207,15 +207,15 @@ export function ProfilePanel({
     navigation,
     panelCommunity(connection.scope, connection.viewer),
   );
-  if (
+  const owner =
     agents &&
     owned &&
     owned.agent.owner === connection.viewer &&
     !owned.agent.unfinished &&
-    owned.agent.place !== "elsewhere"
-  )
-    return (
-      <TranscriptFocus.Provider value={shown}>
+    owned.agent.place !== "elsewhere";
+  return (
+    <TranscriptFocus.Provider value={shown}>
+      {owner ? (
         <OwnedAgentProfile
           linkRenderers={linkRenderers}
           target={target}
@@ -233,28 +233,26 @@ export function ProfilePanel({
           openConversation={openConversation}
           close={close}
         />
-      </TranscriptFocus.Provider>
-    );
-  return (
-    <TranscriptFocus.Provider value={shown}>
-      <ProfileDetails
-        renderPersonInfo={renderPersonInfo}
-        linkRenderers={linkRenderers}
-        key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
-        initialTab={activityKey ? "activity" : "info"}
-        initialTranscript={initialTranscript}
-        session={connection.session}
-        pubkey={pubkey}
-        agentHint={profileAgentHint(target) || !!activityKey}
-        context={context}
-        navigation={navigation}
-        agents={agents}
-        communities={communities}
-        scope={connection.scope}
-        viewer={connection.viewer}
-        openConversation={openConversation}
-        close={close}
-      />
+      ) : (
+        <ProfileDetails
+          renderPersonInfo={renderPersonInfo}
+          linkRenderers={linkRenderers}
+          key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
+          initialTab={activityKey ? "activity" : "info"}
+          initialTranscript={initialTranscript}
+          session={connection.session}
+          pubkey={pubkey}
+          agentHint={profileAgentHint(target) || !!activityKey}
+          context={context}
+          navigation={navigation}
+          agents={agents}
+          communities={communities}
+          scope={connection.scope}
+          viewer={connection.viewer}
+          openConversation={openConversation}
+          close={close}
+        />
+      )}
     </TranscriptFocus.Provider>
   );
 }

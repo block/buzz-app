@@ -150,6 +150,17 @@ it("masks one-colour SVGs at the host stroke and leaves other images alone", () 
   expect(decoded(glyphMask(sized, 2.5))).toContain(
     'stroke-width="1.6666666666666667"',
   );
+  // A portrait icon fits by its height.
+  const portrait = svgImage(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 24" stroke="#333" fill="none"><path d="M1 1h9"/></svg>',
+  );
+  expect(decoded(glyphMask(portrait, 2.5))).toContain('stroke-width="2.5"');
+  const tall = svgImage(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="16" stroke="#333" fill="none"><path d="M1 1h9"/></svg>',
+  );
+  expect(decoded(glyphMask(tall, 2.5))).toContain(
+    'stroke-width="1.6666666666666667"',
+  );
   for (const width of ["100%", "1em"]) {
     const relative = svgImage(
       `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" stroke="#333" fill="none"><path d="M1 1h9"/></svg>`,

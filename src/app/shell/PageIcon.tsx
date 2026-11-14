@@ -110,17 +110,17 @@ export function glyphMask(
       element.textContent =
         element.textContent?.replace(/stroke-width\s*:[^;}]*;?/gi, "") ?? "";
   }
-  const grid =
-    Number(
-      root
-        .getAttribute("viewBox")
-        ?.trim()
-        .split(/[\s,]+/)[2],
-    ) ||
-    Number(
-      /^\s*([\d.]+)(?:px)?\s*$/.exec(root.getAttribute("width") ?? "")?.[1],
-    ) ||
-    24;
+  // The square mask fits the artwork by its longer side.
+  const [, , ...box] = (root.getAttribute("viewBox") ?? "")
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
+  const sized = ["width", "height"].map((side) =>
+    Number(/^\s*([\d.]+)(?:px)?\s*$/.exec(root.getAttribute(side) ?? "")?.[1]),
+  );
+  const fits = (sides: number[]) =>
+    Math.max(...sides.filter((side) => side > 0), 0);
+  const grid = fits(box) || fits(sized) || 24;
   root.setAttribute("stroke-width", String((Number(strokeWidth) * grid) / 24));
   return `data:image/svg+xml,${encodeURIComponent(new XMLSerializer().serializeToString(root))}`;
 }

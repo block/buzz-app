@@ -1293,3 +1293,44 @@ it("leaves an agent-hinted profile outside person Info composition", () => {
     owner.dispose();
   }
 });
+
+it("marks an agent's name with the robot icon, and not a person's", () => {
+  const owner = createRelaySession(null);
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    session: owner.session,
+  };
+  const relay: RelayData = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    retry() {},
+    tryAgain() {},
+    disconnect() {},
+    clearCache: async () => {},
+  };
+  try {
+    const { rerender } = render(
+      <ProfilePanel
+        relay={relay}
+        target={`buzz:agent-profile:${key}`}
+        close={() => {}}
+      />,
+    );
+    expect(
+      screen.getByRole("heading", { level: 2 }).querySelector("svg"),
+    ).not.toBeNull();
+    rerender(
+      <ProfilePanel
+        relay={relay}
+        target={profileTarget(key) ?? ""}
+        close={() => {}}
+      />,
+    );
+    expect(
+      screen.getByRole("heading", { level: 2 }).querySelector("svg"),
+    ).toBeNull();
+  } finally {
+    owner.dispose();
+  }
+});

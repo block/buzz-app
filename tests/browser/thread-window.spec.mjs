@@ -3,6 +3,7 @@ import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { watchPageErrors } from "./page-errors.mjs";
+import { fixtureMediaPlugin } from "./fixture-media.mjs";
 
 test("reconnect repair failure keeps retry reachable at the newest replies", async ({
   page,
@@ -11,7 +12,7 @@ test("reconnect repair failure keeps retry reachable at the newest replies", asy
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
     envFile: false,
-    plugins: [react()],
+    plugins: [fixtureMediaPlugin(), react()],
     logLevel: "error",
     server: { host: "127.0.0.1", port: 0, strictPort: false },
   });
@@ -80,7 +81,7 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
     envFile: false,
-    plugins: [react()],
+    plugins: [fixtureMediaPlugin(), react()],
     logLevel: "error",
     server: { host: "127.0.0.1", port: 0, strictPort: false },
   });
@@ -161,7 +162,7 @@ test("legacy continuation failure exposes recovery after retained replies", asyn
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
     envFile: false,
-    plugins: [react()],
+    plugins: [fixtureMediaPlugin(), react()],
     logLevel: "error",
     server: { host: "127.0.0.1", port: 0, strictPort: false },
   });
@@ -195,7 +196,7 @@ test("older-page loading adds no row or layout shift while the request is held",
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
     envFile: false,
-    plugins: [react()],
+    plugins: [fixtureMediaPlugin(), react()],
     logLevel: "error",
     server: { host: "127.0.0.1", port: 0, strictPort: false },
   });
@@ -256,7 +257,7 @@ test("newest window positions immediately; scrollback preserves the visible repl
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
     envFile: false,
-    plugins: [react()],
+    plugins: [fixtureMediaPlugin(), react()],
     logLevel: "error",
     server: { host: "127.0.0.1", port: 0, strictPort: false },
   });
@@ -381,7 +382,7 @@ test("older-page retry reparents a visible reply under its late parent", async (
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
     envFile: false,
-    plugins: [react()],
+    plugins: [fixtureMediaPlugin(), react()],
     logLevel: "error",
     server: { host: "127.0.0.1", port: 0, strictPort: false },
   });
@@ -438,7 +439,7 @@ test("older page reparents a visible reply under its late parent", async ({
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
     envFile: false,
-    plugins: [react()],
+    plugins: [fixtureMediaPlugin(), react()],
     logLevel: "error",
     server: { host: "127.0.0.1", port: 0, strictPort: false },
   });

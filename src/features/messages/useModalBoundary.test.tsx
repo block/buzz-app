@@ -210,3 +210,58 @@ it.each([false, true])(
     expect(document.activeElement).toBe(moveFocus ? retry : opener);
   },
 );
+
+it("an opener that can no longer take focus hands it to its first available control", async () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  let fail = () => {};
+  function Harness() {
+    const [open, setOpen] = useState(false);
+    const [failed, setFailed] = useState(false);
+    const opener = useRef<HTMLAnchorElement>(null);
+    fail = () => setFailed(true);
+    return (
+      <>
+        <a
+          ref={opener}
+          href={failed ? undefined : "/image.png"}
+          onClick={(event) => {
+            event.preventDefault();
+            setOpen(true);
+          }}
+        >
+          Open image
+          {failed && (
+            <>
+              <button type="button" disabled>
+                Hidden retry
+              </button>
+              <button type="button">Retry image</button>
+            </>
+          )}
+        </a>
+        {open && <Viewer close={() => setOpen(false)} restoreFocus={opener} />}
+      </>
+    );
+  }
+  render(<Harness />);
+  const opener = screen.getByRole("link", { name: "Open image" });
+  opener.focus();
+  await act(async () => {
+    fireEvent.click(opener);
+  });
+  act(() => fail());
+  const modalFocus = screen.getByRole("button", { name: "Close viewer" });
+  await act(async () => {
+    fireEvent.keyDown(modalFocus, { key: "Escape" });
+  });
+  act(() => {
+    for (const frame of frames.splice(0)) frame(0);
+  });
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Retry image" }),
+  );
+});

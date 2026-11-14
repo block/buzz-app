@@ -2,6 +2,13 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import { prepareReviewEntrance } from "./use-review-entrance";
 import { useMediaCorners } from "./use-media-corners";
 import { MediaViewer } from "./MediaAttachment";
+import { focusRetry, ImageLoadError } from "./ImageLoadError";
+import {
+  imageFailed,
+  imageLoaded,
+  retryImage,
+  useImageLoad,
+} from "./image-load";
 import {
   useCallback,
   useEffect,
@@ -35,8 +42,11 @@ export function AttachmentImage({
   onOpenLink,
   keepMounted,
   label = "Open image attachment",
+  name,
 }: {
   label?: string;
+  /** Names the image in its recovery when neighbors share a label, e.g. "image 2 of 4". */
+  name?: string | undefined;
   attachment: Attachment;
   session?: RelaySession | undefined;
   source: string | undefined;
@@ -82,6 +92,44 @@ export function AttachmentImage({
     decoded.source === source && decoded.session === session
       ? decoded.dimensions
       : undefined;
+  const load = useImageLoad(source);
+  // Pixels this view already shows outlast another view's failed request. The
+  // "+N" tile stays the gallery link.
+  const failed = !!load && !overlayCount && !decodedDimensions;
+  // Focus follows the frame's control across a failure and its recovery: the
+  // link while the image opens, Retry while it failed. React detaches a ref
+  // before this commit edits or removes its element, so each records focus
+  // while it still holds it; the frame's ref re-attaches when `failed` flips.
+  const handoff = useRef(false);
+  const keepFocus = useCallback(
+    (element: HTMLElement) => () => {
+      if (element.contains(document.activeElement)) handoff.current = true;
+    },
+    [],
+  );
+  const frame = useCallback(
+    (element: HTMLAnchorElement) => {
+      const release = corners(element);
+      const forget = keepFocus(element);
+      // React leaves the click trap it set for `onClick` (Safari's
+      // trapClickOnNonInteractiveElement) after the prop goes, and Chromium
+      // exposes an anchor with a click listener as a link even without href.
+      if (failed) element.onclick = null;
+      if (handoff.current) {
+        handoff.current = false;
+        const focused = document.activeElement;
+        if (focused === document.body || focused === element) {
+          if (failed) focusRetry(element);
+          else element.focus({ preventScroll: true });
+        }
+      }
+      return () => {
+        forget();
+        release?.();
+      };
+    },
+    [corners, keepFocus, failed],
+  );
   const knownDimensions = decodedDimensions ?? imageDimensions(session, source);
   const dimensions = knownDimensions ?? attachment.dimensions;
   const width = dimensions
@@ -132,25 +180,34 @@ export function AttachmentImage({
     );
   return (
     <>
+      {/* A failure keeps this frame, its preview and its request in place.
+          Without href or a click listener it is no link, so its Retry is not
+          nested in one. */}
       <a
-        ref={corners}
+        ref={frame}
         className={styles.attachmentImage}
         style={style}
-        href={source ?? attachment.url}
+        role={failed ? "none" : undefined}
+        href={failed ? undefined : (source ?? attachment.url)}
         target="_blank"
         rel="noreferrer"
-        aria-label={label}
+        aria-label={failed ? undefined : label}
         data-media-preview=""
         data-image-ready={decodedDimensions ? true : undefined}
-        onClick={(event) => {
-          // Every activation stays in-app, modifiers included: the desktop
-          // opener treats an unprevented Ctrl/Shift or `_blank` click as browser
-          // intent, and no browser tab holds the app's credentials.
-          event.preventDefault();
-          prepareReviewEntrance(event);
-          if (onOpenReview) onOpenReview(attachment, 0);
-          else if (!onOpenLink?.(attachment.url)) setViewerOpen(true);
-        }}
+        data-image-failed={failed ? "" : undefined}
+        onClick={
+          failed
+            ? undefined
+            : (event) => {
+                // Every activation stays in-app, modifiers included: the desktop
+                // opener treats an unprevented Ctrl/Shift or `_blank` click as browser
+                // intent, and no browser tab holds the app's credentials.
+                event.preventDefault();
+                prepareReviewEntrance(event);
+                if (onOpenReview) onOpenReview(attachment, 0);
+                else if (!onOpenLink?.(attachment.url)) setViewerOpen(true);
+              }
+        }
       >
         {/* Retargeting retires both the DOM pixels and all pending callbacks before
             the new source can paint. Session switches also remount the workspace. */}
@@ -162,6 +219,7 @@ export function AttachmentImage({
               source={source}
               thumbnail={thumbnail}
               blurhash={attachment.blurhash}
+              paused={failed && load === "failed"}
               onDecoded={onDecoded}
             />
           )}
@@ -178,6 +236,14 @@ export function AttachmentImage({
         >
           <path />
         </svg>
+        {failed && source && (
+          <ImageLoadError
+            ref={keepFocus}
+            name={name}
+            retrying={load === "retrying"}
+            onRetry={() => retryImage(source)}
+          />
+        )}
       </a>
       {active &&
         viewerOpen &&
@@ -203,12 +269,15 @@ function ImagePixels({
   source,
   thumbnail,
   blurhash,
+  paused,
   onDecoded,
 }: {
   session: RelaySession | undefined;
   source: string;
   thumbnail: string | undefined;
   blurhash: string | undefined;
+  /** Keeps the preview without requesting a failed original until Retry. */
+  paused: boolean;
   onDecoded: (dimensions: NonNullable<Attachment["dimensions"]>) => void;
 }) {
   const image = useRef<HTMLImageElement>(null);
@@ -261,7 +330,7 @@ function ImagePixels({
             height: original.naturalHeight,
           });
       } catch {
-        // Keep the blur preview on original failure, including decode rejection.
+        // Keep the blur preview on decode rejection; load errors offer Retry.
       } finally {
         decoding = false;
       }
@@ -316,10 +385,12 @@ function ImagePixels({
       )}
       <img
         ref={image}
-        src={source}
+        src={paused ? undefined : source}
         alt=""
         loading="lazy"
         style={{ visibility: ready ? "visible" : "hidden" }}
+        onLoad={() => imageLoaded(source)}
+        onError={() => imageFailed(source)}
       />
       {/* After the original, so preview queries still find the original first. */}
       {thumbnail && !ready && (

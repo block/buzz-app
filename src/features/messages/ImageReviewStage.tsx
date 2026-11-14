@@ -30,6 +30,13 @@ import styles from "./Messages.module.css";
 import { MediaDownloadAction } from "./MediaDownloadAction";
 import { copyImageToClipboard, supportsImageCopy } from "./image-copy";
 import { copyNativeImage } from "./native-image-copy";
+import { focusRetry, ImageLoadError } from "./ImageLoadError";
+import {
+  imageFailed,
+  imageLoaded,
+  retryImage,
+  useImageLoad,
+} from "./image-load";
 
 const ZOOM_STEP = 0.25;
 const ZOOM_PRESETS = [0.5, 1, 1.5, 2];
@@ -79,6 +86,57 @@ export function ImageReviewStage({
   );
   const selected = attachments[selectedIndex] ?? attachments[0];
   const source = selected ? media(selected.url) : undefined;
+  // Pixels this view already shows outlast another view's failed request, as
+  // in the row; this view's own failure still shows. Navigation starts over.
+  const [loaded, setLoaded] = useState<{
+    source: string | undefined;
+    ready?: true;
+  }>({ source });
+  if (loaded.source !== source) setLoaded({ source });
+  // Returning before the departing image is gone reuses its element, which
+  // fires no second load or error event, so what it already settled counts at
+  // once: a picture as loaded, and a broken one, complete without a natural
+  // width, as this view's own failure. Only a reused element is judged broken;
+  // a new one still reports its own load or error.
+  const shownImages = useRef(new WeakSet<HTMLImageElement>());
+  useLayoutEffect(() => {
+    const current = image.current;
+    if (!source || !current) return;
+    const reused = shownImages.current.has(current);
+    shownImages.current.add(current);
+    if (!current.complete) return;
+    if (current.naturalWidth) setLoaded({ source, ready: true });
+    else if (reused) {
+      setLoaded({ source });
+      imageFailed(source);
+    }
+  }, [source]);
+  const shared = useImageLoad(source);
+  const load = loaded.source === source && loaded.ready ? undefined : shared;
+  // Only a loaded original can be zoomed, copied, downloaded or opened. Its
+  // actions stay in place, disabled, so the toolbar never shifts under a press.
+  const pixels = load ? undefined : source;
+  // Focus a failure or recovery took away, by removing or disabling its
+  // control, moves to what replaced it: Retry, or the stage once the image is
+  // back. Inside the modal, focus on the body is always such a loss.
+  const failure = !!load;
+  const shownFailure = useRef(failure);
+  useLayoutEffect(() => {
+    const element = stage.current;
+    if (shownFailure.current === failure || !element) return;
+    shownFailure.current = failure;
+    const focused = document.activeElement;
+    if (
+      focused !== document.body &&
+      !(
+        element.contains(focused) &&
+        focused?.matches(':disabled, [aria-disabled="true"]')
+      )
+    )
+      return;
+    if (failure) focusRetry(element);
+    else element.focus({ preventScroll: true });
+  }, [failure]);
   // A press that outlives its image must not zoom any later one, even when
   // navigation returns to the same source.
   useLayoutEffect(() => {
@@ -105,7 +163,7 @@ export function ImageReviewStage({
     toggleZoomAt,
     panTo,
     constrain,
-  } = useImageViewport(stage, image, source);
+  } = useImageViewport(stage, image, pixels);
   const copyFeedbackVisible = copying || copyNotice !== undefined;
   const feedbackVisible = copyFeedbackVisible || downloadFeedbackVisible;
   const idle = useMediaControls(stage, source, feedbackVisible);
@@ -115,7 +173,7 @@ export function ImageReviewStage({
     stage,
     image,
     selected?.url,
-    source,
+    pixels,
   );
 
   const clearCopyNoticeTimer = useCallback(() => {
@@ -242,7 +300,9 @@ export function ImageReviewStage({
       data-review-zoomed={zoom !== 1 || undefined}
       className={`${styles.imageReviewStage} ${pannable ? styles.imageReviewPannable : ""} ${dragging ? styles.imageReviewDragging : ""}`}
       onPointerDown={(event) => {
-        if (event.button !== 0) return;
+        // Without a picture there is nothing to zoom or pan, and capture would
+        // retarget a Retry click to the stage.
+        if (event.button !== 0 || !pixels) return;
         if (press.current) {
           // Multi-touch is not a click; the first contact keeps the pan.
           press.current.click = false;
@@ -291,7 +351,7 @@ export function ImageReviewStage({
         ...(departing && departing.url !== selected.url ? [departing] : []),
         {
           url: selected.url,
-          source,
+          source: load === "failed" ? undefined : source,
           transform:
             zoom === 1
               ? "none"
@@ -299,22 +359,39 @@ export function ImageReviewStage({
         },
       ].map((item) => {
         const current = item.url === selected.url;
-        return item.source ? (
+        const itemSource = item.source;
+        return itemSource ? (
           <img
             key={item.url}
             ref={current ? image : undefined}
             data-review-media={current ? "" : undefined}
             data-gallery-departing={!current ? "" : undefined}
             data-review-chrome={!current ? "" : undefined}
-            src={item.source}
+            src={itemSource}
             alt={current ? "Attachment preview" : ""}
             aria-describedby={current ? zoomHint : undefined}
             aria-hidden={!current || undefined}
             draggable={false}
-            onLoad={current ? constrain : undefined}
+            onLoad={
+              current
+                ? () => {
+                    constrain();
+                    setLoaded({ source: itemSource, ready: true });
+                    imageLoaded(itemSource);
+                  }
+                : undefined
+            }
+            onError={
+              current
+                ? () => {
+                    setLoaded({ source: itemSource });
+                    imageFailed(itemSource);
+                  }
+                : undefined
+            }
             style={{ transform: item.transform }}
           />
-        ) : (
+        ) : load ? null : (
           <p
             key={item.url}
             className={styles.mediaReviewUnavailable}
@@ -324,9 +401,22 @@ export function ImageReviewStage({
           </p>
         );
       })}
-      <p id={zoomHint} className="sr-only">
-        Click the image to zoom.
-      </p>
+      {load && source && (
+        <ImageLoadError
+          name={
+            attachments.length > 1
+              ? `image ${selectedIndex + 1} of ${attachments.length}`
+              : undefined
+          }
+          retrying={load === "retrying"}
+          onRetry={() => retryImage(source)}
+        />
+      )}
+      {pixels && (
+        <p id={zoomHint} className="sr-only">
+          Click the image to zoom.
+        </p>
+      )}
       <div
         className={styles.imageReviewToolbar}
         data-image-controls=""
@@ -363,7 +453,7 @@ export function ImageReviewStage({
             size="sm"
             type="button"
             aria-label="Zoom out"
-            disabled={zoom <= MIN_ZOOM}
+            disabled={!pixels || zoom <= MIN_ZOOM}
             onClick={() => setBoundedZoom(zoom - ZOOM_STEP)}
             icon={<MinusIcon size={16} aria-hidden="true" />}
           />
@@ -372,6 +462,7 @@ export function ImageReviewStage({
             size="sm"
             type="button"
             aria-label={`Image zoom: ${Math.round(zoom * 100)}%. Zoom to ${nextZoom * 100}%`}
+            disabled={!pixels}
             onClick={() => setBoundedZoom(nextZoom)}
           >
             {Math.round(zoom * 100)}%
@@ -380,7 +471,7 @@ export function ImageReviewStage({
             size="sm"
             type="button"
             aria-label="Zoom in"
-            disabled={zoom >= maxZoom}
+            disabled={!pixels || zoom >= maxZoom}
             onClick={() => setBoundedZoom(zoom + ZOOM_STEP)}
             icon={<PlusIcon size={16} aria-hidden="true" />}
           />
@@ -392,7 +483,7 @@ export function ImageReviewStage({
             type="button"
             aria-label="Copy image"
             title="Copy image"
-            disabled={!canCopyImage}
+            disabled={!pixels}
             loading={copying}
             onClick={() => void copyImage()}
             icon={<CopyIcon size={17} aria-hidden="true" />}
@@ -408,6 +499,7 @@ export function ImageReviewStage({
             key={JSON.stringify([selected.url, source, selected.name])}
             kind="image"
             source={source}
+            disabled={!pixels}
             name={selected.name ?? ""}
             onFeedbackVisible={setDownloadFeedbackVisible}
           />
@@ -416,25 +508,28 @@ export function ImageReviewStage({
           <IconButton
             nativeButton={false}
             role="link"
-            render={<a href={source} download />}
+            disabled={!pixels}
+            render={<a href={pixels} download />}
             size="sm"
             aria-label="Download image"
             title="Download image"
             icon={<DownloadIcon size={17} />}
           />
         )}
-        {source && externalSource && (
+        {externalSource && (
           <IconButton
             nativeButton={false}
             role="link"
+            disabled={!pixels}
             render={
               <a
-                href={source}
+                href={pixels}
                 target="_blank"
                 rel="noreferrer"
                 onClick={(event) => {
+                  if (!pixels) return;
                   if (event.metaKey || event.ctrlKey || event.shiftKey) return;
-                  if (onOpenLink(source)) event.preventDefault();
+                  if (onOpenLink(pixels)) event.preventDefault();
                 }}
               />
             }

@@ -105,7 +105,17 @@ export function useModalBoundary(
             handoffFocus = document.activeElement;
           });
         requestAnimationFrame(() => {
-          if (mayRestore()) target?.focus({ preventScroll: true });
+          if (!mayRestore() || !target) return;
+          target.focus({ preventScroll: true });
+          // An opener that can no longer take focus, such as an image that
+          // failed while its viewer was open, hands it to its first control.
+          if (document.activeElement !== target && target !== document.body)
+            [...target.querySelectorAll<HTMLElement>(FOCUSABLE)].find(
+              (control) => {
+                control.focus({ preventScroll: true });
+                return document.activeElement === control;
+              },
+            );
         });
       }
     };

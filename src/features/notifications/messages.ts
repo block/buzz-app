@@ -8,7 +8,8 @@ import type { OpenTarget } from "../navigation/targets";
 import type { IncomingListener } from "../relay/incoming";
 import { relayPartition } from "../relay/partition";
 import type { RelaySession } from "../relay/session";
-import type { NotificationsService } from "./service";
+import type { NotificationEligibility, NotificationsService } from "./service";
+import { AGENT_MESSAGES } from "./preferences";
 import { messageNotificationText } from "./content";
 
 const labels = {
@@ -51,6 +52,31 @@ export function localSoloAgentReply(
   )
     return "reply";
   if (candidates.some((item) => item.publishing)) return "pending";
+}
+/** Whether one author's messages may alert while "Messages from agents" is
+ * off. "Agent" is the profile's self-declared `isAgent`. An author whose
+ * profile is not held is read once, and the alert waits for that read; an
+ * author still unknown after it alerts, so a person is never silenced. */
+export function agentSenderGate(
+  profiles: Pick<RelaySession["profiles"], "snapshot" | "ensure">,
+  author: string,
+  /** The read finished without a profile, so nothing else reports it. */
+  settled: () => void,
+) {
+  let read: "none" | "reading" | "done" = "none";
+  return (): NotificationEligibility => {
+    const profile = profiles.snapshot().get(author);
+    if (profile) return !profile.isAgent;
+    if (read === "none") {
+      read = "reading";
+      const done = () => {
+        read = "done";
+        settled();
+      };
+      profiles.ensure([author], "background").then(done, done);
+    }
+    return read === "done" ? true : "wait";
+  };
 }
 /** No new subscriptions: this first adapter covers only the selected community. */
 export function notificationAuthorized(
@@ -161,6 +187,12 @@ export function bindMessageNotifications(
           soloReply === "reply"
         )
           continue;
+        // Workflow output is the community's, not an agent's.
+        const fromPerson = message.workflowOwnerId
+          ? () => true
+          : agentSenderGate(owned.profiles, message.authorId, () =>
+              notifications.revalidate(),
+            );
         void notifications.admit(
           category,
           labels[category],
@@ -188,6 +220,13 @@ export function bindMessageNotifications(
               if (current === "reply") return false;
               if (current === "pending") return "wait";
             }
+            const sender =
+              notifications.snapshot().preferences.categories[
+                AGENT_MESSAGES
+              ] === false
+                ? fromPerson()
+                : true;
+            if (sender !== true) return sender;
             const attention = owned.unread.attention(
               message.channelId,
               message.messageId,
@@ -261,7 +300,19 @@ export function bindMessageNotifications(
       if (owned.sidebarPreferences.snapshot().status === "idle")
         void owned.sidebarPreferences.ensure();
     };
-    stopPreferences = owned.sidebarPreferences.subscribe(preferencesChanged);
+    const stopSidebar = owned.sidebarPreferences.subscribe(preferencesChanged);
+    // A sender's profile arriving releases or drops the alerts waiting on it.
+    const stopProfiles = owned.profiles.subscribe(() => {
+      if (
+        notifications.snapshot().preferences.categories[AGENT_MESSAGES] ===
+        false
+      )
+        notifications.revalidate();
+    });
+    stopPreferences = () => {
+      stopSidebar();
+      stopProfiles();
+    };
     preferencesChanged();
     // App-global ownership: Channels may not be mounted. Start its shared
     // observation only after discovery, so an empty startup roster cannot

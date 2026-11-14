@@ -1123,3 +1123,58 @@ it("cancels a pending thread notification when metadata marks its room as a Hudd
   await flush();
   expect(h.show).not.toHaveBeenCalled();
 });
+
+it("silences agent senders when Messages from agents is off", async () => {
+  const h = await setup();
+  const person = keypair();
+  h.emit([
+    profile(h.peer, { name: "Bot", is_agent: true }),
+    profile(person, { name: "Pat" }),
+  ]);
+  await flush();
+  h.emit([h.make("@you agent, setting on")], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(1));
+  h.notifications.updatePreferences({
+    categories: {
+      ...h.notifications.snapshot().preferences.categories,
+      "agent-messages": false,
+    },
+  });
+  h.emit([h.make("@you agent, setting off")], "live");
+  h.emit([h.make("@you person", 0, person)], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(2));
+  expect(h.show.mock.calls[1]?.[0].title).toContain("Pat mentioned you");
+  // An author with no profile is read once, then alerts: never silence a person.
+  const unknown = keypair();
+  h.emit([h.make("@you unknown", 0, unknown)], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(3));
+  expect(
+    h.query.mock.calls.some(([filters]) =>
+      filters.some(
+        (filter) =>
+          filter.kinds?.includes(0) && filter.authors?.includes(unknown.pubkey),
+      ),
+    ),
+  ).toBe(true);
+});
+
+it("drops a waiting alert once its sender's profile says agent", async () => {
+  const h = await setup();
+  h.notifications.updatePreferences({
+    categories: {
+      ...h.notifications.snapshot().preferences.categories,
+      "agent-messages": false,
+    },
+  });
+  let release!: (events: ReturnType<typeof profile>[]) => void;
+  h.query.mockImplementationOnce(
+    () => new Promise<never[]>((resolve) => (release = resolve as never)),
+  );
+  h.emit([h.make("@you from a late-loading agent")], "live");
+  await vi.waitFor(() => expect(release).toBeDefined());
+  expect(h.show).not.toHaveBeenCalled();
+  release([profile(h.peer, { name: "Bot", is_agent: true })]);
+  await flush();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(h.show).not.toHaveBeenCalled();
+});

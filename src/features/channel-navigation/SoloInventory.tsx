@@ -463,12 +463,13 @@ function SoloConversationRow({
     const button = selectRef.current;
     if (!button || !present) return;
     const document = button.ownerDocument;
-    const sidebar = button.closest("nav");
-    const panel = button.closest<HTMLElement>("[data-solo-project]");
-    const inventory = button.closest("[data-solo-chat-list]") ?? panel;
-    const region = button.closest("[data-sidebar-section]");
     return () => {
       if (document.activeElement !== button) return;
+      // Row portals can attach or move after mount. Read their current layout.
+      const sidebar = button.closest("nav");
+      const panel = button.closest<HTMLElement>("[data-solo-project]");
+      const inventory = button.closest("[data-solo-chat-list]") ?? panel;
+      const region = button.closest("[data-sidebar-section]");
       const rows = [
         ...(inventory?.querySelectorAll<HTMLElement>(
           "button[data-solo-channel-id]:not([inert] *)",

@@ -2803,8 +2803,8 @@ lowest-`order` match draws its card under the panel
 registering below the default web card's catch-all band; a component that
 renders nothing leaves that link without a card. Components receive
 `{ url, messageId, open }`; `open()` routes `url` through the host's link
-handler, as clicking the link does, and returns false once the contribution or
-message has retired. Cards sit between the message bubble and its attachments.
+handler, as clicking the link does, and returns false when the host leaves the
+URL to the browser or once the contribution or message has retired. Cards sit between the message bubble and its attachments.
 After three, the rest fold behind "Show N more previews". A render failure drops
 only that card. Registration follows the existing plugin lifetime.
 

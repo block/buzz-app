@@ -154,8 +154,9 @@ export type LinkPreviewProps = Readonly<{
   url: string;
   /** The host's id for the message the link is in. */
   messageId: string;
-  /** Opens `url` through the host, as clicking the link does. False once the
-   * contribution or message retires. */
+  /** Opens `url` through the host, as clicking the link does. False when the
+   * host leaves the URL to the browser, or once the contribution or message
+   * retires. */
   open(): boolean;
 }>;
 /** A card below a message for one of its links. The lowest `order` among

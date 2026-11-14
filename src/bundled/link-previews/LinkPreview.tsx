@@ -71,10 +71,13 @@ export function LinkPreview({
     <a
       className={styles.card}
       href={url}
+      target="_blank"
+      rel="noopener noreferrer"
       data-wide={wide || undefined}
       onClick={(event) => {
-        event.preventDefault();
-        open();
+        // The host claims the links it opens in-app; any other page opens in
+        // the browser, as the link in the message does.
+        if (open()) event.preventDefault();
       }}
     >
       {page.image && (

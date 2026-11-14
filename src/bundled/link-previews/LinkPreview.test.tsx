@@ -50,3 +50,27 @@ it("renders nothing when the page has no preview", async () => {
   await vi.waitFor(() => expect(empty.page).toHaveBeenCalled());
   expect(container.innerHTML).toBe("");
 });
+
+it("leaves a page the host doesn't open in-app to the browser", async () => {
+  const page = { url: "https://example.com/", title: "A page" };
+  const { rerender } = render(
+    <LinkPreview
+      url="https://example.com/"
+      messageId="m"
+      open={() => false}
+      loader={loader(page)}
+    />,
+  );
+  const card = await screen.findByRole("link", { name: /A page/ });
+  expect(card.getAttribute("target")).toBe("_blank");
+  expect(fireEvent.click(card)).toBe(true);
+  rerender(
+    <LinkPreview
+      url="https://example.com/"
+      messageId="m"
+      open={() => true}
+      loader={loader(page)}
+    />,
+  );
+  expect(fireEvent.click(await screen.findByRole("link"))).toBe(false);
+});

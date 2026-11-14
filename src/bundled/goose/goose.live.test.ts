@@ -417,7 +417,7 @@ describe.skipIf(!BIN)("goose-acp", () => {
       })) as { session: { title?: string } };
       expect(info.session.title).toBe(title);
       const settled = await session.send("Say hello to me in Buzz.");
-      expect(settled).toEqual({ ok: true });
+      expect(settled).toEqual({ ok: true, answered: true });
       expect(calls.some((call) => call.method === "tools/list")).toBe(true);
       // goose reached the tools over HTTP with the token, and no request was
       // refused.
@@ -425,13 +425,15 @@ describe.skipIf(!BIN)("goose-acp", () => {
       expect(hits.filter((hit) => hit.status === 404)).toEqual([]);
       const server = session.server;
       if (!server) throw new Error("no Buzz MCP server");
-      // goose keeps the server's URL and token out of its sessions.db.
+      // goose keeps the token out of its sessions.db: it holds client MCP
+      // header values in memory and stores a placeholder
+      // (aaif-goose/goose#13435). The loopback URL is still stored; without
+      // the token it admits nothing.
       const files = sessionsDb();
       expect(files.length).toBeGreaterThan(0);
-      for (const secret of [
-        server.url,
-        ...server.headers.map((h) => h.value.replace(/^Bearer /, "")),
-      ])
+      for (const secret of server.headers.map((h) =>
+        h.value.replace(/^Bearer /, ""),
+      ))
         expect(files.some((file) => file.includes(secret))).toBe(false);
       // Alone, the token admits nothing.
       const stolen = await fetch(server.url, {
@@ -530,8 +532,10 @@ describe.skipIf(!BIN)("goose-acp", () => {
         )
         .toBe(true);
       const second = session.send("Also put the word banana in that reply.");
+      // The steered message took over the turn, so its answer is the one
+      // that says a Buzz answer tool ran.
       await expect(first).resolves.toEqual({ ok: true });
-      await expect(second).resolves.toEqual({ ok: true });
+      await expect(second).resolves.toEqual({ ok: true, answered: true });
       expect(
         requests.filter(
           (item) => item.method === "_goose/unstable/session/steer",
@@ -584,7 +588,7 @@ describe.skipIf(!BIN)("goose-acp", () => {
       // The session takes the next message as usual.
       await expect(
         session.send("Reply in Buzz with the word again."),
-      ).resolves.toEqual({ ok: true });
+      ).resolves.toEqual({ ok: true, answered: true });
       expect(sends().at(-1)?.arguments?.text?.toLowerCase()).toContain("again");
     } finally {
       await goose.kill();
@@ -681,7 +685,10 @@ describe.skipIf(!BIN)("goose-acp", () => {
             ),
           ),
         ),
-      ).resolves.toEqual([{ ok: true }, { ok: true }]);
+      ).resolves.toEqual([
+        { ok: true, answered: true },
+        { ok: true, answered: true },
+      ]);
       const [ada, bo] = agents;
       // Each ran in its own workspace, and answered through its own tools.
       expect(ada?.sent.join("\n")).toContain(basename(ada?.cwd ?? "-"));

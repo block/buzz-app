@@ -46,6 +46,7 @@ export function createChannelWrites(
   /** Signed roster discovery, including channels this viewer cannot open. */
   discovery: RelayReader = reader,
   channelIdentity = false,
+  initialChannelAdmins = false,
 ) {
   const available = !!outbox?.supports(9007);
   function writer(addition = false) {
@@ -651,11 +652,18 @@ export function createChannelWrites(
       members: readonly string[] = [],
       active?: () => boolean,
       labels: readonly string[] = [],
+      admins: readonly string[] = [],
     ) {
       writer();
       identifier(id);
       // Solo is a channel label, so a relay without NIP-CL cannot hold one.
       if (!channelIdentity) throw channelIdentityUnsupported();
+      if (admins.length && !initialChannelAdmins)
+        throw new Error(
+          "This community needs a relay update to start chats with agent admins.",
+        );
+      if (admins.some((key) => !members.includes(key)))
+        throw new Error("Initial admins must be initial chat members.");
       if (!title.trim() || [...title].length > 120)
         throw new Error("Use a session title between 1 and 120 characters.");
       if (
@@ -680,7 +688,9 @@ export function createChannelWrites(
               ...(named ? [SOLO_NAMED_LABEL] : []),
               ...labels,
             ]),
-            ...[...new Set(members)].map((key) => ["p", key]),
+            ...[...new Set(members)].map((key) =>
+              admins.includes(key) ? ["p", key, "", "admin"] : ["p", key],
+            ),
           ],
         },
         undefined,
@@ -701,7 +711,11 @@ export function createChannelWrites(
       /** The chat's Canvas, and the work that saves it once the chat
        * exists; nothing waits for it, and a failure leaves a working chat. */
       setup?: { canvas: string; apply(): Promise<unknown> },
-      options?: { labels?: readonly string[]; active?: () => boolean },
+      options?: {
+        labels?: readonly string[];
+        active?: () => boolean;
+        admins?: readonly string[];
+      },
     ) {
       const create = api.create(
         id,
@@ -711,6 +725,7 @@ export function createChannelWrites(
         members,
         options?.active,
         options?.labels,
+        options?.admins,
       );
       channels.start?.({
         id,

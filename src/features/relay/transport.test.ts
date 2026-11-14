@@ -13,6 +13,21 @@ import { PublishRejected } from "./outbox";
 import { hostSigner, keypair, signed } from "./testing";
 const key = keypair();
 afterEach(() => vi.unstubAllGlobals());
+it.each([true, false, undefined, "true"])(
+  "carries only verified initial-admin support from the broker: %o",
+  async (initialChannelAdmins) => {
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        viewer: key.pubkey,
+        relayAuthor: "relay",
+        initialChannelAdmins,
+      }),
+    );
+    expect((await connectBrokerTransport()).initialChannelAdmins).toBe(
+      initialChannelAdmins === true ? true : undefined,
+    );
+  },
+);
 it.each([
   {
     status: 503,

@@ -1827,6 +1827,7 @@ export function createRelaySession(
     transport?.relayAuthor,
     { read: (filters, settings) => readVerified(filters, settings, false) },
     transport?.channelIdentity === true,
+    transport?.initialChannelAdmins === true,
   );
   startingChannel = (id) => channelWrites.starting(id);
   // Roster authority invalidates in-flight reads, including account-owned

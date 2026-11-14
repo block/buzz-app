@@ -431,9 +431,11 @@ pub(super) fn creation(event: &EventTemplate) -> bool {
         .get(index)
         .is_some_and(|t| t.first().is_some_and(|s| s == "p"))
     {
-        let Some(member) = tag(event, index, "p") else {
+        let parts = &event.tags[index];
+        if !(parts.len() == 2 || (parts.len() == 4 && parts[2].is_empty() && parts[3] == "admin")) {
             return false;
-        };
+        }
+        let member = parts[1].as_str();
         if index - first_member >= 32
             || !super::hex_key(member)
             || event.tags[first_member..index]
@@ -807,6 +809,20 @@ mod boundary_tests {
         event.tags.truncate(4);
         event.tags.extend([member(1), member(1)]);
         assert!(!creation(&event));
+        event.tags.truncate(4);
+        event
+            .tags
+            .push(vec!["p".into(), "a".repeat(64), "".into(), "admin".into()]);
+        assert!(creation(&event));
+        for invalid in [
+            vec!["p".into()],
+            vec!["p".into(), "a".repeat(64), "admin".into()],
+            vec!["p".into(), "a".repeat(64), "".into(), "owner".into()],
+            vec!["p".into(), "a".repeat(64), "relay".into(), "admin".into()],
+        ] {
+            *event.tags.last_mut().unwrap() = invalid;
+            assert!(!creation(&event));
+        }
         event.tags.truncate(4);
         event.tags.push(vec!["p".into(), "A".repeat(64)]);
         assert!(!creation(&event));

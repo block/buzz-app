@@ -698,6 +698,7 @@ function setup(
   },
   agents?: Parameters<typeof createChannelWrites>[6],
   relayAuthor?: string,
+  initialChannelAdmins = false,
 ) {
   let items: readonly OutgoingEvent[] = [{ event, delivery: "accepted" }];
   let channelList = initialList;
@@ -773,6 +774,7 @@ function setup(
       relayAuthor,
       reader,
       channelCreation,
+      initialChannelAdmins,
     ),
     outbox,
     channels,
@@ -1552,6 +1554,53 @@ describe("starting a Solo chat", () => {
   const id = "44444444-4444-4444-8444-444444444444";
   const viewer = "f".repeat(64);
   const agent = "a".repeat(64);
+  it("creates all addressed agents as admins while other starting members stay ordinary", async () => {
+    const second = "b".repeat(64),
+      workspace = "c".repeat(64);
+    const test = setup(true, undefined, undefined, undefined, true);
+    const { ready } = test.service.start(
+      id,
+      "Work",
+      [agent, second, workspace, agent],
+      undefined,
+      false,
+      undefined,
+      {
+        admins: [agent, second],
+      },
+    );
+    await ready;
+    expect(test.outbox.send).toHaveBeenCalledOnce();
+    const template = vi.mocked(test.outbox.send).mock.calls[0]?.[0];
+    expect(template?.tags.filter(([tag]) => tag === "p")).toEqual([
+      ["p", agent, "", "admin"],
+      ["p", second, "", "admin"],
+      ["p", workspace],
+    ]);
+  });
+
+  it("requires advertised initial-role support and a matching starting member before creating", () => {
+    const unsupported = setup();
+    expect(() =>
+      unsupported.service.start(
+        id,
+        "Work",
+        [agent],
+        undefined,
+        false,
+        undefined,
+        { admins: [agent] },
+      ),
+    ).toThrow("relay update");
+    expect(unsupported.outbox.send).not.toHaveBeenCalled();
+    const supported = setup(true, undefined, undefined, undefined, true);
+    expect(() =>
+      supported.service.start(id, "Work", [], undefined, false, undefined, {
+        admins: [agent],
+      }),
+    ).toThrow("must be initial chat members");
+    expect(supported.outbox.send).not.toHaveBeenCalled();
+  });
   const listed = (members: string[]) => ({
     status: "ready" as const,
     channels: [{ id, name: "Work", channelType: "solo" as const, members }],

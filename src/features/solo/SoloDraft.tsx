@@ -497,7 +497,7 @@ export function SoloDraft({
               }
             : undefined,
           // Unguarded, so a restart can retry it like any New chat.
-          ...(region ? [{ labels: [region] }] : []),
+          { admins: recipients, ...(region ? { labels: [region] } : {}) },
         );
       } catch (reason) {
         if (startKey) writeView(scope, startKey, null);

@@ -261,6 +261,24 @@ it.each([
     ).toBeUndefined();
   },
 );
+it.each([
+  undefined,
+  [],
+  ["nip-cl"],
+  ["buzz-initial-channel-admins"],
+  "buzz-initial-channel-admins",
+])(
+  "requires the exact initial-admin extension advertisement: %o",
+  async (supported_extensions) => {
+    discovery = { supported_extensions };
+    expect((await connectNativeTransport(community)).initialChannelAdmins).toBe(
+      Array.isArray(supported_extensions) &&
+        supported_extensions.includes("buzz-initial-channel-admins")
+        ? true
+        : undefined,
+    );
+  },
+);
 it("publishes config artifacts straight to the relay, re-sending identical bytes and keeping typed refusals", async () => {
   discovery = { supported_extensions: ["nip-ar"] };
   const transport = await connectNativeTransport(community);

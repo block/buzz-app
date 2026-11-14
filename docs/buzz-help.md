@@ -412,7 +412,12 @@ and are asked to sign in again in Buzz.
   the full, scrollable list of names. Messages and huddle entries split groups.
 
 - **Solo** organizes your chats with agents. Choose **New chat**, select or tag
-  an agent, and send a message. Solo conversations continue at the chat's top
+  an agent, and send a message. Every agent addressed in the opening message
+  becomes a chat admin; you remain owner. Agents included only by workspace
+  defaults, or added later, join as ordinary members. Existing chats keep their
+  roles when resumed. This requires a relay advertising initial-admin creation;
+  an older relay asks for an update before starting the chat.
+  Solo conversations continue at the chat's top
   level rather than requiring a new thread for each reply. Where available, use
   **Model and effort** in the composer before sending; Solo keeps those choices
   for that chat until you reset them in the same control, even if its available

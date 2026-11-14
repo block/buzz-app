@@ -1,5 +1,6 @@
 //! Distinct plugin authority grants. Granted calls go to the adapter origin
-//! with the native session as a Bearer token; the renderer never sees it.
+//! with the native session as a Bearer token or an RFC 8693 subject_token;
+//! the renderer never sees the human credential.
 use super::FederatedIdentity;
 use crate::{with_manager, PluginManager};
 use serde::Deserialize;
@@ -183,7 +184,11 @@ pub(crate) async fn federated_identity_request(
     // adapter's session and assertion routes decide that the session ended,
     // so a 401 asks the session route once.
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    let response = forward(destination, &token, request, home.as_deref()).await?;
+    let response = if destination == config.endpoint("/v1/nip-fi/agent-grant") {
+        forward_agent_exchange(destination, &token, request).await?
+    } else {
+        forward(destination, &token, request, home.as_deref()).await?
+    };
     // Only the adapter's session route ends the session; an Apps refusal is
     // checked there too.
     if response.status == 401 {
@@ -191,6 +196,85 @@ pub(crate) async fn federated_identity_request(
     }
     Ok(response)
 }
+
+/// The granted token-exchange operation puts the session only in subject_token.
+/// The renderer supplies the public fields and never receives the human credential.
+async fn forward_agent_exchange(
+    destination: url::Url,
+    token: &str,
+    request: Request,
+) -> Result<crate::host_request::HostResponse, String> {
+    if request.method != "POST" || request.apps || request.upload.is_some() {
+        return Err("Invalid agent token exchange".into());
+    }
+    let body = agent_exchange_form(request.body.as_deref().unwrap_or_default(), token)?;
+    let headers = reqwest::header::HeaderMap::from_iter([
+        (
+            reqwest::header::ACCEPT,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        ),
+        (
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/x-www-form-urlencoded"),
+        ),
+    ]);
+    crate::host_request::send_request(
+        destination,
+        reqwest::Method::POST,
+        headers,
+        Some(body),
+        crate::host_request::request_deadline(request.timeout_ms)?,
+    )
+    .await
+}
+
+fn agent_exchange_form(body: &str, token: &str) -> Result<String, String> {
+    const GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
+    const SESSION_TYPE: &str = "urn:nostr:params:oauth:token-type:nip-fa-session";
+    const AGENT_TYPE: &str = "urn:nostr:params:oauth:token-type:nip-fi-agent-grant";
+    let fields: Vec<_> = url::form_urlencoded::parse(body.as_bytes()).collect();
+    let value = |name: &str| {
+        fields
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_ref())
+    };
+    let expected = [
+        "grant_type",
+        "subject_token_type",
+        "requested_token_type",
+        "agent_pubkey",
+        "runtime",
+        "owner_attestation",
+    ];
+    if body.len() > 8192
+        || fields.len() != expected.len()
+        || expected.iter().any(|name| {
+            fields
+                .iter()
+                .filter(|(key, _)| key.as_ref() == *name)
+                .count()
+                != 1
+        })
+        || value("grant_type") != Some(GRANT_TYPE)
+        || value("subject_token_type") != Some(SESSION_TYPE)
+        || value("requested_token_type") != Some(AGENT_TYPE)
+        || value("runtime") != Some("hosted")
+    {
+        return Err("Invalid agent token exchange".into());
+    }
+    let mut form = url::form_urlencoded::Serializer::new(String::new());
+    for (name, value) in fields {
+        form.append_pair(&name, &value);
+    }
+    form.append_pair("subject_token", token);
+    let body = form.finish();
+    if body.len() > 8192 {
+        return Err("Agent token exchange is too large".into());
+    }
+    Ok(body)
+}
+
 async fn forward(
     destination: url::Url,
     token: &str,
@@ -325,7 +409,13 @@ fn validate(
         }
     }
     check_headers(request)?;
-    Ok(destination)
+    // The public plugin operation is relative to apiBasePath. NIP-FA's
+    // exchange itself lives under adapterBase, which may have another prefix.
+    if path == &format!("{}v1/nip-fi/agent-grant", config.api_base_path) {
+        Ok(config.endpoint("/v1/nip-fi/agent-grant"))
+    } else {
+        Ok(destination)
+    }
 }
 /// Bounds a request and refuses the headers only native may set.
 fn check_headers(request: &Request) -> Result<(), String> {
@@ -374,6 +464,122 @@ fn check_headers(request: &Request) -> Result<(), String> {
 mod tests {
     use super::*;
     use tauri::Manager as _;
+
+    fn hosted_exchange_form() -> String {
+        url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs([
+                (
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:token-exchange",
+                ),
+                (
+                    "subject_token_type",
+                    "urn:nostr:params:oauth:token-type:nip-fa-session",
+                ),
+                (
+                    "requested_token_type",
+                    "urn:nostr:params:oauth:token-type:nip-fi-agent-grant",
+                ),
+                ("agent_pubkey", "agent"),
+                ("runtime", "hosted"),
+                ("owner_attestation", "owner-proof"),
+            ])
+            .finish()
+    }
+
+    #[test]
+    fn granted_hosted_exchange_uses_the_adapter_prefix() {
+        let config = super::super::config::Config::parse(r#"{"version":1,"id":"example","identityOrigin":"https://identity.example","adapterBase":"https://identity.example/nip-fa/","apiBasePath":"/api/goose/","communityHosts":["community.example"]}"#).unwrap();
+        let path = "/api/goose/v1/nip-fi/agent-grant";
+        let grant = buzzodz_plugins::FederatedIdentityGrant {
+            authority: "example".into(),
+            operations: vec![buzzodz_plugins::AuthenticatedOperation {
+                method: "POST".into(),
+                path: path.into(),
+            }],
+        };
+        let request = Request {
+            path: path.into(),
+            method: "POST".into(),
+            body: Some(hosted_exchange_form()),
+            ..Request::default()
+        };
+        assert_eq!(
+            validate(&config, &grant, &request).unwrap().as_str(),
+            "https://identity.example/nip-fa/v1/nip-fi/agent-grant"
+        );
+        let ungranted = buzzodz_plugins::FederatedIdentityGrant {
+            operations: vec![],
+            ..grant
+        };
+        assert!(validate(&config, &ungranted, &request).is_err());
+    }
+
+    #[test]
+    fn hosted_exchange_accepts_only_public_fields_once() {
+        let public = hosted_exchange_form();
+        let encoded = agent_exchange_form(&public, "native+session&").unwrap();
+        let form: Vec<_> = url::form_urlencoded::parse(encoded.as_bytes()).collect();
+        assert_eq!(
+            form.iter()
+                .filter(|(name, _)| name == "subject_token")
+                .count(),
+            1
+        );
+        assert!(form
+            .iter()
+            .any(|(name, value)| name == "subject_token" && value == "native+session&"));
+        for invalid in [
+            format!("{public}&subject_token=untrusted"),
+            format!("{public}&runtime=hosted"),
+            public.replace("runtime=hosted", "runtime=local"),
+            public.replace("owner_attestation=owner-proof", "unknown=owner-proof"),
+        ] {
+            assert!(agent_exchange_form(&invalid, "native").is_err());
+        }
+        assert!(agent_exchange_form(&public, &"x".repeat(8192)).is_err());
+    }
+
+    #[tokio::test]
+    async fn hosted_exchange_sends_the_native_session_only_in_the_form() {
+        use super::super::tests::adapter;
+        let (base, server) = adapter(vec![serde_json::json!({"access_token":"grant"})]).await;
+        let result = forward_agent_exchange(
+            url::Url::parse(&format!("{base}/v1/nip-fi/agent-grant")).unwrap(),
+            "native-session",
+            Request {
+                path: "/v1/nip-fi/agent-grant".into(),
+                method: "POST".into(),
+                headers: BTreeMap::from([("authorization".into(), "untrusted".into())]),
+                body: Some(hosted_exchange_form()),
+                ..Request::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.status, 200);
+        let seen = server.await.unwrap();
+        assert_eq!(seen[0].target, "POST /mount/v1/nip-fi/agent-grant HTTP/1.1");
+        assert!(!seen[0].headers.iter().any(|(name, _)| matches!(
+            name.as_str(),
+            "authorization" | "x-bb-session-credential" | "cookie"
+        )));
+        assert!(seen[0]
+            .headers
+            .iter()
+            .any(|(name, value)| name == "content-type"
+                && value == "application/x-www-form-urlencoded"));
+        let form: Vec<_> = url::form_urlencoded::parse(&seen[0].body).collect();
+        assert_eq!(
+            form.iter()
+                .filter(|(name, _)| name == "subject_token")
+                .count(),
+            1
+        );
+        assert!(form
+            .iter()
+            .any(|(name, value)| name == "subject_token" && value == "native-session"));
+    }
     #[tokio::test]
     async fn native_grants_require_current_enabled_artifact_and_live_registration() {
         let temp = tempfile::tempdir().unwrap();

@@ -29,6 +29,15 @@ const response = (value: unknown, status = 200): HostResponse => ({
 });
 const viewer = "cd".repeat(32);
 const bound = (pubkey_hex = viewer) => response({ identity: { pubkey_hex } });
+const agentGrant = (patch: Record<string, unknown> = {}) =>
+  response({
+    access_token: "exchanged-agent-grant",
+    issued_token_type: "urn:nostr:params:oauth:token-type:nip-fi-agent-grant",
+    token_type: "N_A",
+    nostr_owner_pubkey: viewer,
+    nip_fi_issuer: "https://builderlab.example",
+    ...patch,
+  });
 async function fixture(subject = "user", canUseRemoteAgents = true) {
   const session = createTestSession(
     async () => ({
@@ -561,6 +570,7 @@ it("registers with a saved UUID and submits the supplied owner proof", async () 
       }),
     )
     .mockResolvedValueOnce(bound())
+    .mockResolvedValueOnce(agentGrant())
     .mockResolvedValueOnce(response({ status: "ATTEST_AGENT_STATUS_ACTIVE" }));
   const agent = await h.client.register(" Helper ", h.signal, h.retain);
   expect(agent).toMatchObject({ name: "Helper", status: "Unattested" });
@@ -580,6 +590,7 @@ it("registers with a saved UUID and submits the supplied owner proof", async () 
       body: JSON.stringify({
         agent_pubkey: row.agent_pubkey,
         owner_auth_tag_json: JSON.stringify(proof),
+        agent_grant: "exchanged-agent-grant",
       }),
     }),
   );
@@ -765,6 +776,7 @@ it("links an unbound Buzz key to the account before attesting", async () => {
     )
     .mockResolvedValueOnce(response({ ...challenge, kind: 24243 }))
     .mockResolvedValueOnce(bound())
+    .mockResolvedValueOnce(agentGrant())
     .mockResolvedValueOnce(response({ status: "ATTEST_AGENT_STATUS_ACTIVE" }));
   await h.client.activate(row.agent_pubkey, proof, undefined, h.signal);
   const calls = vi.mocked(h.host.request).mock.calls.map(([input]) => input);
@@ -772,6 +784,7 @@ it("links an unbound Buzz key to the account before attesting", async () => {
     "https://builderlab.example/api/goose/v1/buzz/nostr-identities/current",
     "https://builderlab.example/api/goose/v1/buzz/nostr-identities/challenge",
     "https://builderlab.example/api/goose/v1/buzz/nostr-identities/verify",
+    "https://builderlab.example/api/goose/v1/nip-fi/agent-grant",
     "https://builderlab.example/api/goose/v3/beekeeper/attest-agent",
   ]);
   expect(calls[1]?.headers).toEqual({
@@ -788,14 +801,24 @@ it("links an unbound Buzz key to the account before attesting", async () => {
     nonce: challenge.nonce,
     signed_payload: JSON.stringify({ id: "signed-binding" }),
   });
+  expect(Object.fromEntries(new URLSearchParams(calls[3]?.body))).toEqual({
+    grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+    subject_token_type: "urn:nostr:params:oauth:token-type:nip-fa-session",
+    requested_token_type:
+      "urn:nostr:params:oauth:token-type:nip-fi-agent-grant",
+    agent_pubkey: row.agent_pubkey,
+    runtime: "hosted",
+    owner_attestation: JSON.stringify(proof),
+  });
 });
 it("skips linking when this key is already bound", async () => {
   const h = await fixture();
   vi.mocked(h.host.request)
     .mockResolvedValueOnce(bound(viewer.toUpperCase()))
+    .mockResolvedValueOnce(agentGrant())
     .mockResolvedValueOnce(response({ status: 1 }));
   await h.client.activate(row.agent_pubkey, proof, undefined, h.signal);
-  expect(h.host.request).toHaveBeenCalledTimes(2);
+  expect(h.host.request).toHaveBeenCalledTimes(3);
   expect(h.owner.signBinding).not.toHaveBeenCalled();
 });
 it.each([
@@ -856,15 +879,17 @@ it("refuses activation with a 401, keeping the session and claiming no expiry", 
 });
 it("attests without linking when there is no native identity", async () => {
   const h = await fixture();
-  vi.mocked(h.host.request).mockResolvedValueOnce(response({ status: 1 }));
+  vi.mocked(h.host.request)
+    .mockResolvedValueOnce(agentGrant())
+    .mockResolvedValueOnce(response({ status: 1 }));
   await createAgentClient(h.session, null).activate(
     row.agent_pubkey,
     proof,
     undefined,
     h.signal,
   );
-  expect(h.host.request).toHaveBeenCalledTimes(1);
-  expect(vi.mocked(h.host.request).mock.calls[0]?.[0].url).toMatch(
+  expect(h.host.request).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(h.host.request).mock.calls[1]?.[0].url).toMatch(
     /\/attest-agent$/,
   );
 });
@@ -884,6 +909,7 @@ it("names the attest status when setup is not confirmed", async () => {
   const h = await fixture();
   vi.mocked(h.host.request)
     .mockResolvedValueOnce(bound())
+    .mockResolvedValueOnce(agentGrant())
     .mockResolvedValueOnce(
       response({ status: "ATTEST_AGENT_STATUS_NO_OWNER_IDENTITY_BOUND" }),
     );
@@ -898,6 +924,7 @@ it("shares one binding attempt between overlapping links", async () => {
   const current = deferred<HostResponse>();
   vi.mocked(h.host.request)
     .mockImplementationOnce(() => current.promise)
+    .mockResolvedValueOnce(agentGrant())
     .mockResolvedValueOnce(response({ status: 1 }));
   const signIn = h.client.link(h.signal);
   const activation = h.client.activate(
@@ -912,7 +939,30 @@ it("shares one binding attempt between overlapping links", async () => {
     vi
       .mocked(h.host.request)
       .mock.calls.map(([input]) => input.url.split("/").at(-1)),
-  ).toEqual(["current", "attest-agent"]);
+  ).toEqual(["current", "agent-grant", "attest-agent"]);
+});
+
+it.each([
+  { access_token: "" },
+  { access_token: "bad token" },
+  { access_token: "x".repeat(1025) },
+  { issued_token_type: "urn:ietf:params:oauth:token-type:access_token" },
+  { token_type: "Bearer" },
+  { nostr_owner_pubkey: "ef".repeat(32) },
+  { nip_fi_issuer: "" },
+])("refuses activation after an invalid exchange result %j", async (patch) => {
+  const h = await fixture();
+  vi.mocked(h.host.request)
+    .mockResolvedValueOnce(bound())
+    .mockResolvedValueOnce(agentGrant(patch));
+  await expect(
+    h.client.activate(row.agent_pubkey, proof, undefined, h.signal),
+  ).rejects.toThrow("invalid agent grant");
+  expect(
+    vi
+      .mocked(h.host.request)
+      .mock.calls.map(([input]) => input.url.split("/").at(-1)),
+  ).toEqual(["current", "agent-grant"]);
 });
 
 it.each(["network", "429"])(

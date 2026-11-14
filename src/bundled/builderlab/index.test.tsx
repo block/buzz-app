@@ -945,6 +945,15 @@ it.for([
       };
     } else if (url.endsWith("/nostr-identities/current")) {
       result = { identity: { pubkey_hex: community.viewer } };
+    } else if (url.endsWith("/agent-grant")) {
+      result = {
+        access_token: "agent-grant",
+        issued_token_type:
+          "urn:nostr:params:oauth:token-type:nip-fi-agent-grant",
+        token_type: "N_A",
+        nostr_owner_pubkey: community.viewer,
+        nip_fi_issuer: "https://builderlab.example",
+      };
     } else if (url.endsWith("/attest-agent")) {
       result = { status: 1 };
     } else if (url.endsWith("/update-agent")) {
@@ -1173,6 +1182,7 @@ it.for([
       ]);
       expect(hostedRequests.at(-1)).toEqual({
         agent_pubkey: hostedKey,
+        agent_grant: "agent-grant",
         community_url: "wss://community.example",
         owner_auth_tag_json: JSON.stringify([
           "auth",

@@ -546,6 +546,80 @@ it("keeps one public server revision for agents, Apps and reloaded clients, and 
   stop();
 });
 
+const hostedExchangeFields = {
+  grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+  subject_token_type: "urn:nostr:params:oauth:token-type:nip-fa-session",
+  requested_token_type: "urn:nostr:params:oauth:token-type:nip-fi-agent-grant",
+  agent_pubkey: "ab".repeat(32),
+  runtime: "hosted",
+  owner_attestation: '["auth","owner","","signature"]',
+};
+it("exchanges the broker's session without ambient credentials", async () => {
+  const h = account({
+    "/v1/nip-fi/agent-grant": () =>
+      Response.json({ access_token: "agent-grant" }),
+  });
+  await signIn(h);
+  const reply = await h.builderlab.request(
+    {
+      revision: h.builderlab.snapshot().revision,
+      path: "/v1/nip-fi/agent-grant",
+      method: "POST",
+      headers: { Authorization: "Bearer untrusted" },
+      body: new URLSearchParams(hostedExchangeFields).toString(),
+    },
+    new AbortController().signal,
+  );
+  expect(JSON.parse(reply.body)).toEqual({ access_token: "agent-grant" });
+  const sent = h.requests.at(-1);
+  expect(sent.path).toBe("/v1/nip-fi/agent-grant");
+  expect(sent.init.headers).toEqual({
+    Accept: "application/json",
+    "Content-Type": "application/x-www-form-urlencoded",
+  });
+  expect(Object.fromEntries(new URLSearchParams(sent.init.body))).toEqual({
+    ...hostedExchangeFields,
+    subject_token: "secret",
+  });
+  expect(sent.init.redirect).toBe("error");
+});
+it.each([
+  [
+    "caller credential",
+    `${new URLSearchParams(hostedExchangeFields)}&subject_token=untrusted`,
+  ],
+  [
+    "duplicate field",
+    `${new URLSearchParams(hostedExchangeFields)}&runtime=hosted`,
+  ],
+  [
+    "local runtime",
+    new URLSearchParams({
+      ...hostedExchangeFields,
+      runtime: "local",
+    }).toString(),
+  ],
+])(
+  "refuses a hosted exchange with %s before forwarding",
+  async (_label, body) => {
+    const h = account();
+    await signIn(h);
+    const count = h.requests.length;
+    await expect(
+      h.builderlab.request(
+        {
+          revision: h.builderlab.snapshot().revision,
+          path: "/v1/nip-fi/agent-grant",
+          method: "POST",
+          body,
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("Invalid agent token exchange");
+    expect(h.requests).toHaveLength(count);
+  },
+);
+
 it("expires every consumer together on 401, while a transient account check preserves the server login", async () => {
   let unavailable = false;
   const h = account({

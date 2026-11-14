@@ -16,6 +16,37 @@ export const BUILDERLAB_ORIGIN = "https://app.builderlab.xyz";
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const RESPONSE_STATUS = Symbol("builderlabResponseStatus");
+const AGENT_GRANT_PATH = "/v1/nip-fi/agent-grant";
+function agentGrantForm(body, token) {
+  if (typeof body !== "string" || Buffer.byteLength(body) > 8192)
+    throw new Error("Invalid agent token exchange");
+  const form = new URLSearchParams(body);
+  const expected = [
+    "grant_type",
+    "subject_token_type",
+    "requested_token_type",
+    "agent_pubkey",
+    "runtime",
+    "owner_attestation",
+  ];
+  if (
+    [...form].length !== expected.length ||
+    expected.some((name) => form.getAll(name).length !== 1) ||
+    form.get("grant_type") !==
+      "urn:ietf:params:oauth:grant-type:token-exchange" ||
+    form.get("subject_token_type") !==
+      "urn:nostr:params:oauth:token-type:nip-fa-session" ||
+    form.get("requested_token_type") !==
+      "urn:nostr:params:oauth:token-type:nip-fi-agent-grant" ||
+    form.get("runtime") !== "hosted"
+  )
+    throw new Error("Invalid agent token exchange");
+  form.set("subject_token", token);
+  const encoded = form.toString();
+  if (Buffer.byteLength(encoded) > 8192)
+    throw new Error("Agent token exchange is too large");
+  return encoded;
+}
 // Use the agents' callback page and assets, without a second visual implementation.
 const callbackRoot = new URL(
   "../src-tauri/src/oauth_callback/",
@@ -506,7 +537,8 @@ export function createBuilderlab({
       // Activation must not overtake the sign-in's automatic key binding.
       if (
         typeof input.path === "string" &&
-        input.path.startsWith("/v3/beekeeper/")
+        (input.path.startsWith("/v3/beekeeper/") ||
+          input.path === AGENT_GRANT_PATH)
       )
         await linking;
       current(input.revision);
@@ -534,6 +566,7 @@ export function createBuilderlab({
         throw new Error("Unsupported Builderlab request");
       }
       const path = url.pathname.slice(prefix.length);
+      const exchange = !apps && path === AGENT_GRANT_PATH && !url.search;
       if (
         url.origin !== base.origin ||
         !url.pathname.startsWith(`${prefix}/`) ||
@@ -545,12 +578,15 @@ export function createBuilderlab({
             ].includes(path)
           : apps
             ? /^\/v1\/agent\//.test(path)
-            : /^\/(?:v3\/beekeeper\/|v1\/buzz\/known-communities\/(?:list|add|remove)$)/.test(
+            : exchange ||
+              /^\/(?:v3\/beekeeper\/|v1\/buzz\/known-communities\/(?:list|add|remove)$)/.test(
                 path,
               ))
       )
         throw new Error("Unsupported Builderlab request");
       const method = input.method ?? "GET";
+      if (exchange && (method !== "POST" || input.file))
+        throw new Error("Invalid agent token exchange");
       if (
         !(apps ? ["GET", "POST", "PUT", "DELETE"] : ["GET", "POST"]).includes(
           method,
@@ -564,7 +600,12 @@ export function createBuilderlab({
               Authorization: `BBIdentity ${secret}`,
               "X-Hotpod-Agent-Client-Version": "0.2.0",
             }
-          : { "X-BB-Session-Credential": secret, Origin: new URL(api).origin }),
+          : exchange
+            ? {}
+            : {
+                "X-BB-Session-Credential": secret,
+                Origin: new URL(api).origin,
+              }),
       };
       if (path === "/v3/builderlab/decisions") {
         if (
@@ -575,7 +616,7 @@ export function createBuilderlab({
           throw new Error("Invalid decision community");
         headers["X-Buzz-Community"] = input.community;
       }
-      let body = input.body;
+      let body = exchange ? agentGrantForm(input.body, secret) : input.body;
       if (input.file) {
         if (
           !apps ||
@@ -604,7 +645,9 @@ export function createBuilderlab({
       } else if (body !== undefined) {
         if (typeof body !== "string")
           throw new Error("Invalid Builderlab body");
-        headers["Content-Type"] = "application/json";
+        headers["Content-Type"] = exchange
+          ? "application/x-www-form-urlencoded"
+          : "application/json";
       }
       current(input.revision);
       const response = await fetch(url, {

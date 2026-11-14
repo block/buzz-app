@@ -110,7 +110,10 @@ export async function bestieFixture(
   federated.request.mockImplementation(async ({ path: route, body: sent }) => {
     const url = `https://builderlab.example${route}`;
     const path = route.split("/").at(-1) ?? "";
-    const body = JSON.parse(sent || "{}");
+    const body =
+      path === "agent-grant"
+        ? Object.fromEntries(new URLSearchParams(sent))
+        : JSON.parse(sent || "{}");
     const hold = holds.get(path);
     holds.delete(path);
     if (hold) await hold;
@@ -165,9 +168,23 @@ export async function bestieFixture(
         agent_id: row.agent_id,
         agent_pubkey: row.agent_pubkey,
       };
+    } else if (path === "agent-grant") {
+      const row = rows.find((item) => item.agent_pubkey === body.agent_pubkey);
+      if (!row || body.runtime !== "hosted")
+        throw new Error("No registered hosted agent");
+      result = {
+        access_token: `grant-${row.agent_id}`,
+        issued_token_type:
+          "urn:nostr:params:oauth:token-type:nip-fi-agent-grant",
+        token_type: "N_A",
+        nostr_owner_pubkey: identity.pubkey,
+        nip_fi_issuer: "https://builderlab.example",
+      };
     } else if (path === "attest-agent") {
       const row = rows.find((item) => item.agent_pubkey === body.agent_pubkey);
       if (!row) throw new Error("No registered agent");
+      if (body.agent_grant !== `grant-${row.agent_id}`)
+        throw new Error("Invalid agent grant");
       row.status = 2;
       result = { status: 1 };
     } else if (path === "update-agent") {

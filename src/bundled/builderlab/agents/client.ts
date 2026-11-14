@@ -168,21 +168,33 @@ export function createAgentClient(
     body: unknown,
     signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
-    signal.throwIfAborted();
-    const credential = await remoteCredential(
+    return send(
+      `/v3/beekeeper/${path}`,
+      JSON.stringify(body),
+      "application/json",
       signal,
       path === "cancel-agent-turn",
     );
+  }
+  async function send(
+    path: string,
+    body: string,
+    contentType: string,
+    signal: AbortSignal,
+    urgent = false,
+  ): Promise<Record<string, unknown>> {
+    signal.throwIfAborted();
+    const credential = await remoteCredential(signal, urgent);
     let response: HostResponse;
     try {
       response = await session.request(credential, {
-        path: `/v3/beekeeper/${path}`,
+        path,
         method: "POST",
         headers: {
           Accept: "application/json",
-          "Content-Type": "application/json",
+          "Content-Type": contentType,
         },
-        body: JSON.stringify(body),
+        body,
       });
     } catch {
       check(credential, signal);
@@ -353,11 +365,40 @@ export function createAgentClient(
     signal: AbortSignal,
   ): Promise<void> {
     await link(signal);
+    const tokenType = "urn:nostr:params:oauth:token-type:nip-fi-agent-grant";
+    // Native (or the development broker) adds the current session as subject_token.
+    const exchanged = await send(
+      "/v1/nip-fi/agent-grant",
+      new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        subject_token_type: "urn:nostr:params:oauth:token-type:nip-fa-session",
+        requested_token_type: tokenType,
+        agent_pubkey: pubkey,
+        runtime: "hosted",
+        owner_attestation: JSON.stringify(auth),
+      }).toString(),
+      "application/x-www-form-urlencoded",
+      signal,
+    );
+    const agentGrant = exchanged.access_token;
+    if (
+      typeof agentGrant !== "string" ||
+      !agentGrant ||
+      agentGrant.length > 1024 ||
+      /\s/.test(agentGrant) ||
+      exchanged.issued_token_type !== tokenType ||
+      exchanged.token_type !== "N_A" ||
+      exchanged.nostr_owner_pubkey !== auth[1] ||
+      typeof exchanged.nip_fi_issuer !== "string" ||
+      !exchanged.nip_fi_issuer
+    )
+      throw new Error("Builderlab returned an invalid agent grant.");
     const result = await request(
       "attest-agent",
       {
         agent_pubkey: pubkey,
         owner_auth_tag_json: JSON.stringify(auth),
+        agent_grant: agentGrant,
         ...(community ? { community_url: community } : {}),
       },
       signal,

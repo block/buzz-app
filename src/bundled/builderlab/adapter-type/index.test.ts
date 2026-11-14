@@ -22,6 +22,14 @@ const response = (value: unknown): HostResponse => ({
   headers: {},
   body: JSON.stringify(value),
 });
+const agentGrant = () =>
+  response({
+    access_token: "agent-grant",
+    issued_token_type: "urn:nostr:params:oauth:token-type:nip-fi-agent-grant",
+    token_type: "N_A",
+    nostr_owner_pubkey: proof[1],
+    nip_fi_issuer: "https://builderlab.example",
+  });
 beforeEach(() => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   const storage = new Map<string, string>();
@@ -77,7 +85,11 @@ async function fixture(subject = "account-a") {
     type,
     remote: type.remote,
     bodies: () =>
-      request.mock.calls.map(([input]) => JSON.parse(input.body ?? "{}")),
+      request.mock.calls.map(([input]) =>
+        input.url.endsWith("/agent-grant")
+          ? Object.fromEntries(new URLSearchParams(input.body))
+          : JSON.parse(input.body ?? "{}"),
+      ),
   };
 }
 const provision = {
@@ -141,6 +153,7 @@ it("saves all creation settings only after attestation and propagates a failed s
   const h = await fixture();
   h.request.mockResolvedValueOnce(response(registration));
   await h.remote.provision(provision);
+  h.request.mockResolvedValueOnce(agentGrant());
   h.request.mockResolvedValueOnce(response({ status: 1 }));
   h.request.mockRejectedValueOnce(new Error("offline"));
   await expect(
@@ -148,13 +161,15 @@ it("saves all creation settings only after attestation and propagates a failed s
   ).rejects.toThrow("Could not reach");
   expect(
     h.request.mock.calls.map(([input]) => input.url.split("/").at(-1)),
-  ).toEqual(["register-agent", "attest-agent", "update-agent"]);
+  ).toEqual(["register-agent", "agent-grant", "attest-agent", "update-agent"]);
+  expect(h.bodies()[2]).toMatchObject({ agent_grant: "agent-grant" });
   expect(h.bodies().at(-1)).toEqual({
     agent_pubkey: pubkey,
     agent_instructions: "",
     model_id: "one",
     reasoning_effort: "high",
   });
+  h.request.mockResolvedValueOnce(agentGrant());
   h.request.mockResolvedValueOnce(response({ status: 2 }));
   await expect(
     h.remote.activate({ ...provision, pubkey, auth: proof }),
@@ -320,6 +335,7 @@ it.each([config, undefined])(
     first.request.mockResolvedValueOnce(response(registration));
     await first.remote.provision(provision);
     first.session.signOut();
+    first.request.mockResolvedValueOnce(agentGrant());
     first.request.mockResolvedValue(response({ status: 1 }));
     await first.remote.activate({
       ...provision,

@@ -313,6 +313,7 @@ it("uses restored explicit mentions, not a separate picker", async () => {
     undefined,
     false,
     undefined,
+    { admins: ["b".repeat(64)] },
   );
   expect(test.channelWrites.addAgents).not.toHaveBeenCalled();
   expect(test.messages.send).toHaveBeenCalledWith(id, "@Outside agent Help", [
@@ -464,6 +465,7 @@ it("a refused start gives its prompt, files and settings back to a blank New cha
     undefined,
     true,
     undefined,
+    { admins: ["a".repeat(64)] },
   );
   expect(test.messages.send).toHaveBeenLastCalledWith(
     retry,
@@ -865,6 +867,7 @@ it("keeps the chosen agent through draft remount, first send, refused-start reco
     undefined,
     false,
     undefined,
+    { admins: ["b".repeat(64)] },
   );
   expect(test.messages.send).toHaveBeenLastCalledWith(retry, "Hello", [
     "b".repeat(64),
@@ -1460,7 +1463,7 @@ async function projectSetup() {
           type: "template",
           id: await projectTemplateId(id),
           canvas: `${id} instructions`,
-          agents: [],
+          agents: [] as string[],
           teamIds: [],
         },
       },
@@ -1497,6 +1500,24 @@ async function projectSetup() {
 
 it("a workspace's defaults changed while New chat is open start the chat", async () => {
   const f = await projectSetup();
+  // Workspace defaults require complete owned-agent and archive evidence.
+  const choices = f.session.agentChoices.snapshot();
+  const completeChoices = {
+    ...choices,
+    templates: {
+      status: "ready",
+      complete: true,
+      pending: false,
+      identities: choices.identities.map((agent) => ({
+        ...agent,
+        managed: true,
+      })),
+    },
+    archives: { status: "ready", archived: [] },
+  } satisfies ReturnType<RelaySession["agentChoices"]["snapshot"]>;
+  Object.assign(f.session.agentChoices, {
+    snapshot: () => completeChoices,
+  });
   const refresh = vi.fn(async () => {});
   Object.assign(f.session.channelKit, { refresh });
   const user = userEvent.setup();
@@ -1518,12 +1539,23 @@ it("a workspace's defaults changed while New chat is open start the chat", async
     ...work,
     eventId: "work-2",
     record: {
-      value: { ...work.record.value, canvas: "new work instructions" },
+      value: {
+        ...work.record.value,
+        canvas: "new work instructions",
+        agents: ["b".repeat(64)],
+      },
     },
   };
   await user.type(screen.getByRole("textbox"), "Go");
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  expect((f.channelWrites.start.mock.calls[0] as unknown[])[2]).toEqual([
+    "a".repeat(64),
+    "b".repeat(64),
+  ]);
+  expect((f.channelWrites.start.mock.calls[0] as unknown[])[6]).toEqual({
+    admins: ["a".repeat(64)],
+  });
   await waitFor(() =>
     expect(f.saveCanvas).toHaveBeenCalledWith(
       expect.any(String),
@@ -2010,6 +2042,7 @@ it.each([false, true])(
       authority.pubkey,
       undefined,
       true,
+      true,
     );
     const eligible = {
       ...h.session.agentChoices.snapshot(),
@@ -2129,6 +2162,9 @@ it.each(["remember", "off"])(
       await waitFor(() => expect(started).toHaveBeenCalledOnce());
       expect(f.messages.send).toHaveBeenCalledOnce();
       expect(f.channelWrites.create).toHaveBeenCalledOnce();
+      expect((f.channelWrites.start.mock.calls[0] as unknown[])[6]).toEqual({
+        admins: recipients.map((recipient) => recipient.pubkey),
+      });
       const id = started.mock.calls[0]?.[0];
       expect(readView("first-followup", `draft:${id}`, null)).toEqual({
         text: "",
@@ -3309,6 +3345,7 @@ it("shows an editable ordinary source link and sends it to the pill's default ag
     undefined,
     false,
     undefined,
+    { admins: ["a".repeat(64)] },
   );
   expect(t.messages.send).toHaveBeenCalledWith(
     id,
@@ -3508,6 +3545,7 @@ function soloDraftWithInventory(
         undefined,
         false,
         undefined,
+        { admins: [aaron.pubkey] },
       );
       expect(test.messages.send).toHaveBeenCalledWith(id, "@Aaron hi", [
         aaron.pubkey,
@@ -3617,7 +3655,10 @@ it("a region's New chat starts a labeled chat its source can find, without filin
   await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
   const id = test.channelWrites.create.mock.calls[0]?.[0] ?? "";
   // Unguarded, so the Outbox replays it after a restart like any New chat.
-  expect(startOptions(test)).toEqual({ labels: [REGION] });
+  expect(startOptions(test)).toEqual({
+    labels: [REGION],
+    admins: ["a".repeat(64)],
+  });
   expect(readView("test", regionStartKey(id), null)).toEqual({
     region: REGION,
     workspace: "work",

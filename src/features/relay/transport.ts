@@ -144,6 +144,8 @@ export interface ReadTransport {
   /** The relay advertises NIP-CL (`nip-cl` in NIP-11 `supported_extensions`):
    * it keeps channel labels and answers label lookups. */
   readonly channelIdentity?: true;
+  /** The relay creates initial admin memberships atomically with kind:9007. */
+  readonly initialChannelAdmins?: true;
   /** The relay advertises `buzz-search-sort`: bridge search accepts
    * `search_sort: "newest"`. Older relays silently rank by relevance. */
   readonly searchSort?: true;
@@ -536,6 +538,7 @@ export async function connectBrokerTransport(
     sidebarMuteWrites?: boolean;
     channelKit?: boolean;
     channelIdentity?: boolean;
+    initialChannelAdmins?: boolean;
     searchSort?: boolean;
     artifactSync?: boolean;
     sidebarPreferenceWrites?: boolean;
@@ -871,6 +874,9 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.channelIdentity === true
       ? { channelIdentity: true as const }
+      : {}),
+    ...(session.initialChannelAdmins === true
+      ? { initialChannelAdmins: true as const }
       : {}),
     ...(session.searchSort === true ? { searchSort: true as const } : {}),
     ...(session.artifactSync === true ? { artifactSync: true as const } : {}),

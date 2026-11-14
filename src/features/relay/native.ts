@@ -959,6 +959,10 @@ export async function connectNativeTransport(
     uploadAttachment: (file, signal, progress) =>
       nativeAttachmentUpload(origin, file, signal, progress),
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
+    ...(Array.isArray(info.supported_extensions) &&
+    info.supported_extensions.includes("buzz-initial-channel-admins")
+      ? { initialChannelAdmins: true as const }
+      : {}),
     ...(searchSort ? { searchSort: true as const } : {}),
     ...(artifactSync ? { artifactSync: true as const } : {}),
     verifiedProfiles: verifiedProfileAuthority(info),

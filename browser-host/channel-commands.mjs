@@ -34,7 +34,12 @@ export function validChannelCommand(event) {
       members.length > 32 ||
       members.some(
         (tag) =>
-          tag.length !== 2 || tag[0] !== "p" || !/^[0-9a-f]{64}$/.test(tag[1]),
+          tag[0] !== "p" ||
+          !/^[0-9a-f]{64}$/.test(tag[1]) ||
+          !(
+            tag.length === 2 ||
+            (tag.length === 4 && tag[2] === "" && tag[3] === "admin")
+          ),
       ) ||
       new Set(members.map(([, key]) => key)).size !== members.length
     )

@@ -60,6 +60,31 @@ it("admits stream and NIP-CL system channel creation only", () => {
     expect(validChannelCommand(create(type))).toBe(false);
 });
 
+it("admits explicit initial admins without accepting other role hints", () => {
+  const prefix = [
+    ["h", id],
+    ["name", "Work"],
+    ["visibility", "private"],
+    ["channel_type", "stream"],
+  ];
+  const create = (member) => ({
+    kind: 9007,
+    created_at: 1,
+    content: "",
+    tags: [...prefix, member],
+  });
+  const key = "a".repeat(64);
+  expect(validChannelCommand(create(["p", key, "", "admin"]))).toBe(true);
+  for (const tag of [
+    ["p"],
+    ["p", key, "admin"],
+    ["p", key, "", "owner"],
+    ["p", key, "relay", "admin"],
+    ["p", key, "", "admin", "extra"],
+  ])
+    expect(validChannelCommand(create(tag))).toBe(false);
+});
+
 it("creates a Solo chat with its label, an optional description and lifetime", () => {
   const create = {
     kind: 9007,

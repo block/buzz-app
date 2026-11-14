@@ -335,6 +335,9 @@ async function relayAuthority(fetch, relay) {
     channelIdentity:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("nip-cl"),
+    initialChannelAdmins:
+      Array.isArray(nip11.supported_extensions) &&
+      nip11.supported_extensions.includes("buzz-initial-channel-admins"),
     // NIP-AR sync: REQ with `"artifact": "current"` keeps a set current.
     artifactSync: nip11.artifacts?.sync?.version === 1,
     artifactSupport:
@@ -1698,6 +1701,8 @@ export function relayBrokerPlugin({
               sidebarMuteWrites: true,
               channelKit: true,
               channelIdentity: (await getAuthority(relay)).channelIdentity,
+              initialChannelAdmins: (await getAuthority(relay))
+                .initialChannelAdmins,
               readState: true,
               sidebarPreferenceWrites: true,
               sidebarSectionRemoval: true,

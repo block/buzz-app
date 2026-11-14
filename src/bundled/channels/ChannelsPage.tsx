@@ -2454,7 +2454,7 @@ function ChannelWorkspace({
                           startChat={
                             navigator &&
                             current &&
-                            canStartLinkedChat(queries, current.id) ? (
+                            canStartLinkedChat(queries) ? (
                               <StartLinkedChat
                                 session={queries}
                                 navigation={navigator}

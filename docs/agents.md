@@ -80,6 +80,46 @@ as the native reset. A failed reset blocks admission until New succeeds.
 Claude and Codex implement this contract. With no router and
 no saved association, the extension adds no execution or publication work.
 
+## Local lifecycle evidence
+
+`session.agentActivity.snapshot().local` can include `LocalWork.evidence`.
+It is an immutable snapshot at a runner-accepted `wake`, accepted mid-turn
+`steer`, or actual `handoff`. New hosts set `evidence: null` until acceptance;
+older hosts omit the field. Check field presence for capability, then skip null
+rows. A `working` presentation state alone does not prove acceptance. Claude Code
+and Codex report exact input acceptance. Other types must report
+`Delivery.acknowledged()` and use `{ steering: true }` for accepted steering.
+Acceptance does not prove that the model has consumed the input.
+
+The lifecycle `id` identifies one local work attempt. Its `revision` increases
+at each boundary within this activity owner. Duplicate callbacks do not create
+boundaries. Reconnect keeps these values; a restarted attempt gets a new ID.
+Use the ID, revision, source fields and logical session association to reject
+stale async results. Publication and step changes do not change this snapshot.
+
+`messages` contains ordered accepted input and attempted kind-9 output for the
+same agent, community and source conversation. When a session association is
+present, its logical session key also isolates the history. The row
+uses `sourceRootId` as the canonical source boundary: a thread root, or null
+for a flat Solo/DM conversation or rootless wake. The `thread` flag describes
+message presentation and does not group evidence. Synthetic input
+has `synthetic: true` and author `host`. Outgoing text has a local ID and a
+`delivery` state: `pending`, `published`, or `failed`. A pending or failed
+attempt is not proof of delivery. An uncertain acknowledgement stays `pending`.
+Each message has an `observedAt` epoch time in milliseconds and a monotonic local
+`order`. Each snapshot keeps at most 64 messages and
+65,536 UTF-16 characters. Oversized text keeps its suffix. `omitted` counts
+text removed within the retained work rows. The existing 512-row activity
+limit also applies. `history: "local"` explicitly excludes an archive guarantee:
+messages from before this process, other devices, and undelivered input can
+be absent. No relay read fills those gaps.
+
+No tool calls, tool targets, thinking summaries, status decisions or task policy
+enter this evidence. It adds no relay reads, subscriptions, timers or polls.
+Handoff can coexist with a background watch or a pending publication. A final
+send tool still waits for publication success before it can end a turn; the
+evidence contract adds no wait after the runner's handoff.
+
 ## Creating and changing agents from a conversation
 
 The shared tools offer `agent_types` to list installed local runtimes and
@@ -566,7 +606,11 @@ channel-scoped session. It is the same `plugin` trigger with `from`, the
 conversation it came from, in place of `plugin`, shown in a `<self-handoff>`
 section that names that conversation, says nobody wrote it as a message and that
 its text is data, and that the agent acts only on what its owner asked. Only a
-run's handle hands off.
+run's handle hands off. Message tools refuse self-mentions because the runner
+suppresses the agent's own relay events. The self-handoff receipt confirms
+local queue admission only, not execution or completion. A busy runner queues
+the wake behind its active mention turn; a full queue or unavailable local
+runner returns an error. The wake is not durable across host shutdown.
 
 A plugin gives standing instructions to every turn with
 `ctx.agents.addInstructions({ id, text, when? })` (see
@@ -574,6 +618,24 @@ A plugin gives standing instructions to every turn with
 used up: every turn of the agents this copy runs (Mesh agents excepted), or
 of those `when` accepts,
 shows them while the plugin is on, and each turn's set replaces the last.
+
+A plugin gives the owner's local agent standing instructions in one
+conversation with
+`ctx.agents.setConversationInstructions(pubkey, { channelId, root? }, text)`.
+Every turn of that agent there then ends with an `<owner-instructions>`
+section naming the plugin, after any `<plugin-instructions>`; Mesh agents get
+none. The base prompt ranks the section with the agent's instructions: the
+owner's messages override it, and it overrides a Solo chat's Canvas. New text
+replaces the old; empty text clears it, and later turns there say no such
+instructions apply now. While the agent is not in the channel, its turns there
+say so too. Text is at most 8192 UTF-8 bytes after trimming and is sent with
+every turn. `place` names the conversation as session controls do: a root for
+a DM, a Solo chat or a channel-scoped agent rejects, and a huddle room rejects
+any instructions. The text is kept on this device for now. It survives a
+restart and the agent leaving the community, and is dropped when the agent is
+deleted; another program that does not share this device's agent state does
+not see it. `ctx.agents.conversationInstructions(pubkey, place)` resolves
+with the text, or undefined. Plugins feature-detect the methods.
 
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent
@@ -779,7 +841,11 @@ those agents as `interrupted` and `InterruptedNotice` asks the owner: **Resume**
 reads each mention again and gives it to `run` marked `resumed`, which tells the
 agent to carry on in its saved session; **Don’t resume** forgets them. Either
 answer covers only the agents the notice names, and only Resume gives those
-mentions again: a replay or live delivery of one never does. A turn
+mentions again: a replay or live delivery of one never does. Opening the
+notice's mention count reads each agent's mentions once, the way Resume does
+(`readInterrupted`), and lists them by channel and thread root; one that read
+does not return shows "Details unavailable", and a read that fails is read again
+when the count is next opened. It is a preview: Resume reads them again. A turn
 stays saved until its resumed turn settles, so closing again first loses none.
 goose sessions end with the app, so a resumed goose turn opens a new one and is
 shown the mention's thread, including what it already posted there.
@@ -1005,6 +1071,11 @@ from profile owner metadata, not a name or presence in the library or local agen
 Recency stays in memory per session/destination and is bounded to 100 destinations
 and 100 recipients each. Neither ownership nor recency overrides membership or
 match quality.
+
+The Solo audience toolbar picker puts agents addressed at opening first when
+browsing without a query, before the 50-row limit. Typed searches keep normal
+match-quality ranking. Checks stay live as you toggle; rows do not move until a
+new query or reopening. Inline `@` order is unchanged.
 
 An open query installs at most 50 keys. Their order and membership stay fixed until
 the query changes or the chooser reopens. Labels, insertion names and availability

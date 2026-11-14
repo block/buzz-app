@@ -227,7 +227,7 @@ export function SoloWorkspaces({
       ?.focus({ preventScroll: true });
     setRowFocus(undefined);
   }, [rowFocus, collapsed, snapshot.data]);
-  // Show more and Show less each unmount once spent; focus stays on the row,
+  // Show more and Show fewer each unmount once spent; focus stays on the row,
   // or moves to the workspace's last chat when nothing is left to show or fold.
   const [stepFocus, setStepFocus] = useState<string>();
   useLayoutEffect(() => {
@@ -683,7 +683,7 @@ export function SoloWorkspaces({
               <NavigationItem
                 variant="text"
                 data-solo-show-more-fold=""
-                label="Show less"
+                label="Show fewer"
                 aria-label={`Show fewer chats in ${project.name}`}
                 onClick={() => expand(project.id, 0)}
               />

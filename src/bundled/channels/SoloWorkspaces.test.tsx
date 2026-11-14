@@ -750,7 +750,7 @@ it("caps each workspace, keeps pinned chats, and remembers Show more", async () 
     screen.getByRole("button", { name: "Show more chats in Chats" }),
   );
   expect(titles()).toHaveLength(SOLO_CHAT_CAP + SOLO_CHAT_STEP + 1);
-  // The last step shows what remains, then only Show less is left.
+  // The last step shows what remains, then only Show fewer is left.
   await user.click(
     screen.getByRole("button", { name: "Show more chats in Chats" }),
   );
@@ -768,7 +768,7 @@ it("caps each workspace, keeps pinned chats, and remembers Show more", async () 
   expect(titles()).toHaveLength(SOLO_CHAT_CAP + 1);
 });
 
-it("offers Show less beside Show more and always folds back to the cap", async () => {
+it("offers Show fewer beside Show more and always folds back to the cap", async () => {
   const h = fixture();
   const user = userEvent.setup();
   const chats = Array.from(
@@ -794,9 +794,11 @@ it("offers Show less beside Show more and always folds back to the cap", async (
     screen.getByRole("button", { name: "Show more chats in Chats" }),
   );
   expect(titles()).toHaveLength(SOLO_CHAT_CAP + SOLO_CHAT_STEP * 2);
-  const row = screen.getByRole("button", {
+  const fold = screen.getByRole("button", {
     name: "Show fewer chats in Chats",
-  }).parentElement;
+  });
+  expect(fold).toHaveTextContent(/^Show fewer$/);
+  const row = fold.parentElement;
   expect(
     within(row as HTMLElement).getByRole("button", {
       name: "Show more chats in Chats",
@@ -815,7 +817,7 @@ it("offers no Show more when a workspace fits under the cap", async () => {
   expect(document.querySelector("[data-solo-show-more]")).toBeNull();
 });
 
-it("keeps keyboard focus on the row when Show more or Show less is spent", async () => {
+it("keeps keyboard focus on the row when Show more or Show fewer is spent", async () => {
   const h = fixture();
   const user = userEvent.setup();
   const chats = Array.from({ length: SOLO_CHAT_CAP + 2 }, (_, index) => ({
@@ -837,7 +839,7 @@ it("keeps keyboard focus on the row when Show more or Show less is spent", async
   ).toHaveFocus();
 });
 
-it("moves focus to the last chat when Show less leaves nothing to fold", async () => {
+it("moves focus to the last chat when Show fewer leaves nothing to fold", async () => {
   const h = fixture();
   const user = userEvent.setup();
   const chats = (pinned: boolean) =>
@@ -964,7 +966,7 @@ it("keeps a pinned chat past the expanded limit held after a partial fold", asyn
   expect(kept).toHaveFocus();
 });
 
-it("offers Show less for retained chats in a never-expanded workspace", async () => {
+it("offers Show fewer for retained chats in a never-expanded workspace", async () => {
   const h = fixture();
   const user = userEvent.setup();
   const chats = (pinned: boolean) =>

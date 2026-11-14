@@ -1611,7 +1611,7 @@ separate from status text and the overflow action.
 Selected rows can expand without painting the entire branch in the accent color.
 
 Its `text` variant is a text-only row action, such as a capped list's Show
-more and Show less: the base navigation item's type and padding with no fill, resting in
+more and Show fewer: the base navigation item's type and padding with no fill, resting in
 `--text-subtle` and strengthening to `--text-standard` on hover and keyboard
 focus. Use it where a fill would read as another destination.
 

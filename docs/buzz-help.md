@@ -462,7 +462,8 @@ and are asked to sign in again in Buzz.
   channels. Reduced motion applies the new order immediately.
   Deleting or archiving the open chat keeps you in Solo and opens another chat
   or a new draft.
-- **Team** contains community channels and their threads. Use the **@** picker
+- **Team** contains community channels and their threads. Choose **Reply** on a
+  message to open or continue its thread. Use the **@** picker
   to address a channel member. A full name typed after **@** and followed by
   Space or closing punctuation, such as `,`, `.` or `'`, selects that person or
   agent unless a namesake or a longer name that begins the same way could be

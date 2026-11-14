@@ -48,7 +48,10 @@ it("imports once and only after consent", async () => {
     await flush();
     expect(legacyImportPending()).toBe(false);
     expect(communities.snapshot().memberships).toEqual([
-      { id: "https://old.example", name: "old.example" },
+      expect.objectContaining({
+        id: "https://old.example",
+        name: "old.example",
+      }),
     ]);
     expect(communities.snapshot().sync.outbox).toEqual([
       { url: "wss://old.example", removed: false },

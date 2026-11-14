@@ -147,5 +147,5 @@ its indexes. Index upgrades scan the collection. Delta completion does not scan 
 An unchanged record and preference need no row writes or index rebuild.
 Source, refresh, and revision checks still run before this comparison.
 Ancestry comparison and separate source-membership writes are absent. The database upgrade removes the obsolete membership store, builds the host
-channel index, and preserves records and device preferences. Leaving a community purges only its saved partition. If database
+channel index, and preserves records and device preferences. Leaving a community purges only its saved partition. The community service reads membership changes from other windows. It clears a removed selection and preserves each window’s live selection. Handles capture the local membership generation and close when it changes. Opens read the current device record, so a window cannot reopen a left partition before its storage event arrives. Explicit rejoin permits new handles; old handles stay closed. Leave holds an exclusive Web Lock for the partition before membership removal, through purge. Collection initialization takes the same lock in shared mode. New collections wait for an in-flight purge. Queued initialization and writes also validate the captured membership. If database
 opening fails, close that handle and open another after the cause clears.

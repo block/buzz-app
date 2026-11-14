@@ -216,6 +216,7 @@ async function setup({
   /** Settings the type syncs across devices. */
   syncedSettings = undefined as AgentType<Config>["syncedSettings"],
   protection = undefined as true | undefined,
+  protectionUnavailable = undefined as string | undefined,
   retire = undefined as AgentType<Config>["retire"],
   readFile = undefined as AgentType<Config>["readFile"],
   /** How `run` answers, from the first delivery on. */
@@ -338,6 +339,7 @@ async function setup({
     run,
     ...(voice ? { voice } : {}),
     ...(protection ? { protection } : {}),
+    ...(protectionUnavailable ? { protectionUnavailable } : {}),
     ...(retire ? { retire } : {}),
     ...(readFile ? { readFile } : {}),
     ...(runOnce ? { runOnce } : {}),
@@ -18716,6 +18718,39 @@ it("fails a protected delivery before calling a runtime that has no protection i
     expect(f.activity.reader.work()[0]).toMatchObject({
       state: "error",
       error: expect.stringContaining("does not support"),
+    }),
+  );
+  expect(f.run).not.toHaveBeenCalled();
+});
+
+it("fails a protected delivery with the type's reason when it has no protection integration", async () => {
+  const identities: AgentIdentity[] = [];
+  const reason = "This type can't enforce protection policies yet.";
+  const f = await setup({ identities, protectionUnavailable: reason });
+  await f.service.create({ type: "example/echo", name: "Worker" });
+  const identity = identities[0];
+  if (!identity) throw new Error("Expected native identity");
+  identities[0] = {
+    ...identity,
+    protection: { provider: "example", policy: {} },
+    protectionRevision: 1,
+  };
+  await f.service.refresh();
+  f.emit({
+    events: [
+      event("protected-reason", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() =>
+    expect(f.activity.reader.work()[0]).toMatchObject({
+      state: "error",
+      error: expect.stringContaining(reason),
     }),
   );
   expect(f.run).not.toHaveBeenCalled();

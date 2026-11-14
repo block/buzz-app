@@ -291,7 +291,7 @@ struct Git {
 /// executable file but can present an installation dialog when tools are missing.
 #[cfg(target_os = "macos")]
 fn git_program(path: &std::ffi::OsStr) -> Option<PathBuf> {
-    git_program_with_tools(path, || {
+    git_program_with_tools(path, Path::new("/usr/bin/git"), || {
         std::process::Command::new("/usr/bin/xcode-select")
             .arg("-p")
             .stdin(Stdio::null())
@@ -305,10 +305,10 @@ fn git_program(path: &std::ffi::OsStr) -> Option<PathBuf> {
 #[cfg(target_os = "macos")]
 fn git_program_with_tools(
     path: &std::ffi::OsStr,
+    shim: &Path,
     tools_available: impl FnOnce() -> bool,
 ) -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt as _;
-    let shim = Path::new("/usr/bin/git");
     let mut tools_available = Some(tools_available);
     std::env::split_paths(path)
         .map(|directory| directory.join("git"))

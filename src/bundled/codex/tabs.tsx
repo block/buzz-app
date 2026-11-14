@@ -246,8 +246,12 @@ export class CodexProvider {
   private found: RecommendedCandidate | undefined;
   resolve(raw: unknown, remote = false): Config {
     // A remote target's catalog isn't this computer's: an agent on
-    // Recommended there runs on its Codex default.
-    if (remote) return readConfig(raw);
+    // Recommended there runs on its Codex default. Apps follow this
+    // computer's Codex sign-in, so they stay off there.
+    if (remote) {
+      const { apps: _apps, ...config } = readConfig(raw);
+      return config;
+    }
     // Recommended picks the model and level, as an explicit choice would.
     const explicit = followRecommended(
       raw,

@@ -2748,6 +2748,14 @@ describe("Recommended", () => {
     });
   });
 
+  it("keeps Apps and plugins to this computer", () => {
+    const f = fixture();
+    const allowed = { ...defaults, apps: true };
+    expect(f.provider.resolve(allowed).apps).toBe(true);
+    // A remote target has its own Codex sign-in.
+    expect(f.provider.resolve(allowed, true)).not.toHaveProperty("apps");
+  });
+
   it("runs on Codex's own default when no candidate is offered", async () => {
     vi.stubEnv(
       "VITE_BUZZ_RECOMMENDED_AGENT",

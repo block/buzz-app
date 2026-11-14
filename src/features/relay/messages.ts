@@ -204,7 +204,7 @@ export function createMessages(
           ["h", channelId],
           ["e", targetId],
           ...attachmentSource.tags.filter((tag) => tag[0] === "imeta"),
-          ...emojiTags(content),
+          ...emojiTags(content.trim()),
         ],
       });
     const id = sendEdit(messageId);
@@ -319,7 +319,7 @@ export function createMessages(
             ...mentionTags(channelId, withDmAgents(channelId, mentions)),
             ...referenceTags(references),
             ...pickTags(channelId, mentions, picks),
-            ...emojiTags(content),
+            ...emojiTags(content.trim()),
             ...message.tags,
             ...signedMessageTokenTags(),
           ],
@@ -443,7 +443,7 @@ export function createMessages(
           ...referenceTags(references),
           ...pickTags(channelId, mentions, picks),
           ...(mediaTarget ? [[MEDIA_TARGET_TAG, mediaTarget]] : []),
-          ...emojiTags(content),
+          ...emojiTags(content.trim()),
           ...message.tags,
           ...signedMessageTokenTags(),
         ],

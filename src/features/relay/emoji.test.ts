@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createEmojiDirectory } from "./emoji-directory";
 import {
   EMOJI_SET,
+  contentEmojiTags,
   emojiTags,
   referencedEmoji,
   suggestShortcode,
@@ -83,6 +84,86 @@ it("normalizes first-wins scheme-agnostic emoji tags and leaves URL fragments ou
       ":PARTY: :party: https://a.test/:link: http://localhost:3000/:dev: :other:",
     ),
   ).toEqual(["party", "other"]);
+});
+it("tags a shortcode after a link and CJK punctuation, but not inside links", () => {
+  const entries = [{ shortcode: "party", url }];
+  for (const content of [
+    "看这个 https://example.com，:party:",
+    "https://example.com/a。:party:",
+    "链接=https://example.com，:party:",
+    "价格<100看这个https://example.com，:party:",
+    "[a](HTTPS://example.com)，:party:",
+    "[a](HTTPS://example.com)，:party:https://b.com",
+    "Check this\n[x]: https://example.com，:party:",
+    "](\n\n[x]: https://example.com\n\nhttps://example.com，:party:",
+  ]) {
+    expect(contentEmojiTags(content, entries)).toEqual([
+      ["emoji", "party", url],
+    ]);
+    expect(referencedEmoji(content)).toEqual(["party"]);
+  }
+  for (const content of [
+    "https://example.com/a:party:",
+    "<https://example.com/a，:party:>",
+    "[a](https://example.com/a，:party:)",
+    "[a]( https://example.com/a，:party:)",
+    String.raw`[a]\(https://example.com/a，:party:\)`,
+    "HTTPS://example.com/?redirect=https://other.com/:party:",
+    "[a](HTTPS://example.com/?redirect=https://other.com/a，:party:)",
+    "<HTTPS://example.com/?redirect=https://other.com/a，:party:>",
+    "[a](HTTPS://x.com/(https://y.com/a，:party:))",
+    "[a](HTTPS://x.com/?urls=HTTPS://one.com,https://two.com/a，:party:)",
+    '[a](https://x.com/?url="https://y.com/a，:party:")',
+    "[a](<https://x.com/a b?u=https://y.com/a，:party:>)",
+    String.raw`[a](<https://x.com/a\>https://y.com/a，:party:>)`,
+    String.raw`[a](<https://x.com/a\<x?url=https://y.com/a，:party:>)`,
+    "[a](https://x.com/a\u3000https://y.com/a，:party:)",
+    "<https://x.com/a\u3000https://y.com/a，:party:>",
+    "[a](<https://x.com/a\\\u2028https://y.com/a，:party:>)",
+    "[a](<https://x.com/a\\\u2029https://y.com/a，:party:>)",
+    "[a](\u2028<x>https://y.com/a，:party:)",
+    "https://github。COM/:party:",
+    "[ref]: https://example.com/a，:party:",
+    "Hi\n\n> [ref]: https://example.com/a，:party:",
+    "- [ref]:\n  https://example.com/a，:party:",
+  ]) {
+    expect(contentEmojiTags(content, entries)).toEqual([]);
+    expect(referencedEmoji(content)).toEqual([]);
+  }
+  expect(referencedEmoji("see :http://")).toEqual(["http"]);
+  expect(
+    referencedEmoji("[ref]: https://example.com/a，:party:\n:other:"),
+  ).toEqual(["other"]);
+});
+it("sends a reference definition's shortcode without the catalog", async () => {
+  const h = session();
+  // The app stores trimmed text, where these are definitions too.
+  const contents = [
+    "[ref]: https://example.com/a，:party:",
+    "\u3000[ref]: https://example.com/a，:party:",
+    "    [ref]: https://example.com/a，:party:",
+    `${"> ".repeat(101)}[ref]: https://example.com/a，:party:`,
+  ];
+  const sent = () =>
+    contents.flatMap((content) => {
+      const id = h.session.messages.send("c", content);
+      return (
+        h.session.outbox
+          ?.snapshot()
+          .find((item) => item.event.id === id)
+          ?.event.tags.filter(([name]) => name === "emoji") ?? [["missing"]]
+      );
+    });
+  expect(sent()).toEqual([]);
+  expect(h.session.emoji.snapshot().status).not.toBe("ready");
+  for (const pending of h.wire.pending.splice(0)) pending.respond([]);
+  await flush();
+  const ready = h.session.emoji.ensure();
+  await flush();
+  h.wire.next().fail(new Error("offline"));
+  await ready;
+  expect(h.session.emoji.snapshot().status).toBe("error");
+  expect(sent()).toEqual([]);
 });
 it("unions latest complete member sets; empty replacements and ties survive stale reads", async () => {
   const h = session();

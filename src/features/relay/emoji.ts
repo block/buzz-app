@@ -1,4 +1,5 @@
 import type { EventData } from "./events.ts";
+import { BARE_URL_REST, definitionRanges } from "./message-content.ts";
 
 export type CustomEmoji = Readonly<{ shortcode: string; url: string }>;
 export const EMOJI_SET = "buzz:custom-emoji";
@@ -81,10 +82,29 @@ export function emojiTags(event: {
   }
   return Object.freeze([...entries.values()]);
 }
-/** Share token boundaries with the renderer: never substitute inside HTTP(S) links. */
+/** Share token boundaries with the renderer: never substitute inside HTTP(S) links.
+ * Bare links end at the same CJK punctuation as rendered ones. Within a `<url>` or
+ * `](url)` destination, a URL ends only at whitespace or `<>"\``. */
+const destinations =
+  /<[a-zA-Z][a-zA-Z\d+.-]{1,31}:[^ \t\r\n<>]*|\]\\?\([ \t\r\n]*(?:<(?:\\[^\r\n]|[^<>\r\n\\])*|[^ \t\r\n]*)/
+    .source;
+const scheme = /https?:\/\/(?=[^\s<>"`])/.source;
+const links = new RegExp(`(${destinations}|${scheme}${BARE_URL_REST})`, "g");
+const runs = /(https?:\/\/[^\s<>"`]+)/;
 export const messageParts = (content: string) =>
-  content.split(/(https?:\/\/[^\s<>"`]+)/g);
+  content.split(links).flatMap((part) => part.split(runs));
 export const linkPart = (part: string) => /^https?:\/\//.test(part);
+/** Message parts outside reference definitions, which render no emoji. */
+function sentParts(content: string) {
+  if (!/:[\w-]{1,64}:/.test(content)) return messageParts(content);
+  const parts: string[] = [];
+  let offset = 0;
+  for (const { start, end } of definitionRanges(content)) {
+    parts.push(...messageParts(content.slice(offset, start)));
+    offset = end;
+  }
+  return [...parts, ...messageParts(content.slice(offset))];
+}
 const shortcodePattern = () => /(?=(:([a-zA-Z0-9_-]{1,64}):))/g;
 export function* emojiMatches(
   content: string,
@@ -130,7 +150,7 @@ export function contentEmojiTags(
   entries: readonly CustomEmoji[],
 ): string[][] {
   const used = new Map<string, string>();
-  for (const part of messageParts(content)) {
+  for (const part of sentParts(content)) {
     if (linkPart(part)) continue;
     for (const { emoji } of emojiMatches(part, entries))
       used.set(emoji.shortcode, emoji.url);
@@ -140,7 +160,7 @@ export function contentEmojiTags(
 export function referencedEmoji(content: string): string[] {
   return [
     ...new Set(
-      messageParts(content).flatMap((part) =>
+      sentParts(content).flatMap((part) =>
         linkPart(part)
           ? []
           : [...part.matchAll(shortcodePattern())].map((m) =>

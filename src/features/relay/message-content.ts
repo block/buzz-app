@@ -23,6 +23,12 @@ export function safeMessageUrl(value: string): string | undefined {
   return url?.startsWith("https:") ? url : undefined;
 }
 
+/** A bare URL after `scheme://`. CJK punctuation ends it, except 。．｡ before
+ * a host label (URLs read them as dots). */
+export const BARE_URL_REST =
+  /(?:[^\s<>"`:/?#，。、．！？；：＂＇（）［］｛｝「」『』《》【】〈〉〔〕〖〗〝〞〟｡｢｣､“”‘’…～〜]|[。．｡](?=[a-zA-Z\d-]+(?![a-zA-Z\d-]|:\/\/)))*(?:[:/?#][^\s<>"`，。、．！？；：＂＇（）［］｛｝「」『』《》【】〈〉〔〕〖〗〝〞〟｡｢｣､“”‘’…～〜]*)?/
+    .source;
+
 type MarkdownNode = {
   type: string;
   value?: string;
@@ -110,6 +116,28 @@ export function scanMarkdown(content: string): MarkdownScan {
     }
   }
   return { tree, tooDeep, definitions, images, links };
+}
+
+/** Source ranges of reference definitions, in order. They render no text. */
+export function definitionRanges(
+  content: string,
+): readonly { start: number; end: number }[] {
+  if (!content.includes("]:") || content.length > MAX_MARKDOWN_LENGTH)
+    return [];
+  const { tree } = scanMarkdown(content);
+  const ranges: { start: number; end: number }[] = [];
+  const pending = [tree];
+  for (let node = pending.pop(); node; node = pending.pop()) {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (node.type === "definition" && start !== undefined && end !== undefined)
+      ranges.push({ start, end });
+    for (let index = (node.children?.length ?? 0) - 1; index >= 0; index--) {
+      const child = node.children?.[index];
+      if (child) pending.push(child);
+    }
+  }
+  return ranges;
 }
 
 function resolvedNodeUrl(

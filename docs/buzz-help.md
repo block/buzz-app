@@ -694,6 +694,9 @@ and are asked to sign in again in Buzz.
   **Settings → Shortcuts → Sending messages → Send with ⌘ Enter** (Ctrl+Enter
   outside Apple platforms) swaps that on this device: Enter adds a line and
   ⌘/Ctrl+Enter sends. It starts off.
+- Clicking anywhere in a conversation that isn't a control, field, or text you
+  select, including a message row and the space around the composer, puts you
+  back in that conversation's composer so you can keep typing.
 - If a message can't be sent, **Retry** appears under it right away. If its
   delivery is only unconfirmed, Buzz waits about ten seconds before saying so.
   To give up on it, choose **Delete message** in its "..." menu for a message

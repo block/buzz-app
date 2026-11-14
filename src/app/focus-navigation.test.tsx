@@ -313,3 +313,32 @@ it("a key pressed before the click's frame supersedes it", async () => {
   await settle();
   expect(draft).not.toHaveFocus();
 });
+
+it("a click on the message box's frame resumes typing in it", async () => {
+  const user = userEvent.setup();
+  render(
+    <main id="main-content">
+      <div id="shell-page-channels" role="tabpanel" tabIndex={-1}>
+        <div data-main-workspace="">
+          <form aria-label="Send a message">
+            <div>
+              <textarea data-tab-focus="" aria-label="Main draft" />
+            </div>
+            <div>
+              <button type="button">Attach</button>
+              <span>Toolbar gap</span>
+            </div>
+          </form>
+        </div>
+      </div>
+    </main>,
+  );
+  // The page panel, not the form, is what the click focuses.
+  screen.getByText("Toolbar gap").addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    document.getElementById("shell-page-channels")?.focus();
+  });
+  await user.click(screen.getByText("Toolbar gap"));
+  await settle();
+  expect(screen.getByRole("textbox", { name: "Main draft" })).toHaveFocus();
+});

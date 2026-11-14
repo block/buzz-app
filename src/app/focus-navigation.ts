@@ -132,7 +132,9 @@ const DISMISSIBLE =
 
 // Containers a click focuses only as a side effect: a message row (selectable
 // by keyboard), its history scroller, or the pane itself.
-const PASSIVE = `[data-message-id], [data-message-id] > [data-layout], [data-message-scroller], [data-channel-history], ${COVERING}, #main-content`;
+// The page's own tab panel takes focus from a click anywhere in the page around
+// a control, such as the message box's frame and its toolbar's gaps.
+const PASSIVE = `[data-message-id], [data-message-id] > [data-layout], [data-message-scroller], [data-channel-history], ${COVERING}, #main-content, [id^="shell-page-"][role="tabpanel"]`;
 
 /** Focus a click left on no control, or on a container it only passed through. */
 function passiveFocus(active: Element | null) {

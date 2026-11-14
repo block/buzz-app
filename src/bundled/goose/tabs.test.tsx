@@ -1432,6 +1432,99 @@ it("preserves Goose model inheritance when only thinking changes", async () => {
   );
 });
 
+function settings(setup: GooseSetup, provider = "anthropic") {
+  const { SettingsTab } = createTabs({ setup, ...unused });
+  render(
+    <SettingsTab
+      agent={
+        {
+          key: "c".repeat(64),
+          pubkey: "c".repeat(64),
+          name: "Gander",
+          type: "buzz.goose/goose",
+          owner: "a".repeat(64),
+          config: { ...DEFAULT_CONFIG, provider },
+        } as Agent<Config>
+      }
+      save={vi.fn()}
+    />,
+  );
+}
+
+it("removes a saved provider key in Settings and asks for one again", async () => {
+  const saved = new Map([["anthropic", new Set(["ANTHROPIC_API_KEY"])]]);
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "anthropic", modelId: "claude-sonnet-5-5" },
+    saved,
+  });
+  const setup = new GooseSetup(fake);
+  settings(setup);
+  const user = userEvent.setup();
+  const key = await screen.findByLabelText("API key", {
+    selector: "input:not([aria-hidden])",
+  });
+  await waitFor(() =>
+    expect(key).toHaveAttribute(
+      "placeholder",
+      "Saved in goose. Enter a new value to replace it.",
+    ),
+  );
+  await user.click(screen.getByRole("button", { name: "Remove key" }));
+  await waitFor(() =>
+    expect(screen.getByLabelText("API key")).not.toHaveAttribute(
+      "placeholder",
+      "Saved in goose. Enter a new value to replace it.",
+    ),
+  );
+  expect(saved.get("anthropic")).toEqual(new Set());
+  expect(screen.queryByRole("button", { name: "Remove key" })).toBeNull();
+  expect(setup.snapshot()).toMatchObject({ readiness: "attention" });
+});
+
+it("keeps a saved provider key and says why when removing it fails", async () => {
+  const saved = new Map([["anthropic", new Set(["ANTHROPIC_API_KEY"])]]);
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "anthropic", modelId: "claude-sonnet-5-5" },
+    saved,
+  });
+  const setup = new GooseSetup(fake);
+  vi.spyOn(setup, "remove").mockRejectedValue(new Error("Keychain is locked"));
+  settings(setup);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Remove key" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Keychain is locked",
+  );
+  expect(screen.getByRole("button", { name: "Remove key" })).toBeEnabled();
+  expect(screen.getByLabelText("API key")).toHaveAttribute(
+    "placeholder",
+    "Saved in goose. Enter a new value to replace it.",
+  );
+  expect(saved.get("anthropic")).toEqual(new Set(["ANTHROPIC_API_KEY"]));
+});
+
+it("offers no removal for a saved field that is not secret", async () => {
+  settings(
+    new GooseSetup(
+      fakeSpawn({
+        providers: PROVIDERS,
+        defaults: { providerId: "databricks", modelId: "goose-claude" },
+        saved: new Map([["databricks", new Set(["DATABRICKS_HOST"])]]),
+      }),
+    ),
+    "databricks",
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText("Host")).toHaveAttribute(
+      "placeholder",
+      "Saved in goose. Enter a new value to replace it.",
+    ),
+  );
+  expect(screen.queryByRole("button", { name: /^Remove key/ })).toBeNull();
+});
+
 it("refreshes the Settings model and thinking after saving provider credentials", async () => {
   const saved = new Map<string, Set<string>>();
   const fake = fakeSpawn({

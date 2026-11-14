@@ -100,10 +100,26 @@ function fixture({
   const processes: { end: ReturnType<typeof vi.fn> }[] = [];
   const items = new Map<string, unknown[]>();
   // Buzz's copy, as its launcher answers: its `login` step runs until it ends.
-  const disk = { signedIn, installed };
+  const disk = { signedIn, installed, logoutFailure: "", modelListFailure: "" };
   const logins: ReturnType<typeof deferred<number | null>>[] = [];
   const spawn = vi.fn(async (id: string, options?: HostProcessOptions) => {
     const exit = deferred<number | null>();
+    if (id === "logout") {
+      // Sign-out ends signed out, unless it fails and leaves the sign-in.
+      if (disk.logoutFailure) {
+        queueMicrotask(() => options?.onStderr?.(disk.logoutFailure));
+        exit.resolve(1);
+      } else {
+        disk.signedIn = false;
+        exit.resolve(0);
+      }
+      return {
+        write: async (_text: string) => {},
+        end: vi.fn(async () => {}),
+        kill: vi.fn(async () => {}),
+        exited: exit.promise,
+      };
+    }
     if (id === "codex" || id === "login") {
       const args = options?.args?.join(" ");
       if (id === "login") logins.push(exit);
@@ -169,6 +185,15 @@ function fixture({
               : null,
             requiresOpenaiAuth,
           };
+        if (wire.method === "model/list" && disk.modelListFailure) {
+          options?.onStdout?.(
+            `${JSON.stringify({
+              id: wire.id,
+              error: { code: -32603, message: disk.modelListFailure },
+            })}\n`,
+          );
+          return;
+        }
         if (wire.method === "model/list")
           result = {
             data: [
@@ -729,6 +754,65 @@ it("keeps provider readiness quiet and shows recovery when needed", async () => 
   expect(screen.getByRole("button", { name: "Sign in" })).toBeVisible();
   expect(screen.queryByText("Connection")).not.toBeInTheDocument();
 });
+it("signs out of Codex, says it signs out the CLI too, and asks to sign in again", async () => {
+  const f = fixture();
+  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Sign out" }));
+  expect(await screen.findByRole("button", { name: "Sign in" })).toBeVisible();
+  expect(f.spawn.mock.calls.map(([id]) => id)).toContain("logout");
+  expect(f.disk.signedIn).toBe(false);
+  expect(f.provider.snapshot()).toMatchObject({
+    readiness: "attention",
+    attentionLabel: "Log in to Codex",
+  });
+  expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
+});
+
+it("tells the person that signing out also signs out the Codex CLI", async () => {
+  const f = fixture();
+  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  await screen.findByRole("button", { name: "Sign out" });
+  expect(
+    screen.getByText("This also signs out the Codex CLI on this computer."),
+  ).toBeVisible();
+});
+
+it("stays signed in and shows why when signing out fails", async () => {
+  const f = fixture();
+  f.disk.logoutFailure = "Codex could not reach the keyring\n";
+  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Sign out" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Codex could not reach the keyring",
+  );
+  expect(f.provider.snapshot().readiness).toBe("ready");
+  expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+});
+
+it("offers sign-out while signed in even when the models can't be listed", async () => {
+  const f = fixture();
+  f.disk.modelListFailure = "model catalog unavailable";
+  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "model catalog unavailable",
+  );
+  expect(f.provider.snapshot().readiness).toBe("attention");
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(await screen.findByRole("button", { name: "Sign in" })).toBeVisible();
+  expect(f.disk.signedIn).toBe(false);
+});
+
+it("offers no sign-out while Codex is signed out", async () => {
+  const f = fixture({ signedIn: false });
+  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  await screen.findByRole("button", { name: "Sign in" });
+  expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
+});
+
 it("keeps the provider dialog and its draft open while defaults could not be saved", async () => {
   let failing = true;
   const storage = fileStore(new Map(), async () => {

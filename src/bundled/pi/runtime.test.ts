@@ -694,6 +694,22 @@ it("lists the tools plugins add, and runs them for Pi", async () => {
   });
 });
 
+it("explains a turn that Pi had no key for in the report", async () => {
+  const { deliver, runtime, published } = setup({
+    wait: () => ({
+      status: "unanswered",
+      reason: "model_error",
+      detail: "Provider is not configured: openai",
+    }),
+  });
+  runtime.explain = (error) => `Explained: ${error}`;
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  await vi.waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]?.content).toBe(
+    "⚠️ I couldn't finish that: Explained: Provider is not configured: openai",
+  );
+});
+
 it("reports a turn Pi left unanswered to the owner, in its thread", async () => {
   const { deliver, settled, published } = setup({
     wait: () => ({

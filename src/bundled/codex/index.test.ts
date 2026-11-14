@@ -256,6 +256,56 @@ it("starts the server once Codex is updated and checked, only while a Codex agen
   expect(warm).toHaveBeenCalledOnce();
 });
 
+it("replaces the server holding the old sign-in once a sign-out ends", async () => {
+  let setup: CodexSetup | undefined;
+  vi.spyOn(CodexSetup.prototype, "update").mockImplementation(function (
+    this: CodexSetup,
+  ) {
+    setup = this;
+    return Promise.resolve();
+  });
+  vi.spyOn(CodexProvider.prototype, "check").mockResolvedValue();
+  vi.spyOn(CodexRuntime.prototype, "sync").mockImplementation(() => undefined);
+  const restart = vi
+    .spyOn(CodexRuntime.prototype, "restart")
+    .mockImplementation(() => undefined);
+  const exits: ((code: number) => void)[] = [];
+  const spawn = vi.fn(async (_id: string, options?: { args?: string[] }) => {
+    const code = new Promise<number>((resolve) => {
+      if (options?.args?.includes("logout")) exits.push(resolve);
+      else resolve(0);
+    });
+    return {
+      write: async () => undefined,
+      end: async () => undefined,
+      kill: async () => undefined,
+      exited: code,
+    };
+  });
+  const agent = { pubkey: "agent", type: "buzz.codex/codex" };
+  apply({
+    agentProtection: { registerModels: vi.fn() },
+    pluginOwner: { id: "buzz.codex" },
+    host: { spawn, request: vi.fn() },
+    agents: {
+      executionBinding: () => undefined,
+      inspectExecution: async () => undefined,
+      execution: async () => undefined,
+      register: () => undefined,
+      snapshot: () => ({ status: "ready", agents: [agent], running: [agent] }),
+      relay: () => undefined,
+      subscribe: () => () => undefined,
+    },
+    effect: vi.fn(),
+  } as never);
+  const signingOut = setup?.signOut();
+  await vi.waitFor(() => expect(exits).toHaveLength(1));
+  expect(restart).not.toHaveBeenCalled();
+  exits[0]?.(0);
+  await signingOut;
+  expect(restart).toHaveBeenCalledOnce();
+});
+
 it("observes each saved conversation as a session, read-only", () => {
   vi.spyOn(CodexRuntime.prototype, "conversations").mockReturnValue([
     {

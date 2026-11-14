@@ -101,6 +101,12 @@ impl JevHost {
     }
 }
 
+/// Deletes the saved key, under both services, for Sign out's erase, which
+/// runs before any `JevHost` exists. Deleting no key succeeds.
+pub(crate) fn erase() -> Result<(), String> {
+    OsKeyStore.clear()
+}
+
 /// The OS credential store: the login Keychain on macOS, the Secret Service on
 /// Linux and the Credential Manager on Windows.
 struct OsKeyStore;

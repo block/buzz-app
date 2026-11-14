@@ -906,10 +906,11 @@ export class ClaudeRuntime {
   }
 
   /** The credentials changed: idle sessions stop, to start again with the new
-   * ones, and busy ones when they next fall idle. */
+   * ones, busy ones when they next fall idle, and the spare at once. */
   restart() {
     this.credentials++;
     for (const entry of this.agents.values()) entry.sessions.reconfigure();
+    this.spare.refresh();
   }
 
   dispose() {

@@ -2651,6 +2651,19 @@ it("keeps one spare for all its agents, and none once they are gone", async () =
   expect(claudes().every((process) => process.killed)).toBe(true);
 });
 
+it("replaces the spare when the credentials change", async () => {
+  const { runtime, claudes } = setup();
+  runtime.sync([{ key: self, pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await flush(10);
+  const [old] = claudes();
+  runtime.restart();
+  await flush(10);
+  expect(old?.killed).toBe(true);
+  expect(claudes()).toHaveLength(2);
+  expect(claudes()[1]?.killed).toBe(false);
+  runtime.dispose();
+});
+
 it("replaces the spare when no agent runs where it was started", async () => {
   const { runtime, claudes } = setup();
   runtime.sync([{ key: self, pubkey: self, config: DEFAULT_CONFIG } as Agent]);

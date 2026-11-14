@@ -61,8 +61,11 @@ original untouched; a missing rollout starts a new thread.
 - Use absolute paths in `config.toml`; relative paths resolve against Buzz's home.
 - The shared home's `hooks.json` and path-based trust are not imported. Hooks
   from shared configuration or project settings still follow Codex's trust rules.
-- File-based sign-in is shared. Sign out through Codex desktop or the terminal;
-  signing out only in Buzz removes a link that the launcher restores. Signing in
+- File-based sign-in is shared. **Sign out** in Codex's settings runs
+  `codex logout` in the shared home, then in Buzz's, so it removes a file or
+  keyring sign-in in both and also signs out the Codex CLI on this computer;
+  Codex agents then start a new server once idle. Signing out only in Buzz's
+  home would remove a link that the launcher restores. Signing in
   through Buzz updates the shared credentials unless they are newer, replacing a
   linked shared `auth.json` with a file, as `codex login` does. Keyring sign-in
   is scoped to the home and needs a separate Buzz sign-in.

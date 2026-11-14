@@ -734,6 +734,43 @@ describe("GooseSetup", () => {
     expect(fake.geese).toHaveLength(before + 1);
   });
 
+  it("removes one saved secret from goose and checks setup again", async () => {
+    const saved = new Map([["anthropic", new Set(["ANTHROPIC_API_KEY"])]]);
+    const { fake, setup: goose } = setup({
+      saved,
+      defaults: { providerId: "anthropic", modelId: "claude-opus-5-5" },
+    });
+    await goose.check();
+    expect(goose.snapshot()).toMatchObject({ readiness: "ready" });
+    await goose.remove("anthropic", "ANTHROPIC_API_KEY");
+    const methods = fake.geese
+      .flatMap((process) => process.received)
+      .filter((message) => message.method?.includes("providers/secrets"));
+    expect(methods.map((message) => message.method)).toEqual([
+      "_goose/unstable/providers/secrets/list",
+      "_goose/unstable/providers/secrets/delete",
+    ]);
+    expect(methods[1]?.params).toEqual({
+      id: "secret_store:anthropic:ANTHROPIC_API_KEY",
+    });
+    expect(saved.get("anthropic")).toEqual(new Set());
+    expect(await goose.saved("anthropic")).toEqual(new Set());
+    expect(goose.snapshot()).toMatchObject({ readiness: "attention" });
+  });
+
+  it("refuses to remove a key goose holds none of", async () => {
+    const saved = new Map([["anthropic", new Set<string>()]]);
+    const { fake, setup: goose } = setup({ saved });
+    await expect(
+      goose.remove("anthropic", "ANTHROPIC_API_KEY"),
+    ).rejects.toThrow("goose has no saved ANTHROPIC_API_KEY to remove");
+    expect(
+      fake.geese
+        .flatMap((process) => process.received)
+        .some((message) => message.method?.endsWith("secrets/delete")),
+    ).toBe(false);
+  });
+
   it("passes a test the provider answers OK, in chat mode with no tools", async () => {
     const { fake, setup: goose } = setup({ reply: "OK." });
     expect(

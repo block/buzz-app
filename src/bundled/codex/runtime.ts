@@ -305,6 +305,8 @@ export class CodexRuntime {
     }
   >();
   private disposed = false;
+  /** Servers started before Codex's sign-in changed. */
+  private readonly stale = new Set<Server>();
   private opening = new Map<
     string,
     {
@@ -1078,6 +1080,40 @@ export class CodexRuntime {
     this.stopping.clear();
     this.close();
   }
+  /** Codex's sign-in changed, and the running servers hold the old one: the
+   * shared server stops once no turn is running, a protected agent's once
+   * that agent has none, and the next turn starts a new one. */
+  restart() {
+    if (this.server) this.stale.add(this.server);
+    for (const server of this.protectedServers.values()) this.stale.add(server);
+    this.renew();
+  }
+  private idle(agent: AgentKey) {
+    const entry = this.entries.get(agent);
+    return !entry || (!entry.lanes.size && !entry.onces.size);
+  }
+  private renew() {
+    if (!this.stale.size) return;
+    for (const [agent, server] of this.protectedServers)
+      if (this.stale.has(server) && this.idle(agent)) {
+        this.stale.delete(server);
+        void this.shutdown(agent, server).catch(() => undefined);
+      }
+    const shared = this.server;
+    if (
+      shared &&
+      this.stale.has(shared) &&
+      [...this.entries.keys()].every((agent) => this.idle(agent))
+    ) {
+      this.stale.delete(shared);
+      void shared.rpc.close();
+      this.server = undefined;
+    }
+    // A server that closed on its own is not replaced again.
+    const live = new Set([this.server, ...this.protectedServers.values()]);
+    for (const server of this.stale)
+      if (!live.has(server)) this.stale.delete(server);
+  }
   /** Starts the shared server ahead of the first mention. */
   warm() {
     this.open();
@@ -1530,8 +1566,10 @@ export class CodexRuntime {
           await loaded.bridge?.close();
         }
         delete lane.voice;
-        if (!lane.active && !lane.queued && entry.lanes.get(key) === lane)
+        if (!lane.active && !lane.queued && entry.lanes.get(key) === lane) {
           entry.lanes.delete(key);
+          this.renew();
+        }
       })();
       lane.tail = closing;
       return closing;
@@ -2127,6 +2165,7 @@ export class CodexRuntime {
           .catch(() => undefined);
       }
       entry.onces.delete(once);
+      this.renew();
       release();
     }
   }
@@ -2275,6 +2314,7 @@ export class CodexRuntime {
       .finally(() => {
         if (current.tail === job && !current.active && !current.voice) {
           entry.lanes.delete(key);
+          this.renew();
           for (const listener of this.listeners) listener();
         }
       });

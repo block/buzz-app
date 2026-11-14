@@ -424,6 +424,26 @@ export function fakeSpawn(
           options.saved?.set(providerId, set);
           return reply(id, { status: { providerId, isConfigured: true } });
         }
+        case "_goose/unstable/providers/secrets/list":
+          // As goose lists secrets: only a provider's secret fields it holds.
+          return reply(id, {
+            secrets: [...(options.saved ?? [])].flatMap(([provider, keys]) =>
+              [...keys]
+                .filter((key) => key.endsWith("_KEY") || key.endsWith("_TOKEN"))
+                .map((key) => ({
+                  id: `secret_store:${provider}:${key}`,
+                  provider,
+                  name: key,
+                  storage: "secret_store",
+                  canDelete: true,
+                })),
+            ),
+          });
+        case "_goose/unstable/providers/secrets/delete": {
+          const [, provider = "", key = ""] = String(params.id).split(":");
+          options.saved?.get(provider)?.delete(key);
+          return reply(id, {});
+        }
         case "_goose/unstable/providers/supported-models/list":
           return reply(id, {
             providerId: params.providerId,

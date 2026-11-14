@@ -67,6 +67,7 @@ function fakePi(
       key: true,
       signsIn: true,
       configured: "auth.json",
+      saved: true,
     },
     { id: "openai", name: "OpenAI", key: true, signsIn: false },
     { id: "copilot", name: "GitHub Copilot", key: false, signsIn: true },
@@ -86,7 +87,19 @@ function fakePi(
           (item) => item.id === params.provider,
         );
         const found = providers[index];
-        if (found) providers[index] = { ...found, configured: "auth.json" };
+        if (found)
+          providers[index] = { ...found, configured: "auth.json", saved: true };
+        return {};
+      }
+      if (method === "logout") {
+        const index = providers.findIndex(
+          (item) => item.id === params.provider,
+        );
+        const found = providers[index];
+        if (found) {
+          const { configured: _, saved: __, ...rest } = found;
+          providers[index] = rest;
+        }
         return {};
       }
       if (method === "test")
@@ -95,7 +108,7 @@ function fakePi(
     },
   );
   type Request = ConstructorParameters<typeof PiSetup>[0]["request"];
-  return { request: request as unknown as Request, calls: request };
+  return { request: request as unknown as Request, calls: request, providers };
 }
 
 /** The runtime's conversations: a thread Pi works in, in a channel the
@@ -538,6 +551,103 @@ it("saves a key on Enter without saving the agent's settings", async () => {
     key: "sk-test",
   });
   expect(save).not.toHaveBeenCalled();
+});
+
+it("removes only a saved key, and asks for a key again", async () => {
+  const pi = fakePi();
+  const { SettingsTab } = createTabs({
+    setup: new PiSetup(pi),
+    runtime: fakeRuntime(),
+  });
+  render(<SettingsTab agent={AGENT} save={vi.fn()} />);
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Provider" })).toBeEnabled(),
+  );
+  const user = userEvent.setup();
+  // A key from the environment or a sign-in from `pi` is not Buzz's to remove.
+  await choose("Provider", "OpenAI");
+  await user.type(await screen.findByLabelText("API key"), "sk-test{Enter}");
+  expect(await screen.findByText("OpenAI is set up in Pi.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Remove key" })).toBeVisible();
+  const openai = pi.providers.findIndex((item) => item.id === "openai");
+  const { saved: _, ...fromEnvironment } = pi.providers[openai] as Provider;
+  pi.providers[openai] = { ...fromEnvironment, configured: "OPENAI_API_KEY" };
+  fireEvent.focus(window);
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Remove key" })).toBeNull(),
+  );
+  expect(screen.getByRole("button", { name: "Change" })).toBeVisible();
+
+  // Anthropic's saved key goes; OpenAI's is not asked about.
+  await choose("Provider", "Anthropic");
+  await user.click(await screen.findByRole("button", { name: "Remove key" }));
+  expect(await screen.findByLabelText("API key")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Save to Pi" })).toBeVisible();
+  expect(screen.queryByText("Anthropic is set up in Pi.")).toBeNull();
+  expect(pi.calls).toHaveBeenCalledWith("logout", { provider: "anthropic" });
+  expect(
+    pi.calls.mock.calls.filter(([method]) => method === "logout"),
+  ).toHaveLength(1);
+});
+
+it("keeps a key and says why when removing it fails", async () => {
+  const pi = fakePi({ logout: "auth.json is locked by another process" });
+  const { SettingsTab } = createTabs({
+    setup: new PiSetup(pi),
+    runtime: fakeRuntime(),
+  });
+  render(<SettingsTab agent={AGENT} save={vi.fn()} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Remove key" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "auth.json is locked by another process",
+  );
+  expect(screen.getByText("Anthropic is set up in Pi.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Remove key" })).toBeEnabled();
+  expect(screen.queryByLabelText("API key")).toBeNull();
+});
+
+it("does not save a replacement key while removing the saved one", async () => {
+  const pi = fakePi();
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const request = vi.fn(
+    async (
+      method: string,
+      params: Record<string, string> = {},
+    ): Promise<unknown> => {
+      if (method === "logout") await held;
+      return pi.calls(method, params);
+    },
+  );
+  const { SettingsTab } = createTabs({
+    setup: new PiSetup({
+      request: request as unknown as typeof pi.request,
+    }),
+    runtime: fakeRuntime(),
+  });
+  render(<SettingsTab agent={AGENT} save={vi.fn()} />);
+  const user = userEvent.setup();
+  try {
+    await user.click(await screen.findByRole("button", { name: "Change" }));
+    const input = await screen.findByLabelText("API key");
+    await user.type(input, "sk-new");
+    await user.click(screen.getByRole("button", { name: "Remove key" }));
+    // Enter in the key field must not save while the removal is pending.
+    await waitFor(() => expect(input).toBeDisabled());
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByRole("button", { name: "Save to Pi" })).toBeDisabled();
+  } finally {
+    release();
+  }
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Remove key" })).toBeNull(),
+  );
+  expect(screen.getByLabelText("API key")).toBeEnabled();
+  expect(request).toHaveBeenCalledWith("logout", { provider: "anthropic" });
+  expect(request).not.toHaveBeenCalledWith("login", expect.anything());
 });
 
 it("settles a transcript request without opening it once Pi's late listing arrives", async () => {

@@ -11,15 +11,26 @@ import { PROTECTED_CLAUDE_ROOT, PROTECTED_CLAUDE_VERSION } from "./security";
 import { ClaudeAuth, type Step } from "./auth";
 import { checkClaude, ClaudeSetup, MIN_VERSION, withScript } from "./setup";
 
-/** Native's Claude key store (`claude_key.rs`): whether a key is saved. */
-const nativeKey = vi.hoisted(() => ({ saved: true }));
+/** Native's Claude key store (`claude_key.rs`): whether a key is saved,
+ * how often it was asked, and an answer to hold once read. */
+const nativeKey = vi.hoisted(() => ({
+  saved: true,
+  asked: 0,
+  hold: undefined as Promise<void> | undefined,
+}));
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => true,
-  invoke: async (command: string) =>
-    command === "claude_api_key_status" ? nativeKey.saved : null,
+  invoke: async (command: string) => {
+    if (command === "claude_api_key_clear") nativeKey.saved = false;
+    if (command !== "claude_api_key_status") return null;
+    nativeKey.asked += 1;
+    const saved = nativeKey.saved;
+    await nativeKey.hold;
+    return saved;
+  },
 }));
 beforeEach(() => {
-  nativeKey.saved = true;
+  Object.assign(nativeKey, { saved: true, asked: 0, hold: undefined });
 });
 
 it("declares protected file reads through the bundled helper with a positional path", () => {
@@ -317,6 +328,30 @@ it("reports the version and whether an API key is saved", async () => {
   const refreshing = setup.check();
   expect(setup.providerSnapshot()).toEqual({ readiness: "ready" });
   await refreshing;
+});
+
+it("checks again when a key is removed during a check, so it is not shown saved", async () => {
+  const { spawn } = scripted({
+    "claude --version": { stdout: "2.1.280 (Claude Code)\n" },
+  });
+  const setup = new ClaudeSetup(spawn);
+  let release: () => void = () => undefined;
+  nativeKey.hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const stale = setup.check();
+  // The first check has read "saved" when the key is removed.
+  await vi.waitFor(() => expect(nativeKey.asked).toBe(1));
+  nativeKey.hold = undefined;
+  await setup.auth.clear();
+  const current = setup.check();
+  release();
+  await Promise.all([stale, current]);
+  expect(nativeKey.asked).toBe(2);
+  expect(setup.providerSnapshot()).toEqual({
+    readiness: "attention",
+    attentionLabel: "Add Claude API key",
+  });
 });
 
 /** An authentication that signs in interactively, as a build may. */

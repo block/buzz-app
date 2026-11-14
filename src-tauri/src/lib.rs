@@ -950,6 +950,8 @@ pub fn run() {
             || {
                 host_mcp::pairing::revoke(&paths.app_data)?;
                 federated_identity::store::remove_all(federated_identity::store::root()?)?;
+                claude_key::erase()?;
+                jev::erase()?;
                 identity::remove_saved_key()
             },
         )

@@ -1335,7 +1335,15 @@ available rather than silently discarding it.
   Codex security reviews for protected agents need a ChatGPT sign-in made
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace. Codex's harness defaults offer that sign-in while Codex is signed
-  out. API key and keyring sign-ins can't run them.
+  out, and **Sign out** once it is signed in; signing out also signs out the
+  Codex CLI on this computer, which shares the sign-in. API key and keyring
+  sign-ins can't run them.
+  Goose and Pi provider settings show **Remove key** beside a key saved there:
+  Goose deletes it from its secret store, Pi from `~/.pi/agent/auth.json`,
+  which the `pi` command shares. Keys set in the environment, and Pi sign-ins
+  made with the `pi` command, are not removed there. Signing out of Buzz with
+  **Also erase everything else Buzz stores on this device** also deletes the
+  saved Claude and TypeSafe keys.
 - **Settings → Agent details** says where an agent's configuration lives:
   **Synced in** its community, or **Only on this Mac** with why (the relay
   doesn't sync agent settings, or the first copy failed and Buzz will try

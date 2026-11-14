@@ -1057,6 +1057,33 @@ it("reopens the shared server after it exits", async () => {
   await f.runtime.run(f.delivery("again"));
   await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
 });
+it("replaces the shared server after a sign-out, once the running turn ends", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.runtime.restart();
+  // The running turn keeps its server, and a mention meanwhile joins it.
+  expect(servers(f)).toHaveLength(1);
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  // Once the turn's conversation lets go, the old server is dropped.
+  // biome-ignore lint/complexity/useLiteralKeys: reads the runtime's private server.
+  await vi.waitFor(() => expect(f.runtime["server"]).toBeUndefined());
+  await f.runtime.run(f.delivery("again"));
+  await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
+  f.runtime.dispose();
+});
+
+it("replaces the shared server at once after a sign-out when no turn is running", async () => {
+  const f = fixture();
+  f.runtime.warm();
+  await vi.waitFor(() => expect(servers(f)).toHaveLength(1));
+  f.runtime.restart();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
+  f.runtime.dispose();
+});
+
 it("refuses a synced effort its model lacks, where a local one falls back", async () => {
   const f = fixture();
   const xhigh = (content: string) => {
@@ -1976,6 +2003,29 @@ describe("saved threads and protection state", () => {
     }
   });
 
+  it("stops a busy protected worker after a sign-out once its turn ends", async () => {
+    const f = protectedPreview();
+    try {
+      if (!f.handle) throw new Error("Missing handle");
+      await f.runtime.run({
+        ...f.delivery("busy"),
+        agent: f.handle,
+        config: { workspace: "/tmp/codex-test" },
+      });
+      await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(1));
+      f.runtime.restart();
+      // The running turn keeps its server until it ends.
+      expect(f.worker.process.end).not.toHaveBeenCalled();
+      await f.worker.complete(0, "ok");
+      await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() =>
+        expect(f.worker.process.end).toHaveBeenCalledOnce(),
+      );
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
   it("retires an idle protected agent without cleaning through its closing connection", async () => {
     const f = protectedPreview();
     try {
@@ -2013,6 +2063,18 @@ describe("saved threads and protection state", () => {
       f.runtime.dispose();
     }
   });
+});
+
+it("stops an idle protected worker after a sign-out, so its next turn signs in again", async () => {
+  const f = protectedPreview();
+  try {
+    await f.runtime.preview(f.agent);
+    expect(f.worker.process.end).not.toHaveBeenCalled();
+    f.runtime.restart();
+    await vi.waitFor(() => expect(f.worker.process.end).toHaveBeenCalledOnce());
+  } finally {
+    f.runtime.dispose();
+  }
 });
 
 it("stops a protected worker that served only a preview once its agent goes", async () => {

@@ -591,6 +591,50 @@ export class GooseSetup {
     this.thinking.clear();
   }
 
+  /** Removes one secret field a provider saved, such as its API key, from
+   * goose's secret store. The provider's other fields stay. A key goose reads
+   * from its environment is not saved there, so it cannot be removed. */
+  async remove(id: string, key: string) {
+    const still = await this.with(async (goose) => {
+      const { secrets } = (await goose.request(
+        "_goose/unstable/providers/secrets/list",
+        {},
+      )) as {
+        secrets: {
+          id: string;
+          provider: string;
+          name: string;
+          storage: string;
+          canDelete: boolean;
+        }[];
+      };
+      const found = secrets.find(
+        (secret) =>
+          secret.provider === id &&
+          secret.name === key &&
+          secret.storage === "secret_store" &&
+          secret.canDelete,
+      );
+      if (!found) throw new Error(`goose has no saved ${key} to remove`);
+      await goose.request("_goose/unstable/providers/secrets/delete", {
+        id: found.id,
+      });
+      const { fields } = (await goose.request(
+        "_goose/unstable/providers/config/read",
+        { providerId: id },
+      )) as { fields: { key: string; isSet: boolean }[] };
+      return fields.some((field) => field.key === key && field.isSet);
+    });
+    // As after a save, but the default provider may now lack its key, so
+    // setup checks again once any check already under way has settled.
+    await this.checking;
+    await this.check();
+    if (still)
+      throw new Error(
+        `Removed the saved ${key}, but goose still reads one from its environment`,
+      );
+  }
+
   /** Asks the provider for one short reply, without tools. goose reports a
    * failed call as its reply, so only the expected answer passes. */
   test(choice: Choice): Promise<Tested> {

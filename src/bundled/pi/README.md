@@ -47,7 +47,8 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
   or approvals. Buzz tools are `buzz_<name>`.
 - Keys in Pi's `auth.json` must be literal: Buzz runs no `!command` key and
   reads no `$NAME` key. Set up a provider that needs more than a key with
-  `pi`.
+  `pi`. **Remove key** in Pi's settings deletes only that provider's saved
+  key from `auth.json`.
 - Pi packages load only from a local folder, and only their `pi.durable`
   parts, when the host starts. See [`EXTENSIONS.md`](EXTENSIONS.md).
 - Runs left unfinished when the app quit continue at the next turn. A

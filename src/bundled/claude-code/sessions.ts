@@ -775,6 +775,13 @@ export class Spare {
     return undefined;
   }
 
+  /** What a spare starts with changed, such as the credentials: the one
+   * running stops, and one starts again where one is wanted. */
+  refresh() {
+    this.stopped = false;
+    this.fill(this.wanted);
+  }
+
   dispose() {
     this.warm();
   }

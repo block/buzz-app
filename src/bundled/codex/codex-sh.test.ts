@@ -547,6 +547,73 @@ it("signs in to Buzz's home, as before, when Codex keeps sign-ins in the keyring
   );
 });
 
+/** A release whose `logout` logs the home it ran in, then removes that home's
+ * `auth.json`, as Codex does: a link itself, never the file it names. It fails
+ * in the home named by `failing`. */
+async function loggingOut(failing?: (f: { codex: string }) => string) {
+  const f = await echoing();
+  await writeFile(
+    join(f.dir, "0.1.0/bin/codex"),
+    `#!/bin/sh\n[ "$1" = logout ] || exit 0\necho "$CODEX_HOME" >>"$HOME/logouts"\nrm -f "$CODEX_HOME/auth.json"\n[ "$CODEX_HOME" != "${failing?.(f) ?? ""}" ]\n`,
+  );
+  const logouts = async () =>
+    (await readFile(join(f.home, "logouts"), "utf8")).trim().split("\n");
+  return { ...f, logouts };
+}
+
+it("signs out of the shared home before Buzz's, so no file Buzz's link names stays", async () => {
+  const f = await loggingOut();
+  await mkdir(f.codex);
+  await writeFile(join(f.codex, "auth.json"), "signed in");
+  await f.step("run");
+  expect(await readlink(join(f.own, "auth.json"))).toBe(
+    join(f.codex, "auth.json"),
+  );
+  await f.step("logout");
+  expect(await f.logouts()).toEqual([f.codex, f.own]);
+  expect(await readdir(f.codex)).not.toContain("auth.json");
+  expect(await readdir(f.own)).not.toContain("auth.json");
+  // Signed out, `run` links the sign-in again, to a file that is not there.
+  await f.step("run");
+  await expect(stat(join(f.own, "auth.json"))).rejects.toThrow();
+});
+
+it("signs out of both homes when Codex keeps sign-ins in the keyring", async () => {
+  const f = await loggingOut();
+  await mkdir(f.codex);
+  await writeFile(
+    join(f.codex, "config.toml"),
+    'cli_auth_credentials_store = "keyring"\n',
+  );
+  await f.step("logout");
+  // Each home's own keyring entry is one `codex logout` removes.
+  expect(await f.logouts()).toEqual([f.codex, f.own]);
+});
+
+it("removes a sign-in Buzz's home holds that was not yet handed over", async () => {
+  const f = await loggingOut();
+  await f.step("run");
+  await signIn(f.own, "signed in");
+  await f.step("logout");
+  expect(await readdir(f.codex)).not.toContain("auth.json");
+  expect(await readdir(f.own)).not.toContain("auth.json");
+});
+
+it("still signs out of Buzz's home when the shared one fails, and fails", async () => {
+  const f = await loggingOut(({ codex }) => codex);
+  await mkdir(f.codex);
+  await expect(f.step("logout")).rejects.toMatchObject({ code: 1 });
+  expect(await f.logouts()).toEqual([f.codex, f.own]);
+});
+
+it("says so when Codex is not installed", async () => {
+  const f = await disk([]);
+  await expect(f.step("logout")).rejects.toMatchObject({
+    code: 127,
+    stderr: expect.stringContaining("Codex is not installed"),
+  });
+});
+
 it("makes a review wait for a sign-in in progress", async () => {
   const f = await signingIn(chatgpt, true);
   // Signing in again, so the sign-in that review sees names the workspace.

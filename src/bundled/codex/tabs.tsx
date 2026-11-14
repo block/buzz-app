@@ -844,6 +844,7 @@ export function createTabs(
     const [draft, setDraft] = useState(state.defaults);
     const [saveError, setSaveError] = useState("");
     const [savingDefaults, setSavingDefaults] = useState(false);
+    const [signOutError, setSignOutError] = useState("");
     const action =
       error === NOT_INSTALLED
         ? ({ step: "install", label: "Install integration" } as const)
@@ -914,8 +915,36 @@ export function createTabs(
             </p>
           )}
         </form>
+        {/* Signed in, even when the models could not be listed. */}
+        {installing.status?.state === "ready" && error !== SIGN_IN_ERROR && (
+          <div className="grid justify-items-start gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              loading={installing.running === "logout"}
+              disabled={!!installing.running || checking}
+              focusableWhenDisabled
+              onClick={() => {
+                setSignOutError("");
+                setup
+                  .signOut()
+                  .catch((reason) => setSignOutError(message(reason)));
+              }}
+            >
+              Sign out
+            </Button>
+            <p className="m-0 text-body-sm text-subtle">
+              This also signs out the Codex CLI on this computer.
+            </p>
+            {signOutError && (
+              <p role="alert" className="buzz-field-error">
+                {signOutError}
+              </p>
+            )}
+          </div>
+        )}
         <div className="grid gap-2" hidden={state.readiness === "ready"}>
-          {installing.running ? (
+          {installing.running && installing.running !== "logout" ? (
             <div className="flex flex-wrap items-center gap-2">
               <p role="status" className="m-0 text-body-sm">
                 {installing.running === "login"
@@ -952,7 +981,9 @@ export function createTabs(
         <ProviderDialogActions>
           <Button
             onClick={() =>
-              installing.running ? void setup.cancel() : onClose()
+              installing.running && installing.running !== "logout"
+                ? void setup.cancel()
+                : onClose()
             }
           >
             Cancel

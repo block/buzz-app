@@ -408,7 +408,35 @@ export function createTabs({
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
     const [changing, setChanging] = useState(false);
+    const [removing, setRemoving] = useState(false);
+    // Once removed, Pi has no key for the provider, so this asks for one
+    // again in place of "set up".
+    const removeKey = async () => {
+      if (saving || removing) return;
+      setRemoving(true);
+      setError("");
+      try {
+        await setup.logout(provider.id);
+        setChanging(false);
+        onSaved();
+      } catch (reason) {
+        setError(errorText(reason));
+      } finally {
+        setRemoving(false);
+      }
+    };
+    const removeButton = provider.saved && (
+      <Button
+        variant="outline"
+        disabled={saving}
+        loading={removing}
+        onClick={removeKey}
+      >
+        Remove key
+      </Button>
+    );
     const saveKey = async () => {
+      if (saving || removing) return;
       setSaving(true);
       setError("");
       try {
@@ -424,12 +452,30 @@ export function createTabs({
     };
     if (provider.configured && (!provider.key || !changing))
       return (
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="m-0 text-body-sm text-subtle">
-            {provider.name} is set up in Pi.
-          </p>
-          {provider.key && (
-            <Button onClick={() => setChanging(true)}>Change</Button>
+        <div className="grid gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="m-0 text-body-sm text-subtle">
+              {provider.name} is set up in Pi.
+            </p>
+            {provider.key && (
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  disabled={removing}
+                  onClick={() => {
+                    setError("");
+                    setChanging(true);
+                  }}
+                >
+                  Change
+                </Button>
+                {removeButton}
+              </div>
+            )}
+          </div>
+          {error && (
+            <p role="alert" className="buzz-field-error m-0">
+              {error}
+            </p>
           )}
         </div>
       );
@@ -450,7 +496,7 @@ export function createTabs({
             type="password"
             autoComplete="off"
             value={key}
-            disabled={saving}
+            disabled={saving || removing}
             onValueChange={setKey}
             onKeyDown={(event) => {
               if (event.key !== "Enter" || event.nativeEvent.isComposing)
@@ -462,9 +508,14 @@ export function createTabs({
           />
         </Field>
         <div className="flex flex-wrap items-center gap-3">
-          <Button disabled={!key.trim()} loading={saving} onClick={saveKey}>
+          <Button
+            disabled={!key.trim() || removing}
+            loading={saving}
+            onClick={saveKey}
+          >
             Save to Pi
           </Button>
+          {removeButton}
           {error && (
             <p role="alert" className="buzz-field-error m-0">
               {error}

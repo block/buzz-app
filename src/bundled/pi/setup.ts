@@ -2,6 +2,7 @@
 // saving a provider's key, and testing that a model answers. Keys go to Pi's
 // own `~/.pi/agent/auth.json`, shared with the `pi` command, never into Buzz.
 import type { ModelChoice } from "../../features/agents/ModelPicker";
+import { withProviderWords } from "../../features/agents/failure-words";
 import type { Pi } from "./pi";
 import type { ReviewPrompt } from "../../features/agent-protection/models";
 
@@ -14,6 +15,9 @@ export type Provider = Readonly<{
   signsIn: boolean;
   /** Where Pi finds its credentials, when it has them. */
   configured?: string;
+  /** An API key saved in Pi's `auth.json`, which can be removed here; not
+   * one from the environment, or a sign-in made with the `pi` command. */
+  saved?: boolean;
 }>;
 
 export type Providers = Readonly<{
@@ -44,6 +48,21 @@ export function runsAt(levels: readonly string[], level: string) {
     levels[0] ??
     "off"
   );
+}
+
+/** A failed turn's error as its report in the conversation says it, in
+ * Markdown: Pi's refusal to run a provider it has no key for links to
+ * `settings`, where the key is saved once for every Pi agent. Pi's own words
+ * are kept under it. */
+export function explainTurn(error: string, settings: string) {
+  const missing = /Provider is not configured: ([\w.-]+)/.exec(error);
+  return missing
+    ? withProviderWords(
+        `Pi is missing an API key for ${missing[1]}. Head to [Settings](${settings}) to add one.`,
+        "Pi",
+        error,
+      )
+    : error;
 }
 
 export class PiSetup {
@@ -87,6 +106,12 @@ export class PiSetup {
   /** Saves a provider's API key with Pi's own login. */
   async login(id: string, key: string) {
     await this.pi.request("login", { provider: id, key });
+  }
+
+  /** Removes only that provider's saved API key from Pi's `auth.json`, with
+   * Pi's own logout. */
+  async logout(id: string) {
+    await this.pi.request("logout", { provider: id });
   }
 
   /** Asks the model for one short reply, without tools. */

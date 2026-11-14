@@ -207,6 +207,9 @@ export class PiRuntime {
   /** The Pi host every agent of this type runs in, started when needed. */
   private readonly pi: Pi;
   readonly setup: PiSetup;
+  /** A failed turn's error as its report says it, such as where to add a
+   * provider's missing key. */
+  explain: (error: string) => string = (error) => error;
 
   constructor(
     private readonly host: Pick<Host, "spawn" | "readFile">,
@@ -1239,7 +1242,7 @@ export class PiRuntime {
     return agent
       .publish({
         kind: 9,
-        content: `⚠️ I couldn't finish that: ${error.slice(0, 500)}`,
+        content: `⚠️ I couldn't finish that: ${this.explain(error.slice(0, 500))}`,
         tags: [...replyTags(where), ["p", agent.owner]],
       })
       .catch((failure) =>

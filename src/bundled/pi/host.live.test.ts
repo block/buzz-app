@@ -514,6 +514,9 @@ await new Promise((resolve) => setTimeout(resolve, 100));
 await writeFile(data + "/auth.json", JSON.stringify({ p: signIn }));
 await writing();
 out.whileWritten = await reading;
+// Removing one provider's entry leaves the others.
+await auth.delete("c");
+out.afterDelete = Object.keys(await auth.all());
 console.log(JSON.stringify(out));
 `;
 
@@ -928,6 +931,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     );
     expect(out.environment).toBe(out.command);
     expect(out.whileWritten).toEqual(signIn);
+    expect(out.afterDelete).toEqual(["p", "e"]);
   }, 90_000);
 
   it("loads the Pi packages in Pi's settings, leaving out each that fails", async () => {

@@ -5,5 +5,5 @@ Create agents that run Goose and answer you in Buzz. Each conversation continues
 ## Getting started
 
 1. Go to **Agents**, create an agent with **Goose** as its **Harness**, and choose its provider and model.
-2. Configure access to your chosen provider. Buzz includes the Goose executable.
+2. Configure access to your chosen provider. Buzz includes the Goose executable. **Remove key** beside a saved provider key deletes it from goose.
 3. Mention your agent in a conversation to give it work.

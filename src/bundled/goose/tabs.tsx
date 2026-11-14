@@ -534,7 +534,7 @@ export function createTabs({
             provider={provider}
             keyDraft={keyDraft}
             disabled={disabled}
-            onSaved={() => {
+            onChanged={() => {
               reload();
               setSaves((count) => count + 1);
             }}
@@ -592,7 +592,7 @@ export function createTabs({
             key={provider.id}
             provider={provider}
             disabled={false}
-            onSaved={() => {
+            onChanged={() => {
               reload();
               onSaved();
             }}
@@ -730,17 +730,18 @@ export function createTabs({
     );
   }
 
-  /** A provider's key and other fields, saved into goose's config. One that
-   * signs in through goose is set up there. */
+  /** A provider's key and other fields, saved into goose's config, and a way
+   * to remove a saved key. One that signs in through goose is set up there.
+   * `onChanged` follows a saved or removed key. */
   function ProviderKeys({
     provider,
     disabled,
-    onSaved,
+    onChanged,
     keyDraft,
   }: Readonly<{
     provider: Provider;
     disabled: boolean;
-    onSaved(): void;
+    onChanged(): void;
     keyDraft?:
       | {
           value: Record<string, string>;
@@ -756,11 +757,14 @@ export function createTabs({
     const draft = keyDraft?.value ?? localDraft;
     const setDraft = keyDraft?.onChange ?? setLocalDraft;
     const [saving, setSaving] = useState(false);
+    // The field being removed.
+    const [removing, setRemoving] = useState("");
     const [error, setError] = useState("");
     const entered = Object.fromEntries(
       Object.entries(draft).filter(([, text]) => text.trim()),
     );
-    const ready = !disabled && !saving && Object.keys(entered).length > 0;
+    const busy = saving || !!removing;
+    const ready = !disabled && !busy && Object.keys(entered).length > 0;
     const submit = async () => {
       setSaving(true);
       setError("");
@@ -768,13 +772,30 @@ export function createTabs({
         await setup.save(provider.id, entered);
         setDraft({});
         reread();
-        onSaved();
+        onChanged();
       } catch (reason) {
         setError(message(reason));
       } finally {
         setSaving(false);
       }
     };
+    // A removed key is asked for again in its place.
+    const remove = async (name: string) => {
+      setRemoving(name);
+      setError("");
+      try {
+        await setup.remove(provider.id, name);
+        onChanged();
+      } catch (reason) {
+        setError(message(reason));
+      } finally {
+        reread();
+        setRemoving("");
+      }
+    };
+    const removable = provider.keys.filter(
+      (key) => key.secret && saved.value?.has(key.name),
+    );
     return (
       <>
         {provider.signsIn && !provider.configured && (
@@ -803,26 +824,42 @@ export function createTabs({
                       : undefined
               }
             >
-              <Input
-                type={key.secret ? "password" : "text"}
-                autoComplete="off"
-                value={draft[key.name] ?? ""}
-                disabled={disabled || saving}
-                placeholder={
-                  isSet
-                    ? "Saved in goose. Enter a new value to replace it."
-                    : (key.default ?? undefined)
-                }
-                onValueChange={(text) =>
-                  setDraft({ ...draft, [key.name]: text })
-                }
-                // Enter saves the key, not the agent settings around it.
-                onKeyDown={(event) => {
-                  if (keyDraft || event.key !== "Enter") return;
-                  event.preventDefault();
-                  if (ready) void submit();
-                }}
-              />
+              <div className="flex items-center gap-2">
+                <Input
+                  type={key.secret ? "password" : "text"}
+                  autoComplete="off"
+                  value={draft[key.name] ?? ""}
+                  disabled={disabled || busy}
+                  placeholder={
+                    isSet
+                      ? "Saved in goose. Enter a new value to replace it."
+                      : (key.default ?? undefined)
+                  }
+                  onValueChange={(text) =>
+                    setDraft({ ...draft, [key.name]: text })
+                  }
+                  // Enter saves the key, not the agent settings around it.
+                  onKeyDown={(event) => {
+                    if (keyDraft || event.key !== "Enter") return;
+                    event.preventDefault();
+                    if (ready) void submit();
+                  }}
+                />
+                {key.secret && isSet && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={disabled || saving || !!removing}
+                    loading={removing === key.name}
+                    {...(removable.length > 1 && {
+                      "aria-label": `Remove key: ${keyLabel(key.name)}`,
+                    })}
+                    onClick={() => void remove(key.name)}
+                  >
+                    Remove key
+                  </Button>
+                )}
+              </div>
             </Field>
           );
         })}
@@ -831,12 +868,12 @@ export function createTabs({
             <Button disabled={!ready} loading={saving} onClick={submit}>
               Save to goose
             </Button>
-            {error && (
-              <p role="alert" className="buzz-field-error m-0">
-                {error}
-              </p>
-            )}
           </div>
+        )}
+        {error && (
+          <p role="alert" className="buzz-field-error m-0">
+            {error}
+          </p>
         )}
       </>
     );

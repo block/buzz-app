@@ -135,6 +135,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
   };
   const offAgents = ctx.agents.subscribe(sync);
   const offProvider = providerController.subscribe(sync);
+  // After a sign-out, the server holding the old sign-in is replaced once idle.
+  let signingOut = false;
+  const offSetup = setup.subscribe(() => {
+    const was = signingOut;
+    signingOut = setup.snapshot().running === "logout";
+    if (was && !signingOut) runtime.restart();
+  });
   sync();
   const timer =
     spawn && setInterval(() => void setup.update(needed ?? false), UPDATE_MS);
@@ -143,6 +150,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     clearInterval(timer);
     offAgents();
     offProvider();
+    offSetup();
     providerController.dispose();
     runtime.dispose();
     setup.dispose();

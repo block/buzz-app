@@ -11,6 +11,9 @@
 #   login                          signs in to Codex in Buzz's review home,
 #                                  records the ChatGPT workspace, and leaves
 #                                  the sign-in for the shared one
+#   logout                         signs out of Codex in the shared home and in
+#                                  Buzz's, where file and keyring sign-ins are
+#                                  kept, so the Codex CLI is signed out too
 #   review                         makes Buzz's review home, and prints it, the
 #                                  state folder it links to and the workspace,
 #                                  while the sign-in still names it
@@ -62,7 +65,7 @@ shift
 # out of the user's Codex history, and the Codex app, which holds a writer lock
 # on each recent thread it reopens, can't block them. It links in only the
 # settings, sign-in and instructions, and never replaces a file in the way.
-case "$command" in run | adopt | home | login | review)
+case "$command" in run | adopt | home | login | logout | review)
   mkdir -p "${CODEX_HOME:-$HOME/.codex}"
   shared=$(cd "${CODEX_HOME:-$HOME/.codex}" && pwd -P)
   mkdir -p -m 700 "$dir-home"
@@ -267,6 +270,20 @@ login | review)
   if [ -n "$workspace" ] && [ "$(chatgpt_workspace "$review/auth.json")" = "$workspace" ]; then
     printf '%s\n' "$workspace"
   fi
+  ;;
+logout)
+  version="${BUZZ_CODEX_VERSION:-$(cat "$dir/current" 2>/dev/null || true)}"
+  valid "$version" || { echo "Codex is not installed" >&2; exit 127; }
+  # Codex removes the sign-in its home keeps, in the file or the keyring that
+  # `cli_auth_credentials_store` names, but only the link in Buzz's home, not
+  # the file it names. So the shared home signs out first, revoking what it
+  # holds, then Buzz's, whose keyring sign-in is its own. Both are tried, and
+  # a failure in either fails the step.
+  status=0
+  for each in "$shared" "$home"; do
+    CODEX_HOME="$each" "$dir/$version/bin/codex" logout || status=1
+  done
+  exit "$status"
   ;;
 read-from)
   # A session file from byte "$2", counting from 1, in base64; it fails

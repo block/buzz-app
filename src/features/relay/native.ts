@@ -537,6 +537,32 @@ export async function connectNativeTransport(
           ),
         }
       : {}),
+    ...(Array.isArray(info.supported_extensions) &&
+    info.supported_extensions.includes("buzz-scheduled-messages-v1")
+      ? {
+          scheduledMessages: {
+            sign: async (event: EventTemplate, signal: AbortSignal) => {
+              const writer = transport.writer;
+              if (!writer)
+                throw new Error("Scheduled message signing is unavailable");
+              return writer.sign(event, signal);
+            },
+            request: (body: unknown, signal: AbortSignal) =>
+              admitSignedRequest(
+                origin,
+                transport.viewer,
+                () =>
+                  nativeRelayRequest(
+                    origin,
+                    "/scheduled-messages",
+                    body,
+                    signal,
+                  ),
+                signal,
+              ),
+          },
+        }
+      : {}),
     workflows: workflowHost(async (route, body, signal) => {
       if (route !== "workflow-runs") throw new Error("Invalid workflow read");
       workflowRunsPath(body);

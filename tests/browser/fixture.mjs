@@ -1588,6 +1588,31 @@ export const test = base.extend({
               ),
             ),
         ];
+      // Drafts & sent reads the viewer's recent messages across conversations.
+      if (
+        !filter["#h"] &&
+        !filter["#e"] &&
+        !filter["#p"] &&
+        filter.authors?.length === 1 &&
+        filter.authors[0] === viewer &&
+        (JSON.stringify([...filter.kinds].sort((a, b) => a - b)) === "[9]" ||
+          JSON.stringify([...filter.kinds].sort((a, b) => a - b)) ===
+            "[5,9005,40003]")
+      ) {
+        expect(filter.limit).toBe(filter.kinds.includes(9) ? 100 : 500);
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .concat(community === "primary" ? targetEvents : [])
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) && event.pubkey === viewer,
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
+      }
       if (
         filter["#p"] &&
         !filter["#h"] &&

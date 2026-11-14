@@ -67,7 +67,9 @@ type FakeView = {
   dispose: ReturnType<typeof vi.fn>;
 };
 
-function harness() {
+function harness(
+  scheduledMessages?: import("../relay/scheduled-messages").ScheduledMessages,
+) {
   let list: {
     status: string;
     channels: import("../relay/contracts").ChannelSummary[];
@@ -148,6 +150,7 @@ function harness() {
     return made;
   };
   const session = {
+    scheduledMessages,
     scope,
     relayAuthor: relay,
     channels: {
@@ -1015,4 +1018,270 @@ it("focuses search only after an excluded preview closes", async () => {
   });
   act(() => h.hideSelected());
   await waitFor(() => expect(focus).toHaveBeenCalled());
+});
+
+it("shows queued delivery beside drafts and shares the list with the Scheduled tab", async () => {
+  const listeners = new Set<() => void>();
+  let rows = [
+    {
+      id: "queued",
+      revision: "1",
+      destination: { channelId: "team", name: "launch-room" },
+      content: "Later",
+      sendAt: Date.now() + 60000,
+      status: "scheduled" as "scheduled" | "sent",
+    },
+  ];
+  const service = {
+    list: vi.fn(async () => rows),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as import("../relay/scheduled-messages").ScheduledMessages;
+  saved("draft:team", "Work in progress");
+  const h = harness(service);
+  const Badge = h.page.badge,
+    Page = h.page.component;
+  render(
+    <>
+      <Badge />
+      <Page />
+    </>,
+  );
+  expect(
+    await screen.findByLabelText("1 scheduled message"),
+  ).toBeInTheDocument();
+  expect(screen.getByLabelText("1 draft")).toBeInTheDocument();
+  expect(service.list).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("tab", { name: /Scheduled/ }));
+  expect(screen.getByText("Later")).toBeVisible();
+  act(() => {
+    rows = rows.map((item) => ({ ...item, status: "sent" }));
+    for (const listener of listeners) listener();
+  });
+  await waitFor(() =>
+    expect(screen.queryByLabelText("1 scheduled message")).toBeNull(),
+  );
+  expect(screen.getByLabelText("1 draft")).toBeInTheDocument();
+});
+
+it("searches scheduled text and destinations without changing the total queued count", async () => {
+  const row = {
+    revision: "1",
+    sendAt: Date.now() + 60000,
+    status: "scheduled" as const,
+  };
+  const rows = [
+    {
+      ...row,
+      id: "launch",
+      destination: { channelId: "team", name: "launch-room" },
+      content: "Review **launch** notes",
+    },
+    {
+      ...row,
+      id: "lunch",
+      destination: { channelId: "dm", name: "Sam Okafor" },
+      content: "Lunch tomorrow?",
+    },
+    {
+      ...row,
+      id: "failed",
+      status: "failed" as const,
+      destination: { channelId: "team", name: "launch-room" },
+      content: "Check delivery",
+      error: "Try again later",
+    },
+    {
+      ...row,
+      id: "sent",
+      status: "sent" as const,
+      destination: { channelId: "team", name: "launch-room" },
+      content: "Already sent",
+    },
+  ];
+  const service = {
+    list: vi.fn(async () => rows),
+    subscribe: () => () => {},
+  } as unknown as import("../relay/scheduled-messages").ScheduledMessages;
+  const h = harness(service),
+    Page = h.page.component;
+  render(<Page />);
+  const tab = screen.getByRole("tab", { name: /^Scheduled/ });
+  await waitFor(() => expect(tab).toHaveTextContent("Scheduled3"));
+  fireEvent.click(tab);
+  const search = screen.getByRole("searchbox", {
+    name: "Search scheduled messages",
+  });
+  const list = screen.getByRole("list", { name: "Scheduled messages" });
+  expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+  fireEvent.change(search, { target: { value: "LAUNCH notes" } });
+  expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+  expect(within(list).getByText("Review **launch** notes")).toBeVisible();
+  fireEvent.change(search, { target: { value: "sam" } });
+  expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+  expect(within(list).getByText("Lunch tomorrow?")).toBeVisible();
+  fireEvent.change(search, { target: { value: "missing" } });
+  expect(
+    screen.getByText("No scheduled messages match “missing”."),
+  ).toBeVisible();
+  expect(within(list).queryByRole("listitem")).toBeNull();
+  expect(tab).toHaveTextContent("Scheduled3");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Clear search scheduled messages" }),
+  );
+  expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+  expect(service.list).toHaveBeenCalledTimes(2);
+});
+
+it("keeps search labels, queries and results scoped to their own tab", async () => {
+  saved("draft:team", "Finish launch notes");
+  const service = {
+    list: vi.fn(async () => [
+      {
+        id: "later",
+        revision: "1",
+        destination: { channelId: "team", name: "launch-room" },
+        content: "Tomorrow's update",
+        sendAt: Date.now() + 60000,
+        status: "scheduled" as const,
+      },
+    ]),
+    subscribe: () => () => {},
+  } as unknown as import("../relay/scheduled-messages").ScheduledMessages;
+  const h = harness(service),
+    Page = h.page.component;
+  render(<Page />);
+  const draftsSearch = screen.getByRole("searchbox", { name: "Search drafts" });
+  expect(draftsSearch).toHaveAttribute("placeholder", "Search drafts");
+  fireEvent.change(draftsSearch, { target: { value: "missing draft" } });
+  expect(screen.getByText("No drafts match “missing draft”.")).toBeVisible();
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+  const sentSearch = screen.getByRole("searchbox", {
+    name: "Search sent messages",
+  });
+  expect(sentSearch).toHaveValue("");
+  expect(
+    await screen.findByRole("button", {
+      name: /View message.*Recently shipped/,
+    }),
+  ).toBeVisible();
+  fireEvent.change(sentSearch, { target: { value: "missing sent" } });
+  fireEvent.click(screen.getByRole("tab", { name: /^Scheduled/ }));
+  const scheduledSearch = screen.getByRole("searchbox", {
+    name: "Search scheduled messages",
+  });
+  expect(scheduledSearch).toHaveValue("");
+  expect(await screen.findByText("Tomorrow's update")).toBeVisible();
+  fireEvent.change(scheduledSearch, { target: { value: "tomorrow" } });
+  fireEvent.click(screen.getByRole("tab", { name: /^Drafts/ }));
+  expect(screen.getByRole("searchbox", { name: "Search drafts" })).toHaveValue(
+    "missing draft",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Clear search drafts" }));
+  expect(screen.getByText("Finish launch notes")).toBeVisible();
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+  expect(
+    screen.getByRole("searchbox", { name: "Search sent messages" }),
+  ).toHaveValue("missing sent");
+  fireEvent.click(screen.getByRole("tab", { name: /^Scheduled/ }));
+  expect(
+    screen.getByRole("searchbox", { name: "Search scheduled messages" }),
+  ).toHaveValue("tomorrow");
+  expect(screen.getByText("Tomorrow's update")).toBeVisible();
+});
+
+it("discovers another device's schedule when the Scheduled tab opens after an empty sidebar read", async () => {
+  let rows: import("../relay/scheduled-messages").ScheduledMessage[] = [];
+  const service = {
+    list: vi.fn(async () => rows),
+    subscribe: () => () => {},
+  } as unknown as import("../relay/scheduled-messages").ScheduledMessages;
+  const h = harness(service),
+    Badge = h.page.badge,
+    Page = h.page.component;
+  render(
+    <>
+      <Badge />
+      <Page />
+    </>,
+  );
+  await waitFor(() => expect(service.list).toHaveBeenCalledTimes(1));
+  rows = [
+    {
+      id: "remote",
+      revision: "1",
+      destination: { channelId: "team", name: "launch-room" },
+      content: "Scheduled on another device",
+      sendAt: Date.now() + 86400000,
+      status: "scheduled",
+    },
+  ];
+  fireEvent.click(screen.getByRole("tab", { name: /^Scheduled/ }));
+  expect(await screen.findByText("Scheduled on another device")).toBeVisible();
+  expect(service.list).toHaveBeenCalledTimes(2);
+});
+
+it("keeps mentioned message text read-only and explains the composer recovery path", async () => {
+  const row = {
+    id: "mentioned",
+    revision: "1",
+    destination: { channelId: "team", name: "launch-room" },
+    content: "@Scout please review",
+    sendAt: Date.now() + 86400000,
+    status: "scheduled" as const,
+  };
+  const update = vi.fn();
+  const service = {
+    list: vi.fn(async () => [row]),
+    subscribe: () => () => {},
+    event: () => ({ tags: [["p", scout]] }),
+    update,
+  } as unknown as import("../relay/scheduled-messages").ScheduledMessages;
+  const h = harness(service),
+    Page = h.page.component;
+  render(<Page />);
+  fireEvent.click(screen.getByRole("tab", { name: /^Scheduled/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit message" }));
+  const dialog = screen.getByRole("dialog", { name: "Edit scheduled message" });
+  expect(
+    within(dialog).getByRole("textbox", { name: "Message" }),
+  ).toHaveAttribute("readonly");
+  expect(
+    within(dialog).getByRole("button", { name: "Save changes" }),
+  ).toBeDisabled();
+  expect(
+    within(dialog).getByText(/save it to drafts and use the composer/),
+  ).toBeVisible();
+  expect(update).not.toHaveBeenCalled();
+});
+
+it("shares an in-flight sidebar read when Scheduled opens", async () => {
+  let release!: (
+    rows: import("../relay/scheduled-messages").ScheduledMessage[],
+  ) => void;
+  const service = {
+    list: vi.fn(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    ),
+    subscribe: () => () => {},
+  } as unknown as import("../relay/scheduled-messages").ScheduledMessages;
+  const h = harness(service),
+    Badge = h.page.badge,
+    Page = h.page.component;
+  render(
+    <>
+      <Badge />
+      <Page />
+    </>,
+  );
+  fireEvent.click(screen.getByRole("tab", { name: /^Scheduled/ }));
+  expect(service.list).toHaveBeenCalledTimes(1);
+  await act(async () => release([]));
+  expect(screen.getByText("No scheduled messages")).toBeVisible();
+  expect(service.list).toHaveBeenCalledTimes(1);
 });

@@ -214,11 +214,24 @@
   }
 }
 
-.badge {
-  display: inline-grid;
+.badge,
+.scheduledBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .channelNotice {
   position: relative;
   flex: none;
+}
+
+.scheduledSection {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+.scheduledSection[hidden] {
+  display: none;
 }

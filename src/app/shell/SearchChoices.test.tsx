@@ -17,6 +17,7 @@ beforeEach(() => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -65,13 +66,7 @@ const choices = (place: SearchViews["place"], rows = destinations) => (
     onQueryChange={() => {}}
     input={createRef<HTMLElement>()}
     highlightEmpty
-    views={{
-      tabs: null,
-      resultsLabel: "Channels",
-      panelId: "search-view-channels",
-      onSwitch: () => {},
-      place,
-    }}
+    views={{ resultsLabel: "Channels", place }}
     groups={[{ label: "Channels", destinations: rows }]}
   />
 );
@@ -187,4 +182,177 @@ it("keeps a footer below the results, outside their scrollport, so it stays in v
   expect(footer.closest("[data-search-palette]")).toHaveAttribute(
     "data-search-footer",
   );
+});
+
+it("keeps Peek's group order once the highlight moves, adding late groups at the end", () => {
+  const row = (key: string) => ({ key, label: key, icon: ChatCircleIcon, run });
+  const peek = { ranked: true, preview: () => null };
+  const palette = (groups: { label: string; rows: string[] }[]) => (
+    <SearchChoices
+      query="lau"
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      peek={peek}
+      groups={groups.map(({ label, rows }) => ({
+        label,
+        destinations: rows.map(row),
+      }))}
+    />
+  );
+  const order = () =>
+    screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"));
+  const { rerender } = render(
+    palette([
+      { label: "Chats", rows: ["chat"] },
+      { label: "People", rows: ["lau"] },
+    ]),
+  );
+  // Untouched, an arrival re-ranks every group.
+  rerender(
+    palette([
+      { label: "People", rows: ["lau"] },
+      { label: "Chats", rows: ["chat"] },
+    ]),
+  );
+  expect(order()).toEqual(["People", "Chats"]);
+  fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+  // Moved, groups shown keep their places and a late one goes last.
+  rerender(
+    palette([
+      { label: "Messages", rows: ["message"] },
+      { label: "Chats", rows: ["chat"] },
+      { label: "People", rows: ["lau"] },
+    ]),
+  );
+  expect(order()).toEqual(["People", "Chats", "Messages"]);
+});
+
+it("puts a group that was still empty when the order froze after the ones shown", () => {
+  const row = (key: string) => ({ key, label: key, icon: ChatCircleIcon, run });
+  const palette = (groups: { label: string; rows: string[] }[]) => (
+    <SearchChoices
+      query="lau"
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      peek={{ ranked: true, preview: () => null }}
+      groups={groups.map(({ label, rows }) => ({
+        label,
+        destinations: rows.map(row),
+      }))}
+    />
+  );
+  const order = () =>
+    screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"));
+  // People is still looking: an empty group, not drawn.
+  const { rerender } = render(
+    palette([
+      { label: "Channels", rows: ["channel"] },
+      { label: "People", rows: [] },
+      { label: "Messages", rows: ["message"] },
+    ]),
+  );
+  expect(order()).toEqual(["Channels", "Messages"]);
+  fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+  rerender(
+    palette([
+      { label: "Channels", rows: ["channel"] },
+      { label: "People", rows: ["lau"] },
+      { label: "Messages", rows: ["message"] },
+    ]),
+  );
+  expect(order()).toEqual(["Channels", "Messages", "People"]);
+});
+
+it("keeps Tab in the field before Peek has any group to show", () => {
+  const action = {
+    key: "scope:a",
+    label: "Search in Alpha",
+    icon: ChatCircleIcon,
+    run,
+  };
+  render(
+    <SearchChoices
+      query="release plan"
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      isAction={(key) => key.startsWith("scope:")}
+      peek={{ ranked: true, preview: () => null }}
+      groups={[{ label: "This conversation", destinations: [action] }]}
+    />,
+  );
+  const field = screen.getByRole("combobox");
+  // fireEvent returns false when the default (moving focus) was prevented.
+  expect(fireEvent.keyDown(field, { key: "Tab" })).toBe(false);
+  expect(fireEvent.keyDown(field, { key: "Tab", shiftKey: true })).toBe(false);
+});
+
+it("keeps an action-only group in place when Peek's order freezes", () => {
+  const row = (key: string) => ({ key, label: key, icon: ChatCircleIcon, run });
+  const palette = (labels: string[]) => (
+    <SearchChoices
+      query=""
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      isAction={(key) => key.startsWith("scope:")}
+      peek={{ ranked: true, preview: () => null }}
+      groups={labels.map((label) => ({
+        label,
+        destinations: [row(label === "This conversation" ? "scope:a" : label)],
+      }))}
+    />
+  );
+  const order = () =>
+    screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"));
+  const { rerender } = render(
+    palette(["This conversation", "Recent activity"]),
+  );
+  fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+  rerender(palette(["This conversation", "Recent activity"]));
+  expect(order()).toEqual(["This conversation", "Recent activity"]);
+});
+
+it("draws a long group Peek shows whole near the view, keeping the highlighted row drawn and placed", () => {
+  const rows = Array.from({ length: 120 }, (_, index) => ({
+    key: `browse:${index}`,
+    label: `channel-${index}`,
+    icon: ChatCircleIcon,
+    run,
+  }));
+  render(
+    <SearchChoices
+      query=""
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      peek={{ ranked: true, preview: () => null }}
+      groups={[
+        {
+          label: "Recent activity",
+          destinations: [
+            { key: "recent", label: "recent", icon: ChatCircleIcon, run },
+          ],
+        },
+        { label: "Channels", browse: true, destinations: rows },
+      ]}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /^Channels/ }));
+  const field = screen.getByRole("combobox");
+  for (let press = 0; press < 80; press++)
+    fireEvent.keyDown(field, { key: "ArrowDown" });
+  // jsdom measures nothing, so virtua leaves the rows it draws hidden: query
+  // the DOM. Rows show once measured in a browser.
+  const drawn = document.querySelectorAll('[role="option"]');
+  expect(drawn.length).toBeLessThan(rows.length);
+  const highlighted = document.getElementById(
+    field.getAttribute("aria-activedescendant") ?? "",
+  );
+  expect(highlighted).toHaveTextContent("channel-80");
+  expect(highlighted).toHaveAttribute("aria-posinset", "81");
+  expect(highlighted).toHaveAttribute("aria-setsize", "120");
 });

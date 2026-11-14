@@ -27,6 +27,9 @@ import {
   scriptedTransport,
 } from "../../features/relay/testing";
 import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { readView, writeView } from "../../shared/view-state";
+import { soloDraftTarget } from "../../features/channel-navigation/routes";
 
 // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
 beforeEach(() => {
@@ -1102,7 +1105,7 @@ it("finds and opens saved conversations while the community is unreachable or st
         .getAllByRole("option")
         .map((option) => option.textContent)
         .sort(),
-    ).toEqual(["AlphaConversation", "BetaConversation"]);
+    ).toEqual(["AlphaConversation · 1 member", "BetaConversation · 1 member"]);
     // A saved session has no message scope or open-channel view to offer.
     expect(within(dialog).queryByText(/^Search in Alpha/)).toBeNull();
     expect(within(dialog).queryByRole("tab", { name: "Channels" })).toBeNull();
@@ -1215,5 +1218,156 @@ it("finds and opens saved conversations while the community is unreachable or st
     owner.dispose();
     bindings.dispose();
     await root.fiber.dispose();
+  }
+});
+
+/** Cmd+K on `ask: …` with an agent New chat would tag, and a New chat draft. */
+async function askSearch(existingDraft?: {
+  text: string;
+  recipients: readonly never[];
+}) {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const relay = keypair(),
+    viewer = keypair(),
+    agent = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query: async () => [],
+  });
+  const source = owner.session.agentChoices;
+  const picked = { pubkey: agent.pubkey, name: "Aria", managed: true };
+  const choices = {
+    ...source.snapshot(),
+    complete: true,
+    identities: [picked],
+    selectable: [picked],
+    archives: { status: "unavailable", archived: [] },
+  } as ReturnType<typeof source.snapshot>;
+  const session = {
+    ...owner.session,
+    agentChoices: {
+      ...source,
+      snapshot: () => choices,
+      subscribe: () => () => {},
+      retain: () => () => {},
+      ensure: () => {},
+    },
+  } as typeof owner.session;
+  const scope = `wss://relay.example:${viewer.pubkey}`;
+  const connection = { status: "ready", generation: 1, session, scope };
+  const community = { selected: "wss://relay.example", viewer: viewer.pubkey };
+  const open = vi.fn(async () => {});
+  const services = {
+    shortcuts,
+    shortcutBindings: bindings,
+    navigation: {
+      subscribe: () => () => {},
+      snapshot: () => ({ entry: { target: null } }),
+      open,
+    },
+    communities: {
+      subscribe: () => () => {},
+      snapshot: () => community,
+      relay: { subscribe: () => () => {}, snapshot: () => connection },
+    },
+  } as unknown as SearchServices;
+  if (existingDraft) writeView(scope, "solo:new-draft", existingDraft);
+  const user = userEvent.setup();
+  render(
+    <ToastProvider>
+      <PageSearch
+        pages={[
+          {
+            key: "buzz.channels/channels",
+            pluginId: "buzz.channels",
+            id: "channels",
+            title: "Channels",
+            revision: "bundled",
+            component: () => null,
+          },
+        ]}
+        onSelect={vi.fn()}
+        services={services}
+      />
+    </ToastProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "Search Buzz" }));
+  const input = await screen.findByRole("combobox", { name: "Search Buzz" });
+  await user.type(input, "ask: summarize the release");
+  // The Ask row appears once the default agent is read.
+  await screen.findByRole("option", { name: /Aria/ });
+  return {
+    agent,
+    scope,
+    open,
+    user,
+    draft: () => readView<unknown>(scope, "solo:new-draft", null),
+    async dispose() {
+      cleanup();
+      owner.dispose();
+      bindings.dispose();
+      await root.fiber.dispose();
+    },
+  };
+}
+
+it("asks in New chat by writing the question draft and opening it for the agent", async () => {
+  const f = await askSearch();
+  try {
+    expect(f.draft()).toBeNull();
+    await f.user.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(f.open).toHaveBeenCalledExactlyOnceWith(
+        soloDraftTarget(f.scope, { agent: f.agent.pubkey }),
+      ),
+    );
+    expect(f.draft()).toEqual({
+      text: "@Aria Search Buzz to answer: summarize the release",
+      recipients: [
+        { pubkey: f.agent.pubkey, name: "Aria", start: 0, end: "@Aria".length },
+      ],
+    });
+  } finally {
+    await f.dispose();
+  }
+});
+
+it("keeps an unsent New chat draft when asking, and replaces it only on request", async () => {
+  const unsent = { text: "my half-written note", recipients: [] };
+  const f = await askSearch(unsent);
+  try {
+    await f.user.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(f.open).toHaveBeenCalledExactlyOnceWith(
+        soloDraftTarget(f.scope, { agent: f.agent.pubkey }),
+      ),
+    );
+    expect(f.draft()).toEqual(unsent);
+    const notice = await screen.findByRole("dialog", {
+      name: "New chat already has an unsent draft",
+    });
+    expect(f.draft()).toEqual(unsent);
+    fireEvent.click(within(notice).getByRole("button", { name: "Replace it" }));
+    await vi.waitFor(() =>
+      expect(f.draft()).toEqual({
+        text: "@Aria Search Buzz to answer: summarize the release",
+        recipients: [
+          {
+            pubkey: f.agent.pubkey,
+            name: "Aria",
+            start: 0,
+            end: "@Aria".length,
+          },
+        ],
+      }),
+    );
+  } finally {
+    await f.dispose();
   }
 });

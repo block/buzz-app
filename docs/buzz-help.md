@@ -591,13 +591,15 @@ and are asked to sign in again in Buzz.
   - If the sidebar says the community refused your account, **Try again**
     asks again, so it works once an admin has fixed your access. Buzz never
     asks again on its own.
-- **Finding channels**: search's **Channels** tab lists the community's open
-  channels you can join, with their member counts; typing also matches channels
-  you're in. Opening an unjoined channel shows a preview with **Join**. Private
+- **Finding channels**: typing in search matches channels you're in and the
+  community's open channels you can join, with their member counts. With
+  nothing typed, **Browse** beside the results lists your channels, direct
+  messages and chats by kind. Opening an unjoined channel shows a preview with
+  **Join**. Private
   channels appear only once someone adds you. Search reopens where you left it
   for a few minutes; Escape starts fresh next time.
 - **Jumping to unread**: opening search (⌘T or ⌘K; Ctrl elsewhere) with
-  nothing typed lists up to six of your other unread channels and DMs first,
+  nothing typed lists up to five of your other unread channels and DMs first,
   most recently active first, and selects the first, so Enter opens it, instead
   of reopening where you left it. A conversation unread only through thread
   replies previews its newest unread reply and opens it in its thread. Muted
@@ -649,8 +651,9 @@ and are asked to sign in again in Buzz.
     (`in:@me` is your own). A name that matches several conversations, or
     none, says so instead of searching.
   - `after:`, `before:`, `on:` a date (`YYYY-MM-DD`, `today`, `yesterday`), and
-    `during:` a day, month (`2026-10`, `october`), or year, in local time.
-    `after:` includes its day; `before:` does not.
+    `during:` a day, month (`2026-10`, `october`), or year, in local time, or a
+    rolling period ending today (`7d`, `4w`, `3m`, `1y`). `after:` includes its
+    day; `before:` does not.
   - `"exact phrase"` and `-word` match whole words, not word starts. Anything
     inside quotes, `from:` or `-` included, is part of the phrase.
   Other words with a colon, such as `has:link`, are searched as text. An
@@ -669,8 +672,25 @@ and are asked to sign in again in Buzz.
   it. With a dialog open, it searches that dialog. It doesn't find messages
   that haven't loaded or text in the message box; use ⌘F (**Search this
   conversation**) to search a conversation's full history.
+- **Search results** list the best match's group first: channels, people,
+  pages and messages are ordered by how well they match, each heading showing
+  a count and why it ranks there. Messages lead when the text reads like a
+  phrase. Each message shows the words around the match. A panel beside the
+  results previews the highlighted row: the message with the ones just before
+  and after it, or a channel's or person's latest messages. Tab and Shift+Tab
+  show one group whole (as does **See all**); Escape goes back. Groups
+  reorder as slower results arrive until you move the highlight; after that
+  they stay put and later groups join at the end. The panel and key hints hide
+  in narrow windows.
+- **Ask an agent**: start with `ask:` to write a question for your default
+  agent, or choose **Ask** under a long query. Enter opens New chat with the
+  question addressed to that agent; press Enter again to send it. If New chat
+  already has an unsent draft, Ask keeps it and offers **Replace it**. Filters
+  such as `in:` stay part of the question. With an empty query, search lists
+  your recent searches on this device.
 - **Channel, people, and message search** shows “Searching…” beside each section heading
-  if a lookup takes more than a second. You can open results already shown
+  if a lookup takes more than a second; in the combined results, “Still
+  searching messages…” appears at the end instead. You can open results already shown
   while the rest of the search finishes.
 - **Search while offline**: while a community is offline or still connecting,
   search finds and opens the conversations saved on this device, and a line

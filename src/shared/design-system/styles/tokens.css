@@ -1175,6 +1175,21 @@
   --surface-categorical-purple: var(--purple-3);
   --icon-categorical-purple: var(--purple-11);
   --icon-categorical-purple-own: var(--icon-categorical-purple);
+  /* Further categorical hues: a step-3 fill under a step-11 glyph, so result
+   * kinds (channels, people, agents, plugins) read apart at a glance. */
+  --surface-categorical-blue: var(--blue-3);
+  --icon-categorical-blue: var(--blue-11);
+  --surface-categorical-green: var(--green-3);
+  --icon-categorical-green: var(--green-11);
+  --surface-categorical-amber: var(--amber-3);
+  --surface-categorical-amber-hover: var(--amber-4);
+  --text-categorical-amber: var(--amber-12);
+  --icon-categorical-amber: var(--amber-11);
+  --surface-categorical-orange: var(--orange-3);
+  --icon-categorical-orange: var(--orange-11);
+  /* Matched characters in search results. */
+  --surface-search-match: var(--amber-4);
+  --text-search-match: var(--amber-12);
   --text-link: var(--text-standard);
   --affordance-link-hover: var(--affordance-subtle-hover);
   --border-standard: var(--neutral-3);
@@ -1330,6 +1345,21 @@
   --surface-categorical-purple: var(--purple-3);
   --icon-categorical-purple: var(--purple-11);
   --icon-categorical-purple-own: var(--icon-categorical-purple);
+  /* Further categorical hues: a step-3 fill under a step-11 glyph, so result
+   * kinds (channels, people, agents, plugins) read apart at a glance. */
+  --surface-categorical-blue: var(--blue-3);
+  --icon-categorical-blue: var(--blue-11);
+  --surface-categorical-green: var(--green-3);
+  --icon-categorical-green: var(--green-11);
+  --surface-categorical-amber: var(--amber-3);
+  --surface-categorical-amber-hover: var(--amber-4);
+  --text-categorical-amber: var(--amber-12);
+  --icon-categorical-amber: var(--amber-11);
+  --surface-categorical-orange: var(--orange-3);
+  --icon-categorical-orange: var(--orange-11);
+  /* Matched characters in search results. */
+  --surface-search-match: var(--amber-4);
+  --text-search-match: var(--amber-12);
   --text-link: var(--text-standard);
   --affordance-link-hover: var(--affordance-subtle-hover);
   --border-standard: var(--neutral-5);
@@ -2112,6 +2142,8 @@
   --text-color-success: var(--text-success);
   --text-color-categorical-purple: var(--text-categorical-purple);
   --color-surface-categorical-purple: var(--surface-categorical-purple);
+  --text-color-categorical-amber: var(--text-categorical-amber);
+  --text-color-search-match: var(--text-search-match);
   --text-color-accent: var(--text-accent);
   --border-color-standard: var(--border-standard);
   --border-color-message-thread: var(--border-message-thread);

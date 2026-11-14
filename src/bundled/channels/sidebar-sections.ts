@@ -89,6 +89,18 @@ export function sidebarSections<T extends ChannelSummary>(
         "starred",
       ),
     },
+    {
+      key: "dms",
+      title: "Direct messages",
+      icon: undefined,
+      rows: sort(
+        dms.filter(
+          (channel) =>
+            !stars.has(channel.id) && !ids.has(assignment(channel.id) ?? ""),
+        ),
+        "dms",
+      ),
+    },
     ...groups.map((group) => ({
       key: `group:${group.id}`,
       title: group.name,
@@ -120,18 +132,6 @@ export function sidebarSections<T extends ChannelSummary>(
       rows: sort(
         active.filter((channel) => channel.channelType === "forum"),
         "forums",
-      ),
-    },
-    {
-      key: "dms",
-      title: "Direct messages",
-      icon: undefined,
-      rows: sort(
-        dms.filter(
-          (channel) =>
-            !stars.has(channel.id) && !ids.has(assignment(channel.id) ?? ""),
-        ),
-        "dms",
       ),
     },
   ].filter(

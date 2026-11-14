@@ -570,9 +570,10 @@ test("navigation reveals the current sidebar entry without moving a visible one"
   await open(page, app);
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const scrollTop = () => sidebar.evaluate((element) => element.scrollTop);
-  const toBottom = () =>
+  // Channels follow the large Direct messages section, so the top is away.
+  const toTop = () =>
     sidebar.evaluate((element) => {
-      element.scrollTop = element.scrollHeight;
+      element.scrollTop = 0;
       return element.scrollTop;
     });
   const alpha = sidebar.locator('[data-channel-id="alpha"]');
@@ -583,7 +584,8 @@ test("navigation reveals the current sidebar entry without moving a visible one"
     .locator("details")
     .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
   await expect(alpha).toHaveAttribute("aria-current", "page");
-  expect(await toBottom()).toBeGreaterThan(100);
+  expect(await scrollTop()).toBeGreaterThan(100);
+  await toTop();
   await expect(alpha).not.toBeInViewport();
   // Search navigation reveals a page entry.
   await openPage(page, "Workflows");
@@ -614,7 +616,7 @@ test("navigation reveals the current sidebar entry without moving a visible one"
   await expect(
     page.getByRole("region", { name: "New message", exact: true }),
   ).toBeVisible();
-  const composing = await toBottom();
+  const composing = await toTop();
   expect(await scrollTop()).toBe(composing);
   await button(page, "Go back").click();
   await expect(
@@ -626,7 +628,7 @@ test("navigation reveals the current sidebar entry without moving a visible one"
   // A collapsed section reveals its header and stays collapsed.
   await group.locator("summary").click();
   await expect(group).not.toHaveAttribute("open");
-  await toBottom();
+  await toTop();
   await button(page, "Go back").click();
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
@@ -835,7 +837,8 @@ test("invalid saved sidebar fields fall back", async ({ page, app }) => {
   await expect(button(page, "Community switcher: Primary")).toBeVisible();
   await expect(button(page, "Beta")).toBeVisible();
   await expect(sidebar.locator("details").first()).toHaveAttribute("open");
-  expect(await sidebar.evaluate((element) => element.scrollTop)).toBe(0);
+  // The invalid offset is ignored; the current channel is revealed instead.
+  await expect(sidebar.locator('[data-channel-id="alpha"]')).toBeInViewport();
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();

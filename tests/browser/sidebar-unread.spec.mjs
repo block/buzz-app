@@ -48,13 +48,17 @@ const scroll = (page, top) =>
   list(page).evaluate((el, top) => {
     el.scrollTop = top;
   }, top);
-const scrollRowAbove = (page, id) =>
+const scrollToEnd = (page) =>
+  list(page).evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+const scrollRowBelow = (page, id) =>
   row(page, id).evaluate((el) => {
     const viewport = el.closest("nav");
     if (!viewport) throw new Error("Channel row is outside the channel list");
     const rowRect = el.getBoundingClientRect();
     const viewportRect = viewport.getBoundingClientRect();
-    viewport.scrollTop += rowRect.bottom - viewportRect.top + 1;
+    viewport.scrollTop -= viewportRect.bottom - rowRect.top + 1;
   });
 const inView = (page, id) =>
   row(page, id).evaluate((el) => {
@@ -161,9 +165,10 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
     app.relay.releaseUnread();
     await expect(row(page, "dm-030").getByRole("img")).toHaveCount(1);
     await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
-    await expect(cue(page, "below")).toBeVisible();
-    await expect(cue(page, "below")).toHaveCSS("border-radius", "34px");
-    await expect(cue(page, "below").locator("..")).toHaveCSS(
+    // Direct messages precede Channels, so revealing Alpha leaves them above.
+    await expect(cue(page, "above")).toBeVisible();
+    await expect(cue(page, "above")).toHaveCSS("border-radius", "34px");
+    await expect(cue(page, "above").locator("..")).toHaveCSS(
       "border-radius",
       "34px",
     );
@@ -244,36 +249,37 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
   await sidebar(page).screenshot({
     path: info.outputPath("sidebar-unread-hierarchy.png"),
   });
-  await expect(cue(page, "below")).toBeVisible();
-  await expect(cue(page, "below")).toHaveText(/\d+ unread$/);
-  await expect(cue(page, "below").locator("..")).toHaveCSS("bottom", "12px");
-  await expect(cue(page, "below")).toHaveAccessibleName(
-    /^\d+ unread conversations? below$/,
-  );
-  await expect(cue(page, "below")).toHaveAttribute("data-attention", "true");
-  const transitionProperties = await cue(page, "below").evaluate((el) =>
-    getComputedStyle(el).transitionProperty.split(", "),
-  );
-  expect(transitionProperties).toEqual(["background-color", "color"]);
-  await expectCueHidden(page, "above");
-  await releaseReadingFocus(page);
-  // Keep actionable DMs below while moving only ordinary unread above: priority
-  // is derived from the destinations on each edge, not from the whole roster.
-  await scrollRowAbove(page, "beta");
-  await expect.poll(() => inView(page, "beta")).toBe(false);
+  // Direct messages precede Channels, so revealing Alpha leaves them above.
   await expect(cue(page, "above")).toBeVisible();
   await expect(cue(page, "above")).toHaveText(/\d+ unread$/);
   await expect(cue(page, "above").locator("..")).toHaveCSS("top", "12px");
   await expect(cue(page, "above")).toHaveAccessibleName(
     /^\d+ unread conversations? above$/,
   );
-  await expect(cue(page, "above")).toHaveAttribute("data-attention", "false");
-  await expect(cue(page, "below")).toHaveAttribute("data-attention", "true");
+  await expect(cue(page, "above")).toHaveAttribute("data-attention", "true");
+  const transitionProperties = await cue(page, "above").evaluate((el) =>
+    getComputedStyle(el).transitionProperty.split(", "),
+  );
+  expect(transitionProperties).toEqual(["background-color", "color"]);
+  await expectCueHidden(page, "below");
+  await releaseReadingFocus(page);
+  // Keep actionable DMs above while moving only ordinary unread below: priority
+  // is derived from the destinations on each edge, not from the whole roster.
+  await scrollRowBelow(page, "beta");
+  await expect.poll(() => inView(page, "beta")).toBe(false);
+  await expect(cue(page, "below")).toBeVisible();
+  await expect(cue(page, "below")).toHaveText(/\d+ unread$/);
+  await expect(cue(page, "below").locator("..")).toHaveCSS("bottom", "12px");
+  await expect(cue(page, "below")).toHaveAccessibleName(
+    /^\d+ unread conversations? below$/,
+  );
+  await expect(cue(page, "below")).toHaveAttribute("data-attention", "false");
+  await expect(cue(page, "above")).toHaveAttribute("data-attention", "true");
   // Only attention earns the strong fill; ordinary unread is the quiet cue.
-  await expect(cue(page, "above")).toHaveAttribute("data-variant", "subtle");
-  await expect(cue(page, "below")).toHaveAttribute("data-variant", "prominent");
-  await scroll(page, 0);
-  await expect(cue(page, "below")).toHaveAttribute("data-attention", "true");
+  await expect(cue(page, "below")).toHaveAttribute("data-variant", "subtle");
+  await expect(cue(page, "above")).toHaveAttribute("data-variant", "prominent");
+  await scrollToEnd(page);
+  await expect(cue(page, "above")).toHaveAttribute("data-attention", "true");
   await scroll(page, 1800);
   await expect(cue(page, "above")).toBeVisible();
   await expect(cue(page, "below")).toBeVisible();
@@ -282,11 +288,13 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
   await sidebar(page).screenshot({
     path: info.outputPath("sidebar-unread-both.png"),
   });
-  await cue(page, "above").focus();
-  await cue(page, "above").press("Enter");
-  await expect.poll(() => inView(page, "dm-030")).toBe(true);
-  await expect(row(page, "dm-030")).toBeFocused();
-  await expect(row(page, "dm-030")).not.toHaveAttribute("aria-current");
+  // Beta also waits below, so reveal the nearer DM there first and finish on
+  // the edge whose last unread conversation hides its cue.
+  await cue(page, "below").focus();
+  await cue(page, "below").press("Enter");
+  await expect.poll(() => inView(page, "dm-090")).toBe(true);
+  await expect(row(page, "dm-090")).toBeFocused();
+  await expect(row(page, "dm-090")).not.toHaveAttribute("aria-current");
   // The edge cue reveals and focuses without changing the selected conversation.
   await expect(list(page).locator('[aria-current="page"]')).toHaveAttribute(
     "data-channel-id",
@@ -301,11 +309,11 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
         .slice(before)
         .map(({ filter }) => filter["#h"][0]),
     )
-    .toContain("dm-030");
-  await cue(page, "below").focus();
-  await cue(page, "below").press("Enter");
-  await expect.poll(() => inView(page, "dm-090")).toBe(true);
-  await expectCueHidden(page, "below");
+    .toContain("dm-090");
+  await cue(page, "above").focus();
+  await cue(page, "above").press("Enter");
+  await expect.poll(() => inView(page, "dm-030")).toBe(true);
+  await expectCueHidden(page, "above");
   expect(await list(page).boundingBox()).toEqual(size); // Overlay never resizes the list.
   const warmed = heads(app)
     .slice(before)
@@ -358,27 +366,28 @@ test("resizing, collapsed groups and new unread evidence update only the display
 }) => {
   await open(page, app);
   await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
-  await expect(cue(page, "below")).toBeVisible();
+  // Direct messages precede Channels, so revealing Alpha leaves them above.
+  await expect(cue(page, "above")).toBeVisible();
   // Messages are hidden behind a visible section summary: not below the scroll fold.
   await list(page)
     .locator("summary")
     .filter({ hasText: /^Channels$/ })
     .click();
   // Channels are collapsed, but unread DMs remain eligible and keep the cue.
-  await expect(cue(page, "below")).toBeVisible();
+  await expect(cue(page, "above")).toBeVisible();
   await list(page)
     .locator("summary")
     .filter({ hasText: /^Channels$/ })
     .click();
-  await cue(page, "below").click();
-  await expect.poll(() => inView(page, "dm-030")).toBe(true);
-  // Collapse the preceding group without scrolling it into view first.
+  await cue(page, "above").click();
+  await expect.poll(() => inView(page, "dm-090")).toBe(true);
+  // Collapse the following group without scrolling it into view first.
   await list(page)
     .locator("summary")
     .filter({ hasText: /^Channels$/ })
     .evaluate((el) => el.click());
-  await expect(cue(page, "above")).toBeVisible();
-  await cue(page, "above").click();
+  await expect(cue(page, "below")).toBeVisible();
+  await cue(page, "below").click();
   await expect.poll(() => inView(page, "Beta")).toBe(true);
   await expect(list(page).locator("details").first()).toHaveAttribute(
     "open",
@@ -420,10 +429,12 @@ test("resizing, collapsed groups and new unread evidence update only the display
   await expect(
     sidebar(page).getByRole("button").and(cue(page, "below")),
   ).toHaveCount(1);
-  await cue(page, "below").click();
-  await cue(page, "below").click();
-  await expectCueHidden(page, "below");
-  app.append("primary", "dm-127", "New offscreen unread", false, false);
+  // Beta is the last row, so exhaust the top edge instead: dm-030 and dm-090.
+  await scrollToEnd(page);
+  await cue(page, "above").click();
+  await cue(page, "above").click();
+  await expectCueHidden(page, "above");
+  app.append("primary", "dm-000", "New offscreen unread", false, false);
   // Non-active channels have no live content route. Discover the new evidence
   // through the existing bounded refresh, not by inventing a subscription.
   await openChannelDetails(page);
@@ -435,11 +446,11 @@ test("resizing, collapsed groups and new unread evidence update only the display
   await page
     .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
-  await expect(cue(page, "below")).toBeVisible();
-  await cue(page, "below").click();
-  await expect.poll(() => inView(page, "dm-127")).toBe(true);
+  await expect(cue(page, "above")).toBeVisible();
+  await cue(page, "above").click();
+  await expect.poll(() => inView(page, "dm-000")).toBe(true);
   // Source badges disappear on an explicit read, and the edge cue follows.
-  await row(page, "dm-127").click();
+  await row(page, "dm-000").click();
   await expect(
     page.getByText("New offscreen unread", { exact: true }),
   ).toBeVisible();
@@ -451,12 +462,13 @@ test("resizing, collapsed groups and new unread evidence update only the display
       exact: true,
     })
     .click();
-  await expect(row(page, "dm-127").getByRole("img")).toHaveCount(0);
+  await expect(row(page, "dm-000").getByRole("img")).toHaveCount(0);
   await page
     .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
-  await scroll(page, 2700);
-  await expectCueHidden(page, "below");
+  // dm-000 is above this offset and dm-030, the next unread, is in view.
+  await scroll(page, 600);
+  await expectCueHidden(page, "above");
 });
 
 test("session changes discard the previous sidebar targets and manual unread still participates", async ({
@@ -480,12 +492,13 @@ test("session changes discard the previous sidebar targets and manual unread sti
   });
   try {
     await open(page, app);
-    await expect(cue(page, "below")).toBeVisible();
+    // Direct messages precede Channels, so revealing Alpha leaves them above.
+    await expect(cue(page, "above")).toBeVisible();
     await selectCommunity(page, "Secondary");
     await expect(
       page.getByText(/secondary alpha message/).first(),
     ).toBeVisible();
-    await expectCueHidden(page, "below");
+    await expectCueHidden(page, "above");
     await openChannelDetails(page);
     await page.getByText("Diagnostics", { exact: true }).press("Enter");
     await page
@@ -506,8 +519,18 @@ test("session changes discard the previous sidebar targets and manual unread sti
     await expect(
       page.getByText("Updating sidebar details…", { exact: true }),
     ).toHaveCount(0);
-    await scroll(page, 1800);
-    await expect(cue(page, "above")).toBeVisible();
+    // Alpha follows the Direct messages, so the cue below already shows at the
+    // top and cannot prove this scroll landed. Wait for the scroll event itself:
+    // the user takes the viewport there, before delayed preferences reveal Alpha.
+    await list(page).evaluate(
+      (el, top) =>
+        new Promise((resolve) => {
+          el.addEventListener("scroll", () => resolve(), { once: true });
+          el.scrollTop = top;
+        }),
+      1800,
+    );
+    await expect(cue(page, "below")).toBeVisible();
     // Completing delayed preferences must not replace the user's newer viewport.
     const refreshed = page.waitForResponse(
       (response) =>
@@ -520,7 +543,7 @@ test("session changes discard the previous sidebar targets and manual unread sti
     expect(await list(page).evaluate((element) => element.scrollTop)).toBe(
       1800,
     );
-    await cue(page, "above").click();
+    await cue(page, "below").click();
     await expect.poll(() => inView(page, "alpha")).toBe(true);
     await expect(
       row(page, "alpha").locator(
@@ -628,14 +651,14 @@ test.describe("DM preview wiring", () => {
       await expect(
         row(page, id).locator("[data-channel-unread]"),
       ).toBeAttached();
-    const below = cue(page, "below");
-    await expect(below.locator("[data-unread-dm]")).toHaveCount(3);
+    // Direct messages precede Channels; the padding channels let them all
+    // scroll past the top edge, while Beta alone waits below from the top.
+    await scrollToEnd(page);
+    const above = cue(page, "above");
+    await expect(above.locator("[data-unread-dm]")).toHaveCount(3);
     const eligible = new Set(["dm-a", "dm-b", "dm-c", "dm-d"]);
-    for (const edge of ["below", "above"]) {
-      if (edge === "above")
-        await list(page).evaluate((el) => {
-          el.scrollTop = el.scrollHeight;
-        });
+    for (const edge of ["above", "below"]) {
+      if (edge === "below") await scroll(page, 0);
       const pill = cue(page, edge);
       await expect(pill).toBeVisible();
       await expect(pill).toHaveCSS("height", "24px");
@@ -671,14 +694,15 @@ test.describe("DM preview wiring", () => {
         await expect(avatar).toHaveCSS("height", "16px");
       }
     }
-    await scroll(page, 0);
-    const human = below.locator('[data-unread-dm="dm-a"] [data-avatar-shape]');
-    const agent = below.locator('[data-unread-dm="dm-b"] [data-avatar-shape]');
+    await scrollToEnd(page);
+    // Nearest-first, the stack holds dm-c, dm-b and dm-d (dm-a's human peer).
+    const human = above.locator('[data-unread-dm="dm-d"] [data-avatar-shape]');
+    const agent = above.locator('[data-unread-dm="dm-b"] [data-avatar-shape]');
     await expect(human).toHaveAttribute("data-avatar-shape", "circle");
     await expect(human).toHaveCSS("border-radius", "50%");
     await expect(agent).toHaveAttribute("data-avatar-shape", "squircle");
     await expect(agent).toHaveCSS("border-radius", "0px");
-    const boxes = await below.locator("[data-unread-dm]").evaluateAll((els) =>
+    const boxes = await above.locator("[data-unread-dm]").evaluateAll((els) =>
       els.map((el) => {
         const { left, right } = el.getBoundingClientRect();
         return { left, right };

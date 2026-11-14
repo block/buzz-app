@@ -616,6 +616,7 @@ export function createProfileDirectory(
     },
     /** Up to `count` held verified heads, for the device mirror. */
     verifiedHeads: (count: number) => verified?.heads(count) ?? [],
+    verifiedAnswered: (subject: string) => !!verified?.answered(subject),
     /** Verified heads an earlier session saved, shown as cached until checked. */
     restoreVerified(saved: readonly RelayEvent[]) {
       verified?.restore(saved);

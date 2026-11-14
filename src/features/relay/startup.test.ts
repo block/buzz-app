@@ -762,6 +762,48 @@ describe("device-local startup", () => {
     expect(await h.mirrored()).toEqual([renamed.id]);
   });
 
+  it("saves a removal that a disable follows before the mirror is written", async () => {
+    const storage = disk();
+    const alice = keypair();
+    await storage.writeProfiles?.([verifiedHead(alice.pubkey, "Alice", 1)]);
+    const h = verifiedSession(storage);
+    const { profiles } = h.owner.session;
+    h.live()?.state({ status: "connected", routes: [] });
+    await h.owner.restore();
+    expect(profiles.snapshot().get(alice.pubkey)?.name).toBe("Alice");
+    await vi.waitFor(() => expect(h.sink()).toBeDefined());
+    h.sink()?.eose(); // The relay no longer holds Alice's head.
+    h.live()?.state({ status: "connecting", routes: [] });
+    h.live()?.state({ status: "connected", routes: [] });
+    await vi.waitFor(() =>
+      expect(profiles.verifiedAuthority?.()).toBeUndefined(),
+    );
+    await vi.waitFor(
+      async () =>
+        expect((await storage.readStartup?.())?.verifiedProfiles).toBeNull(),
+      { timeout: 3000 },
+    );
+    await vi.waitFor(async () => expect(await h.mirrored()).toEqual([]), {
+      timeout: 3000,
+    });
+    // A restart with verified names enabled again shows no stale name.
+    const restarted = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        query: async () => [],
+        media: () => undefined,
+        verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
+      },
+      { persistence: storage, prepared: true, cachedOnly: true },
+    );
+    owners.push(restarted);
+    await restarted.restore();
+    expect(
+      restarted.session.profiles.snapshot().get(alice.pubkey)?.name,
+    ).toBeUndefined();
+  });
+
   it("publishes a mirror of verified names alone before restore returns", async () => {
     const storage = disk();
     const alice = keypair();

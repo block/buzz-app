@@ -1549,13 +1549,17 @@ export function createChannelStore(
     if (!persistence.writeProfiles || !profilesRestored) return;
     const held = directory.verifiedHeads(PROFILE_CACHE_BASE);
     if (authority) savedVerified = held;
-    else if (held.length) {
-      // Heads kept after a disable are newer than the saved copy of theirs.
+    else {
+      // After a disable, a sync's answer is newer than the saved copy: a held
+      // head replaces it, and an answered absence removes it.
       const address = (event: RelayEvent) =>
-        `${event.pubkey}:${event.tags.find(([name]) => name === "d")?.[1]}`;
+        event.tags.find(([name]) => name === "d")?.[1] ?? "";
       const kept = new Set(held.map(address));
       savedVerified = [
-        ...savedVerified.filter((event) => !kept.has(address(event))),
+        ...savedVerified.filter((event) => {
+          const subject = address(event);
+          return !kept.has(subject) && !directory.verifiedAnswered(subject);
+        }),
         ...held,
       ].slice(-PROFILE_CACHE_BASE);
     }

@@ -62,6 +62,7 @@
 .text {
   margin: 0;
   min-width: 0;
+  border-radius: var(--radius-row);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
@@ -377,18 +378,18 @@ html[data-keyboard-navigation] .context summary:focus-visible {
   }
 }
 
-/* Arriving at a message's turn briefly marks its title with the message
-   arrival wash: held about a second, then a slow fade. */
+/* Arriving at a message's turn marks its text with the message arrival
+   wash, longer than in chat so it is found in a busy transcript: held about
+   four seconds, then a two-second fade back to the surface's own fill. The
+   spread pads the wash without moving the text. */
 .timeline [data-arrived] {
-  animation: entry-arrived calc(var(--duration-settle) * 10) ease-out;
+  animation: entry-arrived 6s ease-out;
 }
 @keyframes entry-arrived {
   0%,
-  45% {
+  67% {
     background-color: var(--surface-message-highlight);
-  }
-  100% {
-    background-color: transparent;
+    box-shadow: 0 0 0 var(--space-1) var(--surface-message-highlight);
   }
 }
 @media (prefers-reduced-motion: reduce) {

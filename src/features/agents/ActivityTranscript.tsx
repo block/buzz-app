@@ -226,18 +226,21 @@ function useShowFocused(
     if (!element) return;
     const details = element.querySelector("details");
     if (details) details.open = true;
-    // Its title is marked as an arriving message is, once: the mark goes
-    // when its animation ends or is cut short, so showing the transcript
-    // again does not replay it. A repeat arrival restarts it.
-    const title = element.querySelector("summary") ?? element;
+    // Its text, or else its title, is marked as an arriving message is,
+    // once: the mark goes when its animation ends or is cut short, so showing
+    // the transcript again does not replay it. A repeat arrival restarts it.
+    const surface =
+      element.querySelector<HTMLElement>("[data-arrival-surface]") ??
+      element.querySelector("summary") ??
+      element;
     for (const marked of timeline.current?.querySelectorAll("[data-arrived]") ??
       [])
       marked.removeAttribute("data-arrived");
-    void title.offsetWidth;
-    title.setAttribute("data-arrived", "");
-    const unmark = () => title.removeAttribute("data-arrived");
-    title.addEventListener("animationend", unmark, { once: true });
-    title.addEventListener("animationcancel", unmark, { once: true });
+    void surface.offsetWidth;
+    surface.setAttribute("data-arrived", "");
+    const unmark = () => surface.removeAttribute("data-arrived");
+    surface.addEventListener("animationend", unmark, { once: true });
+    surface.addEventListener("animationcancel", unmark, { once: true });
     following.current = false;
     element.scrollIntoView({ block: "start" });
     focus.done();
@@ -592,7 +595,7 @@ function Item({
           label={<span className={styles.subject}>{name}</span>}
           preview={line(item.text)}
         >
-          <p className={styles.text}>
+          <p className={styles.text} data-arrival-surface>
             {item.steer && <em>(steer) </em>}
             {item.text}
           </p>
@@ -646,7 +649,7 @@ function Item({
           }
           preview={line(item.text)}
         >
-          <div className={messageStyles.messageBubble}>
+          <div className={messageStyles.messageBubble} data-arrival-surface>
             <div className="text-message">
               <Reply text={item.text} />
             </div>

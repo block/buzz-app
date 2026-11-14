@@ -572,15 +572,12 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
     expect(done).toHaveBeenCalledOnce();
     const prompt = screen.getByText("Prompt 2", { selector: "p" });
     expect(prompt.closest("details")).toHaveAttribute("open");
-    expect(prompt.closest("details")?.querySelector("summary")).toHaveAttribute(
-      "data-arrived",
-    );
+    // Its text is marked, not its title.
+    expect(prompt).toHaveAttribute("data-arrived");
     expect(view.querySelectorAll("[data-arrived]")).toHaveLength(1);
     // Once shown, the mark is gone, so the transcript shown again (a hidden
     // pane reopened) does not replay it.
-    fireEvent.animationEnd(
-      prompt.closest("details")?.querySelector("summary") as Element,
-    );
+    fireEvent.animationEnd(prompt);
     expect(view.querySelectorAll("[data-arrived]")).toHaveLength(0);
     // New turns no longer pull it to the latest.
     view.scrollTop = 0;
@@ -589,6 +586,36 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
     // A retried request shows its latest attempt, the one that answered.
     rerender(show([turn(1), turn(2), turn(5, 2)], ["retry", id(2)]));
     expect(shown.at(-1)).toBe("item:p5");
+    // A reply lands on itself, its bubble marked.
+    const replied = turn(6);
+    rerender(
+      show(
+        [
+          turn(1),
+          {
+            ...replied,
+            items: [
+              ...replied.items,
+              {
+                id: "m6",
+                at: 7,
+                type: "message",
+                text: "Reply 6",
+                messageId: "reply",
+              },
+            ],
+          },
+        ],
+        ["reply"],
+      ),
+    );
+    expect(shown.at(-1)).toBe("item:m6");
+    expect(
+      screen
+        .getByText("Reply 6", { selector: "p" })
+        .closest("[data-arrival-surface]"),
+    ).toHaveAttribute("data-arrived");
+    expect(view.querySelectorAll("[data-arrived]")).toHaveLength(1);
   } finally {
     // jsdom has no scrollIntoView of its own.
     Reflect.deleteProperty(Element.prototype, "scrollIntoView");

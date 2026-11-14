@@ -39,6 +39,25 @@ export function targetKey(target: ReadTarget): string {
   if (!/^[0-9a-f]{64}$/.test(id)) throw new Error("Invalid read event ID");
   return `${target.kind === "thread" ? "thread" : "msg"}:${id}`;
 }
+/** Only whole-channel override groups sync; message and thread unread stay local. */
+export const channelContext = (key: string) =>
+  /^[a-zA-Z0-9_-]{1,128}$/.test(key);
+/** Drops `msg:` and `thread:` override groups: never evaluated, merged or carried. */
+export function channelGroups<T extends Readonly<{ state: ReadState }>>(
+  parsed: T,
+): T {
+  const overrides = Object.entries(parsed.state.overrides);
+  if (overrides.every(([key]) => channelContext(key))) return parsed;
+  return Object.freeze({
+    ...parsed,
+    state: Object.freeze({
+      frontiers: parsed.state.frontiers,
+      overrides: Object.freeze(
+        Object.fromEntries(overrides.filter(([key]) => channelContext(key))),
+      ),
+    }),
+  });
+}
 export type Override = Readonly<{
   set: number;
   clear: number;
@@ -266,6 +285,23 @@ export function readBlob(
     );
   return blob;
 }
+/** The primary's override part: every channel group and its own frontier,
+ * which travel together. Throws when they cannot fit in one blob. */
+export function groupBlob(
+  clientId: string,
+  state: ReadState,
+  frontier: (key: string) => number | undefined,
+): ReadBlob {
+  const overrides = Object.fromEntries(
+    Object.entries(state.overrides).filter(([key]) => channelContext(key)),
+  );
+  const frontiers = Object.fromEntries(
+    Object.keys(overrides).flatMap((key) =>
+      state.frontiers[key] === undefined ? [] : [[key, state.frontiers[key]]],
+    ),
+  );
+  return readBlob(clientId, { frontiers, overrides }, frontier);
+}
 export type ReadSlotPlan = Readonly<{
   slot: string;
   frontiers: Readonly<Record<string, number>>;
@@ -282,6 +318,8 @@ export function packReadState(
   slots: readonly Readonly<{ slot: string; carried: readonly string[] }>[],
   newSlot: () => string,
   maxBytes = READ_STATE_PLAINTEXT_BYTES,
+  /** Placed in the first slot before anything else: override groups' blob. */
+  primary?: ReadBlob,
 ): ReadSlotPlan[] {
   const base = bytes(
     JSON.stringify({ v: 1, client_id: clientId, contexts: {} }),
@@ -291,6 +329,21 @@ export function packReadState(
     frontiers: {} as Record<string, number>,
     used: base,
   }));
+  const pinned = new Set<string>();
+  if (primary && Object.keys(primary.contexts).length) {
+    const first = bins[0];
+    if (!first) throw new Error("Read-state primary slot missing");
+    first.used = bytes(JSON.stringify(primary));
+    for (const key of Object.keys(primary.contexts))
+      if (
+        !key.startsWith("ov_") &&
+        frontiers[unescapeContext(key)] !== undefined
+      ) {
+        const id = unescapeContext(key);
+        pinned.add(id);
+        first.frontiers[id] = frontiers[id] as number;
+      }
+  }
   const home = new Map<string, number>();
   slots.forEach(({ carried }, index) => {
     for (const key of carried) if (!home.has(key)) home.set(key, index);
@@ -306,7 +359,9 @@ export function packReadState(
     bin.used += size;
     return true;
   };
-  const keys = Object.keys(frontiers).sort(byKey);
+  const keys = Object.keys(frontiers)
+    .filter((key) => !pinned.has(key))
+    .sort(byKey);
   const rest = keys.filter((key) => {
     const bin = bins[home.get(key) ?? -1];
     return !bin || !add(bin, key, frontiers[key] as number);

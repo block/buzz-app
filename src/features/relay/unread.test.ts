@@ -3670,7 +3670,7 @@ it.each(["markMessageRead", "markMessageUnread"] as const)(
   },
 );
 
-it("bottom catch-up reads top-level mentions and broadcasts; participating threads and later activity stay", async () => {
+it("bottom catch-up reads top-level mentions and broadcasts; covered replies inherit it and later activity stays", async () => {
   const h = setup();
   h.grant("room");
   const own = message(h.viewer, "room", "my thread", 11);
@@ -3702,52 +3702,23 @@ it("bottom catch-up reads top-level mentions and broadcasts; participating threa
   ]);
   const lease = h.session.unread.reading("room");
   await lease.catchUp(bottom.id);
-  // The timeline the reader reached shows the mention and the broadcast, so
-  // each gets its own mark; `activity:` stays ordinary-only.
-  expect(h.journal()?.state.frontiers).toEqual({
-    "activity:room": 20,
-    [`msg:${mention.id}`]: 15,
-    [`msg:${broadcast.id}`]: 16,
-  });
-  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 1 });
-  expect(h.session.unread.attention("room", mention.id).unread).toBe(false);
-  expect(h.session.unread.attention("room", broadcast.id).unread).toBe(false);
-  expect(h.session.unread.attention("room", reply.id).unread).toBe(true);
-  // A peer thread the viewer never joined does not count, even directly.
-  expect(
-    h.session.unread.snapshot({
-      kind: "thread",
-      channelId: "room",
-      rootId: ordinaryRoot.id,
-    }).observedCount,
-  ).toBe(0);
+  // Catch-up advances the channel frontier; it covers the mention, the
+  // broadcast and, by inheritance, older replies (NIP-RS effective(reply)).
+  expect(h.journal()?.state.frontiers).toEqual({ room: 20 });
+  expect(h.snapshot()).toMatchObject({ observedCount: 0, attentionCount: 0 });
+  for (const row of [mention, broadcast, reply, ordinaryReply])
+    expect(h.session.unread.attention("room", row.id).unread).toBe(false);
   h.emit([
     message(h.alice, "room", "late old ordinary", 19),
     message(h.alice, "room", "new", 21),
   ]);
-  expect(h.snapshot()).toMatchObject({ observedCount: 2, attentionCount: 1 });
-  // Attention delivered after catch-up with an older timestamp (a retried
-  // send, a fast clock) was never on screen, so it stays unread.
-  const late = message(h.alice, "room", "late mention", 17, [
-    ["p", h.viewer.pubkey],
-  ]);
-  h.emit([late]);
-  expect(h.session.unread.attention("room", late.id).unread).toBe(true);
-  expect(h.snapshot()).toMatchObject({ observedCount: 3, attentionCount: 2 });
-  // Participation discovered later must restore protected attention, not inherit catch-up.
-  h.emit([
-    message(h.viewer, "room", "earlier participation", 13, [
-      ["e", ordinaryRoot.id, "", "reply"],
-    ]),
-  ]);
-  expect(h.session.unread.attention("room", ordinaryReply.id)).toMatchObject({
-    category: "thread",
-    unread: true,
-  });
+  // Only what is newer than the frontier is unread; an older late arrival is
+  // covered (the accepted ordering tradeoff).
+  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 0 });
   lease.dispose();
 });
 
-it("bottom catch-up leaves older attention that arrives during its save unread", async () => {
+it("bottom catch-up covers older attention that arrives during its save", async () => {
   const h = setup();
   h.grant("room");
   const bottom = message(h.alice, "room", "bottom", 20);
@@ -3765,9 +3736,10 @@ it("bottom catch-up leaves older attention that arrives during its save unread",
     release();
   }
   await pending;
-  // The dwell ended before this mention arrived, so it waits for its own.
-  expect(h.journal()?.state.frontiers).toEqual({ "activity:room": 20 });
-  expect(h.session.unread.attention("room", late.id).unread).toBe(true);
+  // An older-timestamped late arrival is covered by the frontier: the accepted
+  // ordering tradeoff of frontier-only state.
+  expect(h.journal()?.state.frontiers).toEqual({ room: 20 });
+  expect(h.session.unread.attention("room", late.id).unread).toBe(false);
   lease.dispose();
 });
 
@@ -3829,7 +3801,7 @@ it("bottom catch-up ends a manual channel unread but keeps marked messages", asy
   await lease.observe([bottom.id]);
   expect(h.snapshot().manual).toBe("local-only");
   await lease.catchUp(bottom.id);
-  expect(h.journal()?.state.frontiers).toMatchObject({ "activity:room": 12 });
+  expect(h.journal()?.state.frontiers).toMatchObject({ room: 12 });
   expect(h.journal()?.localUnread).not.toHaveProperty("room");
   expect(h.session.unread.snapshot(markedTarget).manual).toBe("local-only");
   lease.dispose();
@@ -3841,142 +3813,7 @@ it("bottom catch-up ends a manual channel unread but keeps marked messages", asy
   again.dispose();
 });
 
-it("keeps peer message-unread intent effective across an in-flight automatic read", async () => {
-  const h = setup();
-  h.grant("room");
-  h.emit([metadata(h.relay, "room", "room", 11, [["t", "stream"]])]);
-  const row = message(h.alice, "room", "hello", 11, [["p", h.viewer.pubkey]]);
-  h.emit([row]);
-  await flush();
-  const unread = h.session.unread;
-  const target = {
-    kind: "message" as const,
-    channelId: "room",
-    messageId: row.id,
-  };
-  const reading = unread.reading("room");
-  const readSave = h.holdSaveStarted();
-  const automaticRead = reading.observe([row.id]);
-  let peerSave: ReturnType<typeof h.holdSaveStarted> | undefined;
-  try {
-    await readSave.started;
-    peerSave = h.holdSaveStarted();
-    const createdAt = Math.floor(Date.now() / 1000);
-    const marker = await signReadState(
-      {
-        slot: "a".repeat(32),
-        createdAt,
-        blob: {
-          v: 1,
-          client_id: "peer",
-          contexts: {
-            [`ov_s:msg:${row.id}`]: 1,
-            [`ov_c:msg:${row.id}`]: 0,
-            [`ov_b:msg:${row.id}`]: 0,
-          },
-        },
-      },
-      h.viewer.secret,
-      createdAt,
-    );
-    h.emit([marker]);
-    readSave.release();
-    await automaticRead;
-    await peerSave.started;
-  } finally {
-    readSave.release();
-    peerSave?.release();
-  }
-  await expect.poll(() => unread.snapshot(target).manual).toBe("remote");
-  expect(h.journal()?.state.overrides[`msg:${row.id}`]).toEqual({
-    set: 1,
-    clear: 0,
-    baseline: 11,
-  });
-  expect(unread.attention("room", row.id).unread).toBe(true);
-  reading.dispose();
-
-  // Explicit message/timeline reads preserve remote overrides at the same
-  // frontier; only a newer frontier ends them (the existing NIP-RS contract).
-  await unread.markMessageRead("room", row.id);
-  expect(unread.snapshot(target).manual).toBe("remote");
-  await unread.markTimelineRead("room", [row.id]);
-  expect(unread.snapshot(target).manual).toBe("remote");
-
-  clock(20);
-  await unread.markChannelRead("room");
-  await expect.poll(() => unread.snapshot(target).manual).toBe("none");
-  expect(unread.attention("room", row.id).unread).toBe(false);
-  expect(h.journal()?.state.frontiers.room).toBe(20);
-});
-
-it.each(["channel", "thread"] as const)(
-  "observing a reply respects its verified inherited %s frontier before preserving peer intent",
-  async (scope) => {
-    const h = setup();
-    h.grant("room");
-    const root = message(h.viewer, "room", "root", 11);
-    const tags = scope === "thread" ? [["e", root.id, "", "reply"]] : [];
-    const earlier = message(h.alice, "room", "earlier", 12, tags);
-    const row = message(h.alice, "room", "mention", 13, [
-      ...tags,
-      ["p", h.viewer.pubkey],
-    ]);
-    h.emit([root, earlier, row]);
-    const unread = h.session.unread;
-    await unread.markThrough(
-      scope === "thread"
-        ? { kind: "thread", channelId: "room", rootId: root.id }
-        : h.target,
-      earlier.id,
-    );
-    const target = {
-      kind: "message" as const,
-      channelId: "room",
-      messageId: row.id,
-    };
-    const reading = unread.reading("room");
-    const held = h.holdSaveStarted();
-    const automaticRead = reading.observe([row.id]);
-    try {
-      await held.started;
-      const createdAt = Math.floor(Date.now() / 1000);
-      h.emit([
-        await signReadState(
-          {
-            slot: "a".repeat(32),
-            createdAt,
-            blob: {
-              v: 1,
-              client_id: "peer",
-              contexts: {
-                [`ov_s:msg:${row.id}`]: 1,
-                [`ov_c:msg:${row.id}`]: 0,
-                [`ov_b:msg:${row.id}`]: 5,
-              },
-            },
-          },
-          h.viewer.secret,
-          createdAt,
-        ),
-      ]);
-      held.release();
-      await automaticRead;
-    } finally {
-      held.release();
-      reading.dispose();
-    }
-    // The merged marker is the completion barrier, not a negative snapshot before ingestion.
-    await expect
-      .poll(() => h.journal()?.state.overrides[`msg:${row.id}`]?.set)
-      .toBe(1);
-    expect(h.journal()?.state.overrides[`msg:${row.id}`]?.baseline).toBe(5);
-    expect(unread.snapshot(target).manual).toBe("none");
-    expect(unread.attention("room", row.id).unread).toBe(false);
-  },
-);
-
-it("thread bottom catch-up clears only its thread and preserves local and remote manual intent", async () => {
+it("thread bottom catch-up clears only its thread and ignores a peer thread override", async () => {
   const h = setup();
   h.grant("room");
   const root = message(h.viewer, "room", "root", 11);
@@ -3998,14 +3835,14 @@ it("thread bottom catch-up clears only its thread and preserves local and remote
   const lease = h.session.unread.reading("room");
   await lease.catchUp(reply.id, root.id);
   expect(h.journal()?.state.frontiers).toEqual({
-    [`thread-activity:${root.id}`]: 13,
+    [`thread:${root.id}`]: 13,
   });
   expect(h.session.unread.snapshot(thread)).toMatchObject({
     observedCount: 0,
     manual: "local-only",
   });
   expect(h.session.unread.attention("room", sibling.id).unread).toBe(true);
-  // Real encrypted marker: automatic thread catch-up must not retire a remote override.
+  // Real encrypted marker carrying a peer `thread:` override group.
   clock(30);
   const marker = await signReadState(
     {
@@ -4025,7 +3862,8 @@ it("thread bottom catch-up clears only its thread and preserves local and remote
   );
   h.emit([marker]);
   await flush();
-  expect(h.session.unread.attention("room", reply.id).unread).toBe(true);
+  // A peer's thread override group is ignored: never evaluated or carried.
+  expect(h.session.unread.attention("room", reply.id).unread).toBe(false);
   lease.dispose();
 });
 
@@ -4072,8 +3910,8 @@ it("channel bottom catch-up leaves newer replies in the viewer's thread unread; 
   };
   const lease = unread.reading("room");
   await lease.catchUp(peerRoot.id);
-  // The cut covers the newest retained reply, but only top-level rows inherit it.
-  expect(h.journal()?.state.frontiers).toEqual({ "activity:room": 16 });
+  // The channel frontier stops at the newest top-level message reached.
+  expect(h.journal()?.state.frontiers).toEqual({ room: 12 });
   expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 1 });
   expect(unread.snapshot(thread).observedCount).toBe(1);
   expect(unread.attention("room", peerReply.id).unread).toBe(false);
@@ -4608,11 +4446,13 @@ it.each([
     const thread = unread.reading("dm", topic.id);
     await thread.observe([reply.id]);
     thread.dispose();
-    // Advancing the frontier leaves the marked message unread, so it does not
-    // stop the read.
+    // The mark does not stop the read; the DM frontier passing it ends it
+    // (NIP-RS device-local overrides, clause a).
     expect(frontier()).toBe(30);
     expect(unread.attention("dm", reply.id).unread).toBe(false);
-    expect(unread.attention("dm", marked.id).unread).toBe(true);
+    await expect
+      .poll(() => unread.attention("dm", marked.id).unread)
+      .toBe(false);
   },
 );
 
@@ -4703,7 +4543,8 @@ it("inbox groups a Solo chat's top-level timeline into one conversation, keeping
   const lease = h.session.unread.reading("chat");
   await lease.catchUp(bottom.id);
   expect(chat().find((item) => item.id === "chat:chat")?.unreadCount).toBe(0);
-  expect(chat().find((item) => item.thread)?.unreadCount).toBe(1);
+  // The channel frontier now covers the older reply too.
+  expect(chat().find((item) => item.thread)?.unreadCount ?? 0).toBe(0);
   lease.dispose();
 });
 
@@ -4748,11 +4589,10 @@ it("reading a Solo chat's timeline row takes one save however many responses it 
   await h.session.unread.markTimelineRead("chat", row()?.messageIds ?? []);
   expect(h.journal()?.revision).toBe(before + 1);
   expect(row()).toMatchObject({ unreadCount: 0, manual: false });
-  expect(chat().find((item) => item.thread)?.unreadCount).toBe(1);
+  expect(chat().find((item) => item.thread)?.unreadCount ?? 0).toBe(0);
   const marks = h.journal()?.state.frontiers ?? {};
-  expect(marks["activity:chat"]).toBe(203);
-  expect(marks[`msg:${ping.id}`]).toBe(200);
-  // The catch-up mark covers ordinary responses, so none keeps its own mark.
+  expect(marks.chat).toBe(203);
+  // The channel frontier covers every response, so none keeps its own mark.
   expect(Object.keys(marks)).toEqual(
     expect.not.arrayContaining(responses.map(({ id }) => `msg:${id}`)),
   );
@@ -5355,7 +5195,9 @@ it("a prepared thread read retries only captured replies and preserves root and 
   );
   h.emit([later]);
   await retry();
+  // The thread frontier syncs the read; reply marks stay local.
   expect(h.journal()?.state.frontiers).toEqual({
+    [`thread:${root.id}`]: 14,
     [`msg:${reply.id}`]: 13,
     [`msg:${orphan.id}`]: 14,
   });
@@ -5368,7 +5210,8 @@ it("a prepared thread read retries only captured replies and preserves root and 
   expect(unread.attention("room", reply.id).unread).toBe(false);
   expect(unread.attention("room", root.id).unread).toBe(true);
   expect(unread.attention("room", otherReply.id).unread).toBe(true);
-  expect(unread.attention("room", later.id).unread).toBe(true);
+  // An older-timestamped late reply is covered by the thread frontier.
+  expect(unread.attention("room", later.id).unread).toBe(false);
 });
 
 it.each([
@@ -5412,7 +5255,10 @@ it.each([
       expect(h.journal()?.localUnread["message-force:room"]).toBe(hint);
       expect(unread.attention("room", reply.id).unread).toBe(false);
       expect(unread.attention("room", reply.id).forced).toBe(false);
-      expect(h.journal()?.state.frontiers).toEqual({ [`msg:${reply.id}`]: 13 });
+      expect(h.journal()?.state.frontiers).toEqual({
+        [`thread:${root.id}`]: 13,
+        [`msg:${reply.id}`]: 13,
+      });
       // Opening, not a narrow reply read, owns reconciliation of the shared hint.
       await unread.enterChannel("room");
       expect(h.journal()?.localUnread["message-force:room"]).toBeUndefined();
@@ -5466,7 +5312,10 @@ it.each(
     await result;
     if (phase === "before-commit") expect(h.journal()).toEqual(before);
     else
-      expect(h.journal()?.state.frontiers).toEqual({ [`msg:${reply.id}`]: 12 });
+      expect(h.journal()?.state.frontiers).toEqual({
+        [`thread:${root.id}`]: 12,
+        [`msg:${reply.id}`]: 12,
+      });
     expect(unread.sync().error).toBeUndefined();
     expect(unread.sync().status).not.toBe("error");
   },
@@ -6348,7 +6197,7 @@ const channelMetadata = (h: ReturnType<typeof setup>, type?: string) =>
     tags: [["d", "room"], ["name", "room"], ...(type ? [["t", type]] : [])],
   });
 
-it("catch-up reads a viewed mention but replaces only ordinary message marks", async () => {
+it("catch-up reads a viewed mention through the channel frontier without message marks", async () => {
   const h = setup();
   h.grant("room");
   h.emit([channelMetadata(h, "stream")]);
@@ -6360,13 +6209,9 @@ it("catch-up reads a viewed mention but replaces only ordinary message marks", a
   h.emit([first, mention, bottom]);
   const lease = h.session.unread.reading("room");
   await lease.observe([first.id, mention.id]);
-  // Catch-up reads the ordinary message, so its own mark goes. The mention is
-  // read by its own mark, which catch-up keeps.
+  // Display writes no `msg:` marks; catch-up's channel frontier reads both.
   await lease.catchUp(bottom.id);
-  expect(h.journal()?.state.frontiers).toEqual({
-    [`msg:${mention.id}`]: 12,
-    "activity:room": 13,
-  });
+  expect(h.journal()?.state.frontiers).toEqual({ room: 13 });
   expect(h.snapshot()).toMatchObject({ observedCount: 0 });
   expect(h.session.unread.attention("room", first.id).unread).toBe(false);
   expect(h.session.unread.attention("room", mention.id).unread).toBe(false);
@@ -6383,7 +6228,7 @@ it("catch-up reads a viewed mention but replaces only ordinary message marks", a
   expect(h.journal()?.state.frontiers).toEqual({ room: 30 });
 });
 
-it("catch-up leaves a mention marked unread unread", async () => {
+it("catch-up clears a mention marked unread among the top-level messages it covers", async () => {
   const h = setup();
   h.grant("room");
   const marked = message(h.alice, "room", "marked", 11, [
@@ -6398,12 +6243,12 @@ it("catch-up leaves a mention marked unread unread", async () => {
   const lease = h.session.unread.reading("room");
   await lease.catchUp(bottom.id);
   expect(h.session.unread.attention("room", mention.id).unread).toBe(false);
-  expect(h.session.unread.attention("room", marked.id).unread).toBe(true);
-  expect(h.journal()?.state.frontiers).not.toHaveProperty(`msg:${marked.id}`);
+  expect(h.session.unread.attention("room", marked.id).unread).toBe(false);
+  expect(h.journal()?.state.frontiers).toEqual({ room: 13 });
   lease.dispose();
 });
 
-it("catch-up marks at most the newest 128 mentions, and marks more once activity covers the cut", async () => {
+it("catch-up reads every covered mention in one frontier write, however many there are", async () => {
   const h = setup();
   h.grant("room");
   const mentions = Array.from({ length: 130 }, (_, index) =>
@@ -6418,12 +6263,8 @@ it("catch-up marks at most the newest 128 mentions, and marks more once activity
   first.dispose();
   const unread = () =>
     mentions.filter(({ id }) => h.session.unread.attention("room", id).unread);
-  expect(unread()).toEqual(mentions.slice(0, 2));
-  // `activity:` already covers the cut, but the rest are still marked.
-  const second = h.session.unread.reading("room");
-  await second.catchUp(bottom.id);
-  second.dispose();
   expect(unread()).toEqual([]);
+  expect(h.journal()?.state.frontiers).toEqual({ room: 300 });
 });
 
 it("catch-up in a DM reads the whole DM, so its channel mark replaces message marks", async () => {
@@ -6447,7 +6288,7 @@ it("catch-up in a DM reads the whole DM, so its channel mark replaces message ma
   expect(h.session.unread.attention("room", bottom.id).unread).toBe(false);
 });
 
-it("catch-up keeps message marks while the channel type is unknown", async () => {
+it("catch-up writes only the channel frontier while the channel type is unknown", async () => {
   const h = setup();
   // The roster lists the channel before its metadata says it is a DM.
   h.grant("room");
@@ -6462,14 +6303,9 @@ it("catch-up keeps message marks while the channel type is unknown", async () =>
   const lease = h.session.unread.reading("room");
   await lease.observe([first.id]);
   await lease.catchUp(bottom.id);
-  // Pruning keeps the existing mark, and a later read still writes its own.
   await lease.observe([second.id]);
   lease.dispose();
-  expect(h.journal()?.state.frontiers).toEqual({
-    [`msg:${first.id}`]: 11,
-    [`msg:${second.id}`]: 12,
-    "activity:room": 13,
-  });
+  expect(h.journal()?.state.frontiers).toEqual({ room: 13 });
   h.emit([channelMetadata(h, "dm")]);
   expect(h.session.unread.attention("room", first.id).unread).toBe(false);
   expect(h.session.unread.attention("room", second.id).unread).toBe(false);
@@ -7128,9 +6964,11 @@ it("catch-up applies to agent-audience rows, and unread intent cannot make them 
   // A quiet newest row is still the live bottom that catch-up reads through.
   const lease = unread.reading("room");
   await lease.catchUp(bottom.id);
-  expect(h.journal()?.state.frontiers).toEqual({ "activity:room": 13 });
+  expect(h.journal()?.state.frontiers).toEqual({ room: 13 });
   await lease.catchUp(progress.id, root.id);
-  expect(h.journal()?.state.frontiers[`thread-activity:${root.id}`]).toBe(12);
+  // The channel frontier already covers the reply, so the thread saves nothing.
+  expect(h.journal()?.state.frontiers).toEqual({ room: 13 });
+  expect(unread.attention("room", progress.id).unread).toBe(false);
   lease.dispose();
   // Unread intent cannot be saved for coordination between agents.
   await expect(unread.markMessageUnread("room", progress.id)).rejects.toThrow(
@@ -7451,33 +7289,6 @@ it("a row receipt never hides a message marked unread", async () => {
   expect(h.snapshot().row).toBeUndefined();
 });
 
-it("a row receipt never hides a message a peer marked unread", async () => {
-  let id = "";
-  const h = setup({}, true, (journal) => ({
-    ...journal,
-    // The message's id exists only after setup makes its keys; the owner
-    // reads the preloaded journal later, on its first load.
-    get state() {
-      return {
-        frontiers: { [`seen:msg:${id}`]: 100 },
-        // A peer's message override; the channel itself is not marked unread.
-        overrides: { [`msg:${id}`]: { set: 5, clear: 0, baseline: 0 } },
-      };
-    },
-  }));
-  const mention = message(h.alice, "room", "mention", 100, [
-    ["p", h.viewer.pubkey],
-  ]);
-  id = mention.id;
-  h.grant("room");
-  h.emit([mention]);
-  await h.session.unread.ensure();
-  expect(h.snapshot()).toMatchObject({
-    manual: "none",
-    row: { attentionCount: 1 },
-  });
-});
-
 it("background arrivals survive a frozen visit's leave and reload without being seen", async () => {
   const h = setup();
   h.grant("room");
@@ -7544,4 +7355,33 @@ it("inactive entry sees nothing until the open visit resumes", async () => {
   await vi.waitFor(() =>
     expect(h.journal()?.state.frontiers[`seen:msg:${mention.id}`]).toBe(100),
   );
+});
+
+it("reading one Inbox row clears only that row's marks, not other marks in its channel", async () => {
+  const h = setup();
+  h.grant("room");
+  const mention = [["p", h.viewer.pubkey]];
+  const a = message(h.alice, "room", "a", 100, mention);
+  const b = message(h.alice, "room", "b", 200, mention);
+  const c = message(h.alice, "room", "c", 300);
+  h.emit([a, b, c]);
+  await h.session.unread.markChannelRead("room");
+  const frontier = h.journal()?.state.frontiers.room;
+  for (const row of [a, b])
+    await h.session.unread.markUnreadLocal({
+      kind: "message",
+      channelId: "room",
+      messageId: row.id,
+    });
+  expect(h.session.unread.attention("room", b.id).unread).toBe(true);
+  const rowA = h.session.unread
+    .inbox()
+    .items.find((item) => item.messageIds.includes(a.id));
+  if (rowA?.messageIds.includes(b.id))
+    throw new Error("A and B share one Inbox row; witness needs separate rows");
+  for (const step of rowA?.readThrough ?? [])
+    await h.session.unread.markThrough(step.target, step.messageId);
+  expect(h.session.unread.attention("room", a.id).unread).toBe(false);
+  expect(h.session.unread.attention("room", b.id).unread).toBe(true);
+  expect(h.journal()?.state.frontiers.room).toBe(frontier);
 });

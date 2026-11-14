@@ -754,19 +754,10 @@ can load the unchanged sync journal but discard the optional reserve and floor o
 their next save; community leave on any build deletes both together. No database migration
 or wire-format change is involved.
 
-Optional local-only `peerOverlaps` metadata in the same per-viewer/partition journal
-holds pending marker-generation corrections. Keys, counters, coordinates and event
-versions are validated on load; corrupt entries fail loading rather than silently
-dropping intent. A transaction reads the latest checkpoint, preserving unrelated
-pending data from other windows. A matching or newer committed marker ingest retires
-its checkpoint; partition deletion removes it with the journal. A valid newer marker
-can recover from an undecodable superseded envelope without trusting that envelope.
-Pending failed-ingest generations share the existing acceptance backlog and browser
-storage quota; there is no hard aggregate memory/disk bound. Storage failures stay
-visible and retain the previously committed journal. Old journals still load, but
-old writers discard this unknown field on their next
-save. Restart recovery is therefore not preserved through an old-writer round trip
-or downgrade. No IndexedDB database, object-store or version migration is involved.
+Peer `msg:` and `thread:` override groups no longer sync (NIP-RS Buzz profile: only
+whole-channel groups are synchronized), so the earlier local `peerOverlaps` recovery
+metadata, which protected a peer's single-message unread during automatic reads, is
+retired. Journals that still carry the field load normally; the next save drops it.
 
 Override groups, permanent clear floors, directly associated frontiers and possible
 inherited channel/thread frontiers are protected; capacity failure is visible,

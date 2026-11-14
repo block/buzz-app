@@ -771,6 +771,17 @@ export function createUnread({
   // Read on first use: constructing a session touches no storage.
   let saved: ThreadFollows | undefined;
   const choices = () => (saved ??= follows.read());
+  /**
+   * The thread a reply is in. A reply names its thread, and that name stands
+   * until the root is loaded and the graph can decide, so a reply the sampled
+   * window cut from its root is already part of its thread: it finds the
+   * thread's marks and shares the thread's row.
+   */
+  const threadOf = (entry: Evidence) =>
+    entry.rootId ??
+    (entry.threadRootId && !structural(entry.threadRootId)
+      ? entry.threadRootId
+      : undefined);
   /** An explicit follow choice for the reply's whole thread, if any. */
   const chosen = ({ channelId, threadRootId }: Evidence) =>
     threadRootId === undefined
@@ -838,14 +849,7 @@ export function createUnread({
     seen = -1,
   ) {
     const { event, channelId } = entry;
-    // A reply names its thread. Until that root is loaded and the graph can
-    // decide, the name finds the thread's marks, so a read reply the sampled
-    // window cut from its root does not count while the root is fetched.
-    const rootId =
-      entry.rootId ??
-      (entry.threadRootId && !structural(entry.threadRootId)
-        ? entry.threadRootId
-        : undefined);
+    const rootId = threadOf(entry);
     const frontier = effectiveFrontier(
       state,
       `msg:${event.id}`,
@@ -1148,7 +1152,7 @@ export function createUnread({
       const event = entry.event;
       if (
         target.kind === "channel" &&
-        !entry.rootId &&
+        !entry.parentId &&
         !entry.quiet &&
         (!topLevel ||
           event.created_at > topLevel.created_at ||
@@ -1478,7 +1482,7 @@ export function createUnread({
           const id =
             dm || (session && !entry.parentId && !roots.has(entry.event.id))
               ? channel.id
-              : (entry.rootId ?? entry.event.id);
+              : (threadOf(entry) ?? entry.event.id);
           if (id !== channel.id) elsewhere.add(id);
           const group = groups.get(id) ?? [];
           group.push(entry);
@@ -1523,6 +1527,7 @@ export function createUnread({
               isUnread(entry, state, dm),
             );
             const representative = unread[0] ?? latest;
+            const rootId = threadOf(representative);
             const replies = entries.filter(
               (entry) => entry.rootId !== undefined,
             );
@@ -1577,9 +1582,7 @@ export function createUnread({
               messageId: representative.event.id,
               latestMessageId: latest.event.id,
               messageIds: Object.freeze(entries.map((entry) => entry.event.id)),
-              ...(representative.rootId
-                ? { rootId: representative.rootId }
-                : {}),
+              ...(rootId ? { rootId } : {}),
               ...(dm &&
               representative.rootId &&
               unread.every((entry) => entry.rootId === representative.rootId)

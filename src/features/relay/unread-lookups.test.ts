@@ -295,12 +295,13 @@ it("Inbox retains a relevant direct reply as thread activity when the root canno
     const item = owner.capability.inbox().items[0];
     assert(item);
     expect(item).toMatchObject({
-      id: `c0:${response.id}`,
+      // The thread it names is its row, loaded or not.
+      id: `c0:${root.id}`,
+      rootId: root.id,
       messageIds: [response.id],
       thread: true,
       unreadCount: 1,
     });
-    expect(item.rootId).toBeUndefined();
     expect(item.target).toEqual({
       kind: "message",
       channelId: "c0",
@@ -384,6 +385,37 @@ it("a read thread's reply does not count while its dropped root is unloaded", as
   } finally {
     stop();
   }
+});
+
+it("replies cut from their root share one thread row and are not the channel's latest", async () => {
+  const { owner, store } = await setup();
+  const root = event(viewer, 9, 10, []);
+  const thread = (time: number) =>
+    event(peer, 9, time, [
+      ["e", root.id, "", "root"],
+      ["e", root.id, "", "reply"],
+      ["p", viewer],
+    ]);
+  const first = thread(20);
+  const second = thread(30);
+  // The sampled window kept the thread's replies but not its root.
+  owner.accept([first, second]);
+  const row = () =>
+    owner.capability.inbox().items.map((item) => ({
+      id: item.id,
+      rootId: item.rootId,
+      unreadCount: item.unreadCount,
+    }));
+  const one = [{ id: `c0:${root.id}`, rootId: root.id, unreadCount: 2 }];
+  const channel = { kind: "channel", channelId: "c0" } as const;
+  expect(row()).toEqual(one);
+  expect(owner.capability.snapshot(channel).latestTopLevel).toBeUndefined();
+
+  // The root arriving changes neither the row nor the channel's latest.
+  store.push(root);
+  owner.accept([root]);
+  expect(row()).toEqual(one);
+  expect(owner.capability.snapshot(channel).latestTopLevel?.id).toBe(root.id);
 });
 
 it("Activity recovers the dropped root of a read reply marked unread", async () => {

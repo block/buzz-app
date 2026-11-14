@@ -575,3 +575,37 @@ it("prints each managed settings file Claude reads, then its drop-ins in name or
   await chmod(join(folder, "managed-settings.json"), 0o000);
   if (process.getuid?.() !== 0) await expect(read()).rejects.toThrow();
 });
+
+it("prints the inherited no-proxy lists and whether a proxy is set, never the proxy", async () => {
+  const { home } = await disk([]);
+  const read = async (env: Record<string, string>) =>
+    (
+      await run("bash", ["-c", script, "claude.sh", "no-proxy"], {
+        env: { PATH: process.env.PATH ?? "", HOME: home, ...env },
+      })
+    ).stdout;
+  const decoded = (stdout: string) =>
+    stdout
+      .split("\n")
+      .slice(0, 2)
+      .map((line) => Buffer.from(line, "base64").toString("utf8"));
+  // Unset: both empty, and no proxy.
+  expect(await read({})).toBe("\n\ndirect\n");
+  const secret = "http://user:p%40ss@proxy.example:8080";
+  for (const name of [
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+  ]) {
+    const stdout = await read({
+      [name]: secret,
+      NO_PROXY: "corp.example, .é",
+      no_proxy: "localhost",
+    });
+    expect(decoded(stdout)).toEqual(["corp.example, .é", "localhost"]);
+    expect(stdout.split("\n")[2]).toBe("proxied");
+    expect(stdout).not.toContain("proxy.example");
+    expect(stdout).not.toContain(Buffer.from(secret).toString("base64"));
+  }
+});

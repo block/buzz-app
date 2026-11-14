@@ -14,7 +14,13 @@ import { ClaudeDefaults } from "./defaults";
 import { ClaudeForwarding, HARNESS } from "./forwarding";
 import { upstreamFor } from "../../features/agents/gateway/route";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
-import { ClaudeSetup, managedFolder, readManaged, withScript } from "./setup";
+import {
+  ClaudeSetup,
+  managedFolder,
+  readManaged,
+  readNoProxy,
+  withScript,
+} from "./setup";
 import { createTabs } from "./tabs";
 import { readUsage } from "./usage";
 
@@ -73,15 +79,22 @@ export const apply: PluginModule["apply"] = (ctx) => {
     // Without a Claude upstream in this build, the runner sends every turn
     // without the gateway, so nothing forwards.
     GATEWAY && ctx.pluginOwner && upstreamFor(HARNESS)
-      ? new ClaudeForwarding(ctx.pluginOwner, async () => {
-          // Without a host to read them, nothing can say they don't route
-          // Claude elsewhere, so nothing opens.
-          if (!spawn) throw new Error("No host to read managed settings");
-          return readManaged(
-            spawn,
-            managedFolder(/Mac/i.test(navigator.platform)),
-          );
-        })
+      ? new ClaudeForwarding(
+          ctx.pluginOwner,
+          async () => {
+            // Without a host to read them, nothing can say they don't route
+            // Claude elsewhere, so nothing opens.
+            if (!spawn) throw new Error("No host to read managed settings");
+            return readManaged(
+              spawn,
+              managedFolder(/Mac/i.test(navigator.platform)),
+            );
+          },
+          async () => {
+            if (!spawn) throw new Error("No host to read proxy exceptions");
+            return readNoProxy(spawn);
+          },
+        )
       : undefined,
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the

@@ -1,6 +1,7 @@
 // @vitest-environment node
 // The exact native CLI: a forwarded process's flag settings outrank the
-// person's own settings that turn on another provider.
+// person's own settings that turn on another provider, and a proxy in its
+// environment never gets its generation's requests.
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -69,10 +70,11 @@ async function model() {
 }
 
 const nativeSpawn =
-  (home: string): Spawn =>
+  (home: string, inherited: NodeJS.ProcessEnv = {}): Spawn =>
   async (_id, options = {}) => {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      ...inherited,
       CLAUDE_CONFIG_DIR: home,
       ANTHROPIC_API_KEY: "fixture",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
@@ -124,7 +126,7 @@ it.skipIf(!binary)(
           },
         }),
       );
-      const run = async (forward?: string) => {
+      const run = async (forward?: { url: string; noProxy: string }) => {
         const claude = await ClaudeProcess.start(nativeSpawn(home), {
           cwd: home,
           systemPrompt: "Reply briefly.",
@@ -142,7 +144,9 @@ it.skipIf(!binary)(
       expect(bedrock.paths.some((path) => path.includes("/model/"))).toBe(true);
       expect(generation.paths).toEqual([]);
       bedrock.paths.length = 0;
-      expect(await run(generation.url)).toEqual({ ok: true });
+      expect(
+        await run({ url: generation.url, noProxy: "127.0.0.1,localhost" }),
+      ).toEqual({ ok: true });
       expect(
         generation.paths.some((path) => path.startsWith("/v1/messages")),
       ).toBe(true);
@@ -154,3 +158,51 @@ it.skipIf(!binary)(
   },
   60_000,
 );
+
+/** The proxy variables each case names, all at a proxy that takes nothing. */
+const PROXIES = [
+  ["HTTP(S)_PROXY", ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"]],
+  ["ALL_PROXY", ["ALL_PROXY", "all_proxy"]],
+] as const;
+
+for (const [label, names] of PROXIES)
+  it.skipIf(!binary)(
+    `keeps a forwarded turn off a proxy the app's environment names in ${label}`,
+    async () => {
+      const home = await mkdtemp(join(tmpdir(), "buzz-claude-proxy-"));
+      const generation = await model();
+      // A proxy that takes nothing: a request sent to it never arrives.
+      const proxy = await model();
+      proxy.server.close();
+      const dead = proxy.url;
+      try {
+        const claude = await ClaudeProcess.start(
+          nativeSpawn(home, {
+            ...Object.fromEntries(names.map((name) => [name, dead])),
+            NO_PROXY: "corp.example",
+          }),
+          {
+            cwd: home,
+            systemPrompt: "Reply briefly.",
+            model: "claude-sonnet-4-6",
+            forward: {
+              url: generation.url,
+              noProxy: "corp.example,127.0.0.1,localhost",
+            },
+          },
+        );
+        try {
+          expect(await claude.send("hi")).toEqual({ ok: true });
+        } finally {
+          await claude.kill();
+        }
+        expect(
+          generation.paths.some((path) => path.startsWith("/v1/messages")),
+        ).toBe(true);
+      } finally {
+        generation.server.close();
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );

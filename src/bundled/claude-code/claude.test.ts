@@ -261,9 +261,12 @@ it("clears what would pick another provider or endpoint for a forwarded process"
   await ClaudeProcess.start(spawn, {
     ...launch,
     sessionId: "s1",
-    forward: "http://127.0.0.1:9/h",
+    forward: { url: "http://127.0.0.1:9/h", noProxy: "corp,127.0.0.1" },
   });
   const env = processes[0]?.options.env ?? {};
+  // Its generation is never sent to a proxy; the person's list stays.
+  expect(env).toHaveProperty("NO_PROXY", "corp,127.0.0.1");
+  expect(env).toHaveProperty("no_proxy", "corp,127.0.0.1");
   for (const name of [
     "ANTHROPIC_BASE_URL",
     "CLAUDE_CODE_API_BASE_URL",
@@ -298,6 +301,7 @@ it("clears what would pick another provider or endpoint for a forwarded process"
   const { spawn: plain, processes: own } = fakeSpawn();
   await ClaudeProcess.start(plain, { ...launch, sessionId: "s2" });
   expect(own[0]?.options.env).not.toHaveProperty("CLAUDE_CODE_USE_BEDROCK");
+  expect(own[0]?.options.env).not.toHaveProperty("NO_PROXY");
 });
 
 it("moves activity only when the exact follow-up is acknowledged, without ending the turn", async () => {

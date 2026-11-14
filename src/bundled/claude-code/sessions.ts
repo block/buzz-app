@@ -18,7 +18,7 @@ import {
 } from "./claude";
 import type { AgentStore } from "../../features/agents/store";
 import type { GatewayBinding } from "../../features/agents/gateway/contract";
-import { BYPASSED, type Generation } from "./forwarding";
+import { BYPASSED, type Generation, UNREACHED } from "./forwarding";
 
 /** A conversation's process stops after this long without a message or its
  * own activity, such as background work. */
@@ -804,7 +804,10 @@ export class AgentSessions {
     const launch = gateway
       ? {
           ...own,
-          forward: gateway.forwarded.generation.url,
+          forward: {
+            url: gateway.forwarded.generation.url,
+            noProxy: gateway.forwarded.generation.noProxy,
+          },
           sessionId: gateway.session,
         }
       : own;
@@ -968,12 +971,18 @@ function joinable(live: Live, forward: Forward | undefined) {
 }
 
 /** A forwarded turn that ran though native never admitted one of its
- * requests went to an endpoint Claude's own settings chose: it fails. */
+ * requests went to an endpoint Claude's own settings chose: it fails. One
+ * that failed so says no request reached the gateway, which may be why. */
 function bypassed(live: Live, settled: Settled): Settled {
   const generation = live.forwarded?.generation;
-  return settled.ok && !settled.stopped && generation && !generation.admitted()
+  if (!generation || settled.stopped || settled.undelivered) return settled;
+  if (generation.admitted()) return settled;
+  return settled.ok
     ? { ok: false, error: BYPASSED }
-    : settled;
+    : {
+        ...settled,
+        error: settled.error ? `${UNREACHED} ${settled.error}` : UNREACHED,
+      };
 }
 
 /** Settles once `signal` aborts. */

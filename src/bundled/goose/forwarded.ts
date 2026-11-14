@@ -5,7 +5,10 @@
 // exit retires it in order (seal, interrupt, close, stop), and the generation
 // is closed only once its process has exited, so nothing of the turn runs on
 // after it, and no other turn's runs on its generation.
-import type { Generation } from "../../features/agents/gateway/forwarding";
+import {
+  type Generation,
+  UNREACHED,
+} from "../../features/agents/gateway/forwarding";
 import { STOP_TIMEOUT_MS } from "../../features/agent-harness/acp/process";
 import type { AcpSession } from "../../features/agent-harness/acp/session";
 import { forwardChildren } from "./forward-children";
@@ -96,6 +99,10 @@ export async function forwardedTurn(
     starting = turn.start(
       {
         DATABRICKS_HOST: generation.url,
+        // goose 1.57.0 sends even loopback requests to an inherited proxy
+        // unless these name it; both, as either may be read.
+        NO_PROXY: generation.noProxy,
+        no_proxy: generation.noProxy,
         // Its one prompt is the turn's: no model call names the session.
         GOOSE_DISABLE_SESSION_NAMING: "true",
         // A delegate runs on these, not a provider the model or config names
@@ -192,6 +199,13 @@ export async function forwardedTurn(
   if (generation.isRevoked()) return { ok: false, error: changed };
   if (signal.aborted)
     return sent ? { ok: true, stopped: true } : { ok: true, undelivered: true };
+  // Sent, yet no model request reached the gateway: said before goose's own
+  // error, which may not name the routing.
+  if (!outcome.ok && sent && !generation.admitted())
+    return {
+      ...outcome,
+      error: outcome.error ? `${UNREACHED} ${outcome.error}` : UNREACHED,
+    };
   if (!outcome.ok || !retirement) return outcome;
   return { ok: false, error: retirement };
 }

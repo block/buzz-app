@@ -3030,6 +3030,7 @@ function gateway(
   const forwarding = new ClaudeForwarding(
     { id: "buzz.claude-code", revision: "r1" },
     async () => [],
+    async () => ({ lists: ["", ""], proxied: false }),
     native,
     {
       routeFor: () => route,

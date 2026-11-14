@@ -30,10 +30,14 @@ import {
   type ForwardRetry,
   type Generation,
   HARNESS,
+  type Inherited,
   MANAGED_UNREADABLE,
   managedRefusal,
   managedRouting,
+  NO_PROXY_UNREADABLE,
+  noProxy,
   UNAVAILABLE,
+  UNREACHED,
 } from "./forwarding";
 const UNREACHABLE = "Could not start forwarding";
 import {
@@ -83,6 +87,10 @@ function harness(
   answers: ForwardOpened[] = [],
   retry: ForwardRetry = { delays: [] },
   managed: () => Promise<readonly string[]> = async () => [],
+  inherited: () => Promise<Inherited> = async () => ({
+    lists: ["", ""],
+    proxied: false,
+  }),
   /** Another harness than Claude, through the shared opener. */
   other?: ForwardingHarness,
 ) {
@@ -138,8 +146,8 @@ function harness(
     }),
   };
   const forwarding: GatewayForwarding = other
-    ? new GatewayForwarding(OWNER, other, native, routes, retry)
-    : new ClaudeForwarding(OWNER, managed, native, routes, retry);
+    ? new GatewayForwarding(OWNER, other, inherited, native, routes, retry)
+    : new ClaudeForwarding(OWNER, managed, inherited, native, routes, retry);
   return {
     forwarding,
     native,
@@ -179,49 +187,103 @@ describe("managedRouting", () => {
 
   it("names a provider managed settings turn on, as Claude reads one", () => {
     for (const on of ["1", "true", "TRUE", "yes", "on"])
-      expect(managedRouting([settings({ CLAUDE_CODE_USE_BEDROCK: on })])).toBe(
-        "CLAUDE_CODE_USE_BEDROCK",
-      );
+      expect(
+        managedRouting([settings({ CLAUDE_CODE_USE_BEDROCK: on })], false),
+      ).toBe("CLAUDE_CODE_USE_BEDROCK");
     for (const off of ["0", "", "false", "no"])
       expect(
-        managedRouting([settings({ CLAUDE_CODE_USE_VERTEX: off })]),
+        managedRouting([settings({ CLAUDE_CODE_USE_VERTEX: off })], false),
       ).toBeUndefined();
   });
 
   it("names an endpoint managed settings set, and a provider before it", () => {
     expect(
-      managedRouting([settings({ ANTHROPIC_VERTEX_BASE_URL: "https://v" })]),
+      managedRouting(
+        [settings({ ANTHROPIC_VERTEX_BASE_URL: "https://v" })],
+        false,
+      ),
     ).toBe("ANTHROPIC_VERTEX_BASE_URL");
     expect(
-      managedRouting([settings({ CLAUDE_CODE_API_BASE_URL: " " })]),
+      managedRouting([settings({ CLAUDE_CODE_API_BASE_URL: " " })], false),
     ).toBeUndefined();
     expect(
-      managedRouting([
-        settings({
-          ANTHROPIC_BASE_URL: "https://proxy",
-          CLAUDE_CODE_USE_FOUNDRY: "1",
-        }),
-      ]),
+      managedRouting(
+        [
+          settings({
+            ANTHROPIC_BASE_URL: "https://proxy",
+            CLAUDE_CODE_USE_FOUNDRY: "1",
+          }),
+        ],
+        false,
+      ),
     ).toBe("CLAUDE_CODE_USE_FOUNDRY");
   });
 
   it("merges files in order, a later one overriding, and skips what isn't settings", () => {
     expect(
-      managedRouting([
-        settings({ CLAUDE_CODE_USE_BEDROCK: "1" }),
-        "not json",
-        "null",
-        JSON.stringify({ permissions: {} }),
-        settings({ CLAUDE_CODE_USE_BEDROCK: "0" }),
-      ]),
+      managedRouting(
+        [
+          settings({ CLAUDE_CODE_USE_BEDROCK: "1" }),
+          "not json",
+          "null",
+          JSON.stringify({ permissions: {} }),
+          settings({ CLAUDE_CODE_USE_BEDROCK: "0" }),
+        ],
+        false,
+      ),
     ).toBeUndefined();
     expect(
-      managedRouting([
-        settings({ OTHER: "1" }),
-        settings({ ANTHROPIC_BEDROCK_BASE_URL: "https://b" }),
-      ]),
+      managedRouting(
+        [
+          settings({ OTHER: "1" }),
+          settings({ ANTHROPIC_BEDROCK_BASE_URL: "https://b" }),
+        ],
+        false,
+      ),
     ).toBe("ANTHROPIC_BEDROCK_BASE_URL");
-    expect(managedRouting([])).toBeUndefined();
+    expect(managedRouting([], false)).toBeUndefined();
+  });
+
+  it("names a no-proxy list that may miss the generation, only where a proxy applies", () => {
+    const list = (value: string) => settings({ NO_PROXY: value });
+    // No proxy anywhere: a list of its own sends nothing to one.
+    expect(managedRouting([list("corp.example")], false)).toBeUndefined();
+    // The app's environment has a proxy, or managed settings set one.
+    expect(managedRouting([list("corp.example")], true)).toBe("NO_PROXY");
+    expect(
+      managedRouting(
+        [settings({ https_proxy: "http://p:8080", no_proxy: "" })],
+        false,
+      ),
+    ).toBe("no_proxy");
+    for (const reaches of [
+      "*",
+      "corp.example, 127.0.0.1",
+      "127.0.0.1/32",
+      "127.0.0.0/8",
+    ])
+      expect(managedRouting([list(reaches)], true)).toBeUndefined();
+    // A port is the generation's only by chance; other ranges, unsure.
+    for (const misses of ["127.0.0.1:8080", "127.0.0.0/16", "localhost"])
+      expect(managedRouting([list(misses)], true)).toBe("NO_PROXY");
+    // Unset, it leaves Buzz's process env list in place.
+    expect(managedRouting([settings({ OTHER: "1" })], true)).toBeUndefined();
+    // A provider or endpoint is named first.
+    expect(
+      managedRouting(
+        [settings({ NO_PROXY: "x", ANTHROPIC_BASE_URL: "https://e" })],
+        true,
+      ),
+    ).toBe("ANTHROPIC_BASE_URL");
+  });
+});
+
+describe("noProxy", () => {
+  it("joins both inherited lists once each, with loopback added", () => {
+    expect(noProxy(["", ""])).toBe("127.0.0.1,localhost");
+    expect(noProxy(["corp.example, .internal", "corp.example,localhost"])).toBe(
+      "corp.example,.internal,localhost,127.0.0.1",
+    );
   });
 });
 
@@ -256,6 +318,55 @@ describe("ClaudeForwarding.open", () => {
       signal,
     );
     expect(generation.url).toBe("http://127.0.0.1:9/h1");
+  });
+
+  it("gives the generation the inherited no-proxy lists with loopback, and refuses without them", async () => {
+    const proxied = harness(
+      [],
+      { delays: [] },
+      async () => [],
+      async () => ({ lists: ["corp.example", ".internal"], proxied: true }),
+    );
+    const generation = await proxied.forwarding.open(
+      AGENT,
+      eligible(2),
+      turn,
+      signal,
+    );
+    expect(generation.noProxy).toBe(
+      "corp.example,.internal,127.0.0.1,localhost",
+    );
+
+    const unreadable = harness(
+      [],
+      { delays: [1] },
+      async () => [],
+      async () => {
+        throw new Error("exit 1");
+      },
+    );
+    await expect(
+      unreadable.forwarding.open(AGENT, eligible(2), turn, signal),
+    ).rejects.toThrow(NO_PROXY_UNREADABLE);
+    expect(unreadable.calls).toEqual([]);
+  });
+
+  it("refuses a managed no-proxy list that misses the generation only under a proxy", async () => {
+    const managed = async () => [
+      JSON.stringify({ env: { NO_PROXY: "corp.example" } }),
+    ];
+    const proxied = harness([], { delays: [] }, managed, async () => ({
+      lists: ["", ""],
+      proxied: true,
+    }));
+    await expect(
+      proxied.forwarding.open(AGENT, eligible(2), turn, signal),
+    ).rejects.toThrow(managedRefusal("NO_PROXY"));
+    expect(proxied.calls).toEqual([]);
+    const direct = harness([], { delays: [] }, managed);
+    await expect(
+      direct.forwarding.open(AGENT, eligible(2), turn, signal),
+    ).resolves.toMatchObject({ url: "http://127.0.0.1:9/h1" });
   });
 
   it("pushes the dispatched revision, then opens at it with the turn's frozen headers", async () => {
@@ -594,7 +705,7 @@ describe("GatewayForwarding for goose", () => {
   const GOOSE = { upstream: "goose", native: "goose" } as const;
 
   it("enables the harness it declares, and opens with no session", async () => {
-    const h = harness([], undefined, undefined, GOOSE);
+    const h = harness([], undefined, undefined, undefined, GOOSE);
     expect(h.forwarding.control(AGENT)).toBeUndefined();
     h.setRoute({ ...eligible(2), harnesses: ["goose"] });
     expect(h.forwarding.control(AGENT)).toEqual({
@@ -608,7 +719,7 @@ describe("GatewayForwarding for goose", () => {
   });
 
   it("names its session and registers children on its own generation", async () => {
-    const h = harness([], undefined, undefined, GOOSE);
+    const h = harness([], undefined, undefined, undefined, GOOSE);
     await h.forwarding.open(AGENT, eligible(2), { binding, context }, signal);
     const generation = await h.forwarding.open(
       AGENT,
@@ -652,6 +763,7 @@ function generation(
   const value: Generation = {
     url: `http://127.0.0.1:9/${name}`,
     revision,
+    noProxy: "127.0.0.1,localhost",
     isSealed: () => sealed,
     admitted: () => admitted,
     revoked: revocation,
@@ -1047,13 +1159,28 @@ describe("forwarded turns in a conversation", () => {
     expect(await second).toEqual({ ok: true });
   });
 
-  it("fails a forwarded turn that made no model request as bypassed, keeping Claude's own failure", async () => {
+  it("fails a forwarded turn that made no model request as bypassed, and says so before Claude's own failure", async () => {
     // Native admitted nothing: Claude's requests went elsewhere, or it made
-    // none. Both fail, since a turn that ran can't tell them apart; one
-    // Claude itself failed keeps its own error.
+    // none. Both fail, since a turn that ran can't tell them apart. One
+    // Claude itself failed, as through a proxy that refuses it, says no
+    // request reached the gateway, then Claude's own error, which may have
+    // nothing to do with routing.
     for (const [result, settled] of [
       [{}, { ok: false, error: BYPASSED }],
-      [{ error: "Overloaded" }, { ok: false, error: "Overloaded" }],
+      [
+        { error: "Overloaded" },
+        { ok: false, error: `${UNREACHED} Overloaded` },
+      ],
+      [
+        {
+          error:
+            "API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)",
+        },
+        {
+          ok: false,
+          error: `${UNREACHED} API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)`,
+        },
+      ],
     ] as const) {
       const { sessions, log, claudes } = pool();
       const delivered = sessions.deliver("c", "hi", 1, {
@@ -1066,6 +1193,17 @@ describe("forwarded turns in a conversation", () => {
       nth(claudes()).finish(result);
       expect(await delivered).toEqual(settled);
     }
+    // One the gateway admitted a request for keeps Claude's own error.
+    const { sessions, log, claudes } = pool();
+    const delivered = sessions.deliver("c", "hi", 1, {
+      forward: async () => ({
+        generation: generation("g", log, undefined, { admitted: true }),
+        binding,
+      }),
+    });
+    await flush();
+    nth(claudes()).finish({ error: "Overloaded" });
+    expect(await delivered).toEqual({ ok: false, error: "Overloaded" });
   });
 
   it("keeps the next turn out until the last process has exited and native has closed", async () => {

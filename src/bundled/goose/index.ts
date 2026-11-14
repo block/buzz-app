@@ -10,7 +10,7 @@ import { GatewayForwarding } from "../../features/agents/gateway/forwarding";
 import { upstreamFor } from "../../features/agents/gateway/route";
 import { type Config, config, DEFAULT_CONFIG, GooseRuntime } from "./runtime";
 import { gooseRun } from "./run";
-import { GooseSetup, REVIEW_REFUSED } from "./setup";
+import { GooseSetup, readNoProxy, REVIEW_REFUSED } from "./setup";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
 import { readUsage } from "./usage";
@@ -40,10 +40,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
     // Without a goose upstream in this build, the runner sends every turn
     // without the gateway, so nothing forwards.
     GATEWAY && ctx.pluginOwner && upstreamFor(HARNESS)
-      ? new GatewayForwarding(ctx.pluginOwner, {
-          upstream: HARNESS,
-          native: "goose",
-        })
+      ? new GatewayForwarding(
+          ctx.pluginOwner,
+          { upstream: HARNESS, native: "goose" },
+          async () => {
+            // Without a host to read them, a forwarded goose could send its
+            // loopback requests to a proxy, so nothing opens.
+            if (!host.spawn)
+              throw new Error("No host to read proxy exceptions");
+            return readNoProxy(host.spawn.bind(host));
+          },
+        )
       : undefined,
     // Read at a forwarded turn, after `setup` exists.
     async () => (await setup.providers()).defaults.provider,

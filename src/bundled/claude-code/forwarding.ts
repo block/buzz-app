@@ -7,6 +7,7 @@ import {
   type ForwardRetry,
   type ForwardRoutes,
   GatewayForwarding,
+  type Inherited,
 } from "../../features/agents/gateway/forwarding";
 import { ENDPOINTS, PROVIDERS } from "./claude";
 
@@ -16,7 +17,11 @@ export {
   type ForwardRetry,
   type ForwardRoutes,
   type Generation,
+  type Inherited,
+  NO_PROXY_UNREADABLE,
+  noProxy,
   UNAVAILABLE,
+  UNREACHED,
 } from "../../features/agents/gateway/forwarding";
 
 /** The harness Claude declares to the gateway, its descriptor upstream key. */
@@ -27,10 +32,23 @@ export const MANAGED_UNREADABLE =
 export const managedRefusal = (name: string) =>
   `Claude's managed settings set ${name}, which would send this agent's requests around the agent gateway, so the turn didn't run.`;
 
+const NO_PROXY = ["NO_PROXY", "no_proxy"] as const;
+const PROXIES = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
+/** What a no-proxy list names that reaches every generation; anything else,
+ * a port or another range included, may not. */
+const BYPASSES = new Set(["*", "127.0.0.1", "127.0.0.1/32", "127.0.0.0/8"]);
+const hosts = (list: string) => list.split(/[\s,]+/).filter(Boolean);
+
 /** The provider or endpoint `files`, managed settings in merge order, set in
- * their `env`, which outranks Buzz's flag settings; undefined when none. A
- * file that isn't a settings object is skipped, as Claude skips it. */
-export function managedRouting(files: readonly string[]): string | undefined {
+ * their `env`, which outranks Buzz's flag settings and process env; or,
+ * where a proxy applies (`proxied`, the app's environment has one, or they
+ * set one), a no-proxy list they set that may not reach the generation.
+ * Undefined when none. A file that isn't a settings object is skipped, as
+ * Claude skips it. */
+export function managedRouting(
+  files: readonly string[],
+  proxied: boolean,
+): string | undefined {
   const env: Record<string, unknown> = {};
   for (const file of files) {
     let settings: unknown;
@@ -43,10 +61,15 @@ export function managedRouting(files: readonly string[]): string | undefined {
     if (own && typeof own === "object") Object.assign(env, own);
   }
   const text = (name: string) => String(env[name] ?? "").trim();
-  return (
+  const routed =
     PROVIDERS.find((name) =>
       ["1", "true", "yes", "on"].includes(text(name).toLowerCase()),
-    ) ?? ENDPOINTS.find((name) => text(name) !== "")
+    ) ?? ENDPOINTS.find((name) => text(name) !== "");
+  if (routed || !(proxied || PROXIES.some((name) => text(name) !== "")))
+    return routed;
+  return NO_PROXY.find(
+    (name) =>
+      name in env && !hosts(text(name)).some((host) => BYPASSES.has(host)),
   );
 }
 
@@ -60,6 +83,9 @@ export class ClaudeForwarding extends GatewayForwarding {
     /** The managed settings files Claude reads, in merge order: required,
      * so nothing opens without checking them. */
     managed: () => Promise<readonly string[]>,
+    /** NO_PROXY and no_proxy as Claude's processes inherit them, and whether
+     * a proxy does. */
+    inherited: () => Promise<Inherited>,
     native?: ForwardNative,
     routes?: ForwardRoutes,
     retry?: ForwardRetry,
@@ -67,10 +93,11 @@ export class ClaudeForwarding extends GatewayForwarding {
     super(
       owner,
       { upstream: HARNESS, native: "claude" },
+      inherited,
       native,
       routes,
       retry,
-      async () => {
+      async ({ proxied }) => {
         let files: readonly string[];
         try {
           files = await managed();
@@ -78,7 +105,7 @@ export class ClaudeForwarding extends GatewayForwarding {
           console.warn("Claude's managed settings are unreadable", error);
           throw new Error(MANAGED_UNREADABLE);
         }
-        const set = managedRouting(files);
+        const set = managedRouting(files, proxied);
         if (set) throw new Error(managedRefusal(set));
       },
     );

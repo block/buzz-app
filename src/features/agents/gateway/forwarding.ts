@@ -63,9 +63,16 @@ export type ForwardRoutes = Readonly<{
 /** The waits before each further try at an open that couldn't reach native
  * or its local proxy: bounded, so a turn still fails visibly soon. */
 export type ForwardRetry = Readonly<{ delays: readonly number[] }>;
+/** NO_PROXY and no_proxy as the harness's processes inherit them from the
+ * app, and whether they inherit a proxy, whose value (it may hold a
+ * password) is never read. */
+export type Inherited = Readonly<{
+  lists: readonly string[];
+  proxied: boolean;
+}>;
 /** A harness's own check before anything is pushed or opened, which throws
  * the turn's error when the harness's requests could go around the gateway. */
-export type ForwardPreflight = () => Promise<void>;
+export type ForwardPreflight = (inherited: Inherited) => Promise<void>;
 
 /** A generation's caller side. `seal` ends admission for good, at the
  * qualifying idle; `close` forgets it once its process has exited, and
@@ -81,6 +88,10 @@ export type Generation = Readonly<{
   /** Whether native admitted any model request on it: one that never did,
    * once a turn has run, means the harness's requests went somewhere else. */
   admitted(): boolean;
+  /** Its process's NO_PROXY and no_proxy: the inherited ones with the
+   * generation's loopback address added, so a proxy never gets its
+   * requests. */
+  noProxy: string;
   seal(): void;
   close(): Promise<void>;
   /** Settles once the route moves on, which revokes the generation
@@ -115,6 +126,39 @@ export const UNAVAILABLE =
  * failure (`host_forward.rs`) worth trying again. Every other is decided
  * before native makes a generation, and fails the same way each time. */
 const UNREACHABLE = "Could not start forwarding";
+export const NO_PROXY_UNREADABLE =
+  "Buzz couldn't read this device's proxy exceptions to keep this agent's requests off a proxy, so the turn didn't run.";
+/** Before the harness's own error, for a forwarded turn that failed with no
+ * model request admitted: not necessarily a routing failure. */
+export const UNREACHED = "No model request reached the agent gateway.";
+
+/** Where every generation is, which a proxy must never be sent. */
+const LOOPBACK = ["127.0.0.1", "localhost"];
+const hosts = (list: string) => list.split(/[\s,]+/).filter(Boolean);
+/** `lists`' hosts once each, with loopback added: what a forwarded process
+ * reaches without a proxy, set as both of its names. */
+export const noProxy = (lists: readonly string[]) =>
+  [...new Set([...lists.flatMap(hosts), ...LOOPBACK])].join(",");
+/** `Inherited` from a reader's output: NO_PROXY, then no_proxy, base64, one
+ * per line, then `proxied` or `direct`. */
+export function parseInherited(stdout: string): Inherited {
+  const [upper, lower, proxy] = stdout.split("\n");
+  if (
+    upper === undefined ||
+    lower === undefined ||
+    (proxy !== "proxied" && proxy !== "direct")
+  )
+    throw new Error("The proxy exceptions are unreadable");
+  return {
+    lists: [decode(upper), decode(lower)],
+    proxied: proxy === "proxied",
+  };
+}
+const decode = (line: string) =>
+  new TextDecoder().decode(
+    Uint8Array.from(atob(line), (char) => char.charCodeAt(0)),
+  );
+
 export const FORWARDING_PROTECTED =
   "Protected agents can't run through the agent gateway yet, so this turn didn't run.";
 
@@ -137,6 +181,11 @@ export class GatewayForwarding {
   constructor(
     private readonly owner: ForwardOwner,
     private readonly harness: ForwardingHarness,
+    /** NO_PROXY and no_proxy as the harness's processes inherit them, and
+     * whether they inherit a proxy: required, so every forwarded process
+     * keeps the person's own exceptions; without a host to read them,
+     * nothing opens. */
+    private readonly inherited: () => Promise<Inherited>,
     private readonly native: ForwardNative = NATIVE,
     private readonly routes: ForwardRoutes = ROUTES,
     private readonly retry: ForwardRetry = RETRY,
@@ -185,10 +234,15 @@ export class GatewayForwarding {
     if (!bindingAdmits(route, turn.binding).ok) throw new Error(CHANGED);
     const discovery = discoveryBundle(route.profile, route, turn.binding);
     if (!discovery.ok) throw new Error(discovery.message);
-    if (this.preflight) {
-      await this.preflight();
-      signal.throwIfAborted();
+    let inherited: Inherited;
+    try {
+      inherited = await this.inherited();
+    } catch (error) {
+      console.warn("The proxy exceptions are unreadable", error);
+      throw new Error(NO_PROXY_UNREADABLE);
     }
+    await this.preflight?.(inherited);
+    signal.throwIfAborted();
     // Watched from before the push: a change during it, the open or the
     // process's startup is pushed (native revokes on it) and recorded.
     let revoked = false;
@@ -267,6 +321,7 @@ export class GatewayForwarding {
       revocation,
       isRevoked: () => revoked,
       admitted: () => admitted,
+      noProxy: noProxy(inherited.lists),
     });
     if (signal.aborted || revoked) {
       await generation.close().catch(() => undefined);
@@ -285,11 +340,13 @@ export class GatewayForwarding {
       revocation,
       isRevoked,
       admitted,
+      noProxy,
     }: Readonly<{
       revision: number;
       revocation: Promise<void>;
       isRevoked: () => boolean;
       admitted: () => boolean;
+      noProxy: string;
     }>,
   ): Generation {
     let sealed = false;
@@ -299,6 +356,7 @@ export class GatewayForwarding {
       revision,
       isSealed: () => sealed || closing !== undefined,
       admitted,
+      noProxy,
       revoked: revocation,
       isRevoked,
       seal: () => {

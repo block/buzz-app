@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Generation } from "../../features/agents/gateway/forwarding";
+import {
+  type Generation,
+  UNREACHED,
+} from "../../features/agents/gateway/forwarding";
 import type { ForwardChildRegistered } from "../../features/host/forward";
 import {
   type ForwardedTurn,
@@ -34,6 +37,7 @@ function generation(
   registers: () => Promise<ForwardChildRegistered> = async () => ({
     type: "registered",
   }),
+  admitted = true,
 ) {
   const calls: string[] = [];
   let revoked = false;
@@ -43,7 +47,8 @@ function generation(
     url: "http://127.0.0.1:4100/g1",
     revision: 1,
     isSealed: () => false,
-    admitted: () => false,
+    admitted: () => admitted,
+    noProxy: "corp.example,127.0.0.1,localhost",
     seal: () => void calls.push("seal"),
     close: vi.fn(() => {
       calls.push("close");
@@ -131,6 +136,8 @@ describe("a forwarded goose turn", () => {
     expect(fake.geese).toHaveLength(1);
     expect(goose?.env).toMatchObject({
       DATABRICKS_HOST: "http://127.0.0.1:4100/g1",
+      NO_PROXY: "corp.example,127.0.0.1,localhost",
+      no_proxy: "corp.example,127.0.0.1,localhost",
       GOOSE_DISABLE_SESSION_NAMING: "true",
       // A delegate stays on the gateway's provider.
       GOOSE_SUBAGENT_PROVIDER: "databricks",
@@ -152,6 +159,29 @@ describe("a forwarded goose turn", () => {
     expect(retirements).toHaveLength(1);
     await expect(retirements[0]).resolves.toBeUndefined();
     expect(native.value.close).toHaveBeenCalledOnce();
+  });
+
+  it("leads a sent turn's failure with UNREACHED only when no model request was admitted", async () => {
+    for (const admitted of [false, true]) {
+      const native = generation(undefined, undefined, admitted);
+      const { fake, run } = setup({ hold: true }, {}, native);
+      const turn = run();
+      while (!fake.geese[0]?.turns.length) await flush();
+      fake.geese[0]?.turns[0]?.finish("refusal");
+      await expect(turn).resolves.toEqual({
+        ok: false,
+        error: admitted
+          ? "goose refused the request"
+          : `${UNREACHED} goose refused the request`,
+      });
+    }
+    // A turn that never prompted had nothing to admit.
+    const { run } = setup(
+      {},
+      { keep: () => false },
+      generation(undefined, undefined, false),
+    );
+    await expect(run()).resolves.toEqual({ ok: false, error: NOT_KEPT });
   });
 
   it("pins a delegate's model to the turn's, else the agent's", async () => {

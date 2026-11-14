@@ -63,8 +63,9 @@ export type ClaudeLaunch = Readonly<{
   sessionId?: string;
   /** The gateway forwarding URL this process's inference goes to: one
    * turn's generation, fixed for the process's life. `--settings` env wins
-   * over the person's own settings and merges the rest. */
-  forward?: string;
+   * over the person's own settings and merges the rest. `noProxy` is its
+   * NO_PROXY and no_proxy, the person's own with the URL's host added. */
+  forward?: Readonly<{ url: string; noProxy: string }>;
   /** The in-process MCP server's tools. */
   tools?: ToolServer;
   hook?: ClaudeHook;
@@ -334,7 +335,10 @@ export class ClaudeProcess {
           : []),
         ...(launch.effort ? ["--effort", launch.effort] : []),
         ...(launch.forward
-          ? ["--settings", JSON.stringify({ env: forwardEnv(launch.forward) })]
+          ? [
+              "--settings",
+              JSON.stringify({ env: forwardEnv(launch.forward.url) }),
+            ]
           : []),
         ...(launch.resume ? ["--resume", launch.resume] : []),
         ...(!launch.resume && launch.sessionId
@@ -399,6 +403,10 @@ export class ClaudeProcess {
                 [...PROVIDERS, ...ENDPOINTS].map((name) => [name, null]),
               ),
               CLAUDE_CODE_REMOTE_SESSION_ID: null,
+              // In the process env, not flag settings, where it would replace
+              // a list the person's settings give their other hosts.
+              NO_PROXY: launch.forward.noProxy,
+              no_proxy: launch.forward.noProxy,
             }
           : {}),
         ...(launch.review

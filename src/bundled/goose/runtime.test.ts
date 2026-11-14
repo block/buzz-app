@@ -21,8 +21,13 @@ import { AcpSession } from "../../features/agent-harness/acp/session";
 import { AgentSessions, localSessions, SharedProcess } from "./sessions";
 import { gooseTurns, marked, unmarked } from "./transcript";
 import { SHARED_POOL } from "../../features/agent-harness/acp/agent-sessions";
-import type { ForwardNative } from "../../features/agents/gateway/forwarding";
-import { GatewayForwarding } from "../../features/agents/gateway/forwarding";
+import {
+  type ForwardNative,
+  GatewayForwarding,
+  type Inherited,
+  NO_PROXY_UNREADABLE,
+  UNREACHED,
+} from "../../features/agents/gateway/forwarding";
 import type { GatewayRoute } from "../../features/agents/gateway/route";
 import { VECTOR_PROFILE } from "../../features/agents/gateway/vectors";
 import type { ForwardOpen } from "../../features/host/forward";
@@ -2355,7 +2360,14 @@ describe("goose turns through the agent gateway", () => {
   } as const;
   const { headers } = VECTOR_PROFILE;
   /** The shared opener over a native side and route the test controls. */
-  const gateway = (route: GatewayRoute = enabled, closeError?: Error) => {
+  const gateway = (
+    route: GatewayRoute = enabled,
+    closeError?: Error,
+    inherited: () => Promise<Inherited> = async () => ({
+      lists: ["", ""],
+      proxied: false,
+    }),
+  ) => {
     const opens: ForwardOpen[] = [];
     const calls: string[] = [];
     const native: ForwardNative = {
@@ -2383,6 +2395,7 @@ describe("goose turns through the agent gateway", () => {
     const forwarding = new GatewayForwarding(
       { id: "buzz.goose", revision: "r1" },
       { upstream: "goose", native: "goose" },
+      inherited,
       native,
       { routeFor: () => route, subscribeRoute: () => () => {} },
     );
@@ -2478,6 +2491,69 @@ describe("goose turns through the agent gateway", () => {
       } finally {
         f.runtime.dispose();
       }
+    }
+  });
+
+  it("keeps a forwarded goose's loopback requests off an inherited proxy, adding loopback to both no-proxy lists", async () => {
+    const g = gateway(enabled, undefined, async () => ({
+      lists: ["corp.example, 10.0.0.0/8", "internal localhost"],
+      proxied: true,
+    }));
+    const f = setup({ forwarding: g.forwarding, provider: "databricks" });
+    try {
+      await f.deliver(root, dispatched());
+      await vi.waitFor(() => expect(g.calls).toContain("close 1"));
+      const list = "corp.example,10.0.0.0/8,internal,localhost,127.0.0.1";
+      expect(f.fake.geese[0]?.env).toMatchObject({
+        NO_PROXY: list,
+        no_proxy: list,
+      });
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("refuses a forwarded turn whose proxy exceptions are unreadable, before anything spawns", async () => {
+    const g = gateway(enabled, undefined, async () => {
+      throw new Error("No host to read proxy exceptions");
+    });
+    const f = setup({ forwarding: g.forwarding, provider: "databricks" });
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await f.deliver(root, dispatched());
+      await vi.waitFor(() => expect(f.published).toHaveLength(1));
+      expect(f.published[0]?.content).toContain(NO_PROXY_UNREADABLE);
+      expect(g.opens).toEqual([]);
+      expect(f.fake.geese).toEqual([]);
+    } finally {
+      warned.mockRestore();
+      f.runtime.dispose();
+    }
+  });
+
+  it("says no model request reached the gateway when a failed turn's only admitted request was discovery", async () => {
+    const g = gateway();
+    const f = setup({
+      forwarding: g.forwarding,
+      provider: "databricks",
+      hold: true,
+    });
+    try {
+      await f.deliver(root, dispatched());
+      await vi.waitFor(() => expect(f.fake.geese[0]?.turns).toHaveLength(1));
+      g.opens[0]?.onEvent({
+        type: "admitted",
+        request: 1,
+        class: "discovery",
+        child: false,
+      });
+      f.fake.geese[0]?.turns[0]?.finish("refusal");
+      await vi.waitFor(() => expect(f.published).toHaveLength(1));
+      expect(f.published[0]?.content).toContain(
+        `${UNREACHED} goose refused the request`,
+      );
+    } finally {
+      f.runtime.dispose();
     }
   });
 
@@ -2668,6 +2744,7 @@ describe("goose turns through the agent gateway", () => {
     const forwarding = new GatewayForwarding(
       { id: "buzz.goose", revision: "r1" },
       { upstream: "goose", native: "goose" },
+      async () => ({ lists: ["", ""], proxied: false }),
       g.native,
       { routeFor: () => route, subscribeRoute: () => () => {} },
     );

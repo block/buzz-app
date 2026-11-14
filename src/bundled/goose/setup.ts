@@ -12,10 +12,15 @@ import type {
   Models,
 } from "../../features/agents/service";
 import {
+  type Inherited,
+  parseInherited,
+} from "../../features/agents/gateway/forwarding";
+import {
   GooseProcess,
   REQUEST_TIMEOUT_MS,
   type Choice,
   type GooseHost,
+  type Spawn,
 } from "./goose";
 import {
   type ConfigValue,
@@ -620,6 +625,27 @@ export class GooseSetup {
   ): Promise<T> {
     return briefly(this.host, run, env);
   }
+}
+
+/** NO_PROXY and no_proxy as goose's processes inherit them from the app,
+ * empty where unset, and whether they inherit a proxy, from the manifest's
+ * `no-proxy` step. One that can't be read fails rather than passing. */
+export async function readNoProxy(spawn: Spawn): Promise<Inherited> {
+  let stdout = "";
+  let stderr = "";
+  const process = await spawn("no-proxy", {
+    onStdout: (data) => {
+      stdout += data;
+    },
+    onStderr: (data) => {
+      stderr += data;
+    },
+  });
+  const timer = setTimeout(() => void process.kill(), REQUEST_TIMEOUT_MS);
+  const code = await process.exited.finally(() => clearTimeout(timer));
+  if (code !== 0)
+    throw new Error(stderr.trim() || "The proxy exceptions are unreadable");
+  return parseInherited(stdout);
 }
 
 /** Runs `run` against a `goose-acp` started for it in the home folder, and

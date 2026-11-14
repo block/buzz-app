@@ -1141,7 +1141,10 @@
     mask-image: var(--scroll-fade-end);
   }
 
-  /* Shared history layout keeps the scroller separate from the composer. */
+  /* Shared history layout keeps the scroller separate from the composer. The
+     history stacks on its own: when its layers share the composer's stacking
+     context, Mac WebKit stops drawing the caret of an empty composer below a
+     scrolling history. */
   .conversation-history-viewport {
     position: relative;
     display: flex;
@@ -1149,6 +1152,7 @@
     flex: 1;
     min-height: 0;
     min-width: 0;
+    isolation: isolate;
   }
   /* A scrolling strip fades out on each edge that has tabs past them, so a cut
      tab reads as "more this way" rather than as clipped. Panel, navigation and button

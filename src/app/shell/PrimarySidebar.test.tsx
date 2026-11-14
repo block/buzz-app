@@ -1410,7 +1410,7 @@ it.each(["neighbor", "heading", "moved"])(
       </ToastProvider>,
     );
     try {
-      const heading = screen.getByLabelText("Work");
+      const heading = screen.getByLabelText("Work", { selector: "summary" });
       const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
       screen.getByRole("button", { name: "Chat" }).focus();
       await act(async () => {

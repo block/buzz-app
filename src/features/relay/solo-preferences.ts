@@ -195,6 +195,26 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
         return saved;
       }),
     groupsOnly: true,
+    renameSection: ({ sectionId, name }, signal) =>
+      serialize(async () => {
+        const next = name.trim();
+        if (!next || next.length > 120)
+          throw new Error("Use a workspace name of 1–120 characters.");
+        const { value, entry, active } = await current(signal);
+        const group = value.groups.find((group) => group.id === sectionId);
+        if (!group) throw new Error("This workspace no longer exists.");
+        if (group.name === next) return project(value);
+        return save(
+          {
+            ...value,
+            groups: value.groups.map((item) =>
+              item.id === sectionId ? { ...item, name: next } : item,
+            ),
+          },
+          entry,
+          active,
+        );
+      }),
     createSection: (section, signal) =>
       serialize(async () => {
         const { value, entry, active } = await current(signal);

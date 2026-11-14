@@ -649,6 +649,40 @@ it("renders the signed whole-thread total rather than only direct replies", () =
   expect(html).toContain('aria-label="View thread: 3 replies"');
   expect(html).toContain("3 replies</span>");
 });
+it.each([
+  [13, 'aria-label="View thread: 2 replies"', "2 replies</span>"],
+  [15, 'aria-label="View thread"', "View thread</span>"],
+])(
+  "leaves %s agent-audience replies out of the count but keeps the thread open",
+  (agents, label, text) => {
+    const author = keypair(),
+      relay = keypair();
+    const root = message(author, "channel", "Root", 1);
+    const [folded] = foldMessages("channel", relay.pubkey, [
+      root,
+      summary(relay, "channel", root.id, {
+        reply_count: 15,
+        descendant_count: 15,
+        agent_descendant_count: agents,
+        participants: [author.pubkey],
+      }),
+    ]);
+    if (!folded) throw new Error("Missing root");
+    const html = renderToStaticMarkup(
+      <MessageRow
+        row={folded}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        onOpenThread={() => {}}
+      />,
+    );
+    expect(html).toContain(label);
+    expect(html).toContain(text);
+  },
+);
 it("selects this thread, adds an accessible unread cue and preserves the total reply count", () => {
   const { html, snapshot } = render({ observedCount: 2 });
   expect(snapshot).toHaveBeenCalledExactlyOnceWith({

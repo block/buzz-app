@@ -1415,6 +1415,10 @@ path. No native or relay changes are required.
 ## Viewing threads
 
 Click a message's reply count to open its root and replies in the right column.
+The count leaves out replies signed `audience=agents`, which the panel folds into
+collapsed agent activity; a thread whose replies are all agent-audience shows
+View thread instead. Relays that do not report the agent-audience total count
+every reply.
 Up to three overlapping participant avatars appear beside the count, with `+N`
 for additional participants; missing/unavailable pictures use initials. Like the
 count, participants come from the relay's summary, with the authors of replies

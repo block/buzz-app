@@ -940,6 +940,9 @@ function MessageRowContent({
   // Accessories may only point at a thread the row could open or start.
   const summaryThread =
     startsThreads || row.replyCount > 0 ? onOpenThread : undefined;
+  // Agent-audience replies fold into the thread's collapsed activity, so the
+  // count names only the replies a person reads; any reply still opens it.
+  const readReplyCount = row.replyCount - (row.agentReplyCount ?? 0);
   const renderMessageSummary = (activity?: MessageSummaryActivity) => {
     const remainingThreadAgents = threadAgents.filter(
       (agent) => !activity?.participants.includes(agent.pubkey),
@@ -971,7 +974,7 @@ function MessageRowContent({
             type="button"
             aria-label={
               row.replyCount > 0
-                ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}${activity ? `. ${activity.label}` : ""}${threadDraft ? ". Draft reply" : ""}`
+                ? `View thread${readReplyCount > 0 ? `: ${readReplyCount} ${readReplyCount === 1 ? "reply" : "replies"}` : ""}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}${activity ? `. ${activity.label}` : ""}${threadDraft ? ". Draft reply" : ""}`
                 : `View thread: ${[
                     ...(activity
                       ? [remainingWorkingLabel, activity.label]
@@ -992,7 +995,7 @@ function MessageRowContent({
               hideEmptyLabel={!!activity}
               draft={threadDraft}
               replied={row.replyCount > 0}
-              count={activity ? 0 : row.replyCount}
+              count={activity ? 0 : readReplyCount}
               participants={row.participants}
               profiles={participantProfiles}
               agentPubkeys={agentPubkeys}

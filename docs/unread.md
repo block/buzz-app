@@ -353,7 +353,8 @@ nearest row, retaining its ordinary focus preparation; it does not select the ch
 prefer a farther DM, or acknowledge any messages.
 
 Thread buttons keep the relay's total reply count (plus replies this client has
-sent since that summary) and add a dot when the shared thread selector has observed
+sent since that summary), less the replies the relay reports as signed
+`audience=agents`, and add a dot when the shared thread selector has observed
 unread replies or explicit thread-unread intent.
 Accessible names distinguish observed evidence, stale evidence and local-only
 intent; unknown/observed-zero omit the dot, not assert complete read history.

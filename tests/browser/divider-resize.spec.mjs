@@ -36,6 +36,28 @@ for (const name of ["Resize sidebar", "Resize main and secondary panels"]) {
     await settle(page, thread);
     const handle = page.getByRole("separator", { name, exact: true });
     await expect(handle).toBeVisible();
+    // Both layouts center the grip across the hr's leading edge. The browser's
+    // default overflow:hidden cuts that capsule in half and clips its tooltip.
+    await expect(handle).toHaveCSS("overflow", "visible");
+    const appearance = await handle.evaluate((el) => {
+      el.setAttribute("data-resizing", "");
+      try {
+        const grip = getComputedStyle(el, "::after");
+        const sidebar = el.getAttribute("aria-label") === "Resize sidebar";
+        const seam = sidebar
+          ? el.closest(".shell-navigation").getBoundingClientRect().right - 0.5
+          : el.parentElement.getBoundingClientRect().left + 0.5;
+        return {
+          offset:
+            el.getBoundingClientRect().left + parseFloat(grip.left) - seam,
+          opacity: Number(grip.opacity),
+        };
+      } finally {
+        el.removeAttribute("data-resizing");
+      }
+    });
+    expect(Math.abs(appearance.offset)).toBeLessThan(0.1);
+    expect(appearance.opacity).toBe(0.5);
     const results = await handle.evaluate(async (handle) => {
       const sidebar = handle.getAttribute("aria-label") === "Resize sidebar";
       const panel = sidebar

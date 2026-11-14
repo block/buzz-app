@@ -9,7 +9,6 @@
 
 /* Keep the resize grip on the joined sidebar/conversation boundary. */
 .handle[aria-orientation="vertical"] {
-  --resize-grip-opacity: 0.5;
   /* Keep the target inside the conversation’s leading inset, clear of both
      sidebar actions and the header identity artwork. */
   width: var(--space-2);
@@ -17,7 +16,8 @@
   translate: 50% 0;
 }
 .handle[aria-orientation="vertical"]::after {
-  left: 0;
+  /* The shell paints its one-pixel seam inside the navigation's trailing edge. */
+  left: -0.5px;
 }
 /* AppShell uses the same physical breakpoint for navigation and resizing. */
 @media (max-width: 650px) {

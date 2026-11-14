@@ -108,6 +108,17 @@ Plugins publish through `session.outbox.send()` after checking
 owner); the caller supplies `["d", agentPubkey]` and JSON `content`, which the
 transport preserves.
 
+The optional `content.capabilities` string array advertises type support.
+`huddle-voice-v1` means the owning desktop has registered a type with a Huddle
+voice hook. It is discovery information, not permission or proof that the agent
+is online. The desktop preserves unrelated tokens and settings, and removes this
+token when a known replacement type lacks voice. Only the copy holding the agent's
+native runtime claim updates this declaration. Missing or unloaded types and
+copies without custody leave it unchanged, including an older plugin on another
+device. Records without capabilities remain valid legacy
+registrations. Room membership, owner presence and native authorization still
+govern every voice connection.
+
 Publish the complete intended **instance-state projection**. Another Buzz desktop
 can apply the event to an existing local agent with the same `d` public key,
 replacing its name, `persona_id`, `parallelism`, `respond_to`, and allowlist.

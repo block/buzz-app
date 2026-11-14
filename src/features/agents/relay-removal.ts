@@ -100,6 +100,8 @@ export type AgentRecordEntry = Readonly<{
   picture?: string;
   /** The agent type's key, `pluginId/typeId`, as the `runtime` tag. */
   runtime: string;
+  /** Known local type capability; omission preserves another host's declaration. */
+  huddleVoice?: boolean;
   /** The record this replaces, whose other settings and tags it keeps. */
   prior?: AgentRecordBody | undefined;
 }>;
@@ -112,7 +114,7 @@ export type AgentRecordEntry = Readonly<{
  * (docs/relay-queries.md, "Managed-agent registration"). */
 export async function publishAgentRecord(
   session: Pick<RelaySession, "outbox">,
-  { pubkey, name, picture, runtime, prior }: AgentRecordEntry,
+  { pubkey, name, picture, runtime, huddleVoice, prior }: AgentRecordEntry,
   signal: AbortSignal,
 ): Promise<AgentRecordBody> {
   const outbox = session.outbox;
@@ -127,6 +129,18 @@ export async function publishAgentRecord(
     parallelism: 1,
     respond_to: "owner-only",
     ...Object.fromEntries(kept),
+    ...(huddleVoice === undefined
+      ? {}
+      : {
+          capabilities: [
+            ...(Array.isArray(prior?.content.capabilities)
+              ? prior.content.capabilities.filter(
+                  (capability) => capability !== "huddle-voice-v1",
+                )
+              : []),
+            ...(huddleVoice ? ["huddle-voice-v1"] : []),
+          ],
+        }),
     name,
     ...(picture ? { picture } : {}),
   };

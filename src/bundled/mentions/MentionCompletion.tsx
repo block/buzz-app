@@ -89,6 +89,10 @@ export function MentionCompletion({
   );
   const selected = useContext(SelectedMentionContext);
   const roster = useContext(DraftMentionRoster);
+  useEffect(() => {
+    roster?.onQuery?.(query.query);
+    return () => roster?.onQuery?.(undefined);
+  }, [roster?.onQuery, query.query]);
   const community = useContext(AgentsContext);
   const draftRoster = roster?.recipients;
   const members = draftRoster?.map((p) => p.pubkey) ?? channel?.members ?? [];

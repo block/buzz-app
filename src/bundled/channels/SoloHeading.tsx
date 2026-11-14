@@ -1,3 +1,7 @@
+import {
+  ConversationHeaderTools,
+  useHeaderToolsMenu,
+} from "../../features/conversation/ConversationHeaderTools";
 import type { Conversation } from "../../features/conversation/service";
 import { prepareSoloMove } from "../../features/channel-navigation/solo-navigation";
 import { useSoloNavigation } from "../../features/channel-navigation/solo-navigation-react";
@@ -64,7 +68,9 @@ type SoloToolbarProps = {
 };
 
 /** The header of a conversation shown with the Solo treatment. */
-export function SoloHeading(props: SoloToolbarProps) {
+export function SoloHeading(
+  props: SoloToolbarProps & { leadingActions?: ReactNode },
+) {
   const owner = useSoloOwner(props.session, props.channel);
   return props.channel.archived ? (
     <SoloTitle channel={props.channel}>
@@ -73,7 +79,11 @@ export function SoloHeading(props: SoloToolbarProps) {
   ) : (
     <div className={identityStyles.soloHeader}>
       <PanelHeader
-        title={
+        variant="conversation"
+        navigation={props.leadingActions}
+        divider={false}
+        title={props.channel.name}
+        icon={
           <ChannelMembersButton
             session={props.session}
             channelId={props.channel.id}
@@ -83,7 +93,11 @@ export function SoloHeading(props: SoloToolbarProps) {
             signal={props.signal}
           />
         }
-        actions={<SoloToolbar {...props} membershipInHeader />}
+        actions={
+          <ConversationHeaderTools
+            actions={<SoloToolbar {...props} membershipInHeader />}
+          />
+        }
       />
     </div>
   );
@@ -115,7 +129,9 @@ export function SoloToolbar({
       region.reason !== "disabled" &&
       region.channels.some((item) => item.id === channel.id),
   );
-  const actionsTrigger = useRef<HTMLButtonElement>(null);
+  const localActionsTrigger = useRef<HTMLButtonElement>(null);
+  const overflow = useHeaderToolsMenu();
+  const actionsTrigger = overflow?.trigger ?? localActionsTrigger;
   // Each dialog returns focus to the control that opened it.
   const [settingsOpen, setSettingsOpen] = useState<{
     visit: AbortSignal | undefined;
@@ -128,6 +144,53 @@ export function SoloToolbar({
   const preferences = session.soloPreferences;
   const canOpenActions =
     !channel.cached && (!channel.readOnly || channel.viewerRole === "guest");
+  const actionItems = (
+    <>
+      {onOpen && (
+        <>
+          <MenuItem onClick={onOpen}>
+            <MenuIcon>
+              <ArrowSquareOutIcon size={14} />
+            </MenuIcon>
+            Open in main view
+          </MenuItem>
+          <MenuSeparator />
+        </>
+      )}
+      <SoloChatMenuItems
+        session={session}
+        channel={channel}
+        onShare={() => setSharing({ visit: signal })}
+        onConvert={onConvert && (() => onConvert(actionsTrigger.current))}
+        onMove={(projectId) => {
+          if (!prepareSoloMove(session, channel.id))
+            onMove(preferences.assign(channel.id, projectId));
+        }}
+        onNewWorkspace={() => setCreatingWorkspace(true)}
+        onSettings={() =>
+          setSettingsOpen({
+            visit: signal,
+            trigger: actionsTrigger,
+          })
+        }
+        onLifecycle={(action) =>
+          onLifecycle(action, actionsTrigger.current ?? undefined)
+        }
+        onReadResult={setReadError}
+      >
+        {menus
+          ?.slice()
+          .sort(
+            (a, b) =>
+              Number(a.pluginId === "buzz.huddles") -
+              Number(b.pluginId === "buzz.huddles"),
+          )
+          .map(({ key, component: Item }) => (
+            <Item key={key} session={session} channelId={channel.id} />
+          ))}
+      </SoloChatMenuItems>
+    </>
+  );
   return (
     <>
       {region && !region.hidden && (
@@ -158,67 +221,29 @@ export function SoloToolbar({
         </>
       )}
       {/* Archived chats keep their lifecycle actions, including Unarchive. */}
-      {canOpenActions && (
-        <MenuRoot key={regions.binding?.incarnation ?? "recovery"}>
-          <MenuTrigger
-            render={
-              <IconButton
-                hint="familiar"
-                ref={actionsTrigger}
-                size="toolbar"
-                aria-label="Chat actions"
-                title="Chat actions"
-                icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
-              />
-            }
-          />
-          <MenuPopup aria-label="Chat actions" align="end">
-            {onOpen && (
-              <>
-                <MenuItem onClick={onOpen}>
-                  <MenuIcon>
-                    <ArrowSquareOutIcon size={14} />
-                  </MenuIcon>
-                  Open in main view
-                </MenuItem>
-                <MenuSeparator />
-              </>
-            )}
-            <SoloChatMenuItems
-              session={session}
-              channel={channel}
-              onShare={() => setSharing({ visit: signal })}
-              onConvert={onConvert && (() => onConvert(actionsTrigger.current))}
-              onMove={(projectId) => {
-                if (!prepareSoloMove(session, channel.id))
-                  onMove(preferences.assign(channel.id, projectId));
-              }}
-              onNewWorkspace={() => setCreatingWorkspace(true)}
-              onSettings={() =>
-                setSettingsOpen({
-                  visit: signal,
-                  trigger: actionsTrigger,
-                })
+      {canOpenActions &&
+        (overflow ? (
+          actionItems
+        ) : (
+          <MenuRoot key={regions.binding?.incarnation ?? "recovery"}>
+            <MenuTrigger
+              openOnHover="control"
+              render={
+                <IconButton
+                  hint="familiar"
+                  ref={actionsTrigger}
+                  size="toolbar"
+                  aria-label="Chat actions"
+                  title="Chat actions"
+                  icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
+                />
               }
-              onLifecycle={(action) =>
-                onLifecycle(action, actionsTrigger.current ?? undefined)
-              }
-              onReadResult={setReadError}
-            >
-              {menus
-                ?.slice()
-                .sort(
-                  (a, b) =>
-                    Number(a.pluginId === "buzz.huddles") -
-                    Number(b.pluginId === "buzz.huddles"),
-                )
-                .map(({ key, component: Item }) => (
-                  <Item key={key} session={session} channelId={channel.id} />
-                ))}
-            </SoloChatMenuItems>
-          </MenuPopup>
-        </MenuRoot>
-      )}
+            />
+            <MenuPopup aria-label="Chat actions" align="end" size="compact">
+              {actionItems}
+            </MenuPopup>
+          </MenuRoot>
+        ))}
       {!channel.archived && paneToggle}
       {sharing && (
         <ChannelMembersDialog

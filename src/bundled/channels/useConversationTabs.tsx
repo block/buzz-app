@@ -28,7 +28,8 @@ import {
 } from "../../shared/design-system/icons";
 import { parseBuzzLink } from "../../features/navigation/buzz-links";
 import { useIdentityNames } from "../../features/identity-names/react";
-import { dmLabel } from "../inbox/dm-label";
+import { dmLabel } from "../../features/conversation/dm-label";
+import { ChannelMembersButton } from "./ChannelMembersDialog";
 import { ConversationTab } from "./ConversationTab";
 import { TabSlot, useTabNodes } from "./TabHosts";
 import { createPortal, flushSync } from "react-dom";
@@ -218,6 +219,24 @@ export function useConversationTabs({
     (entry: Opening) => mainPane && entryPane(mainEntries, entry) === "main",
     [mainPane, mainEntries],
   );
+  // Retained visits from the former split layout keep their content and
+  // dismissal records; only their placement changes to the shared sheet.
+  useLayoutEffect(() => {
+    if (mainPane) return;
+    const threads = tabState.tabs.filter((tab) => tabPane(tab) === "main");
+    const panels = entries.filter(
+      (entry) => entryPane(mainEntries, entry) === "main",
+    );
+    if (!threads.length && !panels.length) return;
+    const selected = tabState.mainSelected ?? tabState.selected;
+    const open = !!tabState.mainSelected || tabState.paneOpen;
+    for (const [index, tab] of threads.entries())
+      tabState.moveTab(tab.id, "side", index);
+    for (const entry of panels) tabState.moveEntry(panelTabId(entry), "side");
+    if (selected) tabState.select(selected);
+    tabState.selectMain(undefined);
+    tabState.setPaneOpen(open);
+  }, [mainPane, tabState, entries, mainEntries]);
   const opened = entries.find(
     (entry) => panelTabId(entry) === tabState.selected && !inMain(entry),
   );
@@ -830,6 +849,25 @@ export function useConversationTabs({
     const openChannel = openInChannel(tab, target);
     return {
       id: tab.id,
+      composer: true,
+      ...(tab.kind === "conversation" &&
+        target && {
+          identity: (
+            <ChannelMembersButton
+              session={queries}
+              channelId={target.id}
+              conversationName={target.name}
+              canOpenLink={canOpenLink}
+              onOpenLink={(url) => openConversationLink(target.id, url)}
+              onOpenConversation={(id) =>
+                openConversationLink(
+                  target.id,
+                  `buzz://channel/${encodeURIComponent(id)}`,
+                )
+              }
+            />
+          ),
+        }),
       label:
         tab.kind === "thread"
           ? threadLabel(tab, target?.name)
@@ -991,6 +1029,7 @@ export function useConversationTabs({
     drawerContext,
     splitTrigger,
     panelTrigger,
+    canOpenLink,
     openConversationLink,
     openConversationThread,
     openLinkedThread,

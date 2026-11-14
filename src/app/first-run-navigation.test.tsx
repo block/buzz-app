@@ -204,9 +204,8 @@ it("still times out a visit the mounted presenter never finishes", async () => {
   await openGate(current);
   const pending = current.navigation.open({
     version: 1,
-    kind: "page",
-    pluginId: "buzz.channels",
-    pageId: "channels",
+    kind: "conversation",
+    channelId: "alpha",
     scope: {
       viewer: member.pubkey,
       communityOrigin: communityDestination(relayB).url,

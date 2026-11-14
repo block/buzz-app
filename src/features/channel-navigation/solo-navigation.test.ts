@@ -5,6 +5,7 @@ import { createRelaySession } from "../relay/session";
 import type { ConfigurationState } from "../../plugins/types";
 import { createSoloRegionFixture } from "./solo-navigation-testing";
 import { prepareSoloMove } from "./solo-navigation";
+import { hiddenSoloChats } from "./solo-navigation-model";
 import { afterEach, expect, it, vi } from "vitest";
 
 function deferred() {
@@ -128,6 +129,10 @@ it("marks a ready region hidden without losing its chats or ownership, and recov
   expect(hidden?.reason).toBeUndefined();
   expect([...(hidden?.live ?? [])]).toEqual(["owned", "shared"]);
   expect([...h.service.snapshot().excluded]).toEqual(["owned", "shared"]);
+  expect([...hiddenSoloChats(h.service.snapshot().regions)]).toEqual([
+    "owned",
+    "shared",
+  ]);
   // Hiding is presentation only: the source still owns, files and starts its chats.
   expect(prepareSoloMove(h.session, "owned")).toBe(
     "This chat is managed by Work.",
@@ -141,6 +146,8 @@ it("marks a ready region hidden without losing its chats or ownership, and recov
   });
   expect(h.service.snapshot().regions[0]).toMatchObject({ reason: "loading" });
   expect(h.service.snapshot().regions[0]?.hidden).toBeUndefined();
+  // A source that cannot list its chats leaves them in the Solo list.
+  expect(hiddenSoloChats(h.service.snapshot().regions).size).toBe(0);
   source.update({ status: "ready", binding: source.binding(), revision: 4 });
   expect([...(h.service.snapshot().regions[0]?.live ?? [])]).toEqual([
     "owned",

@@ -287,38 +287,52 @@ function setup(available = true) {
   } as unknown as RelaySession;
   return { session, channelWrites, messages };
 }
-it("uses restored explicit mentions, not a separate picker", async () => {
-  const test = setup(),
-    onStarted = vi.fn(),
-    user = userEvent.setup();
-  writeView("test", "solo:new-draft", {
-    text: "@Outside agent Help",
-    recipients: [
-      { pubkey: "b".repeat(64), name: "Outside agent", start: 0, end: 14 },
-    ],
-  });
-  render(
-    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
-  );
-  expect(screen.queryByRole("button", { name: "Choose an agent" })).toBeNull();
-  await user.click(screen.getByRole("textbox"));
-  await user.keyboard("{Enter}");
-  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
-  const id = test.channelWrites.create.mock.calls[0]?.[0];
-  // The create names the agent; no separate add.
-  expect(test.channelWrites.start).toHaveBeenCalledWith(
-    id,
-    expect.any(String),
-    ["b".repeat(64)],
-    undefined,
-    false,
-    undefined,
-  );
-  expect(test.channelWrites.addAgents).not.toHaveBeenCalled();
-  expect(test.messages.send).toHaveBeenCalledWith(id, "@Outside agent Help", [
-    "b".repeat(64),
-  ]);
-});
+it.each(["solo", "direct-message"])(
+  "uses the %s draft's restored explicit mentions, not a separate picker",
+  async (prefix) => {
+    const test = setup(),
+      onStarted = vi.fn(),
+      user = userEvent.setup();
+    writeView("test", `${prefix}:new-draft`, {
+      text: "@Outside agent Help",
+      recipients: [
+        { pubkey: "b".repeat(64), name: "Outside agent", start: 0, end: 14 },
+      ],
+    });
+    render(
+      <SoloDraft
+        session={test.session}
+        scope="test"
+        onStarted={onStarted}
+        draftPrefix={prefix}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Choose an agent" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Outside agent" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("textbox"));
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+    const id = test.channelWrites.create.mock.calls[0]?.[0];
+    // The create names the agent; no separate add.
+    expect(test.channelWrites.start).toHaveBeenCalledWith(
+      id,
+      expect.any(String),
+      ["b".repeat(64)],
+      undefined,
+      false,
+      undefined,
+    );
+    expect(test.channelWrites.addAgents).not.toHaveBeenCalled();
+    expect(test.messages.send).toHaveBeenCalledWith(id, "@Outside agent Help", [
+      "b".repeat(64),
+    ]);
+    expect(readView("test", `${prefix}:new-draft`, null)).toBe("");
+  },
+);
 type User = ReturnType<typeof userEvent.setup>;
 it.each([
   {
@@ -891,6 +905,11 @@ it("a pick after a refused start's agent comes back replaces it across remounts"
   await waitFor(() => expect(sendingTo("Member agent")).toBeInTheDocument());
   await user.click(
     screen.getByRole("button", { name: "Send to Outside agent" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("heading", { name: "Outside agent" }),
+    ).toBeInTheDocument(),
   );
   await user.type(screen.getByRole("textbox"), "Hello");
   await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -1671,7 +1690,7 @@ it("`#` chooses New chat's workspace without leaving text, and Send files the ch
   const row = await screen.findByRole("option", { name: /Other/ });
   expect(
     screen.getAllByRole("option").map((option) => option.textContent),
-  ).toEqual(["OtherWorkspaceEnter", "other-team"]);
+  ).toEqual(["OtherWorkspaceEnter", "OTother-team"]);
   expect(row).toHaveAttribute("aria-selected", "true");
   await user.keyboard("{Enter}");
   expect(input).toHaveValue("Plan ");

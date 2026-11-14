@@ -29,6 +29,19 @@ export function ordinaryUnread(
   );
 }
 
+/** The unread state shared by conversation inventories and their live rows. */
+export function channelUnread(
+  snapshot: UnreadSnapshot,
+  dm: boolean,
+  muted = false,
+) {
+  const { observedCount, attentionCount } = shown(snapshot);
+  return (
+    snapshot.manual !== "none" ||
+    ((observedCount ?? 0) > 0 && (dm || !muted || (attentionCount ?? 0) > 0))
+  );
+}
+
 /** Observe only confirmed preferences; optimistic menu intents do not quiet unread. */
 export function useConfirmedMute(session: RelaySession, channelId: string) {
   const get = useCallback(() => {
@@ -74,8 +87,7 @@ export function useUnreadState(
   const muted = useConfirmedMute(session, channelId);
   const { observedCount: count, attentionCount } = shown(snapshot);
   const manual = snapshot.manual !== "none";
-  const unread =
-    manual || ((count ?? 0) > 0 && (dm || !muted || (attentionCount ?? 0) > 0));
+  const unread = channelUnread(snapshot, dm, muted);
   const ordinary = ordinaryUnread(snapshot, dm, muted);
   const threadCount = snapshot.row?.threadCount ?? activity.items?.length ?? 0;
   return {

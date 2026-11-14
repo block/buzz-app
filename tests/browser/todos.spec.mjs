@@ -256,29 +256,20 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     name: "Sidebar",
     exact: true,
   });
-  for (const destination of ["Activity", "Bestie"]) {
-    if (destination === "Bestie") {
-      const choices = await pageChoices(page, "Bestie");
-      await pageChoice(choices, "Create an agent — Bestie").click();
-      await expect(
-        page.getByRole("dialog", { name: "Search Buzz" }),
-      ).toBeHidden();
-    } else await openPage(page, destination);
-    await expect(
-      page.getByRole("region", { name: destination, exact: true }),
-    ).toBeVisible();
-    await expect(drawer).toHaveCount(0);
-    await expect(launcher).toHaveCount(0);
-    await openPage(page, "Messages");
-    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
-    await expect(drawer).toBeVisible();
-    await expect(launcher).toHaveAttribute("aria-expanded", "true");
-    await expect(todo).toBeChecked();
-    await expect(assignee).toHaveAttribute(
-      "aria-description",
-      /Fixture Reader/,
-    );
-  }
+  const choices = await pageChoices(page, "Bestie");
+  await pageChoice(choices, "Create an agent — Bestie").click();
+  await expect(page.getByRole("dialog", { name: "Search Buzz" })).toBeHidden();
+  await expect(
+    page.getByRole("region", { name: "Bestie", exact: true }),
+  ).toBeVisible();
+  await expect(drawer).toHaveCount(0);
+  await expect(launcher).toHaveCount(0);
+  await openPage(page, "Messages");
+  await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+  await expect(drawer).toBeVisible();
+  await expect(launcher).toHaveAttribute("aria-expanded", "true");
+  await expect(todo).toBeChecked();
+  await expect(assignee).toHaveAttribute("aria-description", /Fixture Reader/);
   await expectCompactRow();
   await page.screenshot({
     path: test.info().outputPath("todos-light-wide.png"),

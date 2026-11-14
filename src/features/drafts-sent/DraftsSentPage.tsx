@@ -19,13 +19,12 @@ import { messageAuthor } from "../../features/relay/fold";
 import type { Navigation } from "../../features/navigation/controller";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { channelIcon } from "../channels/channel-icon";
+import { ChannelAvatar } from "../channels/ChannelAvatar";
 import { avatarMedia } from "../../shared/avatar-source";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import {
   ArrowsClockwiseIcon,
-  MessageReplyIcon,
   SendIcon,
-  CheckIcon,
   TrashIcon,
 } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -38,10 +37,7 @@ import { NavigationCard } from "../../shared/design-system/ui/NavigationItem";
 import { MessageListRow } from "../messages/MessageListRow";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { readView, writeView } from "../../shared/view-state";
-import {
-  PanelHeader,
-  PanelHeaderLabel,
-} from "../../shared/design-system/ui/PanelHeader";
+import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import {
   DELETION_KINDS,
@@ -66,6 +62,7 @@ import {
 import { listed, scopeOf } from "./scope";
 import { useActivity, useDeletions, useSent } from "./views";
 import styles from "./DraftsSent.module.css";
+import { NoConversationSelected } from "../conversation/NoConversationSelected";
 
 /** Labels change by the minute, so half a minute keeps them current. */
 const TICK_MS = 30_000;
@@ -144,10 +141,11 @@ export function DraftsSentPage({
             extensions={extensions}
           />
         ) : (
-          <div data-buzz-ui="" className={styles.page}>
+          <div data-buzz-ui="" className={styles.listPane}>
             <Header />
             <div className={styles.sections}>
               <EmptyState
+                frame="none"
                 icon={<SendIcon size={24} />}
                 title="Choose a community"
                 description="Your drafts and sent messages appear once a community is selected."
@@ -161,17 +159,7 @@ export function DraftsSentPage({
 }
 
 function Header({ actions }: { actions?: React.ReactNode }) {
-  return (
-    <PanelHeader
-      title={
-        <PanelHeaderLabel
-          title="Drafts & sent"
-          icon={<SendIcon size="1rem" />}
-        />
-      }
-      actions={actions}
-    />
-  );
+  return <PanelHeader title="Drafts & sent" actions={actions} />;
 }
 
 function ScopedPage({
@@ -542,12 +530,35 @@ function ScopedPage({
     (neighbor ?? searchInput.current)?.focus();
   }
 
+  function destinationAvatar(
+    destination: ReturnType<typeof place>,
+    channelId: string,
+  ) {
+    const destinationIcon = destination.kind !== "dm";
+    const person =
+      destination.kind === "dm" ? (destination.members[0] ?? viewer) : viewer;
+    const profile = profiles.get(person);
+    const Icon = channelIcon(byId.get(channelId));
+    return destination.kind === "channel" ? (
+      <ChannelAvatar name={destination.title} size="fill" shape="squircle" />
+    ) : (
+      <Avatar
+        size="fill"
+        alt=""
+        fallback={destination.title}
+        src={
+          destinationIcon
+            ? undefined
+            : avatarMedia(profile?.picture, session.media)
+        }
+        fallbackContent={destinationIcon ? <Icon size={16} /> : undefined}
+        shape={destinationIcon || profile?.isAgent ? "squircle" : "circle"}
+      />
+    );
+  }
+
   function row(item: Row, draft: boolean) {
     const { entry, place, status } = item;
-    const destinationIcon = place.kind !== "dm";
-    const person = place.kind === "dm" ? (place.members[0] ?? viewer) : viewer;
-    const profile = profiles.get(person);
-    const Icon = channelIcon(byId.get(entry.channelId));
     const context = entry.threadRootId ? "· Thread" : undefined;
     const line = text(item);
     const time = entry.createdAt
@@ -591,53 +602,30 @@ function ScopedPage({
           setAnnouncement("");
           setNotice(undefined);
         }}
-        avatar={
-          <Avatar
-            size="fill"
-            alt=""
-            fallback={place.title}
-            src={
-              destinationIcon
-                ? undefined
-                : avatarMedia(profile?.picture, session.media)
-            }
-            fallbackContent={destinationIcon ? <Icon size={16} /> : undefined}
-            shape={destinationIcon || profile?.isAgent ? "squircle" : "circle"}
-          />
-        }
+        avatar={destinationAvatar(place, entry.channelId)}
         sender={<span className={styles.destinationName}>{place.title}</span>}
         source={context}
         time={
-          <span className={styles.rowMeta}>
-            <span className={styles.deliveryMeta}>
-              {status && (
-                <span
-                  className={`text-caption ${styles.pill}`}
-                  data-tone={status.tone}
-                  title={status.detail}
-                >
-                  {status.icon === "reply" ? (
-                    <MessageReplyIcon size={12} />
-                  ) : status.icon === "check" ? (
-                    <CheckIcon size={12} />
-                  ) : (
-                    <span className={styles.dot} />
-                  )}
-                  {status.label}
-                </span>
-              )}
-              {time && entry.createdAt !== undefined && (
-                <time
-                  dateTime={new Date(entry.createdAt * 1000).toISOString()}
-                  title={fullTime(entry.createdAt)}
-                >
-                  {time}
-                </time>
-              )}
-            </span>
-          </span>
+          time && entry.createdAt !== undefined ? (
+            <time
+              dateTime={new Date(entry.createdAt * 1000).toISOString()}
+              title={fullTime(entry.createdAt)}
+            >
+              {time}
+            </time>
+          ) : null
         }
-        preview={line}
+        preview={
+          <>
+            {status && (
+              <span title={status.detail} data-tone={status.tone}>
+                {status.label}
+              </span>
+            )}
+            {status && " · "}
+            <span>{line}</span>
+          </>
+        }
       />
     );
     return (
@@ -647,7 +635,7 @@ function ScopedPage({
             {destination}
             <span className={styles.clear}>
               <IconButton
-                variant="bare"
+                variant="glass"
                 icon={<TrashIcon size={16} aria-hidden="true" />}
                 aria-label={`Clear draft in ${where}: ${line}`}
                 title="Clear draft"
@@ -684,6 +672,10 @@ function ScopedPage({
         entry={selected.entry}
         mode={selected.draft ? "draft" : "sent"}
         title={place(selected.entry.channelId).title}
+        avatar={destinationAvatar(
+          place(selected.entry.channelId),
+          selected.entry.channelId,
+        )}
         channel={byId.get(selected.entry.channelId)}
         session={session}
         host={host}
@@ -713,193 +705,215 @@ function ScopedPage({
   );
 
   return (
-    <div data-buzz-ui="" className={styles.page}>
-      <Header
-        actions={
-          <IconButton
-            icon={<ArrowsClockwiseIcon size={16} />}
-            aria-label="Refresh"
-            title="Refresh"
-            disabled={sent.status === "loading"}
-            onClick={refresh}
-          />
-        }
-      />
-      <div className={styles.tabsToolbar}>
-        <div className={styles.typeTabs}>
-          <Tabs
-            label="Drafts and sent"
-            variant="panel"
-            size="sm"
-            value={view}
-            items={[
-              {
-                value: "drafts",
-                label: "Drafts",
-                panelId: "drafts-view",
-                trailing: shownDrafts.length ? (
-                  <span className="text-caption text-subtle">
-                    {shownDrafts.length}
-                  </span>
-                ) : undefined,
-              },
-              { value: "sent", label: "Sent", panelId: "sent-view" },
-            ]}
-            onValueChange={(next) => {
-              visit.current = undefined;
-              setSelected(undefined);
-              setView(next);
-              writeView(session.scope, "drafts-sent-tab", next);
-            }}
-          />
-        </div>
-      </div>
-      {notice && (
-        <p role="alert" className={styles.notice}>
-          {notice}
-        </p>
-      )}
-      <p role="status" className="sr-only">
-        {announcement}
-      </p>
-      <div className={styles.sections}>
-        <section
-          role="tabpanel"
-          id="drafts-view"
-          aria-labelledby="drafts-view-tab"
-          hidden={view !== "drafts"}
-          className={styles.draftWorkspace}
-          data-selected={!!selected || undefined}
-        >
-          <div className={styles.draftList}>
-            {view === "drafts" && searchField}
-            <div className={styles.section}>
-              {drafts.unavailable && (
-                <p
-                  role="alert"
-                  className={`text-body-sm text-subtle ${styles.sectionCopy}`}
-                >
-                  Some saved drafts could not be read. They are unchanged.
-                </p>
-              )}
-              {visibleDrafts.length ? (
-                <ul className={styles.list} aria-label="Drafts">
-                  {visibleDrafts.map((item) => row(item, true))}
-                </ul>
-              ) : (
-                <EmptyState
-                  icon={<SendIcon size={24} />}
-                  title={
-                    search ? `No drafts match “${search.trim()}”.` : "No drafts"
-                  }
-                  description={
-                    search
-                      ? undefined
-                      : "Messages you start and don’t send wait here."
-                  }
-                  action={
-                    search ? (
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          setSearch("");
-                          searchInput.current?.focus();
-                        }}
-                      >
-                        Clear search
-                      </Button>
-                    ) : undefined
-                  }
-                />
-              )}
-              {drafts.limited && (
-                <p className={`text-caption text-subtle ${styles.sectionCopy}`}>
-                  Showing 500 drafts.
-                </p>
-              )}
-            </div>
+    <div
+      data-buzz-ui=""
+      className={styles.page}
+      data-detail-workspace=""
+      data-selected={!!selected || undefined}
+    >
+      <div className={styles.listPane}>
+        <Header
+          actions={
+            <IconButton
+              variant="glass"
+              icon={<ArrowsClockwiseIcon size={16} />}
+              aria-label="Refresh"
+              title="Refresh"
+              disabled={sent.status === "loading"}
+              onClick={refresh}
+            />
+          }
+        />
+        <div className={styles.tabsToolbar}>
+          <div className={styles.typeTabs}>
+            <Tabs
+              label="Drafts and sent"
+              variant="capsule"
+              size="sm"
+              value={view}
+              items={[
+                {
+                  value: "drafts",
+                  label: "Drafts",
+                  panelId: "drafts-view",
+                  trailing: shownDrafts.length ? (
+                    <span className="text-caption text-subtle">
+                      {shownDrafts.length}
+                    </span>
+                  ) : undefined,
+                },
+                { value: "sent", label: "Sent", panelId: "sent-view" },
+              ]}
+              onValueChange={(next) => {
+                visit.current = undefined;
+                setSelected(undefined);
+                setView(next);
+                writeView(session.scope, "drafts-sent-tab", next);
+              }}
+            />
           </div>
-          {view === "drafts" && previewPanel}
-        </section>
-        <section
-          role="tabpanel"
-          data-selected={!!selected || undefined}
-          id="sent-view"
-          aria-labelledby="sent-view-tab"
-          hidden={view !== "sent"}
-          className={styles.draftWorkspace}
-        >
-          <div className={styles.draftList}>
-            {view === "sent" && searchField}
-            <div className={styles.section}>
-              {sent.status === "error" && (
-                <div
-                  role="alert"
-                  className={`${styles.notice} ${styles.sectionCopy}`}
-                >
-                  <p>Sent messages could not be loaded.</p>
-                  <Button size="sm" onClick={() => refreshSent.current()}>
-                    Retry
-                  </Button>
-                </div>
-              )}
-              <LoadingRegion
-                pending={sentLoading}
-                label="Loading sent messages…"
-                statusVisibility={
-                  sentLoading && !groups.length ? "visible" : "screen-reader"
-                }
-              >
-                {groups.length ? (
-                  groups.map((group) => (
-                    <section
-                      key={group.label}
-                      aria-label={group.label}
-                      className={styles.dayGroup}
-                    >
-                      <h3 className={`text-caption text-subtle ${styles.day}`}>
-                        {group.label}
-                      </h3>
-                      <ul className={styles.list}>
-                        {group.rows.map((item) => row(item, false))}
-                      </ul>
-                    </section>
-                  ))
-                ) : sentLoading || sent.status === "error" ? null : search ? (
-                  <EmptyState
-                    icon={<SendIcon size={24} />}
-                    title={`No sent messages match “${search.trim()}”`}
-                    description={`Search covers your latest ${SENT_LIMIT} messages.`}
-                    action={
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          setSearch("");
-                          searchInput.current?.focus();
-                        }}
-                      >
-                        Clear search
-                      </Button>
-                    }
-                  />
+        </div>
+        {notice && (
+          <p role="alert" className={styles.notice}>
+            {notice}
+          </p>
+        )}
+        <p role="status" className="sr-only">
+          {announcement}
+        </p>
+        <div className={styles.sections}>
+          <section
+            role="tabpanel"
+            id="drafts-view"
+            aria-labelledby="drafts-view-tab"
+            hidden={view !== "drafts"}
+            className={styles.draftWorkspace}
+            data-selected={!!selected || undefined}
+          >
+            <div className={styles.draftList}>
+              {view === "drafts" && searchField}
+              <div className={styles.section}>
+                {drafts.unavailable && (
+                  <p
+                    role="alert"
+                    className={`text-body-sm text-subtle ${styles.sectionCopy}`}
+                  >
+                    Some saved drafts could not be read. They are unchanged.
+                  </p>
+                )}
+                {visibleDrafts.length ? (
+                  <ul className={styles.list} aria-label="Drafts">
+                    {visibleDrafts.map((item) => row(item, true))}
+                  </ul>
                 ) : (
                   <EmptyState
+                    frame="none"
                     icon={<SendIcon size={24} />}
-                    title="Nothing sent yet"
-                    description="Messages you send in this community show up here."
+                    title={
+                      search
+                        ? `No drafts match “${search.trim()}”.`
+                        : "No drafts"
+                    }
+                    description={
+                      search
+                        ? undefined
+                        : "Messages you start and don’t send wait here."
+                    }
+                    action={
+                      search ? (
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setSearch("");
+                            searchInput.current?.focus();
+                          }}
+                        >
+                          Clear search
+                        </Button>
+                      ) : undefined
+                    }
                   />
                 )}
-              </LoadingRegion>
-              {sentRows.length >= SENT_LIMIT && (
-                <p className={`text-caption text-subtle ${styles.sectionCopy}`}>
-                  Showing your latest {SENT_LIMIT} messages.
-                </p>
-              )}
+                {drafts.limited && (
+                  <p
+                    className={`text-caption text-subtle ${styles.sectionCopy}`}
+                  >
+                    Showing 500 drafts.
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
-          {view === "sent" && previewPanel}
-        </section>
+          </section>
+          <section
+            role="tabpanel"
+            data-selected={!!selected || undefined}
+            id="sent-view"
+            aria-labelledby="sent-view-tab"
+            hidden={view !== "sent"}
+            className={styles.draftWorkspace}
+          >
+            <div className={styles.draftList}>
+              {view === "sent" && searchField}
+              <div className={styles.section}>
+                {sent.status === "error" && (
+                  <div
+                    role="alert"
+                    className={`${styles.notice} ${styles.sectionCopy}`}
+                  >
+                    <p>Sent messages could not be loaded.</p>
+                    <Button size="sm" onClick={() => refreshSent.current()}>
+                      Retry
+                    </Button>
+                  </div>
+                )}
+                <LoadingRegion
+                  pending={sentLoading}
+                  label="Loading sent messages…"
+                  statusVisibility={
+                    sentLoading && !groups.length ? "visible" : "screen-reader"
+                  }
+                >
+                  {groups.length ? (
+                    groups.map((group) => (
+                      <section
+                        key={group.label}
+                        aria-label={group.label}
+                        className={styles.dayGroup}
+                      >
+                        <h3
+                          className={`text-caption text-subtle ${styles.day}`}
+                        >
+                          {group.label}
+                        </h3>
+                        <ul className={styles.list}>
+                          {group.rows.map((item) => row(item, false))}
+                        </ul>
+                      </section>
+                    ))
+                  ) : sentLoading || sent.status === "error" ? null : search ? (
+                    <EmptyState
+                      frame="none"
+                      icon={<SendIcon size={24} />}
+                      title={`No sent messages match “${search.trim()}”`}
+                      description={`Search covers your latest ${SENT_LIMIT} messages.`}
+                      action={
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setSearch("");
+                            searchInput.current?.focus();
+                          }}
+                        >
+                          Clear search
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      frame="none"
+                      icon={<SendIcon size={24} />}
+                      title="Nothing sent yet"
+                      description="Messages you send in this community show up here."
+                    />
+                  )}
+                </LoadingRegion>
+                {sentRows.length >= SENT_LIMIT && (
+                  <p
+                    className={`text-caption text-subtle ${styles.sectionCopy}`}
+                  >
+                    Showing your latest {SENT_LIMIT} messages.
+                  </p>
+                )}
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
+      {previewPanel ?? (
+        <div className={styles.emptyDetail}>
+          <NoConversationSelected />
+        </div>
+      )}
     </div>
   );
 }

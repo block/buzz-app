@@ -4,7 +4,7 @@
   height: 100%;
   min-height: 0;
 }
-.split[data-side] {
+.split:has(> [data-panel-dock]:not([hidden], [data-closing])) {
   grid-template-columns: minmax(0, 1fr) minmax(
       20rem,
       var(--secondary-panel-width, 28rem)
@@ -139,10 +139,10 @@
   overflow-wrap: anywhere;
 }
 @media (max-width: 52rem) {
-  .split[data-side] {
+  .split:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
   }
-  .split[data-side] > .main,
+  .split:has(> [data-panel-dock]:not([hidden], [data-closing])) > .main,
   .side > [data-panel-resize] {
     display: none;
   }

@@ -1,3 +1,4 @@
+import { useInlineReply } from "../../features/messages/use-inline-reply";
 import {
   useCallback,
   useEffect,
@@ -10,6 +11,10 @@ import {
 import { ChannelHeaderMenu } from "../channels/ChannelHeaderMenu";
 import { ChannelSettingsPanel } from "../channels/ChannelSettingsPanel";
 import { ChannelMembersDialog } from "../channels/ChannelMembersDialog";
+import {
+  ChannelHeaderIdentity,
+  memberAccess,
+} from "../channels/ChannelHeaderIdentity";
 import { UnreadOptions } from "../channels/UnreadBadge";
 import { ChannelBody } from "../channels/ChannelBody";
 import {
@@ -108,6 +113,7 @@ export function BestieConversation({
   };
   const [sent, setSent] = useState<string>();
   const [composerFocus, focusComposer] = useState(0);
+  const reply = useInlineReply(session, channel.id, setSent, composerFocus);
   const trigger = useRef<HTMLElement | null>(null);
   const main = useRef<HTMLElement>(null);
   const dismissedTo = useRef<{
@@ -283,7 +289,7 @@ export function BestieConversation({
     navigationSignal: navigation?.signal,
     isLive: ownsCurrentVisit,
     fallbackFocus: main,
-    mainPane: true,
+    mainPane: false,
     openLink: (url) => {
       if (!session.viewer) return false;
       const target = buzzLinkTarget(url, {
@@ -330,6 +336,7 @@ export function BestieConversation({
         channelId: channel.id,
         messageId: routed.messageId,
         rootId: routed.threadRootId,
+        pane: "side",
       },
       !!detail,
       detail && { channelId: channel.id, target: detail.detail },
@@ -459,14 +466,18 @@ export function BestieConversation({
     (
       main.current?.querySelector<HTMLElement>(
         '[data-main-workspace] [role="tab"][data-tab-value="conversation"]',
-      ) ?? main.current
+      ) ??
+      main.current?.querySelector<HTMLElement>(
+        "[data-main-workspace] [data-workspace-identity] button",
+      ) ??
+      main.current
     )?.focus({ preventScroll: true });
   });
   const toggle = (expanded: boolean) => (
     <IconButton
       ref={secondary.splitTrigger}
       size="sm"
-      variant="ghost"
+      variant="glass"
       aria-label="Toggle tab pane"
       title={expanded ? "Close tab pane" : "Open tab pane"}
       aria-expanded={expanded}
@@ -506,6 +517,7 @@ export function BestieConversation({
           >
             <div
               ref={split.ref}
+              data-expando-scope=""
               style={split.style}
               className={`${panelStyles.frame} ${panelStyles.splitMotion}`}
             >
@@ -513,6 +525,21 @@ export function BestieConversation({
                 <Panel>
                   <PanelWorkspace
                     main
+                    identityPlacement="content"
+                    headerDivider={false}
+                    identity={
+                      <ChannelHeaderIdentity
+                        session={session}
+                        channelId={channel.id}
+                        name={bestie}
+                        artwork={
+                          <span className={styles.headerPortrait}>{icon}</span>
+                        }
+                        access={memberAccess(channel)}
+                        aria-expanded={membersOpen}
+                        onClick={openMembers}
+                      />
+                    }
                     label="Bestie conversation tabs"
                     focusOnMount={false}
                     value={secondary.selectedMain}
@@ -595,6 +622,7 @@ export function BestieConversation({
                             >
                               <MessageManagementStatus />
                               <ChannelBody
+                                onReply={reply.select}
                                 intro={
                                   welcome ? (
                                     <FirstAgentWelcome
@@ -615,8 +643,7 @@ export function BestieConversation({
                                 shown={
                                   secondary.selectedMain === "conversation"
                                 }
-                                focusRequest={composerFocus}
-                                onSend={setSent}
+                                {...reply.composer}
                               />
                             </section>
                           </ConversationPresentation>

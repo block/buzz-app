@@ -9,11 +9,13 @@ export function NavigationCard({
   footer,
   body,
   tone = "default",
+  align = "start",
   ...props
 }: ComponentProps<"div"> & {
   footer?: ReactNode;
   body?: ReactNode;
   tone?: "default" | "tonal" | "inset";
+  align?: "start" | "center";
 }) {
   return (
     <div
@@ -21,6 +23,7 @@ export function NavigationCard({
       data-buzz-ui=""
       data-navigation-card=""
       data-tone={tone}
+      data-align={align}
       className={`navigation-card ${className ?? ""}`}
     >
       <div className="navigation-card-row">{children}</div>
@@ -48,7 +51,7 @@ export function NavigationItem({
   /** Transient picker focus; persistent navigation selection stays separate. */
   highlighted?: boolean;
   inset?: boolean;
-  variant?: "row" | "pill" | "option" | "search" | "text";
+  variant?: "row" | "pill" | "option" | "search" | "text" | "avatar";
   /** Stacked labels grow the row without clipping its primary target. */
   multiline?: boolean;
 } & Omit<ComponentProps<typeof BaseButton>, "className" | "children">) {

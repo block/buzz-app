@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
@@ -41,13 +41,14 @@ export function memberAccess(channel: AccessChannel | undefined) {
   return manageAccess;
 }
 
-/** One artwork/name target opens the conversation's existing access dialog. */
+/** Centered artwork opens access; the workspace header owns the visible name. */
 export function ChannelHeaderIdentity({
   session,
   channelId,
   name,
   detail,
   access,
+  artwork,
   ...props
 }: Omit<
   ComponentProps<typeof SurfaceButton>,
@@ -60,20 +61,20 @@ export function ChannelHeaderIdentity({
   detail?: string | undefined;
   /** From `memberAccess`, so the name matches the dialog it opens. */
   access: ReturnType<typeof memberAccess>;
+  /** A pinned conversation can supply its already-resolved agent portrait. */
+  artwork?: ReactNode;
 }) {
   return (
     <SurfaceButton
       {...props}
       aria-label={`${access.label(name)}${detail ? `, ${detail}` : ""}`}
-      title={detail ?? access.title}
       aria-haspopup="dialog"
       className={styles.identity}
     >
       <span className={styles.avatars} aria-hidden="true">
-        <ChannelMemberAvatars session={session} channelId={channelId} />
-      </span>
-      <span className={styles.label}>
-        <span className={`${styles.name} text-body-sm`}>{name}</span>
+        {artwork ?? (
+          <ChannelMemberAvatars session={session} channelId={channelId} />
+        )}
       </span>
     </SurfaceButton>
   );

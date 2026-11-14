@@ -426,6 +426,7 @@ it("returns focus after a pointer open to the field the right-click interrupted,
   const rightClick = () => {
     fireEvent.pointerDown(target, { button: 2 });
     target.focus();
+    expect(target).toHaveFocus();
     return openMenu("Primary");
   };
   composer.focus();

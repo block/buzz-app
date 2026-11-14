@@ -1,3 +1,5 @@
+import { ActionListDismiss } from "./ActionList";
+import { Button } from "./Button";
 import { ContextMenu as BaseContextMenu } from "@base-ui/react/context-menu";
 import { Menu as BaseMenu } from "@base-ui/react/menu";
 import { CheckIcon, CaretRightIcon } from "../icons/index";
@@ -87,6 +89,7 @@ export function ContextMenuTrigger(
   );
 }
 export const MenuGroup = BaseMenu.Group;
+export const MenuList = BaseMenu.List;
 export const MenuRadioGroup = BaseMenu.RadioGroup;
 
 export type MenuPosition = Pick<
@@ -106,9 +109,12 @@ type PopupProps = Omit<ComponentProps<typeof BaseMenu.Popup>, "className"> &
     children: ReactNode;
     /** Compact is for short action lists; larger choices retain panel corners. */
     size?: "compact" | "default" | "wide";
+    /** Retain action-owned dialogs after their menu closes. */
+    keepMounted?: boolean;
   };
 
-function PositionedPopup({
+/** An anchored action menu with collision handling and shared floating-surface styling. */
+export function MenuPopup({
   align = "start",
   alignOffset,
   anchor,
@@ -120,13 +126,14 @@ function PositionedPopup({
   sideOffset = 4,
   sticky,
   finalFocus,
+  keepMounted,
   ref,
   ...props
 }: PopupProps) {
   const focus = useFinalFocusUnlessMoved(finalFocus, ref);
   const contextMenu = useContext(ContextMenuPresence) !== null;
   return (
-    <BaseMenu.Portal>
+    <BaseMenu.Portal keepMounted={keepMounted}>
       <BaseMenu.Positioner
         className="buzz-menu-positioner"
         align={align}
@@ -154,11 +161,6 @@ function PositionedPopup({
   );
 }
 
-/** An anchored action menu with collision handling and shared floating-surface styling. */
-export function MenuPopup(props: PopupProps) {
-  return <PositionedPopup {...props} />;
-}
-
 export function MenuSubmenu(
   props: ComponentProps<typeof BaseMenu.SubmenuRoot>,
 ) {
@@ -170,7 +172,7 @@ export function MenuSubmenu(
 }
 
 export function MenuSubmenuPopup(props: PopupProps) {
-  return <PositionedPopup side="right" align="start" {...props} />;
+  return <MenuPopup side="right" align="start" {...props} />;
 }
 
 type ItemProps = Omit<ComponentProps<typeof BaseMenu.Item>, "className"> & {
@@ -178,6 +180,46 @@ type ItemProps = Omit<ComponentProps<typeof BaseMenu.Item>, "className"> & {
 };
 
 export function MenuItem({ tone = "default", ...props }: ItemProps) {
+  const dismiss = useContext(ActionListDismiss);
+  if (dismiss && !props.render) {
+    const {
+      children,
+      closeOnClick = true,
+      onClick,
+      ref,
+      disabled,
+      label: _label,
+      nativeButton: _nativeButton,
+      style,
+      ...control
+    } = props;
+    return (
+      <Button
+        variant={tone === "danger" ? "destructive" : "ghost"}
+        size="sm"
+        nativeButton={false}
+        disabled={disabled}
+        ref={ref}
+        render={
+          // biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/useKeyWithClickEvents: Button supplies role, focus, and keyboard activation to this render element.
+          <div
+            {...control}
+            onClick={disabled ? undefined : onClick}
+            style={
+              typeof style === "function"
+                ? style({ disabled: !!disabled, highlighted: false })
+                : style
+            }
+          />
+        }
+        onClick={(event) => {
+          if (closeOnClick && !event.defaultPrevented) dismiss();
+        }}
+      >
+        {children}
+      </Button>
+    );
+  }
   return (
     <BaseMenu.Item {...props} data-tone={tone} className="buzz-menu-item" />
   );

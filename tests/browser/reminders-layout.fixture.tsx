@@ -47,48 +47,50 @@ const target = (id: string) => ({
 const initialState: RemindersState = Object.freeze({
   status: "ready" as const,
   hydrated: true,
-  reminders: [
-    {
-      id: "ordinary",
-      eventId: "e1",
-      createdAt: now,
-      // Exercise an older year's full date in the narrow-layout regression.
-      notBefore: now - (demo ? 60 : 400 * 86400),
-      status: "pending" as const,
-      target: target("b"),
-    },
-    {
-      id: "unbroken",
-      eventId: "e2",
-      createdAt: now,
-      notBefore: now + 3600,
-      status: "pending" as const,
-      target: target("c"),
-      note: demo
-        ? "Check in with the team after the rollout."
-        : "x".repeat(2000),
-    },
-    ...(demo
-      ? [
-          {
-            id: "copy",
-            eventId: "e3",
-            createdAt: now,
-            notBefore: now + 7200,
-            status: "pending" as const,
-            target: { ...target("d"), preview: "Review the launch copy" },
-          },
-          {
-            id: "designs",
-            eventId: "e4",
-            createdAt: now,
-            notBefore: now + 10800,
-            status: "pending" as const,
-            target: { ...target("e"), preview: "Share the final designs" },
-          },
-        ]
-      : []),
-  ],
+  reminders: params.has("empty")
+    ? []
+    : [
+        {
+          id: "ordinary",
+          eventId: "e1",
+          createdAt: now,
+          // Exercise an older year's full date in the narrow-layout regression.
+          notBefore: now - (demo ? 60 : 400 * 86400),
+          status: "pending" as const,
+          target: target("b"),
+        },
+        {
+          id: "unbroken",
+          eventId: "e2",
+          createdAt: now,
+          notBefore: now + 3600,
+          status: "pending" as const,
+          target: target("c"),
+          note: demo
+            ? "Check in with the team after the rollout."
+            : "x".repeat(2000),
+        },
+        ...(demo
+          ? [
+              {
+                id: "copy",
+                eventId: "e3",
+                createdAt: now,
+                notBefore: now + 7200,
+                status: "pending" as const,
+                target: { ...target("d"), preview: "Review the launch copy" },
+              },
+              {
+                id: "designs",
+                eventId: "e4",
+                createdAt: now,
+                notBefore: now + 10800,
+                status: "pending" as const,
+                target: { ...target("e"), preview: "Share the final designs" },
+              },
+            ]
+          : []),
+      ],
 });
 const channelList = Object.freeze({
   status: "ready",

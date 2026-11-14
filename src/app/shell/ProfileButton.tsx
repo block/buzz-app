@@ -80,7 +80,10 @@ export function ProfileButton({
   settingsSelected,
   pluginRecommendations = 0,
   onSettings,
+  side = "right",
 }: {
+  /** Where the menu opens: beside a dock, or below the top bar. */
+  side?: "right" | "bottom";
   communities: Communities;
   accountActions: AccountActionsService;
   appearance: Appearance;
@@ -303,6 +306,7 @@ export function ProfileButton({
           render={
             <IconButton
               type="button"
+              size={side === "bottom" ? "sm" : "md"}
               aria-label="Your profile"
               ref={profileTrigger}
               title={name}
@@ -328,7 +332,7 @@ export function ProfileButton({
         />
         <MenuPopup
           data-profile-menu=""
-          side="right"
+          side={side}
           collisionAvoidance={{ fallbackAxisSide: "start" }}
           align="end"
           sideOffset={8}

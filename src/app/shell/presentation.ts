@@ -1,6 +1,7 @@
 import {
   AlarmIcon,
   BellIcon,
+  BestieIcon,
   BrowserIcon,
   ChatsCircleIcon,
   NoteIcon,
@@ -15,7 +16,7 @@ import type { RegisteredPage } from "../../features/pages/service";
 // Add page identities here; unknown plugins inherit a consistent layout default.
 export const shellPresentation = {
   settings: { label: "Settings", icon: GearIcon, tone: "lavender" },
-  channels: { label: "Messages", icon: ChatsCircleIcon, tone: "lime" },
+  channels: { label: "Team", icon: ChatsCircleIcon, tone: "lime" },
 } as const;
 
 // Navigation order is host policy, never plugin activation timing. Match full
@@ -53,6 +54,7 @@ export function orderPages(
 }
 
 const bundledIcons = new Map<string, typeof BrowserIcon>([
+  ["buzz.bestie/bestie", BestieIcon],
   ["buzz.inbox/inbox", BellIcon],
   ["buzz.drafts-and-sent/drafts-sent", SendIcon],
   ["buzz.reminders/reminders", AlarmIcon],
@@ -64,11 +66,10 @@ const bundledIcons = new Map<string, typeof BrowserIcon>([
 export function pagePlacement(page: RegisteredPage) {
   if (!page.primary) return undefined;
   switch (page.key) {
-    // Activity is a row at the top of the Messages sidebar.
-    case "buzz.inbox/inbox":
+    case "buzz.bestie/bestie":
       return "sidebar";
     case "buzz.channels/channels":
-    case "buzz.bestie/bestie":
+    case "buzz.inbox/inbox":
     case "buzz.reminders/reminders":
     case "buzz.agents/agents":
     case "buzz.workflows/workflows":
@@ -81,9 +82,8 @@ export function pagePlacement(page: RegisteredPage) {
   }
 }
 
-/** The app whose navigation lists a destination: the dock selects it and the
- * shell shows its sidebar unless the page supplies its own. Pages listed in
- * the Messages sidebar belong to Messages while it is registered;
+/** The app whose navigation lists a destination: the rail selects it. Pages
+ * listed with Messages belong to Messages while it is registered;
  * conversations already select the Messages page. Every other destination,
  * including Settings and unlisted pages, owns itself. */
 export function navigationOwner(

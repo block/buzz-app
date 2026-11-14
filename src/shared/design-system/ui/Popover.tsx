@@ -47,6 +47,8 @@ type PopoverPopupProps = Omit<
     | "anchor"
     | "sticky"
   > & {
+    /** Retain tool/dialog owners when this popover closes. */
+    keepMounted?: boolean;
     /** Preserve an explicitly themed surface across the portal. */
     colorMode?: "light" | "dark" | undefined;
     /** Compact account/action surfaces use 8px corners as well as a narrower width. */
@@ -68,13 +70,14 @@ export function PopoverPopup({
   size = "default",
   padding = "content",
   colorMode,
+  keepMounted,
   finalFocus,
   ref,
   ...props
 }: PopoverPopupProps) {
   const focus = useFinalFocusUnlessMoved(finalFocus, ref);
   return (
-    <BasePopover.Portal>
+    <BasePopover.Portal keepMounted={keepMounted}>
       <BasePopover.Positioner
         className="buzz-popover-positioner"
         side={side}

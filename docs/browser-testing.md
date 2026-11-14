@@ -252,6 +252,22 @@ or attended live-account acceptance.
 
 ## Channel-opening performance
 
+For Activity's composer sheet, run the explicit diagnostic separately from the
+functional journeys:
+
+```sh
+bin/pnpm exec playwright test --config tests/browser/activity-motion.config.mjs --workers=1
+```
+
+It uses a synthetic 40-thread feed and an 80-reply conversation, recording three
+open/close pairs from pointer input through the sheet's own transition. Raw
+frames include mounted and hit-testable content, frame gaps, and Chromium long
+animation frames. `ACTIVITY_TRACE=1` adds Chromium script/layout/paint attribution;
+tracing changes timing, so compare untraced runs for latency. Run equivalent
+baseline and changed snapshots sequentially on a quiet machine. This diagnostic
+is outside the normal functional and performance inventories and establishes no
+native WebKit frame-rate guarantee.
+
 `channel-opening.spec.mjs` uses the actual app/session and production broker with
 an offline upstream: 128 DMs and 1,001 uncached participants. Profile responses
 stay held while an unprepared channel opens. This checks the **actual sidebar

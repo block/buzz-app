@@ -8,6 +8,17 @@ test("Bestie uses the conversation split workspace and retains both drafts", asy
   page,
 }, testInfo) => {
   await page.goto("/tests/fixtures/bestie-conversation.html");
+  const identity = page.getByRole("button", {
+    name: "Manage members of Bestie",
+    exact: true,
+  });
+  await identity.focus();
+  await identity.press("Enter");
+  await expect(
+    page.getByRole("dialog", { name: "Manage members", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(identity).toBeFocused();
   const composer = page.getByRole("textbox", { name: "Message Bestie" });
   await composer.fill("Main draft");
   const handle = await composer.elementHandle();
@@ -300,7 +311,7 @@ test("application Close All closes Bestie tabs but leaves modal ownership intact
   ).toBeInViewport();
   const conversation = page
     .locator("[data-main-workspace]")
-    .getByRole("tab", { name: "Bestie", exact: true });
+    .getByRole("button", { name: "Manage members of Bestie", exact: true });
   await expect(page.locator("[data-main-workspace] :focus")).toHaveCount(1);
   // The context-menu action must make the same focus handoff.
   await page

@@ -799,10 +799,9 @@ test("keyboard search covers a toolbar under the pointer and restores its action
   );
   const actions = actionsFor(row);
   const reply = actions.getByRole("button", { name: "Reply", exact: true });
-  const composer = page.getByRole("textbox", {
-    name: "Message #Alpha",
-    exact: true,
-  });
+  const composer = page
+    .getByRole("article", { name: "Conversation", exact: true })
+    .getByRole("textbox");
   const modifier = await page.evaluate(() =>
     /Mac|iPhone|iPad/.test(navigator.platform) ? "Meta" : "Control",
   );
@@ -842,8 +841,9 @@ test("keyboard search covers a toolbar under the pointer and restores its action
   }
   await reply.click();
   await expect(
-    page.getByRole("complementary", { name: "Thread", exact: true }),
+    page.getByRole("button", { name: "Cancel reply target" }),
   ).toBeVisible();
+  await expect(composer).toBeFocused();
 });
 
 test("menus keep their actions showing; pickers and dialogs cover them", async ({

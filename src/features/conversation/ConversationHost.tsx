@@ -1,5 +1,8 @@
 import type { Context } from "@deepseek-ai/cordis";
 import {
+  createContext,
+  useContext,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -7,10 +10,17 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { ConversationDetailPane } from "./ConversationDetailPane";
+import { createPortal } from "react-dom";
+import { PanelCard } from "../panels/PanelCard";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { buzzLinkTarget } from "../navigation/buzz-links";
 import { PanelView } from "../panels/PanelView";
-import { panelOpening, type PanelOpening } from "../panels/service";
+import {
+  panelOpening,
+  type PanelOpening,
+  type RegisteredPanel,
+} from "../panels/service";
 import type { ThreadPanelProps } from "../messages/ThreadPanel";
 import { useConversationPresentation } from "./ConversationPresentation";
 import { ForwardMessageProvider } from "../messages/ForwardMessage";
@@ -23,6 +33,21 @@ export type ConversationHostServices = Pick<
 export type ConversationInteractions = Required<
   Pick<ThreadPanelProps, "onOpenLink" | "canOpenLink" | "onOpenMediaReview">
 >;
+export type ConversationHostInteractions = ConversationInteractions & {
+  canOpenLink(target: string): boolean;
+  /** Explicit channel launchers may open panels without a URL matcher. */
+  openPanel(
+    panel: RegisteredPanel,
+    target: string,
+    returnFocus?: HTMLElement | null,
+  ): boolean;
+};
+/** A containing workspace owns contextual detail tabs; standalone readers retain their fallback. */
+export const ConversationTabsContext = createContext<{
+  openLink(channelId: string, url: string, rootId?: string): boolean;
+  openPanel(entry: PanelOpening, returnFocus?: HTMLElement | null): boolean;
+} | null>(null);
+
 type ConversationHostProps = Pick<
   ThreadPanelProps,
   "session" | "scope" | "channelId" | "channelName"
@@ -30,7 +55,7 @@ type ConversationHostProps = Pick<
   host: ConversationHostServices;
   threadId?: string | undefined;
   children(
-    interactions: ConversationInteractions,
+    interactions: ConversationHostInteractions,
     mediaReview: MediaReview | undefined,
   ): ReactNode;
 };
@@ -60,6 +85,8 @@ export function ConversationHost({
   children,
 }: ConversationHostProps) {
   const presented = useConversationPresentation();
+  const detailPane = useContext(ConversationDetailPane);
+  const tabs = useContext(ConversationTabsContext);
   const presentation = useRef(presented);
   const trigger = useRef<HTMLElement | null>(null);
   useEffect(() => {
@@ -72,6 +99,26 @@ export function ConversationHost({
     host.panels.snapshot,
   );
   const [overlay, setOverlay] = useState<Overlay>();
+  const companion = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    if (presented && overlay?.panel && detailPane)
+      return detailPane.show(overlay, () => {
+        const connection = host.relay.snapshot();
+        if (
+          !mounted.current ||
+          !presentation.current ||
+          shown.current !== overlay ||
+          connection.status !== "ready" ||
+          connection.session !== session ||
+          connection.scope !== scope ||
+          !companion.current?.isConnected
+        )
+          return;
+        const focused = document.activeElement;
+        if (focused === trigger.current || focused === document.body)
+          companion.current.focus({ preventScroll: true });
+      });
+  }, [presented, overlay, detailPane, host.relay, session, scope]);
   // A panel never outlives its contribution.
   if (overlay?.panel && !panels.includes(overlay.panel)) setOverlay(undefined);
   // Captured callbacks may run late: nothing acts after unmount, and a plugin
@@ -104,10 +151,14 @@ export function ConversationHost({
           ? document.activeElement
           : null;
   };
-  const canOpen = (target: string) => !!host.panels.resolve(target);
+  const canOpen = useCallback(
+    (target: string) => !!host.panels.resolve(target),
+    [host.panels],
+  );
   /** Replacements stay in the opening message's thread, like Channels. */
   const open = (url: string, rootId?: string) => {
     if (!active()) return false;
+    if (tabs?.openLink(channelId, url, rootId)) return true;
     const target = buzzLinkTarget(url, { viewer, communityOrigin: relayUrl });
     if (target) {
       setOverlay(undefined);
@@ -120,6 +171,29 @@ export function ConversationHost({
     setOverlay(next);
     return true;
   };
+  const panelProps = overlay?.panel
+    ? {
+        panel: overlay.panel,
+        target: overlay.target,
+        channelContext: {
+          scope,
+          channelId,
+          channelName,
+          viewer,
+          relayUrl,
+          ...(threadId ? { threadId } : {}),
+        },
+        context: {
+          channelId,
+          ...(overlay.rootId && { rootId: overlay.rootId }),
+          canOpen,
+          open: (target: string) =>
+            shown.current === overlay &&
+            host.panels.snapshot().includes(overlay.panel) &&
+            open(target, overlay.rootId),
+        },
+      }
+    : undefined;
   return (
     <ForwardMessageProvider
       session={session}
@@ -128,6 +202,31 @@ export function ConversationHost({
     >
       {children(
         {
+          openPanel: (panel, target, returnFocus) => {
+            if (!active() || !host.panels.snapshot().includes(panel))
+              return false;
+            if (
+              tabs?.openPanel(
+                {
+                  panel,
+                  target,
+                  channelId,
+                  ...(threadId && { rootId: threadId }),
+                },
+                returnFocus,
+              )
+            )
+              return true;
+            enter();
+            if (returnFocus) trigger.current = returnFocus;
+            setOverlay({
+              panel,
+              target,
+              channelId,
+              ...(threadId && { rootId: threadId }),
+            });
+            return true;
+          },
           onOpenLink: (url, origin) => open(url, origin?.rootId),
           canOpenLink: canOpen,
           onOpenMediaReview: (
@@ -159,45 +258,45 @@ export function ConversationHost({
             }
           : undefined,
       )}
-      {presented && overlay?.panel && (
-        <Dialog
-          open
-          title={overlay.panel.title}
-          placement="right"
-          height="stable"
-          finalFocus={() =>
-            trigger.current?.isConnected ? trigger.current : false
-          }
-          onOpenChange={(next) => {
-            if (!next) setOverlay(undefined);
-          }}
-        >
-          <PanelView
-            panel={overlay.panel}
-            target={overlay.target}
-            close={() => {
-              if (shown.current === overlay) setOverlay(undefined);
+      {presented &&
+        panelProps &&
+        (detailPane ? (
+          createPortal(
+            <PanelCard
+              ref={companion}
+              {...panelProps}
+              close={() => {
+                if (shown.current !== overlay) return;
+                setOverlay(undefined);
+                trigger.current?.isConnected && trigger.current.focus();
+              }}
+            />,
+            detailPane.container,
+          )
+        ) : (
+          <Dialog
+            open
+            title={panelProps.panel.title}
+            placement="bottom"
+            backdrop="subtle"
+            size="wide"
+            closePlacement="start"
+            height="stable"
+            finalFocus={() =>
+              trigger.current?.isConnected ? trigger.current : false
+            }
+            onOpenChange={(next) => {
+              if (!next) setOverlay(undefined);
             }}
-            channelContext={{
-              scope,
-              channelId,
-              channelName,
-              viewer,
-              relayUrl,
-              ...(threadId ? { threadId } : {}),
-            }}
-            context={{
-              channelId,
-              ...(overlay.rootId && { rootId: overlay.rootId }),
-              canOpen,
-              open: (target) =>
-                shown.current === overlay &&
-                host.panels.snapshot().includes(overlay.panel) &&
-                open(target, overlay.rootId),
-            }}
-          />
-        </Dialog>
-      )}
+          >
+            <PanelView
+              {...panelProps}
+              close={() => {
+                if (shown.current === overlay) setOverlay(undefined);
+              }}
+            />
+          </Dialog>
+        ))}
     </ForwardMessageProvider>
   );
 }

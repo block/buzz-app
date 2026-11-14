@@ -22,12 +22,21 @@ it("keeps the people preview and overflow current as profiles and membership arr
     listeners.add(listener);
     return () => listeners.delete(listener);
   };
-  let members = ["alice", "bob", "carol", "dana", "agent", "remote-agent"];
+  let members = [
+    "viewer",
+    "alice",
+    "bob",
+    "carol",
+    "dana",
+    "agent",
+    "remote-agent",
+  ];
   let list = { channels: [{ id: "channel", members }] };
   let profiles = new Map<
     string,
     { name: string; picture?: string; isAgent?: boolean }
   >([
+    ["viewer", { name: "Your profile" }],
     ["alice", { name: "Alice" }],
     ["bob", { name: "Bob" }],
     ["carol", { name: "Carol" }],
@@ -36,6 +45,7 @@ it("keeps the people preview and overflow current as profiles and membership arr
   ]);
   const choices = { identities: [{ pubkey: "agent" }] };
   const session = {
+    viewer: "viewer",
     channels: { subscribeList: subscribe, list: () => list },
     profiles: {
       subscribe,
@@ -50,6 +60,7 @@ it("keeps the people preview and overflow current as profiles and membership arr
     members,
     "background",
   );
+  expect(screen.queryByTitle("Your profile")).not.toBeInTheDocument();
   expect(screen.getByTitle("Alice")).toBeInTheDocument();
   expect(screen.getByTitle("Bob")).toBeInTheDocument();
   expect(screen.getByTitle("Carol")).toBeInTheDocument();

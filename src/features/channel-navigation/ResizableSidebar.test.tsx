@@ -49,6 +49,26 @@ const resize = (key: string) =>
     key,
   });
 
+it("uses the host's comfortable width while preserving saved choices and draft focus", () => {
+  const scope = "comfortable-width";
+  render(
+    <ResizableSidebar scope={scope} defaultWidth={360}>
+      <input aria-label="Sidebar draft" defaultValue="Keep this" />
+    </ResizableSidebar>,
+  );
+  const draft = screen.getByRole("textbox");
+  draft.focus();
+  expect(column()).toHaveStyle({ width: "360px" });
+  act(() => externalWidth(scope, { width: 300 }));
+  expect(column()).toHaveStyle({ width: "300px" });
+  expect(draft).toHaveFocus();
+  fireEvent.doubleClick(
+    screen.getByRole("separator", { name: "Resize sidebar" }),
+  );
+  expect(column()).toHaveStyle({ width: "360px" });
+  expect(screen.getByRole("textbox")).toBe(draft);
+});
+
 it("adopts another window's saved width while mounted and after remount without replacing its content", () => {
   const scope = "external-width";
   writeView(scope, "channel-sidebar", {

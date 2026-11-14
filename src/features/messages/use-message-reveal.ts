@@ -14,6 +14,7 @@ export function useMessageReveal({
   placed,
   hold,
   focus = true,
+  canFocus,
   mark = focus,
 }: {
   scroller: RefObject<HTMLElement | null>;
@@ -27,6 +28,8 @@ export function useMessageReveal({
   placed?(): void;
   /** A covering modal owns focus; the underlying target still verifies/reveals. */
   focus?: boolean;
+  /** A newer input intent can withdraw focus while positioning still completes. */
+  canFocus?(): boolean;
   /** Whether the reader sees this arrival; a reveal beside the reader that
    * owns focus is marked too. Defaults to `focus`. */
   mark?: boolean;
@@ -96,6 +99,7 @@ export function useMessageReveal({
       let focusPending = false;
       if (
         focus &&
+        canFocus?.() !== false &&
         (focused.current?.signal !== signal ||
           (focused.current.row !== row &&
             (!document.activeElement ||
@@ -176,6 +180,7 @@ export function useMessageReveal({
     prepare,
     placed,
     focus,
+    canFocus,
     mark,
     hold,
   ]);

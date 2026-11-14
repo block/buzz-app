@@ -5,6 +5,16 @@
     gap: var(--space-3);
     margin-bottom: var(--space-5);
   }
+  .buzz-content-header:not([data-inline]) {
+    min-height: calc(var(--size-control-sm) + 2 * var(--space-4));
+    align-items: center;
+    padding: var(--space-4)
+      calc(
+        var(--content-header-inline-inset, var(--space-panel-inset)) +
+        var(--space-1)
+      );
+    margin-bottom: var(--space-4);
+  }
   .buzz-content-header[data-align="end"] {
     align-items: end;
   }

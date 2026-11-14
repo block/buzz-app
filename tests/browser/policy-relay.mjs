@@ -422,6 +422,53 @@ export function policyRelay({
             filters.flatMap((filter) => answer(communityOf(url), filter)),
           );
         }
+        // The Activity sidebar batches one bounded top-level preview per channel.
+        if (
+          filters.length > 0 &&
+          filters.every(
+            (filter) => filter.top_level === true && filter.limit === 1,
+          )
+        ) {
+          expect(filters.length).toBeLessThanOrEqual(10);
+          const channels = [];
+          for (const filter of filters) {
+            expect(filter).toEqual({
+              kinds: [40002, 40008, 9],
+              "#h": [expect.any(String)],
+              top_level: true,
+              limit: 1,
+              include_aux: true,
+            });
+            channels.push(filter["#h"][0]);
+            report.queries.push({
+              community: communityOf(url),
+              filter,
+              at: performance.now(),
+            });
+          }
+          expect(new Set(channels).size).toBe(channels.length);
+          return Response.json(
+            filters.flatMap((filter) => answer(communityOf(url), filter)),
+          );
+        }
+        // Drafts & sent reads the viewer's bounded sent history and its updates.
+        if (
+          filters.length === 2 &&
+          filters[0]?.authors?.[0] === viewer &&
+          filters[0]?.limit === 100
+        ) {
+          expect(filters).toEqual([
+            { kinds: [9], authors: [viewer], limit: 100 },
+            { kinds: [40003, 5, 9005], authors: [viewer], limit: 500 },
+          ]);
+          const community = communityOf(url);
+          for (const filter of filters) {
+            report.queries.push({ community, filter, at: performance.now() });
+          }
+          return Response.json(
+            filters.flatMap((filter) => answer(community, filter)),
+          );
+        }
         if (filters.length !== 1) {
           // Sidebar preferences read only these five exact own-author coordinates.
           expect(filters).toHaveLength(5);

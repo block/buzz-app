@@ -90,7 +90,7 @@ it.each(["bottom", "side"] as const)(
         </>
       );
     }
-    const label = placement === "side" ? "Terminal panel" : "Terminal drawer";
+    const label = "Terminal panel";
     render(<Harness />);
     await user.click(screen.getByRole("button", { name: "Terminal" }));
     expect(onOpen).toHaveBeenCalledTimes(1);
@@ -209,8 +209,7 @@ it("keeps a side panel with its channel until closed, while bottom drawers close
     );
   }
   const side = () => screen.queryByRole("region", { name: "Huddle panel" });
-  const bottom = () =>
-    screen.queryByRole("region", { name: "Terminal drawer" });
+  const bottom = () => screen.queryByRole("region", { name: "Terminal panel" });
   const launcher = (name: string) => screen.getByRole("button", { name });
   // Each channel mounts its own workspace, as ChannelsPage keys it.
   const view = render(<Harness key="alpha" channel="alpha" />);

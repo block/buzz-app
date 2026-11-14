@@ -130,20 +130,31 @@ export function DiscardChanges({
   description,
   onKeep,
   onDiscard,
+  restoreFocusOnDiscard = true,
 }: {
   description: string;
   onKeep(): void;
   onDiscard(): void;
+  /** A replacing owner may restore focus to its newly selected item itself. */
+  restoreFocusOnDiscard?: boolean;
 }) {
+  const discarded = useRef(false);
   return (
     <AlertDialog
       title="Discard changes?"
+      finalFocus={() => !discarded.current || restoreFocusOnDiscard}
       description={description}
       onClose={onKeep}
       actions={
         <>
           <Button onClick={onKeep}>Keep editing</Button>
-          <Button variant="destructive" onClick={onDiscard}>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              discarded.current = true;
+              onDiscard();
+            }}
+          >
             Discard changes
           </Button>
         </>

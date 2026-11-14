@@ -26,7 +26,21 @@ async function bundledPages() {
     };
     const ctx = new Proxy(
       {},
-      { get: (_, key) => (key === "pages" ? registry : inert) },
+      {
+        get: (_, key) =>
+          key === "pages"
+            ? registry
+            : key === "relay"
+              ? {
+                  snapshot: () => ({
+                    status: "idle",
+                    scope: undefined,
+                    session: undefined,
+                  }),
+                  subscribe: () => () => {},
+                }
+              : inert,
+      },
     );
     await module.apply(ctx as Parameters<typeof module.apply>[0]);
   }
@@ -46,9 +60,9 @@ it("gives every bundled page to the app whose navigation lists it", async () => 
     [messages]: messages,
     // Pages listed in the Messages sidebar keep Messages selected.
     "buzz.drafts-and-sent/drafts-sent": messages,
-    "buzz.inbox/inbox": messages,
     // Dock apps own themselves.
-    "buzz.bestie/bestie": "buzz.bestie/bestie",
+    "buzz.inbox/inbox": "buzz.inbox/inbox",
+    "buzz.bestie/bestie": messages,
     "buzz.reminders/reminders": "buzz.reminders/reminders",
     "buzz.agents/agents": "buzz.agents/agents",
     "buzz.workflows/workflows": "buzz.workflows/workflows",

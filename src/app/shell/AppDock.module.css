@@ -1,0 +1,100 @@
+.frame {
+  display: flex;
+  width: var(--shell-rail-width, var(--size-navigation-rail));
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(0);
+  transition:
+    transform var(--duration-panel-enter) var(--easing-enter),
+    opacity var(--duration-panel-enter) var(--easing-enter),
+    visibility 0s;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-1);
+  gap: var(--space-1);
+}
+.heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  gap: var(--space-1);
+}
+.frame[data-compact] .heading {
+  flex-direction: column;
+  padding: 0;
+}
+.frame:not([data-open]) {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(calc(-1 * var(--space-3)));
+  transition-duration: var(--duration-fast), var(--duration-fast), 0s;
+  transition-delay: 0s, 0s, var(--duration-fast);
+}
+html:is([data-keyboard-input], [data-sidebar-resizing]) .frame {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .frame {
+    transition: none;
+    transform: none;
+  }
+}
+.apps {
+  min-width: 0;
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* WebKit can't overlay a classic scrollbar (mouse attached, or "Always
+     show"): it would take 13px once the rail overflows and shift every row.
+     Hide it; wheel, trackpad and focus still scroll, and the scroll fade
+     marks the overflow. */
+  scrollbar-width: none;
+}
+.primary {
+  margin-block-end: var(--space-1);
+}
+.frame[data-compact] .primary {
+  padding: var(--space-1);
+}
+.footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-inline: var(--space-2);
+}
+
+@media (max-width: 650px) {
+  .frame {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: min(var(--size-navigation-rail), calc(100vw - var(--space-8)));
+    z-index: 20;
+    background: var(--surface-panel);
+    border-radius: var(--radius-panel);
+    box-shadow: var(--elevation-dock);
+  }
+}
+
+.dropSlot {
+  position: relative;
+  height: 0;
+  margin-block: calc(-1 * var(--space-3));
+  z-index: 1;
+}
+
+@media (max-width: 650px) {
+  .frame:not([data-open]) {
+    transform: translateX(-100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frame:not([data-open]) {
+    transform: none;
+  }
+}

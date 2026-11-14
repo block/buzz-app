@@ -2247,7 +2247,9 @@ it("starts picker, paste and drop uploads eagerly and publishes only after Send"
   attachByPaste(h.input(), attachmentFile("pasted.txt"));
   attachByDrop(h.form(), attachmentFile("dropped.txt"));
   await waitFor(() =>
-    expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(3),
+    expect(
+      within(h.form()).getAllByRole("button", { name: /^Remove .*\.txt$/ }),
+    ).toHaveLength(3),
   );
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
   expect(h.sign).not.toHaveBeenCalled();
@@ -2260,7 +2262,9 @@ it("starts picker, paste and drop uploads eagerly and publishes only after Send"
   expect(screen.queryByText("Adding agent to this channel…")).toBeNull();
   // Send hands the files to the background upload and frees the composer.
   await waitFor(() =>
-    expect(within(h.form()).queryAllByText(/\.txt$/)).toHaveLength(0),
+    expect(
+      within(h.form()).queryAllByRole("button", { name: /^Remove .*\.txt$/ }),
+    ).toHaveLength(0),
   );
   expect(screen.getByText("Uploading to #General")).toHaveAttribute(
     "role",
@@ -2279,7 +2283,7 @@ it("starts picker, paste and drop uploads eagerly and publishes only after Send"
   act(() => h.uploadCalls[1]?.progress?.(4, 5));
   // The third file is not prepared yet; its transfer total is unknown.
   expect(bar).not.toHaveAttribute("aria-valuenow");
-  expect(screen.queryByText(/%|\d/)).toBeNull();
+  expect(bar.parentElement).not.toHaveTextContent(/%|\d/);
   await act(async () => {
     h.uploadCalls[1]?.result.resolve(uploadDescriptor("pasted.txt"));
   });
@@ -3046,7 +3050,9 @@ it("retains successful attachment uploads after a later file fails and retries o
   attachByPaste(h.input(), attachmentFile("ready.txt"));
   attachByPaste(h.input(), attachmentFile("retry.txt"));
   await waitFor(() =>
-    expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(2),
+    expect(
+      within(h.form()).getAllByRole("button", { name: /^Remove .*\.txt$/ }),
+    ).toHaveLength(2),
   );
   await userEvent.type(h.input(), "caption");
   fireEvent.click(h.send());
@@ -3089,7 +3095,9 @@ it("finishes a background send in its original channel after the composer unmoun
   attachByPaste(h.input(), attachmentFile("ready.txt"));
   attachByPaste(h.input(), attachmentFile("late.txt"));
   await waitFor(() =>
-    expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(2),
+    expect(
+      within(h.form()).getAllByRole("button", { name: /^Remove .*\.txt$/ }),
+    ).toHaveLength(2),
   );
   await userEvent.type(h.input(), "caption");
   fireEvent.click(h.send());
@@ -11562,7 +11570,11 @@ describe("repository resource picker", () => {
     };
     try {
       await waitFor(() => expect(p.homes).toHaveBeenCalled());
-      expect(screen.getByText("Loading repositories…")).toBeInTheDocument();
+      expect(
+        screen.getByText("Loading repositories…", {
+          selector: "[role=status]",
+        }),
+      ).toBeInTheDocument();
       expect(trigger()).toBeNull();
       await finish("channel", { status: "home", repositories: [repository] });
       expect(trigger()).toBeEnabled();
@@ -11661,7 +11673,9 @@ describe("repository resource picker", () => {
       screen.getByRole("button", { name: "Retry repositories" }),
     );
     expect(
-      await screen.findByText("Loading repositories…"),
+      await screen.findByText("Loading repositories…", {
+        selector: "[role=status]",
+      }),
     ).toBeInTheDocument();
     await act(async () => {
       resolveHome?.({ status: "home", repositories: [repository] });

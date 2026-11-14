@@ -10,8 +10,12 @@ import styles from "./Solo.module.css";
 export function SoloDraftView({
   children,
   actions,
+  navigation,
+  identity,
 }: {
   actions?: ReactNode;
+  navigation?: ReactNode;
+  identity?: { name: string; artwork: ReactNode } | undefined;
   children: ReactNode;
 }) {
   return (
@@ -20,7 +24,13 @@ export function SoloDraftView({
       data-attachment-drop-zone=""
       aria-label="New chat"
     >
-      <SoloTitle channel={{ name: "New chat" }}>{actions}</SoloTitle>
+      <PanelHeader
+        variant="conversation"
+        title={identity?.name ?? "New solo chat"}
+        icon={identity?.artwork}
+        navigation={navigation}
+        actions={actions}
+      />
       <div className={styles.start}>
         <div className={styles.startContent}>{children}</div>
       </div>
@@ -49,8 +59,10 @@ export function SoloColumn({
 export function SoloTitle({
   channel,
   children,
+  navigation,
 }: {
   channel: Pick<ChannelSummary, "name">;
+  navigation?: ReactNode;
   children?: ReactNode;
 }) {
   const Icon = ChatCircleIcon;
@@ -60,6 +72,7 @@ export function SoloTitle({
         <PanelHeaderLabel title={channel.name} icon={<Icon size="1rem" />} />
       }
       actions={children}
+      navigation={navigation}
     />
   );
 }

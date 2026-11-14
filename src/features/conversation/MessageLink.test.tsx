@@ -208,17 +208,18 @@ it.each(["buzz://channel/alpha", threadLink])(
   },
 );
 
-it("opens a message link's thread in a tab from its context menu, else as a click would", async () => {
+it("opens cross-channel message links in tabs from clicks and context menus, with navigation fallback", async () => {
   const user = userEvent.setup();
   const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
   const openThreadTab = vi.fn(() => true);
   const onOpenLink = vi.fn(() => true);
   const rootId = "b".repeat(64);
-  const tree = (target: string) => (
+  const tree = (target: string, sourceChannelId = "receiving") => (
     <ToastProvider>
       <LinkThreadTabContext value={openThreadTab}>
         <MessageLink
           url={target}
+          sourceChannelId={sourceChannelId}
           registry={undefined}
           onOpenLink={onOpenLink}
         />
@@ -226,6 +227,9 @@ it("opens a message link's thread in a tab from its context menu, else as a clic
     </ToastProvider>
   );
   const view = render(tree(threadLink));
+  await user.click(screen.getByRole("link"));
+  expect(openThreadTab).toHaveBeenCalledWith("alpha", messageId, messageId);
+  expect(onOpenLink).not.toHaveBeenCalled();
   fireEvent.contextMenu(screen.getByRole("link"));
   await screen.findByRole("menu");
   expect(
@@ -244,10 +248,16 @@ it("opens a message link's thread in a tab from its context menu, else as a clic
   openThreadTab.mockReturnValue(false);
   const reply = `${threadLink}&thread=${rootId}`;
   view.rerender(tree(reply));
-  fireEvent.contextMenu(screen.getByRole("link"));
-  await user.click(await screen.findByRole("menuitem", { name: "Open link" }));
+  await user.click(screen.getByRole("link"));
   expect(openThreadTab).toHaveBeenLastCalledWith("alpha", messageId, rootId);
   expect(onOpenLink).toHaveBeenCalledWith(reply);
+  // Same-channel links keep their existing addressable opening behavior.
+  openThreadTab.mockClear();
+  onOpenLink.mockClear();
+  view.rerender(tree(threadLink, "alpha"));
+  await user.click(screen.getByRole("link"));
+  expect(openThreadTab).not.toHaveBeenCalled();
+  expect(onOpenLink).toHaveBeenCalledWith(threadLink);
 });
 
 it("leaves noninteractive message content without a menu or anchor", () => {

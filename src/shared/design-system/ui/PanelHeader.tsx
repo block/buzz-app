@@ -1,3 +1,6 @@
+import { HeaderIcon } from "./HeaderIcon";
+import { ScrollEdgeMaterial } from "./ScrollEdgeMaterial";
+import { SquaresFourIcon } from "../icons";
 import type { ReactNode } from "react";
 
 /** Shared header frame. Product identity and controls are supplied through slots.
@@ -8,20 +11,39 @@ export function PanelHeader({
   navigation,
   actions,
   variant = "default",
+  divider = false,
+  historyOverlay = false,
 }: {
   title: ReactNode;
   icon?: ReactNode;
   navigation?: ReactNode;
   actions?: ReactNode;
-  variant?: "default" | "compact" | "card";
+  variant?: "default" | "compact" | "card" | "conversation";
+  /** Keep the separator's space while omitting its visible line. */
+  divider?: boolean;
+  /** Conversation history scrolls behind this floating identity. */
+  historyOverlay?: boolean;
 }) {
   return (
-    <header data-buzz-ui="" className="panel-header" data-variant={variant}>
+    <header
+      data-buzz-ui=""
+      className="panel-header"
+      data-variant={variant}
+      data-divider={divider ? undefined : "hidden"}
+      data-history-overlay={historyOverlay || undefined}
+    >
+      {historyOverlay && (
+        <ScrollEdgeMaterial edge="top" className="panel-header-material" />
+      )}
       {navigation}
       <div className="panel-header-title">
         {icon}
         {typeof title === "string" ? (
-          <h2 className="text-label text-primary">{title}</h2>
+          <h2
+            className={`${variant === "conversation" && icon ? "text-label-sm" : "text-label"} text-primary`}
+          >
+            {title}
+          </h2>
         ) : (
           title
         )}
@@ -43,11 +65,7 @@ export function PanelHeaderLabel({
 }) {
   return (
     <div className="panel-header-label">
-      {icon && (
-        <span className="panel-header-label-icon" aria-hidden="true">
-          {icon}
-        </span>
-      )}
+      <HeaderIcon>{icon ?? <SquaresFourIcon size={24} />}</HeaderIcon>
       <h2>{title}</h2>
       {children}
     </div>

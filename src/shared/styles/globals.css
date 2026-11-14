@@ -192,8 +192,7 @@
     box-shadow: var(--elevation-surface);
   }
   .shell-background {
-    background-color: var(--bg-app);
-    @apply texture-dots;
+    background-color: var(--surface-window-underlay);
   }
   /* Only while a plugin registers a backdrop: its layer paints above the
      shell's own background and below every descendant. */
@@ -211,62 +210,38 @@
   .shell-backdrop {
     z-index: -1;
   }
-  .shell-side-dock {
-    display: flex;
-    flex: none;
-    flex-direction: column;
-    align-items: center;
-    padding: var(--space-2) var(--space-2) var(--space-panel-gap);
-    min-height: 0;
-  }
-  .shell-dock-pages {
-    /* Keep corner counts and focus rings inside the scrollport without
-       changing the dock width or the tile positions. */
-    padding: var(--space-3);
-    margin: calc(-1 * var(--space-3));
-    min-height: 0;
-    flex: 1;
-    overflow-y: auto;
-    scrollbar-width: none;
-  }
-  .shell-menu-search {
-    width: 100%;
-    max-width: 32rem;
-    min-width: calc(2 * var(--space-6));
-    justify-self: center;
-    container-type: inline-size;
-  }
-  .shell-background .shell-menu-search > .buzz-button {
-    width: 100%;
-  }
-  .shell-background .shell-menu-search .buzz-button-label {
-    width: 100%;
-    justify-content: flex-start;
-  }
-  .shell-search-content {
-    @apply flex w-full items-center gap-2 text-body-sm text-subtle;
-  }
 
   .shell-header {
     --interaction-hover: var(--affordance-backdrop-hover);
     --interaction-pressed: var(--affordance-backdrop-pressed);
     --interaction-selected: var(--affordance-backdrop-pressed);
     @apply relative grid shrink-0 items-center;
-    grid-template-columns: var(--shell-header-wing, max-content) minmax(0, 1fr) var(
-        --shell-header-wing,
-        max-content
-      );
+    grid-template-columns: minmax(0, 1fr) minmax(0, 15rem) minmax(0, 1fr);
     min-height: calc(var(--size-control-sm) + var(--space-3));
     padding-block: var(--space-1);
     padding-inline: var(--space-2);
-    gap: var(--space-6);
-    /* The active area tint continues beneath the header. */
-    background: transparent;
+    gap: var(--space-2);
+    /* Recessed window chrome beneath the continuous workspace card. */
+    background: var(--surface-window-underlay);
+  }
+  .shell-search {
+    min-width: 0;
+    -webkit-app-region: no-drag;
+  }
+  .shell-search > .buzz-button {
+    width: 100%;
+    justify-content: flex-start;
+    background: var(--surface-panel);
+  }
+  @media (max-width: 650px) {
+    .shell-header {
+      grid-template-columns: auto minmax(0, 15rem) auto;
+    }
   }
   .shell-history {
     @apply flex items-center justify-start;
     width: max-content;
-    min-width: max-content;
+    min-width: 0;
     gap: 0;
   }
   .shell-history > .navigation-item {
@@ -304,57 +279,93 @@
     place-content: center;
     place-items: center;
   }
-  .shell-navigation,
-  .shell-navigation-content {
-    display: contents;
-  }
-  /* A single fr track animates from the sidebar's real extent (not a larger
-     ceiling) to zero, so movement starts on the first frame. */
-  .shell-navigation[data-sidebar-collapsible] {
-    display: grid;
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr);
-    justify-content: end;
-    min-width: 0;
-    flex: none;
-    width: max-content;
-    overflow: visible;
-    /* Release resize help once open; preserve the panel's shadow while moving. */
-    clip-path: none;
-    visibility: visible;
-    transition:
-      grid-template-columns var(--duration-settle) ease-in-out,
-      clip-path var(--duration-settle) step-end allow-discrete,
-      visibility var(--duration-settle);
-  }
-  /* Portalled controls may hide outside regions from assistive tech; only the
-     shell's own state controls whether this track visually collapses. */
-  .shell-navigation[data-sidebar-collapsible]:not([data-sidebar-open]) {
-    grid-template-columns: 0fr;
-    clip-path: inset(
-      calc(-1 * var(--space-2)) 0 calc(-1 * var(--space-2))
-        calc(-1 * var(--space-2))
-    );
-    visibility: hidden;
-    transition-timing-function: ease-in-out, step-start, ease;
-  }
-  .shell-navigation[data-sidebar-collapsible] > .shell-navigation-content {
-    display: flex;
-    justify-content: flex-end;
-    min-width: 0;
-  }
   .shell-body {
-    @apply relative flex min-h-0 min-w-0 flex-1;
-    padding-inline: var(--space-panel-gap);
-    padding-bottom: var(--space-panel-gap);
+    @apply relative grid min-h-0 min-w-0 flex-1;
+    /* One surface spans the reading track and its balancing gutter. Subgrid
+       keeps the content in its existing reading track. */
+    grid-column: 2 / -1;
+    grid-template-columns: subgrid;
+    background: transparent;
+    overflow: clip;
+    padding: var(--space-panel-gap);
+    padding-block-start: var(--space-4);
   }
-  .shell-side-dock ~ .shell-body {
-    padding-inline-start: 0;
+  /* Headers and composers own the main destination's 16px vertical insets. */
+  .shell-body:not(.shell-body-settings) {
+    padding-block: 0;
   }
   /* Keep the modal portal outside the query container so its fixed backdrop
      still blocks the whole window, including the header. */
   .shell-workspace {
-    @apply relative flex min-h-0 min-w-0 flex-1;
+    @apply relative grid min-h-0 min-w-0 flex-1;
+    --shell-container-radius: calc(var(--radius-container) + var(--space-1));
+    background: var(--surface-panel);
+    border-radius: var(--shell-container-radius);
+    overflow: clip;
+    column-gap: 0;
+    --shell-rail-width: var(--size-navigation-rail);
+    /* Balance the rail when there is room for the reading column. Between
+       wide and narrow layouts, give this gutter back to the content first. */
+    --shell-balance-gutter: clamp(
+      0rem,
+      calc(100% - var(--shell-rail-width) - var(--size-conversation-frame)),
+      var(--shell-rail-width)
+    );
+    transition: grid-template-columns var(--duration-panel-enter)
+      var(--easing-enter);
+    grid-template-columns: var(--shell-rail-width) minmax(0, 1fr) var(
+        --shell-balance-gutter
+      );
+  }
+  .shell-body > div {
+    grid-column: 1;
+    width: 100%;
+    margin-inline: auto;
+  }
+  /* Bound the whole destination, not only its list beneath a full-width title. */
+  .shell-body:not(.shell-body-settings) > div {
+    max-width: var(--size-conversation-frame);
+  }
+  /* Split workspaces use the available canvas; readers retain their own measure. */
+  .shell-workspace[data-side-panel],
+  .shell-workspace[data-full-width-workspace] {
+    --shell-balance-gutter: 0rem;
+  }
+  .shell-workspace[data-side-panel] .shell-body > div,
+  .shell-workspace[data-full-width-workspace] .shell-body > div {
+    max-width: none;
+  }
+  /* Collection headers and rows own equal insets at both pane edges. */
+  .shell-workspace[data-full-width-workspace] .shell-body {
+    padding-inline: 0;
+  }
+  /* A full-width reader owns its edge insets, just as it does beside the list. */
+  .shell-workspace[data-list-column="closed"] .shell-body {
+    grid-template-columns: minmax(0, 1fr);
+    padding-inline: 0;
+  }
+  .shell-workspace:not([data-rail-open], [data-rail-compact]) {
+    grid-template-columns: 0px minmax(0, 1fr) 0px;
+    transition-duration: var(--duration-fast);
+  }
+  html:is([data-keyboard-input], [data-sidebar-resizing]) .shell-workspace {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .shell-workspace {
+      transition: none;
+    }
+  }
+  @media (max-width: 650px) {
+    .shell-workspace,
+    .shell-workspace:not([data-rail-open], [data-rail-compact]) {
+      grid-template-columns: minmax(0, 1fr);
+      column-gap: 0;
+    }
+    .shell-body {
+      grid-column: 1 / -1;
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
   .shell-dialog-frame {
     position: absolute;
@@ -392,18 +403,6 @@
   .shell-sidebar-default > * {
     @apply min-w-0 flex-1;
   }
-  .shell-navigation[data-sidebar-collapsible]
-    > .shell-navigation-content
-    > :is(.shell-sidebar, .shell-sidebar-default) {
-    flex: none;
-    /* Clamp against the stable shell, not the animated navigation track. */
-    max-width: max(220px, calc(100cqi - 336px));
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .shell-navigation[data-sidebar-collapsible] {
-      transition: none;
-    }
-  }
   .shell-actions {
     @apply flex items-center justify-end;
     justify-self: end;
@@ -435,68 +434,12 @@
     width: 1rem;
     height: 1rem;
   }
-  .shell-search-shortcut {
-    display: flex;
-    margin-inline-start: auto;
-  }
-  /* The hint fits the small capsule's text line instead of growing the topbar. */
-  .shell-search-shortcut .buzz-keyboard-shortcut {
-    padding-block: 0;
-  }
-  @container (width < 10rem) {
-    .shell-search-shortcut {
-      display: none;
-    }
-  }
-  @container (width < 6rem) {
-    .shell-search-label {
-      display: none;
-    }
-  }
-  .shell-header[data-search-fluid="true"] {
-    grid-template-columns: max-content minmax(0, 1fr) max-content;
-  }
-  /* Only wrap when even the compact Search control cannot fit beside the controls. */
-  .shell-header[data-search-wrapped="true"] {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    row-gap: var(--space-2);
-  }
-  .shell-header[data-search-wrapped="true"] .shell-menu-search {
-    order: 1;
-    flex: 0 0 100%;
-    margin-inline: auto;
-    display: flex;
-    justify-content: center;
-  }
-  .shell-header[data-search-wrapped="true"] .shell-menu-search > .buzz-button {
-    max-width: 32rem;
-  }
   /* Keep this in sync with AppShell's matchMedia navigation owner. */
   @media (max-width: 650px) {
     .shell-sidebar,
     .shell-sidebar-default {
       width: 220px;
       max-width: 220px;
-    }
-    .shell-navigation {
-      display: none;
-    }
-    .shell-navigation[data-sidebar-collapsible] {
-      display: none;
-    }
-    .shell-navigation[data-expanded="true"] {
-      @apply absolute inset-y-0 left-0 z-20 flex;
-      max-width: calc(100% - 1rem);
-    }
-    .shell-navigation .shell-sidebar,
-    .shell-navigation .shell-sidebar-default {
-      max-width: 220px;
-      margin-inline-end: 0;
-    }
-    .shell-navigation-content > hr {
-      display: none;
     }
   }
 
@@ -551,14 +494,10 @@
      and their focus rings, so their ink and fills keep the pairing they were
      designed for. Resize grips sit on the joined pane surface, which is
      already opaque. */
-  .shell-background > .shell-backdrop ~ .shell-header > *,
-  .shell-background
-    > .shell-backdrop
-    ~ :where(.shell-workspace)
-    > .shell-side-dock {
+  .shell-backdrop ~ .shell-header > * {
     border-radius: var(--radius-pill);
-    background: var(--bg-app);
-    box-shadow: 0 0 0 var(--space-2) var(--bg-app);
+    background: var(--surface-window-underlay);
+    box-shadow: 0 0 0 var(--space-2) var(--surface-window-underlay);
   }
 }
 
@@ -623,26 +562,4 @@
 }
 @utility bg-primary-hover {
   background-color: var(--affordance-prominent-hover);
-}
-
-@layer components {
-  .shell-navigation[data-sidebar-collapsible] {
-    position: relative;
-  }
-  .shell-navigation[data-sidebar-collapsible]::after {
-    content: "";
-    position: absolute;
-    inset-block: 0;
-    inset-inline-end: 0;
-    width: 1px;
-    background: var(--border-standard);
-    opacity: 1;
-    pointer-events: none;
-  }
-  /* Keep the retained navigation out of layout and keyboard traversal on apps
-     without a sidebar, including after a narrow drawer was open. This must
-     follow the collapsible and narrow-drawer display rules above. */
-  .shell-navigation[hidden] {
-    display: none;
-  }
 }

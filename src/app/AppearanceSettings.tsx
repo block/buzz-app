@@ -21,11 +21,6 @@ import {
 import type { Appearance } from "../shared/theme/service";
 
 import {
-  setThreadPlacementPreference,
-  useThreadPlacementPreference,
-} from "../features/messages/thread-preferences";
-
-import {
   useFollowUpBehaviorPreference,
   setFollowUpBehaviorPreference,
 } from "../features/messages/follow-up-preference";
@@ -82,7 +77,6 @@ export function AppearanceSettings({
   const clock = useClockPreference();
   const names = useNamePreference();
   const verifiedCommunity = useVerifiedCommunity(communities?.relay);
-  const { placement, unsaved } = useThreadPlacementPreference();
   const increaseButton = useRef<HTMLButtonElement>(null);
   const pendingFocus = useRef<HTMLButtonElement | null>(null);
   const resetRef = useCallback((node: HTMLButtonElement | null) => {
@@ -450,30 +444,6 @@ export function AppearanceSettings({
               }
             />
 
-            <PreferenceRow
-              title="Open threads in"
-              subtitle="New threads open here. Already-open threads stay where you placed them."
-              trailing={
-                <Select
-                  variant="compact"
-                  label="Open threads in"
-                  value={placement}
-                  groups={[
-                    {
-                      label: "Pane",
-                      options: [
-                        { value: "side", label: "Side pane" },
-                        { value: "main", label: "Main pane" },
-                      ],
-                    },
-                  ]}
-                  onValueChange={(value) => {
-                    if (value === "main" || value === "side")
-                      setThreadPlacementPreference(value);
-                  }}
-                />
-              }
-            />
             {autocorrectAvailable && (
               <SwitchPreferenceRow
                 label="Allow automatic spelling correction"
@@ -557,20 +527,6 @@ export function AppearanceSettings({
               onClick={() => setUnreadFirstPreference(unreadFirst.enabled)}
             >
               Retry saving search preference
-            </Button>
-          </ToastNotice>
-        )}
-        {active && unsaved && (
-          <ToastNotice
-            title="Thread preference wasn’t saved"
-            description="This choice is active, but could not be saved on this device. Try again."
-          >
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => setThreadPlacementPreference(placement)}
-            >
-              Retry saving thread placement
             </Button>
           </ToastNotice>
         )}

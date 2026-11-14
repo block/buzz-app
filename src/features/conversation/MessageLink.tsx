@@ -97,6 +97,7 @@ export function MessageLink({
   scope,
   interactive = true,
   channelPrivate = false,
+  sourceChannelId,
 }: {
   url: string;
   children?: ReactNode;
@@ -111,6 +112,8 @@ export function MessageLink({
   scope?: string | undefined;
   interactive?: boolean;
   channelPrivate?: boolean;
+  /** Keep cross-channel message links beside the conversation that contains them. */
+  sourceChannelId?: string | undefined;
 }) {
   const active = useConversationPresentation();
   const renderers = useSyncExternalStore(
@@ -234,7 +237,12 @@ export function MessageLink({
   const openInternal = () => {
     if (trigger.current?.isConnected)
       trigger.current.focus({ preventScroll: true });
-    const opened = (!panelTarget || !!canOpenLink?.(url)) && onOpenLink(url);
+    const opened =
+      (thread &&
+        sourceChannelId &&
+        thread.channelId !== sourceChannelId &&
+        openThreadTab?.(thread.channelId, thread.messageId, thread.rootId)) ||
+      ((!panelTarget || !!canOpenLink?.(url)) && onOpenLink(url));
     setUnavailable(!opened);
     if (opened) setPreviewOpen(false);
   };

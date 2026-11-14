@@ -1,7 +1,7 @@
 import { pauseClock } from "./clock.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { hoverMessage } from "./message-actions.mjs";
+import { hoverMessage, openThreadLink } from "./message-actions.mjs";
 
 test.use({
   productionBroker: true,
@@ -159,7 +159,7 @@ test("channel, thread and DM composers publish their own scope without publishin
     `[data-channel-timeline] [data-message-id="${dmRoot.id}"]`,
   );
   await hoverMessage(row);
-  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  await openThreadLink(page, app, dmRoot.id, "dm-peer");
   await type(
     page.getByRole("textbox", { name: "Reply to thread", exact: true }),
     "publication barrier",

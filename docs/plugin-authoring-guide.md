@@ -56,7 +56,7 @@ export function apply(ctx) {
 
 | Inject | Registers | Call and required fields |
 | --- | --- | --- |
-| `pages` | A page | `ctx.pages.register({ id, title, component, primary?, placement?, icon?, badge?, sidebar?, companion?, layout? })`. `id` must match the id pattern, `title` non-empty, `component` a function. `placement`: `"sidebar"` (default) or `"dock"` (only for `primary` pages; `"topbar"` and `"toolbar"` are accepted aliases for `"dock"`). `icon`: `data:image/...` URL. `badge`: component shown beside the nav entry. `sidebar`: component receiving `{ target, children }` that replaces the conversation sidebar (wrap content in `className="shell-sidebar-default"`). `layout`: `"document"` or `"workspace"`. |
+| `pages` | A page | `ctx.pages.register({ id, title, component, primary?, placement?, icon?, badge?, companion?, layout? })`. `id` must match the id pattern, `title` non-empty, `component` a function. `placement`: `"sidebar"` (default) or `"dock"` (only for `primary` pages; `"topbar"` and `"toolbar"` are accepted aliases for `"dock"`). `icon`: `data:image/...` URL. `badge`: component shown beside the nav entry. `sidebar` is retired: accepted and ignored, so render any list inside the page. `layout`: `"document"` or `"workspace"`. |
 | `panels` | A panel for a link/target string | `ctx.panels.register({ id, title, matches(target) => boolean, component, order?, launcher?, channelLauncher?, channelPlacement?, keepOpen? })`. `component` receives `{ target, close, context?, channelContext? }`. Inside `component`, call `ctx.panels.useTabTitle(label)` (a React hook; no-op outside a panel tab; check `typeof ctx.panels.useTabTitle === "function"` on older hosts) to name the tab per target; `title` stays the fallback. `launcher: { icon: string, target: string }` adds a top-bar button (use `matches: () => false` for launcher-only). `channelLauncher` is a component for the channel header (`channelPlacement`: `"bottom"` default, `"side"`, `"tab"`). |
 | `accountActions` | Account menu action | `ctx.accountActions.register({ id, title, icon?, component, placement? })`. The component receives `{ open, onOpenChange }`. Omit `placement` for the plugin section after Settings; use `"before-settings"` for a profile-related action directly above Settings. The host owns menu order, focus, and dismissal. |
 | `settingsCards` | A Settings destination | `ctx.settingsCards.register({ id, title, component, group?, personal?, identityRow? })`. `component` receives `{ active(), community?, navigation? }`; `navigation.target.route` can carry bounded, versioned presentation data for the card. Opening a route must never submit an operation. Optional `identityRow` receives `{ active() }` and contributes a compact account-status link inside Identity. Reuse the plugin’s existing session; check `active()` before navigation or an action. The row retires with its owning registration. Omit `icon` (it is a host icon component). The host supplies navigation and the content column, not a heading. |
@@ -128,27 +128,19 @@ Add `"host"` to `inject`, then:
 
 ## UI
 
-- `ctx.conversation.ui.Workspace` shows a permanent conversation in a plugin page.
-  Check that it exists before use. Channels supplies it through
-  `registerWorkspace`, with the same provider lifetime as `ui.Tabs`.
-  Set the page's `layout` to `"workspace"`. Pass
-  `{ id, session, scope, target, label, intro?, actions?, detail? }`.
-  `target` is `{ channelId, threadId?, messageId? }`: omit `threadId` for the
-  channel timeline, or supply it for a thread. `messageId` selects a message.
-  `intro` supplies content at the start of history. It scrolls with the messages.
-  `actions` supplies
-  entries in the header's three-dot menu and the tab's context menu, with
-  `{ label, run() }`. `detail: { target, rootId? }` initially selects a panel
-  in the right pane. The host owns the reader, composer, tabs, and panel frame.
+- To show a conversation, open it with `ctx.navigation`; the shell's reader
+  hosts it for every page. `ctx.conversation.ui.Tabs` and `ui.Workspace` are
+  retired and always absent, and `registerTabs` and `registerWorkspace` are
+  accepted and ignored, so a page that checked for them keeps its own layout.
   The page owns its route, content lookup, labels, and actions.
-  Set `conversationNavigation: true` on the page to keep the Messages sidebar
-  and dock selection without adding a primary navigation row.
+  Set `conversationNavigation: true` on the page to keep Messages selected in
+  the rail without adding a primary navigation row.
 - A panel can set `addressable: true` to accept conversation `detail` targets.
   It then uses the host's Back/Forward and explicit Close behavior. The host
   resolves the target again on each visit. The panel must check current access
   and support restoration without replaying writes. This option does not grant
   access. Contextual channel tools keep their existing placement and lifetime.
-- Prefer host classes and tokens over custom chrome: `className="ui-card"` for a card surface, `var(--space-panel-inset)` and `var(--space-2)` for spacing, `shell-sidebar-default` for a page-sidebar root. Plain `h1`, `h2`, `h3`, `p` and `button` get host default styling. Use inline styles for layout; separate CSS is not supported.
+- Prefer host classes and tokens over custom chrome: `className="ui-card"` for a card surface, `var(--space-panel-inset)` and `var(--space-2)` for spacing. Plain `h1`, `h2`, `h3`, `p` and `button` get host default styling. Use inline styles for layout; separate CSS is not supported.
 - The bundled `buzz.profiles/profile` contribution's component advertises `supportsPersonInfoContent: true` when it accepts an optional `renderPersonInfo(content)` prop. The hook applies to people; agent profiles, including owned-agent Settings and Activity, are outside this contract. A specializing panel can use that function to compose the existing Info content with its own content in DOM order. Keep the supplied content's native controls intact. The hook affects Info only; the host retains the header, tabs, focus region and Channels view. Check the capability before claiming normal profile targets on older hosts.
 - A specializing reader opts in with `component.profileHistory = true`; canonical profile targets then inherit profile Back/Forward and explicit Close behavior in conversation tabs. Match the existing profile address rather than inventing a separate history store; unmarked catch-all panels and contextual channel panels retain their own behavior.
 - The host already supplies the shell, navigation, active state, error boundaries and (for panels and Settings) the outer surface, header or content column. Do not add your own page frame, header-level navigation, overlays, global stylesheet, theme or reset. Page content owns its interior padding and scrolling. Panels sit inside a host card: render only the body.

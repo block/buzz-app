@@ -87,7 +87,7 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   await expect
     .poll(async () => (await entry(page)).target.pageId)
     .toBe("workflows");
-  const messages = page.getByRole("tab", { name: "Messages", exact: true });
+  const messages = page.getByRole("tab", { name: "Team", exact: true });
   await messages.focus();
   await messages.press("Enter");
   // A refused connection is a connection failure, whatever the visit was.
@@ -127,7 +127,7 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   });
   await page.keyboard.press("Tab");
   await expect(
-    page.getByRole("tabpanel", { name: "Messages", exact: true }),
+    page.getByRole("tabpanel", { name: "Team", exact: true }),
   ).toBeFocused();
 });
 
@@ -231,7 +231,7 @@ launchTest(
     const card = page.locator('.page-status[role="alert"]');
     // Opened cold, there is nowhere to go back to: Messages did not fail.
     await expect(button(card, "Go back")).toHaveCount(0);
-    await expect(button(card, "Go to Messages")).toBeVisible();
+    await expect(button(card, "Go to Team")).toBeVisible();
     await openPage(page, "Workflows");
     await expect(failed).toBeHidden();
     await page.getByRole("tab", { name: "Agents", exact: true }).click();

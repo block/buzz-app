@@ -5,7 +5,7 @@ export function NavigationSection({
   action,
   children,
 }: {
-  label?: string;
+  label?: ReactNode;
   action?: ReactNode;
   children: ReactNode;
 }) {

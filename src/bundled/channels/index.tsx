@@ -4,7 +4,7 @@ import { channelQuery } from "./channel-query";
 import { isChannelRoute } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
-import { ConversationWorkspace, PageTabs } from "./PageTabs";
+import { isSidebarSectionRoute } from "../../features/channel-navigation/sidebar-section-route";
 import { registerCanvas } from "./canvas-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
 import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
@@ -36,12 +36,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     component: ChannelCompletion,
   });
   const extensions = ctx.conversation;
-  extensions.registerTabs((props) => (
-    <PageTabs {...props} host={ctx} extensions={extensions} />
-  ));
-  extensions.registerWorkspace((props) => (
-    <ConversationWorkspace {...props} host={ctx} extensions={extensions} />
-  ));
   const relay = ctx.relay;
   const navigator = ctx.navigation;
   ctx.conversation.registerMessageAction({
@@ -130,13 +124,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   ctx.pages.register({
     id: "channels",
-    title: "Channels",
+    title: "Team",
     primary: true,
     placement: "dock",
     layout: "workspace",
     companion: true,
     handlesNavigation: true,
-    route: { version: 1, validate: isChannelRoute },
+    route: {
+      version: 1,
+      validate: (params) =>
+        isChannelRoute(params) || isSidebarSectionRoute(params),
+    },
     component: ({ companion, navigation }) => (
       <ChannelsPage
         chatMenus={ctx.conversation.chatMenus}

@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Agents } from "../../features/agents/service";
 import { CreateSidebarSection } from "../../bundled/channels/CreateSidebarSection";
 import { CreateChannelDialog } from "../../bundled/channels/CreateChannelDialog";
@@ -23,14 +23,15 @@ import { soloNavigationFor } from "../../features/channel-navigation/solo-naviga
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
-  MenuTrigger,
   MenuPopup,
   MenuItem,
   MenuGroup,
   MenuGroupLabel,
   MenuSeparator,
+  MenuTrailing,
 } from "../../shared/design-system/ui/Menu";
 import styles from "./NewMenu.module.css";
+import { KeyboardShortcut } from "../../shared/design-system/ui/KeyboardShortcut";
 import { PlusIcon } from "../../shared/design-system/icons";
 
 type Props = {
@@ -38,6 +39,7 @@ type Props = {
   navigator: Navigation;
   agents?: Agents | undefined;
   triggerContainer?: HTMLElement | null;
+  menuTriggerContainer?: HTMLElement | null;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 };
@@ -63,6 +65,7 @@ function ReadyNewMenu({
   session,
   available,
   triggerContainer,
+  menuTriggerContainer,
   open,
   onOpenChange,
 }: Props & { session: RelaySession; available: boolean }) {
@@ -87,43 +90,123 @@ function ReadyNewMenu({
   const [creatingProject, setCreatingProject] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const [draftFocus, setDraftFocus] = useState<HTMLElement | null>(null);
+  const headerTrigger = useRef<HTMLButtonElement>(null);
+  const menuAnchor = useRef<HTMLButtonElement>(null);
+  const openMenu = (anchor: HTMLButtonElement) => {
+    menuAnchor.current = anchor;
+    setMenuOpen(true);
+  };
   const scope = splitPartition(session.scope);
   const current = () => relay.snapshot().session === session;
+  // Team creation uses its inline composer; the keyboard shortcut keeps the global picker.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const compose = (global = false) => {
+    if (scope && current())
+      void navigator.open({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+        scope,
+        route: {
+          version: 1,
+          params: global ? "new-message" : "compose",
+        },
+      });
+  };
+  // The shell's Cmd/Ctrl+N asks to open creation: that is the composer now.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a new request composes.
+  useEffect(() => {
+    if (!open) return;
+    onOpenChange?.(false);
+    if (available) compose(true);
+  }, [open]);
+  const shortcut = (position: number) => (
+    <MenuTrailing>
+      <span aria-hidden="true">
+        <KeyboardShortcut text={String(position)} label={`Press ${position}`} />
+      </span>
+    </MenuTrailing>
+  );
   const menuTrigger = (
-    <MenuTrigger
-      render={
-        <IconButton
-          hint="familiar"
-          ref={trigger}
-          disabled={!available}
-          aria-label="New"
-          title="New"
-          variant="inset"
-          shape="round"
-          size="sm"
-          icon={<PlusIcon className={styles.createIcon} size={16} />}
-        />
+    <IconButton
+      hint="familiar"
+      ref={trigger}
+      disabled={!available || !scope}
+      aria-label="New"
+      aria-haspopup="menu"
+      title="New message (right-click for more)"
+      variant="ghost"
+      size="sm"
+      icon={
+        <PlusIcon className={styles.createIcon} size={16} strokeWidth={2} />
       }
+      onClick={() => compose()}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        openMenu(event.currentTarget);
+      }}
     />
   );
   return (
     <>
+      {triggerContainer === undefined
+        ? menuTrigger
+        : triggerContainer && createPortal(menuTrigger, triggerContainer)}
+      {menuTriggerContainer &&
+        createPortal(
+          <IconButton
+            ref={headerTrigger}
+            aria-label="Create"
+            title="Create"
+            aria-haspopup="menu"
+            aria-expanded={
+              menuOpen && menuAnchor.current === headerTrigger.current
+            }
+            disabled={!available || !scope}
+            variant="ghost"
+            size="sm"
+            icon={<PlusIcon size={16} strokeWidth={2} />}
+            onClick={(event) => openMenu(event.currentTarget)}
+          />,
+          menuTriggerContainer,
+        )}
       <MenuRoot
-        open={open}
+        open={menuOpen}
         onOpenChange={(next) => {
           if (next) setDraftFocus(null);
-          onOpenChange?.(next);
+          setMenuOpen(next);
         }}
       >
-        {triggerContainer === undefined
-          ? menuTrigger
-          : triggerContainer && createPortal(menuTrigger, triggerContainer)}
         <MenuPopup
+          anchor={menuAnchor}
           finalFocus={
             draftFocus
               ? () => (draftFocus.isConnected ? draftFocus : false)
-              : undefined
+              : menuAnchor
           }
+          aria-label="New"
+          size="compact"
+          onKeyDown={(event) => {
+            if (
+              event.altKey ||
+              event.ctrlKey ||
+              event.metaKey ||
+              event.shiftKey ||
+              event.repeat ||
+              event.nativeEvent.isComposing ||
+              !/^[1-9]$/.test(event.key)
+            )
+              return;
+            const item =
+              event.currentTarget.querySelectorAll<HTMLElement>(
+                '[role="menuitem"]',
+              )[Number(event.key) - 1];
+            if (!item) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (item.getAttribute("aria-disabled") !== "true") item.click();
+          }}
         >
           <MenuGroup>
             <MenuGroupLabel emphasis="quiet">Solo</MenuGroupLabel>
@@ -145,7 +228,8 @@ function ReadyNewMenu({
                   void navigator.open(destination);
                 }}
               >
-                New chat
+                New solo chat
+                {shortcut(1)}
               </MenuItem>
             )}
             <MenuItem
@@ -155,26 +239,15 @@ function ReadyNewMenu({
               }}
             >
               New workspace
+              {shortcut(composing ? 1 : 2)}
             </MenuItem>
           </MenuGroup>
           <MenuSeparator />
           <MenuGroup>
             <MenuGroupLabel emphasis="quiet">Team</MenuGroupLabel>
-            <MenuItem
-              disabled={!scope}
-              onClick={() => {
-                if (scope && current())
-                  void navigator.open({
-                    version: 1,
-                    kind: "page",
-                    pluginId: "buzz.channels",
-                    pageId: "channels",
-                    scope,
-                    route: { version: 1, params: "new-message" },
-                  });
-              }}
-            >
-              New DM
+            <MenuItem disabled={!scope} onClick={() => compose()}>
+              New message
+              {shortcut(composing ? 2 : 3)}
             </MenuItem>
             <MenuItem
               disabled={!session.channelCreation.available}
@@ -183,6 +256,7 @@ function ReadyNewMenu({
               }}
             >
               New channel
+              {shortcut(composing ? 3 : 4)}
             </MenuItem>
             <MenuItem
               disabled={!preferences.sectionCreationWritable}
@@ -191,6 +265,7 @@ function ReadyNewMenu({
               }}
             >
               New section
+              {shortcut(composing ? 4 : 5)}
             </MenuItem>
           </MenuGroup>
         </MenuPopup>
@@ -200,7 +275,7 @@ function ReadyNewMenu({
         onOpenChange={setCreatingChannel}
         session={session}
         agents={agents}
-        finalFocus={trigger}
+        finalFocus={menuAnchor}
         destinations={preferences.data?.sections ?? []}
         initialGroup=""
         groupsReady={preferences.writable}
@@ -214,7 +289,7 @@ function ReadyNewMenu({
           writable={preferences.sectionCreationWritable}
           refreshing={preferences.status === "loading"}
           retry={preferences.reload}
-          finalFocus={trigger}
+          finalFocus={menuAnchor}
           close={() => setCreatingSection(false)}
           create={async (section) => {
             if (
@@ -233,7 +308,7 @@ function ReadyNewMenu({
           session={session}
           create={(section) => session.soloPreferences.createSection(section)}
           close={() => setCreatingProject(false)}
-          finalFocus={trigger}
+          finalFocus={menuAnchor}
           onCreated={async (id) => {
             if (!current()) return;
             if (await soloNavigationFor(session)?.openCreatedWorkspace(id))

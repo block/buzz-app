@@ -44,7 +44,11 @@ function matching(people: Recipient[], query: string) {
       matchPerson(person.name, query) !== undefined || person.pubkey === key,
   );
 }
-export function usePeople(session: RelaySession, query: string) {
+export function usePeople(
+  session: RelaySession,
+  query: string,
+  enabled = true,
+) {
   const cache = useMemo(() => {
     const existing = directories.get(session);
     if (existing) return existing;
@@ -148,6 +152,7 @@ export function usePeople(session: RelaySession, query: string) {
     [session, query, cache, visit],
   );
   useEffect(() => {
+    if (!enabled) return;
     const owned: NonNullable<typeof request.current> = {
       controller: new AbortController(),
       loading: false,
@@ -167,9 +172,10 @@ export function usePeople(session: RelaySession, query: string) {
       cancel?.();
       owned.controller.abort();
     };
-  }, [load, query, initial]);
+  }, [load, query, initial, enabled]);
   useEffect(() => {
     if (
+      !enabled ||
       state.session !== session ||
       state.query !== query ||
       !state.page ||
@@ -185,7 +191,7 @@ export function usePeople(session: RelaySession, query: string) {
       if (owned) void load(state.page + 1, owned);
     }, 100);
     return () => clearTimeout(timer);
-  }, [state, session, query, load]);
+  }, [state, session, query, load, enabled]);
   const visible =
     state.session === session && state.query === query ? state : initial;
   const browsed = cache.get("");

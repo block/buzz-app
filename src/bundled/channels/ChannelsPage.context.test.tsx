@@ -329,23 +329,23 @@ const latest = (channelId: string) => renders(channelId).at(-1);
 const timeline = (channelId: string) =>
   document.querySelector(`[data-channel-timeline="${channelId}"]`);
 
-it("holds the list from the visit's start, then reveals the root beside the thread", async () => {
+it("shows the list at once, then reveals the root beside the thread", async () => {
   const h = await channelsPage();
   const first = h.visit(h.inChannel(), "visit");
   h.go(first);
   await vi.waitFor(() => expect(h.held).toHaveLength(1));
   try {
-    // The head is ready, but it lacks the root: the list never mounted there.
+    // The head is ready, but it lacks the root: the list shows its newest
+    // messages while older pages are read.
     expect(h.session.channels.window("alpha").status).toBe("ready");
     expect(renders("alpha").length).toBeGreaterThan(0);
-    expect(renders("alpha").every((body) => body.holding)).toBe(true);
-    expect(timeline("alpha")).toBeNull();
+    expect(renders("alpha").every((body) => !body.inlineTarget)).toBe(true);
+    expect(timeline("alpha")).not.toBeNull();
   } finally {
     await h.release();
   }
   await vi.waitFor(() =>
     expect(latest("alpha")).toMatchObject({
-      holding: false,
       inlineTarget: {
         messageId: fixture.root.id,
         signal: first.signal,
@@ -360,11 +360,11 @@ it("opens the timeline at its usual place when the root is not in its history", 
   h.go(h.visit(h.inChannel(), "visit"));
   await vi.waitFor(() => expect(h.held).toHaveLength(1));
   try {
-    expect(latest("alpha")?.holding).toBe(true);
+    expect(latest("alpha")?.inlineTarget).toBeUndefined();
   } finally {
     await h.release();
   }
-  await vi.waitFor(() => expect(latest("alpha")?.holding).toBe(false));
+  await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
   expect(latest("alpha")?.inlineTarget).toBeUndefined();
   expect(timeline("alpha")).not.toBeNull();
 });
@@ -374,11 +374,11 @@ it("opens the timeline at its usual place when an older page fails", async () =>
   h.go(h.visit(h.inChannel(), "visit"));
   await vi.waitFor(() => expect(h.held).toHaveLength(1));
   try {
-    expect(latest("alpha")?.holding).toBe(true);
+    expect(latest("alpha")?.inlineTarget).toBeUndefined();
   } finally {
     await h.release(new Error("Relay unavailable"));
   }
-  await vi.waitFor(() => expect(latest("alpha")?.holding).toBe(false));
+  await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
   expect(h.session.channels.window("alpha").error).toBeDefined();
   expect(latest("alpha")?.inlineTarget).toBeUndefined();
   expect(timeline("alpha")).not.toBeNull();
@@ -487,7 +487,7 @@ it("another Open in channel during the seek reveals the root for itself", async 
   const second = h.visit(h.inChannel(), "again");
   try {
     h.go(second);
-    expect(latest("alpha")?.holding).toBe(true);
+    expect(latest("alpha")?.inlineTarget).toBeUndefined();
     // The read in flight serves the new visit too.
     expect(h.held).toHaveLength(1);
   } finally {
@@ -518,16 +518,15 @@ it("Back to the visit seeks again once the channel has dropped the pages it read
   expect(h.session.channels.window("alpha").status).toBe("idle");
   const back = h.visit(h.inChannel(), "visit", true);
   h.go(back);
-  expect(latest("alpha")).toMatchObject({ holding: true });
+  expect(latest("alpha")?.inlineTarget).toBeUndefined();
   await vi.waitFor(() => expect(h.held).toHaveLength(1));
   try {
-    expect(latest("alpha")?.holding).toBe(true);
+    expect(latest("alpha")?.inlineTarget).toBeUndefined();
   } finally {
     await h.release();
   }
   await vi.waitFor(() =>
     expect(latest("alpha")).toMatchObject({
-      holding: false,
       inlineTarget: { messageId: fixture.root.id, signal: back.signal },
     }),
   );

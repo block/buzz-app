@@ -1,7 +1,20 @@
 import type { JsonValue, OpenTarget } from "../../features/navigation/targets";
-import type { ActivityFilter, SenderFilter } from "./InboxFilters";
+import type { PageTabTarget } from "../../features/conversation/contracts";
 
-/** Activity's page address; the route contract below applies only to it. */
+/** Views an Activity address may name; some are no longer offered. */
+export type ActivityFilter =
+  | "all"
+  | "channels"
+  | "threads"
+  | "mentions"
+  | "dms"
+  | "reactions"
+  | "direct"
+  | "working"
+  | "waiting";
+export type SenderFilter = "everyone" | "humans" | "agents";
+
+/** Activity's address; the route contract below applies only to it. */
 export const inboxTarget = {
   version: 1,
   kind: "page",
@@ -9,13 +22,20 @@ export const inboxTarget = {
   pageId: "inbox",
 } as const;
 
-/** Filters an open asks the Activity page to show; omitted choices stay as saved. */
-export type InboxRoute = {
+/** Filters an open asks Activity to show; omitted choices stay as saved. */
+export type InboxFiltersRoute = {
   attention?: "all" | "unread";
   activity?: ActivityFilter;
   sender?: SenderFilter;
 };
-type Filters = Required<InboxRoute>;
+export type InboxRoute = InboxFiltersRoute & {
+  compose?: "new";
+  channelId?: string;
+  messageId?: string;
+  threadId?: string;
+};
+type Filters = Required<InboxFiltersRoute>;
+const detailKeys = new Set(["channelId", "messageId", "threadId"]);
 // Keyed by each union so a value added to one fails to compile until listed here.
 const filters: {
   readonly [K in keyof Filters]: Readonly<Record<Filters[K], true>>;
@@ -23,10 +43,14 @@ const filters: {
   attention: { all: true, unread: true },
   activity: {
     all: true,
+    channels: true,
     threads: true,
     mentions: true,
     dms: true,
     reactions: true,
+    direct: true,
+    working: true,
+    waiting: true,
   },
   sender: { everyone: true, humans: true, agents: true },
 };
@@ -51,6 +75,9 @@ function inboxRoute(params: JsonValue | undefined): InboxRoute | undefined {
     keys.some((key) => {
       const choice = value[key];
       if (typeof choice !== "string") return true;
+      if (key === "compose") return choice !== "new";
+      if (detailKeys.has(key))
+        return !choice.length || choice.length > 1024 || /\s/.test(choice);
       if (key === "show") return !Object.hasOwn(retiredShow, choice);
       return (
         !Object.hasOwn(filters, key) ||
@@ -59,6 +86,8 @@ function inboxRoute(params: JsonValue | undefined): InboxRoute | undefined {
     })
   )
     return;
+  if ((value.messageId || value.threadId) && !value.channelId) return;
+  if (value.compose && value.channelId) return;
   return Object.fromEntries(
     keys.filter((key) => key !== "show").map((key) => [key, value[key]]),
   ) as InboxRoute;
@@ -67,13 +96,47 @@ function inboxRoute(params: JsonValue | undefined): InboxRoute | undefined {
 export const isInboxRoute = (params: JsonValue) => !!inboxRoute(params);
 
 /** The route a visit carries, if any; a plain Activity open has none. */
-export function routeOf(target: OpenTarget | undefined) {
-  if (target?.kind !== "page" || target.route?.version !== 1) return;
+function addressedRoute(target: OpenTarget | undefined) {
+  if (
+    target?.kind !== "page" ||
+    target.pluginId !== "buzz.inbox" ||
+    target.pageId !== "inbox" ||
+    target.route?.version !== 1
+  )
+    return;
   return inboxRoute(target.route.params);
 }
+export function routeOf(
+  target: OpenTarget | undefined,
+): InboxFiltersRoute | undefined {
+  const route = addressedRoute(target);
+  if (!route) return;
+  const {
+    channelId: _channel,
+    messageId: _message,
+    threadId: _thread,
+    compose: _compose,
+    ...filters
+  } = route;
+  return filters;
+}
+export const composingOf = (target: OpenTarget | undefined) =>
+  addressedRoute(target)?.compose === "new";
+export function detailOf(
+  target: OpenTarget | undefined,
+): PageTabTarget | undefined {
+  const route = addressedRoute(target);
+  return route?.channelId
+    ? {
+        channelId: route.channelId,
+        ...(route.messageId && { messageId: route.messageId }),
+        ...(route.threadId && { threadId: route.threadId }),
+      }
+    : undefined;
+}
 
-/** An open that shows the Activity page with these filters applied. */
-export const inboxRouteTarget = (params: InboxRoute): OpenTarget => ({
+/** An open that shows Activity with these filters applied. */
+export const inboxRouteTarget = (params: InboxRoute) => ({
   ...inboxTarget,
-  route: { version: 1, params },
+  route: { version: 1 as const, params },
 });

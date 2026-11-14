@@ -36,7 +36,8 @@
     cursor: pointer;
     transition:
       background-color var(--duration-state) var(--easing-state),
-      color var(--duration-state) var(--easing-state);
+      color var(--duration-state) var(--easing-state),
+      scale var(--press-duration, 0ms) var(--press-easing, var(--easing-enter));
   }
   .buzz-button[data-button-shape="control"] {
     border-radius: var(--radius-control);
@@ -492,6 +493,15 @@
     width: var(--size-control-lg);
     height: var(--size-control-lg);
   }
+  /* Compact rail utilities match the section tiles' control and glyph scale. */
+  .buzz-dock-controls .buzz-button[data-icon-variant] {
+    width: var(--size-control-lg);
+    height: var(--size-control-lg);
+  }
+  .buzz-dock-controls .buzz-button .buzz-button-label > svg {
+    width: calc(var(--space-5) + var(--space-half));
+    height: calc(var(--space-5) + var(--space-half));
+  }
   /* A split button is one capsule: the action, then its menu. Filled halves
      part with a hairline; outlined halves share one stroke. */
   .buzz-split-button {
@@ -863,6 +873,22 @@
     color: var(--text-standard);
   }
 
+  .buzz-avatar[data-fallback-surface^="categorical-"] {
+    color: var(--text-standard);
+  }
+  .buzz-avatar[data-fallback-surface="categorical-purple"] {
+    background: var(--surface-categorical-purple);
+  }
+  .buzz-avatar[data-fallback-surface="categorical-blue"] {
+    background: var(--surface-categorical-blue);
+  }
+  .buzz-avatar[data-fallback-surface="categorical-green"] {
+    background: var(--surface-categorical-green);
+  }
+  .buzz-avatar[data-fallback-surface="categorical-orange"] {
+    background: var(--surface-categorical-orange);
+  }
+
   /* Matches reply-stack artwork inside its 24px slot and 1.5px ring. */
   .buzz-avatar[data-size="compact"] {
     @apply text-caption;
@@ -983,6 +1009,12 @@
     border-radius: var(--radius-container);
     background: var(--surface-panel);
     box-shadow: var(--shadow-panel);
+  }
+
+  /* The shell's continuous canvas retains the panel's fill and clipping. */
+  .panel[data-flat] {
+    border: 0;
+    box-shadow: none;
   }
 
   /* Shared with Builderlab/Auth0 standalone account setup cards. */
@@ -1109,22 +1141,51 @@
     mask-image: var(--scroll-fade-end);
   }
 
+  /* Shared history layout keeps the scroller separate from the composer. The
+     history stacks on its own: when its layers share the composer's stacking
+     context, Mac WebKit stops drawing the caret of an empty composer below a
+     scrolling history. */
+  .conversation-history-viewport {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    isolation: isolate;
+  }
   /* A scrolling strip fades out on each edge that has tabs past them, so a cut
-     tab reads as "more this way" rather than as clipped. Only the panel and
-     navigation lists scroll; the others never hide a tab to fade. */
-  .buzz-tabs-list {
+     tab reads as "more this way" rather than as clipped. Panel, navigation and button
+     lists share this overflow cue. */
+  .buzz-tabs-list,
+  .buzz-tabs-scroll-strip {
     --tabs-fade: var(--space-8);
   }
-  .buzz-tabs:is([data-variant="panel"], [data-variant="navigation"])
-    .buzz-tabs-list[data-overflow-start] {
+  .buzz-tabs:is(
+      [data-variant="panel"],
+      [data-variant="navigation"],
+      [data-variant="buttons"]
+    )
+    :is(.buzz-tabs-list, .buzz-tabs-scroll-strip)[data-overflow-start] {
     mask-image: linear-gradient(to right, transparent, #000 var(--tabs-fade));
   }
-  .buzz-tabs:is([data-variant="panel"], [data-variant="navigation"])
-    .buzz-tabs-list[data-overflow-end] {
+  .buzz-tabs:is(
+      [data-variant="panel"],
+      [data-variant="navigation"],
+      [data-variant="buttons"]
+    )
+    :is(.buzz-tabs-list, .buzz-tabs-scroll-strip)[data-overflow-end] {
     mask-image: linear-gradient(to left, transparent, #000 var(--tabs-fade));
   }
-  .buzz-tabs:is([data-variant="panel"], [data-variant="navigation"])
-    .buzz-tabs-list[data-overflow-start][data-overflow-end] {
+  .buzz-tabs:is(
+      [data-variant="panel"],
+      [data-variant="navigation"],
+      [data-variant="buttons"]
+    )
+    :is(
+      .buzz-tabs-list,
+      .buzz-tabs-scroll-strip
+    )[data-overflow-start][data-overflow-end] {
     mask-image: linear-gradient(
       to right,
       transparent,
@@ -1134,13 +1195,25 @@
     );
   }
   [dir="rtl"]
-    .buzz-tabs:is([data-variant="panel"], [data-variant="navigation"])
-    .buzz-tabs-list[data-overflow-start]:not([data-overflow-end]) {
+    .buzz-tabs:is(
+      [data-variant="panel"],
+      [data-variant="navigation"],
+      [data-variant="buttons"]
+    )
+    :is(.buzz-tabs-list, .buzz-tabs-scroll-strip)[data-overflow-start]:not(
+      [data-overflow-end]
+    ) {
     mask-image: linear-gradient(to left, transparent, #000 var(--tabs-fade));
   }
   [dir="rtl"]
-    .buzz-tabs:is([data-variant="panel"], [data-variant="navigation"])
-    .buzz-tabs-list[data-overflow-end]:not([data-overflow-start]) {
+    .buzz-tabs:is(
+      [data-variant="panel"],
+      [data-variant="navigation"],
+      [data-variant="buttons"]
+    )
+    :is(.buzz-tabs-list, .buzz-tabs-scroll-strip)[data-overflow-end]:not(
+      [data-overflow-start]
+    ) {
     mask-image: linear-gradient(to right, transparent, #000 var(--tabs-fade));
   }
 
@@ -1261,6 +1334,13 @@
     color: var(--text-chrome-subtle);
     background: transparent;
   }
+  .buzz-tabs[data-variant="dock"]:where([data-size="sm"]) .buzz-tabs-tab {
+    width: var(--size-control-sm);
+    height: var(--size-control-sm);
+  }
+  .buzz-tabs[data-variant="dock"]:where([data-size="sm"]) .buzz-tabs-list {
+    gap: var(--space-1);
+  }
   .buzz-tabs[data-variant="dock"]
     .buzz-tabs-tab:hover:not([data-selected], [data-disabled]) {
     background: var(--affordance-backdrop-hover);
@@ -1380,6 +1460,29 @@
     transition: none;
   }
 
+  /* --- buttons: small shared controls in a scrolling strip ----- */
+  .buzz-tabs[data-variant="buttons"] .buzz-tabs-scroll-strip {
+    display: flex;
+    gap: var(--space-2);
+    width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding: var(--space-1) var(--tabs-button-gutter, var(--space-1));
+    margin-block: calc(-1 * var(--space-1));
+    scroll-padding-inline: var(--tabs-button-gutter, var(--space-1));
+  }
+  .buzz-tabs[data-variant="buttons"]
+    .buzz-tabs-scroll-strip::-webkit-scrollbar {
+    display: none;
+  }
+  .buzz-tabs-scroll-strip > *,
+  .buzz-tabs[data-variant="buttons"] .buzz-tabs-item {
+    flex: none;
+  }
+  .buzz-tabs[data-variant="buttons"] .buzz-tabs-list {
+    gap: var(--space-2);
+  }
+
   /* --- panel: an underline on a plain surface ---------------- */
 
   /* No container fill and no border: on a panel the tabs are text, and the only
@@ -1462,8 +1565,12 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-2);
-    padding-block: 0;
-    padding-inline: var(--space-1);
+    padding: var(--space-4) var(--space-5);
+  }
+
+  /* Keep toolbar geometry while the conversation identity lives in content. */
+  .panel-header[data-divider="hidden"] {
+    border-block-end-color: transparent;
   }
 
   /* Borderless floating cards retain their established optical alignment. */
@@ -1473,6 +1580,7 @@
 
   .panel-header[data-variant="compact"] {
     min-height: var(--size-panel-header);
+    padding: var(--space-4) var(--space-5);
   }
 
   .panel-header-title,
@@ -1506,6 +1614,9 @@
 
   /* Floating agent cards keep actions beside a truncating title. */
   .panel-header[data-variant="card"] {
+    min-height: var(--size-panel-header);
+    padding-block: 0;
+    padding-inline: var(--space-1);
     border-block-end: 0;
     min-width: 0;
     flex-wrap: nowrap;
@@ -1521,6 +1632,78 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* Chat identity and toolbar controls share a top edge. */
+  .panel-header[data-variant="conversation"] {
+    padding-block-end: var(--space-2);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
+    align-items: start;
+  }
+  /* Keep the first message clear at rest; the inset scrolls away with history. */
+  :has(> .panel-header[data-history-overlay]) {
+    --history-header-inset: calc(
+      var(--space-16) +
+      var(--space-8) +
+      var(--space-2)
+    );
+    --history-leading-space: var(--space-16);
+  }
+  .panel-header[data-history-overlay] {
+    isolation: isolate;
+    height: 0;
+    min-height: 0;
+    padding-block: 0;
+    border-block-end: 0;
+    z-index: 2;
+  }
+  .panel-header[data-history-overlay] > * {
+    margin-block-start: var(--space-4);
+  }
+  .panel-header[data-history-overlay] > .panel-header-material {
+    --scroll-edge-surface: var(--surface-panel);
+    margin: 0;
+    height: calc(var(--history-header-inset) + var(--space-4));
+  }
+  :where(.conversation-history-viewport > [data-message-scroller])
+    > :first-child {
+    padding-block-start: var(--history-leading-space, 0px);
+  }
+  .conversation-history-viewport > [data-message-scroller] {
+    padding-block-start: var(--history-header-inset, 0px);
+    scroll-padding-block-start: var(--history-header-inset, 0px);
+  }
+  .panel-header[data-variant="conversation"] > .panel-header-title {
+    grid-area: 1 / 2;
+    flex-direction: column;
+    overflow: visible;
+    text-align: center;
+    gap: 0;
+  }
+  .panel-header[data-variant="conversation"] > .panel-header-actions {
+    grid-area: 1 / 3;
+    justify-self: end;
+  }
+
+  /* Keep the name legible over scrolling history using the glass-button material. */
+  .panel-header[data-variant="conversation"]
+    .panel-header-title
+    > h2:not(:first-child) {
+    @apply glass-secondary;
+    max-width: 100%;
+    margin-block-start: calc(-1 * var(--space-1));
+    position: relative;
+    border-radius: var(--radius-pill);
+    padding: var(--space-1) var(--space-3);
+  }
+  @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+    .panel-header[data-variant="conversation"]
+      .panel-header-title
+      > h2:not(:first-child) {
+      background: var(--surface-panel);
+      backdrop-filter: none;
+    }
   }
 
   /* Conversation identity composes PanelHeader; only its inner content lives here. */
@@ -1753,6 +1936,9 @@
     align-items: flex-start;
     min-width: 0;
   }
+  .navigation-card[data-align="center"] > .navigation-card-row {
+    align-items: center;
+  }
   .navigation-card-row > :first-child {
     flex: 1;
     min-width: 0;
@@ -1980,6 +2166,16 @@
     align-items: flex-start;
     padding-block: var(--space-1);
   }
+  .navigation-item[data-variant="avatar"] {
+    width: var(--size-control-lg);
+    height: var(--size-control-lg);
+    min-height: var(--size-control-lg);
+    padding: var(--space-1);
+    gap: 0;
+    border-radius: var(--radius-pill);
+    flex: none;
+    overflow: visible;
+  }
   .navigation-item {
     display: inline-flex;
     width: 100%;
@@ -2001,7 +2197,8 @@
     user-select: none;
     transition:
       color var(--duration-state) var(--easing-state),
-      background-color var(--duration-state) var(--easing-state);
+      background-color var(--duration-state) var(--easing-state),
+      scale var(--press-duration, 0ms) var(--press-easing, var(--easing-enter));
   }
 
   /* Hover is the lightest acknowledgement; selection is a persistent, one-step
@@ -2032,6 +2229,10 @@
     --text-metadata: var(--interaction-selected-metadata);
     background: var(--interaction-selected);
     color: var(--navigation-item-text, var(--text-standard));
+  }
+  /* Avatar destinations supply their identity-colored selection ring. */
+  .navigation-item[data-selected][data-variant="avatar"] {
+    background: transparent;
   }
 
   /* Route navigation shares flat chrome, not Tabs' focus/tabpanel contract. */
@@ -2086,7 +2287,8 @@
   }
   .navigation-item[data-variant="option"] {
     padding: var(--space-2);
-    transition: none;
+    transition: scale var(--press-duration, 0ms)
+      var(--press-easing, var(--easing-enter));
   }
   .navigation-item[data-variant="option"]:focus-visible {
     background: var(--affordance-floating-hover);
@@ -2128,6 +2330,9 @@
   .navigation-item[data-multiline] .navigation-item-label {
     white-space: normal;
   }
+  .navigation-item[data-variant="avatar"] .navigation-item-label {
+    @apply sr-only;
+  }
   .navigation-item-trailing {
     flex: 0 0 auto;
     color: var(--text-metadata);
@@ -2161,7 +2366,7 @@
      applying nested shared selectors inside CSS Modules would rename their targets. */
   .buzz-sidebar-navigation {
     display: contents;
-    --affordance-navigation-quiet: var(--affordance-sidebar-hover);
+    --affordance-navigation-quiet: var(--affordance-subtle-hover);
     --affordance-navigation-selected: var(--surface-sidebar-selected);
     --text-row: var(--text-sidebar-hover);
     --text-row-subtle: var(--text-sidebar-hover);
@@ -2268,7 +2473,16 @@
        The scrollbar track reserves that separator pixel in scrollbars.css. */
     padding-block: calc(var(--space-1) - 0.5px) 0;
   }
+  .panel-header .buzz-tabs[data-variant="navigation"] .buzz-tabs-list {
+    height: auto;
+    min-height: calc(var(--size-control-sm) + 2 * var(--space-1));
+    align-items: center;
+    /* Keep capsule edges and elevation inside the scrollport's clip. */
+    padding: var(--space-1);
+  }
   .buzz-tabs[data-variant="navigation"] .buzz-tabs-item {
+    @apply glass-secondary;
+    border-radius: var(--radius-pill);
     display: flex;
     position: relative;
     flex: 0 0 auto;
@@ -2281,9 +2495,24 @@
     border-radius: var(--radius-icon-button);
     padding-inline-start: var(--space-2);
     padding-inline-end: var(--space-2);
+    background: transparent;
   }
-  .buzz-tabs[data-variant="navigation"] .navigation-item[data-selected] {
-    background: var(--affordance-subtle);
+  .buzz-tabs[data-variant="navigation"] .buzz-tabs-item:has([data-selected]) {
+    background: var(--bg-glass-secondary-hover);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-tabs[data-variant="navigation"] .buzz-tabs-item:hover {
+      background: var(--bg-glass-secondary-hover);
+    }
+  }
+  @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+    .buzz-tabs[data-variant="navigation"] .buzz-tabs-item {
+      background: var(--surface-panel);
+      backdrop-filter: none;
+    }
+    .buzz-tabs[data-variant="navigation"] .buzz-tabs-item:has([data-selected]) {
+      background: var(--affordance-subtle);
+    }
   }
   /* Reopening an existing tab identifies it without changing selection or focus. */
   .buzz-tabs-attention {
@@ -2329,6 +2558,10 @@
     gap: var(--space-row-gap);
     padding-inline: var(--space-2);
     @apply text-body-sm;
+  }
+  .panel-header[data-variant="default"] .panel-header-label {
+    @apply text-label;
+    padding-inline: 0;
   }
   .panel-header-label > h2 {
     overflow: hidden;
@@ -2544,7 +2777,8 @@
   .buzz-menu-popup[data-size="compact"] .buzz-menu-item,
   .buzz-popover-popup[data-size="compact"] .navigation-item {
     border-radius: var(--floating-inner-radius);
-    transition: none;
+    transition: scale var(--press-duration, 0ms)
+      var(--press-easing, var(--easing-enter));
   }
   .buzz-popover-popup[data-size="compact"] .navigation-item:focus-visible {
     background: var(--interaction-row-hover);

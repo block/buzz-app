@@ -61,10 +61,12 @@ export function ChannelMemberAvatars({
   const preview = useMemo(
     () =>
       members
-        .filter((id) =>
-          solo
-            ? agents.has(id) || profiles.get(id)?.isAgent
-            : !agents.has(id) && !profiles.get(id)?.isAgent,
+        .filter(
+          (id) =>
+            id !== session.viewer &&
+            (solo
+              ? agents.has(id) || profiles.get(id)?.isAgent
+              : !agents.has(id) && !profiles.get(id)?.isAgent),
         )
         // Prefer recognizable photos over key-only placeholders.
         .sort(
@@ -72,24 +74,26 @@ export function ChannelMemberAvatars({
             Number(!!profiles.get(b)?.picture) -
             Number(!!profiles.get(a)?.picture),
         ),
-    [members, solo, agents, profiles],
+    [members, solo, agents, profiles, session.viewer],
   );
   if (!preview.length) {
     const Icon = solo ? RobotIcon : UsersIcon;
     return (
-      <Avatar
-        size="small"
-        shape="circle"
-        alt=""
-        fallback={solo ? "Agents" : "Members"}
-        fallbackContent={<Icon size="1rem" aria-hidden="true" />}
-      />
+      <span className="inline-flex size-12">
+        <Avatar
+          size="fill"
+          shape="circle"
+          alt=""
+          fallback={solo ? "Agents" : "Members"}
+          fallbackContent={<Icon size="2rem" aria-hidden="true" />}
+        />
+      </span>
     );
   }
   const shown = 3;
   return (
     <AvatarStack
-      size="small"
+      size="large"
       max={shown}
       items={preview.map((id, index) =>
         // Members past the shown ones only count.

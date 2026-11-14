@@ -1164,6 +1164,16 @@ test("a live reply in a main-pane thread stays unread while focus is in the side
 
 test.describe("top-level mention activity", () => {
   test.use({ historyCounts: { alpha: 20, beta: 0 } });
+  // Team's Direct view lists mentions beside chats and DMs.
+  const openTeamDirect = async (page) => {
+    await page
+      .getByRole("navigation", { name: "Apps", exact: true })
+      .getByRole("button", { name: "Open Team", exact: true })
+      .click();
+    const team = page.getByRole("region", { name: "Team", exact: true });
+    await team.getByRole("tab", { name: "Direct", exact: true }).click();
+    return team;
+  };
 
   // Browser-only: hover opening, the exact opening in the timeline and the
   // visibility read depend on real layout and focus.
@@ -1193,12 +1203,11 @@ test.describe("top-level mention activity", () => {
       undefined,
       [["p", app.viewer]],
     );
-    await openPage(page, "Activity");
-    const inbox = page.getByRole("region", { name: "Activity", exact: true });
-    const row = inbox
-      .getByRole("list", { name: "Activity", exact: true })
+    const team = await openTeamDirect(page);
+    const row = team
+      .getByRole("list", { name: "Conversations", exact: true })
       .getByRole("listitem")
-      .filter({ has: page.getByRole("button", { name: / in #Beta$/ }) });
+      .filter({ hasText: "Can you sign off on Beta?" });
     await expect(row.getByRole("img", { name: "Unread" })).toBeVisible();
     await openPage(page, "Messages");
     // A mention alone keeps the priority dot.
@@ -1231,7 +1240,7 @@ test.describe("top-level mention activity", () => {
         ),
       )
       .toBe(false);
-    await openPage(page, "Activity");
+    await openTeamDirect(page);
     await expect(row).toBeVisible();
     await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
   });
@@ -1262,10 +1271,8 @@ test.describe("top-level mention activity", () => {
     // bottom, whose catch-up would read it anyway.
     for (let index = 0; index < 40; index++)
       app.append("primary", "alpha", `Later update ${index}`, true, false);
-    await openPage(page, "Activity");
-    const row = page
-      .getByRole("region", { name: "Activity", exact: true })
-      .getByRole("list", { name: "Activity", exact: true })
+    const row = (await openTeamDirect(page))
+      .getByRole("list", { name: "Conversations", exact: true })
       .getByRole("listitem")
       .filter({ hasText: "Can you sign off on Alpha?" });
     await expect(row.getByRole("img", { name: "Unread" })).toBeVisible();
@@ -1309,7 +1316,7 @@ test.describe("top-level mention activity", () => {
       popover.getByRole("region", { name: "Unread threads" }),
     ).toBeVisible();
     await expect(mentions).toHaveCount(0);
-    await openPage(page, "Activity");
+    await openTeamDirect(page);
     await expect(row).toBeVisible();
     await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
   });

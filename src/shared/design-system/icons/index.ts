@@ -1,6 +1,23 @@
 import { defineIcon } from "./createDecorativeIcon";
+import TablerGripHorizontalIcon from "@tabler/icons-react/dist/esm/icons/IconGripHorizontal.mjs";
+export const GripHorizontalIcon = defineIcon(
+  "tabler",
+  TablerGripHorizontalIcon,
+);
+import TablerPinIcon from "@tabler/icons-react/dist/esm/icons/IconPin.mjs";
+export const PinIcon = defineIcon("tabler", TablerPinIcon);
 import TablerMenuIcon from "@tabler/icons-react/dist/esm/icons/IconMenu2.mjs";
 export const MenuIcon = defineIcon("tabler", TablerMenuIcon);
+import TablerLayoutSidebarLeftCollapseIcon from "@tabler/icons-react/dist/esm/icons/IconLayoutSidebarLeftCollapse.mjs";
+export const LayoutSidebarLeftCollapseIcon = defineIcon(
+  "tabler",
+  TablerLayoutSidebarLeftCollapseIcon,
+);
+import TablerLayoutSidebarLeftExpandIcon from "@tabler/icons-react/dist/esm/icons/IconLayoutSidebarLeftExpand.mjs";
+export const LayoutSidebarLeftExpandIcon = defineIcon(
+  "tabler",
+  TablerLayoutSidebarLeftExpandIcon,
+);
 export type { DefinedIcon } from "./createDecorativeIcon";
 import { BestieMarkArtwork } from "./BestieMark";
 import { BlockLogoArtwork } from "./BlockLogo";
@@ -151,6 +168,8 @@ import TablerCaretUpIcon from "@tabler/icons-react/dist/esm/icons/IconChevronUp.
 export const CaretUpIcon = defineIcon("tabler", TablerCaretUpIcon);
 import TablerChatCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessageCircle.mjs";
 export const ChatCircleIcon = defineIcon("tabler", TablerChatCircleIcon);
+import TablerMessageIcon from "@tabler/icons-react/dist/esm/icons/IconMessage.mjs";
+export const MessageIcon = defineIcon("tabler", TablerMessageIcon);
 import TablerMessageReplyIcon from "@tabler/icons-react/dist/esm/icons/IconMessageReply.mjs";
 export const MessageReplyIcon = defineIcon("tabler", TablerMessageReplyIcon);
 import TablerChatsCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessages.mjs";

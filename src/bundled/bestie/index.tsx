@@ -21,6 +21,7 @@ import { PinnedBestie } from "./PinnedBestie";
 import { bestieRoute, bestieDetailRoute } from "./routes";
 import { onBestieMade } from "../agents/BestieChoice";
 import { bestieTab, formerBestieTab } from "./BestieTab";
+import styles from "./PinnedBestie.module.css";
 import {
   readFormerHosted,
   rememberNewBestie,
@@ -62,14 +63,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
         !!(bestieRoute(params) || bestieDetailRoute(params)),
     },
     component: ({ navigation: pageNavigation }) => (
-      <BestieDestination
-        relay={ctx.relay}
-        navigation={ctx.navigation}
-        extensions={ctx.conversation}
-        host={ctx}
-        agents={ctx.agents}
-        pageNavigation={pageNavigation}
-      />
+      <div className={styles.destination}>
+        <BestieDestination
+          relay={ctx.relay}
+          navigation={ctx.navigation}
+          extensions={ctx.conversation}
+          host={ctx}
+          agents={ctx.agents}
+          pageNavigation={pageNavigation}
+        />
+      </div>
     ),
   });
 };

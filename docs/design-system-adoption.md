@@ -94,7 +94,7 @@ below are labelled separately. No product fixes are included in this documentati
 | Surface | Example and the specific pattern it demonstrates |
 | --- | --- |
 | Conversation workspace | [ChannelsPage](../src/bundled/channels/ChannelsPage.tsx): pane identity and icon actions, timeline scroll ownership, persistent composer |
-| Collection with detail | [InboxPage](../src/bundled/inbox/InboxPage.tsx): filters in the body and list/detail ownership |
+| Collection with detail | [ConversationList](../src/features/conversation/ConversationList.tsx): filters in the list heading, with the shell owning the list and reader columns |
 | Solo chats | [ChannelsPage](../src/bundled/channels/ChannelsPage.tsx) Solo treatment ([SoloHeading](../src/bundled/channels/SoloHeading.tsx)): flat timeline/composer in the shared conversation page and panel workspace |
 | Immediate settings | [NotificationSettings](../src/app/NotificationSettings.tsx), [AppearanceSettings](../src/app/AppearanceSettings.tsx): shared preference rows, grouped controls, and contextual permission feedback |
 | Explicit-save settings | [ProfileSettings](../src/app/ProfileSettings.tsx): scoped description, labelled fields, preserved draft/save behavior. [IdentitySettings](../src/app/IdentitySettings.tsx) owns separate identity details |

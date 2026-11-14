@@ -548,13 +548,17 @@ it("opens settings for a selected agent beside the grid and follows the arrow ke
     "aria-selected",
     "true",
   );
-  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Ada identity" }),
+    ).getByRole("heading", { name: "Ada" }),
+  ).toBeInTheDocument();
   const profilePane = screen.getByRole("region", { name: "Agent profile" });
   expect(screen.getByRole("region", { name: "Agents" })).not.toContainElement(
     profilePane,
   );
   expect(
-    within(profilePane).getByRole("tablist", { name: "Panel tabs" }),
+    within(profilePane).getByRole("tablist", { name: "Ada sections" }),
   ).toBeVisible();
   expect(screen.getByRole("tab", { name: "Reply" })).toHaveAttribute(
     "aria-selected",
@@ -566,7 +570,11 @@ it("opens settings for a selected agent beside the grid and follows the arrow ke
   expect(screen.queryByText("Wakes on")).not.toBeInTheDocument();
 
   await user.keyboard("{ArrowRight}");
-  expect(screen.getByRole("heading", { name: "Bo" })).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Bo identity" }),
+    ).getByRole("heading", { name: "Bo" }),
+  ).toBeInTheDocument();
   expect(screen.getByRole("gridcell", { name: /Bo/ })).toHaveFocus();
 
   await user.keyboard("{Escape}");
@@ -582,7 +590,6 @@ it("opens the side panel with the type's tabs and the app's Settings and Memory 
   expect(screen.getByRole("grid")).toBeInTheDocument();
   const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
   expect(tabs).toEqual([
-    "Agents",
     "Your agents",
     "Your teams",
     "Marketplace",
@@ -599,7 +606,14 @@ it("opens the side panel with the type's tabs and the app's Settings and Memory 
   await user.click(screen.getByRole("tab", { name: "Reply" }));
   expect(screen.getByText("Reply tab")).toBeInTheDocument();
 
-  await user.click(screen.getByRole("button", { name: "Close Ada tab" }));
+  await user.click(
+    within(screen.getByRole("region", { name: "Agent profile" })).getByRole(
+      "button",
+      {
+        name: "Close Ada tab",
+      },
+    ),
+  );
   expect(screen.getByRole("gridcell", { name: /Ada/ })).toHaveAttribute(
     "aria-selected",
     "false",
@@ -802,7 +816,9 @@ it("checks providers in Agent setup and opens their host-owned dialogs", async (
     await user.click(
       within(dialog).getByRole("button", { name: "Save defaults" }),
     );
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Echo" })).toBeNull(),
+    );
 
     await user.click(screen.getByRole("button", { name: "Echo, ready" }));
     const reopenedDialog = await screen.findByRole("dialog", { name: "Echo" });
@@ -820,7 +836,9 @@ it("checks providers in Agent setup and opens their host-owned dialogs", async (
     await user.click(
       document.querySelector(".buzz-dialog-backdrop") as Element,
     );
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Echo" })).toBeNull(),
+    );
 
     const attentionAction = vi.fn();
     echoProvider.setAttentionAction(attentionAction);
@@ -1219,7 +1237,7 @@ it("saves a reviewed provider change with the destination settings", async () =>
     "The provider changes when you save settings.",
   );
   await user.click(within(dialog).getByRole("button", { name: "Continue" }));
-  await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await vi.waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(agents.retype).not.toHaveBeenCalled();
   expect(
     screen.getByRole("button", { name: "Change harness from Relay" }),
@@ -1272,7 +1290,11 @@ it("makes a new agent in the create dialog and goes straight to building it", as
     config: { reply: "Hi there" },
   });
   expect(await screen.findByRole("tab", { name: "Settings" })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Nova" })).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Nova identity" }),
+    ).getByRole("heading", { name: "Nova" }),
+  ).toBeInTheDocument();
 });
 
 it("stays on the grid when the new agent belongs to a community no longer shown", async () => {
@@ -1306,7 +1328,8 @@ it("cancels inline name edits and flags an empty name on Save", async () => {
     );
   };
   await edit();
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("region", { name: "Agent profile" })).toBeVisible();
   expect(
     screen.queryByRole("button", { name: "Message" }),
   ).not.toBeInTheDocument();
@@ -4239,7 +4262,9 @@ it("opens provider setup before staging an unready provider, and leaves the swit
   await choose();
   await user.click(screen.getByRole("button", { name: "Install and connect" }));
   await waitFor(() =>
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    expect(
+      screen.queryByRole("dialog", { name: "Destination" }),
+    ).not.toBeInTheDocument(),
   );
   expect(
     screen.getByRole("button", { name: "Change harness from Destination" }),
@@ -4278,7 +4303,8 @@ it("opens avatar and name editing from the profile menu", async () => {
   expect(
     await screen.findByRole("textbox", { name: "Agent name" }),
   ).toHaveValue("Ada");
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("region", { name: "Agent profile" })).toBeVisible();
   expect(agents.save).not.toHaveBeenCalled();
 });
 
@@ -4304,9 +4330,7 @@ it("keeps avatar changes as a draft until Save and closes without saving", async
   await user.keyboard("{Escape}");
   expect(dialog).toBeVisible();
   await user.click(within(dialog).getByRole("button", { name: "Close" }));
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-  );
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(agents.save).not.toHaveBeenCalled();
 });
 
@@ -4331,7 +4355,11 @@ it("shares the editable owner profile with chat profile targets", async () => {
         close={close}
       />,
     );
-    expect(screen.getByRole("heading", { name: "Ada" })).toBeVisible();
+    expect(
+      within(
+        screen.getByRole("complementary", { name: "Ada identity" }),
+      ).getByRole("heading", { name: "Ada" }),
+    ).toBeVisible();
     expect(screen.getByRole("tab", { name: "Reply" })).toBeVisible();
     expect(screen.queryByRole("tab", { name: "Info" })).not.toBeInTheDocument();
     const user = userEvent.setup();
@@ -4377,9 +4405,7 @@ it("saves an avatar directly from the creation picker", async () => {
   await user.click(
     within(dialog).getByRole("button", { name: "Save changes" }),
   );
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-  );
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(agents.save).toHaveBeenCalledWith("1".repeat(64), {
     picture: expect.any(String),
   });
@@ -4627,7 +4653,11 @@ it("asks before choosing another agent discards an unsaved draft", async () => {
   await waitFor(() => expect(keep).toHaveFocus());
   await user.click(keep);
   expect(screen.queryByRole("alertdialog")).toBeNull();
-  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Ada identity" }),
+    ).getByRole("heading", { name: "Ada" }),
+  ).toBeInTheDocument();
   expect(screen.getByRole("gridcell", { name: "Ada" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -4643,7 +4673,11 @@ it("asks before choosing another agent discards an unsaved draft", async () => {
   ).toBeInTheDocument();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Ada identity" }),
+    ).getByRole("heading", { name: "Ada" }),
+  ).toBeInTheDocument();
   await waitFor(() =>
     expect(screen.getByRole("gridcell", { name: "Ada" })).toHaveFocus(),
   );
@@ -4657,7 +4691,11 @@ it("asks before choosing another agent discards an unsaved draft", async () => {
     ).getByRole("button", { name: "Discard changes" }),
   );
   expect(screen.queryByRole("alertdialog")).toBeNull();
-  expect(screen.getByRole("heading", { name: "Bo" })).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Bo identity" }),
+    ).getByRole("heading", { name: "Bo" }),
+  ).toBeInTheDocument();
   expect(screen.getByRole("gridcell", { name: "Bo" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -4690,7 +4728,9 @@ it("asks before closing a panel with an unsaved draft and keeps it through anoth
   await user.clear(field);
   await user.type(field, "Unsaved reply");
 
-  const close = screen.getByRole("button", { name: "Close Ada tab" });
+  const close = within(
+    screen.getByRole("region", { name: "Agent profile" }),
+  ).getByRole("button", { name: "Close Ada tab" });
   await user.click(close);
   const prompt = await screen.findByRole("alertdialog", {
     name: "Discard changes?",
@@ -4729,10 +4769,21 @@ it("asks before closing a panel with an unsaved draft and keeps it through anoth
     expect(screen.queryByRole("gridcell", { name: "Bo" })).toBeNull(),
   );
   expect(screen.queryByRole("alertdialog")).toBeNull();
-  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Ada identity" }),
+    ).getByRole("heading", { name: "Ada" }),
+  ).toBeInTheDocument();
   expect(field).toHaveValue("Unsaved reply");
 
-  await user.click(screen.getByRole("button", { name: "Close Ada tab" }));
+  await user.click(
+    within(screen.getByRole("region", { name: "Agent profile" })).getByRole(
+      "button",
+      {
+        name: "Close Ada tab",
+      },
+    ),
+  );
   await user.click(
     within(
       await screen.findByRole("alertdialog", { name: "Discard changes?" }),
@@ -4759,7 +4810,9 @@ it("leaves focus in the grid when changing agents after keeping a draft over Clo
   await user.click(within(grid).getByText("Ada"));
   const field = screen.getByRole("textbox", { name: "Reply" });
   await user.type(field, "!");
-  const close = screen.getByRole("button", { name: "Close Ada tab" });
+  const close = within(
+    screen.getByRole("region", { name: "Agent profile" }),
+  ).getByRole("button", { name: "Close Ada tab" });
   await user.click(close);
   await user.click(
     within(
@@ -4772,7 +4825,11 @@ it("leaves focus in the grid when changing agents after keeping a draft over Clo
   screen.getByRole("gridcell", { name: "Ada" }).focus();
   await user.keyboard("{ArrowRight}");
   expect(screen.queryByRole("alertdialog")).toBeNull();
-  expect(screen.getByRole("heading", { name: "Bo" })).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Bo identity" }),
+    ).getByRole("heading", { name: "Bo" }),
+  ).toBeInTheDocument();
   expect(screen.getByRole("gridcell", { name: "Bo" })).toHaveFocus();
 });
 
@@ -4817,7 +4874,14 @@ it("focuses the closed agent's card after discarding a draft over ×, panel Esca
 
   // The card is found by key, so a reorder behind the prompt cannot misplace it.
   await edit("Bo");
-  await user.click(screen.getByRole("button", { name: "Close Bo tab" }));
+  await user.click(
+    within(screen.getByRole("region", { name: "Agent profile" })).getByRole(
+      "button",
+      {
+        name: "Close Bo tab",
+      },
+    ),
+  );
   await prompt();
   act(() => show([bo, ada]));
   await discard();
@@ -4856,7 +4920,14 @@ it("focuses a cleanly closed panel's card, and leaves focus held outside the pan
   const cell = (name: string) => screen.getByRole("gridcell", { name });
 
   await user.click(within(grid).getByText("Ada"));
-  await user.click(screen.getByRole("button", { name: "Close Ada tab" }));
+  await user.click(
+    within(screen.getByRole("region", { name: "Agent profile" })).getByRole(
+      "button",
+      {
+        name: "Close Ada tab",
+      },
+    ),
+  );
   expect(
     screen.queryByRole("region", { name: "Agent profile" }),
   ).not.toBeInTheDocument();
@@ -5121,11 +5192,17 @@ it("leaves an agent a link opened while an unfinished agent's Delete was finishi
     />,
   );
   expect(
-    await screen.findByRole("heading", { name: "Ada" }),
+    within(
+      await screen.findByRole("complementary", { name: "Ada identity" }),
+    ).getByRole("heading", { name: "Ada" }),
   ).toBeInTheDocument();
   await act(async () => finish());
   expect(screen.queryByRole("gridcell", { name: "Sky" })).toBeNull();
-  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Ada identity" }),
+    ).getByRole("heading", { name: "Ada" }),
+  ).toBeInTheDocument();
   expect(screen.getByRole("gridcell", { name: "Ada" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -5158,7 +5235,11 @@ it("keeps a draft open behind Import without asking, and deleting the open agent
       screen.queryByRole("dialog", { name: "Import an agent" }),
     ).not.toBeInTheDocument(),
   );
-  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Ada identity" }),
+    ).getByRole("heading", { name: "Ada" }),
+  ).toBeInTheDocument();
   expect(field).toHaveValue("Unsaved reply");
 
   agents.remove.mockImplementationOnce(async () => show([bo]));
@@ -5233,7 +5314,11 @@ it("asks about an unsaved agent name and keeps the selection while it saves", as
   expect(grid).not.toHaveAttribute("aria-busy");
   await user.click(within(grid).getByText("Bo"));
   expect(screen.queryByRole("alertdialog")).toBeNull();
-  expect(screen.getByRole("heading", { name: "Bo" })).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Bo identity" }),
+    ).getByRole("heading", { name: "Bo" }),
+  ).toBeInTheDocument();
 });
 
 it("asks before choosing another agent drops a staged harness change", async () => {
@@ -5294,7 +5379,11 @@ it("asks before choosing another agent drops a staged harness change", async () 
       await screen.findByRole("alertdialog", { name: "Discard changes?" }),
     ).getByRole("button", { name: "Discard changes" }),
   );
-  expect(screen.getByRole("heading", { name: "Bo" })).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Bo identity" }),
+    ).getByRole("heading", { name: "Bo" }),
+  ).toBeInTheDocument();
   expect(agents.retype).not.toHaveBeenCalled();
   await user.click(within(grid).getByText("Ada"));
   expect(screen.queryByRole("alertdialog")).toBeNull();
@@ -5330,7 +5419,11 @@ it("asks before Create or another card's Open settings replaces an unsaved draft
       await screen.findByRole("alertdialog", { name: "Discard changes?" }),
     ).getByRole("button", { name: "Keep editing" }),
   );
-  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Ada identity" }),
+    ).getByRole("heading", { name: "Ada" }),
+  ).toBeInTheDocument();
   expect(screen.getByRole("gridcell", { name: "Nova" })).toHaveAttribute(
     "aria-selected",
     "false",
@@ -5346,7 +5439,11 @@ it("asks before Create or another card's Open settings replaces an unsaved draft
       await screen.findByRole("alertdialog", { name: "Discard changes?" }),
     ).getByRole("button", { name: "Keep editing" }),
   );
-  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Ada identity" }),
+    ).getByRole("heading", { name: "Ada" }),
+  ).toBeInTheDocument();
   expect(field).toHaveValue("Unsaved reply");
 
   await user.click(screen.getByRole("button", { name: "Actions for Nova" }));
@@ -5358,7 +5455,11 @@ it("asks before Create or another card's Open settings replaces an unsaved draft
       await screen.findByRole("alertdialog", { name: "Discard changes?" }),
     ).getByRole("button", { name: "Discard changes" }),
   );
-  expect(screen.getByRole("heading", { name: "Nova" })).toBeInTheDocument();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Nova identity" }),
+    ).getByRole("heading", { name: "Nova" }),
+  ).toBeInTheDocument();
   expect(screen.getByRole("gridcell", { name: "Nova" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -6205,24 +6306,39 @@ it("opens a Marketplace tile in the profile pane and returns focus on close and 
     await user.click(tile);
     expect(tile).toHaveAttribute("aria-current", "true");
     expect(
-      screen.getByRole("heading", { name: "Marketplace helper" }),
+      within(
+        screen.getByRole("region", {
+          name: "Marketplace helper identity",
+        }),
+      ).getByRole("heading", { name: "Marketplace helper" }),
     ).toBeVisible();
     expect(screen.getByText("Help with tasks.")).toBeVisible();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Shared agent profile" }),
+    ).toBeVisible();
     await user.click(
-      screen.getByRole("button", { name: "Close Marketplace helper tab" }),
+      within(
+        screen.getByRole("region", { name: "Shared agent profile" }),
+      ).getByRole("button", { name: "Close Marketplace helper tab" }),
     );
     expect(tile).toHaveFocus();
     expect(
-      screen.queryByRole("heading", { name: "Marketplace helper" }),
+      screen.queryByRole("region", {
+        name: "Marketplace helper identity",
+      }),
     ).not.toBeInTheDocument();
     // Importing removes the panel and its trigger, so focus follows the tab.
     await user.click(tile);
     await user.click(screen.getByRole("button", { name: "Import" }));
-    const dialog = screen.getByRole("dialog", {
-      name: "Marketplace helper",
-    });
-    await user.click(within(dialog).getByRole("button", { name: "Import" }));
+    const dialog = screen
+      .getAllByRole("dialog", {
+        name: "Marketplace helper",
+      })
+      .find((surface) => surface.getAttribute("aria-modal") === "true");
+    expect(dialog).toBeDefined();
+    await user.click(
+      within(dialog as HTMLElement).getByRole("button", { name: "Import" }),
+    );
     await vi.waitFor(() =>
       expect(screen.getByRole("tab", { name: "Your agents" })).toHaveFocus(),
     );
@@ -6523,7 +6639,11 @@ it("opens a restored version address in Settings, closes on Back, and retires on
   await user.click(
     within(screen.getByRole("grid", { name: "Agents" })).getByText("Bea"),
   );
-  expect(screen.getByRole("heading", { name: "Bea" })).toBeVisible();
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Bea identity" }),
+    ).getByRole("heading", { name: "Bea" }),
+  ).toBeVisible();
   expect(screen.getByRole("tab", { name: "Reply" })).toHaveAttribute(
     "aria-selected",
     "true",

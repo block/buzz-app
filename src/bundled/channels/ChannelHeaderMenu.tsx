@@ -1,4 +1,12 @@
-import { useRef, useState, type ReactNode, type RefObject } from "react";
+import {
+  useLayoutEffect,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import { useHeaderToolsMenu } from "../../features/conversation/ConversationHeaderTools";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { RegisteredPanel } from "../../features/panels/service";
@@ -8,7 +16,12 @@ import {
   useChannelNavigation,
   type ChannelMenuSurface,
 } from "../../features/channel-navigation/ChannelNavigationState";
-import { DotsThreeIcon, InfoIcon } from "../../shared/design-system/icons";
+import {
+  DotsThreeIcon,
+  InfoIcon,
+  FileTextIcon,
+  HashArrowInIcon,
+} from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -49,16 +62,35 @@ export function ChannelHeaderMenu({
   openMenuPanel?: ((panel: RegisteredPanel) => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
-  const finalFocus = useRef<(() => HTMLElement | false) | undefined>(undefined);
+  const overflow = useHeaderToolsMenu();
+  const overflowTrigger = overflow?.trigger;
+  useLayoutEffect(() => {
+    if (!overflowTrigger) return;
+    const element = overflowTrigger.current;
+    trigger.current = element;
+    return () => {
+      if (trigger.current === element) trigger.current = null;
+    };
+  }, [overflowTrigger, trigger]);
+  const localFinalFocus = useRef<(() => HTMLElement | false) | undefined>(
+    undefined,
+  );
+  const finalFocus = overflow?.finalFocus ?? localFinalFocus;
   const handoff = useChannelNavigation();
   const readAction = useChannelReadAction();
-  const origin = trigger.current;
+  const inlineOpen = overflow?.open;
+  const resetRead = readAction.reset;
+  useEffect(() => {
+    if (inlineOpen !== undefined) resetRead();
+  }, [inlineOpen, resetRead]);
+  const origin = overflow?.trigger.current ?? trigger.current;
   const surface: ChannelMenuSurface = {
     signal: lifetime,
     close: (focus) => {
       finalFocus.current = focus;
       readAction.reset();
       setOpen(false);
+      overflow?.close();
     },
     focus: () => {
       if (!lifetime?.aborted && origin?.isConnected)
@@ -69,57 +101,98 @@ export function ChannelHeaderMenu({
       readAction.run(action, () => {
         readAction.reset();
         setOpen(false);
+        overflow?.close();
       }),
   };
-  const popup = (lifecycle: ReactNode) => (
-    <MenuPopup
-      size="default"
-      align="end"
-      finalFocus={() =>
-        finalFocus.current ? finalFocus.current() : (trigger.current ?? false)
-      }
-    >
-      {startChat}
-      {finishConversion && (
-        <MenuItem onClick={finishConversion}>
-          <MenuIcon>{null}</MenuIcon>
-          Finish conversion
-        </MenuItem>
-      )}
-      <MenuItem
-        onClick={() => {
-          // WebKit can drop the tab's focus before the menu finishes closing.
-          finalFocus.current = () =>
-            document.querySelector<HTMLElement>(
-              '[data-panel-workspace] [data-tab-value="settings"]',
-            ) ??
-            trigger.current ??
-            false;
-          openDetails();
-        }}
-      >
-        <MenuIcon>
-          <InfoIcon size={16} />
-        </MenuIcon>
-        View channel details
-      </MenuItem>
-      {menuPanels?.map((panel) => (
-        <MenuItem key={panel.key} onClick={() => openMenuPanel?.(panel)}>
+  const popup = (lifecycle: ReactNode) => {
+    const content = (
+      <>
+        {startChat}
+        {finishConversion && (
+          <MenuItem onClick={finishConversion}>
+            <MenuIcon>
+              <HashArrowInIcon size={16} />
+            </MenuIcon>
+            Finish conversion
+          </MenuItem>
+        )}
+        <MenuItem
+          onClick={() => {
+            // WebKit can drop the tab's focus before the menu finishes closing.
+            finalFocus.current = () =>
+              document.querySelector<HTMLElement>(
+                '[data-panel-workspace] [data-tab-value="settings"]',
+              ) ??
+              trigger.current ??
+              false;
+            openDetails();
+          }}
+        >
           <MenuIcon>
             <InfoIcon size={16} />
           </MenuIcon>
-          {panel.channelMenu?.label}
+          View channel details
         </MenuItem>
-      ))}
-      {channel && <ChannelHeaderActions channel={channel} surface={surface} />}
-      {readAction.state?.pending && <MenuNote role="status">Saving…</MenuNote>}
-      {readAction.state?.error && (
-        <MenuNote role="alert">{readAction.state.error}</MenuNote>
-      )}
-      {lifecycle}
-    </MenuPopup>
+        {menuPanels?.map((panel) => (
+          <MenuItem key={panel.key} onClick={() => openMenuPanel?.(panel)}>
+            <MenuIcon>
+              <FileTextIcon size={16} />
+            </MenuIcon>
+            {panel.channelMenu?.label}
+          </MenuItem>
+        ))}
+        {channel && (
+          <ChannelHeaderActions channel={channel} surface={surface} />
+        )}
+        {readAction.state?.pending && (
+          <MenuNote role="status">Saving…</MenuNote>
+        )}
+        {readAction.state?.error && (
+          <MenuNote role="alert">{readAction.state.error}</MenuNote>
+        )}
+        {lifecycle}
+      </>
+    );
+    return overflow ? (
+      content
+    ) : (
+      <MenuPopup
+        size="compact"
+        align="end"
+        finalFocus={() =>
+          finalFocus.current ? finalFocus.current() : (trigger.current ?? false)
+        }
+      >
+        {content}
+      </MenuPopup>
+    );
+  };
+  const content = popup(
+    channel &&
+      handoff &&
+      (!channel.readOnly || channel.viewerRole === "guest") &&
+      !channel.cached &&
+      !channel.archived ? (
+      <ChannelLifecycleMenu
+        channel={channel}
+        session={session}
+        disabled={!!handoff.lifecycleDialog}
+        separator
+        noun={lifecycleNoun(channel)}
+        choose={(action) =>
+          handoff.openLifecycle(
+            channel,
+            action,
+            trigger.current ?? undefined,
+            lifetime,
+          )
+        }
+      />
+    ) : null,
   );
-  return (
+  return overflow ? (
+    content
+  ) : (
     <MenuRoot
       open={open}
       onOpenChange={(next) => {
@@ -129,6 +202,7 @@ export function ChannelHeaderMenu({
       }}
     >
       <MenuTrigger
+        openOnHover="control"
         render={
           <IconButton
             hint="familiar"
@@ -141,29 +215,7 @@ export function ChannelHeaderMenu({
           />
         }
       />
-      {popup(
-        channel &&
-          handoff &&
-          (!channel.readOnly || channel.viewerRole === "guest") &&
-          !channel.cached &&
-          !channel.archived ? (
-          <ChannelLifecycleMenu
-            channel={channel}
-            session={session}
-            disabled={!!handoff.lifecycleDialog}
-            separator
-            noun={lifecycleNoun(channel)}
-            choose={(action) =>
-              handoff.openLifecycle(
-                channel,
-                action,
-                trigger.current ?? undefined,
-                lifetime,
-              )
-            }
-          />
-        ) : null,
-      )}
+      {content}
     </MenuRoot>
   );
 }

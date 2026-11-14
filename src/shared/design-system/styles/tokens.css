@@ -65,6 +65,12 @@
   /* Fixed palette values used by terminal status in either mode. */
   --red-11-light: #ce2c31;
   --neutral-status-ink: #ffffff;
+  /* Match the navigation cards' composited fill, with a small theme tint. */
+  --window-underlay-fill: color-mix(
+    in srgb,
+    var(--accent-9) 5%,
+    color-mix(in srgb, var(--bubble-received) 50%, var(--surface-panel))
+  );
 
   /* Branded onboarding palette; dark mode adds the approved 30% black tint. */
   --brand-chartreuse: #d7d72e;
@@ -783,6 +789,12 @@
   --neutral-standard-text: #0f0f0f; /* Designer-requested light primary text and inherited icons. */
   --bubble-neutral: #e9e9ea;
   --bubble-received: #f3f3f4;
+  --rail-card-fill: color-mix(
+    in srgb,
+    var(--bubble-received) 50%,
+    var(--neutral-1)
+  );
+  --scrim-subtle: #00000026; /* Light dimming while the window remains legible. */
   --neutral-navigation-text: #404040; /* Tailwind neutral-700. */
   /* Designer-requested light status text: the brightest green and red, 35% of
      the way from step 11 to step 12, that keep AA on every light surface. */
@@ -913,9 +925,11 @@
   --time-state: 150ms;
   --time-panel-enter: 180ms;
   --time-settle: 220ms;
+  --time-sheet: 250ms;
   --ease-state: ease;
   --ease-enter: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-settle: cubic-bezier(0.645, 0.045, 0.355, 1);
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 :root[data-color-mode="dark"],
@@ -932,6 +946,12 @@
   --neutral-quiet-hover: #2e2e2e;
   --bubble-neutral: #2e2e2e;
   --bubble-received: #292929;
+  --rail-card-fill: color-mix(
+    in srgb,
+    var(--bubble-received) 50%,
+    var(--neutral-3)
+  );
+  --scrim-subtle: #00000042;
   --neutral-1: #000000;
   --neutral-2: #101010;
   --neutral-3: #1a1a1a;
@@ -1114,6 +1134,7 @@
   --surface-find-match-active: var(--orange-7);
   --text-on-find-match: var(--neutral-12);
   --surface-message: var(--bubble-received);
+  --surface-rail-card: var(--rail-card-fill);
   --surface-message-own: var(--bubble-neutral);
   --surface-message-hover: var(--bubble-hover);
   --surface-message-own-hover: var(--bubble-own-hover);
@@ -1173,6 +1194,9 @@
   --chart-series-4: var(--purple-9);
   --text-categorical-purple: var(--purple-12);
   --surface-categorical-purple: var(--purple-3);
+  --surface-categorical-blue: var(--blue-3);
+  --surface-categorical-green: var(--green-3);
+  --surface-categorical-orange: var(--orange-3);
   --icon-categorical-purple: var(--purple-11);
   --icon-categorical-purple-own: var(--icon-categorical-purple);
   --text-link: var(--text-standard);
@@ -1257,6 +1281,7 @@
 :root[data-color-mode="dark"],
 .dark {
   --surface-message: var(--bubble-received);
+  --surface-rail-card: var(--rail-card-fill);
   --surface-message-own: var(--bubble-neutral);
   --surface-message-hover: var(--bubble-hover);
   --surface-message-own-hover: var(--bubble-own-hover);
@@ -1328,6 +1353,9 @@
   --chart-series-4: var(--purple-10);
   --text-categorical-purple: var(--purple-12);
   --surface-categorical-purple: var(--purple-3);
+  --surface-categorical-blue: var(--blue-3);
+  --surface-categorical-green: var(--green-3);
+  --surface-categorical-orange: var(--orange-3);
   --icon-categorical-purple: var(--purple-11);
   --icon-categorical-purple-own: var(--icon-categorical-purple);
   --text-link: var(--text-standard);
@@ -1415,9 +1443,12 @@
 }
 
 :root {
+  /* Window chrome follows the navigation card fill and selected theme. */
+  --surface-window-underlay: var(--window-underlay-fill);
   --bg-panel: var(--surface-panel); /* dark: neutral-3 */
   --bg-float: var(--surface-popover); /* dark: neutral-5 */
   --bg-scrim: #00000060;
+  --surface-scrim-subtle: var(--scrim-subtle);
   --border-control: var(--border-prominent);
   /* Emoji artwork scales with text without becoming a readable type role. */
   --size-emoji-display: calc(var(--type-rem) * 2.625);
@@ -1486,12 +1517,20 @@
   --layer-popover: 1100;
   --layer-tooltip: 1200;
   --size-topbar: 3.5rem;
+  --size-navigation-rail: 19rem;
   --size-panel-header: 2.5rem;
   --size-control-sm: 2rem;
   --size-control: 2.5rem;
   --size-control-lg: 3.25rem;
   --size-row: var(--size-control-sm);
   --size-navigator: 13.5rem;
+  /* One reading measure and its timeline gutters across messaging hosts. */
+  --size-conversation-measure: var(--buzz-message-width, 52rem);
+  --size-conversation-frame: calc(
+    var(--size-conversation-measure) +
+    2 *
+    var(--space-panel-inset)
+  );
   /* The grab area of a resize seam, deliberately wider than the gutter it sits
      in. The gutter is a visual decision; this is a hit target, and a person
      aiming at an invisible 8px seam misses. Widening a transparent handle costs
@@ -1520,10 +1559,16 @@
   --duration-state: var(--time-state);
   --duration-panel-enter: var(--time-panel-enter);
   --duration-settle: var(--time-settle);
+  --duration-sheet: var(--time-sheet);
   --duration-field-focus: var(--time-state);
   --easing-state: var(--ease-state);
   --easing-enter: var(--ease-enter);
   --easing-settle: var(--ease-settle);
+  --easing-sheet: var(--ease-sheet);
+  /* Pointer feedback: easeOutBack gives the release one small overshoot. */
+  --easing-press-release: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --scale-press: 0.97;
+  --scale-press-row: 0.99;
 
   /* `text-on-inverse` was `var(--neutral-1)` in both modes and went with
      `bg-inverse`; its two call sites pair `bg-neutral-11` with
@@ -1562,6 +1607,7 @@
   --border-image: var(--image-rim);
   --bg-float: var(--surface-popover);
   --bg-scrim: #000000a6;
+  --surface-scrim-subtle: var(--scrim-subtle);
   /* Rebind material aliases locally: a scoped .dark surface otherwise inherits
      the light root's already-computed glass fills. */
   --bg-glass-primary: var(--glass-2);
@@ -2112,6 +2158,9 @@
   --text-color-success: var(--text-success);
   --text-color-categorical-purple: var(--text-categorical-purple);
   --color-surface-categorical-purple: var(--surface-categorical-purple);
+  --color-surface-categorical-blue: var(--surface-categorical-blue);
+  --color-surface-categorical-green: var(--surface-categorical-green);
+  --color-surface-categorical-orange: var(--surface-categorical-orange);
   --text-color-accent: var(--text-accent);
   --border-color-standard: var(--border-standard);
   --border-color-message-thread: var(--border-message-thread);

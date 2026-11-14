@@ -41,9 +41,7 @@ import {
 } from "../../features/solo/default-agent";
 import { BestieNavigationProvider } from "./BestieNavigation";
 import { PageNavigation } from "./PageNavigation";
-import { PrimarySidebar } from "./PrimarySidebar";
 import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
-import type { Navigation } from "../../features/navigation/controller";
 import { PageSearch } from "./PageSearch";
 
 beforeEach(() => {
@@ -530,32 +528,16 @@ it("honors the promoted DM's mute and unread state through reads and Bestie repl
   f.update({ session, scope: currentScope, viewer: me.pubkey });
   live?.receive(discovery);
   setDefaultAgent(currentScope, pollen);
-  const navigator = {
-    open: vi.fn().mockResolvedValue({ status: "opened" }),
-    subscribe: () => () => {},
-    snapshot: () => ({ attempt: { id: "bestie-visit" } }),
-  } as unknown as Navigation;
   // Like AppShell's memoized navigation: the provider can update without
   // recreating the sidebar element. Context must reach its retained consumers.
   const sidebar = (
     <ChannelNavigationProvider relay={f.relay}>
-      <PrimarySidebar
-        relay={f.relay}
-        navigator={navigator}
-        target={{
-          version: 1,
-          kind: "page",
-          pluginId: "buzz.bestie",
-          pageId: "bestie",
-        }}
-      >
-        <PageNavigation
-          pages={[page]}
-          selected={page.key}
-          placement="dock"
-          onSelect={() => {}}
-        />
-      </PrimarySidebar>
+      <PageNavigation
+        pages={[page]}
+        selected={page.key}
+        placement="dock"
+        onSelect={() => {}}
+      />
     </ChannelNavigationProvider>
   );
   const tree = () => (
@@ -567,14 +549,7 @@ it("honors the promoted DM's mute and unread state through reads and Bestie repl
   );
   const view = render(tree());
   const row = () => screen.getByRole("tab", { name: /^Pollen/ });
-  const dmRow = () => document.querySelector(`[data-channel-id="${first}"]`);
   expect(row().querySelector("[data-channel-priority]")).toBeNull();
-  await waitFor(() =>
-    expect(
-      document.querySelector(`[data-channel-id="${second}"]`),
-    ).not.toBeNull(),
-  );
-  expect(dmRow()).toBeNull();
   const root = message(me, first, "Question", 1_700_000_004);
   act(() => {
     live?.receive([
@@ -590,7 +565,6 @@ it("honors the promoted DM's mute and unread state through reads and Bestie repl
     within(row()).getByRole("img", { name: /1 observed unread messages/ }),
   ).toBeInTheDocument();
   expect(row().querySelector("[data-channel-priority]")).toBeNull();
-  expect(dmRow()).toBeNull();
   await act(async () => {
     muted = false;
     await preferences.queries.refresh();
@@ -602,9 +576,7 @@ it("honors the promoted DM's mute and unread state through reads and Bestie repl
   });
   expect(row().querySelector("[data-channel-activity]")).toBeNull();
   expect(row()).toHaveAccessibleName(/1 unread thread/);
-  expect(dmRow()).toBeNull();
   view.rerender(tree());
-  expect(dmRow()).toBeNull();
   await act(async () => {
     await session.unread.markChannelRead(first);
   });

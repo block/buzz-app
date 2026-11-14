@@ -73,7 +73,10 @@ export function CommunityPicker({
   settingsCards,
   open,
   onOpenChange,
+  side = "right",
 }: {
+  /** Where the switcher opens: beside a dock, or below the top bar. */
+  side?: "right" | "bottom";
   communities: Communities;
   federatedIdentity?: FederatedIdentity | undefined;
   invite?: (JoinRequest & { requestId: number }) | undefined;
@@ -213,7 +216,7 @@ export function CommunityPicker({
             render={
               <IconButton
                 ref={triggerRef}
-                size="md"
+                size={side === "bottom" ? "sm" : "md"}
                 variant="avatar"
                 shape="round"
                 aria-label={`Community switcher: ${active ? communityName(active) : client.memberships.length === 0 ? "Communities" : "Personal space"}`}
@@ -234,7 +237,10 @@ export function CommunityPicker({
                       src={active.publishedIcon ?? active.icon}
                     />
                   ) : (
-                    <GlobeIcon size={22} aria-hidden="true" />
+                    <GlobeIcon
+                      size={side === "bottom" ? 16 : 22}
+                      aria-hidden="true"
+                    />
                   )
                 }
               />
@@ -265,7 +271,7 @@ export function CommunityPicker({
                       rows.length;
               rows[next]?.focus();
             }}
-            side="right"
+            side={side}
             align="end"
             padding="list"
             finalFocus={() =>

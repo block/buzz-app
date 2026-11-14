@@ -68,7 +68,7 @@ function ButtonMatrix({ kind }: { kind: "text" | "icon" }) {
       <div className="flex flex-col gap-6">
         <SectionHeading
           title="Emphasis and sizes"
-          description="Small · 32px, medium · 40px, large · 52px. Medium icon + label uses 12px leading / 16px trailing padding. Hover, press, or Tab through the controls to inspect their states."
+          description="Small · 32px, medium · 40px, large · 52px. Pointer presses compress with a springy release; keyboard activation stays immediate. Reduced motion keeps color feedback without scaling."
         />
         <fieldset className="flex flex-wrap gap-2" aria-label="Preview state">
           {(["enabled", "disabled", "loading"] as const).map((value) => (

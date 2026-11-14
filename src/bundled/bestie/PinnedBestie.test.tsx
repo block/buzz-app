@@ -484,6 +484,29 @@ it("opens the actual verified DM and sends plain text without a seeded removable
   ).not.toBeInTheDocument();
 });
 
+it("holding a Bestie message targets the mounted composer and Escape preserves its draft", async () => {
+  const f = await fixture({ existing: true, withReply: true });
+  f.choose(pollen);
+  const user = userEvent.setup();
+  f.mount();
+  const input = await screen.findByRole("textbox", { name: "Message Pollen" });
+  await user.type(input, "Keep this draft");
+  const message = await screen.findByText("Are you there?");
+  await user.pointer({ target: message, keys: "[MouseLeft>]" });
+  await screen.findByRole("button", { name: "Cancel reply target" });
+  await user.pointer({ keys: "[/MouseLeft]" });
+  expect(input.isConnected).toBe(true);
+  expect(input).toHaveTextContent("Keep this draft");
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Cancel reply target" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(input).toHaveFocus();
+  expect(input).toHaveTextContent("Keep this draft");
+});
+
 it("shows the local welcome only at known history start and keeps real history intact", async () => {
   const f = await fixture({ existing: true, withReply: true, hasOlder: true });
   rememberFirstAgent(f.scope, pollen);
@@ -945,11 +968,10 @@ it("rechecks eligibility before retrying a failed DM open", async () => {
   expect(f.open).toHaveBeenCalledTimes(attempts);
 });
 
-it("keeps the welcome, DM and draft mounted beside a thread and retains the reply draft while collapsing its pane", async () => {
-  const f = await fixture({ existing: true, withReply: true });
+it("keeps the DM draft mounted behind a thread sheet and restores the reply draft after dismissal", async () => {
+  const f = await threadHistoryFixture();
   rememberFirstAgent(f.scope, pollen);
-  f.choose(pollen);
-  f.mount();
+  f.rerender();
   const user = userEvent.setup();
   const composer = await screen.findByRole("textbox", {
     name: "Message Pollen",
@@ -961,25 +983,49 @@ it("keeps the welcome, DM and draft mounted beside a thread and retains the repl
   await user.click(
     await screen.findByRole("button", { name: "View thread: 1 reply" }),
   );
+  f.rerender();
+  const sheet = await screen.findByRole("tabpanel", { name: "Are you there?" });
   expect(await screen.findByLabelText("Thread")).toBeVisible();
-  expect(screen.getByRole("article", { name: "Welcome to Buzz" })).toBe(
-    welcome,
+  expect(composer).toBeInTheDocument();
+  expect(composer).toHaveTextContent("Main draft");
+  const reply = within(sheet).getByRole("textbox", { name: "Reply to thread" });
+  await user.type(reply, "Reply draft");
+  expect(reply).toHaveTextContent("Reply draft");
+  expect(reply).toHaveFocus();
+  await user.click(
+    screen.getByRole("button", { name: "Close Are you there? tab" }),
+  );
+  f.rerender();
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("tabpanel", { name: "Are you there?" }),
+    ).toBeNull(),
   );
   expect(screen.getByRole("textbox", { name: "Message Pollen" })).toBe(
     composer,
   );
   expect(composer).toHaveTextContent("Main draft");
-  const reply = screen.getByRole("textbox", { name: "Reply to thread" });
-  await user.type(reply, "Reply draft");
-  await user.click(screen.getByRole("button", { name: "Toggle tab pane" }));
-  expect(composer).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Toggle tab pane" }));
-  expect(await screen.findByRole("textbox", { name: "Reply to thread" })).toBe(
-    reply,
-  );
-  expect(reply).toHaveTextContent("Reply draft");
+  const root = await waitFor(() => {
+    const message = document.querySelector<HTMLElement>(
+      `[data-message-id="${f.rootId}"]`,
+    );
+    if (!message)
+      throw new Error("Bestie root message is unavailable after Close");
+    return message;
+  });
   await user.click(
-    screen.getByRole("button", { name: "Close Are you there? tab" }),
+    await within(root).findByRole("button", { name: /^View thread/ }),
+  );
+  f.rerender();
+  expect(
+    await screen.findByRole("textbox", { name: "Reply to thread" }),
+  ).toHaveTextContent("Reply draft");
+  await user.keyboard("{Escape}");
+  f.rerender();
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("tabpanel", { name: "Are you there?" }),
+    ).toBeNull(),
   );
   expect(composer).toHaveTextContent("Main draft");
   expect(screen.queryByLabelText("Thread")).not.toBeInTheDocument();
@@ -1022,14 +1068,12 @@ it.each(["side", "bottom", "tab"] as const)(
       } satisfies RegisteredPanel,
     ]);
     f.mount();
-    await user.click(
-      await screen.findByRole("button", { name: `Call ${pollenDM}` }),
-    );
+    await user.click(await headerAction(`Call ${pollenDM}`));
     expect(
       await screen.findByRole("button", { name: "Close call content" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("textbox", { name: "Message Pollen" }),
+      screen.getByRole("textbox", { name: "Message Pollen", hidden: true }),
     ).toBeInTheDocument();
     await act(async () => f.setPanels([]));
     expect(
@@ -1046,17 +1090,15 @@ it("offers the shared DM actions and channel details in Bestie", async () => {
   f.choose(pollen);
   const user = userEvent.setup();
   f.mount();
+  await user.click(await headerAction("Conversation actions"));
   await user.click(
-    await screen.findByRole("button", { name: "Channel actions" }),
-  );
-  await user.click(
-    await screen.findByRole("menuitem", { name: "View channel details" }),
+    await screen.findByRole("button", { name: "View channel details" }),
   );
   expect(
-    await screen.findByRole("tab", { name: "Channel settings" }),
+    await screen.findByRole("tabpanel", { name: "Channel settings" }),
   ).toBeVisible();
   expect(
-    screen.getByRole("textbox", { name: "Message Pollen" }),
+    screen.getByRole("textbox", { name: "Message Pollen", hidden: true }),
   ).toBeInTheDocument();
 });
 
@@ -1082,14 +1124,22 @@ it("opens eligible plugin menu items in the Bestie workspace", async () => {
     } satisfies RegisteredPanel,
   ]);
   f.mount();
-  await user.click(
-    await screen.findByRole("button", { name: "Channel actions" }),
-  );
-  await user.click(
-    await screen.findByRole("menuitem", { name: "View canvas" }),
-  );
+  await user.click(await headerAction("Conversation actions"));
+  await user.click(await screen.findByRole("button", { name: "View canvas" }));
   expect(await screen.findByText(`Canvas for ${pollenDM}`)).toBeVisible();
   expect(
-    screen.getByRole("textbox", { name: "Message Pollen" }),
+    screen.getByRole("textbox", { name: "Message Pollen", hidden: true }),
   ).toBeInTheDocument();
 });
+
+/** Header tools retain their controls inside the shared overflow. */
+async function headerAction(name: string) {
+  if (name === "Conversation actions")
+    return screen.findByRole("button", { name });
+  const action = screen.queryByRole("button", { name });
+  if (action) return action;
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Conversation actions" }),
+  );
+  return screen.findByRole("button", { name });
+}

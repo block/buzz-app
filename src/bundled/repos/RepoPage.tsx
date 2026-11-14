@@ -47,6 +47,7 @@ import {
 } from "../../features/repos/routes";
 import type { GitSnapshot } from "../../features/repos/git";
 import { formatPublicKey } from "../../shared/identity/public-key";
+import { Header } from "../../shared/design-system/ui/Header";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -149,7 +150,9 @@ export function RepoPage({
             />
           ) : (
             <>
-              <h1 className="text-title">Repository</h1>
+              <div className="repo-title">
+                <Header title="Repository" level={1} />
+              </div>
               <p role="status">
                 {connection.status === "connecting"
                   ? "Connecting to your community..."
@@ -322,7 +325,9 @@ function Destination({
   if (failure)
     return (
       <div role="alert">
-        <h1 className="text-title">This destination couldn’t open</h1>
+        <div className="repo-title">
+          <Header title="This destination couldn’t open" level={1} />
+        </div>
         <p>
           {failure === "not-found"
             ? "The requested entity was not found in this community."
@@ -331,14 +336,26 @@ function Destination({
         <Button onClick={() => setRefresh((n) => n + 1)}>Retry</Button>
       </div>
     );
-  if (!data) return <p role="status">Loading repository...</p>;
+  if (!data)
+    return (
+      <>
+        <div className="repo-title">
+          <Header title="Repository" level={1} />
+        </div>
+        <p role="status">Loading repository...</p>
+      </>
+    );
   const detail = data.detail;
   if (!detail)
     return (
       <>
-        <h1 ref={heading} tabIndex={-1} className="text-title">
-          Destination no longer available
-        </h1>
+        <div className="repo-title">
+          <Header
+            title="Destination no longer available"
+            level={1}
+            headingRef={heading}
+          />
+        </div>
         <p role="status">
           Project containers are no longer available. Open a repository, issue
           or pull request link instead.
@@ -365,20 +382,20 @@ function Destination({
   });
   return (
     <>
-      <header className="repo-heading">
-        <div>
-          <p className="text-secondary">
-            Repository · {formatPublicKey(detail.entity.owner)}
-          </p>
-          <h1 ref={heading} tabIndex={-1} className="text-title">
-            {detail.item
+      <div className="repo-title">
+        <Header
+          title={
+            detail.item
               ? (value(detail.item, "subject") ??
                 detail.item.content.split("\n")[0])
-              : detail.entity.name}
-          </h1>
-        </div>
-        {route && <CopyLink route={route} />}
-      </header>
+              : detail.entity.name
+          }
+          eyebrow={<>Repository · {formatPublicKey(detail.entity.owner)}</>}
+          level={1}
+          headingRef={heading}
+          actions={route ? <CopyLink route={route} /> : undefined}
+        />
+      </div>
       {detail.item && (
         <Button variant="link" onClick={() => go(base)}>
           {detail.entity.name}

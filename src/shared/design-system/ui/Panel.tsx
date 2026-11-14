@@ -4,6 +4,8 @@ type PanelProps<T extends ElementType> = {
   as?: T;
   children?: ReactNode;
   joined?: boolean;
+  /** A continuous canvas can retain clipping and fill without an outer contour. */
+  flat?: boolean;
   shape?: "panel" | "capsule" | "card";
 } & Omit<ComponentProps<T>, "as" | "children" | "className">;
 
@@ -28,6 +30,7 @@ export function Panel<T extends ElementType = "section">({
   as,
   children,
   joined,
+  flat,
   shape = "panel",
   ...props
 }: PanelProps<T>) {
@@ -37,6 +40,7 @@ export function Panel<T extends ElementType = "section">({
       {...props}
       data-buzz-surface=""
       data-joined={joined || undefined}
+      data-flat={flat || undefined}
       data-shape={shape}
       className="panel"
     >

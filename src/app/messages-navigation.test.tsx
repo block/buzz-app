@@ -26,11 +26,6 @@ vi.mock("../bundled", async () => ({
       module: await import("../bundled/drafts-sent"),
       enabledByDefault: true,
     },
-    {
-      manifest: { id: "test.sidebar", name: "Sidebar fixture", apiVersion: 1 },
-      module: await import("./sidebar-plugin.fixture"),
-      enabledByDefault: true,
-    },
   ],
 }));
 
@@ -61,7 +56,7 @@ beforeEach(() => {
   }));
 });
 
-it("opens the Drafts & sent plugin page from global search inside Messages", async () => {
+it("opens the Drafts & sent plugin page from global search from the shared rail", async () => {
   services = createServices();
   render(<App services={services} />);
   const user = userEvent.setup();
@@ -80,40 +75,12 @@ it("opens the Drafts & sent plugin page from global search inside Messages", asy
     pluginId: "buzz.drafts-and-sent",
     pageId: "drafts-sent",
   });
-  expect(screen.getByRole("tab", { name: "Messages" })).toHaveAttribute(
-    "aria-selected",
-    "true",
+  expect(screen.getByRole("button", { name: "Drafts & sent" })).toHaveAttribute(
+    "aria-current",
+    "page",
   );
 });
 
-it("opens Drafts & sent from a plugin-owned sidebar's shared Pages navigation", async () => {
-  services = createServices();
-  render(<App services={services} />);
-  await waitFor(() =>
-    expect(services?.navigation.snapshot().status).toBe("opened"),
-  );
-  act(() => {
-    void services?.navigation.open({
-      version: 1,
-      kind: "page",
-      pluginId: "test.sidebar",
-      pageId: "main",
-    });
-  });
-  const sidebar = await screen.findByRole("complementary", {
-    name: "Beacon sidebar",
-  });
-  const pages = within(sidebar).getByRole("navigation", { name: "Pages" });
-  await userEvent.click(
-    within(pages).getByRole("button", { name: "Drafts & sent" }),
-  );
-  expect(
-    await screen.findByRole("region", { name: "Drafts & sent" }),
-  ).toBeVisible();
-  expect(screen.getByRole("navigation", { name: "Pages" })).toContainElement(
-    screen.getByRole("button", { name: "Drafts & sent" }),
-  );
-});
 afterEach(async () => {
   cleanup();
   await services?.dispose();
@@ -130,7 +97,7 @@ afterEach(async () => {
   window.history.replaceState(null, "", "/");
 });
 
-it("opens Drafts & sent inside Messages and retains the sidebar through Back/Forward", async () => {
+it("opens Drafts & sent from the shared rail and retains the rail through Back/Forward", async () => {
   services = createServices();
   render(<App services={services} />);
   const drafts = await screen.findByRole("button", { name: "Drafts & sent" });
@@ -141,14 +108,11 @@ it("opens Drafts & sent inside Messages and retains the sidebar through Back/For
   expect(
     await screen.findByRole("region", { name: "Drafts & sent" }),
   ).toBeVisible();
-  expect(screen.getByRole("tab", { name: "Messages" })).toHaveAttribute(
-    "aria-selected",
-    "true",
+  expect(screen.getByRole("button", { name: "Drafts & sent" })).toHaveAttribute(
+    "aria-current",
+    "page",
   );
-  expect(document.getElementById("shell-navigation")).toHaveAttribute(
-    "aria-hidden",
-    "false",
-  );
+  expect(screen.getByRole("navigation", { name: "Apps" })).toBeVisible();
   expect(drafts).toHaveAttribute("aria-current", "page");
   act(() => {
     void services?.navigation.open({
@@ -168,19 +132,13 @@ it("opens Drafts & sent inside Messages and retains the sidebar through Back/For
     expect(services?.navigation.snapshot().status).toBe("opened"),
   );
   act(() => services?.navigation.back());
-  expect(
-    await screen.findByRole("heading", {
-      name: "Your channels, one conversation.",
-    }),
-  ).toBeVisible();
+  // Without a community there is no list: the conversations page stands alone.
+  expect(await screen.findByRole("region", { name: "Channels" })).toBeVisible();
   act(() => services?.navigation.forward());
   expect(
     await screen.findByRole("region", { name: "Drafts & sent" }),
   ).toBeVisible();
-  expect(document.getElementById("shell-navigation")).toHaveAttribute(
-    "aria-hidden",
-    "false",
-  );
+  expect(screen.getByRole("navigation", { name: "Apps" })).toBeVisible();
 });
 
 const legacyLinks = {
@@ -208,7 +166,7 @@ const legacyLinks = {
   },
 };
 it.each(Object.keys(legacyLinks) as (keyof typeof legacyLinks)[])(
-  "opens old %s links inside Messages without an extra history visit",
+  "opens old %s links from the shared rail without an extra history visit",
   async (kind) => {
     window.history.replaceState(
       null,
@@ -232,9 +190,8 @@ it.each(Object.keys(legacyLinks) as (keyof typeof legacyLinks)[])(
       pageId: "drafts-sent",
       scope: null,
     });
-    expect(screen.getByRole("tab", { name: "Messages" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(
+      screen.getByRole("button", { name: "Drafts & sent" }),
+    ).toHaveAttribute("aria-current", "page");
   },
 );

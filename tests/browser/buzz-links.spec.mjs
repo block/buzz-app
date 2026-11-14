@@ -222,11 +222,24 @@ test("activating a panel from a linked thread retires the navigation-owned threa
 
 // The context menu shares its trigger with the hover preview and the page's
 // tab owner; that composition needs the real page in a browser.
-test("a message link's context menu opens its thread as a tab without leaving the channel", async ({
+test("cross-channel message links open tabs without replacing the conversation", async ({
   page,
   app,
 }) => {
-  await open(page, app);
+  await page.goto(
+    `${app.origin}/#buzz=${encodeURIComponent(
+      JSON.stringify({
+        version: 1,
+        kind: "conversation",
+        channelId: "alpha",
+        scope: {
+          viewer: app.viewer,
+          communityOrigin: "https://primary.example",
+        },
+      }),
+    )}`,
+  );
+  await expect(page.locator('[data-channel-timeline="alpha"]')).toBeVisible();
   const [target] = app.histories.get("primary/beta");
   const href = `buzz://message?channel=beta&id=${target.id}`;
   const message = app.append("primary", "alpha", `Open <${href}>.`);
@@ -282,6 +295,32 @@ test("a message link's context menu opens its thread as a tab without leaving th
     )
     .click();
   await expect(thread).toHaveCount(0);
+  await expect(link).toBeFocused();
+  const editor = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await editor.fill("Keep my source conversation draft");
+  const originalEditor = await editor.elementHandle();
+  await link.click();
+  await expect(editor).toBeVisible();
+  await expect(editor).toHaveText("Keep my source conversation draft");
+  expect(
+    await editor.evaluate(
+      (node, original) => node === original,
+      originalEditor,
+    ),
+  ).toBe(true);
+  await expect(
+    thread.locator(`[data-message-id="${target.id}"]`),
+  ).toBeVisible();
+  expect((await state(page)).entry).toEqual(before);
+  await page
+    .getByRole("button", { name: /^Close .* tab$/ })
+    .last()
+    .click();
+  await expect(thread).toHaveCount(0);
+  await expect(editor).toHaveText("Keep my source conversation draft");
   await expect(link).toBeFocused();
 });
 

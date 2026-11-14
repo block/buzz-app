@@ -1,5 +1,4 @@
 import {
-  activityRow,
   closeSettings,
   openPage,
   openSettings,
@@ -611,9 +610,9 @@ test("Bestie stays clickable while its invitation artwork rotates", async ({
 });
 
 // A real grid/overlay measurement is needed: DOM presence misses implicit columns.
-// Inbox and Bestie leave companion placement to the shell frame, unlike Messages.
+// Bestie leaves companion placement to the shell frame, unlike Messages.
 test.extend({ companionFixture: true })(
-  "Inbox and Bestie pages retain companion layout across navigation and resize",
+  "Bestie retains companion layout across navigation and resize",
   async ({ page, app }) => {
     await open(page, app);
     const sidebar = page.getByRole("navigation", {
@@ -654,43 +653,30 @@ test.extend({ companionFixture: true })(
       if (await show.isVisible()) await show.click();
     };
     const selectChannel = async (name) => {
-      await pages.getByRole("tab", { name: "Messages", exact: true }).click();
+      await pages.getByRole("tab", { name: "Team", exact: true }).click();
       await showNavigation();
       await sidebar.getByRole("button", { name, exact: true }).click();
     };
-    const openPage = async (name) => {
-      if (name === "Activity") {
-        // Activity is a row at the top of the Messages sidebar.
-        await pages.getByRole("tab", { name: "Messages", exact: true }).click();
-        await showNavigation();
-        await activityRow(page).click();
-      } else
-        await pages
-          .getByRole("tab", {
-            name: name === "Bestie" ? "Create an agent" : name,
-            exact: true,
-          })
-          .click();
-      const body = page.getByRole("region", { name, exact: true });
+    const openBestie = async () => {
+      await pages
+        .getByRole("tab", { name: "Create an agent", exact: true })
+        .click();
+      const body = page.getByRole("region", { name: "Bestie", exact: true });
       await expect(
-        name === "Activity"
-          ? body.getByRole("button", { name: /^From / })
-          : body.getByRole("heading", { name, exact: true }),
+        body.getByRole("heading", { name: "Bestie", exact: true }),
       ).toBeVisible();
       return body;
     };
     for (const width of [1440, 900, 600]) {
       await page.setViewportSize({ width, height: 950 });
-      let body = await openPage("Activity");
+      let body = await openBestie();
       await launcher.click();
-      await checkGeometry(body, width <= 1000);
-      body = await openPage("Bestie");
       await checkGeometry(body, width <= 1000);
       await launcher.click();
       await expect(companion).not.toBeVisible();
       await selectChannel("Alpha");
       await launcher.click();
-      body = await openPage("Activity");
+      body = await openBestie();
       await checkGeometry(body, width <= 1000);
       await launcher.click();
     }
@@ -861,12 +847,14 @@ test("non-ready sidebar keeps Retry reachable while dock pages remain available"
   });
   await expect(status).toBeAttached();
   await scrollToBottom(status);
-  const inbox = activityRow(page);
-  await inbox.scrollIntoViewIfNeeded();
-  await expect(inbox).toBeInViewport();
-  await inbox.click();
+  const team = page
+    .getByRole("navigation", { name: "Apps", exact: true })
+    .getByRole("button", { name: "Team", exact: true });
+  await team.scrollIntoViewIfNeeded();
+  await expect(team).toBeInViewport();
+  await team.click();
   await expect(
-    page.getByRole("heading", { name: "Activity", exact: true }),
+    page.getByRole("heading", { name: "Team", exact: true }),
   ).toBeVisible();
 });
 

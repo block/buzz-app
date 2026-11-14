@@ -404,7 +404,7 @@ test("narrow mouse double-click renames while single-click and keyboard still na
     .toEqual({ status: "failed", aborted: true });
   await page
     .getByRole("navigation", { name: "Apps dock" })
-    .getByRole("tab", { name: "Messages", exact: true })
+    .getByRole("tab", { name: "Team", exact: true })
     .click();
   await show.tap();
   await row(page, alpha).click();

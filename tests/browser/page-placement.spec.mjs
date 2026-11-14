@@ -54,7 +54,7 @@ test("shared navigation preserves drafts and history across Solo and header page
     true,
   );
   await expect(composer).toHaveCount(0);
-  const messages = topbar.getByRole("tab", { name: "Messages", exact: true });
+  const messages = topbar.getByRole("tab", { name: "Team", exact: true });
   await expect(messages).toHaveAttribute("aria-selected", "true");
   await page.getByRole("button", { name: "Hide sidebar", exact: true }).click();
   await expect(page.locator("#shell-navigation")).toHaveAttribute(
@@ -239,7 +239,7 @@ test("a page listed in the Messages sidebar keeps Messages and the conversation 
 
   const messages = page
     .getByRole("navigation", { name: "Apps dock" })
-    .getByRole("tab", { name: "Messages", exact: true });
+    .getByRole("tab", { name: "Team", exact: true });
   await expect(messages).toHaveAttribute("aria-selected", "true");
   await expect(sidebar).toBeVisible();
   await expect(destination).toHaveAttribute("aria-current", "page");
@@ -293,7 +293,7 @@ test("a page sidebar uses the shell slot, generic toggle, theme, and narrow draw
   await expect(
     page
       .getByRole("navigation", { name: "Apps dock" })
-      .getByRole("tab", { name: "Messages", exact: true }),
+      .getByRole("tab", { name: "Team", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   const wideSize = await sidebar.evaluate(
     (element) => element.getBoundingClientRect().width,
@@ -723,7 +723,7 @@ test("dock destinations and titlebar controls remain reachable through scale and
           )
           .toBe(true);
         const messages = dock.getByRole("tab", {
-          name: "Messages",
+          name: "Team",
           exact: true,
         });
         await messages.focus();

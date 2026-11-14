@@ -2,7 +2,7 @@
   height: 100%;
   min-width: 0;
   overflow: auto;
-  padding: var(--space-6);
+  padding: 0 var(--space-6) var(--space-6);
   color: var(--text-standard);
 }
 /* README headings keep the shared Markdown spacing. */
@@ -10,15 +10,8 @@
   margin: 0;
   overflow-wrap: anywhere;
 }
-.repo-heading {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: var(--space-4);
-  margin-bottom: var(--space-4);
-}
-.repo-heading > div {
-  min-width: 0;
+.repo-title {
+  margin-inline: calc(-1 * var(--space-panel-inset));
 }
 .repo-content {
   padding-block: var(--space-5);

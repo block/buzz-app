@@ -20,14 +20,14 @@
   background: transparent;
 }
 .feed {
-  --message-hover-inset: var(--space-panel-inset);
-  --timeline-measure: var(--buzz-message-width, 52rem);
+  --message-hover-inset: var(--space-6);
+  --timeline-measure: var(--size-conversation-measure);
 
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overflow-anchor: none;
-  padding: 0 var(--space-panel-inset);
+  padding: 0 var(--space-6);
   /* Keep fractional last rows reachable despite integer scroll extents. */
   --history-bottom-inset: var(--space-half);
   padding-bottom: var(--history-bottom-inset);
@@ -43,13 +43,6 @@
      ::-webkit-scrollbar, which is why .feed carries no such rules. */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-}
-/* Narrow conversations keep the shared compact inset beside the app dock. */
-@container messages (max-width: 30rem) {
-  .feed {
-    --message-hover-inset: var(--space-4);
-    padding-inline: var(--space-4);
-  }
 }
 
 .threadHistory::-webkit-scrollbar {
@@ -245,7 +238,7 @@
   min-width: 0;
 }
 .author {
-  font-weight: var(--type-weight-medium);
+  font-weight: var(--type-weight-message-sender);
   flex-shrink: 0;
   min-width: 0;
   max-width: 100%;
@@ -708,7 +701,10 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   min-width: 0;
 }
 /* Soften the scroll edge without reserving a blank strip above the composer. */
-:is(.feed, .threadHistory)[data-jump-visible] + .composerContext::before {
+:is(.feed, .threadHistory)[data-jump-visible] + .composerContext::before,
+/* biome-ignore lint/correctness/noUnknownPseudoClass: The shared history viewport wraps the feature-owned scroller. */
+:global(.conversation-history-viewport):has(> .feed[data-jump-visible])
++ .composerContext::before {
   content: "";
   position: absolute;
   inset-inline: 0;
@@ -730,7 +726,8 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   border-radius: calc(var(--radius-icon-button) + var(--space-1h) + 1px);
   box-shadow: var(--shadow-xs);
   padding: var(--space-3) var(--space-1h) var(--space-1h);
-  width: min(calc(100% - 2 * var(--space-4)), var(--buzz-message-width, 52rem));
+  width: calc(100% - 2 * var(--space-3));
+  max-width: calc(var(--size-conversation-frame) - 2 * var(--space-3));
   margin: 0 auto var(--space-4);
   display: flex;
   flex-shrink: 0;
@@ -750,13 +747,6 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .emptyConversation {
   padding-block: var(--space-panel-inset);
 }
-.composer[data-chat-presentation] {
-  margin-bottom: var(--space-3);
-}
-/* The composer spans the same full width as a compact list. */
-:where(html[data-message-density="compact"]) .composer {
-  width: calc(100% - 2 * var(--space-4));
-}
 .empty {
   padding: var(--space-8) var(--space-4);
   color: var(--text-subtle);
@@ -770,13 +760,6 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   }
   .emptyConversation {
     padding-block: var(--space-3);
-  }
-  .composer {
-    width: min(
-      calc(100% - 2 * var(--space-3)),
-      var(--buzz-message-width, 52rem)
-    );
-    margin: 0 auto var(--space-3);
   }
 }
 .composer[data-editing] {
@@ -800,6 +783,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   padding-inline-start: var(--space-1);
 }
 .composerInput {
+  @apply text-message;
   box-sizing: border-box;
   position: relative;
   min-width: 0;
@@ -1005,14 +989,14 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 }
 
 .threadHistory {
-  --message-hover-inset: var(--space-4);
-  --timeline-measure: var(--buzz-message-width, 52rem);
+  --message-hover-inset: var(--space-6);
+  --timeline-measure: var(--size-conversation-measure);
   position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
-  /* Narrower than the channel feed's panel inset; aligns with the composer. */
-  padding: 0 var(--space-4);
+  /* Match the main timeline gutter in split threads. */
+  padding: 0 var(--space-6);
   /* The original starts space-4 below the header, less its .message padding. */
   padding-top: calc(var(--space-4) - var(--space-3) - var(--space-half));
   /* The end spacer below replaces bottom padding, so the jump button's sticky
@@ -1026,11 +1010,22 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
+/* Each message row measures its own available width in main and split views.
+   Keep the sender gutter, but reclaim the opposite avatar reservation when
+   the reading area is narrow. */
+@container message-row (max-width: 50rem) {
+  .message:has(> .messageGutter) > .messageBody {
+    max-width: 100%;
+  }
+}
 /* Compact gives conversations the window's full width, as list layouts do. */
 :where(html[data-message-density="compact"]) :is(.feed, .threadHistory) {
   --timeline-measure: 100%;
-  --message-hover-start-inset: var(--space-3);
-  padding-inline-start: var(--space-3);
+  --message-hover-start-inset: var(--space-6);
+  padding-inline-start: var(--space-6);
+}
+:where(html[data-message-density="compact"]) .composer {
+  max-width: none;
 }
 /* Measure loaded rows without painting a scroll position we will replace,
    then fade them in once positioned. */
@@ -2176,6 +2171,15 @@ html[data-keyboard-navigation] .replyBranchCollapse:focus-visible {
   grid-template-rows: 1fr;
   margin-block-start: calc(-1 * var(--space-1h));
 }
+/* Reply holds are provisional: reveal above the editor without resizing the
+   transcript and provoking scroll corrections on every preview/cancellation. */
+.composerReplySlot:not([data-animate-size]) {
+  position: absolute;
+  inset-inline: var(--space-1h);
+  bottom: calc(100% + var(--space-2));
+  margin: 0;
+  z-index: 1;
+}
 .composerReplyClip {
   min-height: 0;
   overflow: hidden;
@@ -2185,17 +2189,21 @@ html[data-keyboard-navigation] .replyBranchCollapse:focus-visible {
   opacity: 0;
   transform: translateY(var(--space-1h));
 }
+.composerReplySlot:not([data-animate-size]) .composerReplyContent {
+  padding-block-end: 0;
+}
 .composerReplySlot[data-open] .composerReplyContent {
   opacity: 1;
   transform: translateY(0);
 }
 @media (prefers-reduced-motion: no-preference) {
-  html:not([data-keyboard-navigation]) .composerReplySlot {
+  html:not([data-keyboard-navigation]) .composerReplySlot[data-animate-size] {
     transition:
       grid-template-rows var(--duration-state) var(--easing-enter),
       margin-block-start var(--duration-state) var(--easing-enter);
   }
-  html:not([data-keyboard-navigation]) .composerReplySlot[data-open] {
+  html:not([data-keyboard-navigation])
+    .composerReplySlot[data-open][data-animate-size] {
     transition-duration: var(--duration-settle);
 
     @starting-style {
@@ -3261,7 +3269,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   pointer-events: auto;
 }
 :where(html[data-message-density="compact"]) .message .author {
-  font-weight: var(--type-weight-medium);
+  font-weight: var(--type-weight-message-sender);
 }
 :where(html[data-message-density="compact"])
   .messageBubble

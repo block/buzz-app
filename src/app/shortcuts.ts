@@ -343,7 +343,7 @@ export function registerNavigationShortcuts(
       id: "home",
       title: "Home",
       order: HOST_SHORTCUT_ORDER.home,
-      // Placeholder chord: Slack's ⌘⇧A belongs to Inbox's unread view.
+      // Placeholder chord: Slack's ⌘⇧A belongs to Team's unread view.
       binding: { key: "o", mod: true, shift: true },
       allowInEditable: true,
       run: () =>

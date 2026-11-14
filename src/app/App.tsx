@@ -2,7 +2,6 @@
 import { AgentAvatarArtworkProvider } from "../features/agents/AgentAvatarArtworkProvider";
 import { Welcome } from "../features/identity/Welcome";
 import { NewMenu } from "./shell/NewMenu";
-import { PrimarySidebar } from "./shell/PrimarySidebar";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { AgentsContext } from "../features/agents/react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
@@ -47,9 +46,6 @@ import { SettingsSidebar } from "./SettingsSidebar";
 import { pendingManaged } from "../plugins/managed";
 import { RecoveryScreen } from "./RecoveryScreen";
 import { PageView } from "../features/pages/PageView";
-import { OwnedContribution } from "../plugins/OwnedContribution";
-import { SidebarFrame } from "../features/channel-navigation/SidebarFrame";
-import { SidebarList } from "../features/channel-navigation/SidebarList";
 import { useAppNavigation, type PendingSettingsDeparture } from "./navigation";
 import { NavigationControls } from "./shell/NavigationControls";
 import { registerNavigationShortcuts } from "./shortcuts";
@@ -364,12 +360,6 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     (settings
       ? !!workspace.request
       : !route.failure && !route.waiting && !failedPage);
-  // A registration lookup does not admit the target's parameters and scope.
-  const pageSidebarReady =
-    startup === "ready" &&
-    (settings
-      ? !!workspace.request
-      : !route.failure && !route.waiting && !failedPage);
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
     return document.getElementById("buzz-launch") ? null : (
@@ -389,7 +379,12 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
       services.navigation.snapshot().ingress &&
       services.navigation.snapshot().retryable;
     services.communities.select(id);
-    if (!recovering) select("buzz.channels/channels");
+    if (!recovering)
+      select(
+        route.pages.some((page) => page.key === "buzz.inbox/inbox")
+          ? "buzz.inbox/inbox"
+          : "buzz.channels/channels",
+      );
   };
   if (firstRun)
     return (
@@ -492,7 +487,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
         variant={variant}
         onClick={() => select("buzz.channels/channels")}
       >
-        Go to Messages
+        Go to Team
       </Button>
     ) : null;
   // A link or access failure returns to where the person came from; opened
@@ -625,82 +620,24 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
       )}
       <ChannelNavigationProvider relay={services.relay}>
         <AppShell
-          creationInSidebar={!workspace.page?.sidebar}
-          creationAction={(open, onOpenChange, triggerContainer) => (
+          creationAction={(
+            open,
+            onOpenChange,
+            triggerContainer,
+            menuTriggerContainer,
+            navigator,
+          ) => (
             <NewMenu
               triggerContainer={triggerContainer}
+              menuTriggerContainer={menuTriggerContainer}
               open={open}
               onOpenChange={onOpenChange}
               relay={services.relay}
-              navigator={services.navigation}
+              navigator={navigator ?? services.navigation}
               agents={services.agents}
             />
           )}
           workspaceRef={setWorkspaceElement}
-          sidebar={(pageNavigation, creationAction) =>
-            workspace.page?.sidebar && pageSidebarReady ? (
-              <Presented
-                store={route.presented}
-                resolve={route.workspaceRequestFor}
-              >
-                {(request) =>
-                  workspace.page && (
-                    <OwnedContribution
-                      entry={workspace.page}
-                      registry={services.pages}
-                      resetIdentity={request}
-                      fallback={
-                        <div className="shell-sidebar-default">
-                          <SidebarFrame
-                            label={`${workspace.page.title} sidebar`}
-                          >
-                            <SidebarList>
-                              <p role="alert">
-                                This page’s sidebar is unavailable.
-                              </p>
-                              {pageNavigation}
-                            </SidebarList>
-                          </SidebarFrame>
-                        </div>
-                      }
-                    >
-                      {(entry) => {
-                        const Sidebar = entry.sidebar;
-                        return Sidebar ? (
-                          <Sidebar target={workspace.target}>
-                            {pageNavigation}
-                          </Sidebar>
-                        ) : null;
-                      }}
-                    </OwnedContribution>
-                  )
-                }
-              </Presented>
-            ) : workspace.page?.sidebar ? (
-              <div className="shell-sidebar-default">
-                <SidebarFrame label="Page navigation">
-                  <SidebarList>{pageNavigation}</SidebarList>
-                </SidebarFrame>
-              </div>
-            ) : (
-              <PrimarySidebar
-                creationAction={creationAction}
-                federatedIdentity={services.federatedIdentity}
-                memberships={client.memberships}
-                relay={services.relay}
-                navigator={services.navigation}
-                agents={services.agents}
-                chatIcons={services.conversation.chatIcons}
-                chatMenus={services.conversation.chatMenus}
-                sidebarSections={services.sidebarSections}
-                sidebarScope={services.sidebarScope}
-                sidebarRows={services.sidebarRows}
-                target={workspace.target}
-              >
-                {pageNavigation}
-              </PrimarySidebar>
-            )
-          }
           navigationControls={
             <NavigationControls navigation={services.navigation} />
           }

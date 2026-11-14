@@ -864,7 +864,7 @@ companionTest(
     await launch.click();
     // The companion keeps one default, minimum, saved width and reset as it
     // moves between PanelFrame and Messages' dock.
-    await openPage(page, "Activity");
+    await openPage(page, "Workflows");
     await expect(companion).toBeVisible();
     const resize = page.getByRole("separator", {
       name: "Resize main and secondary panels",
@@ -884,14 +884,14 @@ companionTest(
     };
     await visitMessages();
     await expect.poll(resizedWidth).toBe(defaultWidth);
-    await openPage(page, "Activity");
+    await openPage(page, "Workflows");
     await resize.focus();
     await resize.press("Home");
     await expect.poll(resizedWidth).toBeLessThan(defaultWidth);
     const minimumWidth = await resizedWidth();
     await visitMessages();
     await expect.poll(resizedWidth).toBe(minimumWidth);
-    await openPage(page, "Activity");
+    await openPage(page, "Workflows");
     await resize.focus();
     await resize.press("Shift+ArrowLeft");
     await expect.poll(resizedWidth).toBeGreaterThan(minimumWidth + 40);
@@ -900,7 +900,7 @@ companionTest(
     await expect.poll(resizedWidth).toBe(companionWidth);
     await resize.dblclick();
     await expect.poll(resizedWidth).toBe(defaultWidth);
-    await openPage(page, "Activity");
+    await openPage(page, "Workflows");
     await expect.poll(resizedWidth).toBe(defaultWidth);
     await visitMessages();
     await composer.fill("Companion draft");

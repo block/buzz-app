@@ -406,6 +406,7 @@ function ReminderSections({
             ) : (
               <motion.div key="empty" layout="position" initial={false}>
                 <EmptyState
+                  frame="none"
                   icon={<AlarmIcon size={24} />}
                   title={done ? "You're all caught up" : "No reminders yet"}
                   description="Choose Remind me from any message's menu to bring it back here when it matters."

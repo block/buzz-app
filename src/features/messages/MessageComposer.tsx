@@ -318,6 +318,10 @@ export type MessageComposerProps = {
   ownSoloConversation?: boolean | undefined;
   /** Seeds an empty draft, or an unaddressed submission that requires a recipient. */
   defaultMention?: MentionRecipient | undefined;
+  /** Effective first recipient for a host’s draft conversation identity. */
+  onPrimaryRecipientChange?:
+    | ((recipient: MentionRecipient | null) => void)
+    | undefined;
   /** Whether a retained tab shows this composer, apart from its read policy.
    * A composer shown again may reseed its remembered agents (see seedMentions). */
   shown?: boolean | undefined;
@@ -347,6 +351,8 @@ export type MessageComposerProps = {
     | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
+  /** Inline replies keep the channel editor and draft while changing delivery target. */
+  retainChannelDraft?: boolean;
   /** The viewer's latest message in this thread, once the thread has loaded.
    * An empty thread composer starts with the agents it notified (see
    * seedMentions); other composers read their own channel window. */
@@ -355,6 +361,7 @@ export type MessageComposerProps = {
   /** Bind a timecoded reply to the selected gallery attachment. */
   mediaTargetUrl?: string | undefined;
   replyContext?: ReactNode;
+  onCancelReply?: (() => void) | undefined;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
   /** Focus once on entry; an owner can cancel its target before a delayed mount. */
@@ -362,8 +369,12 @@ export type MessageComposerProps = {
   focusRequest?: number;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
+  /** Block delivery while retaining draft editing and local composer actions. */
+  sendDisabled?: boolean;
   /** A new conversation owns persistence and delivery before a channel exists. */
   submission?: {
+    /** Existing-channel drafts retain canonical mention preparation before their owner sends. */
+    channel?: true | undefined;
     draftKey: string;
     initialDraft?: MentionDraft | string | undefined;
     /** A durable operation overrides disposable view state during recovery. */
@@ -389,6 +400,7 @@ export type MessageComposerProps = {
       picks?: MentionPicks,
       draftPicks?: DraftPicks,
       draftPicksRevision?: string | null,
+      references?: readonly string[],
     ) => void;
   };
 };
@@ -399,7 +411,7 @@ export function MessageComposer(props: MessageComposerProps) {
     props.session,
     props.scope,
     props.channelId,
-    props.threadRootId,
+    props.retainChannelDraft ? undefined : props.threadRootId,
   )}`;
   return (
     <TypingPresentation active key={key}>
@@ -533,9 +545,11 @@ function Composer({
   onOpenLink,
   canOpenLink,
   threadRootId,
+  retainChannelDraft = false,
   threadSeed,
   replyParentId,
   mediaTargetUrl,
+  onCancelReply,
   replyContext,
   mediaTimeSeconds,
   clearMediaTime,
@@ -543,10 +557,12 @@ function Composer({
   focusRequest,
   hideMediaTimeIndicator = false,
   disabled: requestedDisabled = false,
+  sendDisabled = false,
   submission,
   soloConversation,
   ownSoloConversation = false,
   defaultMention,
+  onPrimaryRecipientChange,
   shown = true,
   requireMention = false,
   chatPresentation = false,
@@ -575,8 +591,8 @@ function Composer({
   const sendAttempt = useRef<AbortController | null>(null);
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
   useLayoutEffect(() => {
-    if (disabled || !active) sendAttempt.current?.abort();
-  }, [disabled, active]);
+    if (disabled || sendDisabled || !active) sendAttempt.current?.abort();
+  }, [disabled, sendDisabled, active]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the root-keyed draft.
   useLayoutEffect(
     () => () => sendAttempt.current?.abort(),
@@ -585,7 +601,7 @@ function Composer({
   const inputId = useId();
   const draftKey =
     submission?.draftKey ??
-    (threadRootId
+    (threadRootId && !retainChannelDraft
       ? `draft:${channelId}:thread:${threadRootId}`
       : `draft:${channelId}`);
   const [admitting, setAdmitting] = useState(false);
@@ -1201,6 +1217,15 @@ function Composer({
   /** Who hears this message: inline mentions win; without any, the toolbar's
    * agents stand in. */
   const addressed = routing && !recipients.length ? routed : recipients;
+  const primaryRecipient = addressed[0];
+  const reportPrimaryRecipient = useEffectEvent(
+    (pubkey?: string, name?: string) => {
+      onPrimaryRecipientChange?.(pubkey && name ? { pubkey, name } : null);
+    },
+  );
+  useEffect(() => {
+    reportPrimaryRecipient(primaryRecipient?.pubkey, primaryRecipient?.name);
+  }, [primaryRecipient?.pubkey, primaryRecipient?.name]);
   // The agents a send addresses: model, effort and session controls are
   // offered for each, so a one-to-one DM with an agent always has them.
   const addressedKeys = sessionTargets(addressed.map((item) => item.pubkey));
@@ -1330,6 +1355,49 @@ function Composer({
   // Notices float above the composer, not over Send.
   useToastClearance(form);
   const notify = useToastNotification();
+  // Escape also cancels a reply target while focus is elsewhere in its own
+  // conversation (or nowhere): before page Escape closes the conversation,
+  // leaving other fields, menus and dialogs their own Escape.
+  const cancelReply = useEffectEvent(() => onCancelReply?.());
+  const replying = !!onCancelReply && active;
+  useEffect(() => {
+    if (!replying) return;
+    const cancel = (event: KeyboardEvent) => {
+      const own = form.current;
+      if (
+        !own ||
+        event.key !== "Escape" ||
+        event.shiftKey ||
+        event.altKey ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.keyCode === 229
+      )
+        return;
+      const focused = event.target instanceof Element ? event.target : null;
+      // The composer's own handler owns Escape inside it.
+      if (focused && own.contains(focused)) return;
+      if (focused && focused !== own.ownerDocument.body) {
+        let surface = own.parentElement;
+        while (surface && !surface.querySelector("[data-message-id]"))
+          surface = surface.parentElement;
+        if (
+          !surface?.contains(focused) ||
+          focused.closest(
+            'input, textarea, select, [role="textbox"], [contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="menu"], [role="listbox"]',
+          )
+        )
+          return;
+      } else if (own.ownerDocument.querySelector('[aria-modal="true"]')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancelReply();
+    };
+    document.addEventListener("keydown", cancel, true);
+    return () => document.removeEventListener("keydown", cancel, true);
+  }, [replying]);
   const handOffFocus = useEffectEvent(() => {
     if (!form.current?.contains(document.activeElement)) return;
     const text = input.current?.value ?? "";
@@ -2601,6 +2669,7 @@ function Composer({
     }
     if (
       disabled ||
+      sendDisabled ||
       compactingNow() ||
       accepted ||
       conflict ||
@@ -2737,7 +2806,9 @@ function Composer({
       );
       return;
     }
-    const savedRevision = revision.current;
+    const savedRevision = submission
+      ? viewRevision(scope, draftKey)
+      : revision.current;
     const attempt = new AbortController();
     sendAttempt.current = attempt;
     const captured = valueRef.current;
@@ -2836,7 +2907,7 @@ function Composer({
         throw new Error(
           "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
         );
-      if (submission) {
+      if (submission && !submission.channel) {
         // SoloDraft filters the captured choices against its final recipient set.
         submission.submit(
           captured,
@@ -2951,6 +3022,20 @@ function Composer({
       if (preparedRevision !== savedRevision) {
         diagnose("send-prepare-conflict", savedRevision, preparedRevision);
         setConflict(true);
+        return;
+      }
+      if (submission?.channel) {
+        submission.submit(
+          captured,
+          attachments.store,
+          capturedRecipients.filter((person) =>
+            recipients.includes(person.pubkey),
+          ),
+          undefined,
+          undefined,
+          undefined,
+          references,
+        );
         return;
       }
       const content =
@@ -3408,6 +3493,17 @@ function Composer({
             event.preventDefault();
             event.stopPropagation();
             if (!editing.busy) editing.close();
+          } else if (
+            onCancelReply &&
+            event.key === "Escape" &&
+            !event.defaultPrevented &&
+            !event.nativeEvent.isComposing &&
+            event.nativeEvent.keyCode !== 229 &&
+            !completion.composing.current
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            onCancelReply();
           }
         }}
         onPasteCapture={(event) => {
@@ -3498,7 +3594,10 @@ function Composer({
             onDismiss={() => setAttachmentError(undefined)}
           />
         )}
-        <ComposerContext key={editing.target ? "edit" : "reply"}>
+        <ComposerContext
+          key={editing.target ? "edit" : "reply"}
+          animateSize={!!editing.target}
+        >
           {editing.target ? (
             <div className={styles.replyContext}>
               <PencilSimpleIcon size={18} aria-hidden="true" />
@@ -3884,6 +3983,7 @@ function Composer({
               }
               disabled={
                 disabled ||
+                (!editing.target && sendDisabled) ||
                 (!editing.target &&
                   stickyPicks &&
                   (pickReadPending || pickReadFailed)) ||
@@ -4036,13 +4136,20 @@ function Composer({
 }
 
 /** Retain the last preview for collapse; context semantics clear immediately. */
-function ComposerContext({ children }: { children: ReactNode }) {
+function ComposerContext({
+  children,
+  animateSize,
+}: {
+  children: ReactNode;
+  animateSize: boolean;
+}) {
   const open = !!children;
   const [lastContext, setLastContext] = useState(children);
   if (open && children !== lastContext) setLastContext(children);
   return (
     <div
       className={styles.composerReplySlot}
+      data-animate-size={animateSize || undefined}
       data-open={open || undefined}
       inert={!open}
       aria-hidden={!open || undefined}

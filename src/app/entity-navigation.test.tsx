@@ -502,7 +502,7 @@ function bindCommunityLinks(
   return { current, ping: () => ping() };
 }
 
-function offlineMessagesFixture() {
+function offlineConversationFixture() {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -523,13 +523,31 @@ function offlineMessagesFixture() {
   let offline = true;
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string) => {
+    vi.fn(async (url: string, options?: RequestInit) => {
       if (url.endsWith("/identity")) return Response.json({ viewer });
       if (url.endsWith("/session"))
         return offline
           ? Response.json({ error: "offline" }, { status: 503 })
           : Response.json({ viewer, relayAuthor: viewer, relayUrl: origin });
-      if (url.endsWith("/query")) return Response.json([]);
+      if (url.endsWith("/query")) {
+        const filters = JSON.parse(String(options?.body)) as ReadFilter[];
+        const author = { secret: key, pubkey: viewer };
+        if (filters.some((filter) => filter.kinds?.includes(9)))
+          return Response.json([
+            bounds(author, "alpha", "head", {
+              has_more: false,
+              next_cursor: null,
+            }),
+          ]);
+        return Response.json(
+          [
+            metadata(author, "alpha", "Alpha"),
+            roster(author, "alpha", [viewer]),
+          ].filter((event) =>
+            filters.some((filter) => matchesEvent(event, filter)),
+          ),
+        );
+      }
       return Response.json({});
     }),
   );
@@ -539,9 +557,8 @@ function offlineMessagesFixture() {
     `/#buzz=${encodeURIComponent(
       JSON.stringify({
         version: 1,
-        kind: "page",
-        pluginId: "buzz.channels",
-        pageId: "channels",
+        kind: "conversation",
+        channelId: "alpha",
         scope: { viewer, communityOrigin: origin },
       }),
     )}`,
@@ -555,8 +572,8 @@ function offlineMessagesFixture() {
     },
   };
 }
-it("waits through a connection that retries by itself, then opens Messages without Retry", async () => {
-  const { current, online } = offlineMessagesFixture();
+it("waits through a connection that retries by itself, then opens the conversation without Retry", async () => {
+  const { current, online } = offlineConversationFixture();
   await waitFor(() =>
     expect(current.relay.snapshot()).toMatchObject({
       status: "error",
@@ -576,7 +593,7 @@ it("waits through a connection that retries by itself, then opens Messages witho
 it("reopens a visit that timed out while connecting once the connection is live", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
-    const { current, online } = offlineMessagesFixture();
+    const { current, online } = offlineConversationFixture();
     await waitFor(() => expect(current.relay.snapshot().status).toBe("error"));
     // The visit deadline ends the wait with an honest, recoverable card.
     await act(() => vi.advanceTimersByTimeAsync(15_000));
@@ -587,8 +604,8 @@ it("reopens a visit that timed out while connecting once the connection is live"
     expect(
       await screen.findByRole("heading", { name: "Can’t connect" }),
     ).toBeVisible();
-    // Messages is what failed, so the way out leads elsewhere.
-    expect(screen.queryByRole("button", { name: "Go to Messages" })).toBeNull();
+    // The collection is still available when one conversation could not connect.
+    expect(screen.getByRole("button", { name: "Go to Team" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Open Settings" })).toBeNull();
     expect(
       screen.getByRole("button", { name: "Try again" }).dataset.variant,
@@ -606,7 +623,7 @@ it("reopens a visit that timed out while connecting once the connection is live"
 it("does not reopen a failed visit after the user has left it", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
-    const { current, online } = offlineMessagesFixture();
+    const { current, online } = offlineConversationFixture();
     await waitFor(() => expect(current.relay.snapshot().status).toBe("error"));
     await act(() => vi.advanceTimersByTimeAsync(15_000));
     await screen.findByRole("heading", { name: "Can’t connect" });
@@ -728,8 +745,9 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
     message(author, "alpha", "Back again", 1_700_000_100),
     bounds(author, "alpha", "head", { has_more: false, next_cursor: null }),
   ];
-  // Two failed history reads within one live connection, then recovery.
-  let failures = 2;
+  // Hold failure until the selected reader exposes its retry, independent of
+  // background preview and inbox reads in the same connection.
+  let failHistory = true;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, options?: RequestInit) => {
@@ -739,8 +757,7 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
       if (url.endsWith("/query")) {
         const filters = JSON.parse(String(options?.body)) as ReadFilter[];
         if (filters.some((filter) => filter.kinds?.includes(9))) {
-          if (failures > 0) {
-            failures--;
+          if (failHistory) {
             return Response.json({ error: "offline" }, { status: 503 });
           }
           return Response.json(history);
@@ -775,6 +792,7 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
       presented: true,
     }),
   );
+  failHistory = false;
   const generation = current.relay.snapshot().generation;
   expect(screen.queryByText(pageFailure)).toBeNull();
   // The page keeps its visit's authority, so the timeline's own Retry works.
@@ -800,7 +818,6 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
   ).toEqual(["Back again"]);
   expect(screen.queryByRole("button", { name: "Retry messages" })).toBeNull();
   expect(current.navigation.snapshot().attempt.signal.aborted).toBe(false);
-  expect(failures).toBe(0);
   expect(current.relay.snapshot().generation).toBe(generation);
   expect(screen.queryByText(pageFailure)).toBeNull();
 });
@@ -865,7 +882,7 @@ it("keeps a link read while a code-less link switches communities", async () => 
   );
 });
 
-it("lists active primary pages in the app dock", async () => {
+it("lists active primary pages in the universal rail", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -904,17 +921,20 @@ it("lists active primary pages in the app dock", async () => {
   services = createServices();
   const current = services;
   render(<App services={current} />);
-  // Activity is a row in the Messages sidebar; the others are dock apps.
-  await within(
-    await screen.findByRole("navigation", { name: "Pages" }),
-  ).findByRole("button", { name: "Activity" });
-  expect(screen.queryByRole("tab", { name: "Activity" })).toBeNull();
-  expect(screen.getByRole("tab", { name: "Bestie" })).toBeInTheDocument();
+  const activity = await screen.findByRole("button", { name: "Activity" });
+  await waitFor(() => expect(activity).toHaveAttribute("aria-current", "page"));
+  expect(current.navigation.snapshot().entry.target).toMatchObject({
+    kind: "page",
+    pluginId: "buzz.inbox",
+    pageId: "inbox",
+  });
+  await userEvent.click(screen.getByRole("button", { name: "Team" }));
+  expect(screen.getByRole("button", { name: "Bestie" })).toBeInTheDocument();
 
   expect(
-    screen.queryByRole("tab", { name: "Repository" }),
+    screen.queryByRole("button", { name: "Repository" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: "Agents" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Agents" })).toBeInTheDocument();
 
   // The fixture page is active and searchable but never a sidebar row.
   expect(current.pages.snapshot().map((page) => page.key)).toContain(
@@ -952,15 +972,12 @@ it("lists active primary pages in the app dock", async () => {
   );
 
   await act(() => current.plugins.change("disable", "buzz.agents"));
-  expect(
-    within(screen.getByRole("navigation", { name: "Pages" })).getByRole(
-      "button",
-      { name: "Activity" },
-    ),
-  ).toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: "Bestie" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Bestie" })).toBeInTheDocument();
 
-  expect(screen.queryByRole("tab", { name: "Agents" })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Agents" }),
+  ).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Search Buzz" }));
   const search = await screen.findByRole("dialog", { name: "Search Buzz" });
   expect(
@@ -978,32 +995,18 @@ it("lists active primary pages in the app dock", async () => {
   ).not.toBeInTheDocument();
   await userEvent.keyboard("{Escape}");
 
-  // Disabling optional pages removes their entries without hiding Messages.
+  // Disabling optional pages removes their rail entries without hiding Messages.
   for (const id of ["buzz.inbox", "buzz.bestie", "buzz.repos"])
     await act(() => current.plugins.change("disable", id));
   expect(
-    within(screen.getByRole("navigation", { name: "Pages" })).queryByRole(
-      "button",
-      { name: "Activity" },
-    ),
+    screen.queryByRole("button", { name: "Activity" }),
   ).not.toBeInTheDocument();
-  expect(screen.queryByRole("tab", { name: "Bestie" })).not.toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: "Messages" })).toBeInTheDocument();
   expect(
-    screen.getByRole("complementary", { name: "Sidebar" }),
-  ).toBeInTheDocument();
+    screen.queryByRole("button", { name: "Bestie" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Team" })).toBeInTheDocument();
+  expect(screen.getByRole("navigation", { name: "Apps" })).toBeInTheDocument();
 });
-
-/** Activity is a row at the top of the Messages sidebar. While the app
- * starts, that sidebar remounts once it becomes resizable, so find the row
- * after that. */
-async function findActivityRow() {
-  await screen.findByRole("separator", { name: "Resize sidebar" });
-  return within(screen.getByRole("navigation", { name: "Pages" })).getByRole(
-    "button",
-    { name: "Activity" },
-  );
-}
 
 function legacyPageFixture(
   memberships = [{ id: origin, name: "Fixture community" }],
@@ -1057,7 +1060,7 @@ it.each(
         JSON.stringify({ version: 3, enabled: { "buzz.bestie": true } }),
       );
     const current = legacyPageFixture();
-    await findActivityRow();
+    await screen.findByRole("button", { name: "Activity" });
     const pageId = name.toLowerCase();
 
     act(() => {
@@ -1243,7 +1246,7 @@ it("cold Settings Close uses required Messages when Inbox is disabled", async ()
 
 it("Close returns to the immediately preceding failed destination, not an older retained workspace", async () => {
   const current = legacyPageFixture();
-  await findActivityRow();
+  await screen.findByRole("button", { name: "Activity" });
   await act(async () => {
     void current.navigation.open({
       version: 1,
@@ -1298,14 +1301,16 @@ async function activityTurnedOff() {
     within(card)
       .getAllByRole("button")
       .map((button) => button.textContent),
-  ).toEqual(["Manage plugins", "Go to Messages"]);
+  ).toEqual(["Manage plugins", "Go to Team"]);
   return card;
 }
 
 /** Turns Activity off while it's open, then goes to Messages and Back. */
 async function backOntoTurnedOffActivity() {
   const current = legacyPageFixture();
-  await userEvent.click(await findActivityRow());
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Activity" }),
+  );
   await waitFor(() =>
     expect(current.navigation.snapshot()).toMatchObject({
       status: "opened",
@@ -1316,7 +1321,7 @@ async function backOntoTurnedOffActivity() {
   await act(() => current.plugins.change("disable", "buzz.inbox"));
   await userEvent.click(
     within(await activityTurnedOff()).getByRole("button", {
-      name: "Go to Messages",
+      name: "Go to Team",
     }),
   );
   await waitFor(() =>
@@ -1392,7 +1397,7 @@ it("turning a plugin back on over its failed page offers Try again, which opens 
     within(card)
       .getAllByRole("button")
       .map((button) => button.textContent),
-  ).toEqual(["Try again", "Go to Messages"]);
+  ).toEqual(["Try again", "Go to Team"]);
   expect(
     screen.queryByRole("heading", { name: "Activity is turned off" }),
   ).not.toBeInTheDocument();
@@ -1428,7 +1433,7 @@ it("keeps the unavailable card for a turned-off external plugin while external p
         }
       : result;
   const current = legacyPageFixture();
-  await findActivityRow();
+  await screen.findByRole("button", { name: "Activity" });
   expect(current.plugins.snapshot().configuration).toMatchObject({
     status: "ready",
     externalPluginsPaused: true,

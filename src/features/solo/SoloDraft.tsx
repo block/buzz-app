@@ -179,6 +179,8 @@ const openNewChats = new Set<{
 const restoredPrompts = new Map<string, string>();
 const REGION_UNAVAILABLE =
   "This chat's plugin is unavailable. Your draft is saved.";
+// Allow async local preparation without leaving Send stuck on a plugin.
+const PREPARE_START_TIMEOUT_MS = 3_000;
 
 export function SoloDraft({
   session,
@@ -458,14 +460,12 @@ export function SoloDraft({
       regionOwner();
       // The region's source finds how its chat started, even after a restart.
       const startKey = region ? regionStartKey(channelId) : undefined;
-      if (
-        startKey &&
-        !writeView(scope, startKey, {
-          region,
-          ...(regionDraft ? { draft: regionDraft } : {}),
-          ...(project ? { workspace: project } : {}),
-        })
-      )
+      const startRecord = {
+        ...(region ? { region } : {}),
+        ...(regionDraft ? { draft: regionDraft } : {}),
+        ...(project ? { workspace: project } : {}),
+      };
+      if (startKey && !writeView(scope, startKey, startRecord))
         throw new Error(
           "This chat couldn't be saved on this device. Your draft is kept.",
         );
@@ -483,6 +483,39 @@ export function SoloDraft({
           );
       let starting: ReturnType<typeof session.channelWrites.start>;
       try {
+        const owner = regionOwner();
+        if (owner?.source.prepareStart) {
+          let timeout: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              Promise.resolve(
+                owner.source.prepareStart(owner.binding, {
+                  channelId,
+                  members,
+                  start: {
+                    ...(project ? { workspace: project } : {}),
+                    draft: regionDraft ?? { context: { saved: startRecord } },
+                  },
+                }),
+              ),
+              new Promise<never>((_resolve, reject) => {
+                timeout = setTimeout(
+                  () => reject(new Error("Solo region preparation timed out")),
+                  PREPARE_START_TIMEOUT_MS,
+                );
+              }),
+            ]);
+          } catch (reason) {
+            console.warn("Solo region could not prepare its chat", reason);
+          } finally {
+            clearTimeout(timeout);
+          }
+          if (!mounted.current) {
+            if (startKey) writeView(scope, startKey, null);
+            return;
+          }
+          regionOwner();
+        }
         starting = session.channelWrites.start(
           channelId,
           name,

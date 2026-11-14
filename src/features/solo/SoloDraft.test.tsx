@@ -54,6 +54,7 @@ import { ChannelCompletion } from "../../bundled/channels/ChannelCompletion";
 import { channelQuery } from "../../bundled/channels/channel-query";
 import type { ComposerCompletion } from "../conversation/contracts";
 import type { Contribution } from "../../plugins/contributions";
+import type { SoloRegionSource } from "../channel-navigation/solo-navigation-contract";
 
 vi.mock(
   "../messages/solo-model-picks-storage",
@@ -1449,9 +1450,25 @@ it("invalid stored draft lifetime fails visibly without a new create", async () 
   expect(h.channelWrites.delivered).not.toHaveBeenCalled();
 });
 
-async function projectSetup() {
+async function projectSetup(agents: string[] = []) {
   vi.stubGlobal("crypto", webcrypto);
   const f = setup();
+  if (agents.length) {
+    const choices = f.session.agentChoices.snapshot();
+    const withTemplates = {
+      ...choices,
+      templates: {
+        status: "ready" as const,
+        complete: true,
+        identities: choices.identities.map((agent) => ({
+          ...agent,
+          managed: true,
+        })),
+      },
+      archives: { status: "ready" as const, archived: [] },
+    };
+    Object.assign(f.session.agentChoices, { snapshot: () => withTemplates });
+  }
   const entries = await Promise.all(
     ["work", "other"].map(async (id) => ({
       eventId: id,
@@ -1460,7 +1477,7 @@ async function projectSetup() {
           type: "template",
           id: await projectTemplateId(id),
           canvas: `${id} instructions`,
-          agents: [],
+          agents,
           teamIds: [],
         },
       },
@@ -3597,6 +3614,198 @@ const REGION = "buzz.region:example:tasks";
 const regionBinding = { scope: "test", viewer: "f".repeat(64), incarnation: 1 };
 const startOptions = (test: ReturnType<typeof setup>) =>
   (test.channelWrites.start.mock.calls[0] as unknown[] | undefined)?.[6];
+it.each([false, true])(
+  "prepares a region start before creating the chat or sending (explicit context=%s)",
+  async (explicit) => {
+    // Include an agent from workspace defaults as well as the addressed agent.
+    const test = await projectSetup(["b".repeat(64)]);
+    const draft = explicit
+      ? { key: "item:42", context: { item: "42" } }
+      : undefined;
+    const prepareStart = vi.fn<NonNullable<SoloRegionSource["prepareStart"]>>(
+      (binding, input) => {
+        expect(binding).toEqual(regionBinding);
+        expect(input).toEqual({
+          channelId: expect.any(String),
+          members: ["a".repeat(64), "b".repeat(64)],
+          start: {
+            workspace: "work",
+            draft: draft ?? {
+              context: { saved: { region: REGION, workspace: "work" } },
+            },
+          },
+        });
+        expect(readView("test", regionStartKey(input.channelId), null)).toEqual(
+          {
+            region: REGION,
+            workspace: "work",
+            ...(draft ? { draft } : {}),
+          },
+        );
+        expect(test.channelWrites.start).not.toHaveBeenCalled();
+        expect(test.channelWrites.create).not.toHaveBeenCalled();
+        expect(test.messages.send).not.toHaveBeenCalled();
+      },
+    );
+    regionNavigation.set({ source: { prepareStart }, binding: regionBinding });
+    writeView(
+      "test",
+      `${regionDraftKey(REGION, "work", draft?.key)}:new-draft`,
+      taggedDraft("Plan the launch"),
+    );
+    render(
+      <SoloDraft
+        session={test.session}
+        scope="test"
+        projectId="work"
+        region={REGION}
+        {...(draft ? { draft } : {})}
+        onStarted={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(test.messages.send).toHaveBeenCalledOnce());
+    expect(prepareStart).toHaveBeenCalledOnce();
+    expect(prepareStart.mock.results[0]?.type).toBe("return");
+    expect(test.channelWrites.start.mock.calls[0]?.[0]).toBe(
+      prepareStart.mock.calls[0]?.[1].channelId,
+    );
+    expect(test.channelWrites.start.mock.calls[0]?.[2]).toEqual(
+      prepareStart.mock.calls[0]?.[1].members,
+    );
+    expect(test.messages.send.mock.calls[0]?.[0]).toBe(
+      prepareStart.mock.calls[0]?.[1].channelId,
+    );
+  },
+);
+
+function preparingRegionDraft() {
+  const test = setup();
+  let resolve!: () => void;
+  let reject!: (reason: Error) => void;
+  const pending = new Promise<void>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  const prepareStart = vi.fn<NonNullable<SoloRegionSource["prepareStart"]>>(
+    () => pending,
+  );
+  regionNavigation.set({ source: { prepareStart }, binding: regionBinding });
+  writeView(
+    "test",
+    `${regionDraftKey(REGION)}:new-draft`,
+    taggedDraft("Plan the launch"),
+  );
+  const view = render(
+    <SoloDraft
+      session={test.session}
+      scope="test"
+      region={REGION}
+      onStarted={vi.fn()}
+    />,
+  );
+  return { ...test, prepareStart, resolve, reject, view };
+}
+
+it("awaits asynchronous region preparation before creating or sending", async () => {
+  const test = preparingRegionDraft();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
+  );
+  vi.useFakeTimers();
+  try {
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Send message" })),
+    );
+    expect(test.prepareStart).toHaveBeenCalledOnce();
+    expect(test.channelWrites.start).not.toHaveBeenCalled();
+    expect(test.messages.send).not.toHaveBeenCalled();
+    // A second Send while preparation is pending cannot duplicate the start.
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Send message" })),
+    );
+    expect(test.prepareStart).toHaveBeenCalledOnce();
+    await act(async () => test.resolve());
+    expect(test.channelWrites.start).toHaveBeenCalledOnce();
+    expect(test.messages.send).toHaveBeenCalledOnce();
+  } finally {
+    test.resolve();
+    vi.useRealTimers();
+  }
+});
+
+it.each(["throw", "reject", "timeout"] as const)(
+  "warns and sends anyway when region preparation fails: %s",
+  async (failure) => {
+    const test = preparingRegionDraft();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled(),
+    );
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    if (failure === "throw")
+      test.prepareStart.mockImplementation(() => {
+        throw new Error("setup failed");
+      });
+    vi.useFakeTimers();
+    try {
+      await act(async () =>
+        fireEvent.click(screen.getByRole("button", { name: "Send message" })),
+      );
+      expect(test.prepareStart).toHaveBeenCalledOnce();
+      if (failure !== "throw") {
+        expect(test.channelWrites.start).not.toHaveBeenCalled();
+        expect(test.messages.send).not.toHaveBeenCalled();
+        if (failure === "reject") {
+          await act(async () => test.reject(new Error("setup failed")));
+        } else {
+          await act(async () => vi.advanceTimersByTimeAsync(2_999));
+          expect(test.channelWrites.start).not.toHaveBeenCalled();
+          expect(test.messages.send).not.toHaveBeenCalled();
+          await act(async () => vi.advanceTimersByTimeAsync(1));
+        }
+      }
+      expect(test.channelWrites.start).toHaveBeenCalledOnce();
+      expect(test.messages.send).toHaveBeenCalledOnce();
+      expect(warning).toHaveBeenCalledWith(
+        "Solo region could not prepare its chat",
+        expect.any(Error),
+      );
+      // A late rejection remains observed, and cannot send a second message.
+      if (failure === "timeout")
+        await act(async () => test.reject(new Error("late failure")));
+      expect(test.messages.send).toHaveBeenCalledOnce();
+    } finally {
+      test.resolve();
+      vi.useRealTimers();
+      warning.mockRestore();
+    }
+  },
+);
+
+it.each(["source stops", "draft unmounts"])(
+  "does not create a chat when %s during preparation",
+  async (change) => {
+    const test = preparingRegionDraft();
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(test.prepareStart).toHaveBeenCalledOnce();
+    const id = test.prepareStart.mock.calls[0]?.[1]?.channelId;
+    assert(id);
+    if (change === "source stops") act(() => regionNavigation.set(undefined));
+    else test.view.unmount();
+    await act(async () => test.resolve());
+    expect(test.channelWrites.start).not.toHaveBeenCalled();
+    expect(test.messages.send).not.toHaveBeenCalled();
+    expect(readView("test", regionStartKey(id), null)).toBeNull();
+  },
+);
+
 it("a region's New chat starts a labeled chat its source can find, without filing it", async () => {
   const test = await projectSetup(),
     onStarted = vi.fn(),

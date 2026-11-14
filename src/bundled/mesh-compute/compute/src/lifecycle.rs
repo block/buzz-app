@@ -196,6 +196,11 @@ impl Lifecycle {
                     .map_err(BeforeNode)?;
                 // Serving resolves and acquires its own artifacts (including layer packages).
                 // A separate GGUF download here duplicates acquisition.
+                let hub = mesh_llm_host_runtime::models::huggingface_hub_cache_dir();
+                let dropped = crate::package_cache::drop_unservable_layer_package_refs(&hub);
+                if dropped > 0 {
+                    eprintln!("mesh-compute: re-resolving {dropped} layer package ref(s) cached as schema v1");
+                }
                 mesh_llm_sdk::serve::start(config).await
             },
             true,

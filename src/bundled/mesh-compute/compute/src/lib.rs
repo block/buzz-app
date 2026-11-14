@@ -21,4 +21,5 @@ pub mod roster;
 pub mod publication;
 
 pub mod catalog;
+mod package_cache;
 mod progress;

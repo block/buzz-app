@@ -24,15 +24,14 @@ import type {
   NavigationScope,
   OpenTarget,
 } from "../../features/navigation/targets";
-import { useChannelList } from "../../features/relay/react";
-import { useUnreadState } from "../../bundled/channels/UnreadBadge";
 import {
-  conversationIndex,
   useConversationEvent,
   useConversationKeys,
+  useConversationReaction,
   useConversationRecord,
   type ConversationEvent,
   type ConversationQuery,
+  type ConversationRecord,
 } from "./conversation-index";
 import { channelIcon, channelText } from "../../features/channels/channel-icon";
 import { ChannelAvatar } from "../channels/ChannelAvatar";
@@ -76,13 +75,8 @@ import {
 } from "../../shared/view-state";
 import styles from "./ConversationList.module.css";
 import feedStyles from "./FeedList.module.css";
-import {
-  useVisibleChannelPreviews,
-  type LatestMessage,
-} from "./latest-previews";
+import { useVisibleChannelPreviews } from "./latest-previews";
 import { useIdentityNames } from "../../features/identity-names/react";
-import { dmLabel } from "./dm-label";
-import { reactionRows } from "./reaction-rows";
 import type { ReadTarget } from "../relay/read-state-model";
 import { ReactionRow } from "./ReactionRow";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
@@ -99,6 +93,8 @@ export type ActivityView = {
     | "reactions";
   unread: boolean;
   sort?: "recent" | "alpha";
+  /** Only what people, or only what agents, sent. */
+  sender?: "humans" | "agents";
 };
 type View = ActivityView;
 
@@ -167,6 +163,9 @@ function readSavedView(scope: string): View {
   const saved = readView<Partial<View> | null>(scope, viewKey, null);
   return {
     ...(saved?.sort === "alpha" && { sort: "alpha" as const }),
+    ...((saved?.sender === "humans" || saved?.sender === "agents") && {
+      sender: saved.sender,
+    }),
     filter:
       saved?.filter === "threads" ||
       saved?.filter === "dms" ||
@@ -184,12 +183,9 @@ function readSavedView(scope: string): View {
   };
 }
 
-/** All keeps Solo in its own collection; explicit agent/direct views may include it. */
-export function includeMessagesChannel(
-  channel: ChannelSummary,
-  view: ActivityView,
-) {
-  return view.filter !== "all" || channel.channelType !== "solo";
+/** Sets a list's saved view from outside it: an address that names one. */
+export function saveActivityView(scope: string, change: (view: View) => View) {
+  writeView(scope, viewKey, change(readSavedView(scope)));
 }
 
 /** Conversation identity follows the roster, never the most recent sender. */
@@ -245,6 +241,7 @@ export function ConversationFiltersMenu({
   sort = false,
   views = false,
   agentViews = false,
+  from = false,
   label,
   variant = "glass",
 }: {
@@ -253,6 +250,8 @@ export function ConversationFiltersMenu({
   sort?: boolean;
   views?: boolean;
   agentViews?: boolean;
+  /** Offers people or agents only: for lists other people write in. */
+  from?: boolean;
   label?: string;
   variant?: "glass" | "ghost";
 }) {
@@ -299,6 +298,34 @@ export function ConversationFiltersMenu({
                   {label}
                 </MenuRadioItem>
               ))}
+            </MenuRadioGroup>
+            <MenuSeparator />
+          </>
+        )}
+        {from && (
+          <>
+            <MenuRadioGroup
+              aria-label="From"
+              value={view.sender ?? "everyone"}
+              onValueChange={(value) => {
+                const { sender: _, ...rest } = view;
+                onChange(
+                  value === "humans" || value === "agents"
+                    ? { ...rest, sender: value }
+                    : rest,
+                );
+              }}
+            >
+              <MenuGroupLabel>From</MenuGroupLabel>
+              <MenuRadioItem value="everyone" closeOnClick>
+                Anyone
+              </MenuRadioItem>
+              <MenuRadioItem value="humans" closeOnClick>
+                People
+              </MenuRadioItem>
+              <MenuRadioItem value="agents" closeOnClick>
+                Agents
+              </MenuRadioItem>
             </MenuRadioGroup>
             <MenuSeparator />
           </>
@@ -368,7 +395,12 @@ export function ActivityFilters({
         layout === "sidebar" ? (
           creationAction
         ) : (
-          <ConversationFiltersMenu view={view} onChange={onChange} sort />
+          <ConversationFiltersMenu
+            view={view}
+            onChange={onChange}
+            sort
+            from={!agentViews}
+          />
         )
       }
       trailingAction={
@@ -439,7 +471,16 @@ type Open = (
   channelId: string,
   options?: { messageId?: string; threadRootId?: string },
 ) => void;
-const noRows: ConversationQuery = { filter: "reactions", unread: false };
+type WrapRow =
+  | ((entry: ConversationListEntry, row: ReactNode) => ReactNode)
+  | undefined;
+/** Rows tell the list whose names and faces they show. */
+type Need = (row: string, people: string) => void;
+const noRows: ConversationQuery = {
+  filter: "all",
+  unread: false,
+  within: new Set(),
+};
 
 export function ConversationList({
   session,
@@ -447,11 +488,9 @@ export function ConversationList({
   scope,
   target,
   view,
-  onOpen,
-  isOpen,
-  includeAuthor,
+  home,
+  within,
   layout = "sidebar",
-  includeChannel,
   wrapRow,
 }: {
   session: RelaySession;
@@ -460,26 +499,14 @@ export function ConversationList({
   scope: NavigationScope;
   target: OpenTarget;
   view: View;
-  onOpen?:
-    | ((target: {
-        channelId: string;
-        messageId?: string;
-        threadId?: string;
-      }) => boolean)
-    | undefined;
-  includeAuthor?: ((authorId: string) => boolean) | undefined;
-  /** A sheet host owns selection while its page route remains active. */
-  isOpen?:
-    | ((target: { channelId: string; threadId?: string }) => boolean)
-    | undefined;
+  /** Team's conversations or Solo's; Team's All is the interleaved feed. */
+  home?: ConversationQuery["home"];
+  /** Only these conversations: a section's own. Keep it while they are equal. */
+  within?: ReadonlySet<string> | undefined;
   layout?: Layout;
-  includeChannel?: ((channel: ChannelSummary) => boolean) | undefined;
   /** Keep host-owned row context actions around the shared feed renderer. */
-  wrapRow?:
-    | ((entry: ConversationListEntry, row: ReactNode) => ReactNode)
-    | undefined;
+  wrapRow?: WrapRow;
 }) {
-  const index = conversationIndex(session);
   useEffect(() => session.channels.ensureList(), [session]);
   const ready = useSyncExternalStore(
     session.channels.subscribeList,
@@ -491,113 +518,57 @@ export function ConversationList({
     session.profiles.snapshot,
   );
   const resolveName = useIdentityNames(session.names);
-  const selectedChannel =
-    target.kind === "conversation" ? target.channelId : undefined;
-  const selectedThread =
-    target.kind === "conversation" ? target.threadRootId : undefined;
-  const isSelected = (channelId: string, threadId?: string) =>
-    isOpen
-      ? isOpen({ channelId, ...(threadId ? { threadId } : {}) })
-      : selectedChannel === channelId && selectedThread === threadId;
+  const selected = target.kind === "conversation" ? target : undefined;
 
-  const openNow: Open = (channelId, options = {}) => {
-    if (
-      onOpen?.({
-        channelId,
-        ...(options.messageId && { messageId: options.messageId }),
-        ...(options.threadRootId && { threadId: options.threadRootId }),
-      })
-    )
-      return;
-    void navigator.open({
-      version: 1,
-      kind: "conversation",
-      scope,
-      channelId,
-      ...(options.messageId ? { messageId: options.messageId } : {}),
-      // A thread opens on its own; its header offers the channel beside it.
-      ...(options.threadRootId
-        ? { threadRootId: options.threadRootId, context: "thread" as const }
-        : {}),
-    });
-  };
   // Rows keep one handler for as long as they are mounted.
-  const opener = useRef(openNow);
+  const opener = useRef<Open>(() => {});
   useLayoutEffect(() => {
-    opener.current = openNow;
+    opener.current = (channelId, options = {}) =>
+      void navigator.open({
+        version: 1,
+        kind: "conversation",
+        scope,
+        channelId,
+        ...(options.messageId ? { messageId: options.messageId } : {}),
+        // A thread opens on its own; its header offers the channel beside it.
+        ...(options.threadRootId
+          ? { threadRootId: options.threadRootId, context: "thread" as const }
+          : {}),
+      });
   });
   const open = useCallback<Open>(
     (channelId, options) => opener.current(channelId, options),
     [],
   );
 
-  const unreadOnly = view.unread;
-  const filter = view.filter;
-  // This render's question. Its functions close over this render's selection
-  // and names, so the index answers it afresh.
-  const query: ConversationQuery = {
+  const { filter, unread: unreadOnly, sender } = view;
+  const place = { home, within };
+  const keys = useConversationKeys(session, {
+    ...place,
     filter,
     unread: unreadOnly,
     sort: view.sort,
-    include: includeChannel,
-    includeAuthor,
+    sender,
     // Opening a conversation quiets its row at once; Unread keeps it listed.
-    keep: (channelId) => isSelected(channelId),
-    label: (channel) => channelLabel(channel, profiles, resolveName),
-  };
-  const keys = useConversationKeys(session, query);
-  const order = useFrozenOrder(keys.join("\n"));
+    keep:
+      unreadOnly && !selected?.threadRootId ? selected?.channelId : undefined,
+  });
+  const order = useFrozenOrder(keys);
   // Waiting and a sender filter judge the latest author of every candidate,
   // shown or not, so each needs its preview.
-  const authors = filter === "waiting" || !!includeAuthor;
   const candidates = useConversationKeys(
     session,
-    !authors
-      ? noRows
-      : filter === "waiting" || filter === "working"
-        ? {
-            filter: "all",
-            unread: false,
-            include: (channel) =>
-              channel.channelType === "solo" &&
-              (!includeChannel || includeChannel(channel)),
-          }
-        : { filter, unread: false, include: includeChannel },
+    filter === "waiting"
+      ? { filter: "all", unread: false, home: "solo", within }
+      : sender
+        ? { ...place, filter, unread: false }
+        : noRows,
   );
   const { observe: previewRef } = useVisibleChannelPreviews(
     session,
     candidates.flatMap((key) => (key.startsWith("c:") ? [key.slice(2)] : [])),
   );
-
-  // The people these rows name and picture.
-  const people = useSyncExternalStore(index.subscribe, () => {
-    const ids = new Set<string>(session.viewer ? [session.viewer] : []);
-    let events = 0;
-    for (const key of index.view(query)) {
-      if (key.startsWith("e:")) {
-        const event = events++ < 100 ? index.event(key.slice(2)) : undefined;
-        if (event) ids.add(event.authorId);
-        continue;
-      }
-      const record = index.record(key.slice(2));
-      if (!record) continue;
-      const { channel, kind } = record;
-      if (kind === "dm")
-        for (const id of channel.participants ?? []) ids.add(id);
-      if (kind !== "team")
-        for (const id of conversationPeople(channel, session.viewer))
-          ids.add(id);
-      if (record.latest?.authorId) ids.add(record.latest.authorId);
-      if (record.thread) ids.add(record.thread.authorId);
-    }
-    return [...ids].sort().join(":");
-  });
-  useEffect(() => {
-    if (people && ready)
-      void session.profiles
-        .ensure(people.split(":"), "background")
-        .catch(() => {});
-  }, [session, people, ready]);
+  const need = useProfiles(session, ready);
   const nameOf = useCallback(
     (id: string) =>
       resolveName(
@@ -607,50 +578,46 @@ export function ConversationList({
     [resolveName, profiles],
   );
 
-  if (filter === "reactions")
-    return (
-      <div className={styles.activity} data-activity-sidebar="">
-        <ReactionList
-          session={session}
-          layout={layout}
-          includeChannel={includeChannel}
-          includeAuthor={includeAuthor}
-          profiles={profiles}
-          resolveName={resolveName}
-          isSelected={(channelId, messageId) =>
-            target.kind === "conversation" &&
-            target.channelId === channelId &&
-            target.messageId === messageId
-          }
-          onOpen={open}
-        />
-      </div>
-    );
   return (
     <div className={styles.activity} data-activity-sidebar="">
       <ul
         className={layout === "feed" ? feedStyles.list : styles.rows}
-        aria-label="Conversations"
+        aria-label={filter === "reactions" ? "Reactions" : "Conversations"}
       >
-        {order.map((key) =>
-          key.startsWith("e:") ? (
+        {order.map((key) => {
+          const id = key.slice(2);
+          return key.startsWith("e:") ? (
             <EventRow
               key={key}
-              id={key.slice(2)}
+              id={id}
               session={session}
               scope={scope}
               layout={layout}
               profiles={profiles}
               nameOf={nameOf}
               unreadOnly={unreadOnly}
-              isSelected={isSelected}
+              selected={selected}
               onOpen={open}
+              need={need}
               wrapRow={wrapRow}
+            />
+          ) : key.startsWith("r:") ? (
+            <ReactionListRow
+              key={key}
+              id={id}
+              sender={sender}
+              session={session}
+              layout={layout}
+              profiles={profiles}
+              resolveName={resolveName}
+              selected={selected}
+              onOpen={open}
+              need={need}
             />
           ) : (
             <IndexedRow
               key={key}
-              id={key.slice(2)}
+              id={id}
               previewRef={previewRef}
               wrapRow={wrapRow}
               scope={scope}
@@ -658,13 +625,13 @@ export function ConversationList({
               session={session}
               profiles={profiles}
               nameOf={nameOf}
-              resolveName={resolveName}
               unreadOnly={unreadOnly}
-              selected={isSelected(key.slice(2))}
+              selected={selected?.channelId === id && !selected.threadRootId}
               onOpen={open}
+              need={need}
             />
-          ),
-        )}
+          );
+        })}
       </ul>
       {ready && !keys.length && (
         <EmptyState
@@ -679,11 +646,13 @@ export function ConversationList({
                   ? "No DMs yet"
                   : filter === "mentions"
                     ? "No mentions yet"
-                    : filter === "working"
-                      ? "No agent is working right now"
-                      : filter === "waiting"
-                        ? "Nothing is waiting on you"
-                        : "Nothing here yet"
+                    : filter === "reactions"
+                      ? "No reactions yet"
+                      : filter === "working"
+                        ? "No agent is working right now"
+                        : filter === "waiting"
+                          ? "Nothing is waiting on you"
+                          : "Nothing here yet"
           }
           description={unreadOnly ? "Nothing unread in this view." : undefined}
         />
@@ -692,39 +661,85 @@ export function ConversationList({
   );
 }
 
-const channelLabel = (
-  channel: ChannelSummary,
-  profiles: ReadonlyMap<string, Profile>,
-  resolveName: ReturnType<typeof useIdentityNames>,
-) =>
-  channel.channelType === "dm"
-    ? dmLabel(channel.participants, profiles, resolveName, channel.name)
-    : channel.name;
+/**
+ * Loads the profiles the mounted rows show, in one request for all of them.
+ * Each row reports its own people, so a message asks again only when it brings
+ * someone new.
+ */
+function useProfiles(session: RelaySession, ready: boolean): Need {
+  const rows = useRef(new Map<string, string>());
+  const [people, setPeople] = useState("");
+  const queued = useRef(false);
+  const need = useCallback<Need>(
+    (row, ids) => {
+      if ((rows.current.get(row) ?? "") === ids) return;
+      if (ids) rows.current.set(row, ids);
+      else rows.current.delete(row);
+      if (queued.current) return;
+      queued.current = true;
+      queueMicrotask(() => {
+        queued.current = false;
+        const all = new Set<string>(session.viewer ? [session.viewer] : []);
+        for (const ids of rows.current.values())
+          for (const id of ids.split(":")) all.add(id);
+        setPeople([...all].sort().join(":"));
+      });
+    },
+    [session],
+  );
+  useEffect(() => {
+    if (!people || !ready) return;
+    const ids = people.split(":");
+    void session.profiles
+      .ensure(
+        ids.slice(0, session.profiles.limit?.() ?? ids.length),
+        "background",
+      )
+      .catch(() => {});
+  }, [session, people, ready]);
+  return need;
+}
+/** Reports a row's people while it is mounted. */
+function useNeed(need: Need, row: string, people: string) {
+  useEffect(() => {
+    need(row, people);
+    return () => need(row, "");
+  }, [need, row, people]);
+}
 
 /** A conversation's row, drawn from its own record in the index. */
 const IndexedRow = memo(function IndexedRow({
   id,
+  need,
   ...row
-}: { id: string } & Omit<
+}: { id: string; need: Need } & Omit<
   Parameters<typeof ChannelActivityRow>[0],
-  "channel" | "at" | "latest" | "team" | "working" | "label"
+  "record"
 >) {
   const record = useConversationRecord(row.session, id);
-  return record ? (
-    <ChannelActivityRow
-      {...row}
-      label={channelLabel(record.channel, row.profiles, row.resolveName)}
-      channel={record.channel}
-      at={record.at}
-      latest={record.latest}
-      team={record.kind === "team"}
-      working={record.working}
-    />
-  ) : null;
+  useNeed(
+    need,
+    `c:${id}`,
+    record
+      ? [
+          ...new Set([
+            ...(record.kind === "dm"
+              ? (record.channel.participants ?? [])
+              : []),
+            ...(record.kind === "team"
+              ? []
+              : conversationPeople(record.channel, row.session.viewer)),
+            ...(record.latest?.authorId ? [record.latest.authorId] : []),
+            ...(record.thread ? [record.thread.authorId] : []),
+          ]),
+        ].join(":")
+      : "",
+  );
+  return record ? <ChannelActivityRow {...row} record={record} /> : null;
 });
 
 /** A thread or mention: a message, opened where it lives. */
-function EventRow({
+const EventRow = memo(function EventRow({
   id,
   session,
   scope,
@@ -732,8 +747,9 @@ function EventRow({
   profiles,
   nameOf,
   unreadOnly,
-  isSelected,
+  selected,
   onOpen,
+  need,
   wrapRow,
 }: {
   id: string;
@@ -743,11 +759,10 @@ function EventRow({
   profiles: ReadonlyMap<string, Profile>;
   nameOf(id: string): string;
   unreadOnly: boolean;
-  isSelected(channelId: string, threadId?: string): boolean;
+  selected: Extract<OpenTarget, { kind: "conversation" }> | undefined;
   onOpen: Open;
-  wrapRow?:
-    | ((entry: ConversationListEntry, row: ReactNode) => ReactNode)
-    | undefined;
+  need: Need;
+  wrapRow?: WrapRow;
 }) {
   const notify = useToastNotification();
   const event = useConversationEvent(session, id);
@@ -755,13 +770,18 @@ function EventRow({
     session,
     event?.channelId ?? "",
   )?.channel;
+  useNeed(need, `e:${id}`, event?.authorId ?? "");
   if (!event) return null;
   const name = nameOf(event.authorId);
   const profile = profiles.get(event.authorId);
   const content = (
     <ConversationRow
       layout={layout}
-      selected={!!event.rootId && isSelected(event.channelId, event.rootId)}
+      selected={
+        !!event.rootId &&
+        selected?.channelId === event.channelId &&
+        selected.threadRootId === event.rootId
+      }
       onClick={() =>
         onOpen(event.channelId, {
           messageId: event.messageId,
@@ -804,7 +824,10 @@ function EventRow({
     />
   );
   return (
-    <li className={layout === "feed" ? feedStyles.item : undefined}>
+    <li
+      data-activity-event={event.key}
+      className={layout === "feed" ? feedStyles.item : undefined}
+    >
       {wrapRow
         ? wrapRow(
             {
@@ -828,7 +851,7 @@ function EventRow({
         : content}
     </li>
   );
-}
+});
 
 /** Sidebar-width recency, as the Activity card abbreviates it. */
 export function shortTime(unixSeconds: number, nowSeconds = Date.now() / 1000) {
@@ -847,7 +870,7 @@ export function shortTime(unixSeconds: number, nowSeconds = Date.now() / 1000) {
  * Keeps rows where they are while the pointer or keyboard is in the list, so a
  * new message doesn't move a row out from under a click. New rows go at the end.
  */
-function useFrozenOrder(key: string) {
+function useFrozenOrder(keys: readonly string[]) {
   const [frozen, setFrozen] = useState(false);
   const held = useRef<readonly string[]>([]);
   useEffect(() => {
@@ -869,74 +892,52 @@ function useFrozenOrder(key: string) {
     };
   }, []);
   return useMemo(() => {
-    const next = key ? key.split("\n") : [];
     if (!frozen) {
-      held.current = next;
-      return next;
+      held.current = keys;
+      return keys;
     }
-    const present = new Set(next);
+    const present = new Set(keys);
     const kept = held.current.filter((id) => present.has(id));
     const keptSet = new Set(kept);
-    held.current = [...kept, ...next.filter((id) => !keptSet.has(id))];
+    held.current = [...kept, ...keys.filter((id) => !keptSet.has(id))];
     return held.current;
-  }, [frozen, key]);
+  }, [frozen, keys]);
 }
 
-/** Renders again only when its own conversation's evidence or state changes. */
+/** Renders again only when its own conversation's record or state changes. */
 export const ChannelActivityRow = memo(function ChannelActivityRow({
   previewRef,
   wrapRow,
   scope,
-  label,
   layout,
   session,
-  channel,
-  at,
-  latest,
-  team,
-  working,
+  record,
   profiles,
   nameOf,
-  resolveName,
   unreadOnly,
   selected,
   onOpen,
 }: {
   previewRef?: RefCallback<HTMLLIElement> | undefined;
   /** A stable host wrapper; the row describes itself to it. */
-  wrapRow?:
-    | ((entry: ConversationListEntry, row: ReactNode) => ReactNode)
-    | undefined;
-  /** With wrapRow: where this row opens and what the host calls it. */
+  wrapRow?: WrapRow;
+  /** With wrapRow: where this row opens. */
   scope?: NavigationScope | undefined;
-  label?: string | undefined;
-  layout: "sidebar" | "feed" | "navigation";
+  layout: Layout;
   session: RelaySession;
-  channel: ChannelSummary;
-  at: number;
-  latest: LatestMessage | undefined;
-  team: boolean;
-  /** An agent is on it: the typing dots take the state slot. */
-  working: boolean;
+  record: ConversationRecord;
   profiles: ReadonlyMap<string, Profile>;
   nameOf(id: string): string;
-  resolveName: ReturnType<typeof useIdentityNames>;
   unreadOnly: boolean;
   selected: boolean;
   onOpen(channelId: string): void;
 }) {
   const notify = useToastNotification();
-  const dm = channel.channelType === "dm";
-  const state = useUnreadState(session, channel.id, dm);
-  const threadUnread = (state.activity.items ?? []).some(
-    (item) => item.unreadCount > 0,
-  );
-  const unread = state.unread || threadUnread;
-  if (unreadOnly && !unread && !selected) return null;
-  const solo = channel.channelType === "solo";
+  const { channel, kind, latest, thread, at, unread, working, label } = record;
+  const dm = kind === "dm";
+  const solo = kind === "solo";
   const people = dm || solo ? conversationPeople(channel, session.viewer) : [];
   // The latest event: a thread reply you're in, when it is newer.
-  const thread = team ? newestThread(session, channel) : undefined;
   const replyIsNewest = !!thread && thread.createdAt > (latest?.createdAt ?? 0);
   const preview = replyIsNewest
     ? messagePreview(thread.preview)
@@ -990,12 +991,7 @@ export const ChannelActivityRow = memo(function ChannelActivityRow({
       placeIcon={privateIcon(channel)}
       place={
         dm
-          ? dmLabel(
-              channel.participants,
-              profiles,
-              resolveName,
-              channel.name || "Direct message",
-            )
+          ? label
           : solo || layout === "navigation"
             ? channel.name
             : channelText(channel)
@@ -1028,7 +1024,7 @@ export const ChannelActivityRow = memo(function ChannelActivityRow({
         ? wrapRow(
             {
               key: `c:${channel.id}`,
-              label: label ?? channel.name,
+              label,
               at,
               target: {
                 version: 1,
@@ -1043,18 +1039,6 @@ export const ChannelActivityRow = memo(function ChannelActivityRow({
     </li>
   );
 });
-
-/** The newest thread you're in, in a Team channel: its latest reply. */
-function newestThread(session: RelaySession, channel: ChannelSummary) {
-  let newest:
-    | NonNullable<
-        ReturnType<RelaySession["unread"]["activity"]>["items"]
-      >[number]
-    | undefined;
-  for (const item of session.unread.activity(channel.id).items ?? [])
-    if (!newest || item.createdAt > newest.createdAt) newest = item;
-  return newest;
-}
 
 /** Only a private channel needs a glyph; its name carries no "#". */
 function privateIcon(channel: ChannelSummary | undefined) {
@@ -1092,99 +1076,70 @@ function offerUndo(
   });
 }
 
-/** Reactions to your messages: context, never unread and never marked read. */
-function ReactionList({
+/** A reaction to your message: context, never unread and never marked read. */
+const ReactionListRow = memo(function ReactionListRow({
+  id,
+  sender,
   session,
   layout,
-  includeChannel,
-  includeAuthor,
   profiles,
   resolveName,
-  isSelected,
+  selected,
   onOpen,
+  need,
 }: {
+  id: string;
+  sender: ConversationQuery["sender"];
   session: RelaySession;
   layout: Layout;
-  includeChannel?: ((channel: ChannelSummary) => boolean) | undefined;
-  includeAuthor?: ((authorId: string) => boolean) | undefined;
   profiles: ReadonlyMap<string, Profile>;
   resolveName: ReturnType<typeof useIdentityNames>;
-  isSelected(channelId: string, messageId: string): boolean;
-  onOpen(
-    channelId: string,
-    options: { messageId?: string; threadRootId?: string },
-  ): void;
+  selected: Extract<OpenTarget, { kind: "conversation" }> | undefined;
+  onOpen: Open;
+  need: Need;
 }) {
-  const reactions = session.inboxFeed.reactions;
-  const feed = useSyncExternalStore(
-    reactions.subscribe,
-    reactions.snapshot,
-    reactions.snapshot,
+  const item = useConversationReaction(session, id, sender);
+  const channel = useConversationRecord(
+    session,
+    item?.channelId ?? "",
+  )?.channel;
+  useNeed(
+    need,
+    `r:${id}`,
+    item
+      ? [...new Set(item.events.map((event) => event.pubkey))]
+          .slice(0, 3)
+          .join(":")
+      : "",
   );
-  useEffect(() => {
-    void reactions.ensure();
-  }, [reactions]);
-  const channels = new Map(
-    useChannelList(session.channels).channels.map((channel) => [
-      channel.id,
-      channel,
-    ]),
-  );
-  const rows = reactionRows(
-    feed.items.filter((item) => {
-      const channel = channels.get(item.channelId);
-      return (
-        !!channel &&
-        !channel.archived &&
-        !channel.huddle &&
-        !channel.metadataPending &&
-        (!includeChannel || includeChannel(channel))
-      );
-    }),
-    includeAuthor,
-  );
+  if (!item) return null;
   return (
-    <>
-      <ul
-        className={layout === "feed" ? feedStyles.list : styles.rows}
-        aria-label="Reactions"
-      >
-        {rows.map((item) => (
-          <li
-            key={item.id}
-            className={layout === "feed" ? feedStyles.item : undefined}
-          >
-            <ReactionRow
-              item={item}
-              session={session}
-              profiles={profiles}
-              name={resolveName}
-              channel={channels.get(item.channelId)}
-              selected={isSelected(item.channelId, item.message.id)}
-              onClick={() =>
-                onOpen(item.channelId, {
-                  messageId: item.message.id,
-                  ...(item.message.threadRootId && {
-                    threadRootId: item.message.threadRootId,
-                  }),
-                })
-              }
-            />
-          </li>
-        ))}
-      </ul>
-      {!rows.length && (
-        <p className={`text-body-sm text-subtle ${styles.empty}`}>
-          {feed.status === "error"
-            ? (feed.error ?? "Couldn't load reactions.")
-            : feed.status === "ready"
-              ? "No reactions yet."
-              : "Loading reactions…"}
-        </p>
-      )}
-    </>
+    <li
+      data-activity-reaction={item.id}
+      className={layout === "feed" ? feedStyles.item : undefined}
+    >
+      <ReactionRow
+        item={item}
+        session={session}
+        profiles={profiles}
+        name={resolveName}
+        channel={channel}
+        selected={
+          selected?.channelId === item.channelId &&
+          selected.messageId === item.message.id
+        }
+        onClick={() =>
+          onOpen(item.channelId, {
+            messageId: item.message.id,
+            ...(item.message.threadRootId && {
+              threadRootId: item.message.threadRootId,
+            }),
+          })
+        }
+      />
+    </li>
   );
-}
+});
 
 async function markEventRead(session: RelaySession, event: ConversationEvent) {
   try {

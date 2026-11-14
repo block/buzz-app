@@ -4,6 +4,7 @@ import { AppDock } from "./AppDock";
 import styles from "./AppShell.module.css";
 import { ResizeHandle } from "../../features/panels/ResizeHandle";
 import { RailNavigation } from "./RailNavigation";
+import { RailDrag } from "./RailArrangement";
 import { ListColumn } from "./ListColumn";
 import { SidePanelPresence } from "../../features/panels/side-panel-presence";
 import { useListSection } from "./list-section";
@@ -196,7 +197,6 @@ function AppShellContent({
     searchServices?.sidebarSections,
     listColumn.list,
   );
-  const [listSlot, setListSlot] = useState<HTMLDivElement | null>(null);
   // Open side panels report themselves; the layout does not search for them.
   const [sidePanels, setSidePanels] = useState(0);
   const sidePanelPresence = useMemo(
@@ -428,7 +428,6 @@ function AppShellContent({
           navigator={railNavigator}
           listNavigator={listNavigator ?? searchServices.navigation}
           openInSection={openInSection}
-          list={listSection && { section: listSection.section, slot: listSlot }}
           pages={pages}
           selected={selected}
           onSelect={onSelect}
@@ -545,124 +544,141 @@ function AppShellContent({
           listSection ? (listColumn.list.open ? "open" : "closed") : undefined
         }
       >
-        {dock}
-        {!narrow && !compactRail && (
-          <ResizeHandle
-            label="Resize app sidebar"
-            width={railWidth}
-            min={240}
-            max={440}
-            target={railWorkspace}
-            property="--shell-rail-width"
-            className={styles.railResize}
-            setWidth={resizeRail}
-            reset={() => {
-              setRailWidth(304);
-              setSidebarOpen(true);
-            }}
+        <RailDrag>
+          {dock}
+          {!narrow && !compactRail && (
+            <ResizeHandle
+              label="Resize app sidebar"
+              width={railWidth}
+              min={240}
+              max={440}
+              target={railWorkspace}
+              property="--shell-rail-width"
+              className={styles.railResize}
+              setWidth={resizeRail}
+              reset={() => {
+                setRailWidth(304);
+                setSidebarOpen(true);
+              }}
+            />
+          )}
+          <div
+            ref={workspaceRef}
+            className="shell-dialog-frame"
+            data-shell-dialog-frame=""
           />
-        )}
-        <div
-          ref={workspaceRef}
-          className="shell-dialog-frame"
-          data-shell-dialog-frame=""
-        />
-        <div
-          className={`shell-body ${selected === "settings" ? "shell-body-settings" : ""}`}
-        >
-          <div className="relative flex min-h-0 min-w-0 flex-1">
-            <Panel as="div" joined flat>
-              <div className="shell-content">
-                <div
-                  id="shell-navigation"
-                  hidden={!hasNavigation}
-                  className="shell-navigation"
-                  data-sidebar-collapsible={
-                    (collapsibleSidebar && !narrow) || undefined
-                  }
-                  data-sidebar-open={visibleSidebar || undefined}
-                  aria-hidden={
-                    (collapsibleSidebar || narrow) && !visibleSidebar
-                  }
-                  inert={(collapsibleSidebar || narrow) && !visibleSidebar}
-                  data-expanded={navigationOpen}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key === "Escape" &&
-                      !event.shiftKey &&
-                      navigationOpen &&
-                      !event.defaultPrevented &&
-                      // The list column is portaled from the sidebar.
-                      event.target instanceof Node &&
-                      event.currentTarget.contains(event.target)
-                    ) {
-                      // Closing the drawer consumes Escape, so it marks nothing read.
-                      event.preventDefault();
-                      setNavigationOpen(false);
-                      navigationToggle.current?.focus();
+          <div
+            className={`shell-body ${selected === "settings" ? "shell-body-settings" : ""}`}
+          >
+            <div className="relative flex min-h-0 min-w-0 flex-1">
+              <Panel as="div" joined flat>
+                <div className="shell-content">
+                  <div
+                    id="shell-navigation"
+                    hidden={!hasNavigation}
+                    className="shell-navigation"
+                    data-sidebar-collapsible={
+                      (collapsibleSidebar && !narrow) || undefined
                     }
-                  }}
-                >
-                  <div className="shell-navigation-content">
-                    {hasNavigation ? navigation : null}
+                    data-sidebar-open={visibleSidebar || undefined}
+                    aria-hidden={
+                      (collapsibleSidebar || narrow) && !visibleSidebar
+                    }
+                    inert={(collapsibleSidebar || narrow) && !visibleSidebar}
+                    data-expanded={navigationOpen}
+                    onKeyDown={(event) => {
+                      if (
+                        event.key === "Escape" &&
+                        !event.shiftKey &&
+                        navigationOpen &&
+                        !event.defaultPrevented &&
+                        event.target instanceof Node &&
+                        event.currentTarget.contains(event.target)
+                      ) {
+                        // Closing the drawer consumes Escape, so it marks nothing read.
+                        event.preventDefault();
+                        setNavigationOpen(false);
+                        navigationToggle.current?.focus();
+                      }
+                    }}
+                  >
+                    <div className="shell-navigation-content">
+                      {hasNavigation ? navigation : null}
+                    </div>
                   </div>
-                </div>
-                <main
-                  id="main-content"
-                  tabIndex={-1}
-                  className="min-h-0 min-w-0 flex-1"
-                >
-                  <SidePanelPresence value={sidePanelPresence}>
-                    <Panel as="div" joined>
-                      <ConversationDetailPane value={detailPane.value}>
-                        <PanelFrame
-                          scope={connection.scope}
-                          companion={detailPane.companion ?? companion}
-                        >
-                          <div
-                            id={`shell-page-${owner}`}
-                            className={
-                              fillsWorkspace
-                                ? "buzz-tabs-panel h-full min-h-0"
-                                : "buzz-tabs-panel h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
-                            }
+                  <main
+                    id="main-content"
+                    tabIndex={-1}
+                    className="min-h-0 min-w-0 flex-1"
+                  >
+                    <SidePanelPresence value={sidePanelPresence}>
+                      <Panel as="div" joined>
+                        <ConversationDetailPane value={detailPane.value}>
+                          <PanelFrame
+                            scope={connection.scope}
+                            companion={detailPane.companion ?? companion}
                           >
                             <div
+                              id={`shell-page-${owner}`}
                               className={
                                 fillsWorkspace
-                                  ? "h-full min-h-0"
-                                  : "mx-auto w-full max-w-4xl"
+                                  ? "buzz-tabs-panel h-full min-h-0"
+                                  : "buzz-tabs-panel h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
                               }
                             >
-                              <OpenCommunitySwitcher value={openSwitcher}>
-                                <ListColumn
-                                  scope={connection.scope ?? "disconnected"}
-                                  list={listSection && listColumn.list}
-                                  setOpen={listColumn.setOpen}
-                                  title={listSection?.title ?? ""}
-                                  label={listSection?.label}
-                                  fill={!!listSection?.fill}
-                                  content={
-                                    <div
-                                      ref={setListSlot}
-                                      className="flex min-h-0 min-w-0 flex-col"
-                                    />
-                                  }
-                                >
-                                  {children}
-                                </ListColumn>
-                              </OpenCommunitySwitcher>
+                              <div
+                                className={
+                                  fillsWorkspace
+                                    ? "h-full min-h-0"
+                                    : "mx-auto w-full max-w-4xl"
+                                }
+                              >
+                                <OpenCommunitySwitcher value={openSwitcher}>
+                                  <ListColumn
+                                    scope={connection.scope ?? "disconnected"}
+                                    list={listSection && listColumn.list}
+                                    setOpen={listColumn.setOpen}
+                                    title={listSection?.title ?? ""}
+                                    label={listSection?.label}
+                                    fill={!!listSection?.fill}
+                                    content={
+                                      listSection &&
+                                      shellScope &&
+                                      searchServices &&
+                                      listNavigator && (
+                                        <RailNavigation
+                                          key={connection.scope}
+                                          section={listSection.section}
+                                          session={connection.session}
+                                          scope={shellScope}
+                                          sidebarSections={
+                                            searchServices.sidebarSections
+                                          }
+                                          navigator={listNavigator}
+                                          listNavigator={listNavigator}
+                                          openInSection={openInSection}
+                                          pages={pages}
+                                          selected={selected}
+                                          onSelect={onSelect}
+                                        />
+                                      )
+                                    }
+                                  >
+                                    {children}
+                                  </ListColumn>
+                                </OpenCommunitySwitcher>
+                              </div>
                             </div>
-                          </div>
-                        </PanelFrame>
-                      </ConversationDetailPane>
-                    </Panel>
-                  </SidePanelPresence>
-                </main>
-              </div>
-            </Panel>
+                          </PanelFrame>
+                        </ConversationDetailPane>
+                      </Panel>
+                    </SidePanelPresence>
+                  </main>
+                </div>
+              </Panel>
+            </div>
           </div>
-        </div>
+        </RailDrag>
       </div>
       {creationAction?.(
         creationOpen,

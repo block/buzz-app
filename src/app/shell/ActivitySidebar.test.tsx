@@ -51,7 +51,6 @@ function setup(
   workingIn: readonly string[] = [],
   dmParticipants: readonly string[] = [alice],
   snapshotRead?: RelaySession["snapshotRead"],
-  isOpen?: (target: { channelId: string; threadId?: string }) => boolean,
 ) {
   const base = createRelaySession(null).session;
   const channels = [
@@ -234,7 +233,6 @@ function setup(
             { version: 1, kind: "page", pluginId: "x", pageId: "y" } as never
           }
           view={view}
-          isOpen={isOpen}
         />
       </>
     );
@@ -298,24 +296,6 @@ test("only visible conversation rows request missing previews", async () => {
       include_aux: true,
     },
   ]);
-});
-
-test("a page-hosted sheet selects its conversation without a conversation route", () => {
-  setup(
-    [],
-    {},
-    [],
-    [alice],
-    undefined,
-    (target) => target.channelId === "dm" && !target.threadId,
-  );
-  const list = screen.getByRole("list", { name: "Conversations" });
-  expect(
-    list.querySelector('[data-activity-row="dm"] [data-conversation-row]'),
-  ).toHaveAttribute("aria-current", "page");
-  expect(
-    list.querySelector('[data-activity-row="new"] [data-conversation-row]'),
-  ).not.toHaveAttribute("aria-current", "page");
 });
 
 test("All interleaves chats, DMs, and channels by their newest activity", () => {

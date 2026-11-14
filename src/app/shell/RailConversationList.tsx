@@ -1,4 +1,4 @@
-import { useCallback, useRef, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, type ReactNode } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { Navigation } from "../../features/navigation/controller";
 import type {
@@ -8,7 +8,6 @@ import type {
 import {
   ActivityFilters,
   ConversationList,
-  includeMessagesChannel,
   useActivityView,
   withoutAgentViews,
   withoutTeamViews,
@@ -68,6 +67,9 @@ export function RailConversationList({
   // this pass's entries: an effect would hand a new row the previous ones.
   const current = useRef(conversations);
   current.current = conversations;
+  // One set for as long as the section holds the same conversations.
+  const ids = [...conversations.keys()].join("\n");
+  const within = useMemo(() => new Set(ids ? ids.split("\n") : []), [ids]);
   const wrapRow = useCallback(
     (item: ConversationListEntry, content: ReactNode) => {
       const original = current.current.get(item.target.channelId);
@@ -119,9 +121,13 @@ export function RailConversationList({
           target={target}
           view={view}
           layout="feed"
-          includeChannel={(channel) =>
-            conversations.has(channel.id) &&
-            (section !== "messages" || includeMessagesChannel(channel, view))
+          within={within}
+          home={
+            section === "messages"
+              ? "team"
+              : section === "solo"
+                ? "solo"
+                : undefined
           }
           wrapRow={wrapRow}
         />

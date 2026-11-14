@@ -1,8 +1,20 @@
 import type { JsonValue, OpenTarget } from "../../features/navigation/targets";
 import type { PageTabTarget } from "../../features/conversation/contracts";
-import type { ActivityFilter, SenderFilter } from "./InboxFilters";
 
-/** Activity's page address; the route contract below applies only to it. */
+/** Views an Activity address may name; some are no longer offered. */
+export type ActivityFilter =
+  | "all"
+  | "channels"
+  | "threads"
+  | "mentions"
+  | "dms"
+  | "reactions"
+  | "direct"
+  | "working"
+  | "waiting";
+export type SenderFilter = "everyone" | "humans" | "agents";
+
+/** Activity's address; the route contract below applies only to it. */
 export const inboxTarget = {
   version: 1,
   kind: "page",
@@ -10,7 +22,7 @@ export const inboxTarget = {
   pageId: "inbox",
 } as const;
 
-/** Filters an open asks the Activity page to show; omitted choices stay as saved. */
+/** Filters an open asks Activity to show; omitted choices stay as saved. */
 export type InboxFiltersRoute = {
   attention?: "all" | "unread";
   activity?: ActivityFilter;
@@ -123,7 +135,7 @@ export function detailOf(
     : undefined;
 }
 
-/** An open that shows the Activity page with these filters applied. */
+/** An open that shows Activity with these filters applied. */
 export const inboxRouteTarget = (params: InboxRoute) => ({
   ...inboxTarget,
   route: { version: 1 as const, params },

@@ -12,8 +12,13 @@ import {
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { ComposerAttachments } from "./ComposerAttachments";
 import type { RelaySession } from "../relay/session";
-import type { UploadedAttachment } from "../relay/attachments";
 import {
+  UPLOAD_FAILURES,
+  UploadError,
+  type UploadedAttachment,
+} from "../relay/attachments";
+import {
+  UPLOAD_FAILED_TEXT,
   useAttachmentDraft,
   attachmentDraft,
   transferAttachmentDraft,
@@ -144,17 +149,225 @@ it("preserves real upload errors while resuming unfinished siblings on return", 
     first.result.current.store.add([file("failed.txt"), file("pending.txt")]),
   );
   await waitFor(() => expect(h.calls).toHaveLength(1));
-  await act(async () => h.calls[0]?.result.reject(new Error("relay down")));
+  await act(async () => h.calls[0]?.result.reject(new UploadError("failed")));
   await waitFor(() => expect(h.calls).toHaveLength(2));
   first.unmount();
   const returned = renderHook(() =>
     useAttachmentDraft(h.session, "one", "one"),
   );
   await waitFor(() => expect(h.calls).toHaveLength(3));
-  expect(returned.result.current.items[0]?.error).toBe("relay down");
+  expect(returned.result.current.items[0]?.error).toBe(UPLOAD_FAILURES.failed);
   expect(returned.result.current.items[0]?.status).toBe("error");
   expect(returned.result.current.blocked).toBe(true);
   expect(h.calls[2]?.file.name).toBe("pending.txt");
+});
+
+it.each([
+  [
+    "a fetch network failure",
+    () => new TypeError("Failed to fetch"),
+    "Upload didn’t finish. Check your connection, then retry.",
+  ],
+  [
+    "the upload timeout",
+    // jsdom's DOMException is not an Error; browsers' is, with this name.
+    () =>
+      Object.assign(new Error("signal timed out"), { name: "TimeoutError" }),
+    "Upload took too long. Retry, or remove this file.",
+  ],
+  [
+    "a relay refusal the client already worded",
+    () => new UploadError("capacity"),
+    UPLOAD_FAILURES.capacity,
+  ],
+  ["an unrecognised error", () => new Error("relay down"), UPLOAD_FAILED_TEXT],
+  ["a native string", () => "Something native broke", UPLOAD_FAILED_TEXT],
+])(
+  "words %s for the tile, never with the raw text",
+  async (_name, make, text) => {
+    const h = fixture();
+    const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));
+    act(() => draft.result.current.store.add([file()]));
+    await waitFor(() => expect(h.calls).toHaveLength(1));
+    await act(async () => h.calls[0]?.result.reject(make()));
+    expect(draft.result.current.items[0]).toMatchObject({
+      status: "error",
+      error: text,
+    });
+    expect(draft.result.current.blocked).toBe(true);
+    // Retry still starts a fresh upload.
+    act(() =>
+      draft.result.current.store.retry(draft.result.current.items[0]?.id ?? ""),
+    );
+    await waitFor(() => expect(h.calls).toHaveLength(2));
+  },
+);
+
+const bitmap = (width: number, height: number) => async () => ({
+  width,
+  height,
+  close() {},
+});
+it.each([
+  [
+    "the pixel limit",
+    bitmap(5001, 5000),
+    "Choose an image with at most 25 million pixels.",
+  ],
+  [
+    "a browser without a canvas context",
+    bitmap(10, 10),
+    "Image preparation is unavailable in this browser.",
+  ],
+  [
+    "an image the browser cannot decode",
+    async () => {
+      throw Object.assign(new Error("The source image could not be decoded."), {
+        name: "InvalidStateError",
+      });
+    },
+    UPLOAD_FAILED_TEXT,
+  ],
+])(
+  "words a preparation refusal from %s for the tile",
+  async (_name, decode, text) => {
+    vi.stubGlobal("createImageBitmap", decode);
+    const context = vi
+      .spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockReturnValue(null);
+    try {
+      // The fixture supplies no `prepare`, so the draft's own preparation runs.
+      const h = fixture();
+      const draft = renderHook(() =>
+        useAttachmentDraft(h.session, "one", "one"),
+      );
+      const photo = new File(
+        [new Uint8Array([0xff, 0xd8, 0xff, 0xe0])],
+        "photo.jpg",
+        { type: "image/jpeg" },
+      ) as unknown as globalThis.File;
+      act(() => draft.result.current.store.add([photo]));
+      await waitFor(() =>
+        expect(draft.result.current.items[0]?.status).toBe("error"),
+      );
+      expect(draft.result.current.items[0]?.error).toBe(text);
+      expect(draft.result.current.blocked).toBe(true);
+      expect(h.upload).not.toHaveBeenCalled();
+    } finally {
+      context.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
+const ascii = (text: string) => [...text].map((char) => char.charCodeAt(0));
+/** A PNG chunk: length, kind, payload, then a CRC that preparation never reads. */
+const pngChunk = (kind: string, payload: number[] = []) => [
+  ...[0, 0, 0, payload.length],
+  ...ascii(kind),
+  ...payload,
+  ...[0, 0, 0, 0],
+];
+/** A RIFF chunk with an even-length payload. */
+const riffChunk = (kind: string, payload: number[]) => [
+  ...ascii(kind),
+  ...[payload.length, 0, 0, 0],
+  ...payload,
+];
+const webp = (...chunks: number[][]) => [
+  ...ascii("RIFF"),
+  ...[4 + chunks.flat().length, 0, 0, 0],
+  ...ascii("WEBP"),
+  ...chunks.flat(),
+];
+// A little-endian TIFF directory whose one entry is orientation 6 (rotated).
+const rotatedExif = [
+  ...ascii("II"),
+  ...[42, 0, 8, 0, 0, 0, 1, 0],
+  ...[0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0],
+];
+it.each([
+  [
+    "an animated PNG with a color profile",
+    "spin.png",
+    [
+      ...[137, 80, 78, 71, 13, 10, 26, 10],
+      ...pngChunk("IHDR", Array<number>(13).fill(0)),
+      ...pngChunk("acTL", [0]),
+      ...pngChunk("iCCP", [0]),
+      ...pngChunk("IEND"),
+    ],
+    "This animated image has a color profile, which can’t be kept. Export it without one, or choose another image.",
+  ],
+  [
+    "an animated WebP with a color profile",
+    "spin.webp",
+    webp(
+      riffChunk("ANIM", Array<number>(6).fill(0)),
+      riffChunk("ICCP", [0, 0]),
+    ),
+    "This animated image has a color profile, which can’t be kept. Export it without one, or choose another image.",
+  ],
+  [
+    "an animated PNG rotated by its metadata",
+    "spin.png",
+    [
+      ...[137, 80, 78, 71, 13, 10, 26, 10],
+      ...pngChunk("IHDR", Array<number>(13).fill(0)),
+      ...pngChunk("acTL", [0]),
+      ...pngChunk("eXIf", rotatedExif),
+      ...pngChunk("IEND"),
+    ],
+    "This animated image is rotated by its metadata, which can’t be kept. Export it upright, or choose another image.",
+  ],
+  [
+    "an animated WebP rotated by its metadata",
+    "spin.webp",
+    webp(
+      riffChunk("ANIM", Array<number>(6).fill(0)),
+      riffChunk("EXIF", rotatedExif),
+    ),
+    "This animated image is rotated by its metadata, which can’t be kept. Export it upright, or choose another image.",
+  ],
+  [
+    "a GIF cut short",
+    "clip.gif",
+    [...ascii("GIF89a"), 0, 0, 0, 0, 0, 0, 0],
+    "This image file can’t be read. Choose another image.",
+  ],
+])(
+  "words the preparation refusal of %s for the tile",
+  async (_name, name, bytes, text) => {
+    // No decoder stub: the draft's own preparation refuses these from their
+    // bytes, before it decodes or uploads anything.
+    const h = fixture();
+    const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));
+    const image = new File([new Uint8Array(bytes)], name);
+    act(() =>
+      draft.result.current.store.add([image as unknown as globalThis.File]),
+    );
+    await waitFor(() =>
+      expect(draft.result.current.items[0]?.status).toBe("error"),
+    );
+    expect(draft.result.current.items[0]?.error).toBe(text);
+    expect(draft.result.current.blocked).toBe(true);
+    expect(h.upload).not.toHaveBeenCalled();
+  },
+);
+
+it("does not mark a cancelled upload as failed", async () => {
+  const h = fixture();
+  const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));
+  act(() => draft.result.current.store.add([file()]));
+  await waitFor(() => expect(h.calls).toHaveLength(1));
+  act(() =>
+    draft.result.current.store.remove(draft.result.current.items[0]?.id ?? ""),
+  );
+  await act(async () =>
+    h.calls[0]?.result.reject(new DOMException("aborted", "AbortError")),
+  );
+  expect(draft.result.current.items).toEqual([]);
+  expect(draft.result.current.blocked).toBe(false);
 });
 
 it("ignores a host progress report after an upload fails", async () => {
@@ -595,13 +808,13 @@ it("rejects eager upload errors until explicit Retry, including after Send hando
   const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));
   act(() => draft.result.current.store.add([file()]));
   await waitFor(() => expect(h.calls).toHaveLength(1));
-  await act(async () => h.calls[0]?.result.reject(new Error("relay down")));
+  await act(async () => h.calls[0]?.result.reject(new UploadError("failed")));
   expect(draft.result.current.blocked).toBe(true);
   const target = attachmentDraft(h.session, "send", "one");
   act(() => transferAttachmentDraft(draft.result.current.store, target));
   await expect(
     target.prepareForSend(new AbortController().signal),
-  ).rejects.toThrow("relay down");
+  ).rejects.toThrow(UPLOAD_FAILURES.failed);
   expect(h.calls).toHaveLength(1);
   expect(target.snapshot()[0]?.status).toBe("error");
   target.retry(target.snapshot()[0]?.id ?? "");

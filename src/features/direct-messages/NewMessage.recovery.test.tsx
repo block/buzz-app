@@ -1328,7 +1328,8 @@ it("waits for uploads before opening a DM and reports failure only on the chip",
     ),
   ).toHaveAttribute("role", "status");
   expect(screen.getAllByRole("alert")).toHaveLength(1);
-  expect(send()).toBeDisabled();
+  // Focusable while blocked, so its tooltip can say why.
+  expect(send()).toHaveAttribute("aria-disabled", "true");
   expect(t.openDirectMessage).not.toHaveBeenCalled();
   expect(t.publish).not.toHaveBeenCalled();
   await t.user.click(screen.getByRole("button", { name: "Retry photo.png" }));

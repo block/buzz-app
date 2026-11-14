@@ -4,18 +4,33 @@ import { mentionDraft } from "../messages/mention-draft";
 import { readView, writeView } from "../../shared/view-state";
 import type { RelaySession } from "../relay/session";
 import { canAddMembers } from "../channel-members/members";
-import { prepareAttachment } from "../messages/prepare-attachment";
+import {
+  PreparationError,
+  prepareAttachment,
+} from "../messages/prepare-attachment";
 import {
   UPLOAD_MAX_BYTES,
+  UploadError,
   type UploadedAttachment,
 } from "../relay/attachments";
+import { failureKind } from "../relay/user-copy";
 import type {
   ComposerCommand,
+  ComposerFailure,
   ComposerReader,
   ComposerRequest,
   ComposerResponse,
   ComposerSnapshot,
 } from "./composer-contract";
+
+/** A failed upload's identity, so the detached composer words it as this
+ * window's composer does. Anything else crosses as text only and stays generic. */
+function uploadFailure(cause: unknown): ComposerFailure | undefined {
+  if (cause instanceof UploadError) return { upload: cause.code };
+  if (cause instanceof PreparationError) return "preparation";
+  const kind = failureKind(cause);
+  return kind === "connection" || kind === "timeout" ? kind : undefined;
+}
 
 /** One unpredictable, native-delivered capability for one room in one main session.
  * File bytes use structured cloning; all preparation, signing and delivery stay here. */
@@ -441,6 +456,7 @@ export function createHuddleComposerOwner(
         const value = await execute(data, controller.signal);
         response = { kind: "result", client: data.client, id: data.id, value };
       } catch (cause) {
+        const failure = data.op === "upload" ? uploadFailure(cause) : undefined;
         response = {
           kind: "result",
           client: data.client,
@@ -449,6 +465,7 @@ export function createHuddleComposerOwner(
             ? cause.message
             : "Could not complete this request."
           ).slice(0, 2048),
+          ...(failure ? { failure } : {}),
         };
       }
       if (

@@ -17,6 +17,37 @@ async function openPreparationDocument(page, server) {
   await page.goto(url);
 }
 
+// Spare width of a failed upload tile, given its alert. The tile fits the
+// strip, or is only as wide as its one-row Retry and Remove need; anything
+// else widening it, such as a long name or an 18rem floor, makes this negative.
+function failedTileRoom(alert) {
+  const item = alert.closest("li");
+  const strip = item.closest("ul");
+  const width = (el) => el.getBoundingClientRect().width;
+  const insets = (el) => {
+    const style = getComputedStyle(el);
+    return [
+      "paddingLeft",
+      "paddingRight",
+      "borderLeftWidth",
+      "borderRightWidth",
+    ]
+      .map((name) => parseFloat(style[name]))
+      .reduce((total, inset) => total + inset);
+  };
+  // Measure the actions' outer edges, whichever button comes first.
+  const actions = [
+    ...item.querySelectorAll('[aria-label^="Remove "], [aria-label^="Retry "]'),
+  ].map((action) => action.getBoundingClientRect());
+  const left = Math.min(...actions.map((action) => action.left));
+  const right = Math.max(...actions.map((action) => action.right));
+  const room = Math.max(
+    width(strip) - insets(strip),
+    right - left + insets(item),
+  );
+  return Math.round(room - width(item));
+}
+
 // Browser-only boundary: actual File/DataTransfer delivery, editor capture and page wiring.
 test("picker, pane drop and clipboard files use the same attachment draft and existing Send", async ({
   page,
@@ -1039,14 +1070,30 @@ test("local previews stay interactive during eager upload and removal collapses 
         await expect(failure).toBeInViewport();
         if (width === 640) {
           // A narrow pane must not inherit an 18rem floor at enlarged text sizes.
-          expect(
-            await failure.evaluate((el) => {
-              const item = el.closest("li").getBoundingClientRect();
-              const strip = el.closest("ul").getBoundingClientRect();
-              return strip.width - item.width;
-            }),
-          ).toBeGreaterThanOrEqual(0);
+          expect(await failure.evaluate(failedTileRoom)).toBeGreaterThanOrEqual(
+            0,
+          );
         }
+        // Retry and Remove never wrap, and the error spans the tile from its
+        // inner edge, under the thumbnail rather than the file name.
+        const [removeTop, retryTop] = await Promise.all(
+          [failedRemove, retry].map((action) =>
+            action.evaluate((el) => el.getBoundingClientRect().top),
+          ),
+        );
+        expect(retryTop).toBe(removeTop);
+        expect(
+          await failure.evaluate((el) => {
+            const item = el.closest("li");
+            const style = getComputedStyle(item);
+            return (
+              el.getBoundingClientRect().left -
+              item.getBoundingClientRect().left -
+              parseFloat(style.borderLeftWidth) -
+              parseFloat(style.paddingLeft)
+            );
+          }),
+        ).toBeCloseTo(0, 1);
         for (const content of [failure, retry, failedRemove]) {
           expect(
             await content.evaluate((el) => {
@@ -1066,15 +1113,20 @@ test("local previews stay interactive during eager upload and removal collapses 
         await form.screenshot({
           path: test.info().outputPath(`upload-failure-${mode}-${width}.png`),
         });
-        // Error actions must stay clear of the following image, at any UI size.
+        // Error actions, up to the rightmost one, must stay clear of the
+        // following image at any UI size.
         expect(
-          await failedRemove.evaluate((el) => {
+          await failure.evaluate((el) => {
             const item = el.closest("li");
             const next = item.nextElementSibling;
-            return (
-              next.getBoundingClientRect().left -
-              el.getBoundingClientRect().right
+            const right = Math.max(
+              ...[
+                ...item.querySelectorAll(
+                  '[aria-label^="Remove "], [aria-label^="Retry "]',
+                ),
+              ].map((action) => action.getBoundingClientRect().right),
             );
+            return next.getBoundingClientRect().left - right;
           }),
         ).toBeGreaterThanOrEqual(0);
       }
@@ -1134,13 +1186,7 @@ test("local previews stay interactive during eager upload and removal collapses 
     await expect(
       form.getByRole("button", { name: `Retry ${failedName}` }),
     ).toBeVisible();
-    expect(
-      await failure.evaluate(
-        (el) =>
-          el.closest("ul").getBoundingClientRect().width -
-          el.closest("li").getBoundingClientRect().width,
-      ),
-    ).toBeGreaterThanOrEqual(0);
+    expect(await failure.evaluate(failedTileRoom)).toBeGreaterThanOrEqual(0);
     expect(
       await form
         .getByText(failedName, { exact: true })

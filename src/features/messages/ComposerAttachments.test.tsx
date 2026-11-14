@@ -355,6 +355,11 @@ it.each([
     const removeButton = screen.getByRole("button", { name: `Remove ${name}` });
     expect(retryButton.textContent).toBe("Retry");
     expect(removeButton.textContent).toBe("Remove");
+    // Retry first, then Remove.
+    expect([...(retryButton.parentElement?.children ?? [])]).toEqual([
+      retryButton,
+      removeButton,
+    ]);
     act(() => retryButton.focus());
     expect(retryButton.getAttribute("title")).toBeNull();
     fireEvent.click(retryButton);
@@ -399,7 +404,7 @@ it.each([
   expect(screen.getByText(error, { selector: "p" })).toBe(alert);
   expect(alert.classList.contains("sr-only")).toBe(false);
   expect(
-    screen.queryByText("Upload failed. Retry or remove it to send."),
+    screen.queryByText("Upload failed. Retry or remove this file."),
   ).toBeNull();
 });
 
@@ -414,7 +419,7 @@ it("explains errors without service details and disables both recovery actions",
     <ComposerAttachments {...props} items={[item]} disabled />,
   );
   expect(screen.getByRole("alert").textContent).toBe(
-    "photo.png: Upload failed. Retry or remove it to send.",
+    "photo.png: Upload failed. Retry or remove this file.",
   );
   for (const action of ["Retry", "Remove"]) {
     const button = screen.getByRole("button", { name: `${action} photo.png` });

@@ -63,6 +63,7 @@ import { createAgentChoices } from "../agents/choices";
 import type { LocalAgents } from "../agents/local";
 import { localAgentsFixture } from "../agents/local-testing";
 import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
+import { UPLOAD_FAILED_TEXT } from "./attachment-draft";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { Outbox, OutgoingEvent } from "../relay/outbox";
 import { createMessages } from "../relay/messages";
@@ -2145,6 +2146,46 @@ it("does not focus after a picker upload fails or is later retried", async () =>
   expect(trigger).toHaveFocus();
 });
 
+it("words a failed upload and explains the disabled Send, until the file is removed", async () => {
+  const h = await mountUploadComposer();
+  pickAttachments(h.container, [attachmentFile()]);
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(() =>
+    h.uploadCalls[0]?.result.reject(new TypeError("Failed to fetch")),
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Upload didn’t finish. Check your connection, then retry.",
+  );
+  expect(screen.queryByText(/Failed to fetch/)).toBeNull();
+  // A disabled button gets no hover from the browser, so Send stays focusable
+  // and its tooltip says what to do.
+  const send = screen.getByRole("button", { name: "Send message" });
+  expect(send).toHaveAttribute("aria-disabled", "true");
+  await userEvent.hover(send);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Retry or remove the failed file to send.",
+  );
+  await userEvent.unhover(send);
+  // Focusable is not enabled: neither Send nor Enter sends or uploads again.
+  fireEvent.change(h.input(), { target: { value: "With the file" } });
+  fireEvent.click(send);
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  await act(async () => {});
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.uploadCalls).toHaveLength(1);
+  expect(h.input()).toHaveValue("With the file");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Upload didn’t finish. Check your connection, then retry.",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Remove notes.txt" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Send message" }),
+    ).not.toHaveAttribute("aria-disabled", "true"),
+  );
+});
+
 it.each(["inactive", "hidden"])(
   "cancels picker focus when the conversation becomes %s, including a warm return",
   async (state) => {
@@ -3000,21 +3041,22 @@ it("offers message preparation retry after a failed attachment send remounts", a
 });
 
 it("identifies failed filenames through retry and removal when service errors match", async () => {
+  const NETWORK = "Upload didn’t finish. Check your connection, then retry.";
   const h = await mountUploadComposer();
   attachByPaste(h.input(), attachmentFile("one.txt"));
   attachByPaste(h.input(), attachmentFile("two.txt"));
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
   await act(async () => {
-    h.uploadCalls[0]?.result.reject(new Error("HTTP 503"));
+    h.uploadCalls[0]?.result.reject(new TypeError("Failed to fetch"));
   });
   await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
   await act(async () => {
-    h.uploadCalls[1]?.result.reject(new Error("HTTP 503"));
+    h.uploadCalls[1]?.result.reject(new TypeError("Failed to fetch"));
   });
   await waitFor(() =>
     expect(
       screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual(["one.txt: HTTP 503", "two.txt: HTTP 503"]),
+    ).toEqual([`one.txt: ${NETWORK}`, `two.txt: ${NETWORK}`]),
   );
   await userEvent.click(screen.getByRole("button", { name: "Retry one.txt" }));
   await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
@@ -3024,12 +3066,12 @@ it("identifies failed filenames through retry and removal when service errors ma
   await waitFor(() =>
     expect(
       screen.getAllByRole("alert").map((node) => node.textContent),
-    ).toEqual(["one.txt: first failed again", "two.txt: HTTP 503"]),
+    ).toEqual([`one.txt: ${UPLOAD_FAILED_TEXT}`, `two.txt: ${NETWORK}`]),
   );
   await userEvent.click(screen.getByRole("button", { name: "Remove one.txt" }));
   expect(h.input()).toHaveFocus();
   expect(screen.getAllByRole("alert").map((node) => node.textContent)).toEqual([
-    "two.txt: HTTP 503",
+    `two.txt: ${NETWORK}`,
   ]);
   await waitFor(() =>
     expect(within(h.form()).queryByText("one.txt")).not.toBeInTheDocument(),
@@ -3057,7 +3099,7 @@ it("retains successful attachment uploads after a later file fails and retries o
   });
   await screen.findAllByRole("alert");
   expect(screen.getAllByRole("alert").map((node) => node.textContent)).toEqual([
-    "retry.txt: relay down",
+    `retry.txt: ${UPLOAD_FAILED_TEXT}`,
   ]);
   expect(
     screen.getByRole("dialog", { name: "Upload to #General failed" }),

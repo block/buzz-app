@@ -168,24 +168,31 @@ html[data-keyboard-navigation] .preview:focus-visible {
 }
 
 .item[data-upload-error] {
-  /* Fit the strip when possible, but never squeeze the recovery controls. */
+  /* The error and its actions each take a full row from the tile's inner
+     edge, and the icon gap stays the resting tile's. Fit the strip when
+     possible, but never squeeze the recovery controls. */
   min-width: min-content;
   flex-wrap: wrap;
-  column-gap: var(--space-2);
   row-gap: var(--space-1);
   padding-inline-end: calc(var(--space-5) / 2);
 }
 .item[data-upload-error] .error {
+  /* With the row gap, 12px below the file row, as the actions sit 12px
+     below the error. */
   flex-basis: 100%;
+  margin-block-start: var(--space-2);
 }
 .item[data-upload-error] .details {
   /* Ellipsized filenames must not determine the card's minimum width. */
   contain: inline-size;
 }
 .item[data-upload-error] .actions {
+  /* As in a toast: 12px from the message, 8px between actions. The actions
+     never wrap; the tile's min-content width keeps room for both. */
   position: static;
   flex-basis: 100%;
-  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-block-start: var(--space-2);
   min-width: min-content;
 }
 

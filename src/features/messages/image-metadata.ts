@@ -4,7 +4,11 @@ const text = (b: Uint8Array, a: number, z: number) =>
   String.fromCharCode(...b.subarray(a, z));
 const view = (b: Uint8Array) =>
   new DataView(b.buffer, b.byteOffset, b.byteLength);
-const invalid = () => new Error("Image container is malformed.");
+/** A preparation refusal already written for people, such as the pixel limit;
+ * callers may show its message as is. */
+export class PreparationError extends Error {}
+const invalid = () =>
+  new PreparationError("This image file can’t be read. Choose another image.");
 type Chunk = { kind: string; payload: Uint8Array; raw: Uint8Array };
 
 export function pngChunks(bytes: Uint8Array): Chunk[] {
@@ -58,12 +62,12 @@ function oriented(bytes: Uint8Array): boolean {
 }
 function assertAnimationAppearance(chunks: Chunk[], icc: string, exif: string) {
   if (chunks.some((c) => c.kind === icc))
-    throw new Error(
-      "Animated images with an ICC profile cannot be cleaned without changing their colors.",
+    throw new PreparationError(
+      "This animated image has a color profile, which can’t be kept. Export it without one, or choose another image.",
     );
   if (chunks.some((c) => c.kind === exif && oriented(c.payload)))
-    throw new Error(
-      "Animated images with EXIF orientation cannot be cleaned without changing their appearance.",
+    throw new PreparationError(
+      "This animated image is rotated by its metadata, which can’t be kept. Export it upright, or choose another image.",
     );
 }
 const pngRendering = new Set([

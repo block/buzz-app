@@ -2227,7 +2227,11 @@ it("a failed upload blocks a new chat before anything is created", async () => {
   expect(
     await screen.findByRole("button", { name: "Retry notes.txt" }),
   ).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  // Focusable while blocked, so its tooltip can say why.
+  expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(test.channelWrites.create).not.toHaveBeenCalled();
   expect(test.messages.send).not.toHaveBeenCalled();
 });

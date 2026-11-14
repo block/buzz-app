@@ -23,7 +23,7 @@ import {
   useDraftAttachmentSource,
 } from "./use-draft-attachment-source";
 import { XIcon } from "../../shared/design-system/icons";
-import type { DraftAttachment } from "./attachment-draft";
+import { UPLOAD_FAILED_TEXT, type DraftAttachment } from "./attachment-draft";
 import styles from "./ComposerAttachments.module.css";
 import { useMediaElementSource } from "./use-media-element-source";
 
@@ -417,7 +417,7 @@ function AttachmentItem({
       {uploadFailed && (
         <p className={styles.error} role="alert">
           <span className="sr-only">{item.file.name}: </span>
-          {item.error || "Upload failed. Retry or remove it to send."}
+          {item.error || UPLOAD_FAILED_TEXT}
         </p>
       )}
       <div

@@ -71,7 +71,7 @@ it("preserves APNG rendering chunks and rejects ICC rather than silently recolor
     png("iCCP", enc("profile")),
     png("IEND"),
   ]);
-  expect(() => cleanPng(icc, undefined, true)).toThrow(/ICC/);
+  expect(() => cleanPng(icc, undefined, true)).toThrow(/color profile/);
 });
 function riff(kind: string, p: Uint8Array) {
   const b = new Uint8Array(8 + p.length + (p.length & 1));
@@ -108,7 +108,7 @@ it("cleans WebP flags, nested frame metadata and padding without changing frames
   );
   const icc = webp([riff("ICCP", enc("profile")), riff("VP8 ", pixels)]);
   expect(webpNeedsPixelTransform(webpChunks(icc))).toBe(true);
-  expect(() => cleanWebp(icc, true)).toThrow(/ICC/);
+  expect(() => cleanWebp(icc, true)).toThrow(/color profile/);
 });
 it("preserves GIF loop, delay and image blocks but drops comment/trailer junk", async () => {
   const header = join([enc("GIF89a"), new Uint8Array([1, 0, 1, 0, 0, 0, 0])]);
@@ -130,7 +130,7 @@ it("preserves GIF loop, delay and image blocks but drops comment/trailer junk", 
     new Uint8Array([0x3b, 1, 2]),
   ]);
   expect(new Uint8Array(await cleanGif(dirty).arrayBuffer())).toEqual(clean);
-  expect(() => cleanGif(dirty.subarray(0, 15))).toThrow(/malformed/);
+  expect(() => cleanGif(dirty.subarray(0, 15))).toThrow(/can’t be read/);
 });
 
 it("avatar-purpose preparation removes nested snapshot metadata before upload", async () => {

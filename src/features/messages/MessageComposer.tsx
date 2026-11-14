@@ -3855,10 +3855,14 @@ function Composer({
                     ? "Wait for compaction to finish, or interrupt it."
                     : untagged
                       ? recipientHint
-                      : "Send message"
+                      : attachments.blocked
+                        ? "Retry or remove the failed file to send."
+                        : "Send message"
               }
               focusableWhenDisabled={
-                untagged || (!editing.target && compacting) || undefined
+                untagged ||
+                (!editing.target && (compacting || attachments.blocked)) ||
+                undefined
               }
               disabled={
                 disabled ||

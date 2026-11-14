@@ -12,7 +12,11 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { createElement } from "react";
-import { attachmentDraft } from "../messages/attachment-draft";
+import {
+  attachmentDraft,
+  UPLOAD_FAILED_TEXT,
+} from "../messages/attachment-draft";
+import { ComposerAttachments } from "../messages/ComposerAttachments";
 import { MessageComposer } from "../messages/MessageComposer";
 import { composerDOMFixture, typedDraft } from "../messages/composer-testing";
 import { followupDraft, mentionDraft } from "../messages/mention-draft";
@@ -22,6 +26,7 @@ import {
   gifMarkdown,
   relayGifRequests,
 } from "../relay/gifs";
+import { UPLOAD_FAILURES, UploadError } from "../relay/attachments";
 import { createRelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import { createHuddleComposerOwner } from "./composer-owner";
@@ -364,9 +369,9 @@ it.each([false, true])(
   },
 );
 
-it("retains valid voice metadata and releases enriched upload identities", async () => {
-  // Node's BroadcastChannel does not preserve File instances as browsers do.
-  // Keep message ordering while retaining files in this owner/client fixture.
+/** Node's BroadcastChannel does not preserve File instances as browsers do.
+ * Keep message ordering while retaining files in this owner/client fixture. */
+function retainFiles() {
   const peers = new Set<{
     name: string;
     onmessage?: (event: { data: unknown }) => void;
@@ -392,6 +397,9 @@ it("retains valid voice metadata and releases enriched upload identities", async
       }
     },
   );
+}
+it("retains valid voice metadata and releases enriched upload identities", async () => {
+  retainFiles();
   const h = harness();
   const { remote } = await h.connect();
   const file = new File([new Uint8Array(64)], "voice.wav", {
@@ -449,6 +457,111 @@ it("retains valid voice metadata and releases enriched upload identities", async
       [{ ...invalid, voice: { ...voice, duration: Infinity } }],
     ),
   ).rejects.toThrow("Invalid voice");
+});
+
+/** The failed tile's alert for one file the main window could not upload. The
+ * tile names the file first, for screen readers. */
+async function failedTile(
+  remote: Parameters<typeof attachmentDraft>[0],
+  file: File,
+) {
+  const draft = attachmentDraft(remote, "failed-upload", "room");
+  cleanup.push(() => draft.clear());
+  draft.add([file]);
+  await vi.waitFor(() => expect(draft.snapshot()[0]?.status).toBe("error"));
+  render(
+    createElement(ComposerAttachments, {
+      items: draft.snapshot(),
+      disabled: false,
+      remove: draft.remove,
+      retry: draft.retry,
+      media: () => undefined,
+    }),
+  );
+  return screen.getByRole("alert").textContent;
+}
+it.each([
+  [
+    "an upload refusal already written for people",
+    () => new UploadError("ffmpeg"),
+    UPLOAD_FAILURES.ffmpeg,
+  ],
+  [
+    "a fetch network failure",
+    () => new TypeError("Failed to fetch"),
+    "Upload didn’t finish. Check your connection, then retry.",
+  ],
+  [
+    "a native connection failure",
+    () => "network-unavailable",
+    "Upload didn’t finish. Check your connection, then retry.",
+  ],
+  [
+    "the upload timeout",
+    // jsdom's DOMException is not an Error; browsers' is, with this name.
+    () =>
+      Object.assign(new Error("signal timed out"), { name: "TimeoutError" }),
+    "Upload took too long. Retry, or remove this file.",
+  ],
+  ["an unrecognised error", () => new Error("relay down"), UPLOAD_FAILED_TEXT],
+  ["a native string", () => "Something native broke", UPLOAD_FAILED_TEXT],
+])(
+  "words %s from the main window on the detached composer's failed tile",
+  async (_name, make, text) => {
+    retainFiles();
+    const h = harness();
+    const { remote } = await h.connect();
+    h.session.attachments.upload.mockRejectedValueOnce(make());
+    expect(
+      await failedTile(
+        remote,
+        new File([new Uint8Array(64)], "clip.mov", { type: "video/quicktime" }),
+      ),
+    ).toBe(`clip.mov: ${text}`);
+  },
+);
+it("keeps the main window's image-preparation refusal on the detached composer's failed tile", async () => {
+  retainFiles();
+  vi.stubGlobal("createImageBitmap", async () => ({
+    width: 5001,
+    height: 5000,
+    close() {},
+  }));
+  const h = harness();
+  const { remote } = await h.connect();
+  expect(
+    await failedTile(
+      remote,
+      new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe0])], "photo.jpg", {
+        type: "image/jpeg",
+      }),
+    ),
+  ).toBe("photo.jpg: Choose an image with at most 25 million pixels.");
+  expect(h.session.attachments.upload).not.toHaveBeenCalled();
+});
+
+it("keeps the main window's refusal of an animated image on the detached composer's failed tile", async () => {
+  retainFiles();
+  const h = harness();
+  const { remote } = await h.connect();
+  const chunk = (kind: string, payload: number[] = []) => [
+    ...[0, 0, 0, payload.length],
+    ...[...kind].map((char) => char.charCodeAt(0)),
+    ...payload,
+    ...[0, 0, 0, 0],
+  ];
+  // An animated PNG with a color profile: refused from its bytes alone.
+  const bytes = new Uint8Array([
+    ...[137, 80, 78, 71, 13, 10, 26, 10],
+    ...chunk("IHDR", Array<number>(13).fill(0)),
+    ...chunk("acTL", [0]),
+    ...chunk("iCCP", [0]),
+    ...chunk("IEND"),
+  ]);
+  expect(await failedTile(remote, new File([bytes], "spin.png"))).toBe(
+    "spin.png: This animated image has a color profile, which can’t be kept. Export it without one, or choose another image.",
+  );
+  expect(h.session.attachments.upload).not.toHaveBeenCalled();
 });
 
 it("projects owned model choices and carries validated picks through the companion transport", async () => {

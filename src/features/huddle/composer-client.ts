@@ -1,16 +1,31 @@
 import type { GifRequests } from "../relay/gifs";
 import { readView } from "../../shared/view-state";
 import type { ComposerSession } from "../messages/composer-session";
+import { PreparationError } from "../messages/prepare-attachment";
+import { UploadError } from "../relay/attachments";
 import { createNameProvider } from "../identity-names/directory";
 import { resolveIdentityNames } from "../identity-names/policy";
 import type { IdentityNameView } from "../identity-names/service";
 import type {
   ComposerCommand,
+  ComposerFailure,
   ComposerOperation,
   ComposerOperations,
   ComposerResponse,
   ComposerSnapshot,
 } from "./composer-contract";
+
+/** The owner's rejection, typed again when it recognised an upload failure, so
+ * the failed tile reads as it does in the main window. */
+function rejection(message: string, failure: ComposerFailure | undefined) {
+  if (!failure) return new Error(message);
+  if (typeof failure === "object") return new UploadError(failure.upload);
+  if (failure === "preparation") return new PreparationError(message);
+  // The names `failureKind` classifies by.
+  return Object.assign(new Error(message), {
+    name: failure === "timeout" ? "TimeoutError" : "NetworkError",
+  });
+}
 
 /** The detached editor has no relay transport, signer, or outbox of its own. */
 export function createHuddleComposerClient(token: string) {
@@ -270,7 +285,8 @@ export function createHuddleComposerClient(token: string) {
       if (!pending) return;
       waiting.delete(response.id);
       pending.cleanup();
-      if (response.error) pending.reject(new Error(response.error));
+      if (response.error)
+        pending.reject(rejection(response.error, response.failure));
       else pending.resolve(response.value);
     }
   };

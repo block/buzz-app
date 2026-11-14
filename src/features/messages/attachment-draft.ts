@@ -7,7 +7,25 @@ import {
   type UploadedAttachment,
   type UploadProgress,
 } from "../relay/attachments";
-import { prepareAttachment } from "./prepare-attachment";
+import { failureKind } from "../relay/user-copy";
+import { PreparationError, prepareAttachment } from "./prepare-attachment";
+
+/** The tile's sentence when nothing more specific is known. */
+export const UPLOAD_FAILED_TEXT = "Upload failed. Retry or remove this file.";
+
+/** Plain-language copy for a failed upload; never the browser's or host's own
+ * text. An `UploadError`'s or `PreparationError`'s message is already written
+ * for people. */
+function uploadFailureText(error: unknown) {
+  if (error instanceof UploadError || error instanceof PreparationError)
+    return error.message;
+  const kind = failureKind(error);
+  if (kind === "connection")
+    return "Upload didn’t finish. Check your connection, then retry.";
+  if (kind === "timeout")
+    return "Upload took too long. Retry, or remove this file.";
+  return UPLOAD_FAILED_TEXT;
+}
 
 export type DraftAttachment = Readonly<{
   id: string;
@@ -247,10 +265,7 @@ export function attachmentDraft(
         task.update(item.id, {
           status: "error",
           transfer: undefined,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Upload failed. Retry or remove this file.",
+          error: uploadFailureText(error),
         });
       throw error;
     } finally {

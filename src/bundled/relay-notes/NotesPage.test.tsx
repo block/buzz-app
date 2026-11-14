@@ -1365,9 +1365,7 @@ it("groups packages across agents, sorts titles and keeps untagged notes and rea
     "true",
   );
   await user.click(screen.getByRole("combobox", { name: "Group by" }));
-  await user.click(
-    await screen.findByRole("option", { name: "Agent", exact: true }),
-  );
+  await user.click(await screen.findByRole("option", { name: "Agent" }));
   expect(
     screen.getByRole("button", { name: "Open Carl folder" }),
   ).toBeVisible();

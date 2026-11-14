@@ -2,7 +2,11 @@
 // Native code binds `tabEvent` to the requested close action.
 // An unhandled Close request lets native code close the window; Close All Tabs never does.
 (() => {
-  if (document.querySelector('dialog[open], [aria-modal="true"]'))
+  if (
+    document.querySelector(
+      'dialog[open]:not(:has([data-panel-sheet-body])), [aria-modal="true"]:not(:has([data-panel-sheet-body]))',
+    )
+  )
     return "handled";
   const target =
     typeof browserSessionId === "string"

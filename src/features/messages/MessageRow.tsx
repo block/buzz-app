@@ -1,3 +1,4 @@
+import { useMessageReplyHold, type ReplyHold } from "./use-message-reply-hold";
 import { requestWork, isSettledWork } from "../agents/request-work";
 import { ActivityDisclosure } from "./ActivityDisclosure";
 import { ActivityOutcome } from "./ActivityOutcome";
@@ -149,7 +150,9 @@ export type MessageRowProps = {
   onOpenThread?:
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
-  onReply?: ((messageId: string) => void) | undefined;
+  onReply?:
+    | ((messageId: string, deferFocus?: boolean) => ReplyHold | undefined)
+    | undefined;
   /** False: existing threads open, but the row offers none to start or reply in. */
   startsThreads?: boolean;
   quickControls?: ReactNode;
@@ -454,6 +457,16 @@ function MessageRowContent({
     (!session.channels.get || listed) &&
     !archived &&
     !readOnly
+  );
+  const replyDisabled =
+    !!(row.delivery && !["accepted", "seen"].includes(row.delivery)) ||
+    archived ||
+    (!!session?.channels.get && (!listed || readOnly));
+  const replyHold = useMessageReplyHold(
+    row.id,
+    onReply && !replyDisabled && !row.membership && !row.huddle
+      ? (deferFocus) => onReply(row.id, deferFocus)
+      : undefined,
   );
   const rowRef = useRef<HTMLDivElement>(null);
   const menuTrigger = useRef<HTMLButtonElement>(null);
@@ -793,22 +806,21 @@ function MessageRowContent({
       menuTriggerRef={menuTrigger}
       messageId={row.id}
       onForward={forward ? () => forward(row) : undefined}
+      // The Reply button opens the thread; holding the message is the quick
+      // reply. A reader with no thread view falls back to the quick reply.
       onReply={
-        (onReply ? () => onReply(row.id) : undefined) ??
-        (onOpenThread && startsThreads
+        onOpenThread && startsThreads
           ? () =>
               onOpenThread(
                 row.threadRootId ?? row.id,
                 row.threadRootId ?? row.id,
                 "reply",
               )
-          : undefined)
+          : onReply
+            ? () => onReply(row.id)
+            : undefined
       }
-      replyDisabled={
-        !!(row.delivery && !["accepted", "seen"].includes(row.delivery)) ||
-        archived ||
-        (!!session?.channels.get && (!listed || readOnly))
-      }
+      replyDisabled={replyDisabled}
       onSendToChannel={
         session &&
         listed &&
@@ -1110,6 +1122,7 @@ function MessageRowContent({
     >
       {day && <DayDivider createdAt={row.createdAt} />}
       <div
+        {...replyHold}
         ref={rowRef}
         className={styles.message}
         data-highlight-surface=""

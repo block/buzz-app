@@ -1,4 +1,5 @@
 import {
+  type ReactNode,
   useCallback,
   useEffect,
   useRef,
@@ -28,10 +29,7 @@ import { readView, viewRevision } from "../../shared/view-state";
 import { writeClipboardText } from "../../shared/clipboard";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import {
-  PanelHeader,
-  PanelHeaderLabel,
-} from "../../shared/design-system/ui/PanelHeader";
+import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import {
@@ -47,6 +45,7 @@ export function DraftPreview({
   entry,
   mode = "draft",
   title,
+  avatar,
   channel,
   loading = false,
   session,
@@ -60,6 +59,7 @@ export function DraftPreview({
   entry: Entry;
   mode?: "draft" | "sent";
   title: string;
+  avatar?: ReactNode;
   channel: ChannelSummary | undefined;
   loading?: boolean;
   session: RelaySession;
@@ -187,6 +187,7 @@ export function DraftPreview({
         navigation={
           <span className={styles.draftBack}>
             <IconButton
+              variant="glass"
               ref={back}
               size="sm"
               aria-label={mode === "draft" ? "Back to drafts" : "Back to sent"}
@@ -195,14 +196,12 @@ export function DraftPreview({
             />
           </span>
         }
-        title={
-          <PanelHeaderLabel
-            title={`${title}${entry.threadRootId ? " · Thread" : ""}`}
-          />
-        }
+        icon={<span className={styles.headerAvatar}>{avatar}</span>}
+        title={`${title}${entry.threadRootId ? " · Thread" : ""}`}
         actions={
           <>
             <IconButton
+              variant="glass"
               size="sm"
               aria-label="Open conversation"
               title="Open conversation"
@@ -212,6 +211,7 @@ export function DraftPreview({
             />
             <span className={styles.draftClose}>
               <IconButton
+                variant="glass"
                 ref={close}
                 size="sm"
                 aria-label={
@@ -297,6 +297,7 @@ function DraftChannel({
   onSend,
 }: {
   title: string;
+  avatar?: ReactNode;
   target?: Entry | undefined;
   channel: ChannelSummary;
   writable: boolean;

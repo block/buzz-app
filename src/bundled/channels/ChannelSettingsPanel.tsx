@@ -21,6 +21,7 @@ import type { RelaySession } from "../../features/relay/session";
 import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
 import { useReferenceDirectory } from "../../features/messages/ReferenceText";
 import { channelIcon } from "../../features/channels/channel-icon";
+import { ChannelAvatar } from "../../features/channels/ChannelAvatar";
 import {
   GearIcon,
   CircleNotchIcon,
@@ -142,7 +143,12 @@ export function ChannelSettingsPanel({
             <>
               <div className={styles.settingsIdentity}>
                 <span className={styles.settingsIcon}>
-                  <ChannelIcon size={32} aria-hidden="true" />
+                  {channel.channelType !== "dm" &&
+                  channel.channelType !== "solo" ? (
+                    <ChannelAvatar name={channel.name} />
+                  ) : (
+                    <ChannelIcon size={32} aria-hidden="true" />
+                  )}
                 </span>
                 <h3
                   className={`text-heading text-primary ${styles.settingsTitle}`}

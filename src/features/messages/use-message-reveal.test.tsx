@@ -56,7 +56,11 @@ async function idle() {
 }
 function mount(
   hold?: () => boolean,
-  { focus, mark }: { focus?: boolean; mark?: boolean } = {},
+  {
+    focus,
+    mark,
+    canFocus,
+  }: { focus?: boolean; mark?: boolean; canFocus?: () => boolean } = {},
 ) {
   const request = new AbortController();
   const complete = vi.fn();
@@ -81,6 +85,7 @@ function mount(
       ready: true,
       complete,
       ...(focus === undefined ? {} : { focus }),
+      ...(canFocus ? { canFocus } : {}),
       ...(mark === undefined ? {} : { mark }),
       ...(prepare ? { prepare } : {}),
       ...(hold ? { hold } : {}),
@@ -261,6 +266,21 @@ it("preserves focus ownership through an effect restart, but a new request can f
   await frame();
   expect(document.activeElement).toBe(row);
   expect(complete).toHaveBeenCalledTimes(2);
+});
+
+it("keeps positioning and marking when newer input withdraws focus before reveal", async () => {
+  let current = true;
+  const { row, outside, complete } = mount(undefined, {
+    canFocus: () => current,
+  });
+  await frame(); // Attach observers; the target is not revealed yet.
+  outside.focus();
+  current = false;
+  await idle();
+  expect(document.activeElement).toBe(outside);
+  expect(row.scrollIntoView).toHaveBeenCalled();
+  expect(highlighted(row)).toBe(true);
+  expect(complete).toHaveBeenCalledOnce();
 });
 
 it("retries a focus attempt that did not acquire ownership", async () => {

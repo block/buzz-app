@@ -359,7 +359,8 @@ it("channel feed history uses the shared fold: own/deleted rows stay absent and 
   const work = h.session.inboxFeed.ensure();
   (await take(h, 9)).resolve([reply, own]);
   await work;
-  expect(rows(h).map((row) => row.id)).toEqual([`room:${reply.id}`]);
+  // The reply names its thread: the row is the same before its root loads.
+  expect(rows(h).map((row) => row.id)).toEqual([`room:${root.id}`]);
   h.live.receive([root]);
   expect(rows(h).map((row) => row.id)).toEqual([`room:${root.id}`]);
   h.live.receive([
@@ -861,7 +862,7 @@ it("pending exact group member survives verified root regrouping and representat
       expect(h.session.inboxFeed.snapshot().incomplete).toEqual([reply.id]),
     );
     expect(rows(h)[0]).toMatchObject({
-      id: `room:${reply.id}`,
+      id: `room:${root.id}`,
       messageIds: [reply.id],
     });
     h.live.receive([root]);

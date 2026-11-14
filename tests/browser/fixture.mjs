@@ -90,9 +90,7 @@ export const test = base.extend({
   dmMembers: [{}, { option: true }],
   agentPeers: [false, { option: true }],
   inboxDm: [false, { option: true }],
-  inboxDmOldAnchor: [false, { option: true }],
   inboxThreadWindow: [false, { option: true }],
-  inboxSoloAgent: [false, { option: true }],
   tallMessages: [false, { option: true }],
   // Opt-in perf workload: chat-like Markdown (code, links, lists, mentions)
   // in most corpus rows instead of inert prose.
@@ -176,9 +174,7 @@ export const test = base.extend({
       dmMembers,
       agentPeers,
       inboxDm,
-      inboxDmOldAnchor,
       inboxThreadWindow,
-      inboxSoloAgent,
       tallMessages,
       markdownMessages,
       firstSeenHistory,
@@ -346,7 +342,7 @@ export const test = base.extend({
           )
         : dmLabels
           ? ["dm-peer", "dm-group"]
-          : inboxDm || inboxDmOldAnchor
+          : inboxDm
             ? ["dm-peer"]
             : [];
     const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
@@ -693,30 +689,6 @@ export const test = base.extend({
           ),
         ),
       );
-    }
-    let inboxDmAnchor;
-    if (inboxDmOldAnchor) {
-      inboxDmAnchor = sign(
-        9,
-        [["h", "dm-peer"]],
-        "Inbox old DM anchor",
-        peerKey,
-        1700000800,
-      );
-      histories
-        .get("primary/dm-peer")
-        .push(
-          inboxDmAnchor,
-          ...Array.from({ length: 24 }, (_, index) =>
-            sign(
-              9,
-              [["h", "dm-peer"]],
-              `Recent DM ${index}`,
-              userKey,
-              1700000810 + index,
-            ),
-          ),
-        );
     }
     if (inboxDm)
       histories
@@ -1076,6 +1048,30 @@ export const test = base.extend({
         .map((entry) => entry.event);
     };
     const answer = (community, filter) => {
+      // Sent-history requests are bounded own-author reads across this community.
+      if (
+        filter.authors?.length === 1 &&
+        filter.authors[0] === viewer &&
+        !filter["#h"] &&
+        !filter["#d"] &&
+        ((filter.kinds?.length === 1 &&
+          filter.kinds[0] === 9 &&
+          filter.limit === 100) ||
+          (JSON.stringify(filter.kinds) === "[40003,5,9005]" &&
+            filter.limit === 500))
+      ) {
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .filter(
+            (event) =>
+              event.pubkey === viewer && filter.kinds.includes(event.kind),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
+      }
       // These ordinary fixture channels have no Huddle creation receipt.
       if (filter.kinds?.length === 1 && filter.kinds[0] === 9007) return [];
       // The real relay can return both current metadata and rosters in one query.
@@ -1575,9 +1571,7 @@ export const test = base.extend({
                 0,
                 [],
                 JSON.stringify({
-                  ...((agentPeers && key !== peerKey) || inboxSoloAgent
-                    ? { is_agent: true }
-                    : {}),
+                  ...(agentPeers && key !== peerKey ? { is_agent: true } : {}),
                   display_name: [
                     "Alice Fixture",
                     "Bob Fixture",
@@ -2684,21 +2678,6 @@ export const test = base.extend({
         },
         presenceThread,
         inboxWindow,
-        inboxDmAnchor,
-        deleteInboxAnchor(event) {
-          const deletion = sign(
-            5,
-            [
-              ["h", inboxWindow.channelId],
-              ["e", event.id],
-            ],
-            "",
-            peerKey,
-            event.created_at + 100,
-          );
-          targetEvents.push(deletion);
-          relay.publish("primary", deletion);
-        },
         exact,
         ownerAgentMessage,
         searchTarget,

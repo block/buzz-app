@@ -21,9 +21,11 @@ export const ChannelBody = memo(function ChannelBody({
   marksRead,
   holding,
   onOpenThread,
+  onReply,
   navigation,
   onContentReady,
 }: {
+  onReply?: ChannelTimelineProps["onReply"];
   onContentReady?(channelId: string): void;
   cached: boolean;
   intro?: ReactNode;
@@ -109,7 +111,15 @@ export const ChannelBody = memo(function ChannelBody({
         </Button>
       </div>
     );
-  if (holding || (window.status !== "ready" && !window.rows.length))
+  // Until the first history page lands, rows the session already holds (a list
+  // preview, a live message) are not the conversation: showing them first
+  // makes the reader lay out twice.
+  if (
+    holding ||
+    window.status === "idle" ||
+    window.status === "loading" ||
+    (window.status !== "ready" && !window.rows.length)
+  )
     return (
       <div
         className={`${styles.empty} ${styles.timelinePlaceholder}`}
@@ -128,10 +138,10 @@ export const ChannelBody = memo(function ChannelBody({
       launchPending={
         !cached &&
         !window.error &&
-        (window.status === "idle" ||
-          window.status === "loading" ||
-          (window.status === "ready" && window.freshness === "cached"))
+        window.status === "ready" &&
+        window.freshness === "cached"
       }
+      onReply={onReply}
       {...(onOpenThread ? { onOpenThread } : {})}
       revealMessageId={revealMessageId}
       inlineTarget={inlineTarget}

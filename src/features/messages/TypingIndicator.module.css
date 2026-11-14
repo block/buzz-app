@@ -30,7 +30,7 @@
 }
 
 .typing > [data-agent-response-preview] {
-  width: min(100%, var(--timeline-measure, var(--buzz-message-width, 52rem)));
+  width: min(100%, var(--timeline-measure, var(--size-conversation-measure)));
 }
 
 .dots {
@@ -81,7 +81,7 @@
 }
 
 .typing[data-in-flow] {
-  width: min(100%, var(--timeline-measure, var(--buzz-message-width, 52rem)));
+  width: min(100%, var(--timeline-measure, var(--size-conversation-measure)));
   margin-inline: auto;
   padding: 0;
 }
@@ -93,7 +93,7 @@
   inset-inline: var(--space-4);
   inline-size: min(
     calc(100% - 2 * var(--space-4)),
-    var(--buzz-message-width, 52rem)
+    var(--size-conversation-measure)
   );
   margin-inline: auto;
   z-index: 1;

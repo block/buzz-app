@@ -34,6 +34,8 @@ export function useMessageOpening(
   channelId: string,
   messageId: string | undefined,
   request?: number,
+  /** Older pages to read before giving up. */
+  limit = SEEK_PAGES,
 ): boolean | undefined {
   const key = messageId && JSON.stringify([channelId, messageId, request]);
   // Read the window only to open at a message, so other readers load nothing.
@@ -85,7 +87,7 @@ export function useMessageOpening(
     !window.error &&
     window.hasMore &&
     !window.historyLimited &&
-    pages.current.count < SEEK_PAGES;
+    pages.current.count < limit;
   // A page or head read in flight can still change the answer: a refreshed
   // head can drop a message the old one held.
   const busy = window.loadingOlder || !!window.refreshing;

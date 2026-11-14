@@ -1809,10 +1809,18 @@ message opens as the root in the existing thread panel; a reply opens there with
 its actual root and bounded surrounding replies. No around-message channel query
 or separate detail screen is added. The presentation choice stays fixed for that
 navigation attempt; exact reads do not insert isolated old rows into channel history.
-Only **Open in channel** from a thread tab also shows the thread's root in the
-timeline: the list waits while older pages are read to find it, within the same
-bound as conversation tabs, then reveals and marks the root without taking the
-thread's focus. A root it cannot find leaves the timeline at its usual place.
+A thread opened from a conversation list (Team, Activity, a section's list) opens
+on its own: its pane takes the timeline's place, with no search for its root.
+The channel button beside the list button in its header opens the channel beside
+it, as Open in channel does.
+Only **Open in channel** from a thread tab, and that button, also show the thread's root in the
+timeline. The timeline shows its newest messages at once and reads up to three
+older pages to find the root. A root further up moves the timeline to that part
+of its history instead of reading everything between: it then shows a stretch of
+older messages, reads on toward the newest as the reader scrolls down, and
+returns to them on **Jump to latest** or on leaving the channel. Either way the
+root arrives with a short upward glide, is revealed and marked without taking
+the thread's focus; a root it cannot find leaves the timeline at its usual place.
 Back or Forward to that visit, or closing Members, seeks the root again; a list
 already shown stays in place while it does. Cached rows cannot place the root,
 so a cached session shows them as usual and seeks once it connects.

@@ -1,3 +1,7 @@
+import { isSidebarSectionRoute } from "../../features/channel-navigation/sidebar-section-route";
+import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import { ConversationListToggle } from "../../features/conversation/ConversationListToggle";
+import { useInlineReply } from "../../features/messages/use-inline-reply";
 import { useChannelHistoryFocus } from "./useChannelHistoryFocus";
 import type { Conversation } from "../../features/conversation/service";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
@@ -6,6 +10,7 @@ import {
   linkedDraftKey,
 } from "../../features/solo/linked-chat";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { NoConversationSelected } from "../../features/conversation/NoConversationSelected";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import {
@@ -24,6 +29,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
 import { useMessageOpening } from "../../features/messages/use-message-opening";
+import { useThreadJump, useThreadRootTime } from "./use-thread-jump";
 import { ChannelBody } from "./ChannelBody";
 import {
   entryPane,
@@ -85,6 +91,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  HashIcon,
   SidebarRightIcon,
   PlugIcon,
   CloudOffIcon,
@@ -142,6 +149,9 @@ export type ArchiveShortcut = {
 export type ReadShortcut = {
   current?: { available(): boolean; run(): Promise<void> } | undefined;
 };
+
+/** Older pages read to reach a thread's first message before jumping to it. */
+const NEAR_PAGES = 3;
 
 export function ChannelsPage({
   extensions,
@@ -375,16 +385,35 @@ function ChannelWorkspace({
   archive?: ArchiveShortcut | undefined;
   read?: ReadShortcut | undefined;
 }) {
-  const composingMessage =
-    navigation?.target.kind === "page" &&
-    navigation.target.route?.params === "new-message";
   const draftTarget = navigation?.target;
+  const draftRoute =
+    draftTarget?.kind === "page" ? draftTarget.route?.params : undefined;
+  // A section's own address has no conversation: Solo's shows its draft, and
+  // every other one says nothing is selected beside its list.
+  const home =
+    draftTarget?.kind !== "page"
+      ? undefined
+      : !draftTarget.route
+        ? "messages"
+        : isSidebarSectionRoute(draftRoute)
+          ? draftRoute.section
+          : undefined;
+  const composingTeam = draftRoute === "compose";
+  const unselected = !!home && home !== "solo";
+  // A section's address is a place to come back to, drafted or not; a draft
+  // opened on its own is a Back stop only once it holds something.
+  const draftVisit = home ? undefined : navigation;
+  // Neither a draft nor a section's own address has a conversation to read.
+  const composingMessage =
+    composingTeam || unselected || draftRoute === "new-message";
   const draft = useMemo(
     () =>
-      draftTarget?.kind === "page"
-        ? soloDraft(draftTarget.route?.params)
-        : undefined,
-    [draftTarget],
+      draftTarget?.kind !== "page"
+        ? undefined
+        : home === "solo"
+          ? soloDraft({ kind: "solo-draft" })
+          : soloDraft(draftTarget.route?.params),
+    [draftTarget, home],
   );
   // The draft consumes its source on creation. Keep this visit's source while
   // membership and first-send work settles; a later visit reads storage anew.
@@ -806,7 +835,7 @@ function ChannelWorkspace({
     () => !!watched && newChat(queries.channels.window(watched)),
   );
   // Solo has no main tab workspace; its threads open beside the chat.
-  const threadPane = solo ? ("side" as const) : undefined;
+  const threadPane = "side" as const;
   // Confirmations belong to this visit; a Solo conversation that leaves the
   // owner's view opens its nearest sidebar neighbor, or else a new draft,
   // rather than an empty page.
@@ -956,6 +985,12 @@ function ChannelWorkspace({
     };
   }, [read, readableId, queries, navigation]);
   const onComposerSend = useComposerSent(currentId, setSent);
+  const inlineReply = useInlineReply(
+    queries,
+    currentId,
+    onComposerSend,
+    composerFocus,
+  );
   const [exactOpening, setExactOpening] = useState<{
     request: PageNavigation;
     inTimeline: boolean;
@@ -1075,12 +1110,24 @@ function ChannelWorkspace({
       navigation,
       request: contextVisit.current.request + 1,
     };
-  const contextInTimeline = useMessageOpening(
+  // Read beside the pages, so a jump does not wait for it afterwards.
+  const contextAt = useThreadRootTime(queries, currentId ?? "", contextRoot);
+  const contextNear = useMessageOpening(
     queries.channels,
     currentId ?? "",
     contextRoot,
     contextVisit.current.request,
+    NEAR_PAGES,
   );
+  // Further up than a few pages, the channel moves to that part of its
+  // history instead of reading everything between.
+  const contextJump = useThreadJump(
+    queries.channels,
+    currentId ?? "",
+    contextNear === false ? contextRoot : undefined,
+    contextAt,
+  );
+  const contextInTimeline = contextNear || contextJump === true;
   const contextRouted = !!routedThread;
   const contextSignal = navigation?.signal;
   const contextTarget = useMemo(
@@ -1090,22 +1137,23 @@ function ChannelWorkspace({
             messageId: contextRoot,
             signal: contextSignal,
             focus: false as const,
+            glide: true as const,
           }
         : undefined,
     [contextRouted, contextRoot, contextInTimeline, contextSignal],
   );
-  // The channel whose list has shown since it opened. Hold only until then,
-  // so the list mounts once, at the root; a later attempt, as when Members
-  // closes, seeks with the list in place and reveals the root there.
-  const [listed, setListed] = useState<string>();
-  const contextHolding =
-    !!contextRoot && contextInTimeline === undefined && listed !== current?.id;
-  const listing =
-    listed === current?.id ||
-    (!contextHolding && contentReadyChannel === current?.id)
-      ? current?.id
-      : undefined;
-  if (listing !== listed) setListed(listing);
+  // The channel a jump moved returns to its newest messages on leaving it,
+  // not when its thread closes: the reader may still be reading there.
+  const jumped = useRef<string>(undefined);
+  if (contextJump === true) jumped.current = currentId;
+  useEffect(
+    () => () => {
+      if (!currentId || jumped.current !== currentId) return;
+      jumped.current = undefined;
+      queries.channels.attach?.(currentId);
+    },
+    [queries, currentId],
+  );
   const conversationIcon = (item: (typeof channels)[number]) => {
     const person = item.participants?.[0];
     return (
@@ -1309,7 +1357,7 @@ function ChannelWorkspace({
     extensions,
     leadingIds: settings ? ["settings"] : [],
     threadId: routedThread?.messageId,
-    mainPane: !solo,
+    mainPane: false,
     // Side thread tabs leave during an image or video review; this is what
     // hands the thread draft back from the viewer. The viewer's comment
     // composer reads the thread's saved draft when it mounts, and a thread
@@ -1466,15 +1514,22 @@ function ChannelWorkspace({
         focused !== document.body &&
         focused.isConnected &&
         !focused.closest(
-          '[inert], [hidden], [aria-hidden="true"], [role="menu"]',
+          '[inert], [hidden], [aria-hidden="true"], [role="menu"], [role="dialog"][data-closed]',
         );
       if (!preserved) {
+        const composerTrigger = secondary.panelTrigger.current;
         const target =
+          (composerTrigger?.isConnected &&
+          composerTrigger.matches('[role="textbox"]')
+            ? composerTrigger
+            : undefined) ??
           channelConversation.current
             ?.closest("[data-main-workspace]")
             ?.querySelector<HTMLElement>(
               '[role="tab"][data-tab-value="conversation"], [data-workspace-identity] button',
-            ) ?? (solo ? historyContainer.current : settingsTrigger.current);
+            ) ??
+          settingsTrigger.current ??
+          historyContainer.current;
         // A dock that outlives the close, as a launcher's side panel does,
         // still covers that target, so the dock takes focus instead.
         const cover = target?.closest("[inert]");
@@ -1944,6 +1999,17 @@ function ChannelWorkspace({
     companion ? COMPANION_SPLIT.min : undefined,
   );
   const docked = !!showingPanel && !showingMediaReview;
+  // A list opens a thread on its own: its pane takes the conversation's place
+  // and offers the channel beside it.
+  const threadAlone =
+    docked &&
+    showingChannelPanel &&
+    !companion &&
+    !membersOpen &&
+    navigation?.target.kind === "conversation" &&
+    navigation.target.context === "thread"
+      ? navigation.target
+      : undefined;
   // A floating dock covers the conversation, even the strip beside a card:
   // keep focus, typing, reading and assistive technology out of it.
   const conversation = useRef<HTMLElement>(null);
@@ -2117,9 +2183,15 @@ function ChannelWorkspace({
                 ? navigation
                 : undefined
             }
-            holding={contextHolding}
             inlineTarget={contextTarget}
             onOpenThread={openThread}
+            onReply={
+              !current.archived &&
+              current.viewerRole !== "guest" &&
+              !current.readOnly
+                ? inlineReply.select
+                : undefined
+            }
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined
             }
@@ -2214,6 +2286,7 @@ function ChannelWorkspace({
                 <WorkspaceControl session={queries} channelId={current.id} />
               ) : undefined
             }
+            {...inlineReply.composer}
             workspace={
               filed && fresh
                 ? {
@@ -2232,19 +2305,20 @@ function ChannelWorkspace({
                   }
                 : undefined
             }
-            onSend={onComposerSend}
             onCommand={handleCommand}
-            focusRequest={composerFocus}
           />
         )}
     </div>
   );
+  const listToggle = <ConversationListToggle />;
   const workspace = (
     <div
       data-channel-workspace={currentId ?? ""}
       data-reading-thread={readingThread ? "" : undefined}
+      data-thread-alone={threadAlone ? "" : undefined}
       data-companion={companion ? "" : undefined}
       ref={split.ref}
+      data-expando-scope=""
       style={split.style}
       className={`${styles.board} ${panelStyles.splitMotion}`}
     >
@@ -2282,7 +2356,7 @@ function ChannelWorkspace({
         aria-hidden={covered || undefined}
       >
         <div
-          className={`${styles.conversation}${solo ? ` ${styles.soloConversation}` : ""}`}
+          className={`${styles.conversation} ${styles.mainConversation}${solo ? ` ${styles.soloConversation}` : ""}`}
           style={
             {
               "--channel-preview-inset": channelNotice
@@ -2292,15 +2366,62 @@ function ChannelWorkspace({
           }
           data-attachment-drop-zone=""
         >
-          {composingMessage ? (
+          {composingTeam && (
+            <PanelHeader
+              variant="conversation"
+              title="New message"
+              navigation={listToggle}
+            />
+          )}
+          {unselected ? (
+            <>
+              <PanelHeader
+                variant="conversation"
+                title={null}
+                navigation={listToggle}
+              />
+              <div className={styles.unselected}>
+                <NoConversationSelected />
+              </div>
+            </>
+          ) : composingMessage ? (
             <LiveNewMessage
+              {...(composingTeam && {
+                layout: "page" as const,
+                expanded: true,
+              })}
               host={{ relay, panels, navigation: navigator }}
               session={queries}
               scope={scope}
-              visit={navigation}
+              visit={draftVisit}
               extensions={extensions}
               onPreparing={(pubkeys) => handoff?.prepareDm(pubkeys)}
               onOpenThread={openChannelThread}
+              allowChannels
+              onOpenChat={(channelId) => {
+                if (!behindSettings()) select(channelId);
+              }}
+              solo={
+                composingTeam
+                  ? undefined
+                  : {
+                      onStarted: (channelId) => {
+                        if (!behindSettings()) select(channelId);
+                      },
+                      onFailed: (_channelId, message, retry) =>
+                        notify(
+                          message,
+                          "error",
+                          retry
+                            ? {
+                                label: "Retry restoring message",
+                                onClick: () => void retry(),
+                                timeout: Infinity,
+                              }
+                            : undefined,
+                        ),
+                    }
+              }
               onStarted={(channelId, id) => {
                 handoff?.clearPreparingDm();
                 if (behindSettings()) return;
@@ -2324,11 +2445,12 @@ function ChannelWorkspace({
                 draft.draft,
                 retiredSoloDraft.generation,
               ])}
+              navigation={listToggle}
               linkedId={draft.linked}
               region={draft.region}
               draft={draft.draft}
               source={linkedSource}
-              visit={navigation}
+              visit={draftVisit}
               focusRequest={
                 navigation?.focus === "preserve" ||
                 (retiredSoloDraft.generation > 0 &&
@@ -2377,6 +2499,7 @@ function ChannelWorkspace({
             <>
               {current && solo ? (
                 <SoloHeading
+                  leadingActions={listToggle}
                   chatMenus={chatMenus}
                   key={`${current.id}:${navigation?.entryId ?? ""}`}
                   session={queries}
@@ -2400,6 +2523,7 @@ function ChannelWorkspace({
                     !showingChannelPanel && (
                       <span className={panelStyles.paneToggle}>
                         <IconButton
+                          variant="glass"
                           hint="familiar"
                           ref={splitTrigger}
                           data-tab-pane-toggle=""
@@ -2423,6 +2547,9 @@ function ChannelWorkspace({
                 <div className={styles.mainWorkspace}>
                   <PanelWorkspace
                     main
+                    leadingActions={current ? listToggle : undefined}
+                    identityPlacement="content"
+                    headerDivider={false}
                     tabMenu={tabMenu}
                     drag={secondary.drag.main}
                     label="Channel tabs"
@@ -2527,6 +2654,7 @@ function ChannelWorkspace({
                         {current && hasChannelPanel && !showingChannelPanel && (
                           <span className={panelStyles.paneToggle}>
                             <IconButton
+                              variant="glass"
                               hint="familiar"
                               ref={splitTrigger}
                               data-tab-pane-toggle=""
@@ -2602,7 +2730,7 @@ function ChannelWorkspace({
         {secondary.announcement}
       </p>
       <PanelDock
-        open={docked}
+        open={!!showingPanel && !showingMediaReview}
         keepMounted={
           tabState.entries.length > 0 ||
           (!!hasPanel && !tabState.paneOpen) ||
@@ -2620,19 +2748,55 @@ function ChannelWorkspace({
               >
                 <PanelWorkspace
                   key={currentId}
+                  leadingActions={
+                    threadAlone ? (
+                      <span className="flex min-w-0 items-center gap-1">
+                        {listToggle}
+                        {current && (
+                          <IconButton
+                            size="sm"
+                            variant="glass"
+                            data-thread-show-channel=""
+                            aria-label={
+                              current.channelType === "dm"
+                                ? "Show conversation"
+                                : `Show #${current.name}`
+                            }
+                            title="Show the channel beside this thread"
+                            onClick={() =>
+                              // The thread is already being read: only
+                              // the channel marks the message it lands on.
+                              void navigator?.open({
+                                ...threadAlone,
+                                ...(threadAlone.threadRootId
+                                  ? { messageId: threadAlone.threadRootId }
+                                  : {}),
+                                context: "channel",
+                              })
+                            }
+                            icon={<HashIcon size={18} aria-hidden="true" />}
+                          />
+                        )}
+                      </span>
+                    ) : undefined
+                  }
                   actions={
-                    <IconButton
-                      hint="familiar"
-                      data-tab-pane-toggle=""
-                      data-highlight-expanded="false"
-                      variant="subtle"
-                      size="toolbar"
-                      aria-label="Toggle tab pane"
-                      title="Close tab pane"
-                      aria-expanded={true}
-                      onClick={secondary.closePane}
-                      icon={<SidebarRightIcon size="1rem" aria-hidden="true" />}
-                    />
+                    threadAlone ? undefined : (
+                      <IconButton
+                        hint="familiar"
+                        data-tab-pane-toggle=""
+                        data-highlight-expanded="false"
+                        variant="glass"
+                        size="toolbar"
+                        aria-label="Toggle tab pane"
+                        title="Close tab pane"
+                        aria-expanded={true}
+                        onClick={secondary.closePane}
+                        icon={
+                          <SidebarRightIcon size="1rem" aria-hidden="true" />
+                        }
+                      />
+                    )
                   }
                   tabMenu={tabMenu}
                   drag={secondary.drag.side}

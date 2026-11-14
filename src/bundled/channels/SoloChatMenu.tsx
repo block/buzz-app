@@ -24,9 +24,14 @@ import {
   MenuSubmenu,
   MenuSubmenuPopup,
   MenuSubmenuTrigger,
+  MenuGroup,
+  MenuGroupLabel,
 } from "../../shared/design-system/ui/Menu";
+import { useHeaderToolsMenu } from "../../features/conversation/ConversationHeaderTools";
 import {
   FolderSimpleIcon,
+  FolderPlusIcon,
+  ChatCircleIcon,
   HashArrowInIcon,
   GearIcon,
   PencilSimpleIcon,
@@ -69,6 +74,7 @@ export function SoloChatMenuItems({
   onReadResult(error?: string): void;
 }) {
   const handoff = useChannelNavigation();
+  const overflow = useHeaderToolsMenu();
   const regions = useSoloNavigation(session);
   const preferences = session.soloPreferences;
   const snapshot = useSyncExternalStore(
@@ -81,8 +87,39 @@ export function SoloChatMenuItems({
   const grouped = groups.some((group) => group.id === assigned);
   // Archived chats keep only what still applies, including Unarchive.
   const active = !channel.archived;
+  const moveItems = (
+    <>
+      {grouped && (
+        <MenuItem disabled={!preferences.writable} onClick={() => onMove?.()}>
+          <MenuIcon>
+            <ChatCircleIcon size={16} />
+          </MenuIcon>
+          Chats
+        </MenuItem>
+      )}
+      {groups.map((group) => (
+        <MenuItem
+          key={group.id}
+          disabled={!preferences.writable}
+          onClick={() => onMove?.(group.id)}
+        >
+          <MenuIcon>
+            <FolderSimpleIcon size={16} />
+          </MenuIcon>
+          {group.name}
+        </MenuItem>
+      ))}
+      <MenuItem disabled={!preferences.writable} onClick={onNewWorkspace}>
+        <MenuIcon>
+          <FolderPlusIcon size={16} />
+        </MenuIcon>
+        New workspace
+      </MenuItem>
+    </>
+  );
   return (
     <>
+      {active && children}
       {session.unread.sync().capability === "frontier-sync" && (
         <ChannelReadMenuItem
           unread={session.unread}
@@ -122,29 +159,6 @@ export function SoloChatMenuItems({
         </MenuIcon>
         Chat settings
       </MenuItem>
-      {active &&
-        !regions.managed.has(channel.id) &&
-        onMove &&
-        onNewWorkspace && (
-          <MenuSubmenu>
-            <MenuSubmenuTrigger disabled={!preferences.writable}>
-              <MenuIcon>
-                <FolderSimpleIcon size={14} />
-              </MenuIcon>
-              Move to
-            </MenuSubmenuTrigger>
-            <MenuSubmenuPopup aria-label="Workspace">
-              {grouped && <MenuItem onClick={() => onMove()}>Chats</MenuItem>}
-              {groups.map((group) => (
-                <MenuItem key={group.id} onClick={() => onMove(group.id)}>
-                  {group.name}
-                </MenuItem>
-              ))}
-              <MenuItem onClick={onNewWorkspace}>New workspace</MenuItem>
-            </MenuSubmenuPopup>
-          </MenuSubmenu>
-        )}
-      {active && children}
       <MenuSeparator />
       {active && (
         <MenuItem
@@ -169,6 +183,29 @@ export function SoloChatMenuItems({
             {conversionLabel(session, channel.id)}
           </MenuItem>
         )}
+      {active &&
+        !regions.excluded.has(channel.id) &&
+        onMove &&
+        onNewWorkspace &&
+        (overflow ? (
+          <MenuGroup>
+            <MenuSeparator />
+            <MenuGroupLabel>Move to</MenuGroupLabel>
+            {moveItems}
+          </MenuGroup>
+        ) : (
+          <MenuSubmenu>
+            <MenuSubmenuTrigger disabled={!preferences.writable}>
+              <MenuIcon>
+                <FolderSimpleIcon size={14} />
+              </MenuIcon>
+              Move to
+            </MenuSubmenuTrigger>
+            <MenuSubmenuPopup aria-label="Workspace">
+              {moveItems}
+            </MenuSubmenuPopup>
+          </MenuSubmenu>
+        ))}
       {onLifecycle &&
         (!channel.readOnly || channel.viewerRole === "guest") &&
         !channel.cached && (

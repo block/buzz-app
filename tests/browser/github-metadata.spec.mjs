@@ -1,6 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
-import { end, settle } from "./timeline.mjs";
+import { end } from "./timeline.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
 
@@ -34,9 +33,20 @@ test("PR metadata wraps into readable rows at enlarged text size", async ({
       });
     },
   );
-  await page.goto(app.origin);
-  await openPage(page, "Messages");
-  await settle(page);
+  await page.goto(
+    `${app.origin}/#buzz=${encodeURIComponent(
+      JSON.stringify({
+        version: 1,
+        kind: "conversation",
+        channelId: "alpha",
+        scope: {
+          viewer: app.viewer,
+          communityOrigin: "https://primary.example",
+        },
+      }),
+    )}`,
+  );
+  await expect(page.locator('[data-channel-timeline="alpha"]')).toBeVisible();
   app.append("primary", "alpha", target);
   const link = page.locator(`a[href="${target}"]`);
   await expect(link).toBeAttached();

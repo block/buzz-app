@@ -1,6 +1,10 @@
-import { validDirectMessageParticipants } from "./direct-message-policy";
+import {
+  directMessageWith,
+  validDirectMessageParticipants,
+} from "./direct-message-policy";
 import { foldProfiles } from "./profiles";
 import type { ChannelQueries } from "./contracts";
+import type { ChannelLifecycleCapability } from "./channel-lifecycle";
 import type { ReadTransport } from "./transport";
 import type { RelayReader } from "./reader";
 import type { Outbox } from "./outbox";
@@ -33,6 +37,11 @@ export function createDirectMessages(
   /** The shared profile cache. A first message reads its 1:1 partner's
    * agent flag from it, and the people directory stays outside it. */
   profiles?: Pick<ProfileQueries, "ensure">,
+  /** The DMs hidden on the relay. Opening one there unhides it. */
+  visibility?: Pick<
+    ChannelLifecycleCapability,
+    "snapshot" | "refreshVisibility"
+  >,
 ) {
   const available = !!transport?.openDirectMessage && !!outbox?.supports(9);
   const opened = new Set<(id: string) => void>();
@@ -152,6 +161,21 @@ export function createDirectMessages(
         throw new Error("Choose between one and eight other people.");
       const active = AbortSignal.any([lifetime, signal]);
       active.throwIfAborted();
+      // Signed discovery already admitted a listed DM: it opens with no
+      // relay command, unless the relay holds it hidden and must unhide it.
+      const known = directMessageWith(
+        channels.list().channels,
+        transport.viewer,
+        pubkeys,
+      )?.id;
+      if (known && visibility) {
+        if (visibility.snapshot().status !== "ready")
+          await visibility.refreshVisibility(active).catch(() => {});
+        active.throwIfAborted();
+        const shown = visibility.snapshot();
+        if (shown.status === "ready" && !shown.hidden.includes(known))
+          return admit(known);
+      }
       const id = await transport.openDirectMessage(pubkeys, active);
       active.throwIfAborted();
       // Only signed discovery can admit the returned channel. Never trust a receipt as membership.
@@ -179,16 +203,19 @@ export function createDirectMessages(
         throw new Error(
           "The conversation’s participants could not be confirmed. Try again.",
         );
-      // A 1:1 DM's agent partner is woken only by a `p` tag, which `send`
-      // adds from the shared profile cache. The people directory leaves that
-      // cache empty, so load the partner before the first message is sent.
-      // A failed read still opens the DM: it only loses the wake tag, as
-      // before this read existed.
-      if (pubkeys.length === 1)
-        await profiles?.ensure(pubkeys, "foreground").catch(() => {});
-      active.throwIfAborted();
-      for (const listener of [...opened]) listener(id);
-      return id;
+      return admit(id);
+      async function admit(id: string) {
+        // A 1:1 DM's agent partner is woken only by a `p` tag, which `send`
+        // adds from the shared profile cache. The people directory leaves that
+        // cache empty, so load the partner before the first message is sent.
+        // A failed read still opens the DM: it only loses the wake tag, as
+        // before this read existed.
+        if (pubkeys.length === 1)
+          await profiles?.ensure(pubkeys, "foreground").catch(() => {});
+        active.throwIfAborted();
+        for (const listener of [...opened]) listener(id);
+        return id;
+      }
     },
     delivery(id: string) {
       return journal?.snapshot().find((item) => item.event.id === id)?.delivery;

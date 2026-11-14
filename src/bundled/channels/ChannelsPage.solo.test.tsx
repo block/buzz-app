@@ -37,9 +37,6 @@ import {
   type ArchiveShortcut,
   type ReadShortcut,
 } from "./ChannelsPage";
-import { SoloWorkspaces } from "./SoloWorkspaces";
-import type { RelaySession } from "../../features/relay/session";
-import type { RegisteredSidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
 import type { ReadTarget } from "../../features/relay/read-state-model";
 
 vi.mock(
@@ -77,9 +74,7 @@ function fixture({
   viewOnly = false,
   canLeave,
   preview,
-  sidebarRows,
 }: {
-  sidebarRows?: readonly RegisteredSidebarRows[];
   /** Observed unread messages in this chat; fakes the read state when given. */
   unread?: number;
   /** What the read state can do on this connection. */
@@ -402,21 +397,8 @@ function fixture({
   } as unknown as Navigation;
   const archive: ArchiveShortcut = {};
   const read: ReadShortcut = {};
-  const page = (sidebar = false) => (
+  const page = () => (
     <ChannelNavigationProvider relay={relay}>
-      {sidebar && (
-        <SoloWorkspaces
-          session={session as unknown as RelaySession}
-          navigator={navigator}
-          scope={scope}
-          sidebarRows={sidebarRows}
-          chats={[channel, ...neighbors].map((chat) => ({
-            id: chat.id,
-            title: chat.name,
-          }))}
-          renderChat={(item) => <button type="button">{item.title}</button>}
-        />
-      )}
       <ChannelsPage
         relay={relay}
         panels={{
@@ -446,8 +428,6 @@ function fixture({
       navigationSnapshot.entry.target = next;
       rendered?.rerender(<ToastProvider>{page()}</ToastProvider>);
     },
-    mountWithSidebar: (toasts = false) =>
-      render(toasts ? <ToastProvider>{page(true)}</ToastProvider> : page(true)),
     abort,
     archive,
     read,
@@ -1171,10 +1151,8 @@ it.each([
     const f = fixture();
     f.mount();
     const user = userEvent.setup();
-    await user.click(
-      await screen.findByRole("button", { name: "Chat actions" }),
-    );
-    await user.click(await screen.findByRole("menuitem", { name: label }));
+    await user.click(await headerAction("Chat actions"));
+    await user.click(await screen.findByRole("button", { name: label }));
     // Archive is undoable from its result toast, so only Delete confirms.
     if (title) {
       const dialog = screen.getByRole("dialog", { name: title });
@@ -1191,123 +1169,49 @@ it.each([
   },
 );
 
-it.each([
-  ["open", true],
-  ["another", false],
-] as const)(
-  "archives the %s chat from its sidebar row; only leaving the open chat opens a new Solo draft",
-  async (_, open) => {
-    const f = fixture(
-      open ? {} : { target: (scope) => soloDraftTarget(scope) },
-    );
-    f.mountWithSidebar();
-    const user = userEvent.setup();
-    await user.click(
-      await screen.findByRole("button", { name: "Actions for Planning" }),
-    );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Archive chat" }),
-    );
-    await waitFor(() => expect(f.run).toHaveBeenCalled());
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(f.run).toHaveBeenCalledExactlyOnceWith(
-      "archive",
-      id,
-      expect.any(AbortSignal),
-    );
-    if (open)
-      expect(f.open).toHaveBeenCalledExactlyOnceWith(soloDraftTarget(f.scope));
-    else expect(f.open).not.toHaveBeenCalled();
-  },
-);
+const deleteFromHeader = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(await headerAction("Chat actions"));
+  await user.click(await screen.findByRole("button", { name: "Delete chat" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Delete Planning?",
+  });
+  return within(dialog).getByRole("button", { name: "Delete chat" });
+};
 
-it.each([
-  ["Chat actions", "archive", "Archive chat", undefined],
-  ["Chat actions", "delete", "Delete chat", "Delete Planning?"],
-  ["Actions for Planning", "archive", "Archive chat", undefined],
-] as const)(
-  "from %s, %s leaves the open chat for its sidebar neighbor",
-  async (trigger, action, label, title) => {
-    const other = "22222222-2222-4222-8222-222222222222";
-    const f = fixture({ others: [other] });
-    f.mountWithSidebar();
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: trigger }));
-    await user.click(await screen.findByRole("menuitem", { name: label }));
-    // Archive is undoable from its result toast, so only Delete confirms.
-    if (title) {
-      const dialog = await screen.findByRole("dialog", { name: title });
-      await user.click(within(dialog).getByRole("button", { name: label }));
-    }
-    await waitFor(() => expect(f.open).toHaveBeenCalled());
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(f.run).toHaveBeenCalledExactlyOnceWith(
-      action,
-      id,
-      expect.any(AbortSignal),
-    );
-    expect(f.open).toHaveBeenCalledExactlyOnceWith(
-      conversationTarget(f.scope, other),
-    );
-  },
-);
-
-it.each(["Chat actions", "Actions for Planning"])(
-  "keeps a submitted delete alive from %s and reports failure with its chat name",
-  async (trigger) => {
-    const other = "22222222-2222-4222-8222-222222222222";
-    const f = fixture({ others: [other] });
-    let reject!: (error: Error) => void;
-    const pending = new Promise<void>((_resolve, fail) => {
-      reject = fail;
+it("keeps a submitted delete alive after leaving and reports failure with its chat name", async () => {
+  const f = fixture();
+  let reject!: (error: Error) => void;
+  const pending = new Promise<void>((_resolve, fail) => {
+    reject = fail;
+  });
+  f.run.mockImplementationOnce(() => pending);
+  f.mountWithToasts();
+  const user = userEvent.setup();
+  try {
+    const confirm = await deleteFromHeader(user);
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+    expect(f.open).toHaveBeenCalledExactlyOnceWith(soloDraftTarget(f.scope));
+    expect(f.run.mock.calls[0]?.[2]?.aborted).toBe(false);
+    await act(async () => reject(new Error("Deletion refused")));
+    const failure = await screen.findByRole("dialog", {
+      name: "Delete chat failed",
     });
-    f.run.mockImplementationOnce(() => pending);
-    f.mountWithSidebar(true);
-    const user = userEvent.setup();
-    try {
-      await user.click(await screen.findByRole("button", { name: trigger }));
-      await user.click(
-        await screen.findByRole("menuitem", { name: "Delete chat" }),
-      );
-      const confirm = await screen.findByRole("button", {
-        name: "Delete chat",
-      });
-      fireEvent.click(confirm);
-      fireEvent.click(confirm);
-      await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
-      expect(f.open).toHaveBeenCalledExactlyOnceWith(
-        conversationTarget(f.scope, other),
-      );
-      const signal = f.run.mock.calls[0]?.[2];
-      expect(signal?.aborted).toBe(false);
-      expect(
-        f.session.channels.list().channels.some((chat) => chat.id === id),
-      ).toBe(true);
-      await act(async () => reject(new Error("Deletion refused")));
-      const failure = await screen.findByRole("dialog", {
-        name: "Delete chat failed",
-      });
-      expect(failure).toHaveTextContent("Planning: Deletion refused");
-      expect(
-        f.session.channels.list().channels.some((chat) => chat.id === id),
-      ).toBe(true);
-      expect(f.open).toHaveBeenCalledOnce();
-    } finally {
-      await act(async () => reject(new Error("Test finished")));
-    }
-  },
-);
+    expect(failure).toHaveTextContent("Planning: Deletion refused");
+    expect(
+      f.session.channels.list().channels.some((chat) => chat.id === id),
+    ).toBe(true);
+    expect(f.open).toHaveBeenCalledOnce();
+  } finally {
+    await act(async () => reject(new Error("Test finished")));
+  }
+});
 
-it.each([
-  ["Chat actions", "Cancel"],
-  ["Chat actions", "Retry"],
-  ["Actions for Planning", "Cancel"],
-  ["Actions for Planning", "Retry"],
-] as const)(
-  "keeps a paused Solo delete recoverable after departure from %s (%s)",
-  async (trigger, choice) => {
-    const other = "22222222-2222-4222-8222-222222222222";
-    const f = fixture({ others: [other] });
+it.each(["Cancel", "Retry"] as const)(
+  "keeps a paused Solo delete recoverable after departure (%s)",
+  async (choice) => {
+    const f = fixture();
     f.run.mockRejectedValueOnce(new ApiPaused(0));
     // A real route change aborts the old visit before the paused result arrives.
     f.open.mockImplementation(async (target) => {
@@ -1315,26 +1219,15 @@ it.each([
       f.abort.abort();
       return { status: "opened" as const };
     });
-    f.mountWithSidebar(true);
+    f.mountWithToasts();
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: trigger }));
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Delete chat" }),
-    );
-    await user.click(
-      await screen.findByRole("button", { name: "Delete chat" }),
-    );
+    await user.click(await deleteFromHeader(user));
     const retry = await screen.findByRole("button", { name: "Retry" });
     const confirmation = screen.getByRole("dialog", {
       name: "Delete Planning?",
     });
     expect(confirmation).toHaveTextContent("nothing was deleted");
-    expect(f.open).toHaveBeenCalledExactlyOnceWith(
-      conversationTarget(f.scope, other),
-    );
-    expect(
-      f.session.channels.list().channels.some((chat) => chat.id === id),
-    ).toBe(true);
+    expect(f.open).toHaveBeenCalledExactlyOnceWith(soloDraftTarget(f.scope));
     expect(f.run).toHaveBeenCalledOnce();
     await user.click(
       choice === "Retry"
@@ -1342,33 +1235,21 @@ it.each([
         : within(confirmation).getByRole("button", { name: "Cancel" }),
     );
     await waitFor(() => expect(confirmation).not.toBeInTheDocument());
-    if (choice === "Retry") {
+    if (choice === "Retry")
       await screen.findByRole("dialog", { name: "Chat deleted: Planning" });
-      expect(f.run).toHaveBeenCalledTimes(2);
-      expect(
-        f.session.channels.list().channels.some((chat) => chat.id === id),
-      ).toBe(false);
-    } else {
-      expect(f.run).toHaveBeenCalledOnce();
-      expect(
-        f.session.channels.list().channels.some((chat) => chat.id === id),
-      ).toBe(true);
-    }
+    expect(f.run).toHaveBeenCalledTimes(choice === "Retry" ? 2 : 1);
+    expect(
+      f.session.channels.list().channels.some((chat) => chat.id === id),
+    ).toBe(choice !== "Retry");
     expect(f.open).toHaveBeenCalledOnce();
   },
 );
 
-it.each([
-  ["Chat actions", true],
-  ["Chat actions", false],
-  ["Actions for Planning", true],
-  ["Actions for Planning", false],
-] as const)(
-  "retires a reopened deleted chat from %s, preserving other destinations (%s)",
-  async (trigger, reopened) => {
+it.each([true, false])(
+  "leaves a deleted chat that was reopened while it was deleting (%s)",
+  async (reopened) => {
     const other = "22222222-2222-4222-8222-222222222222";
-    const last = "33333333-3333-4333-8333-333333333333";
-    const f = fixture({ others: [other, last] });
+    const f = fixture({ others: [other] });
     let release!: () => void;
     const pending = new Promise<void>((resolve) => {
       release = resolve;
@@ -1379,32 +1260,21 @@ it.each([
       await pending;
       await run(...args);
     });
-    f.mountWithSidebar(true);
+    f.mountWithToasts();
     const user = userEvent.setup();
     try {
-      await user.click(await screen.findByRole("button", { name: trigger }));
-      await user.click(
-        await screen.findByRole("menuitem", { name: "Delete chat" }),
-      );
-      await user.click(
-        await screen.findByRole("button", { name: "Delete chat" }),
-      );
+      await user.click(await deleteFromHeader(user));
       await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
-      expect(f.open).toHaveBeenCalledExactlyOnceWith(
-        conversationTarget(f.scope, other),
-      );
+      expect(f.open).toHaveBeenCalledExactlyOnceWith(soloDraftTarget(f.scope));
       act(() => {
         f.abort.abort();
-        f.show(conversationTarget(f.scope, reopened ? id : last));
+        f.show(conversationTarget(f.scope, reopened ? id : other));
       });
       await act(async () => {
         release();
       });
       await screen.findByRole("dialog", { name: "Chat deleted: Planning" });
       expect(f.open).toHaveBeenCalledTimes(reopened ? 2 : 1);
-      expect(f.open).toHaveBeenLastCalledWith(
-        conversationTarget(f.scope, other),
-      );
     } finally {
       await act(async () => {
         release();
@@ -1412,108 +1282,6 @@ it.each([
     }
   },
 );
-
-it.each([
-  ["Chat actions", "confirmation"],
-  ["Chat actions", "pending"],
-  ["Chat actions", "all-hidden"],
-  ["Actions for Planning", "confirmation"],
-  ["Actions for Planning", "pending"],
-  ["Actions for Planning", "all-hidden"],
-] as const)(
-  "chooses visible successors from %s on delete submission (%s)",
-  async (trigger, phase) => {
-    const other = "22222222-2222-4222-8222-222222222222";
-    const last = "33333333-3333-4333-8333-333333333333";
-    const f = fixture({
-      others: [other, last],
-      sidebarRows: [
-        {
-          version: 1,
-          id: "hide",
-          key: "fixture.rows/hide",
-          pluginId: "fixture.rows",
-          revision: "one",
-          render: (row, Default) =>
-            row.channel.lastActivityAt === 1 ? null : Default,
-        },
-      ],
-    });
-    let release = () => {};
-    const pending = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const run = f.run.getMockImplementation();
-    if (!run) throw new Error("Missing lifecycle fixture implementation");
-    f.run.mockImplementationOnce(async (...args) => {
-      await pending;
-      await run(...args);
-    });
-    f.mountWithSidebar();
-    const user = userEvent.setup();
-    try {
-      await user.click(await screen.findByRole("button", { name: trigger }));
-      await user.click(
-        await screen.findByRole("menuitem", { name: "Delete chat" }),
-      );
-      const dialog = await screen.findByRole("dialog", {
-        name: "Delete Planning?",
-      });
-      if (phase === "confirmation")
-        act(() => f.updateChat(other, { lastActivityAt: 1 }));
-      await user.click(
-        within(dialog).getByRole("button", { name: "Delete chat" }),
-      );
-      await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
-      const successor = conversationTarget(
-        f.scope,
-        phase === "confirmation" ? last : other,
-      );
-      expect(f.open).toHaveBeenCalledExactlyOnceWith(successor);
-      if (phase !== "confirmation")
-        act(() => {
-          f.updateChat(other, { lastActivityAt: 1 });
-          if (phase === "all-hidden") f.updateChat(last, { lastActivityAt: 1 });
-        });
-      expect(screen.queryByRole("button", { name: "Other 1" })).toBeNull();
-      await act(async () => {
-        release();
-      });
-      // Completion must not navigate again, even if sidebar visibility changed.
-      expect(f.open).toHaveBeenCalledExactlyOnceWith(successor);
-    } finally {
-      release();
-    }
-  },
-);
-
-it("offers the header's chat actions from the sidebar row, plus inline Rename", async () => {
-  const f = fixture();
-  f.mountWithSidebar();
-  const user = userEvent.setup();
-  const items = async (trigger: string) => {
-    await user.click(await screen.findByRole("button", { name: trigger }));
-    const menu = await screen.findByRole("menu", { name: trigger });
-    await within(menu).findByRole("menuitem", { name: "Delete chat" });
-    const names = within(menu)
-      .getAllByRole("menuitem")
-      .map((item) => item.textContent);
-    await user.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-    return names;
-  };
-  const header = await items("Chat actions");
-  expect(header).toEqual([
-    "Chat settings",
-    "Move to",
-    "Share access",
-    "Copy link",
-    "Convert to channel",
-    "Archive chat",
-    "Delete chat",
-  ]);
-  expect(await items("Actions for Planning")).toEqual(["Rename", ...header]);
-});
 
 it("runs the header's own chat actions and returns focus to Chat actions", async () => {
   const f = fixture();
@@ -1521,20 +1289,20 @@ it("runs the header's own chat actions and returns focus to Chat actions", async
   Object.assign(f.session.soloPreferences, { writable: true, assign });
   f.mount();
   const user = userEvent.setup();
-  const trigger = await screen.findByRole("button", { name: "Chat actions" });
+  const trigger = await headerAction("Chat actions");
   await user.click(trigger);
-  (await screen.findByRole("menuitem", { name: "Move to" })).focus();
-  await user.keyboard("{ArrowRight}");
-  await user.click(await screen.findByRole("menuitem", { name: "Work" }));
+  await user.click(await screen.findByRole("button", { name: "Work" }));
   expect(assign).toHaveBeenCalledExactlyOnceWith(id, "work");
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await user.click(trigger);
   await user.click(
-    await screen.findByRole("menuitem", { name: "Chat settings" }),
+    await screen.findByRole("button", { name: "Chat settings" }),
   );
   const dialog = await screen.findByRole("dialog", { name: "Edit chat" });
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Edit chat" })).toBeNull(),
+  );
   await waitFor(() => expect(trigger).toHaveFocus());
 });
 
@@ -1580,10 +1348,8 @@ it("reports a failed header move beside the header and retries it", async () => 
   act(() => publish(failed));
   expect(screen.queryByText("Chat wasn’t moved")).toBeNull();
   act(() => publish(base));
-  await user.click(await screen.findByRole("button", { name: "Chat actions" }));
-  (await screen.findByRole("menuitem", { name: "Move to" })).focus();
-  await user.keyboard("{ArrowRight}");
-  await user.click(await screen.findByRole("menuitem", { name: "Work" }));
+  await user.click(await headerAction("Chat actions"));
+  await user.click(await screen.findByRole("button", { name: "Work" }));
   expect(await screen.findByText("Chat wasn’t moved")).toBeVisible();
   // Toasts own swipe gestures, so press their buttons without a pointer.
   fireEvent.click(screen.getByRole("button", { name: "Retry move" }));
@@ -1598,13 +1364,13 @@ it("returns focus to Chat actions when its confirmation is cancelled", async () 
   const f = fixture();
   f.mount();
   const user = userEvent.setup();
-  const trigger = await screen.findByRole("button", { name: "Chat actions" });
+  const trigger = await headerAction("Chat actions");
   await user.click(trigger);
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Delete chat" }),
-  );
+  await user.click(await screen.findByRole("button", { name: "Delete chat" }));
   await user.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(
+    screen.queryByRole("dialog", { name: "Delete chat: Planning" }),
+  ).toBeNull();
   expect(trigger).toHaveFocus();
   expect(f.run).not.toHaveBeenCalled();
   expect(f.open).not.toHaveBeenCalled();
@@ -1613,31 +1379,21 @@ it("returns focus to Chat actions when its confirmation is cancelled", async () 
 it("keeps Chat settings in the chat actions menu, not as a separate heading button", async () => {
   const f = fixture();
   f.mount();
-  await screen.findByRole("button", { name: "Chat actions" });
+  await headerAction("Chat actions");
   expect(screen.queryByRole("button", { name: "Chat settings" })).toBeNull();
 });
 
 it("names the owner on the access controls of someone else's shared chat", async () => {
   const person = "e".repeat(64);
   const f = fixture({ placed: false, ownedBy: person, people: [person] });
-  f.mountWithSidebar();
-  const user = userEvent.setup();
-  // The header names the owner; the sidebar mark retains the owner avatar.
+  f.mount();
   const header = await screen.findByRole("button", {
     name: "Share access to Planning, Teammate’s chat",
   });
-  expect(header).toHaveTextContent("Planning");
-  expect(header).toHaveAttribute("title", "Teammate’s chat");
-  const mark = screen.getByRole("button", { name: "Teammate’s chat" });
-  expect(mark).toHaveTextContent("T");
-  await user.click(mark);
-  expect(
-    await screen.findByRole("dialog", { name: /Share access/ }),
-  ).toBeInTheDocument();
-  // Closing returns focus to the mark, not the row's select button.
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(mark).toHaveFocus();
+  expect(screen.getByRole("heading", { name: "Planning" })).toBeVisible();
+  expect(header).toHaveAccessibleName(
+    "Share access to Planning, Teammate’s chat",
+  );
 });
 
 it.each([
@@ -1652,7 +1408,7 @@ it.each([
     },
   ],
 ])("names no owner on %s", async (_, options) => {
-  fixture(options).mountWithSidebar();
+  fixture(options).mount();
   expect(
     await screen.findByRole("button", { name: "Share access to Planning" }),
   ).toBeInTheDocument();
@@ -1661,7 +1417,7 @@ it.each([
 
 it("marks an archived chat once and keeps only its lifecycle actions", async () => {
   fixture({ archived: true }).mount();
-  await screen.findByRole("button", { name: "Chat actions" });
+  await headerAction("Chat actions");
   expect(screen.getAllByText("Archived")).toHaveLength(1);
   expect(
     screen.queryByRole("button", { name: "Share access to Planning" }),
@@ -1695,17 +1451,15 @@ it.each([
 
 it("lets a joined Solo viewer cancel Leave and restores focus to Chat actions", async () => {
   const f = fixture({ placed: false, viewOnly: true });
-  f.mountWithSidebar();
-  const row = await screen.findByRole("button", { name: /^Planning/ });
-  expect(row).toBeVisible();
+  f.mount();
+  const user = userEvent.setup();
+  const actions = await headerAction("Chat actions");
   expect(screen.queryByRole("textbox")).toBeNull();
   expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
-  const user = userEvent.setup();
-  const actions = screen.getByRole("button", { name: "Chat actions" });
   await user.click(actions);
-  const leave = await screen.findByRole("menuitem", { name: "Leave chat" });
-  expect(screen.queryByRole("menuitem", { name: "Archive chat" })).toBeNull();
-  expect(screen.queryByRole("menuitem", { name: "Delete chat" })).toBeNull();
+  const leave = await screen.findByRole("button", { name: "Leave chat" });
+  expect(screen.queryByRole("button", { name: "Archive chat" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete chat" })).toBeNull();
   await user.click(leave);
   const dialog = await screen.findByRole("dialog", {
     name: "Leave chat: Planning",
@@ -1851,3 +1605,15 @@ it("leaves Escape to a text field outside the composer", async () => {
   expect(f.read.current?.available()).toBe(false);
   field.remove();
 });
+
+/** Header tools retain their controls inside the shared overflow. */
+async function headerAction(name: string) {
+  const action = screen.queryByRole("button", { name });
+  if (action) return action;
+  if (name === "Channel actions" || name === "Chat actions")
+    return screen.findByRole("button", { name: "Conversation actions" });
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Conversation actions" }),
+  );
+  return screen.findByRole("button", { name });
+}

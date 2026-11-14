@@ -1,6 +1,7 @@
 import { Tabs as BaseTabs } from "@base-ui/react/tabs";
 import { NavigationItem } from "./NavigationItem";
 import { IconButton } from "./IconButton";
+import { Button } from "./Button";
 import { Input } from "./Input";
 import { Tooltip } from "./Tooltip";
 import {
@@ -69,6 +70,7 @@ export type TabsVariant =
   | "chrome"
   | "dock"
   | "panel"
+  | "buttons"
   | "workspace"
   | "navigation"
   | "segmented"
@@ -81,6 +83,7 @@ export function Tabs<Value extends string>({
   onValueChange,
   onReselect,
   trailingAction,
+  leadingAction,
   variant = "chrome",
   orientation = "horizontal",
   size = "md",
@@ -108,9 +111,11 @@ export function Tabs<Value extends string>({
   /** Opt in when activating the selected tab returns from a nested view. */
   onReselect?: (value: Value) => void;
   trailingAction?: ReactNode;
+  /** A sibling action before the tabs; button strips scroll actions and tabs together. */
+  leadingAction?: ReactNode;
   variant?: TabsVariant;
   orientation?: "horizontal" | "vertical";
-  /** Segmented filter track size; other variants retain their own geometry. */
+  /** Segmented filter track and dock tile size; other variants retain their geometry. */
   size?: "sm" | "md";
   /** Hide the visual selection for a single-view header; tab semantics remain. */
   showSelection?: boolean;
@@ -124,26 +129,34 @@ export function Tabs<Value extends string>({
   if (renaming !== undefined && !items.some((item) => item.value === renaming))
     setRenaming(undefined);
   const list = useScrollEdges("inline");
-  const strip = (
+  const tabStrip = (
     <>
-      <BaseTabs.List ref={list} className="buzz-tabs-list" aria-label={label}>
-        {showSelection && variant !== "navigation" && variant !== "dock" && (
-          <BaseTabs.Indicator
-            className="buzz-tabs-indicator"
-            render={
-              variant === "segmented" || iconOnly
-                ? (props, state) => (
-                    <SegmentedIndicator
-                      {...props}
-                      value={value}
-                      left={state.activeTabPosition?.left}
-                      width={state.activeTabSize?.width}
-                    />
-                  )
-                : undefined
-            }
-          />
-        )}
+      {leadingAction}
+      <BaseTabs.List
+        ref={variant === "buttons" ? undefined : list}
+        className="buzz-tabs-list"
+        aria-label={label}
+      >
+        {showSelection &&
+          variant !== "navigation" &&
+          variant !== "dock" &&
+          variant !== "buttons" && (
+            <BaseTabs.Indicator
+              className="buzz-tabs-indicator"
+              render={
+                variant === "segmented" || iconOnly
+                  ? (props, state) => (
+                      <SegmentedIndicator
+                        {...props}
+                        value={value}
+                        left={state.activeTabPosition?.left}
+                        width={state.activeTabSize?.width}
+                      />
+                    )
+                  : undefined
+              }
+            />
+          )}
         {items.map((item) => {
           const tab = (
             <BaseTabs.Tab
@@ -169,6 +182,20 @@ export function Tabs<Value extends string>({
                     selected={showSelection && item.value === value}
                     aria-current={false}
                   />
+                ) : variant === "buttons" ? (
+                  (tabProps) => (
+                    <Button
+                      {...tabProps}
+                      size="sm"
+                      variant={
+                        showSelection && item.value === value
+                          ? "prominent"
+                          : "subtle"
+                      }
+                    >
+                      {tabProps.children}
+                    </Button>
+                  )
                 ) : undefined
               }
               {...(item.panelId
@@ -268,6 +295,7 @@ export function Tabs<Value extends string>({
               )}
               {item.onClose && (
                 <IconButton
+                  variant="ghost"
                   size="xs"
                   aria-label={`Close ${item.label} tab`}
                   onClick={item.onClose}
@@ -290,6 +318,14 @@ export function Tabs<Value extends string>({
       {trailingAction}
     </>
   );
+  const strip =
+    variant === "buttons" ? (
+      <div ref={list} className="buzz-tabs-scroll-strip">
+        {tabStrip}
+      </div>
+    ) : (
+      tabStrip
+    );
   return (
     <BaseTabs.Root
       orientation={orientation}

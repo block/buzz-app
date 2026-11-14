@@ -1,0 +1,65 @@
+@layer components {
+  /* Individual scale composes with existing transforms. Activation and focus
+     remain with Base UI; repeated presses retarget the current transition. */
+  :where(
+    .buzz-button,
+    .navigation-item,
+    .buzz-tabs-tab,
+    .buzz-menu-item,
+    .buzz-select-option,
+    .buzz-select-trigger,
+    .buzz-surface-button
+  ) {
+    --press-scale: var(--scale-press);
+    --press-duration: 0ms;
+    --press-easing: var(--easing-press-release);
+  }
+
+  :where(.navigation-item, .buzz-menu-item, .buzz-select-option) {
+    --press-scale: var(--scale-press-row);
+  }
+
+  :where(
+    .navigation-item[data-variant="avatar"],
+    .navigation-item[data-variant="pill"]
+  ) {
+    --press-scale: var(--scale-press);
+  }
+
+  /* Button, NavigationItem and Select retain their existing color/border
+     transitions in their owning recipes. These controls have no state tween. */
+  :where(
+    .buzz-tabs-tab,
+    .buzz-menu-item,
+    .buzz-select-option,
+    .buzz-surface-button
+  ) {
+    transition: scale var(--press-duration) var(--press-easing);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    html:not([data-keyboard-input])
+      :where(
+        .buzz-button,
+        .navigation-item,
+        .buzz-tabs-tab,
+        .buzz-menu-item,
+        .buzz-select-option,
+        .buzz-select-trigger,
+        .buzz-surface-button
+      ):not(
+        :disabled,
+        [data-disabled],
+        [aria-disabled="true"],
+        [aria-busy="true"]
+      ) {
+      --press-duration: var(--duration-settle);
+
+      &:active {
+        --press-duration: var(--duration-fast);
+        --press-easing: var(--easing-enter);
+        scale: var(--press-scale);
+      }
+    }
+  }
+}

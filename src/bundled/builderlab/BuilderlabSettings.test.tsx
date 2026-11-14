@@ -60,7 +60,7 @@ it("opens sections by keyboard, restores card focus and preserves management dra
   );
   expect(
     screen.getByRole("button", { name: "Back to Builderlab" }),
-  ).toHaveTextContent(/^$/);
+  ).toHaveAccessibleName("Back to Builderlab");
   await user.type(screen.getByRole("textbox"), "my-community");
   await user.click(screen.getByRole("button", { name: "Back to Builderlab" }));
   expect(communities).toHaveFocus();

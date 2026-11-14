@@ -1,20 +1,34 @@
 import { ActivityNavigationProvider } from "./ActivityNavigation";
 import { PageNavigation } from "./PageNavigation";
-import { navigationOwner, orderPages, pagePlacement } from "./presentation";
+import { AppDock } from "./AppDock";
+import styles from "./AppShell.module.css";
+import { ResizeHandle } from "../../features/panels/ResizeHandle";
+import { RailNavigation } from "./RailNavigation";
+import { RailDrag } from "./RailArrangement";
+import { ChatIcons } from "../../features/conversation/ChatIconSlot";
+import { ListColumn } from "./ListColumn";
+import { SidePanelPresence } from "../../features/panels/side-panel-presence";
+import { useListSection } from "./list-section";
+import { routedSection, useListColumn } from "./list-column";
+import { navigationOwner, orderPages } from "./presentation";
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ComponentProps,
   type ReactNode,
   type Ref,
 } from "react";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { SidebarIcon } from "../../shared/design-system/icons";
+import {
+  SidebarIcon,
+  MagnifyingGlassIcon,
+} from "../../shared/design-system/icons";
+import { createPortal } from "react-dom";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { isTauri } from "@tauri-apps/api/core";
 import type { SettingsCards } from "../../features/settings/service";
@@ -22,7 +36,6 @@ import type { RegisteredPage } from "../../features/pages/service";
 import type { AccountActionsService } from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
-import { ResizableSidebar } from "../../features/channel-navigation/ResizableSidebar";
 import type { JoinRequest } from "../../features/communities/invite-intent";
 import type { OpenTarget } from "../../features/navigation/targets";
 import {
@@ -36,7 +49,14 @@ import type { Appearance } from "../../shared/theme/service";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { FindInPage } from "./FindInPage";
 import { BestieNavigationProvider } from "./BestieNavigation";
-import type { NavigationOpenOptions } from "../../features/navigation/controller";
+import type {
+  Navigation as AppNavigation,
+  NavigationOpenOptions,
+} from "../../features/navigation/controller";
+import {
+  ConversationDetailPane,
+  useConversationDetailPane,
+} from "../../features/conversation/ConversationDetailPane";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { useRelayConnection } from "../../features/relay/react";
 import { macTitleBarDragHandlers } from "./title-bar";
@@ -69,7 +89,6 @@ function AppShellContent({
   tone,
   workspace,
   workspaceRef,
-  sidebar,
   communities,
   invite,
   onInviteClose,
@@ -86,7 +105,6 @@ function AppShellContent({
   backdrop,
   companion,
   creationAction,
-  creationInSidebar = true,
   children,
 }: {
   pages: readonly RegisteredPage[];
@@ -100,7 +118,6 @@ function AppShellContent({
   workspace?: boolean;
   /** Centered modal frame below window chrome. */
   workspaceRef?: Ref<HTMLDivElement>;
-  sidebar?: (pages: ReactNode, creationAction: ReactNode) => ReactNode;
   communities: Communities;
   invite?: (JoinRequest & { requestId: number }) | undefined;
   onInviteClose?: ((requestId: number) => void) | undefined;
@@ -123,71 +140,30 @@ function AppShellContent({
     open: boolean,
     onOpenChange: (open: boolean) => void,
     triggerContainer: HTMLElement | null,
+    menuTriggerContainer: HTMLElement | null,
+    /** Opens what was created the way the sidebar does: without the list. */
+    navigator: AppNavigation | undefined,
   ) => ReactNode;
-  creationInSidebar?: boolean;
   children: ReactNode;
 }) {
-  const header = useRef<HTMLElement>(null);
-  const historyRef = useRef<HTMLDivElement>(null);
-  const actionsRef = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const element = header.current;
-    const history = historyRef.current;
-    const actions = actionsRef.current;
-    const search = searchRef.current;
-    if (!element || !history || !actions || !search) return;
-    const measure = () => {
-      // Equal wings keep Search centered even when the native controls or launchers differ.
-      const wing = Math.max(history.offsetWidth, actions.offsetWidth);
-      const style = getComputedStyle(element);
-      const available =
-        element.clientWidth -
-        parseFloat(style.paddingLeft) -
-        parseFloat(style.paddingRight);
-      const searchStyle = getComputedStyle(search);
-      const controls =
-        history.offsetWidth +
-        actions.offsetWidth +
-        2 * parseFloat(style.columnGap);
-      element.dataset.searchFluid = String(
-        available < controls + parseFloat(searchStyle.maxWidth),
-      );
-      element.style.setProperty("--shell-header-wing", `${wing}px`);
-      element.dataset.searchWrapped = String(
-        available < controls + parseFloat(searchStyle.minWidth),
-      );
-    };
-    // Header wrapping resizes the workspace below it. Apply it outside resize
-    // delivery so timeline observers do not receive a second layout mid-cycle.
-    let frame: number | undefined;
-    const observer = new ResizeObserver(() => {
-      if (frame !== undefined) cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        frame = undefined;
-        measure();
-      });
-    });
-    for (const target of [element, history, actions]) observer.observe(target);
-    measure();
-    return () => {
-      observer.disconnect();
-      if (frame !== undefined) cancelAnimationFrame(frame);
-    };
-  }, []);
+  const detailPane = useConversationDetailPane();
   const fillsWorkspace = workspace || selected === "settings";
   const [creationContainer, setCreationContainer] =
     useState<HTMLDivElement | null>(null);
   const [creationOpen, setCreationOpen] = useState(false);
+  const [creationMenuContainer, setCreationMenuContainer] =
+    useState<HTMLDivElement | null>(null);
+  const [searchContainer, setSearchContainer] = useState<HTMLDivElement | null>(
+    null,
+  );
   const [switcherOpen, setSwitcherOpen] = useState(false);
-  const openSwitcher = useCallback(() => setSwitcherOpen(true), []);
+  const openSwitcher = useCallback(() => {
+    setSidebarOpen(true);
+    setNavigationOpen(true);
+    setSwitcherOpen(true);
+  }, []);
   const connection = useRelayConnection(communities.relay);
-  const sidebarScope = connection.scope ?? "disconnected";
   const owner = navigationOwner(pages, selected);
-  const channelsNavigation = owner === "buzz.channels/channels";
-  const hasNavigation =
-    channelsNavigation ||
-    pages.some((page) => page.key === selected && !!page.sidebar);
   const [narrow, setNarrow] = useState(
     () => window.matchMedia("(max-width: 650px)").matches,
   );
@@ -198,18 +174,83 @@ function AppShellContent({
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, []);
-  const collapsibleSidebar =
-    channelsNavigation ||
-    selected === "settings" ||
-    pages.some(
-      (page) => page.key === selected && (page.primary || !!page.sidebar),
-    );
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const listColumn = useListColumn(searchServices?.navigation);
+  const askList = listColumn.ask;
+  const listSection = useListSection(
+    connection.session,
+    connection.viewer ? connection.scope : undefined,
+    searchServices?.navigation,
+    searchServices?.sidebarSections,
+    listColumn.list,
+  );
+  // Open side panels report themselves; the layout does not search for them.
+  const [sidePanels, setSidePanels] = useState(0);
+  const sidePanelPresence = useMemo(
+    () => ({
+      opened() {
+        setSidePanels((count) => count + 1);
+        return () => setSidePanels((count) => count - 1);
+      },
+    }),
+    [],
+  );
+  const hostNavigation = searchServices?.navigation;
+  // The sidebar opens destinations directly; only a section address lists.
+  const railNavigator = useMemo(
+    () =>
+      hostNavigation && {
+        ...hostNavigation,
+        open: ((target, options) => {
+          if (!routedSection(target)) askList("close");
+          return hostNavigation.open(target, options);
+        }) as typeof hostNavigation.open,
+      },
+    [hostNavigation, askList],
+  );
+  // A section opened on one of its conversations lists that section.
+  const openInSection = useCallback(
+    (section: string, target: OpenTarget) => {
+      askList({ section });
+      void hostNavigation?.open(target);
+    },
+    [hostNavigation, askList],
+  );
+  // Opens from the list keep it showing.
+  const listNavigator = useMemo(
+    () =>
+      hostNavigation && {
+        ...hostNavigation,
+        open: ((target, options) => {
+          askList("keep");
+          return hostNavigation.open(target, options);
+        }) as typeof hostNavigation.open,
+      },
+    [hostNavigation, askList],
+  );
+  const shellScope = useMemo(
+    () =>
+      connection.viewer && connection.scope
+        ? {
+            viewer: connection.viewer,
+            communityOrigin: connection.scope.slice(
+              0,
+              -(connection.viewer.length + 1),
+            ),
+          }
+        : undefined,
+    [connection.viewer, connection.scope],
+  );
+  const [railWidth, setRailWidth] = useState(304);
+  const railWorkspace = useRef<HTMLDivElement>(null);
+  const resizeRail = (width: number) => {
+    setRailWidth(Math.min(440, Math.max(240, width)));
+  };
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationToggle = useRef<HTMLButtonElement>(null);
-  const visibleSidebar =
-    hasNavigation && (narrow ? navigationOpen : sidebarOpen);
-  const creationInNavigation = !!creationAction && creationInSidebar;
+  const visibleRail = narrow ? navigationOpen : sidebarOpen;
+  const compactRail = !narrow && !sidebarOpen;
+  const creationInNavigation = !!creationAction;
   useEffect(
     () =>
       searchServices?.shortcuts.registerHost({
@@ -219,7 +260,6 @@ function AppShellContent({
         order: 75,
         allowInEditable: true,
         when: () =>
-          hasNavigation &&
           !!creationAction &&
           !!creationContainer?.querySelector("button:not(:disabled)") &&
           (isApplePlatform(navigator.platform) ||
@@ -230,7 +270,7 @@ function AppShellContent({
           setCreationOpen(true);
         },
       }),
-    [searchServices, creationAction, creationContainer, hasNavigation],
+    [searchServices, creationAction, creationContainer],
   );
   const toggleLabel = narrow
     ? navigationOpen
@@ -244,42 +284,123 @@ function AppShellContent({
     }
     setNavigationOpen(false);
   }, [navigationAttempt]);
-  // Toggling the sidebar changes only this shell's own state. Keep the
-  // navigation element stable across those renders so React skips the whole
-  // sidebar subtree instead of re-rendering every row on each click.
-  const navigation = useMemo(() => {
-    const selectedPageHasSidebar = pages.some(
-      (page) => page.key === selected && !!page.sidebar,
-    );
-    // Sidebars retain their documented app-link and creation slots.
-    const content = sidebar
-      ? sidebar(
-          <nav aria-label="Pages" className="shell-pages">
-            <PageNavigation
-              pages={orderPages(
-                pages.filter((page) => pagePlacement(page) === "sidebar"),
-              )}
-              selected={selected}
-              onSelect={onSelect}
-              previews
-            />
-          </nav>,
-          creationInNavigation ? <div ref={setCreationContainer} /> : null,
-        )
-      : null;
-    return selectedPageHasSidebar ? (
-      <ResizableSidebar scope={sidebarScope} className="shell-sidebar">
-        {content}
-      </ResizableSidebar>
-    ) : (
-      content
-    );
-  }, [pages, selected, sidebar, sidebarScope, onSelect, creationInNavigation]);
-  const dockPages = orderPages(
-    pages.filter((page) => page.primary && pagePlacement(page) !== "sidebar"),
-    "dock",
+  const dockPages = useMemo(
+    () =>
+      orderPages(
+        pages.filter((page) => page.primary && page.key === "buzz.inbox/inbox"),
+        "dock",
+      ),
+    [pages],
   );
-  const selectedDockPage = dockPages.some((page) => page.key === owner);
+  const search = (
+    <PageSearch
+      pages={pages}
+      onSelect={onSelect}
+      services={searchServices}
+      presentation="bar"
+    >
+      {(open) =>
+        searchContainer &&
+        createPortal(
+          <IconButton
+            aria-label="Search"
+            title="Search"
+            icon={<MagnifyingGlassIcon size={16} />}
+            onClick={(event) => {
+              event.currentTarget.focus();
+              open();
+            }}
+          />,
+          searchContainer,
+        )
+      }
+    </PageSearch>
+  );
+  const railCommunity = (
+    <CommunityPicker
+      communities={communities}
+      invite={invite}
+      onInviteClose={onInviteClose}
+      settingsCards={settingsCards}
+      federatedIdentity={federatedIdentity}
+      onSelect={onCommunitySelect}
+      onOpenTarget={onOpenTarget}
+      open={switcherOpen}
+      onOpenChange={setSwitcherOpen}
+      side="bottom"
+    />
+  );
+  const railActions = (
+    <>
+      {railCommunity}
+      <ProfileButton
+        communities={communities}
+        accountActions={accountActions}
+        settingsSelected={selected === "settings"}
+        appearance={appearance}
+        pluginRecommendations={pluginRecommendations}
+        onSettings={(section) =>
+          onSelect("settings", section ? { section } : undefined)
+        }
+        side="bottom"
+      />
+      <div ref={setSearchContainer} />
+      {creationAction && <div ref={setCreationMenuContainer} />}
+    </>
+  );
+  const dock = (
+    <AppDock
+      showPrimaryNavigation={
+        !(connection.viewer && connection.scope && searchServices?.navigation)
+      }
+      search={null}
+      open={visibleRail || compactRail}
+      compact={compactRail}
+      onDismiss={() => {
+        if (narrow) setNavigationOpen(false);
+        else setSidebarOpen(false);
+        navigationToggle.current?.focus();
+      }}
+      pages={dockPages}
+      selected={owner}
+      currentPage={selected}
+      onSelect={onSelect}
+      previews
+      community={null}
+      profile={null}
+      settings={null}
+      header={railActions}
+    >
+      {shellScope && searchServices && railNavigator ? (
+        <RailNavigation
+          key={connection.scope}
+          compact={compactRail}
+          session={connection.session}
+          scope={shellScope}
+          sidebarSections={searchServices.sidebarSections}
+          sidebarScope={searchServices.sidebarScope}
+          navigator={railNavigator}
+          listNavigator={listNavigator ?? searchServices.navigation}
+          openInSection={openInSection}
+          pages={pages}
+          selected={selected}
+          onSelect={onSelect}
+          creationAction={
+            creationInNavigation ? <div ref={setCreationContainer} /> : null
+          }
+        />
+      ) : (
+        <PageNavigation
+          placement={compactRail ? "dock" : "sidebar"}
+          pages={pages.filter(
+            (page) => page.primary && page.key !== "buzz.inbox/inbox",
+          )}
+          selected={selected}
+          onSelect={onSelect}
+        />
+      )}
+    </AppDock>
+  );
   return (
     <div
       data-shell-tone={tone}
@@ -299,7 +420,6 @@ function AppShellContent({
         Skip to content
       </a>
       <header
-        ref={header}
         data-buzz-window-drag={
           macDesktop || hasIntegratedWindowControls() || undefined
         }
@@ -308,7 +428,6 @@ function AppShellContent({
         className={`shell-header ${macDesktop ? "shell-header-mac" : ""}`}
       >
         <div
-          ref={historyRef}
           className="shell-history"
           data-buzz-window-drag={
             macDesktop || hasIntegratedWindowControls() || undefined
@@ -316,7 +435,7 @@ function AppShellContent({
           data-tauri-drag-region={macDesktop ? undefined : true}
           {...titleBarDragProps}
         >
-          {hasNavigation && (collapsibleSidebar || narrow) && (
+          {
             <IconButton
               hint="familiar"
               ref={navigationToggle}
@@ -325,8 +444,8 @@ function AppShellContent({
               type="button"
               variant="ghost"
               aria-label={toggleLabel}
-              aria-expanded={visibleSidebar}
-              aria-controls="shell-navigation"
+              aria-expanded={visibleRail}
+              aria-controls="shell-rail"
               title={toggleLabel}
               onClick={() => {
                 if (narrow) setNavigationOpen((open) => !open);
@@ -334,150 +453,161 @@ function AppShellContent({
               }}
               icon={<SidebarIcon aria-hidden="true" size={16} />}
             />
-          )}
+          }
           {navigationControls}
         </div>
-        <div ref={searchRef} className="shell-menu-search">
-          <PageSearch
-            pages={pages}
-            onSelect={onSelect}
-            services={searchServices}
-          />
+        <div className="shell-search">
+          {search}
           <FindInPage shortcuts={searchServices?.shortcuts} />
         </div>
         <div
-          ref={actionsRef}
           className="shell-actions"
           data-tauri-drag-region={macDesktop ? undefined : true}
           {...titleBarDragProps}
         >
           <div className="shell-actions-fixed">
             {launchers}
+
             <WindowControls />
           </div>
         </div>
       </header>
 
-      <div className="shell-workspace">
-        <nav className="shell-side-dock" aria-label="Apps dock">
-          <div className="shell-dock-pages">
-            <PageNavigation
-              pages={dockPages}
-              selected={owner}
-              currentPage={selected}
-              onSelect={onSelect}
-              placement="dock"
-              previews
+      <div
+        ref={railWorkspace}
+        className="shell-workspace"
+        style={
+          {
+            "--shell-rail-width": compactRail
+              ? "calc(var(--size-control-lg) + 2 * var(--space-1))"
+              : `${railWidth}px`,
+          } as CSSProperties
+        }
+        data-detail-container=""
+        data-full-width-workspace={
+          !!listSection ||
+          selected === "buzz.drafts-and-sent/drafts-sent" ||
+          undefined
+        }
+        data-rail-open={visibleRail || undefined}
+        data-rail-compact={compactRail || undefined}
+        data-side-panel={sidePanels > 0 || undefined}
+        data-list-column={
+          listSection ? (listColumn.list.open ? "open" : "closed") : undefined
+        }
+      >
+        <ChatIcons value={searchServices?.conversation?.chatIcons}>
+          <RailDrag>
+            {dock}
+            {!narrow && !compactRail && (
+              <ResizeHandle
+                label="Resize app sidebar"
+                width={railWidth}
+                min={240}
+                max={440}
+                target={railWorkspace}
+                property="--shell-rail-width"
+                className={styles.railResize}
+                setWidth={resizeRail}
+                reset={() => {
+                  setRailWidth(304);
+                  setSidebarOpen(true);
+                }}
+              />
+            )}
+            <div
+              ref={workspaceRef}
+              className="shell-dialog-frame"
+              data-shell-dialog-frame=""
             />
-          </div>
-          <div className="shell-community-switcher">
-            <CommunityPicker
-              communities={communities}
-              invite={invite}
-              onInviteClose={onInviteClose}
-              settingsCards={settingsCards}
-              federatedIdentity={federatedIdentity}
-              onSelect={onCommunitySelect}
-              onOpenTarget={onOpenTarget}
-              open={switcherOpen}
-              onOpenChange={setSwitcherOpen}
-            />
-            <ProfileButton
-              communities={communities}
-              accountActions={accountActions}
-              settingsSelected={selected === "settings"}
-              appearance={appearance}
-              pluginRecommendations={pluginRecommendations}
-              onSettings={(section) =>
-                onSelect("settings", section ? { section } : undefined)
-              }
-            />
-          </div>
-        </nav>
-        <div
-          ref={workspaceRef}
-          className="shell-dialog-frame"
-          data-shell-dialog-frame=""
-        />
-        <div
-          className={`shell-body ${selected === "settings" ? "shell-body-settings" : ""}`}
-        >
-          <div className="relative flex min-h-0 min-w-0 flex-1">
-            <Panel as="div" joined>
-              <div className="shell-content">
-                <div
-                  id="shell-navigation"
-                  hidden={!hasNavigation}
-                  className="shell-navigation"
-                  data-sidebar-collapsible={
-                    (collapsibleSidebar && !narrow) || undefined
-                  }
-                  data-sidebar-open={visibleSidebar || undefined}
-                  aria-hidden={
-                    (collapsibleSidebar || narrow) && !visibleSidebar
-                  }
-                  inert={(collapsibleSidebar || narrow) && !visibleSidebar}
-                  data-expanded={navigationOpen}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key === "Escape" &&
-                      !event.shiftKey &&
-                      navigationOpen &&
-                      !event.defaultPrevented
-                    ) {
-                      // Closing the drawer consumes Escape, so it marks nothing read.
-                      event.preventDefault();
-                      setNavigationOpen(false);
-                      navigationToggle.current?.focus();
-                    }
-                  }}
-                >
-                  <div className="shell-navigation-content">{navigation}</div>
-                </div>
-                <main
-                  id="main-content"
-                  tabIndex={-1}
-                  className="min-h-0 min-w-0 flex-1"
-                >
-                  <Panel as="div" joined>
-                    <PanelFrame scope={connection.scope} companion={companion}>
-                      <div
-                        id={`shell-page-${owner}`}
-                        {...(selectedDockPage
-                          ? {
-                              role: "tabpanel",
-                              "data-focus-inset": "",
-                              "aria-labelledby": `shell-page-${owner}-tab`,
-                              tabIndex: 0,
-                            }
-                          : {})}
-                        className={
-                          fillsWorkspace
-                            ? "buzz-tabs-panel h-full min-h-0"
-                            : "buzz-tabs-panel h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
-                        }
-                      >
-                        <div
-                          className={
-                            fillsWorkspace
-                              ? "h-full min-h-0"
-                              : "mx-auto w-full max-w-4xl"
-                          }
-                        >
-                          <OpenCommunitySwitcher value={openSwitcher}>
-                            {children}
-                          </OpenCommunitySwitcher>
-                        </div>
-                      </div>
-                    </PanelFrame>
-                  </Panel>
-                </main>
+            <div
+              className={`shell-body ${selected === "settings" ? "shell-body-settings" : ""}`}
+            >
+              <div className="relative flex min-h-0 min-w-0 flex-1">
+                <Panel as="div" joined flat>
+                  <div className="shell-content">
+                    <main
+                      id="main-content"
+                      tabIndex={-1}
+                      className="min-h-0 min-w-0 flex-1"
+                    >
+                      <SidePanelPresence value={sidePanelPresence}>
+                        <Panel as="div" joined>
+                          <ConversationDetailPane value={detailPane.value}>
+                            <PanelFrame
+                              scope={connection.scope}
+                              companion={detailPane.companion ?? companion}
+                            >
+                              <div
+                                id={`shell-page-${owner}`}
+                                className={
+                                  fillsWorkspace
+                                    ? "buzz-tabs-panel h-full min-h-0"
+                                    : "buzz-tabs-panel h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
+                                }
+                              >
+                                <div
+                                  className={
+                                    fillsWorkspace
+                                      ? "h-full min-h-0"
+                                      : "mx-auto w-full max-w-4xl"
+                                  }
+                                >
+                                  <OpenCommunitySwitcher value={openSwitcher}>
+                                    <ListColumn
+                                      scope={connection.scope ?? "disconnected"}
+                                      list={listSection && listColumn.list}
+                                      setOpen={listColumn.setOpen}
+                                      title={listSection?.title ?? ""}
+                                      label={listSection?.label}
+                                      fill={!!listSection?.fill}
+                                      content={
+                                        listSection &&
+                                        shellScope &&
+                                        searchServices &&
+                                        listNavigator && (
+                                          <RailNavigation
+                                            key={connection.scope}
+                                            section={listSection.section}
+                                            session={connection.session}
+                                            scope={shellScope}
+                                            sidebarSections={
+                                              searchServices.sidebarSections
+                                            }
+                                            navigator={listNavigator}
+                                            listNavigator={listNavigator}
+                                            openInSection={openInSection}
+                                            pages={pages}
+                                            selected={selected}
+                                            onSelect={onSelect}
+                                          />
+                                        )
+                                      }
+                                    >
+                                      {children}
+                                    </ListColumn>
+                                  </OpenCommunitySwitcher>
+                                </div>
+                              </div>
+                            </PanelFrame>
+                          </ConversationDetailPane>
+                        </Panel>
+                      </SidePanelPresence>
+                    </main>
+                  </div>
+                </Panel>
               </div>
-            </Panel>
-          </div>
-        </div>
+            </div>
+          </RailDrag>
+        </ChatIcons>
       </div>
-      {creationAction?.(creationOpen, setCreationOpen, creationContainer)}
+      {creationAction?.(
+        creationOpen,
+        setCreationOpen,
+        creationContainer,
+        creationMenuContainer,
+        railNavigator,
+      )}
       {searchServices && (
         <>
           <MarkAllReadShortcut

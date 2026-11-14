@@ -10,3 +10,15 @@
   border-radius: 0;
   mask: url("./avatar-squircle.svg") center / 100% 100% no-repeat;
 }
+
+/* Avatar grids use a smaller presence cue and matching cutout. */
+.buzz-avatar-status[data-status][data-status-size="small"] > .buzz-avatar {
+  mask: radial-gradient(
+    circle at 85% 85%,
+    transparent 12%,
+    black calc(12% + 0.5px)
+  );
+}
+.buzz-avatar-status[data-status-size="small"] .buzz-avatar-status-dot {
+  width: 16%;
+}

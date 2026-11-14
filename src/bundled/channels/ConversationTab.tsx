@@ -1,3 +1,4 @@
+import { useInlineReply } from "../../features/messages/use-inline-reply";
 import {
   useCallback,
   useEffect,
@@ -42,7 +43,8 @@ type ConversationTabProps = {
   openLink(target: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink(target: string): boolean;
   openThread(messageId: string, rootId: string, intent?: "reply"): void;
-  close(): void;
+  /** Omit when an embedding surface owns dismissal and framing. */
+  close?: (() => void) | undefined;
   /** The current route's request, only for the thread it addresses. */
   navigation?: PageNavigation | undefined;
   onRetryNavigation?: (() => void) | undefined;
@@ -119,6 +121,12 @@ export function ConversationTab({
     return () => request.abort();
   }, [revealKey]);
   const [sent, setSent] = useState<string>();
+  const inlineReply = useInlineReply(
+    session,
+    channel.id,
+    setSent,
+    focusRequest,
+  );
   const media = useMediaReview();
   // A retained tab re-renders with its page. Its memoized rows open links and
   // threads through stable openers that consult the latest handlers when chosen.
@@ -189,6 +197,7 @@ export function ConversationTab({
         ) : (
           <SoloColumn enabled={soloConversation}>
             <ChannelBody
+              onReply={inlineReply.select}
               intro={intro}
               viewer={session.viewer}
               cached={!!channel.cached}
@@ -210,8 +219,7 @@ export function ConversationTab({
             <ConversationComposer
               // Shown follows the tab, not whether showing it visits the chat.
               shown={active}
-              onSend={setSent}
-              {...(focusRequest ? { focusRequest } : {})}
+              {...inlineReply.composer}
             />
           </SoloColumn>
         )}

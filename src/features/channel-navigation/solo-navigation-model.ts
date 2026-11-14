@@ -101,6 +101,17 @@ export function projectSoloRegions(
   return { regions, excluded, managed };
 }
 
+/** Chats a ready source lists in its own UI, so the Solo list leaves them out. */
+export function hiddenSoloChats(
+  regions: readonly SoloRegion[],
+): ReadonlySet<string> {
+  return new Set(
+    regions.flatMap((region) =>
+      region.hidden ? region.channels.map((channel) => channel.id) : [],
+    ),
+  );
+}
+
 function soloRegionLabelOf(source: RegisteredSoloSource) {
   return `${REGION_PREFIX}${source.pluginId}:${source.id}`;
 }

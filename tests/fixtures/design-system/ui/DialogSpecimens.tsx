@@ -25,6 +25,7 @@ function Example({
   description,
   title,
   artwork,
+  identity,
   intro,
   action = "Save",
   informational = false,
@@ -32,6 +33,9 @@ function Example({
   bodyLayout,
   chromeSpacing,
   size,
+  placement,
+  backdrop,
+  closePlacement,
   children,
 }: {
   label: string;
@@ -39,6 +43,7 @@ function Example({
   description: string;
   title: string;
   artwork?: ReactNode;
+  identity?: ReactNode;
   intro?: string;
   action?: string;
   informational?: boolean;
@@ -46,6 +51,9 @@ function Example({
   chromeSpacing?: "default" | "padded";
   bodyLayout?: "flow" | "flex";
   size?: "compact" | "default" | "wide" | "expanded";
+  placement?: "bottom" | "rail";
+  backdrop?: "default" | "subtle";
+  closePlacement?: "start" | "end";
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -69,7 +77,7 @@ const id = useId();
 <Dialog
   open={open}
   onOpenChange={setOpen}
-  title=${JSON.stringify(title)}${artwork ? '\n  artwork={<Avatar size="large" alt="" fallback="A" />}' : ""}${size ? `\n  size="${size}"` : ""}${height ? `\n  height="${height}"` : ""}${bodyLayout ? `\n  bodyLayout="${bodyLayout}"` : ""}${chromeSpacing ? `\n  chromeSpacing="${chromeSpacing}"` : ""}${intro ? `\n  description=${JSON.stringify(intro)}` : ""}
+  title=${JSON.stringify(title)}${artwork ? '\n  artwork={<Avatar size="large" alt="" fallback="A" />}' : ""}${size ? `\n  size="${size}"` : ""}${placement ? `\n  placement="${placement}"` : ""}${backdrop ? `\n  backdrop="${backdrop}"` : ""}${height ? `\n  height="${height}"` : ""}${bodyLayout ? `\n  bodyLayout="${bodyLayout}"` : ""}${chromeSpacing ? `\n  chromeSpacing="${chromeSpacing}"` : ""}${intro ? `\n  description=${JSON.stringify(intro)}` : ""}
   actions={${
     informational
       ? '<Button variant="prominent" onClick={() => setOpen(false)}>Done</Button>'
@@ -91,7 +99,11 @@ ${informational ? "" : `  <form id={id} className="space-y-section-gap" onSubmit
         onOpenChange={setOpen}
         title={title}
         artwork={artwork}
+        identity={identity}
+        {...(closePlacement ? { closePlacement } : {})}
         {...(size ? { size } : {})}
+        {...(placement ? { placement } : {})}
+        {...(backdrop ? { backdrop } : {})}
         {...(height ? { height } : {})}
         {...(bodyLayout ? { bodyLayout } : {})}
         {...(chromeSpacing ? { chromeSpacing } : {})}
@@ -233,6 +245,37 @@ function NavigationExample() {
 export function DialogSpecimens() {
   return (
     <div className="component-specimen-stack">
+      <Example
+        label="Floating detail card"
+        description="A non-modal card enters from the right, with a wider reading area and the composer's shadow, leaving the page interactive."
+        title="Profile"
+        placement="rail"
+        closePlacement="start"
+        informational
+        code={"<p>Profile or linked object details</p>"}
+      >
+        <p className="text-body">Profile or linked object details</p>
+      </Example>
+      <Example
+        label="Bottom conversation sheet"
+        description="Activity's reader reveals upward while its composer stays at the bottom; shared focus and dismissal apply."
+        title="Conversation"
+        identity={
+          <span className="flex flex-col items-center gap-1 text-body-sm">
+            <Avatar size="large" alt="" fallback="A" />
+          </span>
+        }
+        placement="bottom"
+        backdrop="subtle"
+        closePlacement="start"
+        size="wide"
+        height="stable"
+        bodyLayout="flex"
+        informational
+        code={"<p>Conversation content and its composer</p>"}
+      >
+        <p className="text-body">Conversation content and its composer</p>
+      </Example>
       <Example
         label="Illustrated introduction"
         description="Artwork above a centered title and description; shared Close stays at the top right."

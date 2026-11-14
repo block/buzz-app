@@ -1,6 +1,7 @@
 # Bestie
 
-Bestie is the account-saved agent pinned in Buzz's left navigation. The
+Bestie is the account-saved agent pinned at the top of the Messages list. It
+opens beside the list, keeping Messages selected in the app dock. The
 selection is the private `main-agent` record shared with Solo's default-agent
 owner; this plugin adds presentation and a conversation destination, not another
 selection store.

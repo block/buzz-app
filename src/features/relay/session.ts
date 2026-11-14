@@ -73,6 +73,7 @@ import { createTyping } from "./typing";
 import { validTypingTemplate } from "./typing-protocol";
 import { workflowOwner } from "./workflow-attribution";
 import { createUnread } from "./unread";
+import { createChannelPreviews, loadedPreview } from "./channel-previews";
 import type { SnapshotRead } from "../agents/agent-config-artifacts";
 
 import { createInboxFeed } from "./inbox-feed";
@@ -1308,6 +1309,24 @@ export function createRelaySession(
     notify,
     follows: browserThreadFollows(readScope),
   });
+  const channelPreviews = createChannelPreviews({
+    read: transport && !options.cachedOnly ? verified.read : undefined,
+    loaded: (id) => loadedPreview(channelQueries.window(id)),
+    latest: (id) => {
+      const head = loadedPreview(channelQueries.window(id));
+      return head !== undefined
+        ? head
+        : unread.capability.snapshot({ kind: "channel", channelId: id })
+            .latestTopLevel;
+    },
+    readable: (id) =>
+      !closed && !revoking && !cacheClearing && canReadRemote(id),
+    notify,
+  });
+  observations.add(channelPreviews.changed);
+  const stopPreviewList = channels.queries.subscribeList(
+    channelPreviews.changed,
+  );
   const inboxFeed = createInboxFeed({
     reactionReader: {
       read: (filters, settings) =>
@@ -2410,6 +2429,7 @@ export function createRelaySession(
   const recovery = transport
     ? createRecovery([
         liveRecovery,
+        channelPreviews.recovery,
         recoverable(
           channelKit.capability.subscribe,
           () => loadState(channelKit.capability.snapshot()),
@@ -2451,6 +2471,9 @@ export function createRelaySession(
     presence,
     viewer: transport?.viewer,
     relayAuthor: transport?.relayAuthor,
+    /** Visible-row demand only: one finite batch per four missing heads, shared
+     * across hosts. No polling or independent reconnect reader. */
+    channelPreviews: channelPreviews.capability,
     /** NIP-AP config artifacts: the relay's own verified answer, never merged
      * with live or local outgoing events or fed to any projection, and a
      * kind-45010 writer when the host has one. Each read starts fresh. */
@@ -2643,6 +2666,7 @@ export function createRelaySession(
       searchProfiles,
       () => profiles.queries.verifiedAuthority?.(),
       profiles.queries,
+      lifecycle.capability,
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
@@ -4053,6 +4077,7 @@ export function createRelaySession(
         for (const clear of views.values()) clear(true);
         for (const view of artifactSyncs) view.restart();
         recent.clear();
+        channelPreviews.clear();
         resumes.clear();
         unread.clear();
         inboxFeed.clear();
@@ -4071,11 +4096,14 @@ export function createRelaySession(
         if (failed?.status === "rejected") throw failed.reason;
       } finally {
         cacheClearing--;
+        channelPreviews.changed();
       }
     },
     dispose() {
       stopSoloGroups();
       closed = true;
+      stopPreviewList();
+      channelPreviews.dispose();
       resumes.clear();
       stopLiveRecovery();
       recovery?.dispose();

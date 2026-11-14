@@ -59,11 +59,11 @@ export function BestieNavigationProvider({
     (agent || choices.status !== "ready" || !choices.complete)
       ? saved
       : undefined;
-  const channels = useSyncExternalStore(
+  // Only which chat it is: a message replaces the list, not this answer.
+  const channelId = useSyncExternalStore(
     session.channels.subscribeList,
-    session.channels.list,
+    () => bestieChat(session.channels.list().channels, viewer, promoted)?.id,
   );
-  const channel = bestieChat(channels.channels, viewer, promoted);
   // The published profile wins, as in DM rows and message avatars, including a
   // profile without a picture (initials). The agent definition's art covers
   // only the wait for that profile, or an agent that never published one.
@@ -118,7 +118,7 @@ export function BestieNavigationProvider({
   return (
     <BestieNavigationContext value={mark}>
       <BestieConversationContext
-        value={channel ? { session, channelId: channel.id } : undefined}
+        value={channelId ? { session, channelId } : undefined}
       >
         {children}
       </BestieConversationContext>

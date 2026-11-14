@@ -1,14 +1,25 @@
 import { expect, it } from "vitest";
-import { inboxRouteTarget, inboxTarget, isInboxRoute, routeOf } from "./route";
+import {
+  inboxRouteTarget,
+  inboxTarget,
+  isInboxRoute,
+  routeOf,
+  detailOf,
+} from "./route";
 
 it.each([
   {},
   { attention: "unread" },
   { attention: "all" },
   { activity: "all" },
+  { activity: "channels" },
   { activity: "threads" },
   { activity: "mentions" },
   { activity: "dms" },
+  { activity: "direct" },
+  { activity: "working" },
+  { activity: "waiting" },
+  { compose: "new" },
   { activity: "all", attention: "unread" },
   { show: "archived" },
   { show: "inbox" },
@@ -42,6 +53,8 @@ it.each([
   { drafts: true, activity: "dms" },
   { drafts: true, show: "inbox" },
   { unknown: "x" },
+  { compose: "other" },
+  { compose: "new", channelId: "alpha" },
 ])("rejects the filter params %j", (params) => {
   expect(isInboxRoute(params)).toBe(false);
 });
@@ -79,4 +92,22 @@ it("drops a link's retired Archived and Drafts choices", () => {
   });
   expect(at({ show: "inbox" })).toEqual({});
   expect(at({ drafts: "true" })).toEqual({});
+});
+
+it("keeps the selected conversation in the address, separate from saved filters", () => {
+  const target = inboxRouteTarget({
+    activity: "threads",
+    channelId: "room",
+    threadId: "root",
+    messageId: "reply",
+  });
+  expect(isInboxRoute(target.route.params)).toBe(true);
+  expect(detailOf(target)).toEqual({
+    channelId: "room",
+    threadId: "root",
+    messageId: "reply",
+  });
+  expect(routeOf(target)).toEqual({ activity: "threads" });
+  expect(isInboxRoute({ threadId: "root" })).toBe(false);
+  expect(isInboxRoute({ channelId: "" })).toBe(false);
 });

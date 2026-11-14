@@ -418,10 +418,13 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .some((panel) => panel.pluginId === "buzz.bestie"),
       false,
     );
-    const page = services.pages.snapshot()[0];
+    const page = services.pages
+      .snapshot()
+      .find((page) => page.pluginId === "buzz.channels");
+    assert.ok(page);
     assert.match(
       renderToStaticMarkup(createElement(page.component)),
-      /Your channels, one conversation/,
+      /Choose a community/,
     );
     const session = services.relay.snapshot().session;
     const nameFacts = [

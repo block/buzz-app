@@ -168,7 +168,7 @@ async function page(
     pluginId: "fixture",
     revision: "1",
     title: "Notes",
-    matches: () => false,
+    matches: (target) => target === "fixture:notes",
     channelPlacement: "tab",
     channelLauncher: ({ context, toggle }) => (
       <button type="button" onClick={() => toggle(context.channelId)}>
@@ -246,8 +246,14 @@ async function page(
     name: type === "solo" ? "Message your agents" : "Message #Alpha",
     hidden: routed,
   });
-  const open = () =>
-    user.click(screen.getByRole("button", { name: "Open notes" }));
+  const open = async () => {
+    if (!detailWorkspace()) composer.focus();
+    act(() =>
+      expect(panels.requestOpen({ channelId, target: "fixture:notes" })).toBe(
+        true,
+      ),
+    );
+  };
   return {
     user,
     composer,
@@ -379,7 +385,7 @@ it.each(["side", "main"] as const)(
     const root = h.root;
     if (!root) throw new Error("Routed thread root unavailable");
     const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
-    await screen.findByRole("tab", { name: "Initiating thread" });
+    await screen.findByRole("tabpanel", { name: "Initiating thread" });
     act(() =>
       expect(
         h.panels.requestOpen({
@@ -389,10 +395,7 @@ it.each(["side", "main"] as const)(
         }),
       ).toBe(true),
     );
-    expect(screen.getByRole("tab", { name: "App" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(screen.getByRole("tabpanel", { name: "App" })).toBeVisible();
     expect(open).not.toHaveBeenCalled();
     expect(tabs.result.current.tabs).toEqual(
       expect.arrayContaining([
@@ -400,8 +403,9 @@ it.each(["side", "main"] as const)(
       ]),
     );
     await h.user.click(screen.getByRole("button", { name: "Close App tab" }));
-    const thread = screen.getByRole("tab", { name: "Initiating thread" });
-    expect(thread).toHaveAttribute("aria-selected", "true");
+    expect(
+      await screen.findByRole("tabpanel", { name: "Initiating thread" }),
+    ).toBeVisible();
     expect(open).not.toHaveBeenCalled();
   },
 );
@@ -555,9 +559,9 @@ it("hands the community roster to Channel settings and follows the republished f
   });
   await screen.findByRole("textbox", { name: "Message #Alpha" });
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  await user.click(await headerAction("Conversation actions"));
   await user.click(
-    await screen.findByRole("menuitem", { name: "View channel details" }),
+    await screen.findByRole("button", { name: "View channel details" }),
   );
   const control = await screen.findByRole("switch", {
     name: "Starter channel for new members",
@@ -646,20 +650,10 @@ it("keeps the computed channel across a New chat draft opened and closed meanwhi
   expect(screen.queryByRole("textbox", { name: "Message #Beta" })).toBeNull();
 });
 
-it("moving the last side app adopts its guest before the dock exit finishes", async () => {
+it("restoring an app with old main placement keeps its live browser guest in the sheet", async () => {
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
     new DOMRect(0, 0, 800, 500),
   );
-  let finishExit = () => {};
-  const finished = new Promise<void>((resolve) => {
-    finishExit = resolve;
-  });
-  const originalAnimations = HTMLElement.prototype.getAnimations;
-  const getAnimations = vi.fn(() => [{ finished }]);
-  Object.defineProperty(HTMLElement.prototype, "getAnimations", {
-    configurable: true,
-    value: getAnimations,
-  });
   const pages = new Map<string, string>();
   const attached = vi.fn(async (url: string) => {
     const id = `guest-${pages.size + 1}`;
@@ -696,61 +690,45 @@ it("moving the last side app adopts its guest before the dock exit finishes", as
       sessions={sessions}
     />
   );
-  try {
-    const h = await page("stream", undefined, false, App);
-    act(() =>
-      expect(
-        h.panels.requestOpen({
-          channelId: "alpha",
-          target: "https://app.example/",
-        }),
-      ).toBe(true),
-    );
-    await vi.waitFor(() => expect(attached).toHaveBeenCalledTimes(1));
-    const address = screen.getByRole("textbox", { name: "Address" });
-    await h.user.clear(address);
-    await h.user.type(address, "https://app.example/second.html{Enter}");
-    await vi.waitFor(() =>
-      expect(observed).toContain("https://app.example/second.html"),
-    );
-    const source = document.querySelector("[data-panel-dock]");
-    const sourceGuest = source
-      ?.querySelector("[data-browser-session]")
-      ?.getAttribute("data-browser-session");
-    expect(sourceGuest).toBe("guest-1");
-    screen.getByRole("tab", { name: "App" }).focus();
-    await h.user.keyboard("{Alt>}{Shift>}{ArrowLeft}{/Shift}{/Alt}");
-    const main = document.querySelector<HTMLElement>("[data-main-workspace]");
-    if (!main) throw new Error("Main workspace unavailable");
-    fireEvent.animationEnd(within(main).getByRole("tabpanel", { name: "App" }));
-    await vi.waitFor(() =>
-      expect(main.querySelector("[data-browser-session]")).not.toBeNull(),
-    );
-    expect(getAnimations).toHaveBeenCalled();
-    expect(source).toHaveAttribute("data-closing");
-    expect(main.querySelector("[data-browser-session]")).toHaveAttribute(
-      "data-browser-session",
-      sourceGuest,
-    );
-    expect(attached).toHaveBeenCalledTimes(1);
-    expect(detached).not.toHaveBeenCalled();
-    await vi.waitFor(() =>
-      expect(
-        within(main).getByRole("textbox", { name: "Address" }),
-      ).toHaveValue("https://app.example/second.html"),
-    );
-    await act(async () => finishExit());
-    expect(main.querySelector("[data-browser-session]")).toHaveAttribute(
-      "data-browser-session",
-      sourceGuest,
-    );
-    expect(attached).toHaveBeenCalledTimes(1);
-  } finally {
-    await act(async () => finishExit());
-    if (originalAnimations)
-      HTMLElement.prototype.getAnimations = originalAnimations;
-    else Reflect.deleteProperty(HTMLElement.prototype, "getAnimations");
-  }
+  const h = await page("stream", undefined, false, App);
+  act(() =>
+    expect(
+      h.panels.requestOpen({
+        channelId: "alpha",
+        target: "https://app.example/",
+      }),
+    ).toBe(true),
+  );
+  await vi.waitFor(() => expect(attached).toHaveBeenCalledTimes(1));
+  const address = screen.getByRole("textbox", { name: "Address" });
+  await h.user.clear(address);
+  await h.user.type(address, "https://app.example/second.html{Enter}");
+  await vi.waitFor(() =>
+    expect(observed).toContain("https://app.example/second.html"),
+  );
+  const sheet = screen.getByRole("tabpanel", { name: "App" });
+  const guest = sheet
+    .querySelector("[data-browser-session]")
+    ?.getAttribute("data-browser-session");
+  expect(guest).toBe("guest-1");
+  const state = renderHook(() => useChannelTabState(h.session, "alpha"));
+  const entry = state.result.current.selected;
+  // Persisted workspaces may still contain main entries. Restoration must not
+  // discard the browser session, even though sheet UI no longer offers Move.
+  act(() => state.result.current.moveEntry(entry, "main"));
+  await vi.waitFor(() => {
+    expect(state.result.current.mainEntries).toBeUndefined();
+    expect(
+      screen
+        .getByRole("tabpanel", { name: "App" })
+        .querySelector("[data-browser-session]"),
+    ).toHaveAttribute("data-browser-session", guest);
+  });
+  expect(attached).toHaveBeenCalledTimes(1);
+  expect(detached).not.toHaveBeenCalled();
+  expect(screen.getByRole("textbox", { name: "Address" })).toHaveValue(
+    "https://app.example/second.html",
+  );
 });
 
 const closeTabs = (tabEvent = "buzz:close-all-tabs") => {
@@ -789,7 +767,7 @@ it("solo composer retains side-tab cycling and close focus", async () => {
     ["buzz:next-tab", thread],
     ["buzz:previous-tab", notes],
   ] as const) {
-    h.composer.focus();
+    (detailWorkspace() as HTMLElement).focus();
     const event = new Event(eventName, { cancelable: true });
     act(() => {
       window.dispatchEvent(event);
@@ -797,10 +775,12 @@ it("solo composer retains side-tab cycling and close focus", async () => {
     expect(event.defaultPrevented).toBe(true);
     expect(selected).toHaveAttribute("aria-selected", "true");
   }
-  h.composer.focus();
+  (detailWorkspace() as HTMLElement).focus();
   expect(closeTabs("buzz:close-active-tab")).toBe(true);
   expect(notes).not.toBeInTheDocument();
-  expect(thread).toHaveFocus();
+  expect(detailWorkspace()).toContainElement(
+    document.activeElement as HTMLElement,
+  );
 });
 
 it("leaves Shift+Escape (Mark all as read) to a side thread, closing it on Escape", async () => {
@@ -810,11 +790,10 @@ it("leaves Shift+Escape (Mark all as read) to a side thread, closing it on Escap
   act(() =>
     tabs.result.current.openThreadTab("alpha", root, root, undefined, "side"),
   );
-  const thread = await screen.findByRole("tab", { name: "Thread · Alpha" });
-  expect(thread).toHaveAttribute("aria-selected", "true");
-  const content = document.querySelector(
-    `[id="${thread.getAttribute("aria-controls")}"] *`,
-  );
+  const thread = await screen.findByRole("tabpanel", {
+    name: "Thread · Alpha",
+  });
+  const content = thread.closest("[data-panel-workspace]");
   if (!content) throw new Error("The side thread has no content");
   fireEvent.keyDown(content, { key: "Escape", shiftKey: true });
   expect(thread).toBeInTheDocument();
@@ -826,61 +805,49 @@ it.each(["stream", "solo"] as const)(
   "the real %s page closes its side tabs by shortcut, preserves typing, and handles an empty repeat",
   async (type) => {
     const h = await page(type);
-    await h.open();
-    expect(
-      screen.getByRole("tab", {
-        name: "Notes",
-      }),
-    ).toBeInTheDocument();
     h.composer.focus();
     await h.user.keyboard("Keep typing");
+    await h.open();
+    expect(screen.getByRole("tabpanel", { name: "Notes" })).toBeInTheDocument();
     const modal = document.createElement("dialog");
     modal.open = true;
     document.body.append(modal);
     closeTabs();
     modal.remove();
-    expect(
-      screen.getByRole("tab", {
-        name: "Notes",
-      }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Notes" })).toBeInTheDocument();
     expect(closeTabs()).toBe(true);
     expect(
-      screen.queryByRole("tab", {
-        name: "Notes",
-      }),
+      screen.queryByRole("tabpanel", { name: "Notes" }),
     ).not.toBeInTheDocument();
+    await vi.waitFor(() => expect(detailWorkspace()).toBeNull());
     expect(h.composer).toHaveFocus();
     expect(h.composer).toHaveTextContent("Keep typing");
     closeTabs();
+    await vi.waitFor(() => expect(detailWorkspace()).toBeNull());
     expect(h.composer).toHaveFocus();
     expect(h.composer).toHaveTextContent("Keep typing");
   },
 );
 
 it.each(["stream", "solo"] as const)(
-  "the real %s page returns focus when the menu's owning tab closes",
+  "the real %s page returns focus when the sheet action closes all details",
   async (type) => {
     const h = await page(type);
-    await h.open();
-    const notes = screen.getByRole("tab", {
-      name: "Notes",
+    const trigger = await headerAction("Open notes");
+    await h.user.click(trigger);
+    await screen.findByRole("tabpanel", { name: "Notes" });
+    await h.user.pointer({
+      target: screen.getByRole("tab", { name: "Notes" }),
+      keys: "[MouseRight]",
     });
-    await h.user.pointer({ target: notes, keys: "[MouseRight]" });
     await h.user.click(
       await screen.findByRole("menuitem", { name: "Close all tabs" }),
     );
+    await vi.waitFor(() => expect(detailWorkspace()).toBeNull());
+    expect(h.composer).toBeInTheDocument();
     expect(
-      screen.queryByRole("tab", {
-        name: "Notes",
-      }),
-    ).not.toBeInTheDocument();
-    if (type === "stream")
-      expect(
-        screen.getByRole("button", { name: "Manage members of Alpha" }),
-      ).toHaveFocus();
-    else
-      expect(screen.getByRole("region", { name: "Chat Alpha" })).toHaveFocus();
+      document.activeElement?.closest('[aria-hidden="true"], [inert]'),
+    ).toBeNull();
   },
 );
 
@@ -902,21 +869,23 @@ it("an empty tab menu returns keyboard focus to the conversation identity", asyn
   expect(screen.queryAllByRole("tab")).toHaveLength(0);
 });
 
-it("the conversation identity menu clears the page's side tabs too", async () => {
+it("the detail sheet actions clear the page's retained tabs too", async () => {
   const h = await page();
   await h.open();
-  const channel = screen.getByRole("button", {
-    name: "Manage members of Alpha",
+  await h.user.pointer({
+    target: screen.getByRole("tab", { name: "Notes" }),
+    keys: "[MouseRight]",
   });
-  await h.user.pointer({ target: channel, keys: "[MouseRight]" });
   await h.user.click(
     await screen.findByRole("menuitem", { name: "Close all tabs" }),
   );
-  expect(screen.queryByRole("tab", { name: "Notes" })).not.toBeInTheDocument();
-  expect(channel).toHaveFocus();
+  await vi.waitFor(() => expect(detailWorkspace()).toBeNull());
+  const state = renderHook(() => useChannelTabState(h.session, "alpha"));
+  expect(state.result.current.entries).toHaveLength(0);
+  expect(h.composer).toBeInTheDocument();
 });
 
-it("close-all works while a main-pane thread covers the channel conversation", async () => {
+it("close-all closes a thread restored from the old main placement", async () => {
   const h = await page();
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   const root = "a".repeat(64);
@@ -924,10 +893,8 @@ it("close-all works while a main-pane thread covers the channel conversation", a
     tabs.result.current.openThreadTab("alpha", root, root, undefined, "main"),
   );
   expect(
-    within(screen.getByRole("tablist", { name: "Channel tabs" })).getAllByRole(
-      "tab",
-    ),
-  ).toHaveLength(2);
+    await screen.findByRole("tabpanel", { name: "Thread · Alpha" }),
+  ).toBeVisible();
   expect(closeTabs()).toBe(true);
   expect(screen.queryAllByRole("tab")).toHaveLength(0);
   expect(
@@ -953,16 +920,16 @@ it.each([false, true])(
       );
     }
     await h.open();
-    expect(screen.getByRole("tab", { name: "Notes" })).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Notes" })).toBeInTheDocument();
     h.composer.focus();
     expect(closeTabs("buzz:close-active-tab")).toBe(true);
     expect(
-      screen.queryByRole("tab", { name: "Notes" }),
+      screen.queryByRole("tabpanel", { name: "Notes" }),
     ).not.toBeInTheDocument();
     expect(h.composer).toHaveFocus();
     await h.user.keyboard("{Enter}");
     expect(
-      screen.queryByRole("tab", { name: "Notes" }),
+      screen.queryByRole("tabpanel", { name: "Notes" }),
     ).not.toBeInTheDocument();
     expect(h.composer).toHaveFocus();
     await h.user.keyboard("Keep typing");
@@ -970,9 +937,9 @@ it.each([false, true])(
   },
 );
 
-it.each(["side", "main"] as const)(
-  "closing others from a %s tab keeps focus on it while the other pane's selected tab closes",
-  async (kept) => {
+it.each(["Notes", "Thread · Alpha"] as const)(
+  "closing others retains %s and its focus after restoring an old main thread",
+  async (name) => {
     const h = await page();
     const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
     const root = "c".repeat(64);
@@ -980,20 +947,22 @@ it.each(["side", "main"] as const)(
       tabs.result.current.openThreadTab("alpha", root, root, undefined, "main"),
     );
     await h.open();
-    const main = within(screen.getByRole("tablist", { name: "Channel tabs" }));
-    const thread = main.getAllByRole("tab")[1];
-    if (!thread) throw new Error("missing main-pane thread tab");
-    expect(thread).toHaveAttribute("aria-selected", "true");
-    const target =
-      kept === "side" ? screen.getByRole("tab", { name: "Notes" }) : thread;
+    const thread = screen.getByRole("tab", { name: "Thread · Alpha" });
+    const notes = screen.getByRole("tab", { name: "Notes" });
+    const target = name === "Notes" ? notes : thread;
     await h.user.pointer({ target, keys: "[MouseRight]" });
     await h.user.click(
       await screen.findByRole("menuitem", { name: "Close other tabs" }),
     );
-    expect(screen.getAllByRole("tab")).toHaveLength(kept === "side" ? 1 : 2);
-    expect(target).toBeInTheDocument();
-    expect(target).toHaveAttribute("aria-selected", "true");
-    expect(target).toHaveFocus();
+    await vi.waitFor(() =>
+      expect(screen.getByRole("tabpanel", { name })).toBeVisible(),
+    );
+    expect(
+      tabs.result.current.tabs.length + tabs.result.current.entries.length,
+    ).toBe(1);
+    expect(detailWorkspace()).toContainElement(
+      document.activeElement as HTMLElement,
+    );
   },
 );
 
@@ -1013,10 +982,8 @@ it("gives a Solo chat's side tab its own header actions, opening it in the main 
     ]),
   );
   await h.user.click(await screen.findByRole("tab", { name: "Gamma" }));
-  expect(
-    await screen.findByRole("button", { name: "Share access" }),
-  ).toBeInTheDocument();
-  await h.user.click(screen.getByRole("button", { name: "Chat actions" }));
+  expect(await headerAction("Share access")).toBeInTheDocument();
+  await h.user.click(await headerAction("Chat actions"));
   const menu = within(
     await screen.findByRole("menu", { name: "Chat actions" }),
   );
@@ -1105,9 +1072,7 @@ it("keeps a side tab's failed move recoverable after switching tabs", async () =
     ]),
   );
   await h.user.click(await screen.findByRole("tab", { name: "Gamma" }));
-  await h.user.click(
-    await screen.findByRole("button", { name: "Chat actions" }),
-  );
+  await h.user.click(await headerAction("Chat actions"));
   (await screen.findByRole("menuitem", { name: "Move to" })).focus();
   await h.user.keyboard("{ArrowRight}");
   await h.user.click(await screen.findByRole("menuitem", { name: "Work" }));
@@ -1196,11 +1161,9 @@ it("keeps a newer header move recoverable after an earlier one succeeds", async 
       { id: "conversation:gamma", kind: "conversation", channelId: "gamma" },
     ]),
   );
-  await h.user.click(await screen.findByRole("tab", { name: "Gamma" }));
+  await screen.findByRole("tabpanel", { name: "Gamma" });
   const moveTo = async (name: string) => {
-    await h.user.click(
-      await screen.findByRole("button", { name: "Chat actions" }),
-    );
+    await h.user.click(await headerAction("Chat actions"));
     (await screen.findByRole("menuitem", { name: "Move to" })).focus();
     await h.user.keyboard("{ArrowRight}");
     await h.user.click(await screen.findByRole("menuitem", { name }));
@@ -1299,3 +1262,21 @@ it("opens another conversation's tab in its channel, but not the current channel
     }),
   );
 });
+
+function detailWorkspace() {
+  return document.querySelector<HTMLElement>(
+    "[data-panel-dock]:not([hidden]) [data-panel-workspace]",
+  );
+}
+
+async function headerAction(name: string) {
+  if (name === "Conversation actions")
+    return screen.findByRole("button", { name });
+  const action = screen.queryByRole("button", { name });
+  if (action) return action;
+  await userEvent.click(
+    screen.queryByRole("button", { name: "Detail actions" }) ??
+      (await screen.findByRole("button", { name: "Conversation actions" })),
+  );
+  return screen.findByRole("button", { name });
+}

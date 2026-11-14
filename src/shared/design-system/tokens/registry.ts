@@ -312,11 +312,43 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-surface-categorical-blue",
+        variable: "--surface-categorical-blue",
+        pointsAt: "blue-3 light / blue-3 dark",
+        use: "Stable channel identity artwork, paired with text-standard.",
+        status: "proposed",
+        owner: "Activity sidebar",
+      },
+      {
+        token: "bg-surface-categorical-green",
+        variable: "--surface-categorical-green",
+        pointsAt: "green-3 light / green-3 dark",
+        use: "Stable channel identity artwork, paired with text-standard.",
+        status: "proposed",
+        owner: "Activity sidebar",
+      },
+      {
+        token: "bg-surface-categorical-orange",
+        variable: "--surface-categorical-orange",
+        pointsAt: "orange-3 light / orange-3 dark",
+        use: "Stable channel identity artwork, paired with text-standard.",
+        status: "proposed",
+        owner: "Activity sidebar",
+      },
+      {
         token: "bg-surface-categorical-purple",
         variable: "--surface-categorical-purple",
         pointsAt: "purple-3 light / purple-3 dark",
         use: "Accent-independent categorical fill, paired with text-categorical-purple.",
         status: "core",
+      },
+      {
+        token: "--surface-window-underlay",
+        variable: "--surface-window-underlay",
+        pointsAt: "Navigation card fill with 5% theme accent",
+        use: "Window toolbar beneath the workspace card, following the app's color mode.",
+        status: "proposed",
+        owner: "App shell",
       },
       {
         token: "bg-surface-panel",
@@ -326,11 +358,29 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-surface-rail-card",
+        variable: "--surface-rail-card",
+        pointsAt: "surface-message mixed equally with surface-panel",
+        use: "Matching left navigation cards and floating right detail cards.",
+        status: "proposed",
+        owner: "App rails",
+      },
+      {
         token: "bg-surface-composer",
         variable: "--surface-composer",
         pointsAt: "surface-panel light / neutral-4 dark",
         use: "Message drafting surface, raised above the panel in dark mode.",
         status: "core",
+      },
+      {
+        token: "bg-surface-scrim-subtle",
+        variable: "--surface-scrim-subtle",
+        pointsAt: "black at 15% light / 26% dark",
+        use: "Light window-wide dimming behind anchored reading sheets.",
+        status: "proposed",
+        owner: "Activity and Messages sheets",
+        exception:
+          "Genuine overlay translucency; no text or controls are painted on this surface.",
       },
       {
         token: "bg-surface-popover",
@@ -1723,10 +1773,10 @@ export const TYPE_ROLES: TypeRole[] = [
     token: "text-message",
     pointsAt: "body/message",
     size: "14px",
-    lineHeight: "1.5714285714285714 (22px at default)",
-    tracking: "-0.0025em",
+    lineHeight: "1.5357142857142858 (21.5px at default)",
+    tracking: "-0.01em",
     weight: "400",
-    use: "Sent and received message prose, with compact line spacing.",
+    use: "Sent and received message prose and composer text, with compact line spacing.",
     status: "core",
   },
   {
@@ -2044,6 +2094,36 @@ export const RADII = [
 ];
 
 export const MOTION = [
+  {
+    token: "scale-press",
+    variable: "--scale-press",
+    value: "0.97",
+    use: "Pointer-down compression for buttons, icon actions, tabs and artwork controls.",
+  },
+  {
+    token: "scale-press-row",
+    variable: "--scale-press-row",
+    value: "0.99",
+    use: "Shallower pointer-down compression for wide navigation and menu rows.",
+  },
+  {
+    token: "easing-press-release",
+    variable: "--easing-press-release",
+    value: "cubic-bezier(.34,1.56,.64,1)",
+    use: "A small easeOutBack overshoot when a pointer press is released; keyboard and reduced motion stay immediate.",
+  },
+  {
+    token: "duration-sheet",
+    variable: "--duration-sheet",
+    value: "250ms",
+    use: "A composer-anchored sheet unfolding into its reading surface.",
+  },
+  {
+    token: "easing-sheet",
+    variable: "--easing-sheet",
+    value: "cubic-bezier(.32,.72,0,1)",
+    use: "A continuous sheet reveal with a gentler initial velocity.",
+  },
   {
     token: "duration-panel-enter",
     variable: "--duration-panel-enter",

@@ -44,8 +44,9 @@ export function PageNavigation({
   /** The open destination when `selected` is the app that lists it. */
   currentPage?: string;
   onSelect(key: string, options?: Pick<NavigationOpenOptions, "focus">): void;
-  /** The app dock is a vertical icon tablist; the sidebar lists rows. */
-  placement?: "sidebar" | "dock";
+  /** The app dock is a vertical icon tablist, the top bar a horizontal one;
+   * the sidebar lists rows. */
+  placement?: "sidebar" | "dock" | "top";
   /** Show inactive page previews in this navigation surface on hover-capable devices. */
   previews?: boolean;
 }) {
@@ -53,12 +54,14 @@ export function PageNavigation({
   const hover = useHoverPointer();
   const previewed = (page: RegisteredPage) =>
     previews && hover && page.key !== selected;
-  if (placement === "dock") {
+  if (placement === "dock" || placement === "top") {
+    const top = placement === "top";
     return (
       <Tabs
         label="Apps"
         variant="dock"
-        orientation="vertical"
+        size={top ? "sm" : "md"}
+        orientation={top ? "horizontal" : "vertical"}
         value={pages.some((page) => page.key === selected) ? selected : null}
         onValueChange={(key) => onSelect(key, { focus: "preserve" })}
         // The selected app returns from a page opened in its navigation.
@@ -83,8 +86,22 @@ export function PageNavigation({
                 shape={avatar.shape}
                 size="small"
               />
+            ) : page.key === ACTIVITY_PAGE ? (
+              <ActivityNavigationIcon>
+                <PageIcon
+                  icon={icon}
+                  image={image}
+                  size={top ? 16 : 20}
+                  strokeWidth={2.5}
+                />
+              </ActivityNavigationIcon>
             ) : (
-              <PageIcon icon={icon} image={image} size={20} strokeWidth={2.5} />
+              <PageIcon
+                icon={icon}
+                image={image}
+                size={top ? 16 : 20}
+                strokeWidth={2.5}
+              />
             ),
             panelId: `shell-page-${page.key}`,
             renderTab: Preview
@@ -95,6 +112,7 @@ export function PageNavigation({
                     label={label}
                     enabled={previewed(page)}
                     dockHint
+                    side={top ? "bottom" : "right"}
                   >
                     {tab}
                   </PagePreview>
@@ -158,11 +176,17 @@ export function PageNavigation({
       <NavigationItem
         key={page.key}
         onClick={select}
+        aria-label={label}
         selected={selected === page.key}
         label={label}
         title={page.preview && previewed(page) ? undefined : label}
         variant="row"
-        trailing={badge}
+        trailing={
+          <>
+            {badge}
+            <BestieUnreadBadge pageKey={page.key} />
+          </>
+        }
         icon={<span className="shell-page-icon">{pageIcon}</span>}
       />
     );
@@ -206,8 +230,11 @@ function PagePreview({
   label,
   enabled,
   dockHint = false,
+  side = "right",
   children,
 }: {
+  /** Beside a dock or row, or below the top bar. */
+  side?: "right" | "bottom";
   page: RegisteredPage;
   preview: ComponentType<PagePreviewProps>;
   label: string;
@@ -267,7 +294,7 @@ function PagePreview({
         <Tooltip
           content={label}
           hint="dock"
-          side="right"
+          side={side}
           // Keyboard focus opens only the label; the preview replaces it once
           // a resting pointer opens it.
           {...(enabled && open ? { open: false } : {})}
@@ -280,7 +307,7 @@ function PagePreview({
       <PopoverPopup
         size="wide"
         padding="list"
-        side="right"
+        side={side}
         align="start"
         // 6px beside the row's hover background, lifted so the line under the
         // preview's header meets the background's top edge. Offsets ignore the
@@ -288,6 +315,7 @@ function PagePreview({
         sideOffset={6}
         collisionBoundary={boundary ?? undefined}
         alignOffset={() => {
+          if (side === "bottom") return 0;
           const header = popup.current?.querySelector("header");
           return header ? 1 - header.offsetTop - header.offsetHeight : 0;
         }}

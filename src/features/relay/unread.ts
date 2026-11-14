@@ -1,3 +1,4 @@
+import { messageContentKind } from "./channel-kinds";
 import type { ProfileQueries } from "./profile-directory";
 import { workflowOwner } from "./workflow-attribution";
 import { agentAudience } from "./audience";
@@ -34,6 +35,14 @@ export type UnreadSnapshot = Readonly<{
   target: ReadTarget;
   /** Latest verified content evidence, including read and self-authored messages. */
   latestMessage?: Readonly<{ id: string; createdAt: number }>;
+  /** PROTOTYPE: the latest top-level message, not a thread reply or quiet
+   * agent coordination, for the conversation list's order and preview. */
+  latestTopLevel?: Readonly<{
+    id: string;
+    createdAt: number;
+    authorId: string;
+    content: string;
+  }>;
   /** Channel targets: the id of the oldest unread message the channel's
    * timeline shows (a top-level post or broadcast reply), in rendered order.
    * Bounded like `observedCount`: missing history can leave a later message
@@ -238,8 +247,7 @@ const REPAIR_LIMIT = 500;
 /** Rendered message order: effective ms, then event id. */
 const order = (a: RelayEvent, b: RelayEvent) =>
   eventMs(a) - eventMs(b) || a.id.localeCompare(b.id);
-const contentKind = (event: RelayEvent) =>
-  event.kind === 9 || event.kind === 40002 || event.kind === 40008;
+const contentKind = (event: RelayEvent) => messageContentKind(event.kind);
 /**
  * Live Inbox recompute window. Each recompute folds every channel (7-70 ms at
  * 100-1000 items), so a burst would otherwise cost that per message. 200 ms
@@ -556,6 +564,7 @@ export function createUnread({
   // Ids named by an `e` tag of any retained or fetched event: a deletion, edit
   // or reply that arrived before its target. Built with the index.
   const referenced = new Set<string>();
+  const edited = new Set<string>();
   // Conversation membership: the viewer's own messages, and the parents the
   // viewer has replied to, each keyed by channel. A conversation is the set of
   // replies to one parent.
@@ -645,7 +654,10 @@ export function createUnread({
   }
   function markReferenced(event: RelayEvent) {
     for (const [name, id] of event.tags)
-      if (name === "e" && id) referenced.add(id.toLowerCase());
+      if (name === "e" && id) {
+        referenced.add(id.toLowerCase());
+        if (event.kind === 40003) edited.add(id.toLowerCase());
+      }
   }
   /** Indexes one counted content event: the body of one `indexEvidence` step. */
   function indexContent(event: RelayEvent) {
@@ -707,6 +719,7 @@ export function createUnread({
     byId.clear();
     tombstones.clear();
     referenced.clear();
+    edited.clear();
     own.clear();
     joined.clear();
     ownThreads.clear();
@@ -757,6 +770,17 @@ export function createUnread({
   // Read on first use: constructing a session touches no storage.
   let saved: ThreadFollows | undefined;
   const choices = () => (saved ??= follows.read());
+  /**
+   * The thread a reply is in. A reply names its thread, and that name stands
+   * until the root is loaded and the graph can decide, so a reply the sampled
+   * window cut from its root is already part of its thread: it finds the
+   * thread's marks and shares the thread's row.
+   */
+  const threadOf = (entry: Evidence) =>
+    entry.rootId ??
+    (entry.threadRootId && !structural(entry.threadRootId)
+      ? entry.threadRootId
+      : undefined);
   /** An explicit follow choice for the reply's whole thread, if any. */
   const chosen = ({ channelId, threadRootId }: Evidence) =>
     threadRootId === undefined
@@ -823,7 +847,8 @@ export function createUnread({
     dm: boolean,
     seen = -1,
   ) {
-    const { event, channelId, rootId } = entry;
+    const { event, channelId } = entry;
+    const rootId = threadOf(entry);
     const frontier = effectiveFrontier(
       state,
       `msg:${event.id}`,
@@ -1121,8 +1146,18 @@ export function createUnread({
     const dm = isDm(target.channelId);
     indexEvidence();
     let latest: RelayEvent | undefined, oldest: RelayEvent | undefined;
+    let topLevel: RelayEvent | undefined;
     for (const entry of byChannel.get(target.channelId) ?? []) {
       const event = entry.event;
+      if (
+        target.kind === "channel" &&
+        !entry.parentId &&
+        !entry.quiet &&
+        (!topLevel ||
+          event.created_at > topLevel.created_at ||
+          (event.created_at === topLevel.created_at && event.id < topLevel.id))
+      )
+        topLevel = event;
       if (
         target.kind === "channel" &&
         (!latest ||
@@ -1164,10 +1199,26 @@ export function createUnread({
               )
             ? "remote"
             : "none";
+    const topRow =
+      topLevel &&
+      (topLevel.kind !== 9 || edited.has(topLevel.id)) &&
+      folded(target.channelId).find((row) => row.id === topLevel.id);
     return Object.freeze({
       target,
       ...(latest
         ? { latestMessage: { id: latest.id, createdAt: latest.created_at } }
+        : {}),
+      ...(topLevel
+        ? {
+            latestTopLevel: {
+              id: topLevel.id,
+              createdAt: topLevel.created_at,
+              authorId: topRow
+                ? topRow.authorId
+                : messageAuthor(topLevel, signingAuthority),
+              content: topRow ? topRow.content : topLevel.content,
+            },
+          }
         : {}),
       ...(evidence && oldest ? { oldestUnreadId: oldest.id } : {}),
       ...(evidence && target.kind === "channel" && sampled
@@ -1200,6 +1251,9 @@ export function createUnread({
   }
   const equal = (a: UnreadSnapshot, b: UnreadSnapshot) =>
     a.latestMessage?.id === b.latestMessage?.id &&
+    a.latestTopLevel?.id === b.latestTopLevel?.id &&
+    a.latestTopLevel?.content === b.latestTopLevel?.content &&
+    a.latestTopLevel?.authorId === b.latestTopLevel?.authorId &&
     a.oldestUnreadId === b.oldestUnreadId &&
     a.sampled === b.sampled &&
     a.sampling === b.sampling &&
@@ -1427,7 +1481,7 @@ export function createUnread({
           const id =
             dm || (session && !entry.parentId && !roots.has(entry.event.id))
               ? channel.id
-              : (entry.rootId ?? entry.event.id);
+              : (threadOf(entry) ?? entry.event.id);
           if (id !== channel.id) elsewhere.add(id);
           const group = groups.get(id) ?? [];
           group.push(entry);
@@ -1472,6 +1526,7 @@ export function createUnread({
               isUnread(entry, state, dm),
             );
             const representative = unread[0] ?? latest;
+            const rootId = threadOf(representative);
             const replies = entries.filter(
               (entry) => entry.rootId !== undefined,
             );
@@ -1526,9 +1581,7 @@ export function createUnread({
               messageId: representative.event.id,
               latestMessageId: latest.event.id,
               messageIds: Object.freeze(entries.map((entry) => entry.event.id)),
-              ...(representative.rootId
-                ? { rootId: representative.rootId }
-                : {}),
+              ...(rootId ? { rootId } : {}),
               ...(dm &&
               representative.rootId &&
               unread.every((entry) => entry.rootId === representative.rootId)

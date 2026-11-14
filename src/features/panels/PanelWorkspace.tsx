@@ -1,3 +1,4 @@
+import { ConversationHeaderTools } from "../conversation/ConversationHeaderTools";
 import {
   createContext,
   useCallback,
@@ -26,6 +27,10 @@ import type { TabDragHost } from "./useTabDrag";
 type Item = {
   id: string;
   label: string;
+  /** Conversation membership identity shown above its message scrollport. */
+  identity?: ReactNode;
+  /** Conversation/thread content needs the bottom composer expansion. */
+  composer?: boolean;
   icon?: ReactNode;
   content: ReactNode;
   /** Increment when an opening returns to this existing tab. */
@@ -110,7 +115,10 @@ export function PanelWorkspace({
   value,
   select,
   actions,
+  leadingActions,
   identity,
+  identityPlacement = "header",
+  headerDivider = true,
   main = false,
   label = "Panel tabs",
   focusOnMount = true,
@@ -132,8 +140,13 @@ export function PanelWorkspace({
   select(id: string): void;
   /** Header icon actions owned by the hosting page. */
   actions?: ReactNode;
+  /** Navigation at the leading edge, independent of centered membership artwork. */
+  leadingActions?: ReactNode;
   /** Interactive conversation identity; a lone permanent tab needs no tab strip. */
   identity?: ReactNode;
+  /** The permanent conversation may present its identity above its scrollport. */
+  identityPlacement?: "header" | "content";
+  headerDivider?: boolean;
   /**
    * The page's main pane: a lone permanent tab reads as a title, and native
    * Close acts here only while focus is inside (the side pane is the default).
@@ -241,12 +254,16 @@ export function PanelWorkspace({
       event.target instanceof Element ? event.target : document.activeElement;
     const owns = (event: Event) => {
       const element = root.current;
+      const from = source(event);
+      const dialog = from?.closest('[role="dialog"]');
       return (
         visible() &&
-        (source(event)?.closest(
-          "[data-panel-workspace], [data-main-workspace]",
-        ) ?? (main || event.target instanceof Element ? null : element)) ===
-          element
+        (from?.closest("[data-panel-workspace], [data-main-workspace]") ??
+          (dialog?.contains(element)
+            ? element
+            : main || event.target instanceof Element
+              ? null
+              : element)) === element
       );
     };
     const close = (event: Event) => {
@@ -295,11 +312,18 @@ export function PanelWorkspace({
     };
     const showNext = step(1);
     const showPrevious = step(-1);
+    const closeAll = (event: Event) => {
+      if (event.defaultPrevented || !tabMenu?.closeAll || !owns(event)) return;
+      event.preventDefault();
+      flushSync(() => tabMenu.closeAll());
+    };
     window.addEventListener("buzz:close-active-tab", close);
+    window.addEventListener("buzz:close-all-tabs", closeAll);
     window.addEventListener("buzz:next-tab", showNext);
     window.addEventListener("buzz:previous-tab", showPrevious);
     return () => {
       window.removeEventListener("buzz:close-active-tab", close);
+      window.removeEventListener("buzz:close-all-tabs", closeAll);
       window.removeEventListener("buzz:next-tab", showNext);
       window.removeEventListener("buzz:previous-tab", showPrevious);
     };
@@ -364,6 +388,16 @@ export function PanelWorkspace({
       closingTab.current = undefined;
     }
   });
+  const conversationTools =
+    identityPlacement === "content" && selected === items[0]?.id && !!identity;
+  const activeToolbar = active && "toolbar" in active ? active.toolbar : null;
+  const headerTools =
+    activeToolbar || actions ? (
+      <>
+        {activeToolbar}
+        {actions}
+      </>
+    ) : null;
   const identityOnly = !!identity && tabs.length === 1 && !tabs[0]?.close;
   const heading = identity ? (
     <div data-workspace-identity="" className={styles.workspaceIdentity}>
@@ -384,6 +418,20 @@ export function PanelWorkspace({
       )}
     </div>
   ) : undefined;
+  const conversationIdentity =
+    identityPlacement === "content" && selected === items[0]?.id
+      ? heading
+      : active && "identity" in active
+        ? active.identity
+        : undefined;
+  const conversationTitle =
+    identityPlacement === "content" ? items[0]?.label : active?.label;
+  const standaloneIdentity = !!conversationIdentity && identityOnly;
+  const tools = conversationTools ? (
+    <ConversationHeaderTools actions={headerTools} />
+  ) : (
+    headerTools
+  );
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: Escape from descendant controls closes their active tab.
     <div
@@ -392,6 +440,7 @@ export function PanelWorkspace({
         : { "data-panel-workspace": "" })}
       data-active-tab-closable={!!active?.close || undefined}
       data-overlay-boundary=""
+      tabIndex={-1}
       className={styles.workspace}
       ref={(element) => {
         root.current = element;
@@ -435,81 +484,104 @@ export function PanelWorkspace({
         }
       }}
     >
-      <PanelHeader
-        navigation={!identityOnly ? heading : undefined}
-        actions={
-          active && "toolbar" in active && active.toolbar ? (
-            <>
-              {active.toolbar}
-              {actions}
-            </>
-          ) : (
-            actions
-          )
-        }
-        title={
-          identityOnly ? (
-            heading
-          ) : (
-            <Tabs
-              label={label}
-              variant="navigation"
-              showSelection={!main || tabs.length > 1}
-              value={selected}
-              items={tabs.map((tab) => ({
-                value: tab.id,
-                label: tab.label,
-                icon: tab.icon,
-                panelId: panelId(tab.id),
-                attentionRequest:
-                  "attentionRequest" in tab ? tab.attentionRequest : undefined,
-                onMove: "move" in tab ? tab.move : undefined,
-                onRename: "rename" in tab ? tab.rename : undefined,
-                actions: "actions" in tab ? tab.actions : undefined,
-                draggable: !!drag && "move" in tab && !!tab.move,
-                onClose: tab.close
-                  ? () => {
-                      // Recover focus only when removing its current owner.
-                      closingTab.current = document
-                        .getElementById(`${panelId(tab.id)}-tab`)
-                        ?.parentElement?.contains(document.activeElement)
-                        ? tab.id
-                        : undefined;
-                      if (tab.close?.() === false)
-                        closingTab.current = undefined;
-                    }
-                  : undefined,
-              }))}
-              tabMenu={
-                tabMenu && {
-                  ...tabMenu,
-                  // A detail tab cannot outlive its owner, so the owner is kept.
-                  // Details live only here: close the kept owner's ones too,
-                  // even when the channel has no other tab to close.
-                  closeOthers:
-                    tabMenu.closeOthers &&
-                    ((id) => {
-                      const local = owned.find((tab) => tab.id === id);
-                      const keep = local?.owner ?? id;
-                      const details = owned.filter((tab) => tab.owner === keep);
-                      const closed = tabMenu.closeOthers?.(keep) ?? false;
-                      if (!closed && !details.length) return false;
-                      // Focus follows the chosen detail's removal to its owner.
-                      if (local) closingTab.current = local.id;
-                      for (const tab of details) tab.close({ keepOwner: true });
-                      return true;
-                    }),
+      {!standaloneIdentity && (
+        <PanelHeader
+          divider={headerDivider}
+          navigation={
+            leadingActions ??
+            (!identityOnly && identityPlacement === "header"
+              ? heading
+              : undefined)
+          }
+          actions={tools}
+          title={
+            identityOnly ? (
+              identityPlacement === "header" ? (
+                heading
+              ) : (
+                tabs[0]?.label
+              )
+            ) : (
+              <Tabs
+                label={label}
+                variant="navigation"
+                showSelection={!main || tabs.length > 1}
+                value={selected}
+                items={tabs.map((tab) => ({
+                  value: tab.id,
+                  label: tab.label,
+                  icon: tab.icon,
+                  panelId: panelId(tab.id),
+                  attentionRequest:
+                    "attentionRequest" in tab
+                      ? tab.attentionRequest
+                      : undefined,
+                  onMove: "move" in tab ? tab.move : undefined,
+                  onRename: "rename" in tab ? tab.rename : undefined,
+                  actions: "actions" in tab ? tab.actions : undefined,
+                  draggable: !!drag && "move" in tab && !!tab.move,
+                  onClose: tab.close
+                    ? () => {
+                        // Recover focus only when removing its current owner.
+                        closingTab.current = document
+                          .getElementById(`${panelId(tab.id)}-tab`)
+                          ?.parentElement?.contains(document.activeElement)
+                          ? tab.id
+                          : undefined;
+                        if (tab.close?.() === false)
+                          closingTab.current = undefined;
+                      }
+                    : undefined,
+                }))}
+                tabMenu={
+                  tabMenu && {
+                    ...tabMenu,
+                    // A detail tab cannot outlive its owner, so the owner is kept.
+                    // Details live only here: close the kept owner's ones too,
+                    // even when the channel has no other tab to close.
+                    closeOthers:
+                      tabMenu.closeOthers &&
+                      ((id) => {
+                        const local = owned.find((tab) => tab.id === id);
+                        const keep = local?.owner ?? id;
+                        const details = owned.filter(
+                          (tab) => tab.owner === keep,
+                        );
+                        const closed = tabMenu.closeOthers?.(keep) ?? false;
+                        if (!closed && !details.length) return false;
+                        // Focus follows the chosen detail's removal to its owner.
+                        if (local) closingTab.current = local.id;
+                        // With one item left the tab strip disappears; its
+                        // surviving content becomes the focus destination.
+                        focusTab.current = true;
+                        focusContent.current = true;
+                        for (const tab of details)
+                          tab.close({ keepOwner: true });
+                        return true;
+                      }),
+                  }
                 }
-              }
-              onValueChange={(id) => {
-                focusContent.current = pointerTab.current;
-                pointerTab.current = false;
-                choose(id);
-              }}
-            />
-          )
-        }
-      />
+                onValueChange={(id) => {
+                  focusContent.current = pointerTab.current;
+                  pointerTab.current = false;
+                  choose(id);
+                }}
+              />
+            )
+          }
+        />
+      )}
+      {conversationIdentity && (
+        <PanelHeader
+          variant="conversation"
+          historyOverlay
+          navigation={standaloneIdentity ? leadingActions : undefined}
+          title={conversationTitle ?? label}
+          icon={conversationIdentity}
+          actions={standaloneIdentity ? tools : undefined}
+          divider={false}
+        />
+      )}
       <div className={styles.workspaceBody}>
         {items.map((item) => (
           <TabScope

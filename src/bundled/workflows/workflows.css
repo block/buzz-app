@@ -606,7 +606,7 @@ html[data-keyboard-navigation]
   height: 100%;
   min-height: 0;
 }
-.workflows-split[data-side] {
+.workflows-split:has(> [data-panel-dock]:not([hidden], [data-closing])) {
   grid-template-columns: minmax(0, 1fr) minmax(
       20rem,
       var(--secondary-panel-width, 28rem)
@@ -676,10 +676,11 @@ html[data-keyboard-navigation]
   border-top: 1px solid var(--border-standard);
 }
 @media (max-width: 52rem) {
-  .workflows-split[data-side] {
+  .workflows-split:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
   }
-  .workflows-split[data-side] > .workflows-main {
+  .workflows-split:has(> [data-panel-dock]:not([hidden], [data-closing]))
+    > .workflows-main {
     display: none;
   }
   .workflows-side > [data-panel-resize] {

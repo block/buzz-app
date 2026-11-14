@@ -5,7 +5,7 @@
   height: 100%;
   min-height: 0;
 }
-.browse[data-side] {
+.browse:has(> [data-panel-dock]:not([hidden], [data-closing])) {
   grid-template-columns: minmax(0, 1fr) minmax(
       20rem,
       var(--secondary-panel-width, 28rem)
@@ -33,6 +33,21 @@
   gap: var(--space-5);
   padding: var(--space-4) var(--space-5) var(--space-6);
 }
+.browse[data-detail] {
+  display: block;
+  max-width: 42rem;
+  margin-inline: auto;
+}
+.browse[data-detail] > .main,
+.browse[data-detail] > .side > [data-panel-resize] {
+  display: none;
+}
+.browse[data-detail] > .side {
+  height: 100%;
+  width: 100%;
+  position: relative;
+  border-inline-start: 0;
+}
 
 .portList {
   display: grid;
@@ -50,69 +65,6 @@
   border-top: 1px solid var(--border-standard);
 }
 
-.grid {
-  display: grid;
-  /* Fixed columns, so opening the side panel never resizes a tile. */
-  grid-template-columns: repeat(auto-fill, 10rem);
-  gap: var(--space-3);
-  padding: var(--space-6);
-  outline: none;
-}
-.tile {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-  padding: var(--space-5) var(--space-3) var(--space-4);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-container);
-  background: var(--surface-panel);
-  text-align: center;
-  cursor: pointer;
-  user-select: none;
-  transition:
-    transform var(--duration-fast, 160ms) var(--ease-out, ease-out),
-    background-color var(--duration-fast, 160ms) var(--ease-out, ease-out),
-    border-color var(--duration-fast, 160ms) var(--ease-out, ease-out);
-}
-.tile:hover {
-  background: var(--affordance-panel-hover);
-  transform: translateY(-1px);
-}
-.tile[aria-selected="true"] {
-  border-color: var(--border-focus);
-  background: var(--affordance-selected);
-}
-.tile:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
-}
-.portrait {
-  width: 4.5rem;
-  height: 4.5rem;
-  margin-bottom: var(--space-2);
-}
-.tile[data-unavailable] .portrait {
-  opacity: 0.5;
-}
-.tileName {
-  max-width: 100%;
-  overflow: hidden;
-  font-weight: var(--type-weight-medium);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.tileSummary {
-  display: -webkit-box;
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: var(--text-body-sm-size, 0.8125rem);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
 .peekIdentity {
   display: flex;
   align-items: flex-start;
@@ -122,11 +74,6 @@
   flex: none;
   width: 4rem;
   height: 4rem;
-}
-.peekPlugin {
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-container);
-  background: var(--surface-inset);
 }
 
 /* Profile-style identity and shared agent sections in one scrollport. */
@@ -225,10 +172,10 @@
 }
 
 @media (max-width: 52rem) {
-  .browse[data-side] {
+  .browse:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
   }
-  .browse[data-side] > .main {
+  .browse:has(> [data-panel-dock]:not([hidden], [data-closing])) > .main {
     display: none;
   }
   .side > [data-panel-resize] {
@@ -243,19 +190,6 @@
   .side {
     animation: none;
   }
-  .tile,
-  .tile:hover {
-    transition: none;
-    transform: none;
-  }
-}
-.portraitEdit {
-  display: grid;
-  gap: var(--space-2);
-  justify-items: start;
-}
-.portraitEdit > * {
-  margin-inline: 0;
 }
 
 /* Each tab's content, centered in the inventory column. */
@@ -264,18 +198,7 @@
   flex-direction: column;
   gap: var(--space-6);
   width: 100%;
-  max-width: 48rem;
-  margin-inline: auto;
-  padding: clamp(var(--space-4), 6vh, calc(var(--space-16) + var(--space-4)))
-    var(--space-6) var(--space-8);
-}
-.typeLabel {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding-inline: var(--space-2);
-  color: var(--text-secondary);
-  font-size: var(--text-body-sm-size, 0.8125rem);
+  padding: var(--space-6) var(--space-panel-inset) var(--space-8);
 }
 
 .nameActions {

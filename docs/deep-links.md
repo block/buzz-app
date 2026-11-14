@@ -131,8 +131,7 @@ malformed parameters, malformed join
 or community links, incomplete entity or plugin links and oversize links, show a "This
 link doesn't work" notice. In a running app the notice shows over the current
 page, and history is unchanged. A link that launches the app, read before the
-client is first ready, opens Inbox in the selected community with the notice;
-with Inbox turned off, the notice shows over the start page. A repeat replaces
+client is first ready, opens Team in the selected community with the notice. A repeat replaces
 the notice, and the next link that names a destination clears it. Without an
 identity, selected community and settled plugin catalog a launch link waits
 for them, and new navigation cancels it. A malformed link that replaces a valid
@@ -184,7 +183,7 @@ A warm packaged app should come to the front and open the conversation. A cold
 start should launch, show the start page, then open the destination once the
 client is ready. A malformed link such as `buzz://unknown` or
 `buzz://join?relay=example` must show the "This link doesn't work" notice over
-the current page when warm, and open Inbox with it on a cold start. Ordinary `just desktop` keeps in-app Buzz links and
+the current page when warm, and open Team with it on a cold start. Ordinary `just desktop` keeps in-app Buzz links and
 **Copy link**, but external `buzz://` delivery is not a supported development
 contract.
 

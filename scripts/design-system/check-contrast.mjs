@@ -285,6 +285,10 @@ const BOUNDARY_ROLES = [
 ];
 
 const TINT_PAIRS = [
+  ["--text-standard", "--surface-categorical-purple"],
+  ["--text-standard", "--surface-categorical-blue"],
+  ["--text-standard", "--surface-categorical-green"],
+  ["--text-standard", "--surface-categorical-orange"],
   ["--text-warning", "--affordance-warning"],
   ["--text-on-find-match", "--surface-find-match"],
   ["--text-on-find-match", "--surface-find-match-active"],

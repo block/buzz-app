@@ -1,4 +1,3 @@
-import { activityRow } from "./navigation.mjs";
 import { readFileSync } from "node:fs";
 import { test, expect } from "./fixture.mjs";
 import {
@@ -895,12 +894,11 @@ test("header openings keep focus while a main-pane thread is retained", async ({
   const main = page.locator("[data-main-workspace]");
   const topbar = page.getByRole("navigation", { name: "Apps dock" });
   const messages = topbar.getByRole("tab", {
-    name: "Messages",
+    name: "Team",
     exact: true,
   });
   const projects = topbar.getByRole("tab", { name: "Workflows", exact: true });
-  const inbox = activityRow(page);
-  for (const leave of [inbox, projects]) {
+  for (const leave of [projects]) {
     await page
       .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
       .getByRole("button", { name: /^View thread:/ })

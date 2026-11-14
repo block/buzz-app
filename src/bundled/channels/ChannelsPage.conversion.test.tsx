@@ -211,10 +211,10 @@ function fixture() {
 }
 async function openConversion() {
   const user = userEvent.setup();
-  const trigger = await screen.findByRole("button", { name: "Chat actions" });
+  const trigger = await headerAction("Chat actions");
   await user.click(trigger);
   await user.click(
-    await screen.findByRole("menuitem", { name: "Convert to channel" }),
+    await screen.findByRole("button", { name: "Convert to channel" }),
   );
   const dialog = await screen.findByRole("dialog", {
     name: "Convert to channel",
@@ -309,9 +309,9 @@ it("Messages header reopens unfiling recovery after confirmed metadata and a fai
     .at(-1);
   if (!closeButton) throw new Error("Close missing");
   await user.click(closeButton);
-  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  await user.click(await headerAction("Channel actions"));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Finish conversion" }),
+    await screen.findByRole("button", { name: "Finish conversion" }),
   );
   const reopened = await screen.findByRole("dialog", {
     name: "Convert to channel",
@@ -326,3 +326,15 @@ it("Messages header reopens unfiling recovery after confirmed metadata and a fai
     expect(screen.getByRole("textbox", { name: "Message Work" })).toHaveFocus(),
   );
 });
+
+/** Header tools retain their controls inside the shared overflow. */
+async function headerAction(name: string) {
+  const action = screen.queryByRole("button", { name });
+  if (action) return action;
+  if (name === "Channel actions" || name === "Chat actions")
+    return screen.findByRole("button", { name: "Conversation actions" });
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Conversation actions" }),
+  );
+  return screen.findByRole("button", { name });
+}

@@ -94,7 +94,7 @@ it("loads details only on demand, offers lifecycle actions from live state, and 
   await user.click(trigger);
   expect(await screen.findByRole("menu")).toHaveAttribute(
     "data-size",
-    "default",
+    "compact",
   );
   await screen.findByRole("menuitem", { name: "Delete channel" });
   expect(

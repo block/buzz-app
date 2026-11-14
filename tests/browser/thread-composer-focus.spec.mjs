@@ -85,7 +85,7 @@ for (const pane of ["side", "main"]) {
 
 // Beta has never been opened, so its root cannot seed the reply editor from the
 // timeline cache. Hold its read until a real gesture cancels the focus request.
-for (const owner of [undefined, "page draft", "menu", "dialog"]) {
+for (const owner of [undefined, "menu", "dialog"]) {
   test(`a late-mounted thread ${owner ? `preserves a later ${owner}` : "focuses its reply composer"}`, async ({
     page,
     app,
@@ -113,20 +113,19 @@ for (const owner of [undefined, "page draft", "menu", "dialog"]) {
       await route.continue().catch(() => {});
     });
     try {
-      await page.evaluate(
-        (threadId) =>
-          window.fixtureNavigation.open({
+      // Not awaited: the visit completes only once the held read returns.
+      void page.evaluate(
+        ({ viewer, threadRootId }) =>
+          void window.fixtureNavigation.open({
             version: 1,
-            kind: "page",
-            pluginId: "fixture.session",
-            pageId: "thread-focus",
-            route: { version: 1, params: threadId },
+            kind: "conversation",
+            channelId: "beta",
+            threadRootId,
+            context: "thread",
+            scope: { viewer, communityOrigin: "https://primary.example" },
           }),
-        root.id,
+        { viewer: app.viewer, threadRootId: root.id },
       );
-      await page
-        .getByRole("button", { name: "Open cold thread", exact: true })
-        .click();
       await pending;
       // This is the late-mount boundary: neither cached history nor preview
       // has made an editor available to consume the opening's focus request.
@@ -135,14 +134,7 @@ for (const owner of [undefined, "page draft", "menu", "dialog"]) {
       );
       await expect(reply).toHaveCount(0);
       let target;
-      if (owner === "page draft") {
-        target = page.getByRole("textbox", {
-          name: "Page draft",
-          exact: true,
-        });
-        await target.click();
-        await page.keyboard.type("Keep my main draft");
-      } else if (owner === "menu") {
+      if (owner === "menu") {
         await page
           .getByRole("button", { name: "Your profile", exact: true })
           .click();
@@ -163,8 +155,6 @@ for (const owner of [undefined, "page draft", "menu", "dialog"]) {
       // observe the retained editor DOM as the read-completion barrier.
       await expect(reply).toHaveCount(1);
       await expect(target ?? reply).toBeFocused();
-      if (owner === "page draft")
-        await expect(target).toHaveValue("Keep my main draft");
     } finally {
       release();
     }

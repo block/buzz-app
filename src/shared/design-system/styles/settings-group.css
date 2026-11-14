@@ -22,13 +22,13 @@
     scroll-padding-inline: var(--settings-content-inset);
   }
   .buzz-settings-page .buzz-content-header:not([data-inline]) {
-    margin-block-end: var(--space-8);
+    margin-block-end: var(--space-4);
   }
   .buzz-settings-page
     .buzz-content-header:not([data-inline])
     > .buzz-content-header-copy
     > .buzz-content-header-title {
-    @apply text-heading;
+    @apply text-label;
   }
   .buzz-settings-page .buzz-content-header-subtitle,
   .buzz-settings-group .buzz-field-description,

@@ -91,6 +91,8 @@ export function soloDraft(
 export function isChannelRoute(params: JsonValue) {
   return (
     params === "new-message" ||
+    // Team's own composer, without the global picker's Solo and channel modes.
+    params === "compose" ||
     params === "empty" ||
     soloDraft(params) !== undefined
   );

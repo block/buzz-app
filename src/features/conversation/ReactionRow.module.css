@@ -1,0 +1,24 @@
+.emoji {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  object-fit: contain;
+  vertical-align: middle;
+}
+
+.heading {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+}
+.tail {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.preview {
+  max-inline-size: 64ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

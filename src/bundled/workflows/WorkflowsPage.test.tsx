@@ -413,6 +413,7 @@ it("explains another author's disabled controls from the landing through the rea
   expect(
     controls.queryByRole("button", { name: "Save changes" }),
   ).not.toBeInTheDocument();
+  expect(controls.getByRole("button", { name: "Close editor" })).toBeEnabled();
   expect(
     controls.queryByRole("button", { name: /^(Close|Cancel)$/ }),
   ).not.toBeInTheDocument();
@@ -422,7 +423,7 @@ it("explains another author's disabled controls from the landing through the rea
     controls.getByRole("textbox", { name: "Workflow YAML" }),
   ).toHaveAttribute("readonly");
   await user.click(controls.getByRole("button", { name: "Close editor" }));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(dialog).not.toBeInTheDocument();
   expect(fixture.calls.save).toBe(0);
 });
 
@@ -1269,7 +1270,7 @@ function channelFilteredPage() {
   return { fixture, user, openChannels, otherDefinition };
 }
 
-it("opens a selected card in the side pane and closes its tab", async () => {
+it("opens a selected card in the detail rail and closes from its keyboard controls", async () => {
   const { user } = channelFilteredPage();
   expect(
     screen.getByRole("button", { name: /^Channels(?::|$)/ }).closest("header"),
@@ -1283,15 +1284,29 @@ it("opens a selected card in the side pane and closes its tab", async () => {
     "Open Message helper: When a message is posted, send a message.",
   );
   expect(open).toHaveAttribute("aria-pressed", "true");
-  const tab = detailPane().getByRole("tab", { name: "Message helper" });
-  fireEvent.keyDown(tab, { key: "Escape" });
-  expect(screen.queryByRole("region", { name: "Workflow details" })).toBeNull();
+  const detail = screen.getByRole("region", { name: "Workflow details" });
+  within(detail)
+    .getByRole("button", { name: "Close Message helper tab" })
+    .focus();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("region", { name: "Workflow details" }),
+    ).toBeNull(),
+  );
   expect(open).toHaveAttribute("aria-pressed", "false");
   await user.click(open);
   await user.click(
-    detailPane().getByRole("button", { name: "Close Message helper tab" }),
+    within(screen.getByRole("region", { name: "Workflow details" })).getByRole(
+      "button",
+      { name: "Close Message helper tab" },
+    ),
   );
-  expect(screen.queryByRole("region", { name: "Workflow details" })).toBeNull();
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("region", { name: "Workflow details" }),
+    ).toBeNull(),
+  );
 });
 
 it("combines channel selections and resets them while closing filtered details", async () => {

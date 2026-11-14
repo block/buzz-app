@@ -1,0 +1,123 @@
+/* Column 2 (a section's list) beside column 3 (the page). The list keeps a
+   fixed width while the page lays out once at its new size. */
+.frame {
+  position: relative;
+  width: 100%;
+  container: activity / inline-size;
+  overflow: clip;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: auto 0 minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+.columns[data-list-open="false"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.list,
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.list > :first-child {
+  flex: 1;
+  min-height: 0;
+}
+.list {
+  --collection-content-inset: var(--space-4);
+  max-width: max(220px, calc(100cqw - 320px));
+  visibility: visible;
+  opacity: 1;
+  transform: translateX(0);
+  background: var(--surface-panel);
+  z-index: 2;
+}
+.columns[data-list-animate] .list {
+  transition:
+    transform var(--time-panel-enter) var(--ease-enter),
+    opacity var(--time-panel-enter) var(--ease-enter),
+    visibility 0s;
+}
+.columns[data-list-open="false"] .list {
+  position: absolute;
+  inset: 0 auto 0 0;
+  visibility: hidden;
+  opacity: 0;
+  transform: translateX(-100%);
+  pointer-events: none;
+}
+.columns[data-list-animate][data-list-open="false"] .list {
+  transition-duration: var(--time-fast), var(--time-fast), 0s;
+  transition-delay: 0s, 0s, var(--time-fast);
+}
+html[data-keyboard-input] .columns[data-list-animate] .list {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .columns[data-list-animate] .list {
+    transition: none;
+  }
+}
+.columns[data-list-open="false"] > .list + hr,
+.frame[data-narrow] .list + hr {
+  display: none;
+}
+
+.page {
+  border-inline-start: 1px solid var(--border-standard);
+}
+.page > * {
+  flex: 1;
+}
+.columns[data-list-open="false"] .page,
+.frame[data-narrow] .page {
+  border-inline-start: 0;
+}
+
+/* Too narrow for both: the list overlays the page it belongs to. */
+.frame[data-narrow] .columns {
+  grid-template-columns: minmax(0, 1fr);
+}
+.frame[data-narrow] .columns[data-list-open="true"] .list {
+  position: absolute;
+  inset: 0 auto 0 0;
+  max-width: 100%;
+  box-shadow: var(--elevation-dock);
+}
+
+.dismiss {
+  display: none;
+  gap: var(--space-2);
+  flex: none;
+  justify-content: center;
+  padding: var(--space-4);
+}
+.frame[data-narrow] .dismiss {
+  display: flex;
+}
+.frame[data-narrow] .columns[data-list-fill][data-list-open="true"] .list {
+  min-width: 100%;
+  box-shadow: none;
+}
+
+/* Pages that list no conversations lay out as if this frame were absent. */
+.frame:not([data-detail-workspace]),
+.frame:not([data-detail-workspace]) > .columns,
+.frame:not([data-detail-workspace]) > .columns > .page {
+  display: contents;
+}
+
+/* With nothing selected the list is the whole frame; the page stays mounted. */
+.frame[data-narrow] .columns[data-list-fill][data-list-open="true"] .page {
+  display: none;
+}

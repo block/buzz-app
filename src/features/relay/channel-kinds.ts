@@ -1,3 +1,8 @@
+/** Message content folded by channel history, unread, and preview readers. */
+export const MESSAGE_CONTENT_KINDS = [9, 40002, 40008];
+export const messageContentKind = (kind: number) =>
+  MESSAGE_CONTENT_KINDS.includes(kind);
+
 /** Event kinds delivered on the application's channel subscriptions. */
 export const CHANNEL_KINDS = [
   9, 40002, 40008, 45001, 45003, 40099, 40100, 40003, 5, 9005, 7, 39000, 39002,

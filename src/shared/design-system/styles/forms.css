@@ -306,6 +306,9 @@
     gap: var(--space-2);
     text-align: start;
     cursor: pointer;
+    transition:
+      border-color var(--duration-field-focus) var(--easing-state),
+      scale var(--press-duration, 0ms) var(--press-easing, var(--easing-enter));
   }
   .buzz-select-value-content {
     display: flex;

@@ -1,0 +1,75 @@
+.rowLabel {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.pinArtwork {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+.pinSelection {
+  --pin-selection-stroke: calc(var(--space-1h) / 2);
+  position: absolute;
+  inset: calc(-1 * (var(--space-half) + var(--pin-selection-stroke)));
+  padding: var(--pin-selection-stroke);
+  border-radius: var(--radius-pill);
+  background: var(--border-standard);
+  pointer-events: none;
+  overflow: hidden;
+  /* The mask keeps the artwork blur inside a crisp 3px ring, 2px away. */
+  mask:
+    linear-gradient(currentColor 0 0) content-box,
+    linear-gradient(currentColor 0 0);
+  mask-composite: exclude;
+}
+.pinSelection[data-agent] {
+  border-radius: 0;
+  mask:
+    url("../../shared/design-system/styles/avatar-squircle.svg") center / 100%
+    100% no-repeat,
+    url("../../shared/design-system/styles/avatar-squircle.svg") center /
+    calc(100% - 2 * var(--pin-selection-stroke))
+    calc(100% - 2 * var(--pin-selection-stroke)) no-repeat;
+  mask-composite: exclude;
+}
+.pinSelectionArtwork {
+  position: absolute;
+  inset: -25%;
+  display: flex;
+  filter: blur(var(--space-2)) saturate(4);
+}
+.pinSelection[data-channel] .pinSelectionArtwork {
+  filter: none;
+}
+@media (forced-colors: active) {
+  .pinSelection {
+    background: CanvasText;
+  }
+  .pinSelectionArtwork {
+    display: none;
+  }
+}
+.rowLabel > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rowLabel > span:first-child {
+  flex: 0 1 auto;
+}
+.note {
+  padding: var(--space-2) var(--space-control-inset);
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}

@@ -5,6 +5,9 @@
     z-index: var(--layer-dialog-backdrop);
     background: var(--bg-scrim);
   }
+  .buzz-dialog-backdrop[data-tone="subtle"] {
+    background: var(--surface-scrim-subtle);
+  }
   .buzz-dialog {
     @apply interaction-floating;
     --dialog-padding: var(--space-8);
@@ -175,18 +178,26 @@
     justify-content: space-between;
     gap: var(--space-4);
   }
-  .buzz-dialog-header[data-artwork] {
+  .buzz-dialog-header:is([data-artwork], [data-close-placement="start"]) {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
   }
-  .buzz-dialog-header[data-artwork] > .buzz-dialog-heading {
+  .buzz-dialog-header:is([data-artwork], [data-close-placement="start"])
+    > .buzz-dialog-heading {
     grid-area: 1 / 1;
     text-align: center;
   }
-  .buzz-dialog-header[data-artwork] > .buzz-dialog-header-actions {
+  .buzz-dialog-header:is([data-artwork], [data-close-placement="start"])
+    > .buzz-dialog-header-actions {
     grid-area: 1 / 1;
     justify-self: end;
     align-self: start;
+  }
+  .buzz-dialog-header-start {
+    grid-area: 1 / 1;
+    justify-self: start;
+    align-self: start;
+    z-index: 1;
   }
   .buzz-dialog-artwork {
     display: flex;
@@ -197,6 +208,59 @@
   .buzz-dialog-header > h2,
   .buzz-dialog-heading > h2 {
     margin: 0;
+  }
+  .buzz-dialog-header[data-identity] > .buzz-dialog-header-start {
+    display: flex;
+    align-items: center;
+    align-self: center;
+    gap: var(--space-2);
+    max-width: calc(100% - var(--space-16));
+    min-width: 0;
+  }
+  .buzz-dialog-header[data-identity] > .buzz-dialog-header-start > h2 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin: 0;
+  }
+  .buzz-dialog-header[data-identity] > .buzz-dialog-header-actions {
+    align-self: center;
+  }
+  .buzz-dialog-identity {
+    display: flex;
+    justify-content: center;
+    min-width: 0;
+  }
+  .buzz-dialog-header[data-identity][data-close-placement="start"] {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
+    gap: var(--space-half);
+  }
+  .buzz-dialog-header[data-identity][data-close-placement="start"]
+    > .buzz-dialog-header-start {
+    grid-area: 1 / 1;
+    align-self: start;
+  }
+  .buzz-dialog-header[data-identity][data-close-placement="start"]
+    > .buzz-dialog-header-actions {
+    grid-area: 1 / 3;
+    align-self: start;
+  }
+  .buzz-dialog-header[data-identity][data-close-placement="start"]
+    > .buzz-dialog-heading {
+    grid-area: 1 / 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-half);
+    min-width: 0;
+  }
+  .buzz-dialog-header[data-identity][data-close-placement="start"]
+    > .buzz-dialog-heading
+    > h2 {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .buzz-dialog-description {
     @apply text-body-sm;
@@ -351,6 +415,182 @@
     width: 100%;
     height: 100%;
     max-height: none;
+  }
+  /* Detail cards use the navigation-card surface, with a roomier reading measure.
+     Their portal leaves the reader's width and interaction unchanged. */
+  .buzz-dialog[data-placement="rail"] {
+    --dialog-padding: var(--space-4);
+    /* Nested plugin panels share this card's surface rather than repainting it. */
+    --surface-panel: var(--surface-rail-card);
+    --dialog-available-height: calc(
+      100dvh -
+      var(--size-topbar) -
+      2 *
+      var(--space-4)
+    );
+    inset: calc(var(--dialog-rail-top, 0px) + var(--space-1)) var(--space-1)
+      auto auto;
+    margin: 0;
+    width: min(
+      calc(var(--size-navigation-rail) - 2 * var(--space-1) + var(--space-16)),
+      calc(100% - 2 * var(--space-4))
+    );
+    height: calc(
+      min(44rem, var(--dialog-available-height)) -
+      2 *
+      var(--space-6)
+    );
+    max-height: var(--dialog-available-height);
+    border: 0;
+    border-radius: var(--radius-container);
+    background: var(--surface-rail-card);
+    box-shadow: var(--shadow-xs);
+  }
+  .buzz-dialog[data-placement="rail"][data-motion="default"]:is(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    transform: translateX(calc(100% + var(--space-1)));
+  }
+  @starting-style {
+    .buzz-dialog[data-placement="rail"][data-motion="default"] {
+      transform: translateX(calc(100% + var(--space-1)));
+    }
+  }
+  html[data-keyboard-navigation]
+    .buzz-dialog[data-placement="rail"][data-motion] {
+    transform: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-dialog[data-placement="rail"][data-motion="default"]:is(
+        [data-starting-style],
+        [data-ending-style]
+      ) {
+      transform: none;
+    }
+  }
+  /* Activity's conversation sheet keeps its composer at the bottom while the
+     reader reveals upward. Clip the surface, never stretch the editor or text. */
+  .buzz-dialog[data-placement="bottom"] {
+    background: var(--surface-panel);
+    inset: auto 0 var(--space-4);
+    width: min(55rem, calc(100% - 2 * var(--space-4)));
+    height: var(--dialog-available-height);
+    max-height: var(--dialog-available-height);
+    transform: none;
+    clip-path: inset(0 round var(--dialog-sheet-radius, var(--radius-panel)));
+  }
+  .buzz-dialog[data-contained][data-placement="bottom"] {
+    inset: auto 0 var(--space-4);
+    width: min(55rem, calc(100% - 2 * var(--space-4)));
+    height: min(44rem, calc(100% - 2 * var(--space-4)));
+    max-height: calc(100% - 2 * var(--space-4));
+  }
+  .buzz-dialog[data-placement="bottom"][data-anchored] {
+    --dialog-padding: 0;
+    /* Composer radius plus its horizontal/bottom gutters. The header's
+       controls have their own, smaller concentric top corners. */
+    --dialog-composer-radius: calc(
+      var(--radius-icon-button) +
+      var(--space-1h) +
+      1px
+    );
+    --dialog-header-radius: calc(var(--radius-icon-button) + var(--space-4));
+    --dialog-sheet-radius:
+      var(--dialog-header-radius) var(--dialog-header-radius)
+      calc(var(--dialog-composer-radius) + var(--space-3))
+      calc(var(--dialog-composer-radius) + var(--space-3)) /
+      var(--dialog-header-radius) var(--dialog-header-radius)
+      calc(var(--dialog-composer-radius) + var(--space-4))
+      calc(var(--dialog-composer-radius) + var(--space-4));
+    border-radius: var(--dialog-sheet-radius);
+    border: 0;
+    box-shadow: none;
+    padding-block-start: 0;
+    /* The anchored composer already supplies its own bottom inset. */
+    padding-block-end: 0;
+    inset: auto auto var(--dialog-anchor-bottom) var(--dialog-anchor-left);
+    width: var(--dialog-anchor-width);
+    height: min(
+      44rem,
+      calc(100% - var(--dialog-anchor-bottom) - var(--space-4))
+    );
+    max-height: calc(100% - var(--dialog-anchor-bottom) - var(--space-4));
+    margin: 0;
+  }
+  .buzz-dialog[data-placement="bottom"][data-anchored]:not(
+    [data-anchor-ready]
+  ) {
+    visibility: hidden;
+  }
+  .buzz-dialog:where([data-placement="bottom"][data-anchored])
+    > .buzz-dialog-header {
+    padding: var(--space-4) var(--space-5) var(--space-3);
+    z-index: 2;
+    --scroll-edge-surface: var(--surface-panel);
+  }
+  .buzz-dialog:where([data-placement="bottom"][data-anchored])
+    > .buzz-dialog-header
+    > .buzz-dialog-bar-material {
+    display: block;
+    height: calc(100% + var(--space-6));
+  }
+  .buzz-dialog[data-placement="bottom"][data-motion="default"] {
+    transform: none;
+    will-change: clip-path;
+    transition: clip-path var(--duration-sheet) var(--easing-sheet);
+  }
+  .buzz-dialog[data-placement="bottom"][data-motion="default"]:is(
+    [data-starting-style],
+    [data-ending-style]
+  ) {
+    transform: none;
+    opacity: 1;
+    clip-path: inset(
+      max(
+          0px,
+          calc(
+            100% -
+            var(--dialog-anchor-height, calc(3 * var(--size-control)))
+          )
+        )
+        0 0 round var(--dialog-sheet-radius, var(--radius-panel))
+    );
+  }
+  @starting-style {
+    .buzz-dialog[data-placement="bottom"][data-motion="default"] {
+      transform: none;
+      opacity: 1;
+      clip-path: inset(
+        max(
+            0px,
+            calc(
+              100% -
+              var(--dialog-anchor-height, calc(3 * var(--size-control)))
+            )
+          )
+          0 0 round var(--dialog-sheet-radius, var(--radius-panel))
+      );
+    }
+  }
+  .buzz-dialog[data-placement="bottom"][data-motion="default"][data-ending-style] {
+    transition-duration: var(--duration-fast);
+  }
+  html[data-keyboard-navigation]
+    .buzz-dialog[data-placement="bottom"][data-motion],
+  .buzz-dialog[data-placement="bottom"][data-motion="none"] {
+    transition: none;
+    clip-path: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-dialog[data-placement="bottom"][data-motion],
+    .buzz-dialog[data-placement="bottom"][data-motion]:is(
+        [data-starting-style],
+        [data-ending-style]
+      ) {
+      transition: none;
+      clip-path: none;
+    }
   }
   /* Sectioned settings need a bounded workspace, even inside a large host. */
   .buzz-dialog[data-contained][data-navigation][data-placement="center"] {

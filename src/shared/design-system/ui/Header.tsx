@@ -9,6 +9,7 @@ type HeaderProps = {
   align?: "start" | "end";
   id?: string;
   level?: 1 | 2 | 3 | 4;
+  headingRef?: Ref<HTMLHeadingElement>;
   /** The heading element, for a caller that moves focus to it. */
   ref?: Ref<HTMLHeadingElement>;
   /** `-1` lets the heading take programmatic focus: a landing with no
@@ -35,6 +36,7 @@ function ContentHeader({
   id,
   level = 2,
   inline = false,
+  headingRef,
   ref,
   tabIndex,
 }: HeaderProps & { inline?: boolean }) {
@@ -55,8 +57,8 @@ function ContentHeader({
         {eyebrow && <p className="buzz-content-header-eyebrow">{eyebrow}</p>}
         <Heading
           id={id}
-          ref={ref}
-          tabIndex={tabIndex}
+          ref={ref ?? headingRef}
+          tabIndex={tabIndex ?? (headingRef ? -1 : undefined)}
           className="buzz-content-header-title"
         >
           {title}

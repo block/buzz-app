@@ -13,6 +13,7 @@ import {
   LockIcon,
 } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../channels/channel-icon";
+import { ChannelAvatar } from "../channels/ChannelAvatar";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import styles from "./LinkPreview.module.css";
@@ -248,7 +249,6 @@ export function ChannelLinkPreview({ channel }: { channel: FoundChannel }) {
 }
 
 function ChannelByline({ channel }: { channel: FoundChannel }) {
-  const Icon = channelIcon(channel.private ? { private: true } : undefined);
   const details = [
     channel.private ? "Private channel" : "Public channel",
     channel.archived ? "Archived" : "",
@@ -259,7 +259,7 @@ function ChannelByline({ channel }: { channel: FoundChannel }) {
   ].filter(Boolean);
   return (
     <span className={styles.byline}>
-      <Icon aria-hidden="true" size={20} />
+      <ChannelAvatar name={channel.name} />
       <span className={styles.metadata}>
         <span className={styles.author}>
           <strong>{channel.name}</strong>

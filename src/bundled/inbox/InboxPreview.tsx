@@ -1,4 +1,4 @@
-import { reactionRows } from "./reaction-rows";
+import { reactionRows } from "../../features/conversation/reaction-rows";
 import {
   useCallback,
   useEffect,

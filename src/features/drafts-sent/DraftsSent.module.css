@@ -1,15 +1,34 @@
 .page {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   height: 100%;
   min-height: 0;
   container-name: drafts-sent;
   container-type: inline-size;
 }
 
+.listPane {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 22rem;
+  min-width: 0;
+  min-height: 0;
+  --message-row-preview-lines: 1;
+  --message-row-line-gap: var(--space-half);
+}
+
+.emptyDetail {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-panel-inset);
+  border-inline-start: 1px solid var(--border-standard);
+}
+
 .toolbar {
   flex: none;
-  padding: var(--space-2) var(--space-row-gap);
+  padding: var(--space-2) var(--space-panel-inset);
 }
 
 .notice {
@@ -53,6 +72,9 @@
 }
 
 .list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -67,76 +89,30 @@
   padding: var(--space-1) var(--space-control-inset) var(--space-2);
 }
 
-.rowMeta {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  white-space: nowrap;
-}
-
-.deliveryMeta {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.rowMeta:empty {
-  display: none;
-}
-
-.pill {
-  display: inline-flex;
+.headerAvatar {
+  display: grid;
   flex: none;
-  align-items: center;
-  gap: var(--space-1);
-  min-height: var(--space-5);
-  padding-inline: var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--affordance-subtle);
-  color: var(--text-metadata);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.pill[data-tone="new"] {
-  color: var(--text-standard);
-  font-weight: var(--type-weight-medium);
-}
-
-.pill[data-tone="last"] {
-  background: var(--affordance-success);
-  color: var(--text-success);
-}
-
-.dot {
-  flex: none;
-  width: var(--space-2);
-  height: var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--affordance-accent-prominent);
+  width: var(--space-8);
+  height: var(--space-8);
 }
 
 /* Activity's panel-tab toolbar geometry. */
 .tabsToolbar {
   flex: none;
-  min-height: var(--size-panel-header);
   display: flex;
   align-items: center;
-  padding-inline: calc(var(--space-1) + var(--space-2));
-  border-bottom: 1px solid var(--border-standard);
+  padding: var(--space-2) var(--space-panel-inset);
 }
 .typeTabs {
   min-width: 0;
-  margin-inline: calc(var(--space-1) * -1);
 }
 
 .clear {
-  margin-inline-end: var(--space-control-inset);
-  flex: none;
-  align-self: center;
+  position: absolute;
+  inset-inline-end: var(--space-control-inset);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
 }
 
 .draftWorkspace {
@@ -149,6 +125,7 @@
   display: none;
 }
 .draftList {
+  container: drafts-sent-list / inline-size;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -158,7 +135,7 @@
 .draftPreview {
   display: flex;
   flex-direction: column;
-  flex: 2;
+  flex: 1;
   min-width: 0;
   min-height: 0;
   border-inline-start: 1px solid var(--border-standard);
@@ -186,7 +163,11 @@
   display: contents;
 }
 @container drafts-sent (max-width: 48rem) {
-  .draftWorkspace[data-selected] .draftList {
+  .listPane {
+    flex: 1;
+  }
+  .page[data-selected] .listPane,
+  .emptyDetail {
     display: none;
   }
   .draftPreview {
@@ -206,11 +187,12 @@
 @media (hover: hover) and (pointer: fine) {
   .row .clear {
     opacity: 0;
+    pointer-events: none;
   }
   .row:hover .clear,
-  .row:focus-within .clear,
-  .row:has([data-selected]) .clear {
+  .row:focus-within .clear {
     opacity: 1;
+    pointer-events: auto;
   }
 }
 

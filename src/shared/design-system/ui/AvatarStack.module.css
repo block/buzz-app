@@ -1,3 +1,5 @@
+@reference "../../styles/globals.css";
+
 .root {
   display: inline-flex;
   align-items: center;
@@ -32,8 +34,9 @@
   width: 1.5rem;
   height: 1.5rem;
 }
+
 /* Keep short counts round; wider counts grow into a capsule. */
-.root[data-size="small"] .count {
+.root:is([data-size="small"], [data-size="large"]) .count {
   display: inline-grid;
   place-items: center;
   flex-shrink: 0;
@@ -98,4 +101,68 @@
 
 .root[data-size="hero-large"] .item:last-child {
   margin-inline-end: 0;
+}
+
+/* Conversation identity artwork: twice the small member preview. */
+.root[data-size="large"] {
+  padding-inline-end: var(--space-2);
+}
+.root[data-size="large"] .item {
+  @apply glass-secondary;
+  padding: 3px;
+  width: 3rem;
+  height: 3rem;
+  margin-inline-end: calc(-1 * var(--space-2));
+}
+.root[data-size="large"] .count {
+  @apply glass-secondary;
+  min-width: 3rem;
+  height: 3rem;
+  margin-inline-end: calc(-1 * var(--space-2));
+}
+
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .root[data-size="large"] :is(.item, .count) {
+    background: var(--surface-panel);
+    backdrop-filter: none;
+  }
+}
+
+/* Up to three identities in one conversation-row artwork slot. */
+.root[data-size="cluster"] {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+}
+.root[data-size="cluster"] .item {
+  position: absolute;
+  inset-inline-start: 0;
+  width: var(--space-6);
+  height: var(--space-6);
+  margin: 0;
+  padding: 1px;
+}
+.root[data-size="cluster"] .item:only-child {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+}
+.root[data-size="cluster"] .item:first-child {
+  inset-block-start: 0;
+}
+.root[data-size="cluster"] .item:nth-child(2) {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+  inset-block-end: 0;
+}
+.root[data-size="cluster"]:has(.item:nth-child(3)) .item {
+  width: var(--space-5);
+  height: var(--space-5);
+  inset-block-end: 0;
+}
+.root[data-size="cluster"]:has(.item:nth-child(3)) .item:first-child {
+  inset-block-start: 0;
+  inset-block-end: auto;
+  inset-inline-start: calc(50% - var(--space-5) / 2);
 }

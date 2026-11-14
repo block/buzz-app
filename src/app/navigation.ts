@@ -238,17 +238,21 @@ export function useAppNavigation(
             ),
         )?.manifest
       : undefined;
-  // Legacy Home resolves to Messages; version-1 placeholder routes resolve to
+  const homeWaiting =
+    startup === "loading" ||
+    plugins.activation["buzz.inbox"]?.status === "starting";
+  const activityHome = pages.some((page) => page.key === "buzz.inbox/inbox");
+  // Legacy Home resolves to Activity (Messages when Activity is turned off); version-1 placeholder routes resolve to
   // their standalone plugins. Preserve scope so normalization never grants access.
   // Resolve in place before paint: links and history share one policy.
   // Keep the caller and visit rather than adding a redirect to browser history.
   useLayoutEffect(() => {
-    if (legacyHome)
+    if (legacyHome && !homeWaiting)
       services.navigationHost.resolve(state.attempt, {
         version: 1,
         kind: "page",
-        pluginId: "buzz.channels",
-        pageId: "channels",
+        pluginId: activityHome ? "buzz.inbox" : "buzz.channels",
+        pageId: activityHome ? "inbox" : "channels",
       });
     else if (legacyPage)
       services.navigationHost.resolve(state.attempt, legacyPage);
@@ -266,6 +270,8 @@ export function useAppNavigation(
     services,
     state.attempt,
     legacyHome,
+    homeWaiting,
+    activityHome,
     legacyPage,
     legacyMessagesSettings,
     target,

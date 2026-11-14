@@ -8,10 +8,13 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import { MagnifyingGlassIcon } from "../../shared/design-system/icons/index";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import type { RegisteredPage } from "../../features/pages/service";
 import { communityDestination } from "../../features/communities/destination";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
@@ -21,7 +24,6 @@ import {
   formatBinding,
   isApplePlatform,
 } from "../../features/shortcuts/format";
-import { KeyCombo } from "../../features/shortcuts/KeyCombo";
 import type { ShortcutBindingsSnapshot } from "../../features/shortcuts/preferences";
 import type { AppServices } from "../services";
 import { HOST_SHORTCUT_ORDER } from "../shortcuts";
@@ -48,11 +50,14 @@ export type SearchServices = Pick<
   Partial<
     Pick<
       AppServices,
+      | "sidebarSections"
       | "appearance"
       | "notifications"
       | "plugins"
       | "adminAccess"
       | "settingsCards"
+      | "conversation"
+      | "sidebarScope"
     >
   >;
 const SEARCH_ID = "global-search";
@@ -76,10 +81,14 @@ export function PageSearch({
   pages,
   onSelect,
   services,
+  presentation = "icon",
+  children,
 }: {
   pages: readonly RegisteredPage[];
   onSelect: (key: string, options?: { section?: string }) => void;
   services?: SearchServices | undefined;
+  presentation?: "icon" | "row" | "bar";
+  children?: (open: (query?: string) => void) => ReactNode;
 }) {
   const pagePresentation = usePagePresentation();
   const [open, setOpen] = useState(false);
@@ -270,26 +279,48 @@ export function PageSearch({
     }));
   return (
     <>
-      <Button
-        ref={trigger}
-        variant="inverted"
-        size="sm"
-        shape="capsule"
-        aria-label="Search Buzz"
-        title={`Search Buzz (${formatBinding(binding, apple).text})`}
-        onClick={() => {
-          trigger.current?.focus();
-          begin();
-        }}
-      >
-        <span className="shell-search-content">
+      {presentation === "bar" ? (
+        <Button
+          ref={trigger}
+          variant="subtle"
+          size="sm"
+          aria-label="Search Buzz"
+          onClick={begin}
+        >
           <MagnifyingGlassIcon size={16} aria-hidden="true" />
-          <span className="shell-search-label">Search</span>
-          <span className="shell-search-shortcut">
-            <KeyCombo binding={binding} apple={apple} />
-          </span>
-        </span>
-      </Button>
+          Search Buzz
+        </Button>
+      ) : presentation === "row" ? (
+        <NavigationItem
+          ref={trigger}
+          aria-label="Search Buzz"
+          title={`Search Buzz (${formatBinding(binding, apple).text})`}
+          label="Search"
+          icon={<MagnifyingGlassIcon size={20} aria-hidden="true" />}
+          onClick={begin}
+        />
+      ) : (
+        <IconButton
+          ref={trigger}
+          variant="ghost"
+          size="sm"
+          aria-label="Search Buzz"
+          title={`Search Buzz (${formatBinding(binding, apple).text})`}
+          onClick={() => {
+            trigger.current?.focus();
+            begin();
+          }}
+          icon={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
+        />
+      )}
+      {children?.((query) => {
+        begin();
+        if (query !== undefined) {
+          setQuery(query);
+          setTab("all");
+          place.current = { top: 0, key: "" };
+        }
+      })}
       <Dialog
         open={open}
         onOpenChange={setSearchOpen}
@@ -556,7 +587,7 @@ function CommunitySearch({
                     label: "Recent activity",
                     destinations: [],
                     empty: !enabled
-                      ? "Enable Messages to see conversations."
+                      ? "Enable Team to see conversations."
                       : !client.selected
                         ? "Choose a community to see recent conversations."
                         : "Connecting to this community…",

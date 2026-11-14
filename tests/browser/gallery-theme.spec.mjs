@@ -1,4 +1,4 @@
-import { hoverMessage } from "./message-actions.mjs";
+import { hoverMessage, openThreadLink } from "./message-actions.mjs";
 import { fileURLToPath } from "node:url";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -58,7 +58,7 @@ test("an open image gallery follows host appearance while retaining its dark sta
     .getByRole("region", { name: "Channel message history" })
     .locator(`[data-message-id="${event.id}"]`);
   await hoverMessage(row);
-  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  await openThreadLink(page, app, event.id);
   const thread = page.getByRole("complementary", {
     name: "Thread",
     exact: true,

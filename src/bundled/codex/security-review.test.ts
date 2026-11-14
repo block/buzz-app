@@ -29,6 +29,7 @@ function fixture(
   hold = false,
   catalogFailure = false,
   turnStart?: Promise<void>,
+  userAgent = "fixture buzz-protection-v2",
 ) {
   let options: HostProcessOptions | undefined;
   let threads = 0;
@@ -46,8 +47,7 @@ function fixture(
       if (wire.id == null || !wire.method) return;
       const params = wire.params as Record<string, unknown>;
       let result: unknown;
-      if (wire.method === "initialize")
-        result = { userAgent: "fixture buzz-protection-v2" };
+      if (wire.method === "initialize") result = { userAgent };
       else if (wire.method === "config/read")
         result = {
           config: {
@@ -143,6 +143,20 @@ function fixture(
     requests,
   };
 }
+
+it("still requires the custom native build for protected reviews", async () => {
+  const f = fixture(false, false, undefined, "codex/0.167.1");
+  await expect(
+    reviewModel(
+      f.spawn,
+      { id: "recommended-model" },
+      prompt,
+      new AbortController().signal,
+      f.homes,
+    ),
+  ).rejects.toThrow("lacks mandatory security hooks");
+  expect(f.requests("thread/start")).toEqual([]);
+});
 
 it("uses Buzz's recommended model and supported low effort for blank review selections", async () => {
   const f = fixture();

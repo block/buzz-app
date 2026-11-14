@@ -233,7 +233,9 @@ html[data-keyboard-input] :is(.subviewBase, .subview) {
   flex-wrap: nowrap;
   flex-shrink: 0;
 }
-.workspace > header [class="panel-header-title"] {
+.workspace
+  > header:not([data-variant="conversation"])
+  [class="panel-header-title"] {
   overflow: hidden;
 }
 .workspace > header [class="panel-header-actions"] {
@@ -317,6 +319,8 @@ html[data-keyboard-input] :is(.subviewBase, .subview) {
 }
 
 .workspaceIdentity {
+  display: flex;
+  justify-content: center;
   min-width: 0;
   max-width: 100%;
 }

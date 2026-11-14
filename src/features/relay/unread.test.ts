@@ -189,6 +189,179 @@ function setup(
   };
 }
 
+it("session previews reconcile edits and deletions without reviving a cached newer post", async () => {
+  const h = setup();
+  h.grant("room");
+  const previous = message(h.alice, "room", "Previous post", 11);
+  const newest = message(h.alice, "room", "Newest post", 12);
+  const edit = signed(h.alice, {
+    kind: 40003,
+    content: "Edited post",
+    tags: [["e", newest.id]],
+    created_at: 13,
+  });
+  h.emit([previous]);
+  h.query.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.top_level && filter.limit === 1)
+      ? [newest, edit]
+      : [],
+  );
+  const previews = h.session.channelPreviews;
+  const release = previews.retain(["room"]);
+  try {
+    await vi.waitFor(() =>
+      expect(previews.snapshot().get("room")?.content).toBe("Edited post"),
+    );
+    const before = h.query.mock.calls.filter(([filters]) =>
+      filters.some((filter) => filter.top_level && filter.limit === 1),
+    ).length;
+    h.emit([
+      signed(h.viewer, {
+        kind: 5,
+        content: "",
+        tags: [["e", newest.id]],
+        created_at: 14,
+      }),
+    ]);
+    expect(previews.snapshot().get("room")?.id).toBe(newest.id);
+    h.emit([
+      signed(h.alice, {
+        kind: 5,
+        content: "",
+        tags: [["e", newest.id]],
+        created_at: 15,
+      }),
+    ]);
+    expect(previews.snapshot().get("room")?.id).toBe(previous.id);
+    expect(previews.snapshot().get("room")?.content).toBe("Previous post");
+    await flush();
+    expect(
+      h.query.mock.calls.filter(([filters]) =>
+        filters.some((filter) => filter.top_level && filter.limit === 1),
+      ),
+    ).toHaveLength(before);
+    expect(h.host.sign).not.toHaveBeenCalled();
+    expect(h.session.channels.window("room").status).toBe("idle");
+  } finally {
+    release();
+  }
+});
+
+it("repairs a removed last preview only while visible and purges it on access loss", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("retained");
+  const newest = message(h.alice, "room", "Last post", 11);
+  const retained = message(h.alice, "retained", "Still visible", 11);
+  let present = true;
+  h.query.mockImplementation(async (filters) =>
+    filters.flatMap((filter) =>
+      filter.top_level && filter.limit === 1
+        ? (filter["#h"]?.flatMap((id) =>
+            id === "retained" ? [retained] : present ? [newest] : [],
+          ) ?? [])
+        : [],
+    ),
+  );
+  const previews = h.session.channelPreviews;
+  const release = previews.retain(["room", "retained"]);
+  try {
+    await vi.waitFor(() =>
+      expect(previews.snapshot().get("room")?.id).toBe(newest.id),
+    );
+    present = false;
+    h.emit([
+      signed(h.alice, {
+        kind: 5,
+        content: "",
+        tags: [["e", newest.id]],
+        created_at: 12,
+      }),
+    ]);
+    await vi.waitFor(() => expect(previews.snapshot().get("room")).toBeNull());
+    expect(
+      h.query.mock.calls.filter(([filters]) =>
+        filters.some((filter) => filter.top_level && filter.limit === 1),
+      ),
+    ).toHaveLength(2);
+    h.emit([roster(h.relay, "room", [], 13)]);
+    expect(previews.snapshot().has("room")).toBe(false);
+    expect(previews.snapshot().get("retained")?.id).toBe(retained.id);
+    await flush();
+    expect(
+      h.query.mock.calls.filter(([filters]) =>
+        filters.some((filter) => filter.top_level && filter.limit === 1),
+      ),
+    ).toHaveLength(2);
+  } finally {
+    release();
+  }
+});
+
+it("an open verified conversation supplies its preview without another relay read", async () => {
+  const h = setup();
+  h.grant("room");
+  const top = message(h.alice, "room", "Top-level post", 11);
+  const reply = message(h.alice, "room", "Newer reply", 12, [
+    ["e", top.id, "", "reply"],
+  ]);
+  h.query.mockResolvedValue([
+    top,
+    reply,
+    bounds(h.relay, "room", "head", { has_more: false, next_cursor: null }),
+  ]);
+  h.session.channels.ensure("room");
+  await vi.waitFor(() =>
+    expect(h.session.channels.window("room").status).toBe("ready"),
+  );
+  const previews = h.session.channelPreviews;
+  const release = previews.retain(["room"]);
+  try {
+    await flush();
+    expect(previews.snapshot().get("room")?.id).toBe(top.id);
+    expect(
+      h.query.mock.calls.filter(([filters]) =>
+        filters.some((filter) => filter.top_level && filter.limit === 1),
+      ),
+    ).toHaveLength(0);
+    expect(h.host.sign).not.toHaveBeenCalled();
+  } finally {
+    release();
+  }
+});
+
+it("cache clear fences a pending preview and resumes the visible row", async () => {
+  const h = setup();
+  h.grant("room");
+  const old = message(h.alice, "room", "Before clearing", 11);
+  const fresh = message(h.alice, "room", "After clearing", 12);
+  let finish: ((events: RelayEvent[]) => void) | undefined;
+  let calls = 0;
+  h.query.mockImplementation(async (filters) => {
+    if (!filters.some((filter) => filter.top_level && filter.limit === 1))
+      return [];
+    if (++calls > 1) return [fresh];
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
+  });
+  const previews = h.session.channelPreviews;
+  const release = previews.retain(["room"]);
+  try {
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    await h.clearCache();
+    expect(previews.snapshot().has("room")).toBe(false);
+    finish?.([old]);
+    await vi.waitFor(() =>
+      expect(previews.snapshot().get("room")?.id).toBe(fresh.id),
+    );
+    expect(calls).toBe(2);
+  } finally {
+    finish?.([old]);
+    release();
+  }
+});
+
 function requireCapturedRead(
   unread: Pick<UnreadCapability, "markCapturedMessagesRead">,
   messageIds: readonly string[],
@@ -974,6 +1147,21 @@ it("activity previews use edited and unwrapped current message content and notif
     ["e", root.id, "", "reply"],
   ]);
   h.emit([root, reply]);
+  const headChanges = vi.fn();
+  h.session.unread.subscribe(
+    { kind: "channel", channelId: "room" },
+    headChanges,
+  );
+  expect(h.snapshot().latestTopLevel?.content).toBe("root");
+  h.emit([
+    signed(h.viewer, {
+      kind: 40003,
+      content: "EDITED root",
+      tags: [["e", root.id]],
+    }),
+  ]);
+  expect(h.snapshot().latestTopLevel?.content).toBe("EDITED root");
+  expect(headChanges).toHaveBeenCalled();
   const before = h.session.unread.activity("room");
   const changes: ThreadActivitySnapshot[] = [];
   h.session.unread.subscribeActivity("room", () =>
@@ -1003,6 +1191,17 @@ it("activity previews use edited and unwrapped current message content and notif
   expect(h.session.unread.activity("room").items?.[0]).toMatchObject({
     latestMessageId: agentReply.id,
     preview: "unwrapped hello",
+  });
+  const agentHead = signed(h.alice, {
+    kind: 40002,
+    content: JSON.stringify({ content: "unwrapped top-level" }),
+    tags: [["h", "room"]],
+    created_at: 13,
+  });
+  h.emit([agentHead]);
+  expect(h.snapshot().latestTopLevel).toMatchObject({
+    id: agentHead.id,
+    content: "unwrapped top-level",
   });
 });
 

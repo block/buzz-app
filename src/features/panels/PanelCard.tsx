@@ -37,7 +37,7 @@ export function PanelCard({
         }
       }}
     >
-      <Panel as="div">
+      <Panel as="div" joined flat>
         <PanelSubviewHost close={props.close}>
           <div className={styles.card}>
             {!tabbed && (
@@ -54,6 +54,7 @@ export function PanelCard({
                 }
                 actions={
                   <IconButton
+                    variant="glass"
                     size="toolbar"
                     aria-label={`Close ${panel.title} panel`}
                     onClick={props.close}

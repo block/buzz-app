@@ -68,9 +68,19 @@ it("keeps a paused delete's confirmation and offers Retry only after the pause, 
     .mockRejectedValueOnce(new ApiPaused(1000))
     .mockResolvedValueOnce();
   const { completed, failed } = mount(lifecycle);
+  await flush();
+  await act(
+    () =>
+      new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+  );
+  expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
   fireEvent.click(screen.getByRole("button", { name: "Delete channel" }));
   await flush();
 
+  await act(
+    () =>
+      new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+  );
   const dialog = screen.getByRole("dialog", { name: "Delete Fixture?" });
   const retry = screen.getByRole("button", { name: "Retry" });
   expect(retry).toHaveAttribute("aria-disabled", "true");

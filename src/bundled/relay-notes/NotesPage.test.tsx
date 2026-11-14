@@ -78,6 +78,17 @@ function fixture(events = [note("Icons"), note("Guide", ned)]) {
   } as unknown as RelaySession;
   return { session, readPage };
 }
+// One open note uses the rail's title and a region; multiple notes expose tabs.
+function noteView(name: string) {
+  return screen.getByRole("tab", { name });
+}
+function queryNoteView(name: string) {
+  return (
+    screen.queryByRole("tab", { name }) ??
+    screen.queryByRole("region", { name })
+  );
+}
+
 async function enterFolder(name = "Carl") {
   await userEvent.click(
     await screen.findByRole("button", { name: `Open ${name} folder` }),
@@ -203,7 +214,7 @@ it("groups other agents below owned agents and excludes human-authored notes", a
   await userEvent.click(
     screen.getByRole("button", { name: "Open Shared by Other agent" }),
   );
-  expect(screen.getByRole("tab", { name: "Shared" })).toBeVisible();
+  expect(noteView("Shared")).toBeVisible();
   expect(ensure).toHaveBeenCalledWith(
     expect.arrayContaining([other, human]),
     "background",
@@ -258,23 +269,22 @@ it("scopes reads to all owned identities, including archived ones, and opens ind
   await user.click(icons);
   expect(screen.getByRole("heading", { name: "Icons content" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: /Open Guide by Carl/ }));
-  expect(screen.getByRole("tab", { name: "Icons" })).toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: "Guide" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await user.click(screen.getByRole("tab", { name: "Icons" }));
+  expect(noteView("Icons")).toBeInTheDocument();
+  expect(screen.getByRole("tabpanel", { name: "Guide" })).toBeVisible();
+  await user.click(noteView("Icons"));
   expect(screen.getByRole("heading", { name: "Icons content" })).toBeVisible();
-  fireEvent.keyDown(screen.getByRole("tab", { name: "Icons" }), {
+  fireEvent.keyDown(noteView("Icons"), {
     key: "Escape",
   });
-  expect(screen.queryByRole("tab", { name: "Icons" })).not.toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: "Guide" })).toBeVisible();
-  fireEvent.keyDown(screen.getByRole("tab", { name: "Guide" }), {
+  expect(queryNoteView("Icons")).not.toBeInTheDocument();
+  expect(noteView("Guide")).toBeVisible();
+  fireEvent.keyDown(noteView("Guide"), {
     key: "Escape",
   });
   await waitFor(() =>
-    expect(screen.queryByRole("complementary")).not.toBeInTheDocument(),
+    expect(
+      screen.queryByRole("region", { name: "Note details" }),
+    ).not.toBeInTheDocument(),
   );
   await waitFor(() =>
     expect(
@@ -353,27 +363,21 @@ it.each(["icons", "", "two\nlines"])(
       await user.click(
         screen.getByRole("button", { name: "Open Guide by Carl" }),
       );
-      expect(screen.getByRole("tab", { name: "Guide" })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
+      expect(screen.getByRole("tabpanel", { name: "Guide" })).toBeVisible();
       act(() => navigator.back());
       expect(
         await screen.findByRole("button", { name: "Open Carl folder" }),
       ).toBeVisible();
-      expect(screen.getByRole("tab", { name: "Guide" })).toBeVisible();
+      expect(noteView("Guide")).toBeVisible();
       expect(navigator.snapshot().canGoBack).toBe(false);
       expect(navigator.snapshot().canGoForward).toBe(true);
       act(() => navigator.forward());
       expect(
         await screen.findByRole("button", { name: "Open Icons by Carl" }),
       ).toBeVisible();
-      expect(screen.getByRole("tab", { name: "Guide" })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
+      expect(screen.getByRole("tabpanel", { name: "Guide" })).toBeVisible();
       await user.click(screen.getByRole("button", { name: "Back to folders" }));
-      expect(screen.getByRole("tab", { name: "Icons" })).toBeVisible();
+      expect(noteView("Icons")).toBeVisible();
       await enterFolder("Ned");
       act(() => navigator.back());
       expect(
@@ -418,28 +422,25 @@ it("opens the registered author profile beside notes and retires it with its plu
       screen.getByRole("button", { name: "Open Icons by Carl" }),
     );
     await user.click(
-      within(screen.getByRole("complementary")).getByRole("button", {
-        name: "View Carl profile",
-      }),
+      within(screen.getByRole("region", { name: "Note details" })).getByRole(
+        "button",
+        {
+          name: "View Carl profile",
+        },
+      ),
     );
-    expect(screen.getByRole("tab", { name: "Icons" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Carl · Profile" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(noteView("Icons")).toBeVisible();
+    expect(
+      screen.getByRole("tabpanel", { name: "Carl · Profile" }),
+    ).toBeVisible();
     expect(
       screen.getByText(`Profile for buzz:agent-profile:${carl}`),
     ).toBeVisible();
     await act(async () => {
       await scope.dispose();
     });
-    expect(
-      screen.queryByRole("tab", { name: "Carl · Profile" }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Icons" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(queryNoteView("Carl · Profile")).not.toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Icons" })).toBeVisible();
   } finally {
     view.unmount();
     await ctx.fiber.dispose();
@@ -471,30 +472,25 @@ it("toggles existing note tabs from cards without closing other notes", async ()
   expect(icons).toHaveAttribute("aria-pressed", "true");
   // Clicking an already-open card closes its tab even when another tab is active.
   await user.click(icons);
-  expect(screen.queryByRole("tab", { name: "Icons" })).not.toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: "Guide" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  expect(queryNoteView("Icons")).not.toBeInTheDocument();
+  expect(screen.getByRole("tabpanel", { name: "Guide" })).toBeVisible();
   expect(icons).toHaveAttribute("aria-pressed", "false");
   await user.click(icons);
-  expect(screen.getByRole("tab", { name: "Icons" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  expect(screen.getByRole("tabpanel", { name: "Icons" })).toBeVisible();
   await user.click(icons);
-  expect(screen.getByRole("tab", { name: "Guide" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  expect(screen.getByRole("tabpanel", { name: "Guide" })).toBeVisible();
   await user.click(guide);
-  expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("region", { name: "Note details" }),
+  ).not.toBeInTheDocument();
   await waitFor(() => expect(guide).toHaveFocus());
   await user.keyboard("{Enter}");
-  expect(screen.getByRole("tab", { name: "Guide" })).toBeVisible();
+  expect(noteView("Guide")).toBeVisible();
   guide.focus();
   await user.keyboard("{Enter}");
-  expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("region", { name: "Note details" }),
+  ).not.toBeInTheDocument();
 });
 
 it("shows owned notes on the index, filters by agent, and retains reader tabs across folders", async () => {
@@ -513,35 +509,34 @@ it("shows owned notes on the index, filters by agent, and retains reader tabs ac
   expect(
     screen.queryByRole("button", { name: /Open Icons by Carl/ }),
   ).toBeVisible();
-  expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("region", { name: "Note details" }),
+  ).not.toBeInTheDocument();
   await user.click(carlFolder);
   expect(screen.getByRole("heading", { name: "Carl" })).toBeVisible();
-  expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("region", { name: "Note details" }),
+  ).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: /Open Archive by Ned/ }),
   ).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /Open Icons by Carl/ }));
-  expect(screen.getByRole("tab", { name: "Icons" })).toBeVisible();
+  expect(noteView("Icons")).toBeVisible();
   expect(
-    screen
-      .getByRole("tab", { name: "Icons" })
-      .querySelector('[data-avatar-shape="squircle"]'),
+    noteView("Icons").querySelector('[data-avatar-shape="squircle"]'),
   ).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Back to folders" }));
-  expect(screen.getByRole("tab", { name: "Icons" })).toBeVisible();
+  expect(noteView("Icons")).toBeVisible();
   const restored = screen.getByRole("button", { name: "Open Carl folder" });
   await waitFor(() => expect(restored).toHaveFocus());
   await enterFolder("Ned");
   expect(
     screen.getByRole("button", { name: /Open Archive by Ned/ }),
   ).toBeVisible();
-  expect(screen.getByRole("tab", { name: "Icons" })).toBeVisible();
+  expect(noteView("Icons")).toBeVisible();
   await user.click(screen.getByRole("button", { name: /Open Archive by Ned/ }));
-  expect(screen.getByRole("tab", { name: "Icons" })).toBeVisible();
-  expect(screen.getByRole("tab", { name: "Archive" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  expect(noteView("Icons")).toBeVisible();
+  expect(screen.getByRole("tabpanel", { name: "Archive" })).toBeVisible();
 });
 
 it("shows only agents with loaded notes and returns to folders when the open folder disappears", async () => {
@@ -567,7 +562,9 @@ it("shows only agents with loaded notes and returns to folders when the open fol
   expect(
     screen.queryByRole("button", { name: "Back to folders" }),
   ).not.toBeInTheDocument();
-  expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("region", { name: "Note details" }),
+  ).not.toBeInTheDocument();
 });
 
 it("keeps loading distinct from empty, retries failures and updates open note revisions on refresh", async () => {
@@ -602,14 +599,16 @@ it("keeps loading distinct from empty, retries failures and updates open note re
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Couldn’t read notes",
   );
-  expect(screen.getByRole("tab", { name: "Icons" })).toBeVisible();
+  expect(noteView("Icons")).toBeVisible();
   f.readPage.mockResolvedValueOnce({
     events: [{ ...note("Icons", carl, 12), content: "Updated recipe" }],
     relayCount: 1,
   });
   await user.click(screen.getByRole("button", { name: "Retry notes" }));
   expect(
-    await within(screen.getByRole("tabpanel")).findByText("Updated recipe"),
+    await within(screen.getByRole("tabpanel", { name: "Icons" })).findByText(
+      "Updated recipe",
+    ),
   ).toBeVisible();
   expect(
     within(
@@ -675,7 +674,7 @@ it("renders note content as Markdown without executable HTML or unsafe links", a
   await user.click(
     await screen.findByRole("button", { name: /Open Safety by Carl/ }),
   );
-  const reader = screen.getByRole("complementary");
+  const reader = screen.getByRole("region", { name: "Note details" });
   expect(reader.querySelector("strong")).toHaveTextContent("Safe");
   expect(reader.querySelector("script")).toBeNull();
   expect(reader.querySelector("img")).toBeNull();
@@ -755,7 +754,7 @@ it("opens Buzz message and channel links in the app, naming a raw channel link",
   await user.click(
     screen.getByRole("button", { name: "Open Blockers by Carl" }),
   );
-  const reader = screen.getByRole("complementary");
+  const reader = screen.getByRole("region", { name: "Note details" });
   const message = within(reader).getByRole("link", {
     name: "the blockers thread",
   });
@@ -791,7 +790,9 @@ it("keeps a formatted label on a Buzz channel link", async () => {
   render(<NotesCommunity session={withReleaseChannel(f.session)} />);
   await enterFolder();
   await user.click(screen.getByRole("button", { name: "Open Launch by Carl" }));
-  const link = within(screen.getByRole("complementary")).getByRole("link", {
+  const link = within(
+    screen.getByRole("region", { name: "Note details" }),
+  ).getByRole("link", {
     name: "the release room",
   });
   expect(link).toHaveTextContent("the release room");
@@ -809,7 +810,7 @@ it("explains that a Buzz link can't be opened without a scope or navigator", asy
   render(<NotesCommunity session={f.session} />);
   await enterFolder();
   await user.click(screen.getByRole("button", { name: "Open Launch by Carl" }));
-  const reader = screen.getByRole("complementary");
+  const reader = screen.getByRole("region", { name: "Note details" });
   expect(
     within(reader).queryByText("This Buzz link couldn’t be opened here."),
   ).not.toBeInTheDocument();
@@ -842,7 +843,9 @@ it("shows the saved identifier separately from the display title in row and read
   );
   await userEvent.click(row);
   expect(
-    within(screen.getByRole("complementary")).getByText("saved-recipe-name"),
+    within(screen.getByRole("region", { name: "Note details" })).getByText(
+      "saved-recipe-name",
+    ),
   ).toBeVisible();
 });
 
@@ -879,7 +882,9 @@ it.each([
     );
     await userEvent.click(row);
     expect(
-      within(screen.getByRole("complementary")).getByText(label),
+      within(screen.getByRole("region", { name: "Note details" })).getByText(
+        label,
+      ),
     ).toHaveAttribute("title", time.title);
   },
 );
@@ -922,7 +927,7 @@ it("loads older pages independently, keeps heads and open tabs, and refreshes fr
   expect(
     screen.getByRole("button", { name: "Open Older by Carl" }),
   ).toBeVisible();
-  expect(screen.getByRole("tab", { name: "Recent" })).toBeVisible();
+  expect(noteView("Recent")).toBeVisible();
   expect(
     screen
       .getAllByRole("button", { name: /^Open .* by Carl$/ })
@@ -944,7 +949,9 @@ it("loads older pages independently, keeps heads and open tabs, and refreshes fr
     before_id: recent.id,
   });
   expect(
-    within(screen.getByRole("tabpanel")).getByText("Recent content"),
+    within(screen.getByRole("tabpanel", { name: "Recent" })).getByText(
+      "Recent content",
+    ),
   ).toBeVisible();
   await userEvent.click(
     screen.getByRole("button", { name: "Back to folders" }),
@@ -962,7 +969,7 @@ it("loads older pages independently, keeps heads and open tabs, and refreshes fr
     ).not.toBeInTheDocument(),
   );
   expect(f.readPage.mock.calls.at(-2)?.[0][0]).not.toHaveProperty("until");
-  expect(screen.getByRole("tab", { name: "Recent" })).toBeVisible();
+  expect(noteView("Recent")).toBeVisible();
 });
 
 it("retains pages on a failed or stalled continuation and retries the same cursor", async () => {
@@ -1142,12 +1149,12 @@ it("shows only owned notes in the index grid and retains a note while filtering 
   expect(
     screen.getByRole("button", { name: "Open Second by Ned" }),
   ).toBeVisible();
-  expect(screen.getByRole("tab", { name: "Latest" })).toBeVisible();
+  expect(noteView("Latest")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Back to folders" }));
   expect(
     screen.getByRole("button", { name: "Open Latest by Carl" }),
   ).toBeVisible();
-  expect(screen.getByRole("tab", { name: "Latest" })).toBeVisible();
+  expect(noteView("Latest")).toBeVisible();
 });
 
 it("pages beyond the real profile directory budget and retains evicted agent classification", async () => {

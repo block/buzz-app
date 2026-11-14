@@ -1,6 +1,5 @@
 import { test, expect } from "./fixture.mjs";
 import {
-  activityRow,
   closeSettings,
   openPage,
   settlePanelMotion,
@@ -618,70 +617,6 @@ test.extend({ readState: true, threadUnread: true })(
   },
 );
 
-// The Activity page's tabs float over it the same way. The native close-all
-// command must still reach the page while its tabs cover it.
-test.extend({
-  readState: true,
-  threadUnread: true,
-  threadUnreadMentions: true,
-})(
-  "an Activity tab covering the page keeps focus out and still closes all tabs",
-  async ({ page, app }) => {
-    await page.setViewportSize({ width: 1100, height: 900 });
-    await open(page, app);
-    await activityRow(page).click();
-    const inbox = page.getByRole("region", { name: "Activity", exact: true });
-    await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
-    const row = inbox
-      .getByRole("list", { name: "Activity", exact: true })
-      .getByRole("listitem")
-      .filter({ hasText: "Unread reply 1" })
-      .getByRole("button", { name: /^Open / });
-    await row.click();
-    const side = page.locator("[data-panel-workspace]");
-    const tab = side.getByRole("tab", { selected: true });
-    await expect(tab).toBeVisible();
-    const covered = inbox.locator(
-      'div[tabindex="-1"]:has(> [data-main-workspace])',
-    );
-    // Beside the tab the page stays live. Narrowing from it hands focus to
-    // the tab. Opening lands on the reply first; let it, or it takes focus
-    // back from the row.
-    await expect(covered).not.toHaveAttribute("inert");
-    await expect(side.locator("[data-message-id]:focus")).toHaveCount(1);
-    await row.focus();
-    await expect(row).toBeFocused();
-    await page.setViewportSize({ width: 600, height: 900 });
-    await expect(tab).toBeFocused();
-    await settlePanelMotion(page);
-    await expect(covered).toHaveAttribute("inert", "");
-    await expect(covered).toHaveAttribute("aria-hidden", "true");
-    await tab.focus();
-    for (let press = 0; press < 8; press++) {
-      await page.keyboard.press("Shift+Tab");
-      expect(
-        await covered.evaluate((element) =>
-          element.contains(document.activeElement),
-        ),
-      ).toBe(false);
-    }
-    // Close from the pane being removed. Surviving navigation controls keep
-    // their focus, and Shift+Tab can reach different ones in each engine.
-    await tab.focus();
-    const handled = await page.evaluate(() => {
-      const event = new Event("buzz:close-all-tabs", { cancelable: true });
-      window.dispatchEvent(event);
-      return event.defaultPrevented;
-    });
-    expect(handled).toBe(true);
-    await expect(side).toHaveCount(0);
-    await expect(covered).not.toHaveAttribute("inert");
-    await expect(
-      inbox.getByRole("tab", { name: "Activity", exact: true }),
-    ).toBeFocused();
-  },
-);
-
 // A companion over the conversation takes focus on itself, where a typed key
 // does nothing: as the cover starts, and when a tab closes under it.
 test.extend({ companionFixture: true })(
@@ -805,7 +740,7 @@ test("escaping a restored side panel over the conversation returns focus to the 
     .click();
   const todos = page.getByRole("region", { name: "Todos panel", exact: true });
   await expect(todos).toBeVisible();
-  await activityRow(page).click();
+  await openPage(page, "Agents");
   await expect(todos).toHaveCount(0);
   await openPage(page, "Messages");
   await expect(todos).toBeVisible();

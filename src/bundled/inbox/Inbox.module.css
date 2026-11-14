@@ -1,171 +1,3 @@
-.page {
-  container-type: inline-size;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
-/* Status fills the unused space after Unread, never wrapping controls or
-   rows: its margin cancels the gap before it, so it takes no room
-   on a full line, and its text keeps that gap instead. */
-.refreshSlot {
-  display: flex;
-  flex: 1;
-  width: 0;
-  min-width: 0;
-  align-items: center;
-  margin-inline-start: calc(var(--space-2) * -1);
-}
-
-/* Type tabs (sized to their words, like Slack's), From and Unread read as one
-   left-aligned group, so Unread stays in view on a wide page; the status after
-   them fills the row. Too narrow, Unread wraps first to the start of the next
-   line, then From. */
-.filters {
-  display: flex;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1) var(--space-2);
-  min-width: 0;
-  padding-block: var(--space-1);
-}
-
-/* The panel tab strip insets its tabs by the focus ring's room; cancel that
-   here so the first tab's text starts on the toolbar edge, like Unread and
-   From when they wrap, and From follows DMs about a tab gap away. */
-.typeTabs {
-  flex: 0 1 auto;
-  min-width: 0;
-  margin-inline: calc(var(--space-1) * -1);
-}
-
-.refreshStatus {
-  min-width: 0;
-  padding-inline-start: var(--space-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace,
-.listPane {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-}
-
-.scroll {
-  container-name: inbox-list;
-  container-type: inline-size;
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  overflow: auto;
-}
-
-.toolbar {
-  display: flex;
-  flex: 0 0 auto;
-  min-height: var(--size-panel-header);
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-1);
-  /* Start the first tab's text on the title bar's bell: the panel header's
-     inset plus its label's. */
-  padding-inline: calc(var(--space-1) + var(--space-2));
-  border-bottom: 1px solid var(--border-standard);
-}
-
-.notice {
-  margin: 0;
-  padding: var(--space-3) var(--space-panel-inset);
-}
-
-.notice {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.empty {
-  padding: var(--space-page-section-gap) var(--space-panel-inset);
-}
-
-.list {
-  list-style: none;
-  margin: 0;
-  padding: 0 var(--space-row-gap) var(--space-panel-inset);
-}
-
-.row {
-  min-width: 0;
-}
-
-.rowSurface {
-  display: grid;
-  position: relative;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: stretch;
-  min-width: 0;
-  border-radius: var(--radius-row);
-}
-
-.row[data-selected] .rowSurface {
-  background: var(--interaction-selected);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .rowSurface:hover {
-    background: var(--interaction-row-hover);
-  }
-}
-
-/* Mark as read, on unread rows only: revealed on hover or keyboard focus over
-   the date, and always shown without a hover pointer. */
-.rowAction {
-  display: flex;
-  position: absolute;
-  inset-block-start: var(--space-row-gap);
-  inset-inline-end: calc(
-    var(--space-control-inset) +
-    var(--space-row-gap) +
-    var(--space-2)
-  );
-  opacity: 0;
-}
-
-.row:hover .rowAction,
-.row:focus-within .rowAction {
-  opacity: 1;
-}
-
-.row[data-action]:hover [data-inbox-date],
-.row[data-action]:focus-within [data-inbox-date] {
-  opacity: 0;
-}
-
-@media (hover: none), (pointer: coarse) {
-  .rowAction {
-    opacity: 1;
-  }
-
-  .row[data-action] [data-inbox-date] {
-    opacity: 0;
-  }
-}
-
-@media (max-width: 600px) {
-  .row {
-    padding-bottom: var(--space-3);
-  }
-}
-
 .reactionEmoji {
   display: inline-block;
   width: 1em;
@@ -178,19 +10,32 @@
   color: var(--text-subtle);
 }
 
-.reactionHeading {
+.rowIdentity {
   display: flex;
   min-width: 0;
   align-items: baseline;
+  gap: var(--space-2);
+}
+.rowIdentity > :is(span, strong) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .reactionTail {
   flex-shrink: 0;
   white-space: nowrap;
 }
 
-.reactionPreview {
-  max-inline-size: 64ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* The reader with nothing open, as Team shows it. */
+.reader {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  flex-direction: column;
+}
+.unselected {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  padding: var(--space-panel-inset);
 }

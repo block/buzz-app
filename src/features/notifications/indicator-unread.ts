@@ -2,31 +2,36 @@ import type { Communities } from "../communities/service";
 import type { RelaySession } from "../relay/session";
 import { communityDestination } from "../communities/destination";
 import type { OpenTarget } from "../navigation/targets";
+import type { BadgeActivity } from "./preferences";
 
 /** Notification gates: only conversations they allow light the indicator. */
 export type IndicatorGates = Readonly<{
   allows(target: OpenTarget): boolean;
+  badgeActivity?(): BadgeActivity;
   subscribe(listener: () => void): () => void;
 }>;
 
-/** A host projection of existing evidence, never a count or a new read owner. */
+/** A host projection of retained unread evidence, never a new read owner. */
 export function bindUnreadIndicator(
   communities: Communities,
-  project: (unread: boolean) => void,
+  project: (unread: boolean, count?: number) => void,
   gates?: IndicatorGates,
 ) {
   let closed = false;
   let session: RelaySession | undefined;
   let identity = "";
   let previous: boolean | undefined;
+  let previousCount = 0;
   let stopRoster = () => {};
   let refresh = () => {};
   let stopPreferences = () => {};
   const channels = new Map<string, () => void>();
-  const publish = (unread: boolean) => {
-    if (unread === previous) return;
+  const publish = (unread: boolean, count = 0) => {
+    if (unread === previous && count === previousCount) return;
     previous = unread;
-    project(unread);
+    previousCount = count;
+    if (count > 0) project(unread, count);
+    else project(unread);
   };
   const clear = () => {
     stopRoster();
@@ -54,6 +59,7 @@ export function bindUnreadIndicator(
     publish(false);
     if (!owned) return;
     const viewer = client.viewer as string;
+    const directChannels = new Set<string>();
     const scope = gates && {
       viewer,
       communityOrigin: communityDestination(client.selected as string).url,
@@ -70,42 +76,50 @@ export function bindUnreadIndicator(
         return;
       }
       const muted = new Set(preferences.data?.muted ?? []);
-      publish(
-        [...channels.keys()].some((channelId) => {
-          if (muted.has(channelId)) return false;
-          const snapshot = owned.unread.snapshot({
-            kind: "channel",
-            channelId,
-          });
-          // The dock follows the sidebar rows, which opening a channel quiets.
-          const count = snapshot.row?.observedCount ?? snapshot.observedCount;
-          return snapshot.manual !== "none" || (count ?? 0) > 0;
-        }),
-      );
+      const activity = gates?.badgeActivity?.() ?? "all";
+      let unread = false;
+      let count = 0;
+      for (const channelId of channels.keys()) {
+        if (muted.has(channelId)) continue;
+        const snapshot = owned.unread.snapshot({ kind: "channel", channelId });
+        // The Dock follows the sidebar rows, which opening a channel quiets.
+        const observed =
+          snapshot.row?.observedCount ?? snapshot.observedCount ?? 0;
+        const mentions =
+          (snapshot.row ? snapshot.row.mentionCount : snapshot.mentionCount) ??
+          0;
+        const direct = directChannels.has(channelId);
+        count += direct ? observed : mentions;
+        if (
+          (activity === "all" || direct) &&
+          (snapshot.manual !== "none" || observed > 0)
+        )
+          unread = true;
+      }
+      publish(unread || count > 0, count);
     };
     stopPreferences = owned.sidebarPreferences.subscribe(changed);
     changed();
     const roster = () => {
       if (!valid()) return;
-      const ids = new Set(
-        owned.channels
-          .list()
-          .channels.filter(
-            (channel) =>
-              !channel.huddle &&
-              !channel.metadataPending &&
-              channel.members?.includes(viewer) &&
-              (!gates ||
-                !scope ||
-                gates.allows({
-                  version: 1,
-                  kind: "conversation",
-                  scope,
-                  channelId: channel.id,
-                })),
-          )
-          .map((channel) => channel.id),
+      const eligible = owned.channels.list().channels.filter(
+        (channel) =>
+          !channel.huddle &&
+          !channel.metadataPending &&
+          channel.members?.includes(viewer) &&
+          (!gates ||
+            !scope ||
+            gates.allows({
+              version: 1,
+              kind: "conversation",
+              scope,
+              channelId: channel.id,
+            })),
       );
+      const ids = new Set(eligible.map((channel) => channel.id));
+      directChannels.clear();
+      for (const channel of eligible)
+        if (channel.channelType === "dm") directChannels.add(channel.id);
       for (const [id, stop] of channels) {
         if (ids.has(id)) continue;
         stop();

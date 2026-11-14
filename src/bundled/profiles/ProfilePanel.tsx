@@ -69,6 +69,7 @@ import {
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { ProfileAgentIdentity } from "./ProfileAgentIdentity";
+import { ProfileArchiveNotice } from "./ProfileArchiveNotice";
 import styles from "./Profiles.module.css";
 import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
 import hero from "../../features/profiles/ProfileHero.module.css";
@@ -631,6 +632,11 @@ function ProfileDetails({
                   `· @${profile.verified.username}`}
               </p>
             )}
+            <ProfileArchiveNotice
+              session={session}
+              pubkey={pubkey}
+              context={context}
+            />
             {presence !== "unknown" && (
               <p className="text-body-sm text-primary">
                 {

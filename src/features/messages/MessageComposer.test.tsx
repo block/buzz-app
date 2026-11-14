@@ -11123,6 +11123,7 @@ it("rejects a known archived recipient at send entry without clearing the draft"
         writable: false,
         supported: true,
         consent: vi.fn(),
+        replacement: async () => undefined,
         request: vi.fn(),
       },
     },

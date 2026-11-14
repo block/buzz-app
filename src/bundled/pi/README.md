@@ -17,7 +17,10 @@ To give your Pi agents your own tools, hooks or providers, see
 
 Agents run on [Pi durable](https://github.com/earendil-works/pi/blob/main/packages/durable/README.md) in one Node
 host ([`host.mjs`](host.mjs)). Each agent has its own SQLite storage, and each
-Buzz thread or channel is one durable Pi conversation. Agents owns identity,
+Buzz thread or channel is one durable Pi conversation. A conversation that
+several threads share, such as a channel-scoped agent's channel or a DM, notes
+what each thread has been shown, for its 200 most recently addressed threads,
+so a turn in one thread does not hide another's unread messages. Agents owns identity,
 admission and signing; this plugin owns the turn after handover. The host also
 loads the Pi durable parts of the Pi packages in Pi's settings
 ([`EXTENSIONS.md`](EXTENSIONS.md)).

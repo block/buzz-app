@@ -188,6 +188,83 @@ it.each(["during", "after", "reconnect"])(
   },
 );
 
+it("a retired snapshot paces the next read from its settlement, after the broker's admission", async () => {
+  const h = setup();
+  const lane = createApiAdmission();
+  let releaseTransit!: () => void;
+  const transit = new Promise<void>((resolve) => {
+    releaseTransit = resolve;
+  });
+  const skipped = vi.fn();
+  let first = true;
+  // Like fetch: an abort settles locally at once, but a sent request still
+  // reaches the broker, which starts its five-second gate on admission.
+  h.read.mockImplementation((authors, signal) => {
+    const remote = (async () => {
+      if (first) {
+        first = false;
+        await transit;
+      }
+      const release = lane.tryPresence();
+      if (!release) {
+        skipped();
+        return null;
+      }
+      release();
+      return new Map(authors.map((author) => [author, "online" as const]));
+    })();
+    return new Promise((resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), {
+        once: true,
+      });
+      remote.then(resolve, reject);
+    });
+  });
+  try {
+    h.owner.subscribe(key(3), () => {});
+    await vi.advanceTimersByTimeAsync(100);
+    expect(h.read).toHaveBeenCalledOnce();
+    h.owner.subscribe(key(4), () => {});
+    h.owner.connected(false);
+    h.owner.connected(true);
+    await vi.advanceTimersByTimeAsync(50);
+    releaseTransit();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(h.read).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.read).toHaveBeenCalledTimes(2);
+    expect(skipped).not.toHaveBeenCalled();
+    expect(h.owner.status(key(4))).toBe("online");
+  } finally {
+    releaseTransit();
+    h.owner.dispose();
+  }
+});
+
+it("a retired read that settles after disposal neither notifies nor reads again", async () => {
+  const h = setup();
+  let release!: (value: ReadonlyMap<string, "online">) => void;
+  h.read.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const listener = vi.fn();
+  h.owner.subscribe(key(3), listener);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(h.read).toHaveBeenCalledOnce();
+  h.owner.clear();
+  h.owner.dispose();
+  listener.mockClear();
+  release(new Map([[key(3), "online"]]));
+  await vi.advanceTimersByTimeAsync(120000);
+  expect(listener).not.toHaveBeenCalled();
+  expect(h.read).toHaveBeenCalledOnce();
+  expect(h.owner.status(key(3))).toBe("unknown");
+});
+
 it("local skips expire evidence; network failures enforce a minute delay even for new demand", async () => {
   const h = setup();
   h.owner.subscribe(key(3), () => {});

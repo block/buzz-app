@@ -2150,7 +2150,7 @@ function ChannelWorkspace({
       close() {
         if (trigger.isConnected) trigger.focus({ preventScroll: true });
       },
-      completed() {
+      depart() {
         if (showing.current === channel.id)
           setComposerFocus((value) => value + 1);
       },

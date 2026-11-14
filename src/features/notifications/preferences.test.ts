@@ -20,11 +20,18 @@ it("values saved before per-category sounds restore with the defaults", () => {
 });
 
 it.each([
-  { mention: "ping", direct: "unison", thread: "doop", agent: "doodone" },
+  {
+    mention: "ping",
+    direct: "unison",
+    thread: "doop",
+    post: "soft",
+    agent: "doodone",
+  },
   {
     mention: "silent",
     direct: "silent",
     thread: "silent",
+    post: "silent",
     agent: "silent",
   },
 ])("saved sound choices round-trip: %j", (sounds) => {
@@ -53,6 +60,7 @@ it("a sound name this build lacks falls back to the default for its category onl
     mention: DEFAULT_SOUND,
     direct: DEFAULT_SOUND,
     thread: DEFAULT_SOUND,
+    post: DEFAULT_SOUND,
     agent: "doodone",
   });
   expect(Object.isFrozen(sounds)).toBe(true);
@@ -82,7 +90,11 @@ it("restore keeps alerts on for an unknown sound name and leaves storage untouch
   const service = createNotificationPreferences(host);
   service.selectViewer(viewer);
   expect(service.snapshot()).toEqual({
-    preferences: { ...stored, sounds: DEFAULT_NOTIFICATION_PREFERENCES.sounds },
+    preferences: {
+      ...stored,
+      sounds: DEFAULT_NOTIFICATION_PREFERENCES.sounds,
+      allPosts: [],
+    },
     error: null,
   });
   expect(setItem).not.toHaveBeenCalled();
@@ -91,6 +103,20 @@ it("restore keeps alerts on for an unknown sound name and leaves storage untouch
   expect(JSON.parse(store.get(key) ?? "")).toEqual({
     ...stored,
     sounds: DEFAULT_NOTIFICATION_PREFERENCES.sounds,
+    allPosts: [],
   });
   service.dispose();
+});
+
+it("channels set to All new posts round-trip; older values restore none", () => {
+  expect(parsePreferences(stored).allPosts).toEqual([]);
+  expect(
+    parsePreferences(
+      JSON.parse(JSON.stringify({ ...stored, allPosts: ["c1", "c2"] })),
+    ).allPosts,
+  ).toEqual(["c1", "c2"]);
+  for (const allPosts of ["c1", [""], ["c1", "c1"], [7]])
+    expect(() => parsePreferences({ ...stored, allPosts })).toThrow(
+      "Invalid notification channels",
+    );
 });

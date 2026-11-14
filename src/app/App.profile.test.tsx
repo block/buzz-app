@@ -467,7 +467,12 @@ it.each([
         name: "Planning",
       });
       fireEvent.keyDown(row, { key: "ContextMenu" });
-      await user.click(await screen.findByRole("menuitem", { name: "Mute" }));
+      await user.hover(
+        await screen.findByRole("menuitem", { name: "Notifications" }),
+      );
+      fireEvent.click(
+        await screen.findByRole("menuitemradio", { name: "Mute" }),
+      );
       await waitFor(() =>
         expect(write).toHaveBeenCalledExactlyOnceWith({
           channelId,

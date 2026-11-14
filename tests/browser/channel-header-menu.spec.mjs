@@ -1,6 +1,11 @@
 import { checkDurationConsumer } from "./duration-layout.mjs";
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import {
+  expectNotificationLevel,
+  notificationLevel,
+  notificationLevels,
+  openPage,
+} from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 
 const channelId = "11111111-1111-4111-8111-111111111111";
@@ -507,13 +512,14 @@ test.describe("sidebar actions in the header", () => {
     await expect(trigger).toBeFocused();
     await trigger.click();
     const muted = page.waitForResponse("**/sidebar-mute");
-    await menu.getByRole("menuitem", { name: "Mute", exact: true }).click();
+    await notificationLevel(
+      await notificationLevels(page, menu),
+      "Mute",
+    ).click();
     await muted;
     await expect(trigger).toBeFocused();
     await trigger.click();
-    await expect(
-      menu.getByRole("menuitem", { name: "Unmute", exact: true }),
-    ).toBeVisible();
+    await expectNotificationLevel(page, menu, "Mute");
     await menu
       .getByRole("menuitem", { name: /^Mark as (read|unread)$/ })
       .click();

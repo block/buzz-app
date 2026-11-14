@@ -25,6 +25,7 @@ const SOUND_ROWS: readonly NotificationCategory[] = [
   "direct",
   "mention",
   "thread",
+  "post",
   "agent",
 ];
 

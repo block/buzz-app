@@ -623,7 +623,10 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           active={client.selected}
         />
       )}
-      <ChannelNavigationProvider relay={services.relay}>
+      <ChannelNavigationProvider
+        relay={services.relay}
+        alerts={services.notifications}
+      >
         <AppShell
           creationInSidebar={!workspace.page?.sidebar}
           creationAction={(open, onOpenChange, triggerContainer) => (

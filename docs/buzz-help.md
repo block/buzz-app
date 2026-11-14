@@ -610,7 +610,13 @@ and are asked to sign in again in Buzz.
 - **Sidebar activity**: rest the pointer on a sidebar row to list its unread
   mentions of you and its unread threads, mentions first. Open one or mark it
   read from the list; just looking marks nothing read.
-- **Mute** is available from a channel or DM's sidebar context menu. Once
+- **Notifications** in a channel's sidebar or header menu chooses what alerts
+  you: **All new posts** (every new top-level post, plus your usual mentions and
+  thread replies), **Just mentions** (the default) or **Mute**. All new posts is
+  saved on this device only and can be turned off for every channel with
+  **Channel posts** in Settings → Notifications. Mute wins over it.
+- **Mute** is available from a channel's **Notifications** submenu or a DM's
+  sidebar context menu. Once
   confirmed, a crossed-out bell appears immediately after its name. New messages
   do not make muted channel or DM names bold.
   Mute suppresses notifications for messages that do not mention you; mentions can still notify

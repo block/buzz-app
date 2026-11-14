@@ -10,6 +10,7 @@ export const NOTIFICATION_CATEGORIES = [
   "mention",
   "direct",
   "thread",
+  "post",
   "agent",
 ] as const;
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
@@ -19,6 +20,8 @@ export type NotificationPreferences = Readonly<{
   sound: boolean;
   sounds: CategorySounds;
   categories: Readonly<Record<string, boolean>>;
+  /** Channels whose every new top-level post alerts on this device. */
+  allPosts: readonly string[];
 }>;
 export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences =
   Object.freeze({
@@ -30,8 +33,10 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences =
       mention: true,
       direct: true,
       thread: true,
+      post: true,
       agent: true,
     }),
+    allPosts: Object.freeze([]),
   });
 const KEY = "buzz-notification-preferences.v1";
 // Values saved before per-category sounds existed omit `sounds`; they get the
@@ -50,6 +55,20 @@ function parseSounds(raw: unknown): CategorySounds {
     if (isSoundName(picked)) sounds[category] = picked;
   }
   return Object.freeze(sounds);
+}
+/** The same budget as channel mutes. */
+export const MAX_ALL_POSTS_CHANNELS = 500;
+// Values saved before per-channel post alerts existed omit `allPosts`.
+function parseAllPosts(raw: unknown): readonly string[] {
+  if (raw === undefined) return DEFAULT_NOTIFICATION_PREFERENCES.allPosts;
+  if (
+    !Array.isArray(raw) ||
+    raw.length > MAX_ALL_POSTS_CHANNELS ||
+    raw.some((id) => typeof id !== "string" || !id.trim() || id.length > 256) ||
+    new Set(raw).size !== raw.length
+  )
+    throw new Error("Invalid notification channels");
+  return Object.freeze([...raw]);
 }
 export function parsePreferences(raw: unknown): NotificationPreferences {
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
@@ -80,6 +99,7 @@ export function parsePreferences(raw: unknown): NotificationPreferences {
     sound: value.sound as boolean,
     sounds: parseSounds(value.sounds),
     categories: Object.freeze(Object.fromEntries(categories)),
+    allPosts: parseAllPosts(value.allPosts),
   });
 }
 export function createNotificationPreferences(

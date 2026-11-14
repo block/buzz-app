@@ -66,6 +66,7 @@ const categories = Object.freeze([
   { key: "mention", label: "Mentions" },
   { key: "direct", label: "Direct messages" },
   { key: "thread", label: "Thread replies" },
+  { key: "post", label: "Channel posts" },
   { key: "agent", label: "Solo chat completions" },
 ]);
 const FRESH_MS = 120_000;

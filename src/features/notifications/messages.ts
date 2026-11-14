@@ -15,6 +15,7 @@ const labels = {
   mention: "Mentions",
   direct: "Direct messages",
   thread: "Thread replies",
+  post: "Channel posts",
 };
 /** A local Solo run owns its completion feedback; its reply is not a mention alert. */
 export function localSoloAgentReply(
@@ -133,6 +134,8 @@ export function bindMessageNotifications(
       !closed &&
       generation === current &&
       communities.relay.snapshot().session === owned;
+    const allPosts = (channelId: string) =>
+      notifications.snapshot().preferences.allPosts.includes(channelId);
     const receive: IncomingListener = (messages) => {
       for (const message of messages) {
         if (!valid()) return;
@@ -144,9 +147,15 @@ export function bindMessageNotifications(
           message.messageId,
         );
         // A reply whose conversation lookup is pending may become thread
-        // attention; admission waits until the lookup decides it.
+        // attention; admission waits until the lookup decides it. A plain
+        // top-level post alerts only in a channel set to All new posts.
         const category =
-          attention.category ?? (attention.pending ? "thread" : undefined);
+          attention.category ??
+          (attention.pending
+            ? "thread"
+            : attention.post && allPosts(message.channelId)
+              ? "post"
+              : undefined);
         const soloReply =
           category === "mention"
             ? localSoloAgentReply(
@@ -157,7 +166,9 @@ export function bindMessageNotifications(
             : undefined;
         if (
           !category ||
-          (attention.status !== "eligible" && !attention.pending) ||
+          (attention.status !== "eligible" &&
+            !attention.pending &&
+            category !== "post") ||
           soloReply === "reply"
         )
           continue;
@@ -209,9 +220,14 @@ export function bindMessageNotifications(
             }
             const whileViewing =
               notifications.snapshot().preferences.notifyWhileViewing;
+            const kind =
+              attention.category ??
+              (attention.post && allPosts(message.channelId)
+                ? "post"
+                : undefined);
             if (
-              attention.status === "ineligible" ||
-              (!attention.pending && attention.category !== category) ||
+              (attention.status === "ineligible" && kind !== "post") ||
+              (!attention.pending && kind !== category) ||
               (!whileViewing && attention.viewing)
             )
               return false;

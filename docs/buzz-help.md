@@ -1004,6 +1004,9 @@ available rather than silently discarding it.
   uses. Available types and models depend on the platform, active plugins, and
   provider setup. Tools and connections depend on that agent's configuration;
   naming a service or adding instructions does not connect it.
+- An agent's `send` or `reply_in_subthread` with `final: true` ends its turn.
+  Progress messages should omit `final` while work remains. Claude's completion
+  hook explains this reason after a successful final send.
 - On desktop, Buzz starts every agent with `BUZZ_VERSION` set to the app's
   version, and agents usually pass it on to the shell commands they run. A
   script or shell config can check for it to tell it is running under Buzz.

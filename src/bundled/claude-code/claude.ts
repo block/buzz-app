@@ -1119,7 +1119,11 @@ export class ClaudeProcess {
                 request.input,
               )) ?? {})
             : request.callback_id === "final" && this.final(request.input)
-              ? { continue: false }
+              ? {
+                  continue: false,
+                  stopReason:
+                    "Message sent successfully. Buzz ended this turn because you set final: true. Omit final or use false when more work remains.",
+                }
               : {},
         );
       } catch (error) {

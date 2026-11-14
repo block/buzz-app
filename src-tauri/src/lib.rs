@@ -1060,7 +1060,7 @@ pub fn run() {
                     }
                 }
             }
-            tauri::async_runtime::spawn(host_command::load_login_shell_path());
+            tauri::async_runtime::spawn(host_command::load_login_shell_environment());
             if let Ok(manager) = &app.state::<PluginManager>().0 {
                 packaged_plugins::spawn(manager.clone());
             }

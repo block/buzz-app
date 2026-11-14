@@ -29,6 +29,7 @@ import {
   profileActivityViewTarget,
   profileTranscriptRequest,
   claimProfileTranscript,
+  claimTranscriptFocus,
 } from "../profiles/target";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
@@ -3779,7 +3780,7 @@ it.each(["available", "human", "profiles disabled", "retired"])(
         retired = mode === "retired";
         fireEvent.click(item);
         if (retired) expect(open).not.toHaveBeenCalled();
-        else expect(open).toHaveBeenCalledWith(target);
+        else expect(open).toHaveBeenCalledWith(target, { rootId: row.id });
       } else
         expect(
           screen.queryByRole("menuitem", { name: "View activity" }),
@@ -3789,6 +3790,110 @@ it.each(["available", "human", "profiles disabled", "retired"])(
     }
   },
 );
+
+it("opens an agent reply's activity at the turn of the message it answers", async () => {
+  const author = "ab".repeat(32);
+  const target = profileActivityViewTarget(author) as string;
+  const open = vi.fn(() => true);
+  try {
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          id: "reply",
+          authorId: author,
+          agentEnvelope: true,
+          threadRootId: "thread",
+          request: "prompt",
+        }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={open}
+        canOpenLink={() => true}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "View activity" }),
+    );
+    expect(open).toHaveBeenCalledExactlyOnceWith(target, { rootId: "thread" });
+    const opening = claimProfileTranscript(target) as number;
+    expect(claimTranscriptFocus(opening)).toEqual(["reply", "prompt"]);
+  } finally {
+    cleanup();
+  }
+});
+
+it("offers the viewer's own message the activity of each agent it names", async () => {
+  const viewer = "cd".repeat(32);
+  const first = "ab".repeat(32);
+  const second = "ef".repeat(32);
+  const person = "12".repeat(32);
+  const open = vi.fn(() => true);
+  const render = (mentions: string[], authorId = viewer) =>
+    renderDom(
+      <MessageRow
+        row={{ ...row, id: "prompt", authorId, mentions }}
+        profile={undefined}
+        viewer={viewer}
+        agentPubkeys={new Set([first, second])}
+        media={() => undefined}
+        onOpenLink={open}
+        canOpenLink={() => true}
+        day={false}
+        retry={undefined}
+      />,
+    );
+  const menu = async () => {
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    await screen.findByRole("menu");
+  };
+  try {
+    render([first, person]);
+    await menu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "View activity" }));
+    const target = profileActivityViewTarget(first) as string;
+    expect(open).toHaveBeenCalledExactlyOnceWith(target, { rootId: "prompt" });
+    expect(
+      claimTranscriptFocus(claimProfileTranscript(target) as number),
+    ).toEqual(["prompt"]);
+    cleanup();
+
+    render([first, second]);
+    await menu();
+    expect(
+      screen
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent)
+        .filter((text) => text?.includes("activity")),
+    ).toEqual([
+      `View ${first.slice(0, 10)} activity`,
+      `View ${second.slice(0, 10)} activity`,
+    ]);
+    cleanup();
+
+    // Someone else's message, or one naming no agent, has no activity.
+    for (const [mentions, author] of [
+      [[first], person],
+      [[person], viewer],
+    ] as const) {
+      render([...mentions], author);
+      await menu();
+      expect(
+        screen.queryByRole("menuitem", { name: /activity/ }),
+      ).not.toBeInTheDocument();
+      cleanup();
+    }
+  } finally {
+    cleanup();
+  }
+});
 
 it("keeps agent and human emoji reactions ordinary, without treating them as activity", () => {
   const agent = { id: "agent-reaction", authorId: "agent" };

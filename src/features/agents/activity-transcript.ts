@@ -221,6 +221,23 @@ export function promptMessage(
   };
 }
 
+/** The ids of the Buzz events a prompt was for: an exact record's first line,
+ * or an older turn's escaped event. */
+export function promptEventIds(sections: readonly PromptSection[]) {
+  return sections.flatMap(({ tag, body }) => {
+    if (!EVENT_TAGS.has(tag)) return [];
+    for (const json of [body.split("\n", 1)[0], body]) {
+      try {
+        const id = eventId(object(JSON.parse(json ?? ""))?.id);
+        if (id) return [id];
+      } catch {
+        // Not an event record.
+      }
+    }
+    return [];
+  });
+}
+
 /** Thread evidence from the prompt's `<context>`: root, channel, or unknown. */
 function promptThread(sections: PromptSection[]) {
   const context = sections.find((section) => section.tag === "context")?.body;

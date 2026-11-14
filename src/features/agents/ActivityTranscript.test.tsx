@@ -11,10 +11,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { AgentsContext } from "./react";
 import type { Agents } from "./service";
-import { ActivityTranscript } from "./ActivityTranscript";
+import { ActivityTranscript, TranscriptFocus } from "./ActivityTranscript";
 import type { TranscriptTurn } from "./activity-transcript";
 import { activityTranscript } from "./activity-transcript";
 import { withSessionPrompts } from "./session-prompts";
+import { eventBody } from "../agent-harness/turn-records";
 import { codexTurns } from "../../bundled/codex/transcript";
 import { restoreRecordedTools } from "../../bundled/codex/recorded-tools";
 import {
@@ -500,6 +501,99 @@ it("opens at the latest turn and follows new ones until the reader scrolls up", 
   expect(shared.scrollTop).toBe(0);
   view.remove();
   shared.remove();
+});
+
+it("shows the turn a message began, its prompt open, instead of the latest, once", () => {
+  const id = (n: number) => String(n).repeat(64);
+  // A retry asks the same message again, so `event` can repeat.
+  const turn = (n: number, event = n): TranscriptTurn => ({
+    turnId: `t${n}`,
+    channelId: "channel",
+    threadRootId: null,
+    triggeringEventIds: [],
+    newSession: false,
+    config: [],
+    startedAt: n,
+    endedAt: n + 1000,
+    partial: false,
+    items: [
+      {
+        id: `p${n}`,
+        at: n,
+        type: "prompt",
+        text: `Prompt ${n}`,
+        sections: [
+          {
+            tag: "buzz-event",
+            body: eventBody(
+              {
+                id: id(event),
+                pubkey: "a".repeat(64),
+                kind: 9,
+                created_at: event,
+                content: `Prompt ${n}`,
+                tags: [],
+              },
+              `Prompt ${n}`,
+            ),
+          },
+        ],
+        steer: false,
+      },
+    ],
+  });
+  const view = document.createElement("div");
+  view.style.overflowY = "auto";
+  Object.defineProperty(view, "scrollHeight", { get: () => 1000 });
+  document.body.appendChild(view);
+  const shown: string[] = [];
+  Element.prototype.scrollIntoView = function (this: HTMLElement) {
+    shown.push(this.dataset.entry ?? "");
+  };
+  const done = vi.fn();
+  const show = (turns: TranscriptTurn[], events: string[]) => (
+    <TranscriptFocus.Provider value={{ events, done }}>
+      <ActivityTranscript
+        transcript={{ turns }}
+        agentName="Sol"
+        state={() => "ended"}
+      />
+    </TranscriptFocus.Provider>
+  );
+  try {
+    // Not loaded yet: it opens at the latest and waits.
+    const { rerender } = render(show([turn(1)], ["reply", id(2)]), {
+      container: view,
+    });
+    expect(view.scrollTop).toBe(1000);
+    expect(done).not.toHaveBeenCalled();
+    rerender(show([turn(1), turn(2), turn(3)], ["reply", id(2)]));
+    expect(shown).toEqual(["item:p2"]);
+    expect(done).toHaveBeenCalledOnce();
+    const prompt = screen.getByText("Prompt 2", { selector: "p" });
+    expect(prompt.closest("details")).toHaveAttribute("open");
+    expect(prompt.closest("details")?.querySelector("summary")).toHaveAttribute(
+      "data-arrived",
+    );
+    expect(view.querySelectorAll("[data-arrived]")).toHaveLength(1);
+    // Once shown, the mark is gone, so the transcript shown again (a hidden
+    // pane reopened) does not replay it.
+    fireEvent.animationEnd(
+      prompt.closest("details")?.querySelector("summary") as Element,
+    );
+    expect(view.querySelectorAll("[data-arrived]")).toHaveLength(0);
+    // New turns no longer pull it to the latest.
+    view.scrollTop = 0;
+    rerender(show([turn(1), turn(2), turn(3), turn(4)], ["reply", id(2)]));
+    expect(view.scrollTop).toBe(0);
+    // A retried request shows its latest attempt, the one that answered.
+    rerender(show([turn(1), turn(2), turn(5, 2)], ["retry", id(2)]));
+    expect(shown.at(-1)).toBe("item:p5");
+  } finally {
+    // jsdom has no scrollIntoView of its own.
+    Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+    view.remove();
+  }
 });
 
 it("divides sessions, and shows each one's prompt once at its top", () => {

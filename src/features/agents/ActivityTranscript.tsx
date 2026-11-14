@@ -11,6 +11,7 @@ import {
 } from "react";
 import remarkGfm from "remark-gfm";
 import {
+  promptEventIds,
   sectionTitle,
   type PromptSection,
   type ToolDiff,
@@ -67,6 +68,31 @@ const PeopleContext = createContext<{
 }>({});
 
 const AgentAvatarSource = createContext<string | undefined>(undefined);
+
+/** The Buzz events a profile was opened for. A transcript showing one of
+ * their turns shows it first, once, and then reports `done`. */
+export const TranscriptFocus = createContext<
+  { events: readonly string[]; done(): void } | undefined
+>(undefined);
+
+/** The item, else the turn, that one of `events` began or posted. */
+function focusedEntry(transcript: Transcript, events: readonly string[]) {
+  const wanted = new Set(events);
+  // Newest first: a retried request's latest attempt is the one that answered.
+  for (const turn of [...transcript.turns].reverse()) {
+    const item = turn.items.find((entry) =>
+      entry.type === "prompt"
+        ? promptEventIds(entry.sections).some((id) => wanted.has(id))
+        : entry.type === "message" &&
+          !!entry.messageId &&
+          wanted.has(entry.messageId),
+    );
+    if (item) return `item:${item.id}`;
+    if (turn.triggeringEventIds.some((id) => wanted.has(id)))
+      return `turn:${turn.turnId}`;
+  }
+  return undefined;
+}
 
 type TurnState = "working" | "unknown" | "ended";
 // Icons follow ACP's standard tool kinds; tool names stay as the adapter sent them.
@@ -179,7 +205,43 @@ function useFollowLatest(content: unknown, enabled: boolean) {
     const view = enabled && following.current && scroller(timeline.current);
     if (view) view.scrollTop = view.scrollHeight;
   }, [content, enabled]);
-  return timeline;
+  return { timeline, following };
+}
+
+/** Shows the focused entry once it is loaded, opening its prompt, instead of
+ * the latest; the reader then scrolls on from there. */
+function useShowFocused(
+  transcript: Transcript,
+  timeline: { current: HTMLDivElement | null },
+  following: { current: boolean },
+) {
+  const focus = useContext(TranscriptFocus);
+  const entry = focus && focusedEntry(transcript, focus.events);
+  useLayoutEffect(() => {
+    if (!focus || !entry) return;
+    const element = [
+      ...(timeline.current?.querySelectorAll<HTMLElement>("[data-entry]") ??
+        []),
+    ].find((node) => node.dataset.entry === entry);
+    if (!element) return;
+    const details = element.querySelector("details");
+    if (details) details.open = true;
+    // Its title is marked as an arriving message is, once: the mark goes
+    // when its animation ends or is cut short, so showing the transcript
+    // again does not replay it. A repeat arrival restarts it.
+    const title = element.querySelector("summary") ?? element;
+    for (const marked of timeline.current?.querySelectorAll("[data-arrived]") ??
+      [])
+      marked.removeAttribute("data-arrived");
+    void title.offsetWidth;
+    title.setAttribute("data-arrived", "");
+    const unmark = () => title.removeAttribute("data-arrived");
+    title.addEventListener("animationend", unmark, { once: true });
+    title.addEventListener("animationcancel", unmark, { once: true });
+    following.current = false;
+    element.scrollIntoView({ block: "start" });
+    focus.done();
+  }, [focus, entry, timeline, following]);
 }
 
 /** Turn-by-turn transcript of the loaded activity, oldest first, opened at
@@ -209,7 +271,8 @@ export function ActivityTranscript({
   agentKey?: string;
   community?: string | undefined;
 }) {
-  const timeline = useFollowLatest(transcript, follow);
+  const { timeline, following } = useFollowLatest(transcript, follow);
+  useShowFocused(transcript, timeline, following);
   const agents = useContext(AgentsContext);
   const relay = useSyncExternalStore(
     agents?.subscribe ?? noSubscribe,
@@ -310,6 +373,7 @@ function Turn({
   return (
     <article
       className={styles.turn}
+      data-entry={`turn:${turn.turnId}`}
       aria-label={
         known(turn.startedAt) ? `Turn ${time(turn.startedAt)}` : "Turn"
       }
@@ -397,6 +461,7 @@ function Entry({
     <div
       className={styles.item}
       data-type={item.type}
+      data-entry={`item:${item.id}`}
       title={known(item.at) ? formatFullTimestamp(item.at / 1000) : undefined}
     >
       <Item item={item} agentName={agentName} />

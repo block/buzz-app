@@ -384,18 +384,37 @@ function MessageRowContent({
     canViewTranscript ? session?.agentActivity : undefined,
     row,
   );
-  const activityItem = canViewActivity && (
-    <MenuItem
-      onClick={() => {
-        if (canOpenLink?.(activityView)) onOpenLink(activityView);
-      }}
-    >
-      <MenuIcon>
-        <ListBulletsIcon />
-      </MenuIcon>
-      View activity
-    </MenuItem>
-  );
+  // An agent's message opens at the turn that posted it; the viewer's own
+  // message, at the turns it began for each agent it names.
+  const activityAgents = canViewActivity
+    ? [row.authorId]
+    : viewer && row.authorId === viewer && row.audience !== "agents"
+      ? [...new Set(row.mentions)].filter(
+          (pubkey) =>
+            agentPubkeys?.has(pubkey) ||
+            !!directory.profiles.get(pubkey)?.isAgent ||
+            directory.agents.some((item) => item.pubkey === pubkey),
+        )
+      : [];
+  const activityFocus = [row.id, ...(row.request ? [row.request] : [])];
+  const openActivity = (view: string) =>
+    canOpenLink?.(view) && openProfileTranscript(view, openLink, activityFocus);
+  const activityItem = activityAgents.map((pubkey) => {
+    const view = profileActivityViewTarget(pubkey);
+    return (
+      view &&
+      canOpenLink?.(view) && (
+        <MenuItem key={pubkey} onClick={() => openActivity(view)}>
+          <MenuIcon>
+            <ListBulletsIcon />
+          </MenuIcon>
+          {activityAgents.length > 1
+            ? `View ${resolveName(pubkey, directory.profiles.get(pubkey)?.name ?? pubkey.slice(0, 10))} activity`
+            : "View activity"}
+        </MenuItem>
+      )
+    );
+  });
   const avatarShape =
     row.agentEnvelope || agentPubkeys?.has(row.authorId) || profile?.isAgent
       ? "squircle"
@@ -1248,10 +1267,7 @@ function MessageRowContent({
                     <button
                       type="button"
                       className={referenceStyles.link}
-                      onClick={() => {
-                        if (canOpenLink?.(transcriptView))
-                          openProfileTranscript(transcriptView, openLink);
-                      }}
+                      onClick={() => openActivity(transcriptView)}
                     >
                       View activity
                     </button>

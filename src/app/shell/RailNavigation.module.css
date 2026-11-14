@@ -73,3 +73,29 @@
   gap: var(--space-4);
   min-width: 0;
 }
+
+/* Team collapsed: one row of round view buttons, counts on their corners. */
+.teamIcons {
+  display: flex;
+  justify-content: space-between;
+  padding-block-start: var(--space-1);
+}
+/* Capsules of one width, spread evenly across the card. */
+.teamIcon {
+  position: relative;
+  display: flex;
+}
+.teamIcon > button {
+  width: calc(var(--size-control-sm) + var(--space-1h));
+}
+.teamIconCount {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: calc(-1 * var(--space-1));
+  transform: translateY(-25%);
+  pointer-events: none;
+}
+.teamIconCount > [role="img"] {
+  background: var(--affordance-accent-prominent);
+  color: var(--text-on-accent);
+}

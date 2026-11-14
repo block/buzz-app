@@ -1,6 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 test.use({
   productionBroker: true,
+  enabledPlugins: ["buzz.drafts-and-sent"],
   readState: true,
   inboxDm: true,
   historyCounts: { alpha: 3, beta: 2 },
@@ -23,6 +24,32 @@ test("Team card opens its views and list rows drag onto sidebar cards", async ({
   await expect(
     card.getByRole("list", { name: "Recent conversations" }),
   ).toHaveCount(0);
+
+  // Team starts as one row of icons. Its list control waits beside the card's
+  // create action, clear of the icons, and shows the rows.
+  const icons = card.locator("[data-rail-team-icons]");
+  await expect(icons).toBeVisible();
+  // Team's own page sits last, after its views.
+  await expect(icons.getByRole("button")).toHaveCount(6);
+  await expect(icons.getByRole("button").last()).toHaveAttribute(
+    "data-rail-team-view",
+    "buzz.drafts-and-sent/drafts-sent",
+  );
+  await page.screenshot({ path: testInfo.outputPath("team-icons.png") });
+  await card.hover();
+  const expand = card.locator("[data-rail-team-expand]");
+  await expect(expand).toBeVisible();
+  await expect(card.locator("[data-rail-card-actions]")).toHaveCSS(
+    "opacity",
+    "1",
+  );
+  await page.screenshot({ path: testInfo.outputPath("team-icons-hover.png") });
+  await expand.click();
+  await expect(icons).toHaveCount(0);
+  await expect(card.getByText("Channels", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("team-list.png") });
+  await expand.click();
+  await expect(icons).toBeVisible();
 
   const channels = card.locator('[data-rail-team-view="channels"]');
   await channels.click();
@@ -52,9 +79,10 @@ test("Team card opens its views and list rows drag onto sidebar cards", async ({
   await dms.click();
   await expect(alpha).toHaveCount(0);
   // Opening the unread DM clears it from the card's count.
-  await expect(dms).toContainText("1");
+  const dmCount = dms.locator("xpath=..").getByRole("img");
+  await expect(dmCount).toHaveText("1");
   await index.locator("[data-activity-row] [data-conversation-row]").click();
-  await expect(dms).not.toContainText("1");
+  await expect(dmCount).toHaveCount(0);
   await channels.click();
   await expect(alpha).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("team-card.png") });

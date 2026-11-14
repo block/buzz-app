@@ -1379,7 +1379,10 @@ available rather than silently discarding it.
   A turn's **Thread** or **Channel** label
   opens that conversation. Choosing an agent in the activity under a message,
   or a Working now agent whose conversation is known, opens that
-  conversation's transcript. Working indicators describe current work,
+  conversation's transcript. **View activity** in an agent message's menu,
+  or in the menu of your own message that names an agent, opens that
+  conversation's transcript at the turn the message began or answered, with
+  its prompt expanded, when that turn is loaded. Working indicators describe current work,
   not a guarantee that an agent is available or that a message was delivered.
   Local work includes conversation wakes from plugins, watches, and timers.
   These wakes have no message link of their own.

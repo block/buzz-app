@@ -47,12 +47,14 @@ import {
 } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AgentAvatar } from "../../features/agents/AgentAvatar";
+import { TranscriptFocus } from "../../features/agents/ActivityTranscript";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import type { PanelProps } from "../../features/panels/service";
 import {
   claimProfileTranscript,
+  claimTranscriptFocus,
   profileActivityViewKey,
   profileTranscriptRequest,
   subscribeProfileTranscripts,
@@ -158,11 +160,30 @@ export function ProfilePanel({
   );
   const [held, setHeld] = useState<number>();
   const [offered, setOffered] = useState(0);
+  // The latest opening's message, until its transcript has shown it.
+  const [focus, setFocus] = useState<{
+    opening: number;
+    events: readonly string[];
+  }>();
   // biome-ignore lint/correctness/useExhaustiveDependencies: each new opening is claimed.
   useEffect(() => {
     const claimed = claimProfileTranscript(target);
-    if (claimed !== undefined) setHeld(claimed);
+    if (claimed === undefined) return;
+    setHeld(claimed);
+    const events = claimTranscriptFocus(claimed);
+    setFocus(events && { opening: claimed, events });
   }, [asked, target]);
+  const shown = useMemo(
+    () =>
+      focus && {
+        events: focus.events,
+        done: () =>
+          setFocus((current) =>
+            current?.opening === focus.opening ? undefined : current,
+          ),
+      },
+    [focus],
+  );
   const pending = asked ?? held;
   const request =
     pending !== undefined && pending > offered ? pending : undefined;
@@ -194,43 +215,47 @@ export function ProfilePanel({
     owned.agent.place !== "elsewhere"
   )
     return (
-      <OwnedAgentProfile
+      <TranscriptFocus.Provider value={shown}>
+        <OwnedAgentProfile
+          linkRenderers={linkRenderers}
+          target={target}
+          key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
+          agents={agents}
+          communities={communities}
+          initialActivity={!!activityKey}
+          initialTranscript={initialTranscript}
+          pubkey={pubkey}
+          relay={relay}
+          session={connection.session}
+          scope={panelCommunity(connection.scope, connection.viewer)}
+          navigation={navigation}
+          context={context}
+          openConversation={openConversation}
+          close={close}
+        />
+      </TranscriptFocus.Provider>
+    );
+  return (
+    <TranscriptFocus.Provider value={shown}>
+      <ProfileDetails
+        renderPersonInfo={renderPersonInfo}
         linkRenderers={linkRenderers}
-        target={target}
         key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
+        initialTab={activityKey ? "activity" : "info"}
+        initialTranscript={initialTranscript}
+        session={connection.session}
+        pubkey={pubkey}
+        agentHint={profileAgentHint(target) || !!activityKey}
+        context={context}
+        navigation={navigation}
         agents={agents}
         communities={communities}
-        initialActivity={!!activityKey}
-        initialTranscript={initialTranscript}
-        pubkey={pubkey}
-        relay={relay}
-        session={connection.session}
-        scope={panelCommunity(connection.scope, connection.viewer)}
-        navigation={navigation}
-        context={context}
+        scope={connection.scope}
+        viewer={connection.viewer}
         openConversation={openConversation}
         close={close}
       />
-    );
-  return (
-    <ProfileDetails
-      renderPersonInfo={renderPersonInfo}
-      linkRenderers={linkRenderers}
-      key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
-      initialTab={activityKey ? "activity" : "info"}
-      initialTranscript={initialTranscript}
-      session={connection.session}
-      pubkey={pubkey}
-      agentHint={profileAgentHint(target) || !!activityKey}
-      context={context}
-      navigation={navigation}
-      agents={agents}
-      communities={communities}
-      scope={connection.scope}
-      viewer={connection.viewer}
-      openConversation={openConversation}
-      close={close}
-    />
+    </TranscriptFocus.Provider>
   );
 }
 function OwnedAgentProfile({

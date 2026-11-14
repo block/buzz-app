@@ -376,3 +376,23 @@ html[data-keyboard-navigation] .context summary:focus-visible {
       opacity var(--duration-fast) var(--easing-enter);
   }
 }
+
+/* Arriving at a message's turn briefly marks its title with the message
+   arrival wash: held about a second, then a slow fade. */
+.timeline [data-arrived] {
+  animation: entry-arrived calc(var(--duration-settle) * 10) ease-out;
+}
+@keyframes entry-arrived {
+  0%,
+  45% {
+    background-color: var(--surface-message-highlight);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .timeline [data-arrived] {
+    animation-timing-function: steps(1, end);
+  }
+}

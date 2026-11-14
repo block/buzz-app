@@ -450,6 +450,42 @@ it("keeps failed first-reaction delivery visible and retries the same event", as
   });
   expect(publish.mock.calls[1]?.[0]).toEqual(original);
 });
+it("dismisses a failed reaction so the message can be reacted to again", async () => {
+  const publish = vi.fn(async (_event: RelayEvent) => {
+    throw new PublishRejected(
+      "This event is too old to retry and was not found on the relay.",
+    );
+  });
+  const h = harness([react(other)], publish);
+  const view = render(<h.Controls />);
+  const pill = () => {
+    const button = within(view.container)
+      .getByTestId("reaction-row")
+      .querySelector("button[data-reaction]");
+    if (!button) throw new Error("Reaction missing");
+    return button;
+  };
+  fireEvent.click(pill());
+  const status = await within(view.container).findByRole("status");
+  expect(status.textContent).toContain("too old to retry");
+  // The unsettled reaction blocks every toggle on this message.
+  expect(pill().getAttribute("aria-disabled")).toBe("true");
+  const failed = publish.mock.calls[0]?.[0];
+
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss reaction" }));
+  await waitFor(() => expect(h.session.outbox?.snapshot()).toHaveLength(0));
+  expect(screen.queryByRole("button", { name: "Retry reaction" })).toBeNull();
+  expect(pill().getAttribute("aria-disabled")).toBe("false");
+  // Dismissing forgets local intent without publishing anything.
+  expect(publish).toHaveBeenCalledTimes(1);
+
+  publish.mockImplementation(async () => undefined as never);
+  fireEvent.click(pill());
+  await waitFor(() => expect(publish).toHaveBeenCalledTimes(2));
+  // Reacting again signs a fresh event rather than replaying the failed one.
+  expect(publish.mock.calls[1]?.[0]?.id).not.toBe(failed?.id);
+  expect(publish.mock.calls[1]?.[0]?.content).toBe(failed?.content);
+});
 it("prevents duplicate submissions and unavailable-message actions", async () => {
   const h = harness();
   const view = render(<h.Controls disabled />);

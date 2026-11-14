@@ -371,6 +371,12 @@ and are asked to sign in again in Buzz.
   color; on your own messages they take a neutral gray instead. A reaction
   never shows a `:shortcode:` as text: it draws the community's custom emoji
   with that name, or a neutral smiley when there is none or its image can't load.
+  If a reaction can't be delivered, the message shows why with **Retry
+  reaction** and **Dismiss reaction**. That message's reactions stay locked
+  until the reaction is delivered or dismissed. Dismissing only clears the
+  pending attempt on this device and never undoes a reaction that already
+  arrived; the emoji then shows what the relay holds, and clicking it adds or
+  removes your reaction as usual.
 - In the fullscreen video viewer, comments and emoji reactions at the current
   frame stay attached to that video when you move through a thread's media.
 - With **Voice Notes** enabled, use the microphone in the composer to record

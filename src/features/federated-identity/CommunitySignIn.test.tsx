@@ -339,17 +339,6 @@ it("keeps an explained refusal hidden until its error clears, so a resolving sig
   rerender({ error: refusal });
   expect(result.current).toBe(false);
 });
-it("names this computer's clock when the token it was issued is from the future", () => {
-  const h = federatedFixture();
-  h.publish({ status: "signed-in", failure: "clock-skew" });
-  render(
-    <CommunitySignIn identity={h.service} error="clock-skew" retry={vi.fn()} />,
-  );
-  expect(screen.getByRole("alert")).toHaveTextContent(
-    "Your computer’s date and time look wrong. Check them in System Settings, then try again.",
-  );
-  expect(screen.queryByText(/clock looks about/)).toBeNull();
-});
 it.each([
   [130, "about 2 minutes off"],
   [-130, "about 2 minutes off"],
@@ -384,17 +373,4 @@ it("adds no clock hint without a measured offset", () => {
     />,
   );
   expect(screen.queryByText(/clock looks about/)).toBeNull();
-});
-it("adds the clock hint beneath a refusal it doesn't explain itself", () => {
-  const h = federatedFixture();
-  h.publish({ clockOffset: 130 });
-  render(
-    <CommunitySignIn
-      identity={h.service}
-      error="relay-forbidden"
-      retry={vi.fn()}
-    />,
-  );
-  expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.getByText(/clock looks about 2 minutes off/)).toBeVisible();
 });

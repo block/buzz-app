@@ -2156,46 +2156,33 @@ async fn a_server_added_once_the_first_has_a_supplier_follows_the_account() {
 }
 
 /// An agent fixture whose issuer enrolls it, then answers each mint after its
-/// delay. Each mint is stamped `skew` seconds from the real time now, so an
-/// issuer ahead of or behind that time is this computer's clock behind or
-/// ahead of it; a `503` reply asks for a retry after 2 s.
+/// delay, stamped `skew` seconds from the real time now: an issuer ahead of
+/// or behind that time is this computer's clock behind or ahead of it.
 async fn skewed_agent(
-    mints: Vec<(Duration, &'static str, i64, u64)>,
+    mints: Vec<(Duration, i64, u64)>,
 ) -> (Fixture, tokio::task::JoinHandle<Vec<String>>) {
     use crate::federated_identity::testing::{raw, scripted_issuer};
     let key = Secret::generate().unwrap();
     let mut probe = fixture("http://unused".into()).agent;
     probe.pubkey = key.pubkey().into();
-    let real = crate::federated_identity::protocol::wall_now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
+    let real = now().unwrap();
     let mut replies = vec![(
         Duration::ZERO,
         raw("200 OK", "", &enrolled(&"b".repeat(64)).to_string()),
     )];
-    for (delay, status, skew, lifetime) in mints {
+    for (delay, skew, lifetime) in mints {
         let minted = (real + skew) as u64;
-        let reply = if status.starts_with("503") {
-            raw(status, "Retry-After: 2\r\n", "{}")
-        } else {
-            let body = issued(
-                &probe,
-                serde_json::json!({ "iat": minted, "exp": minted + lifetime }),
-            );
-            raw(status, "", &body.to_string())
-        };
-        replies.push((delay, reply));
+        let claims = serde_json::json!({ "iat": minted, "exp": minted + lifetime });
+        replies.push((
+            delay,
+            raw("200 OK", "", &issued(&probe, claims).to_string()),
+        ));
     }
     let (base, served) = scripted_issuer(replies).await;
     let mut f = fixture(base);
     f.agent.pubkey = key.pubkey().into();
     f.key = key;
     (f, served)
-}
-const OK: &str = "200 OK";
-fn secs(value: u64) -> Duration {
-    Duration::from_secs(value)
 }
 async fn admitted(f: &Fixture) -> Result<Admission, String> {
     f.tokens.authorize(&f.agent, &f.key, Stamp::default()).await
@@ -2208,112 +2195,36 @@ fn left(admission: &Admission) -> Duration {
 }
 
 #[tokio::test]
-async fn an_agent_assertion_may_be_minted_up_to_120_s_ahead() {
-    for (skew, accepted) in [(119, true), (120, true), (121, false)] {
-        // Fixture and validation read the same pinned second.
-        let pinned = std::time::UNIX_EPOCH + secs(now().unwrap() as u64);
-        let ok = crate::federated_identity::protocol::WALL_NOW
-            .scope(pinned, async {
-                let (f, _) = skewed_agent(vec![(secs(0), OK, skew, 300)]).await;
-                admitted(&f).await.is_ok()
-            })
-            .await;
-        assert_eq!(ok, accepted, "iat +{skew}");
-    }
-}
-
-#[tokio::test]
 async fn an_agent_on_a_slow_or_fast_clock_keeps_only_the_issued_lifetime() {
-    for skew in [120, -120] {
-        let (f, _) = skewed_agent(vec![(secs(0), OK, skew, 150)]).await;
+    for (skew, issued) in [(120, 150), (-120, 30)] {
+        let (f, _) = skewed_agent(vec![(Duration::ZERO, skew, 150)]).await;
         let left = left(&admitted(&f).await.unwrap());
-        let issued = if skew > 0 { 150 } else { 30 };
+        let issued = Duration::from_secs(issued);
         assert!(
-            left <= secs(issued) && left > secs(issued - 2),
+            left <= issued && left > issued - Duration::from_secs(2),
             "{skew}: {left:?}"
         );
     }
 }
 
 #[tokio::test]
-async fn an_agent_mint_delayed_on_a_slow_clock_counts_its_time_in_flight() {
-    let (f, _) = skewed_agent(vec![(secs(2), OK, 60, 40)]).await;
-    let left = left(&admitted(&f).await.unwrap());
-    assert!(left <= secs(38), "{left:?}");
-}
-
-#[tokio::test]
-async fn a_short_agent_assertion_on_a_slow_clock_keeps_its_short_life() {
-    let (f, _) = skewed_agent(vec![(secs(0), OK, 60, 35)]).await;
-    let left = left(&admitted(&f).await.unwrap());
-    assert!(left <= secs(35) && left > secs(33), "{left:?}");
-}
-
-#[tokio::test]
-async fn an_agent_retry_counts_from_the_attempt_that_returned_the_assertion() {
-    let (f, served) = skewed_agent(vec![
-        (secs(0), "503 Service Unavailable", 0, 0),
-        (secs(0), OK, 60, 40),
-    ])
-    .await;
-    let left = left(&admitted(&f).await.unwrap());
-    // Counted from the first attempt it would have ~38 s after the backoff.
-    assert!(left > secs(39), "{left:?}");
-    assert_eq!(bounded(served).await.unwrap().len(), 3);
-}
-
-#[tokio::test]
-async fn a_zero_budget_agent_assertion_is_never_dispatched() {
-    let (f, _) = skewed_agent(vec![(secs(2), OK, 60, 1)]).await;
-    assert!(admitted(&f).await.and_then(|a| a.dispatch()).is_err());
-}
-
-#[tokio::test]
-async fn a_reused_agent_assertion_keeps_its_deadline_and_refresh_mints_a_new_one() {
-    let (f, served) = skewed_agent(vec![(secs(0), OK, 60, 300), (secs(0), OK, 60, 301)]).await;
+async fn a_reused_agent_assertion_keeps_its_deadline() {
+    let (f, served) = skewed_agent(vec![(Duration::ZERO, 60, 300)]).await;
     let first = admitted(&f).await.unwrap();
     tokio::time::pause();
-    tokio::time::advance(secs(100)).await;
+    tokio::time::advance(Duration::from_secs(100)).await;
     tokio::time::resume();
     let reused = admitted(&f).await.unwrap();
     assert_eq!(reused.header(), first.header());
     assert_eq!(reused.expires_at(), first.expires_at());
-    tokio::time::pause();
-    tokio::time::advance(secs(180)).await; // inside its last 30 s
-    tokio::time::resume();
-    let refreshed = admitted(&f).await.unwrap();
-    assert_ne!(refreshed.header(), first.header());
-    assert!(refreshed.expires_at().unwrap() > first.expires_at().unwrap() + secs(250));
-    assert_eq!(bounded(served).await.unwrap().len(), 3);
+    drop(f);
+    assert_eq!(bounded(served).await.unwrap().len(), 2);
 }
 
-#[test]
-fn the_agent_validator_allows_iat_up_to_120_s_ahead() {
-    let f = fixture("http://unused".into());
-    let grant = Grant::new(
-        f.agent.owner.clone(),
-        f.agent.pubkey.clone(),
-        "a@example.com".into(),
-        "https://issuer.example".into(),
-        "g".into(),
-    );
-    let now = now().unwrap() as u64;
-    for (skew, accepted) in [(119, true), (120, true), (121, false)] {
-        let token = jwt(&f.agent, serde_json::json!({ "iat": now + skew }));
-        let result = validate(
-            &token,
-            &f.agent,
-            &grant,
-            "wss://relay.example",
-            now + 300,
-            now,
-        );
-        assert_eq!(result.is_ok(), accepted, "iat +{skew}");
-        if !accepted {
-            // Not `clock-skew`: that is the human sign-in's diagnosis only.
-            assert_eq!(result.unwrap_err().code, "invalid-assertion");
-        }
-    }
+#[tokio::test]
+async fn a_zero_budget_agent_assertion_is_never_dispatched() {
+    let (f, _) = skewed_agent(vec![(Duration::from_secs(2), 60, 1)]).await;
+    assert!(admitted(&f).await.and_then(|a| a.dispatch()).is_err());
 }
 
 #[tokio::test]

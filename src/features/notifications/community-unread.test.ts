@@ -42,7 +42,12 @@ function fakeSession() {
     status: "ready",
     data: { muted: [] },
   };
-  let channels: { id: string; members: string[]; huddle?: true }[] = [];
+  let channels: {
+    id: string;
+    members: string[];
+    huddle?: true;
+    cached?: true;
+  }[] = [];
   let listStatus = "loading";
   const unread = new Map<string, Partial<UnreadSnapshot>>();
   let liveStatus = "connected";
@@ -91,6 +96,11 @@ function fakeSession() {
     /** Lists fresh joined channels while the roster is still loading. */
     load(...ids: string[]) {
       channels = ids.map((id) => ({ id, members: [viewer] }));
+      list.emit();
+    },
+    /** Lists channels repair cannot read while the roster is still loading. */
+    loadUnreadable(channel: { id: string; members: string[]; cached?: true }) {
+      channels = [channel];
       list.emit();
     },
     join(...ids: string[]) {
@@ -228,6 +238,10 @@ it("keys every joined community's unread, opening its session and repair once", 
   const unreads = createCommunityUnreads(communities);
   cleanups.push(unreads.dispose);
   // Repair reads the roster's channels, so it waits for one it can read.
+  expect(first.ensure).not.toHaveBeenCalled();
+  first.loadUnreadable({ id: "a", members: [viewer], cached: true });
+  expect(first.ensure).not.toHaveBeenCalled();
+  first.loadUnreadable({ id: "a", members: ["someone-else"] });
   expect(first.ensure).not.toHaveBeenCalled();
   first.load("a");
   expect(first.ensure).toHaveBeenCalledTimes(1);

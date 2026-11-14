@@ -246,6 +246,10 @@ export function createThreadFollowSync({
   /** Newest head of every coordinate we don't own, cached in the journal. */
   const peers = () => Object.values(stored.peers ?? {});
   let complete = false;
+  // Startup gate (§6, Option 1): taps wait for this writer's first complete
+  // recovery; set also refuses while an owned head is unreadable. Cached
+  // choices still display.
+  let ready = false;
   let merged: ThreadFollows | undefined;
   let snapshot: FollowSyncSnapshot = { status: "loading", complete: false };
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -395,6 +399,7 @@ export function createThreadFollowSync({
   const unreadable = () =>
     peers().some((head) => !head.payload) || ownUnreadable();
   const UNREADABLE = "Follow choices are unreadable on this device";
+  const NOT_READY = "Follow choices are not ready. Connect and try again.";
   const INCOMPLETE =
     "Follow choices can't sync without a complete read of this account";
   /** Merged choices of every coordinate (rules: greater `at`, unfollow ties). */
@@ -483,6 +488,7 @@ export function createThreadFollowSync({
         await reader.readStateSnapshot({ signal, priority, fresh: true }),
         signal,
       );
+      ready = true;
       return true;
     }
     await ingest(
@@ -756,6 +762,7 @@ export function createThreadFollowSync({
       }
       // Local only: never queued behind signing, sending or reads (§3).
       return (async () => {
+        if (!ready) throw new Error(NOT_READY);
         await save((current, journal) => {
           if (ownUnreadable(current)) throw new Error(UNREADABLE);
           const placed = place(shared(current, journal), key, follow);

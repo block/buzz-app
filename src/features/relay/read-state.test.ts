@@ -2081,6 +2081,75 @@ describe("publication fences", () => {
     ).toThrow("capacity reached");
   }, 30000);
 
+  it("a larger follow observed during a recovery fetch after a gap keeps its size", async () => {
+    const f = fixture(T);
+    const half = 4 * 1024 * 1024;
+    const filler = foreignAt(f.key.pubkey, 1, "x".repeat(half - 3000));
+    const small = foreignAt(f.key.pubkey, 0);
+    const cut = [small, filler];
+    let held = false;
+    let release!: () => void;
+    const fetched = new Promise<void>((resolve) => (release = resolve));
+    let started!: () => void;
+    const fetching = new Promise<void>((resolve) => (started = resolve));
+    const owner = snapshotted(f, [small, filler])({
+      reader: {
+        ...f.reader,
+        async readStateSnapshot() {
+          const events = [...cut];
+          if (held) {
+            started();
+            await fetched;
+          }
+          return events;
+        },
+      },
+    });
+    await owner.ready;
+    await owner.refresh();
+    // A gap clears the basis; the recovery response is cut before F2.
+    owner.stale();
+    held = true;
+    const recovery = owner.refresh();
+    await fetching;
+    owner.observeSize({
+      ...foreignAt(f.key.pubkey, 0, "x".repeat(half)),
+      id: "e".repeat(64),
+      created_at: T + 1,
+    });
+    release();
+    await recovery;
+    expect(() =>
+      owner.admit([foreignAt(f.key.pubkey, 2, "x".repeat(4000))]),
+    ).toThrow("capacity reached");
+  }, 30000);
+
+  it("an overfull merged override union still publishes frontiers and fails override actions", async () => {
+    const f = fixture(T);
+    // Peer groups whose union cannot fit one primary blob.
+    const markers = Array.from({ length: 150 }, (_, n) =>
+      peerUnreadMarker(f, `c${n}`.padEnd(120, "x"), 0, {
+        slot: n.toString(16).padStart(32, "b"),
+        createdAt: T,
+      }),
+    );
+    const owner = snapshotted(f, markers)();
+    await owner.ready;
+    await owner.refresh();
+    await owner.read("room", T, () => true);
+    await owner.flush();
+    expect(ownerStatus(owner)).toBe("reconciled");
+    const [primary] = Object.values(f.own());
+    expect(primary?.room).toBe(T);
+    // Last published groups (none), never a truncated merged set.
+    expect(
+      Object.keys(primary ?? {}).some((key) => key.startsWith("ov_")),
+    ).toBe(false);
+    await expect(owner.markLocalUnread("other", () => true)).rejects.toThrow(
+      "capacity reached",
+    );
+  }, 30000);
+
   it("takes a complete snapshot before the first send, and again after a gap", async () => {
     const f = fixture(T);
     const full = snapshotted(f, foreign(f.key.pubkey, READ_SNAPSHOT_EVENTS))();

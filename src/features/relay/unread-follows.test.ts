@@ -586,3 +586,26 @@ it("shows a follow publication error that happens after the tap, and retries it"
   expect(retry).toHaveBeenCalledOnce();
   stop();
 });
+
+it("startup gate: a refused Inbox follow changes nothing while mark unread still works", async () => {
+  const saved = memoryThreadFollows();
+  const follows: ThreadFollowStorage = {
+    ...saved,
+    async set() {
+      throw new Error("Follow choices are not ready. Connect and try again.");
+    },
+  };
+  const { owner, unread, settled } = await setup(follows);
+  const root = event(peer, 10, []);
+  const answer = reply(peer, 20, root);
+  owner.accept([root, answer]);
+  await settled(answer);
+  await expect(unread.follow("c0", root.id, true)).rejects.toThrow("not ready");
+  expect(unread.following("c0", root.id)).toBe(false);
+  await unread.markUnreadLocal({
+    kind: "message",
+    channelId: "c0",
+    messageId: answer.id,
+  });
+  await unread.markUnreadLocal({ kind: "channel", channelId: "c1" });
+});

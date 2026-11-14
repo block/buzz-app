@@ -28,6 +28,7 @@ import {
   changeOverride,
   overrideActive,
   uint32,
+  type ReadBlob,
   type ReadState,
   type ParsedReadBlob,
 } from "./read-state-model";
@@ -627,9 +628,11 @@ export function createReadState({
   function noteSize(event: RelayEvent) {
     const coordinate = dTag(event);
     const prior = sizeVersions.get(coordinate);
-    if (!snapshotSizes || (prior && newer(prior, event) !== event)) return;
+    if (prior && newer(prior, event) !== event) return;
+    // Remember the newest version even without a basis, so a snapshot
+    // installed after a gap cannot restore an older, smaller size.
     sizeVersions.set(coordinate, event);
-    snapshotSizes.set(coordinate, encodedBytes(event));
+    snapshotSizes?.set(coordinate, encodedBytes(event));
   }
   // Sizes of a complete snapshot, kept current by every later observation.
   function basis(events: readonly RelayEvent[]) {
@@ -946,11 +949,23 @@ export function createReadState({
           // channel override groups, which only the primary carries.
           const ownFrontiers = advanceOwn(journal.own);
           const merged = localState(journal);
-          const groups = groupBlob(
-            journal.clientId,
-            { frontiers: ownFrontiers, overrides: journal.state.overrides },
-            (key) => merged.frontiers[key],
-          );
+          const { clientId } = journal;
+          const primary = (overrides: ReadState["overrides"]) =>
+            groupBlob(
+              clientId,
+              { frontiers: ownFrontiers, overrides },
+              (key) => merged.frontiers[key],
+            );
+          // When the merged groups overfill the primary, republish the last
+          // published groups, compacted against current frontiers so they can
+          // only shrink: frontiers still publish, and override actions fail
+          // visibly in changeGroups.
+          let groups: ReadBlob;
+          try {
+            groups = primary(journal.state.overrides);
+          } catch {
+            groups = primary(seen[0]?.parsed.state.overrides ?? {});
+          }
           const plan = packReadState(
             journal.clientId,
             ownFrontiers,

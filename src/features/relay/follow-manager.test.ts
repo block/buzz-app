@@ -851,13 +851,18 @@ it("D9: other devices' slots never count against our 16", async () => {
 it("D1: without a complete snapshot, flush publishes nothing and keeps the work", async () => {
   const r = relay();
   const disk = memoryStorage();
+  // A tap saved after complete recovery, then a restart on a host without
+  // the complete snapshot.
+  const first = setup(r, { now: 1000 }, { storage: disk.storage });
+  await first.refresh();
+  await first.set(K, true);
+  first.dispose();
   const sync = setup(
     r,
     { now: 1000 },
     { storage: disk.storage, snapshot: false },
   );
   await sync.refresh();
-  await sync.set(K, true);
   await sync.flush();
   expect(r.published).toHaveLength(0);
   expect(sync.snapshot()).toMatchObject({ status: "failed" });
@@ -927,3 +932,55 @@ for (const retry of [false, true])
     expect(r.published).toHaveLength(1);
     expect(sync.snapshot().error).toContain("unreadable");
   });
+
+it("startup gate: a tap before the first complete recovery is refused and changes nothing", async () => {
+  const r = relay();
+  const disk = memoryStorage();
+  const sync = setup(r, { now: 1000 }, { storage: disk.storage });
+  await expect(sync.set(K, true)).rejects.toThrow(
+    "Follow choices are not ready. Connect and try again.",
+  );
+  expect(sync.read().get(K)).toBeUndefined();
+  // Nothing was saved.
+  expect(() => disk.backup()).toThrow();
+  // Without the complete snapshot, recovery never opens the gate.
+  const partial = setup(r, { now: 1000 }, { snapshot: false });
+  await partial.refresh();
+  await expect(partial.set(K, true)).rejects.toThrow("not ready");
+});
+
+it("startup gate: a tap after complete recovery works, and a new writer starts closed", async () => {
+  const r = relay();
+  const disk = memoryStorage();
+  const sync = setup(r, { now: 1000 }, { storage: disk.storage });
+  await sync.refresh();
+  await sync.set(K, true);
+  expect(sync.read().get(K)).toBe(true);
+  sync.dispose();
+  // Recreated on the same journal while offline: cached choices show, and
+  // taps wait for this writer's own complete recovery.
+  const offline = setup(
+    r,
+    { now: 1000 },
+    {
+      storage: disk.storage,
+      reader: {
+        read: async () => {
+          throw new Error("Relay is disconnected");
+        },
+        readStateSnapshot: async () => {
+          throw new Error("Relay is disconnected");
+        },
+      } as unknown as RelayReader,
+    },
+  );
+  await offline.refresh();
+  expect(offline.read().get(K)).toBe(true);
+  await expect(offline.set(K, false)).rejects.toThrow("not ready");
+  expect(offline.read().get(K)).toBe(true);
+  offline.dispose();
+  const again = setup(r, { now: 1000 }, { storage: disk.storage });
+  await again.refresh();
+  await again.set(K, false);
+  expect(again.read().get(K)).toBe(false);
+});

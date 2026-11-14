@@ -4,7 +4,6 @@ import { PROMPTS_BUDGET, sessionPrompts } from "./session-prompts";
 import {
   removeStandaloneSessions,
   STANDALONE_DAYS,
-  STANDALONE_LIMIT,
   STANDALONE_PREFIX,
   standaloneSessions,
 } from "./standalone-sessions";
@@ -61,7 +60,7 @@ it("outlasts the saved prompts dropping its sessions", async () => {
   ).toEqual(["once"]);
 });
 
-it("keeps a session for as long as Usage reads back, then drops it", async () => {
+it("keeps a session for as long as Usage reads back, then drops its day", async () => {
   const storage = memory();
   let now = 0;
   const sessions = standaloneSessions(storage, "pi", AGENT, () => now);
@@ -70,39 +69,90 @@ it("keeps a session for as long as Usage reads back, then drops it", async () =>
   expect(sessions.list().map(({ id }) => id)).toEqual(["old"]);
   now += 1;
   expect(sessions.list()).toEqual([]);
+  // Its day's value stays until all of that day is past keeping.
+  await sessions.add("late");
+  expect(storage.get(`${STANDALONE_PREFIX}pi:${AGENT}:0`)).not.toBeNull();
+  now = (STANDALONE_DAYS + 1) * DAY;
   await sessions.add("new");
+  expect(storage.get(`${STANDALONE_PREFIX}pi:${AGENT}:0`)).toBeNull();
   expect(
-    JSON.parse(storage.get(`${STANDALONE_PREFIX}pi:${AGENT}`) ?? ""),
+    JSON.parse(
+      storage.get(`${STANDALONE_PREFIX}pi:${AGENT}:${STANDALONE_DAYS + 1}`) ??
+        "",
+    ),
   ).toEqual({ version: 1, sessions: [["new", now]] });
+  expect(sessions.list().map(({ id }) => id)).toEqual(["late", "new"]);
 });
 
-it("keeps at most the newest sessions past its limit", async () => {
+it("keeps every session in the window, however often turns run", async () => {
+  // One timer at its shortest interval, a minute, for 30 days: far past any
+  // fixed count, and its oldest start must still be counted.
   const storage = memory();
-  const many = Array.from(
-    { length: STANDALONE_LIMIT },
-    (_, index): [string, number] => [`s${index}`, Date.now()],
+  const start = 100 * DAY;
+  const minutes = 30 * 1_440;
+  for (let day = 0; day < 30; day += 1)
+    await storage.set(
+      `${STANDALONE_PREFIX}pi:${AGENT}:${100 + day}`,
+      JSON.stringify({
+        version: 1,
+        sessions: Array.from({ length: 1_440 }, (_, minute) => [
+          `s${day * 1_440 + minute}`,
+          start + (day * 1_440 + minute) * 60_000,
+        ]),
+      }),
+    );
+  const sessions = standaloneSessions(
+    storage,
+    "pi",
+    AGENT,
+    () => start + minutes * 60_000,
   );
-  await storage.set(
-    `${STANDALONE_PREFIX}pi:${AGENT}`,
-    JSON.stringify({ version: 1, sessions: many }),
-  );
-  const sessions = standaloneSessions(storage, "pi", AGENT);
   await sessions.add("newest");
   const ids = sessions.list().map(({ id }) => id);
-  expect(ids).toHaveLength(STANDALONE_LIMIT);
-  expect(ids[0]).toBe("s1");
+  expect(ids).toHaveLength(minutes + 1);
+  expect(ids[0]).toBe("s0");
   expect(ids.at(-1)).toBe("newest");
+  // Each turn rewrites only its own day's value.
+  for (const key of storage.keys())
+    expect(storage.get(key)?.length ?? 0).toBeLessThan(200_000);
 });
 
-it("drops damaged entries and reads a damaged value as none", async () => {
+it("keeps entries with more fields than it reads", async () => {
   const storage = memory();
-  const key = `${STANDALONE_PREFIX}pi:${AGENT}`;
+  let now = 5 * DAY;
+  const key = `${STANDALONE_PREFIX}pi:${AGENT}:5`;
+  await storage.set(
+    key,
+    JSON.stringify({ version: 1, sessions: [["s1", now, "timer/daily"]] }),
+  );
+  const sessions = standaloneSessions(storage, "pi", AGENT, () => now);
+  now += 1;
+  await sessions.add("s2");
+  expect(sessions.list()).toEqual([
+    { id: "s1", at: 5 * DAY },
+    { id: "s2", at: now },
+  ]);
+  expect(JSON.parse(storage.get(key) ?? "").sessions[0]).toEqual([
+    "s1",
+    5 * DAY,
+    "timer/daily",
+  ]);
+});
+
+it("drops damaged entries and reads a damaged value or key as none", async () => {
+  const storage = memory();
+  const now = Date.now();
+  const key = `${STANDALONE_PREFIX}pi:${AGENT}:${Math.floor(now / DAY)}`;
+  await storage.set(
+    `${STANDALONE_PREFIX}pi:${AGENT}:soon`,
+    JSON.stringify({ version: 1, sessions: [["bad key", now]] }),
+  );
   await storage.set(
     key,
     JSON.stringify({
       version: 1,
       sessions: [
-        ["ok", Date.now()],
+        ["ok", now],
         ["", 1],
         ["x".repeat(257), 1],
         [3, 1],

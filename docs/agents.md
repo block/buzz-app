@@ -1901,7 +1901,9 @@ Streamed responses repeat their usage on each line, so each request is counted
 once. A watch's or timer's standalone turn opens with no context, so only the
 app's record of the session it started says it is the agent's. That record is
 kept apart from saved prompts, for 32 days from the session's start, longer than
-Usage reads back. The snapshot has no `channelId`, and a session from before that
+Usage reads back, with no limit on how many sessions it holds. Each day's starts
+are saved as one value, and a day's value is removed once all of it is past
+keeping. The snapshot has no `channelId`, and a session from before that
 record was kept is not counted.
 
 Codex finds the agent's threads through app-server by the agent's name in their

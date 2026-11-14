@@ -342,7 +342,11 @@ export const TOOLS: readonly Tool[] = [
     { channel: str, pubkeys: strs },
     ["pubkeys"],
   ),
-  tool("users", "Profiles by pubkey or name.", { ids: strs, q: str }),
+  tool(
+    "users",
+    "Profiles by pubkey, name or verified username, with any verified name.",
+    { ids: strs, q: str },
+  ),
   tool("dm", "Open a DM; returns its channel.", { to: strs }, ["to"]),
   tool(
     "mem_get",
@@ -1039,26 +1043,57 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       !ids.length && q && [...q].length <= PROFILE_SEARCH_QUERY_MAX
         ? await client.searchProfiles?.(q, PROFILE_SEARCH_MAX)
         : undefined;
-    const profiles =
+    const profiles = newest(
       named?.filter((event) => event.kind === 0) ??
-      (await client.query([
-        ids.length
-          ? { kinds: [0], authors: ids, limit: ids.length }
-          : { kinds: [0], search: q, limit: 100 },
-      ]));
-    const rows = newest(profiles)
-      .map((event) => {
-        const profile = parse(event.content);
-        const name = profileName(profile) ?? "";
+        (await client.query([
+          ids.length
+            ? { kinds: [0], authors: ids, limit: ids.length }
+            : { kinds: [0], search: q, limit: 100 },
+        ])),
+    );
+    // Name search also gives each found person's verified name, and finds
+    // people by it, some with no profile; elsewhere they are read.
+    const verified = named
+      ? tools.verifiedProjection(named)
+      : await tools.verifiedNames(profiles.map((event) => event.pubkey));
+    const order = named
+      ? named.map((event) =>
+          event.kind === 0
+            ? event.pubkey
+            : (tools.verifiedSubject(event) ?? ""),
+        )
+      : profiles.map((event) => event.pubkey);
+    const byKey = new Map(profiles.map((event) => [event.pubkey, event]));
+    const rows = [...new Set(order)]
+      .filter((key) => byKey.has(key) || verified.has(key))
+      .map((key) => {
+        const event = byKey.get(key);
+        const profile = event ? parse(event.content) : {};
+        const person = verified.get(key);
+        const name = profileName(profile) ?? person?.displayName ?? "";
+        const names = person
+          ? ` (@${person.username}, ${person.fullName ?? person.displayName}, verified by ${person.issuerLabel})`
+          : "";
         const about =
           typeof profile.about === "string" && profile.about.trim()
             ? ` — ${profile.about.trim().slice(0, 120)}`
             : "";
-        return { name, row: `${event.pubkey} ${name}${about}` };
+        return {
+          names: [
+            name,
+            person?.username,
+            person?.fullName,
+            person?.displayName,
+          ],
+          row: `${key} ${name}${names}${about}`,
+        };
       })
       .filter(
-        ({ name }) =>
-          !q || ids.length || named || name.toLowerCase().includes(q),
+        ({ names }) =>
+          !q ||
+          ids.length ||
+          named ||
+          names.some((value) => value?.toLowerCase().includes(q)),
       );
     return rows.map(({ row }) => row).join("\n") || "No users.";
   },
@@ -2139,10 +2174,8 @@ class Tools {
    * reads them, so `send` and the app agree on who is verified. None without
    * the connection's relay key. */
   async verifiedNames(pubkeys: readonly string[]) {
-    const names = new Map<string, VerifiedProfile>();
-    const relay = this.client.relayAuthor;
-    if (!relay || !HEX_KEY.test(relay)) return names;
-    const authority = { pubkey: relay, multipleIssuers: false };
+    const relay = this.verifiedAuthority()?.pubkey;
+    if (!relay) return new Map<string, VerifiedProfile>();
     const subjects = [...new Set(pubkeys)].filter((key) => HEX_KEY.test(key));
     const batches: string[][] = [];
     for (let at = 0; at < subjects.length; at += VERIFIED_PROFILE_BATCH)
@@ -2156,6 +2189,18 @@ class Tools {
         ),
       )
     ).flat();
+    return this.verifiedProjection(found, subjects);
+  }
+
+  /** The verified names among `found`, for `subjects` (default: everyone
+   * they name). */
+  verifiedProjection(
+    found: readonly BuzzEvent[],
+    subjects?: readonly string[],
+  ) {
+    const names = new Map<string, VerifiedProfile>();
+    const authority = this.verifiedAuthority();
+    if (!authority) return names;
     // The newest event at each address decides; a newer malformed or
     // retracted one leaves the person unverified, as in the app.
     const latest = new Map<string, RelayEvent>();
@@ -2164,7 +2209,7 @@ class Tools {
       // projection takes only those.
       const event = item as unknown as RelayEvent;
       const subject = verifiedProfileSubject(event, authority);
-      if (!subject || !subjects.includes(subject)) continue;
+      if (!subject || (subjects && !subjects.includes(subject))) continue;
       latest.set(subject, newer(latest.get(subject), event));
     }
     for (const [subject, event] of latest) {
@@ -2172,6 +2217,21 @@ class Tools {
       if (verified) names.set(subject, verified);
     }
     return names;
+  }
+
+  /** Whose verified name `event` is, when the connection's relay signed it. */
+  verifiedSubject(event: BuzzEvent) {
+    const authority = this.verifiedAuthority();
+    return authority
+      ? verifiedProfileSubject(event as unknown as RelayEvent, authority)
+      : undefined;
+  }
+
+  private verifiedAuthority() {
+    const relay = this.client.relayAuthor;
+    return relay && HEX_KEY.test(relay)
+      ? { pubkey: relay, multipleIssuers: false }
+      : undefined;
   }
 
   /** Messages oldest first with their latest edits, a line each: its ID,

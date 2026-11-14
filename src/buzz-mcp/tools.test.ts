@@ -3583,6 +3583,64 @@ it("finds a name longer than the name search's limit with NIP-50 search", async 
   ]);
 });
 
+const verifiedName = (
+  by: ReturnType<typeof keypair>,
+  subject: string,
+  username: string,
+  fullName: string,
+): BuzzEvent =>
+  eventDto(
+    signed(by, {
+      kind: 30382,
+      content: "",
+      created_at: 100,
+      tags: [
+        ["d", subject],
+        ["p", subject],
+        ["active", "true"],
+        ["issuer_label", "Example"],
+        ["verified_at", "100"],
+        ["display_name", username],
+        ["username", username],
+        ["full_name", fullName],
+      ],
+    }),
+  );
+
+it("shows the verified names name search gives, and people it finds only by them", async () => {
+  const relay = keypair();
+  const carol = "d".repeat(64);
+  const { client } = fake(community);
+  // Bob matches by profile name; Carol, who has no profile, only by her
+  // verified username; a name another key signed is not shown.
+  client.searchProfiles = vi.fn(async () => [
+    profile(bob, "Bob"),
+    verifiedName(relay, bob, "bobb", "Bob Builder"),
+    verifiedName(relay, carol, "cdoe", "Carol Doe"),
+    verifiedName(keypair(), alice, "forged", "Forged Name"),
+  ]);
+  const tagged = { ...client, relayAuthor: relay.pubkey };
+  expect(await callTool(tagged, {}, "users", { q: "b" })).toBe(
+    `${bob} Bob (@bobb, Bob Builder, verified by Example)\n` +
+      `${carol} cdoe (@cdoe, Carol Doe, verified by Example)`,
+  );
+  expect(client.query).not.toHaveBeenCalled();
+  // Without the relay's key, no name is verified.
+  expect(await callTool(client, {}, "users", { q: "b" })).toBe(`${bob} Bob`);
+});
+
+it("reads the verified names of users found by id", async () => {
+  const relay = keypair();
+  const { client } = fake([
+    ...community,
+    verifiedName(relay, bob, "bobb", "Bob Builder"),
+  ]);
+  const tagged = { ...client, relayAuthor: relay.pubkey };
+  expect(await callTool(tagged, {}, "users", { ids: [bob, alice] })).toBe(
+    `${alice} Alice Smith\n${bob} Bob (@bobb, Bob Builder, verified by Example)`,
+  );
+});
+
 it("reads users by id without the name search", async () => {
   const { client } = fake(community);
   client.searchProfiles = vi.fn(async () => []);

@@ -30,6 +30,7 @@ import {
   joinForward,
   deleteSelection,
   selectAll,
+  splitBlockKeepMarks,
 } from "prosemirror-commands";
 import { sinkListItem, liftListItem } from "prosemirror-schema-list";
 import {
@@ -75,7 +76,14 @@ import {
   applyComposerInlineInput,
   composerInlineDelimiters,
 } from "./composer-inline-input";
-import { composerMarkdown } from "./composer-markdown";
+import {
+  composerMarkdown,
+  type ComposerMarkdownMode,
+} from "./composer-markdown";
+import {
+  documentEditorDraft,
+  documentEditorMarkdown,
+} from "./document-editor-markdown";
 import {
   annotationAt,
   annotationPlugin,
@@ -405,6 +413,8 @@ export type EditableInputProps = Omit<
   disabled: boolean;
   placeholder: string;
   maxLength: number;
+  /** One policy for wire output, editing budgets and both clipboard flavors. */
+  markdownMode?: ComposerMarkdownMode;
   onDraftChange(draft: MentionDraft): void;
   onFormatsChange(active: readonly ComposerFormat[]): void;
   onEditLink?(edit: ComposerLinkEdit): void;
@@ -427,6 +437,7 @@ export function EditableInput({
   disabled,
   placeholder,
   maxLength,
+  markdownMode = "chat",
   onDraftChange,
   onFormatsChange,
   onEditLink,
@@ -438,6 +449,8 @@ export function EditableInput({
   draft: MentionDraft;
   decorationsFor(draft: MentionDraft): readonly EditorDecoration[];
 }) {
+  const serializeDraft =
+    markdownMode === "document" ? documentEditorMarkdown : composerMarkdown;
   const mount = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const { enabled: autocorrect } = useMessageAutocorrectPreference();
@@ -445,6 +458,8 @@ export function EditableInput({
     draft,
     decorationsFor,
     maxLength,
+    markdownMode,
+    serializeDraft,
     onDraftChange,
     onFormatsChange,
     onEditLink,
@@ -459,6 +474,8 @@ export function EditableInput({
     draft,
     decorationsFor,
     maxLength,
+    markdownMode,
+    serializeDraft,
     onDraftChange,
     onFormatsChange,
     onEditLink,
@@ -593,8 +610,8 @@ export function EditableInput({
       filterTransaction(tr) {
         return (
           !tr.docChanged ||
-          composerMarkdown(projectComposerDocument(tr.doc).draft).length <=
-            current.current.maxLength
+          current.current.serializeDraft(projectComposerDocument(tr.doc).draft)
+            .length <= current.current.maxLength
         );
       },
       appendTransaction(transactions, old, state) {
@@ -874,8 +891,9 @@ export function EditableInput({
         // Like inline input rules, keep the typed source as the undo target.
         const typed = editor.state.tr.insertText(terminator);
         if (
-          composerMarkdown(projectComposerDocument(typed.doc).draft).length >
-          current.current.maxLength
+          current.current.serializeDraft(
+            projectComposerDocument(typed.doc).draft,
+          ).length > current.current.maxLength
         )
           return false;
         const previous = editor.state;
@@ -944,8 +962,8 @@ export function EditableInput({
       )
         tr.setStoredMarks(marks);
       if (
-        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
-        current.current.maxLength
+        current.current.serializeDraft(projectComposerDocument(tr.doc).draft)
+          .length > current.current.maxLength
       ) {
         onTooLong?.();
         return !!terminator; // The typed colon landed even if conversion cannot.
@@ -1036,8 +1054,8 @@ export function EditableInput({
         }
       }
       if (
-        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
-        current.current.maxLength
+        current.current.serializeDraft(projectComposerDocument(tr.doc).draft)
+          .length > current.current.maxLength
       ) {
         current.current.onPasteTooLong?.();
         return null;
@@ -1126,7 +1144,7 @@ export function EditableInput({
       const next = projectComposerDocument(tr.doc).draft;
       if (
         next.recipients.length > 32 ||
-        composerMarkdown(next).length > current.current.maxLength
+        current.current.serializeDraft(next).length > current.current.maxLength
       )
         return false;
       tr.setSelection(editor.state.selection.map(tr.doc, tr.mapping));
@@ -1178,8 +1196,8 @@ export function EditableInput({
         Selection.near(tr.doc.resolve(tr.mapping.map(to, 1)), -1),
       );
       if (
-        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
-        current.current.maxLength
+        current.current.serializeDraft(projectComposerDocument(tr.doc).draft)
+          .length > current.current.maxLength
       )
         return false;
       const before = editor.state;
@@ -1235,8 +1253,8 @@ export function EditableInput({
       // A longer current name can overrun the limit; the typed text then stands.
       if (
         recipient &&
-        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
-          current.current.maxLength
+        current.current.serializeDraft(projectComposerDocument(tr.doc).draft)
+          .length > current.current.maxLength
       )
         tr = convert(null);
       editor.dispatch(tr);
@@ -1394,7 +1412,10 @@ export function EditableInput({
       const next = projectComposerDocument(tr.doc);
       if (next.tokens.filter((token) => token.node.attrs.resource).length > 32)
         return "Add at most 32 links to one message";
-      if (composerMarkdown(next.draft).length > current.current.maxLength)
+      if (
+        current.current.serializeDraft(next.draft).length >
+        current.current.maxLength
+      )
         return "Message is too long to add this link";
       if (brokenResources(tr.doc, next).length)
         return "Links can't be added inside code or other Markdown here";
@@ -1644,8 +1665,8 @@ export function EditableInput({
             ),
         );
         if (
-          composerMarkdown(projectComposerDocument(tr.doc).draft).length >
-          current.current.maxLength
+          current.current.serializeDraft(projectComposerDocument(tr.doc).draft)
+            .length > current.current.maxLength
         )
           return false;
         applied = true;
@@ -1669,7 +1690,11 @@ export function EditableInput({
           ? content
           : composerSchema.nodes.paragraph.create(null, content),
       );
-      const { text, html } = composerClipboard(doc, editor.dom.ownerDocument);
+      const { text, html } = composerClipboard(
+        doc,
+        editor.dom.ownerDocument,
+        current.current.markdownMode,
+      );
       event.clipboardData?.setData("text/plain", text);
       event.clipboardData?.setData("text/html", html);
       event.preventDefault();
@@ -2360,7 +2385,9 @@ export function EditableInput({
             const html = event.clipboardData?.getData("text/html") ?? "";
             const hasPlain =
               !!plain || event.clipboardData?.types?.includes("text/plain");
-            const copy = code ? undefined : buzzCopyDocument(html);
+            const copy = code
+              ? undefined
+              : buzzCopyDocument(html, current.current.markdownMode);
             // Unformatted prose takes the text path: it inherits the caret's
             // marks and the link spacing below. Structure pastes as nodes.
             const paragraph = copy?.childCount === 1 ? copy.firstChild : null;
@@ -2370,6 +2397,22 @@ export function EditableInput({
               !paragraph.firstChild?.marks.length
                 ? paragraph.textContent
                 : undefined;
+            const { $from, $to } = editor.state.selection;
+            if (
+              current.current.markdownMode === "document" &&
+              $from.sameParent($to) &&
+              $from.parent.type === composerSchema.nodes.paragraph &&
+              $from.parent.content.content.some(
+                (node) => node.isText && /[\r\n]/.test(node.textContent),
+              ) &&
+              (hasPlain || prose !== undefined)
+            ) {
+              // A fragment of raw source can parse as blocks or soft-broken prose.
+              // Keep it literal inside its raw destination instead of reparsing it.
+              const text = hasPlain ? plain : prose;
+              if (text) insertPastedText(text);
+              return true;
+            }
             if (copy && prose === undefined) {
               // Only the pasted content is offered: an item-start paste lands
               // after the item's text, whose display-only links stay so.
@@ -2431,6 +2474,32 @@ export function EditableInput({
                 current.current.maxLength
             )
               text += " ";
+            if (
+              !code &&
+              current.current.markdownMode === "document" &&
+              text.trim()
+            ) {
+              const draft = documentEditorDraft(text);
+              if (draft.document) {
+                const parsed = readComposerDocument(draft, []);
+                const paragraph =
+                  parsed.childCount === 1 ? parsed.firstChild : null;
+                // Fallback blocks keep embedded source newlines; supported prose
+                // has already folded them and still inherits the caret's marks.
+                if (
+                  paragraph?.type === composerSchema.nodes.paragraph &&
+                  paragraph.childCount <= 1 &&
+                  !paragraph.firstChild?.marks.length
+                )
+                  insertPastedText(
+                    /[\r\n]/.test(paragraph.textContent)
+                      ? text
+                      : text.replace(/\r\n?|\n/g, " "),
+                  );
+                else insertDocument(parsed);
+                return true;
+              }
+            }
             if (!insertPastedText(text)) return true;
             const inserted = projection().source(editor.state.selection.to);
             if (reuse) {
@@ -2546,7 +2615,7 @@ export function EditableInput({
       toggleFormat: { configurable: true, value: toggleFormat },
       insertLineBreak: {
         configurable: true,
-        value: () => {
+        value: (kind?: "paragraph" | "hard") => {
           if (!editable() || composing.current || editor.composing)
             return false;
           // Mac WebKit can keep painting a stale caret after a line break:
@@ -2557,7 +2626,20 @@ export function EditableInput({
           // (1.41.0). Remove once upstream repaints it.
           if (editor.state.selection.empty && editor.hasFocus() && macWebKit())
             editor.dom.ownerDocument.getSelection()?.removeAllRanges();
-          const tr = composerBlockLineBreak(editor.state);
+          let tr: Transaction | undefined;
+          if (kind === "hard")
+            tr = editor.state.selection.$from.parent.type.spec.code
+              ? editor.state.tr.insertText("\n")
+              : editor.state.tr.replaceSelectionWith(
+                  composerSchema.nodes.hard_break.create(),
+                );
+          else {
+            tr = composerBlockLineBreak(editor.state);
+            if (!tr && kind === "paragraph") {
+              const next = editor.state.tr;
+              if (apply(next, splitBlockKeepMarks)) tr = next;
+            }
+          }
           if (tr) editor.dispatch(closeHistory(tr).scrollIntoView());
           const inserted = !!tr || insert("\n");
           editor.focus();

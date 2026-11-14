@@ -2316,6 +2316,200 @@ test("installed documents reuse host Markdown, workspace tabs and persisted spli
   await expect(tab("Reference")).toHaveCount(0);
   await expect(draft("Guide")).toHaveValue("Retain this document");
 
+  // Native contenteditable, host formatting and the portal's link-dialog focus
+  // must work through the external Blob module, not just a type/DOM fixture.
+  await reader.getByRole("button", { name: "Edit Guide", exact: true }).click();
+  const richEditor = reader.getByRole("textbox", {
+    name: "Document body",
+    exact: true,
+  });
+  await richEditor.fill("Changed guide");
+  await richEditor.press("ControlOrMeta+a");
+  await reader.getByRole("button", { name: "Bold", exact: true }).click();
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  const markdownSource = reader.getByRole("textbox", {
+    name: "Markdown",
+    exact: true,
+  });
+  await expect(markdownSource).toHaveValue("**Changed guide**");
+  await markdownSource.fill("# Source heading\n\nKept literal source");
+  await markdownSource.press("ControlOrMeta+Enter");
+  await expect(reader.getByRole("status")).toContainText("Saved 1");
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await expect(richEditor).toContainText("# Source heading");
+  await reader
+    .getByRole("button", { name: "Replace document", exact: true })
+    .click();
+  await expect(richEditor.locator("strong")).toHaveText("replacement");
+  await richEditor.press("ControlOrMeta+a");
+  await reader.getByRole("button", { name: "Link", exact: true }).click();
+  const linkDialog = page.getByRole("dialog", {
+    name: "Add link",
+    exact: true,
+  });
+  await linkDialog
+    .getByRole("textbox", { name: "URL", exact: true })
+    .fill("javascript:alert(1)");
+  await linkDialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(linkDialog).toContainText(
+    "Use an HTTP(S) URL or a valid buzz:// link.",
+  );
+  const destination = linkDialog.getByRole("combobox", {
+    name: "Link destination",
+    exact: true,
+  });
+  await destination.fill("Reference");
+  await page
+    .getByRole("option", { name: "Reference document", exact: true })
+    .click();
+  await expect(
+    linkDialog.getByRole("textbox", { name: "URL", exact: true }),
+  ).toHaveValue("buzz://plugin?id=example.documents&document=reference");
+  await linkDialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(linkDialog).toBeHidden();
+  await expect(richEditor).toBeFocused();
+  // Native keyboard edits must preserve the CommonMark structure the host reads,
+  // including when the changed text is outside a nested block.
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  const quoted = "> First point\n>\n> Second point\n\nEnd";
+  await markdownSource.fill(quoted);
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await richEditor.evaluate((field) => {
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+  });
+  await richEditor.press("!");
+  await reader.getByRole("button", { name: "Read Guide", exact: true }).click();
+  // The shared renderer owns the read-mode wrapper; the hidden editor is its sibling.
+  const body = reader
+    .getByRole("region", { name: "Document content", exact: true })
+    .locator(":scope > div:not([hidden])");
+  await expect(body).toHaveCount(1);
+  await expect(body.locator(":scope > blockquote p")).toHaveText([
+    "First point",
+    "Second point",
+  ]);
+  await expect(body.locator(":scope > p").last()).toHaveText("End!");
+  await reader.getByRole("button", { name: "Edit Guide", exact: true }).click();
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  await markdownSource.fill("FirstSecond");
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await richEditor.evaluate((field) => field.setSelectionRange(5, 5));
+  await richEditor.press("Enter");
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  await expect(markdownSource).toHaveValue("First\n\nSecond");
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await richEditor.evaluate((field) => field.setSelectionRange(1, 1));
+  await richEditor.press("Shift+Enter");
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  await expect(markdownSource).toHaveValue("F\\\nirst\n\nSecond");
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await reader.getByRole("button", { name: "Read Guide", exact: true }).click();
+  await expect(body.locator(":scope > p")).toHaveCount(2);
+  await expect(body.locator(":scope > p br")).toHaveCount(1);
+
+  // Exercise the installed module's browser clipboard handlers in both flavors.
+  // DataTransfer stays inside this page; the operating-system clipboard is untouched.
+  await reader.getByRole("button", { name: "Edit Guide", exact: true }).click();
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  const clipboardSource =
+    "First\\\nSecond `code`\n\n> Quote first\n>\n> Quote second\n\n- One\n\n- Two";
+  await markdownSource.fill(clipboardSource);
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await richEditor.evaluate((field) => {
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+  });
+  await richEditor.press("!");
+  for (const rich of [true, false]) {
+    await richEditor.evaluate((field, rich) => {
+      field.focus();
+      field.setSelectionRange(0, field.value.length);
+      const copied = new DataTransfer();
+      field.dispatchEvent(
+        new ClipboardEvent("copy", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: copied,
+        }),
+      );
+      const pasted = new DataTransfer();
+      pasted.setData("text/plain", copied.getData("text/plain"));
+      if (rich) pasted.setData("text/html", copied.getData("text/html"));
+      field.dispatchEvent(
+        new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: pasted,
+        }),
+      );
+    }, rich);
+    await reader
+      .getByRole("button", { name: "Read Guide", exact: true })
+      .click();
+    await expect(body.locator(":scope > p br")).toHaveCount(1);
+    await expect(body.locator(":scope > p code")).toHaveText("code");
+    await expect(body.locator(":scope > blockquote p")).toHaveText([
+      "Quote first",
+      "Quote second",
+    ]);
+    await expect(body.locator(":scope > ul > li > p")).toHaveText([
+      "One",
+      "Two!",
+    ]);
+    await reader
+      .getByRole("button", { name: "Edit Guide", exact: true })
+      .click();
+  }
+
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  await markdownSource.fill("**Hello**");
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await richEditor.evaluate((field) => {
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+    const data = new DataTransfer();
+    data.setData("text/plain", " next");
+    field.dispatchEvent(
+      new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: data,
+      }),
+    );
+  });
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  await expect(markdownSource).toHaveValue("**Hello next**");
+  await markdownSource.fill("");
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await richEditor.pressSequentially("C:" + "\\");
+  await richEditor.press("Shift+Enter");
+  await richEditor.pressSequentially("next");
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  await expect(markdownSource).toHaveValue("C:" + "\\".repeat(3) + "\nnext");
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await reader.getByRole("button", { name: "Read Guide", exact: true }).click();
+  await expect(body.locator(":scope > p br")).toHaveCount(1);
+  await expect(body.locator(":scope > p")).toHaveText(/C:\\\s*next/);
+
   const handle = reader.getByRole("separator");
   await handle.focus();
   await page.keyboard.press("Home");
@@ -2333,9 +2527,7 @@ test("installed documents reuse host Markdown, workspace tabs and persisted spli
   await expect(handle).toHaveAttribute("aria-valuenow", "448");
   // Native focus/scrolling through the installed module needs a browser;
   // the shared Markdown journey owns the theme/width/text-scale matrix.
-  const code = reader
-    .getByRole("tabpanel", { name: "Guide", exact: true })
-    .locator("pre code");
+  const code = body.locator("pre code");
   const precedingLink = reader.getByRole("link", { name: "the alpha room" });
   await precedingLink.focus();
   // The host link opens its keyboard preview before the code's Tab stop.
@@ -2365,9 +2557,19 @@ test("installed documents reuse host Markdown, workspace tabs and persisted spli
     );
     await expect(tab("Guide")).toBeVisible();
     await expect(draft("Guide")).toBeVisible();
+    await reader
+      .getByRole("button", { name: "Edit Guide", exact: true })
+      .click();
+    await expect(richEditor).toBeVisible();
+    await expect(
+      reader.getByRole("button", { name: "Bold", exact: true }),
+    ).toBeVisible();
     const bounds = await reader.boundingBox();
     expect(bounds.x).toBeGreaterThanOrEqual(0);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(480);
+    await reader
+      .getByRole("button", { name: "Read Guide", exact: true })
+      .click();
     await page.setViewportSize({ width: 1440, height: 950 });
     await page.evaluate(() =>
       document.documentElement.style.removeProperty("font-size"),

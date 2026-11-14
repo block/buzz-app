@@ -40,6 +40,10 @@ import type {
 } from "./contracts";
 import { PluginMarkdown, type MarkdownProps } from "../messages/PluginMarkdown";
 import type { RelaySession } from "../relay/session";
+import {
+  DocumentEditor,
+  type DocumentEditorProps,
+} from "../messages/DocumentEditor";
 
 /** A Solo chat's sidebar icon: what the plugin knows about the chat, or
  * `fallback` when it has nothing to show. */
@@ -92,6 +96,8 @@ export type Conversation = {
   identityMarks: ContributionReader<IdentityMark>;
   registerIdentityMark(mark: IdentityMark): void;
   ui: {
+    /** Controlled document editing with the host engine, formatting and link policy. */
+    DocumentEditor: ComponentType<DocumentEditorProps>;
     /** Bounded document Markdown with host-owned link and image trust rules. */
     Markdown: (props: MarkdownProps) => ReactNode;
     Thread: (props: EmbeddedThreadProps) => ReactNode;
@@ -291,6 +297,7 @@ export class ConversationService extends Service implements Conversation {
       return Provided ? <Provided {...props} /> : null;
     };
     this.ui = {
+      DocumentEditor,
       Markdown: (props: MarkdownProps) => (
         <PluginMarkdown
           {...props}

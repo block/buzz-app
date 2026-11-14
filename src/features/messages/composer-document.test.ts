@@ -748,3 +748,23 @@ describe("inline formatting batch", () => {
       }
   });
 });
+
+it.each(["chat", "document"] as const)(
+  "keeps folder-chip paths literal in %s Markdown",
+  (mode) => {
+    const chip = {
+      kind: "folder",
+      id: "/__draft__/notes",
+      label: "Draft notes",
+    };
+    const original = doc(
+      paragraph(schema.nodes.token.create({ source: chip.id, semantic: chip })),
+    );
+    const draft = projectComposerDocument(original).draft;
+    const tree = fromMarkdown(composerMarkdown(draft, mode));
+    expect(tree.children).toMatchObject([
+      { type: "paragraph", children: [{ type: "text", value: chip.id }] },
+    ]);
+    expect(readComposerDocument(draft, []).eq(original)).toBe(true);
+  },
+);

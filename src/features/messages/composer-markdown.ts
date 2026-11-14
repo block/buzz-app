@@ -45,6 +45,8 @@ const strike: Handle & { peek?: Handle } = (node, parent, state, info) => {
 };
 strike.peek = () => "~";
 
+export type ComposerMarkdownMode = "chat" | "document";
+
 /** Plain portions are authored Markdown, not rich-editor literal text. Keeping
  * their source verbatim avoids normalizing formats this slice does not edit.
  * Marked content uses CommonMark/GFM delimiter escaping and flanking rules.
@@ -52,6 +54,7 @@ strike.peek = () => "~";
  * the typed source without the namesake qualifiers a send adds. */
 export function composerMarkdown(
   draft: MentionDraft,
+  mode: ComposerMarkdownMode = "chat",
   { authored = false }: { authored?: boolean } = {},
 ): string {
   const project = (node: EditorNode): EditorNode =>
@@ -62,10 +65,14 @@ export function composerMarkdown(
         : node.copy(Fragment.fromArray(node.content.content.map(project)));
   const doc = project(readComposerDocument(draft, []));
   const wire = (body: EditorNode) =>
-    [...(draft.chatCards ?? []), blocksMarkdown(body), ...(draft.gifs ?? [])]
+    [
+      ...(draft.chatCards ?? []),
+      blocksMarkdown(body, mode),
+      ...(draft.gifs ?? []),
+    ]
       .filter(Boolean)
       .join("\n\n");
-  const qualified = authored ? doc : qualifyNamesakes(doc);
+  const qualified = authored ? doc : qualifyNamesakes(doc, mode);
   if (qualified === doc) return wire(doc);
   // The timeline renders a too-deep or too-long body as plain text, where no
   // span binds, so qualifiers there would only add characters.
@@ -77,7 +84,10 @@ export function composerMarkdown(
  * Chips of different keys sharing a name, ignoring case, are therefore sent as
  * `@Name (<hex>)`, the form that names one key. A chip the timeline cannot bind,
  * inside code, a link, an image, a definition or HTML, stays as typed. */
-function qualifyNamesakes(doc: EditorNode): EditorNode {
+function qualifyNamesakes(
+  doc: EditorNode,
+  mode: "chat" | "document",
+): EditorNode {
   const person = (
     node?: EditorNode,
   ): { pubkey: string; name: string } | undefined =>
@@ -105,7 +115,7 @@ function qualifyNamesakes(doc: EditorNode): EditorNode {
     // Paragraph offsets match authoredLiteralRanges, as blocksMarkdown reads them.
     const paragraphs = node.isTextblock
       ? undefined
-      : authoredLiteralRanges(node);
+      : authoredLiteralRanges(node, mode);
     let start = 0;
     node.forEach((child, offset, index) => {
       if (!node.isTextblock) {
@@ -151,10 +161,10 @@ function qualifyNamesakes(doc: EditorNode): EditorNode {
   return visit(doc);
 }
 
-function blocksMarkdown(doc: EditorNode): string {
+function blocksMarkdown(doc: EditorNode, mode: ComposerMarkdownMode): string {
   const blocks: string[] = [];
   let previous: EditorNode | undefined;
-  const authored = authoredLiteralRanges(doc);
+  const authored = authoredLiteralRanges(doc, mode);
   // Two lists of one kind separated only by blank lines read as one list, so
   // adjacent lists alternate their marker as mdast-util-to-markdown does: `-`
   // then `*` for bullets, `.` then `)` for numbers. A block that serialises to
@@ -164,11 +174,15 @@ function blocksMarkdown(doc: EditorNode): string {
   let lastList: NodeType | undefined;
   let alternate = false;
   doc.forEach((block, offset) => {
+    const paragraphs =
+      previous?.type.name === "paragraph" && block.type.name === "paragraph";
+    const tightItem =
+      mode === "document" && doc.type.name === "list_item" && !doc.attrs.spread;
     // Blank separation prevents lazy quote continuation and adjacent blocks
     // merging on send; ordinary authored paragraph newlines remain unchanged.
     if (previous)
       blocks.push(
-        previous.type.name === "paragraph" && block.type.name === "paragraph"
+        (mode === "chat" && paragraphs) || (tightItem && !paragraphs)
           ? "\n"
           : "\n\n",
       );
@@ -193,7 +207,7 @@ function blocksMarkdown(doc: EditorNode): string {
         { fences: true },
       ).slice(0, -1);
     } else if (block.type.name === "blockquote") {
-      output = blocksMarkdown(block)
+      output = blocksMarkdown(block, mode)
         .split("\n")
         .map((line) => (line ? `> ${line}` : ">"))
         .join("\n");
@@ -208,7 +222,7 @@ function blocksMarkdown(doc: EditorNode): string {
             : alternate
               ? "* "
               : "- ";
-        const lines = blocksMarkdown(item).split("\n");
+        const lines = blocksMarkdown(item, mode).split("\n");
         items.push(
           prefix +
             lines
@@ -218,8 +232,10 @@ function blocksMarkdown(doc: EditorNode): string {
               .join("\n"),
         );
       });
-      output = items.join("\n");
-    } else output = paragraphMarkdown(block, authored.get(offset));
+      output = items.join(
+        mode === "document" && block.attrs.spread ? "\n\n" : "\n",
+      );
+    } else output = paragraphMarkdown(block, authored.get(offset), mode);
     blocks.push(output);
     if (list) lastList = block.type;
     else if (/\S/.test(output)) {
@@ -233,7 +249,7 @@ function blocksMarkdown(doc: EditorNode): string {
 
 /** Parse each contiguous paragraph run once, lazily. Rich text is masked so
  * only authored source defines code, links and HTML; offsets stay unchanged. */
-function authoredLiteralRanges(doc: EditorNode) {
+function authoredLiteralRanges(doc: EditorNode, mode: ComposerMarkdownMode) {
   const ranges = new Map<number, () => SourceRange[]>();
   let run: { source: string; ranges?: SourceRange[] } | undefined;
   doc.forEach((block, offset) => {
@@ -256,7 +272,7 @@ function authoredLiteralRanges(doc: EditorNode) {
           : value;
     });
     const end = context.source.length;
-    context.source += "\n";
+    context.source += mode === "document" ? "\n\n" : "\n";
     ranges.set(offset, () => {
       if (!context.ranges) {
         context.ranges = [];
@@ -295,6 +311,7 @@ function authoredLiteralRanges(doc: EditorNode) {
 function paragraphMarkdown(
   block: EditorNode,
   authoredLiterals?: () => SourceRange[],
+  mode: ComposerMarkdownMode = "chat",
 ): string {
   let text = "";
   const formats = [
@@ -308,8 +325,11 @@ function paragraphMarkdown(
   const ranges: (SourceRange & { href?: string })[][] = formats.map(() => []);
   const literals: SourceRange[] = [];
   const recipients: SourceRange[] = [];
+  const hardBreaks: number[] = [];
   block.forEach((node) => {
     const start = text.length;
+    if (mode === "document" && node.type.name === "hard_break")
+      hardBreaks.push(start);
     text += node.isText
       ? node.textContent
       : node.type.name === "hard_break"
@@ -352,7 +372,12 @@ function paragraphMarkdown(
     if (start < range.end) parts.push({ start, end: range.end });
     return parts;
   });
-  if (!literals.length && ranges.every((spans) => !spans.length)) return text;
+  if (
+    !hardBreaks.length &&
+    !literals.length &&
+    ranges.every((spans) => !spans.length)
+  )
+    return text;
   const raw = new WeakMap<Text, SourceRange>();
   const literal = new WeakSet<Text>();
   const attention = new WeakMap<Text, SourceRange[]>();
@@ -484,7 +509,19 @@ function paragraphMarkdown(
     linked = false,
   ): PhrasingContent[] => {
     const format = formats[depth];
-    if (!format) return source(start, end, marked, linked);
+    if (!format) {
+      const children: PhrasingContent[] = [];
+      let offset = start;
+      for (const point of hardBreaks) {
+        if (point < start || point >= end) continue;
+        children.push(...source(offset, point, marked, linked), {
+          type: "break",
+        });
+        offset = point + 1;
+      }
+      children.push(...source(offset, end, marked, linked));
+      return children;
+    }
     const children: PhrasingContent[] = [];
     let offset = start;
     for (const range of ranges[depth] ?? []) {
@@ -493,11 +530,16 @@ function paragraphMarkdown(
       if (from >= to) continue;
       const value = text.slice(from, to);
       if (format.type === "inlineCode") {
-        children.push(...source(offset, from, marked, linked));
+        children.push(...content(offset, from, depth + 1, marked, linked));
         // CommonMark folds newlines inside a code span to spaces. Separate spans
         // preserve authored line breaks without inventing a fenced block.
         value.split("\n").forEach((line, index) => {
-          if (index) children.push({ type: "text", value: "\n" });
+          if (index)
+            children.push(
+              mode === "document"
+                ? { type: "break" }
+                : { type: "text", value: "\n" },
+            );
           if (line) children.push({ type: "inlineCode", value: line });
         });
         offset = to;
@@ -629,6 +671,18 @@ function paragraphMarkdown(
       if (info.after.startsWith("`"))
         value = value.replace(/[`\\]+$/, (tail) =>
           tail.replace(/[\\`]/g, "\\$&"),
+        );
+      // An odd authored slash must not escape the generated hard-break slash.
+      if (
+        mode === "document" &&
+        parent &&
+        "children" in parent &&
+        parent.children[
+          parent.children.findIndex((child) => child === node) + 1
+        ]?.type === "break"
+      )
+        value = value.replace(/\\+$/, (tail) =>
+          tail.length % 2 ? `${tail}\\` : tail,
         );
       return value;
     }

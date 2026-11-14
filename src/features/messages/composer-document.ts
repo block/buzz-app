@@ -82,9 +82,32 @@ export const composerSchema = new Schema<
         },
       ],
     },
-    bullet_list: { ...bulletList, group: "block", content: "list_item+" },
-    ordered_list: { ...orderedList, group: "block", content: "list_item+" },
-    list_item: { ...listItem, content: "paragraph block*" },
+    bullet_list: {
+      ...bulletList,
+      attrs: {
+        ...bulletList.attrs,
+        spread: { default: false, validate: "boolean" },
+      },
+      group: "block",
+      content: "list_item+",
+    },
+    ordered_list: {
+      ...orderedList,
+      attrs: {
+        ...orderedList.attrs,
+        spread: { default: false, validate: "boolean" },
+      },
+      group: "block",
+      content: "list_item+",
+    },
+    list_item: {
+      ...listItem,
+      attrs: {
+        ...listItem.attrs,
+        spread: { default: false, validate: "boolean" },
+      },
+      content: "paragraph block*",
+    },
     text: { group: "inline" },
     hard_break: {
       group: "inline",

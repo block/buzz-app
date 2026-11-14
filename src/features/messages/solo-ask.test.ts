@@ -2,6 +2,9 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { ChannelSummary } from "../relay/contracts";
 import { SOLO_LABEL, SOLO_NAMED_LABEL } from "../solo/labels";
+import { ChatNotStarted } from "../relay/channel-writes";
+import { signedMessageTokenTags } from "./message-tokens";
+import type { ComposerToken } from "./composer-token";
 import {
   askInSolo,
   soloAskMessage,
@@ -18,8 +21,12 @@ const foo = "11111111-1111-4111-8111-111111111111",
 const scope = `https://one.example:${viewer}`;
 afterEach(() => localStorage.clear());
 
-function fakeSession({ available = true } = {}) {
+function fakeSession({
+  available = true,
+  ready = (): Promise<void> => Promise.resolve(),
+} = {}) {
   const channels: ChannelSummary[] = [];
+  const starts = new Map<string, Promise<void>>();
   const start = vi.fn(
     (
       id: string,
@@ -30,10 +37,12 @@ function fakeSession({ available = true } = {}) {
       _setup?: unknown,
       options?: { labels?: readonly string[]; about?: string },
     ) => {
+      // Confirmed by the relay: private, as every Solo chat starts.
       channels.push({
         id,
         name,
         channelType: "solo",
+        visibility: "private",
         creator: viewer,
         members: [viewer, ...members],
         labels: [
@@ -42,15 +51,22 @@ function fakeSession({ available = true } = {}) {
           ...(options?.labels ?? []),
         ],
       } as ChannelSummary);
-      return { create: Promise.resolve(), ready: Promise.resolve() };
+      const started = ready();
+      starts.set(id, started);
+      return { create: Promise.resolve(), ready: started };
     },
   );
-  const send = vi.fn();
+  // The chips a send is signing, as the real publisher reads them.
+  const send = vi.fn((..._args: unknown[]) => signedMessageTokenTags());
   const session = {
     viewer,
     scope,
     channels: { list: () => ({ status: "ready", channels }) },
-    channelWrites: { available, start },
+    channelWrites: {
+      available,
+      start,
+      starting: (id: string) => starts.get(id),
+    },
     messages: { send },
   } as unknown as Parameters<typeof askInSolo>[0];
   return { session, channels, start, send };
@@ -97,7 +113,7 @@ it("starts one Solo chat for the first ask from a channel, and continues it for 
     [agent],
   );
   const second = askInSolo(f.session, ask({ question: "And the venue?" }));
-  expect(second).toEqual({ channelId: first.channelId, reused: true });
+  expect(second).toMatchObject({ channelId: first.channelId, reused: true });
   expect(f.start).toHaveBeenCalledOnce();
   expect(f.send).toHaveBeenCalledTimes(2);
   expect(f.send.mock.lastCall?.[0]).toBe(first.channelId);
@@ -152,6 +168,26 @@ it.each([
   ],
   ["someone else's", (chat: ChannelSummary) => ({ ...chat, creator: twin })],
   ["gone", () => undefined],
+  // Shared: a Solo chat keeps its labels when it is shared.
+  [
+    "open to the community",
+    (chat: ChannelSummary) => ({ ...chat, visibility: "public" as const }),
+  ],
+  [
+    "joined by someone else",
+    (chat: ChannelSummary) => ({
+      ...chat,
+      members: [...(chat.members ?? []), twin],
+    }),
+  ],
+  [
+    "of unconfirmed visibility",
+    (chat: ChannelSummary) => ({ ...chat, visibility: undefined }),
+  ],
+  [
+    "private only in saved metadata",
+    (chat: ChannelSummary) => ({ ...chat, metadataCached: true as const }),
+  ],
 ])("starts a new chat when the earlier one is %s", (_, change) => {
   const f = fakeSession();
   const first = askInSolo(f.session, ask());
@@ -170,10 +206,12 @@ it("remembers a source channel a label can't hold on this device", () => {
   expect(f.start.mock.lastCall?.[6]).toEqual({
     about: "Questions for Bestie from #buzz-team: buzz://channel/Legacy%20Room",
   });
-  expect(askInSolo(f.session, ask({ channelId: "Legacy Room" }))).toEqual({
-    channelId: first.channelId,
-    reused: true,
-  });
+  expect(askInSolo(f.session, ask({ channelId: "Legacy Room" }))).toMatchObject(
+    {
+      channelId: first.channelId,
+      reused: true,
+    },
+  );
 });
 
 it("links a thread's root, so the agent reads the thread it was asked from", () => {
@@ -189,4 +227,40 @@ it("creates and sends nothing when Solo chats are unavailable", () => {
   );
   expect(f.start).not.toHaveBeenCalled();
   expect(f.send).not.toHaveBeenCalled();
+});
+
+it("continues a chat this device is still starting", () => {
+  const f = fakeSession();
+  const first = askInSolo(f.session, ask());
+  // Listed before the relay confirms it: pending, no visibility yet.
+  const { visibility: _visibility, ...listed } = f
+    .channels[0] as ChannelSummary;
+  f.channels.splice(0, 1, { ...listed, pending: true } as ChannelSummary);
+  expect(askInSolo(f.session, ask()).channelId).toBe(first.channelId);
+});
+
+it("reports a chat the relay never made, for a reused chat too", async () => {
+  const refused = new ChatNotStarted("refused");
+  const f = fakeSession({ ready: () => Promise.reject(refused) });
+  const first = askInSolo(f.session, ask());
+  await expect(first.ready).rejects.toBe(refused);
+  // A second ask before the refusal lands continues the starting chat.
+  const second = askInSolo(f.session, ask());
+  expect(second.reused).toBe(true);
+  await expect(second.ready).rejects.toBe(refused);
+});
+
+it("signs the question's chips, as an ordinary send does", () => {
+  const f = fakeSession();
+  const tokens: ComposerToken[] = [
+    { kind: "skill", id: "review", label: "review", target: agent },
+    { kind: "folder", id: "/work/launch", label: "launch" },
+  ];
+  askInSolo(f.session, ask({ tokens }));
+  const [tag] = (f.send.mock.results[0]?.value ?? []) as string[][];
+  expect(tag?.[0]).toBe("buzz-tokens-v1");
+  expect(JSON.parse(tag?.[1] ?? "[]")).toEqual(tokens);
+  // A question without chips signs none.
+  askInSolo(f.session, ask());
+  expect(f.send.mock.results[1]?.value).toEqual([]);
 });

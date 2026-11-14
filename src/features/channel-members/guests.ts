@@ -20,8 +20,9 @@ export function guestKeys(roles: Roles | undefined, channelId: string) {
 }
 
 /** Reads a channel's roles once the relay confirms its roster, again when the
- * roster changes, then follows changes. Like the members panel, it waits out
- * downloaded membership: role reads fail until the relay confirms it. */
+ * roster's members or Guests change, then follows changes. Like the members
+ * panel, it waits out downloaded membership: role reads fail until the relay
+ * confirms it. */
 export function useChannelGuests(
   session: ComposerSession,
   channelId: string | undefined,
@@ -33,8 +34,11 @@ export function useChannelGuests(
     () => (roles && channelId ? roles.snapshot(channelId) : undefined),
     () => (roles && channelId ? roles.snapshot(channelId) : undefined),
   );
+  // Roles count too: a member↔guest change keeps the members.
   const roster = useListedChannel(session.channels, channelId, (channel) =>
-    channel && !channel.cached ? (channel.members ?? []).join(":") : undefined,
+    channel && !channel.cached
+      ? `${(channel.members ?? []).join(":")}|${(channel.guests ?? []).join(":")}`
+      : undefined,
   );
   const readable = enabled && roster !== undefined;
   useEffect(() => {

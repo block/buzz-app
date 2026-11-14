@@ -473,9 +473,12 @@ and are asked to sign in again in Buzz.
   a Solo chat**. Asking posts your message, with a link back to the channel or
   thread, in your Solo chat with that agent for that channel, named
   `<channel>-ask-<agent>` (for example `launch-ask-pollen`). Later asks from
-  the same channel continue that chat, even after you rename it; if it is
-  archived or the agent has left it, the next ask starts a new one. You stay in
-  the channel; **Open** on the confirmation opens the chat beside it.
+  the same channel continue that chat, even after you rename it. If it is
+  archived, the agent has left it, or it is no longer private to you and the
+  agent (shared, or someone else joined), the next ask starts a new one. Chips
+  in your message go with it. You stay in the channel; **Open** on the
+  confirmation opens the chat beside it. If the chat can't be started, your
+  message comes back to the draft.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
   With Nexus enabled, each workspace also contains its tasks and can have a Lead
   task. Nexus saves and chooses Leads, so they exist only while Nexus is enabled.

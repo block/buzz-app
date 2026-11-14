@@ -200,6 +200,7 @@ import {
 } from "./useGuestAgentMentions";
 import { guestKeys, useChannelGuests } from "../channel-members/guests";
 import { askInSolo } from "./solo-ask";
+import { ChatNotStarted } from "../relay/channel-writes";
 
 const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   status: "idle",
@@ -253,6 +254,19 @@ function notifyRecovered(
   byKey.set(key, recovered);
   for (const listener of recoveryListeners.get(session)?.get(key) ?? [])
     listener(recovered);
+}
+/** A saved draft with nothing in it, like the one a send leaves. */
+function blankDraft(raw: string) {
+  try {
+    const draft = mentionDraft(JSON.parse(raw));
+    return (
+      !draft.text.trim() &&
+      !draft.recipients.length &&
+      !composerMarkdown(draft).trim()
+    );
+  } catch {
+    return false;
+  }
 }
 function errorForRecovery(reason: unknown) {
   return reason instanceof Error
@@ -2969,12 +2983,30 @@ function Composer({
               }
             }
             if (choice === "solo" && agent && relaySession) {
+              // The ordinary send's final checks: a draft another window
+              // replaced while the dialog was open is never asked.
+              attempt.signal.throwIfAborted();
+              if (
+                valueRef.current !== captured ||
+                !sameAttachmentSelection(
+                  attachments.store.snapshot(),
+                  capturedAttachments,
+                )
+              )
+                return;
+              const askRevision = viewRevision(scope, draftKey);
+              if (askRevision !== savedRevision) {
+                diagnose("send-prepare-conflict", savedRevision, askRevision);
+                setConflict(true);
+                return;
+              }
               const asked = askInSolo(relaySession, {
                 agent: { pubkey: agent.pubkey, name: agent.name },
                 question: composerMarkdown(captured),
                 channelId,
                 channelName: here.name,
                 ...(threadRootId ? { threadRootId } : {}),
+                ...(tokens.length ? { tokens } : {}),
               });
               // The question moved to the Solo chat; clear it like a send.
               const handed = {
@@ -2990,6 +3022,34 @@ function Composer({
               input.current?.reset(handed.next);
               setError(undefined);
               finishDraft(handed);
+              // A chat the relay never made is withdrawn with the question
+              // (see askInSolo). The question returns to this draft, unless
+              // something new was written there since.
+              void asked.ready.catch((reason: unknown) => {
+                if (!(reason instanceof ChatNotStarted)) return;
+                const failed = `Couldn’t start your Solo chat with ${agent.name}, so the question wasn’t sent.`;
+                const current = viewRevision(scope, draftKey);
+                const restored =
+                  current !== undefined &&
+                  (current === null || blankDraft(current)) &&
+                  (!live.current ||
+                    blankDraft(JSON.stringify(valueRef.current))) &&
+                  replaceView(scope, draftKey, current, captured) === "saved";
+                if (restored)
+                  notifyRecovered(session, recoveryKey, {
+                    draft: captured,
+                    picks: capturedPicks,
+                    preparationError: new Error(
+                      `${failed} Your draft is back.`,
+                    ),
+                  });
+                notify(
+                  restored
+                    ? `${failed} It’s back in your draft in #${here.name}.`
+                    : failed,
+                  "error",
+                );
+              });
               const link = `buzz://channel/${encodeURIComponent(asked.channelId)}`;
               notify(
                 `Asked ${agent.name} in your Solo chat from #${here.name}.`,

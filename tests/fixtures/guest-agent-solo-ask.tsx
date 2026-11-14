@@ -42,6 +42,16 @@ import { ChannelNavigationProvider } from "../../src/features/channel-navigation
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { Button } from "../../src/shared/design-system/ui/Button";
 import * as mentions from "../../src/bundled/mentions";
+import { MESSAGE_TOKENS_TAG } from "../../src/features/messages/message-tokens";
+import {
+  composerSchema,
+  projectComposerDocument,
+} from "../../src/features/messages/composer-document";
+import {
+  composerTokenText,
+  type ComposerToken,
+} from "../../src/features/messages/composer-token";
+import { writeView } from "../../src/shared/view-state";
 
 const params = new URLSearchParams(location.search);
 // `guest=outside`: Pollen isn't in #launch at all.
@@ -53,6 +63,10 @@ const cold = params.get("guest") === "cold";
 const other = params.get("guest") === "other";
 // `refuse`: the relay refuses role changes, as for a viewer no longer an admin.
 const refuse = params.has("refuse");
+// `refuse-create`: the relay refuses to make a Solo chat (kind 9007).
+const refuseCreate = params.has("refuse-create");
+// `chips`: #launch's saved draft holds a skill and a folder chip.
+const chips = params.has("chips");
 let confirmMembership = () => {};
 const confirmed = cold
   ? new Promise<void>((resolve) => {
@@ -149,6 +163,10 @@ const launchSaved = events.filter(
     event.kind <= 39002 &&
     event.tags.some(([tag, value]) => tag === "d" && value === launch),
 );
+/** Messages the relay took in Solo chats, with their signed chips. */
+const soloMessages: { channel: string; content: string; tokens?: string }[] =
+  [];
+Object.assign(window, { soloMessages });
 /** Solo chats the relay has created, for the walk to count. */
 const soloCreates: {
   id: string;
@@ -312,7 +330,22 @@ const owner = createRelaySession(
           grant(event);
           return;
         }
-        if (event.kind === 9007) create(event);
+        if (event.kind === 9007) {
+          if (refuseCreate)
+            throw new PublishRejected("Solo chats are off in this community.");
+          create(event);
+        }
+        const channel = event.tags.find(([tag]) => tag === "h")?.[1];
+        if (event.kind === 9 && soloCreates.some((chat) => chat.id === channel))
+          soloMessages.push({
+            channel: channel ?? "",
+            content: event.content,
+            ...Object.fromEntries(
+              event.tags
+                .filter(([tag]) => tag === MESSAGE_TOKENS_TAG)
+                .map(([, value]) => ["tokens", value]),
+            ),
+          });
         events.push(event);
       },
     },
@@ -343,6 +376,33 @@ const owner = createRelaySession(
   },
 );
 if (cold) await owner.restore();
+if (chips) {
+  const chip = (semantic: ComposerToken) =>
+    composerSchema.nodes.token.create({
+      source: composerTokenText(semantic),
+      semantic,
+    });
+  writeView(
+    owner.session.scope,
+    `draft:${launch}`,
+    projectComposerDocument(
+      composerSchema.nodes.doc.create(
+        null,
+        composerSchema.nodes.paragraph.create(null, [
+          composerSchema.text("Use "),
+          chip({
+            kind: "skill",
+            id: "/work/skills/review/SKILL.md",
+            label: "review",
+            target: agent.pubkey,
+          }),
+          composerSchema.text(" in "),
+          chip({ kind: "folder", id: "/work/launch", label: "launch" }),
+        ]),
+      ),
+    ).draft,
+  );
+}
 live?.state({ status: "connected", routes: [] });
 // Someone else's agent is never the viewer's Bestie.
 if (!other) setDefaultAgent(owner.session.scope, agent.pubkey);

@@ -5,6 +5,8 @@ import { eligibleSolo, ownSolo } from "../solo/labels";
 import { readDefaultLifetime } from "../solo/default-lifetime";
 import { readView, writeView } from "../../shared/view-state";
 import { messageCopyLink } from "./message-copy";
+import type { ComposerToken } from "./composer-token";
+import { signMessageTokens } from "./message-tokens";
 
 /** A question for an agent that can't reply where it was written (Viewing
  * only, or not in the channel), asked in your Solo chat with it instead. */
@@ -14,6 +16,8 @@ export type SoloAsk = {
   channelId: string;
   channelName: string;
   threadRootId?: string | undefined;
+  /** The question's chips, signed with it as an ordinary send signs them. */
+  tokens?: readonly ComposerToken[] | undefined;
 };
 
 /** Lowercase words joined by single hyphens, with no `#`, spaces or marks. */
@@ -54,13 +58,32 @@ const askLabel = (channelId: string) => {
 const askKey = (agent: string, channelId: string) =>
   `solo:ask:${agent}:${channelId}`;
 
+/** Only you and `agent` can read it: confirmed private, or still starting
+ * on this device (always private), with no one else in it. Sharing a Solo
+ * chat keeps its labels, so a shared one is left for a new chat. */
+function privateWith(chat: ChannelSummary, viewer: string, agent: string) {
+  const members = chat.members ?? [];
+  return (
+    (chat.pending ||
+      (chat.visibility === "private" &&
+        !chat.metadataCached &&
+        !chat.cached)) &&
+    members.length === 2 &&
+    members.includes(viewer) &&
+    members.includes(agent)
+  );
+}
+
 /** Your Solo chat with `agent` for asks from `channelId`: one you started,
- * still open, with the agent in it, that records this source channel. */
+ * still open and private to the two of you, that records this source
+ * channel. */
 export function soloAskChat(
   session: Pick<RelaySession, "channels" | "viewer" | "scope">,
   agent: string,
   channelId: string,
 ): ChannelSummary | undefined {
+  const viewer = session.viewer;
+  if (!viewer) return;
   const label = askLabel(channelId);
   const saved = label
     ? undefined
@@ -69,9 +92,9 @@ export function soloAskChat(
     .list()
     .channels.filter(
       (chat) =>
-        eligibleSolo(chat, session.viewer) &&
-        ownSolo(chat, session.viewer) &&
-        !!chat.members?.includes(agent) &&
+        eligibleSolo(chat, viewer) &&
+        ownSolo(chat, viewer) &&
+        privateWith(chat, viewer, agent) &&
         (label ? !!chat.labels?.includes(label) : chat.id === saved),
     )
     .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0];
@@ -105,9 +128,12 @@ export function soloAskMessage(
 /**
  * Asks `ask.agent` in your Solo chat with it for this channel: the one an
  * earlier ask from here started, or a new one when that chat is gone,
- * archived, or no longer has the agent. Each chat is one conversation, so
- * later asks from the same channel continue it. Returns the chat's id.
- * Throws, without creating or sending, when nothing can be asked.
+ * archived, or no longer private to you and the agent. Each chat is one conversation, so
+ * later asks from the same channel continue it. Returns the chat's id and
+ * `ready`, which rejects with `ChatNotStarted` when the relay never made the
+ * chat: then the chat and the question are withdrawn (see
+ * `channelWrites.start`). Throws, without creating or sending, when nothing
+ * can be asked.
  */
 export function askInSolo(
   session: Pick<
@@ -115,7 +141,7 @@ export function askInSolo(
     "channels" | "channelWrites" | "messages" | "viewer" | "scope"
   >,
   ask: SoloAsk,
-): { channelId: string; reused: boolean } {
+): { channelId: string; reused: boolean; ready: Promise<void> } {
   if (!session.viewer || !session.channelWrites.available)
     throw new Error(
       "Solo chats are unavailable right now. Your draft is kept.",
@@ -125,6 +151,10 @@ export function askInSolo(
     throw new Error("This thread can’t be linked yet. Your draft is kept.");
   const existing = soloAskChat(session, ask.agent.pubkey, ask.channelId);
   const channelId = existing?.id ?? crypto.randomUUID();
+  // A chat an earlier ask is still starting can still be refused.
+  let ready =
+    (existing && session.channelWrites.starting(existing.id)) ||
+    Promise.resolve();
   if (!existing) {
     const label = askLabel(ask.channelId);
     if (
@@ -139,7 +169,7 @@ export function askInSolo(
         "This chat couldn’t be saved on this device. Your draft is kept.",
       );
     // The chat lists at once and the question goes out behind its create.
-    session.channelWrites.start(
+    ({ ready } = session.channelWrites.start(
       channelId,
       soloAskName(ask.channelName, ask.agent.name),
       [ask.agent.pubkey],
@@ -148,8 +178,10 @@ export function askInSolo(
       true,
       undefined,
       { ...(label ? { labels: [label] } : {}), about: soloAskAbout(ask) },
-    );
+    ));
   }
-  session.messages.send(channelId, text, [ask.agent.pubkey]);
-  return { channelId, reused: !!existing };
+  signMessageTokens(ask.tokens ?? [], () =>
+    session.messages.send(channelId, text, [ask.agent.pubkey]),
+  );
+  return { channelId, reused: !!existing, ready };
 }

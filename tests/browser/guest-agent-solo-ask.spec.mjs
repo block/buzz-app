@@ -325,6 +325,120 @@ test("a refused role change keeps the draft and says why", async ({
   expect(errors.unexplained()).toEqual([]);
 });
 
+test("a draft replaced in another window while the dialog is open isn't asked", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.goto("/tests/fixtures/guest-agent-solo-ask.html");
+  await page
+    .getByRole("button", { name: "Launch channel", exact: true })
+    .click();
+  const composer = page.getByRole("textbox", { name: "Message launch" });
+  await mention(page, composer, "are we still on for Thursday?");
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "Pollen can’t reply here" });
+  await expect(dialog).toBeVisible();
+  // Another window of the app replaces #launch's saved draft.
+  const other = await page.context().newPage();
+  await other.goto("/tests/fixtures/guest-agent-solo-ask.html");
+  await expect
+    .poll(() =>
+      other.evaluate(() => {
+        const key = Object.keys(localStorage).find((item) =>
+          /"draft:[0-9a-f-]{36}"\]$/.test(item),
+        );
+        if (!key) return false;
+        localStorage.setItem(
+          key,
+          JSON.stringify({ text: "A newer question", recipients: [] }),
+        );
+        return true;
+      }),
+    )
+    .toBe(true);
+  await other.close();
+  await dialog.getByRole("button", { name: "Ask in a Solo chat" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "This draft changed elsewhere.",
+  );
+  // Nothing was asked: no chat, no question, and this draft is kept.
+  expect(await page.evaluate(() => window.soloCreates)).toEqual([]);
+  expect(await page.evaluate(() => window.soloMessages)).toEqual([]);
+  await expect(composer).toContainText("are we still on for Thursday?");
+  expect(errors.unexplained()).toEqual([]);
+});
+
+test("a Solo chat the relay refuses gives the question back", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.goto("/tests/fixtures/guest-agent-solo-ask.html?refuse-create");
+  await page
+    .getByRole("button", { name: "Launch channel", exact: true })
+    .click();
+  const composer = page.getByRole("textbox", { name: "Message launch" });
+  await mention(page, composer, "are we still on for Thursday?");
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "Pollen can’t reply here" });
+  await dialog.getByRole("button", { name: "Ask in a Solo chat" }).click();
+  await expect(
+    page.getByRole("dialog", {
+      name: "Couldn’t start your Solo chat with Pollen, so the question wasn’t sent. It’s back in your draft in #launch.",
+    }),
+  ).toBeVisible();
+  await expect(composer).toContainText("are we still on for Thursday?");
+  // The chat that never started is gone from Solo.
+  await expect(
+    page
+      .getByRole("navigation", { name: "Solo conversations" })
+      .getByRole("button", { name: "launch-ask-pollen", exact: true }),
+  ).toHaveCount(0);
+  expect(errors.unexplained()).toEqual([]);
+});
+
+test("the question's skill and folder chips go with it to the Solo chat", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.goto("/tests/fixtures/guest-agent-solo-ask.html?chips");
+  await page
+    .getByRole("button", { name: "Launch channel", exact: true })
+    .click();
+  const composer = page.getByRole("textbox", { name: "Message launch" });
+  await expect(composer).toContainText("Use review in launch");
+  await composer.click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" @Poll");
+  await page.getByRole("option", { name: /^Pollen / }).click();
+  await askInSolo(page);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.soloMessages.map((item) => ({
+          content: item.content,
+          tokens: item.tokens && JSON.parse(item.tokens),
+        })),
+      ),
+    )
+    .toEqual([
+      {
+        content: expect.stringMatching(
+          /^Use \$review in \/work\/launch @Pollen/,
+        ),
+        tokens: [
+          {
+            kind: "skill",
+            id: "/work/skills/review/SKILL.md",
+            label: "review",
+            target: expect.stringMatching(/^[0-9a-f]{64}$/),
+          },
+          { kind: "folder", id: "/work/launch", label: "launch" },
+        ],
+      },
+    ]);
+  expect(errors.unexplained()).toEqual([]);
+});
+
 test("someone else's Viewing-only agent sends as before, with no dialog", async ({
   page,
 }, testInfo) => {

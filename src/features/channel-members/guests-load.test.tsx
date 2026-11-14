@@ -20,7 +20,7 @@ afterEach(() => {
   for (const stop of stops.splice(0)) stop();
 });
 
-function relay(members: readonly string[], agentRole?: "guest") {
+function relay(members: readonly string[], agentRole?: "guest" | "bot") {
   let clock = 100;
   const record = (kind: number, tags: string[][]) =>
     finalizeEvent({ kind, tags, content: "", created_at: clock++ }, relayKey);
@@ -75,6 +75,12 @@ function relay(members: readonly string[], agentRole?: "guest") {
     status: () => owner.capability.snapshot(id).status,
     /** The relay confirms the downloaded membership. */
     confirm: () => publish({}),
+    /** Another device changes the agent's role; the members stay the same,
+     * and the signed roster's Guests follow it, as discovery lists them. */
+    setRole: (role: "guest" | "bot") => {
+      roles = [...roles.filter(([key]) => key !== agent), [agent, role]];
+      publish({ guests: role === "guest" ? [agent] : [] });
+    },
     /** The agent joins as a guest while the channel is open. */
     addGuest: () => {
       roles = [...roles, [agent, "guest"]];
@@ -101,4 +107,16 @@ it("rereads roles when an agent joins as a guest after they were read", async ()
   expect(result.current.size).toBe(0);
   h.addGuest();
   await waitFor(() => expect([...result.current]).toEqual([agent]));
+});
+
+it("rereads roles when another device changes only the agent's role", async () => {
+  const h = relay([viewer, agent], "bot");
+  h.confirm();
+  const { result } = renderHook(() => useChannelGuests(h.session, id));
+  await waitFor(() => expect(h.status()).toBe("ready"));
+  expect(result.current.size).toBe(0);
+  h.setRole("guest");
+  await waitFor(() => expect([...result.current]).toEqual([agent]));
+  h.setRole("bot");
+  await waitFor(() => expect(result.current.size).toBe(0));
 });

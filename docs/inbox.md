@@ -1,13 +1,33 @@
-# Activity (Inbox plugin): in-progress port
+# Activity (Inbox plugin)
 
-Activity is a bundled page (`buzz.inbox/inbox`) that opens recent conversations
-for the selected community. People see it as **Activity**, with the bell icon;
-it was called Inbox, and its plugin id (`buzz.inbox`), page id and route
-(`inbox`), saved-view keys and source files keep that name. Older sections
-below say Inbox for the same page. The stacked evidence, conversation UI and Drafts
-PRs are one user-approved Inbox launch batch; none should ship independently.
-Activity no longer has a Drafts view (see [Drafts](#drafts-removed)); sections
-that describe it are history.
+Activity is Team's conversation list on its **All** view. The bundled plugin
+(`buzz.inbox`) keeps the address `buzz.inbox/inbox`, the bell row, its hover
+preview and its shortcuts; it no longer draws a page of its own. The plugin id,
+page id, route and source files keep the earlier name, Inbox.
+
+## Where each part lives
+
+- **The list.** `ConversationList` (`src/features/conversation`) draws every
+  conversation list, including this one. Its rows come from the conversation
+  index (`conversation-index.ts`), one ordered view per query. Team's All view
+  mixes DMs and Team channels with thread replies, mentions of you and
+  reactions to your messages; a channel whose shown message already has its own
+  thread or mention row is listed once. The **From** choice (Anyone, People,
+  Agents) and **Unread** are filters on that list, saved with Team's other
+  list choices per account and community.
+- **The address.** The shell shows Team's list for `buzz.inbox/inbox`, with
+  no conversation selected. The page applies a link's filters to the saved
+  list choices once per presentation of the visit, not on Back or Forward. A
+  link that names a conversation, message or thread opens it in the reader, and
+  a compose link opens Team's new message pane.
+- **Preview and shortcuts.** Unchanged, described under
+  [Sidebar preview](#sidebar-preview) and
+  [Open Activity with a filter](#open-activity-with-a-filter).
+
+The sections below describe the earlier Activity page and its detail pane. Its
+toolbar, tab workspace, sheet and row components are gone; what they say about
+evidence (`session.unread.inbox()`, `session.inboxFeed`), read rules, routes,
+the preview and shortcuts still holds.
 
 ## Evidence slice (stacked with Inbox UI)
 

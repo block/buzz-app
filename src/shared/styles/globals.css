@@ -397,7 +397,6 @@
   }
   @media (max-width: 650px) {
     .shell-workspace,
-    .shell-workspace[data-feed-layout],
     .shell-workspace:not([data-rail-open], [data-rail-compact]) {
       grid-template-columns: minmax(0, 1fr);
       column-gap: 0;

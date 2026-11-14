@@ -479,8 +479,8 @@ and are asked to sign in again in Buzz.
   work in that folder for the rest of the conversation. A chip someone else
   sends, or a folder no longer in your repositories folder, grants nothing.
   A bare **!**, or **!** before a space, stays text.
-- **Activity** is the default landing view. With no conversation selected, the detail pane shows “No conversation selected”; use **+** to start a new message. The visible filter strip below its title selects All, Threads,
-  DMs, Mentions or Reactions, the same views as Team. The sidebar’s **Agents** card shows up to four of your
+- **Activity** is the default landing view: it is Team’s list on **All**, with the selected conversation beside it. With no conversation selected, the reader shows “No conversation selected”; use **+** to start a new message. The visible filter strip below the list’s title selects All, Threads,
+  DMs, Mentions or Reactions. The sidebar’s **Agents** card shows up to four of your
   non-archived agents that are eligible to message in the current community,
   ranked by your usage; older library entries alone do not qualify. Like Pins,
   it displays an avatar grid. Agents remain here when pinned or placed in another
@@ -489,7 +489,7 @@ and are asked to sign in again in Buzz.
   or unavailable playback.
   DMs and Mentions use the same conversation
   views as Team; the filter icon before All chooses whose activity to show and whether
-  to show unread only. Team, Activity, and Solo keep the list on the left and the
+  to show unread only. Team and Solo keep the list on the left and the
   selected conversation on the right. Click a sidebar card’s title or **Open [section name]**
   to open its full list. **Agents** is a single row in Plugins that opens the agent directory. Drag the outer sidebar’s right edge to resize it;
   double-click the divider to restore its default width. Use the top sidebar
@@ -497,10 +497,10 @@ and are asked to sign in again in Buzz.
   sidebar chat rows, chat pins, and direct conversation links open with the list
   collapsed. Use the sidebar toggle at the left of the conversation header to
   show or hide the list without leaving the chat. Drag the list’s right edge to
-  resize it; double-click the divider to reset its width. Team, Solo, and Activity
+  resize it; double-click the divider to reset its width. Team and Solo
   share the saved list width. A chat assigned to a sidebar section
   shows that section's rows and title. Expanded Pins and custom-section lists show
-  one-line conversation previews, like Team and Activity. Team’s new-message pane and card’s **+** open a centered recipient bar with Team selected above the composer.
+  one-line conversation previews, like Team. Team’s new-message pane and card’s **+** open a centered recipient bar with Team selected above the composer.
   Choose a person or channel, then write a message. Channel drafts use the normal
   channel mention rules. Switching Solo/Team keeps the creation draft and files;
   destination controls stay locked while submitting. Cmd/Ctrl+N opens the global recipient
@@ -508,17 +508,11 @@ and are asked to sign in again in Buzz.
   composer, saved draft, and chat settings as **New Solo chat**. Its header centers the selected agent’s avatar and name, with the list toggle on the left. Pointer toggles slide the list in and out;
   keyboard toggles and reduced-motion preferences change it immediately. Selecting a list row keeps it
   open on wide windows; narrow windows show it over the reader and close it after selection.
-  Native Close also dismisses the focused Activity detail, preserving its draft;
-  an open companion tab closes through its own guarded action first.
-  Activity’s Close or Escape clears the detail while keeping its draft; explicit
-  Close retires that selection’s return path. Back and Forward restore earlier
+  Back and Forward restore earlier
   selections, drafts, and the list’s open/closed state within the navigation session.
-  Links to conversations and threads, replies, and profile details in Activity open
-  in side tabs, preserving the source conversation and its draft. Close a tab to
-  return to the source; **Open in channel** still navigates to the channel.
-  Narrow windows show one pane at a time; Activity’s Close returns to its list.
+  A row in the list opens its conversation, thread or message in the reader beside it.
   Team restores its saved conversation filters when you switch accounts or communities.
-  The **New message** plus in the Team, Solo, or Activity list heading opens a draft in
+  The **New message** plus in the Team or Solo list heading opens a draft in
   the right pane. Type **@name** and
   choose recipients to see their avatars or existing DM history before sending.
   Collection headings use text alone; conversation avatars stay centered above their names.
@@ -538,7 +532,7 @@ and are asked to sign in again in Buzz.
   threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, DMs, Mentions, Reactions) narrow it by
   kind, and **From** by sender (Anyone, People or Agents). Turn on **Unread** to see only what you haven't read:
   there, a row's ✓ marks it as read and it leaves the list, with **Undo** for a moment; when nothing is left it
-  says **All caught up**. If loading fails, use **Retry activity** on the page or preview to retry; recovered
+  says **All caught up**. If the Activity preview fails to load, use **Retry activity** on it to retry; recovered
   activity clears the loading error.
   A DM row whose unread messages are all in one thread opens that thread; later DM messages outside it stay
   unread until you open the whole DM, which its row then does.
@@ -900,8 +894,8 @@ and are asked to sign in again in Buzz.
   Each object card shows up to four rows, then **→ Open [section name]**;
   **Open [section name]** opens a dedicated list in the main content area without expanding
   the card. Back and Forward return between the list and its items. Pins remains uncapped. The Team card lists
-  **Activity**, **Threads**, **DMs**, **Mentions**, and **Channels**. Activity opens the
-  Activity page; the others open the Team list on that view. Each row shows how many
+  **Activity**, **Threads**, **DMs**, **Mentions**, and **Channels**. Each opens the
+  Team list on that view; Activity is the **All** view. Each row shows how many
   of its conversations are unread, and no number when all are read. The view
   you choose is saved locally for this account and community. Bestie conversations
   follow normal ordering; the Bestie plugin also appears under Plugins.
@@ -1006,10 +1000,10 @@ and are asked to sign in again in Buzz.
   device.
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
   **Activity** in the app rail to see recent mentions, DMs, thread replies, and reactions
-  without opening the Activity page. Clicking a conversation opens it directly;
-  **Open Activity** opens the page. The card's **Unread only** switch is
-  separate from the Activity page's filters and hides reactions when on. The preview is not shown on touch
-  devices or while the Activity page is open.
+  without opening the list. Clicking a conversation opens it directly;
+  **Open Activity** opens the list. The card's **Unread only** switch is
+  separate from the list's filters and hides reactions when on. The preview is not shown on touch
+  devices or while Activity is open.
 - **Sidebar width**: drag the sidebar's right edge, or focus its resize handle
   and use the Left/Right arrow keys. Double-click the handle to reset the width.
   Team and plugin pages share the saved width within the same community

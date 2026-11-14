@@ -308,6 +308,9 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   align-items: center;
   gap: var(--space-1);
   margin: var(--space-1h) 0 0;
+  /* Reactions and reply summaries are controls, not conversation text;
+     a copy states reaction counts from the group's data-copy-text. */
+  user-select: none;
 }
 .reactions[data-populated],
 .reactionFallback {
@@ -977,6 +980,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   font-weight: var(--type-weight-regular);
   padding: var(--space-1);
   padding-right: var(--space-1h);
+  user-select: none;
 }
 /* Compact summaries keep their 24px participants but drop the control's
    spare block padding. */
@@ -2827,6 +2831,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 
 .jumpToLatest {
   align-items: flex-end;
+  user-select: none;
   position: sticky;
   z-index: 2;
   /* Anchor the bottom edge, leaving space-3 for the shadow at any text size. */

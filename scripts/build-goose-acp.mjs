@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -121,14 +122,28 @@ export async function stageGoose(root, pin, triple, download = fetch) {
   }
 }
 
+// Distribution builds without network access build goose-acp themselves and
+// pass it in BUZZ_GOOSE_ACP_BINARY; it is staged as is.
+export function stagePrebuilt(root, file, triple) {
+  const name = triple.includes("windows") ? "goose-acp.exe" : "goose-acp";
+  const destination = join(root, "src-tauri/resources/bin");
+  mkdirSync(destination, { recursive: true });
+  const binary = join(destination, name);
+  copyFileSync(file, `${binary}.new`);
+  chmodSync(`${binary}.new`, 0o755);
+  renameSync(`${binary}.new`, binary);
+  console.log(`goose-acp staged at ${binary} from ${file}`);
+}
+
 if (import.meta.main) {
   const root = fileURLToPath(new URL("../", import.meta.url));
-  const pin = JSON.parse(
-    readFileSync(join(root, "runtime/goose-acp.json"), "utf8"),
-  );
-  await stageGoose(
-    root,
-    pin,
-    process.env.TAURI_ENV_TARGET_TRIPLE || hostTriple(),
-  );
+  const triple = process.env.TAURI_ENV_TARGET_TRIPLE || hostTriple();
+  const prebuilt = process.env.BUZZ_GOOSE_ACP_BINARY;
+  if (prebuilt) stagePrebuilt(root, prebuilt, triple);
+  else
+    await stageGoose(
+      root,
+      JSON.parse(readFileSync(join(root, "runtime/goose-acp.json"), "utf8")),
+      triple,
+    );
 }

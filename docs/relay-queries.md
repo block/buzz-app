@@ -1274,7 +1274,9 @@ reactions to the viewer's messages. Live reactions are candidates when they carr
 `p` tag or a `p` tag for the viewer; a reaction whose `p` tags name only others costs
 no read. Candidates whose target is not the viewer's message are not retained, and
 up to 1,000 such verified targets are remembered so their later reactions cost no
-read. Unreadable targets are never remembered.
+read; messages received in channel batches are remembered the same way.
+Unreadable targets are never remembered, and candidates on the viewer's messages
+are retained while their channel is unavailable.
 It retains at most 100 candidates, resolves exact message IDs, and reads paginated
 edit/deletion closure using `(until, before_id)`. Closure reads cap at 2,000 events
 or 4 MiB; combined evidence caps at 8 MiB. Incomplete or inaccessible overlay

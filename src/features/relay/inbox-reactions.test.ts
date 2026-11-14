@@ -314,6 +314,38 @@ it("keeps checking a target it could not read, so access can return", async () =
   expect(fetchesMissing()).toBe(2);
 });
 
+it("reads no target for reactions to other people's messages it already received", async () => {
+  const h = setup();
+  await h.feed.ensure();
+  const others = Array.from({ length: 50 }, (_, index) =>
+    message(h.bob, "room", `Bob ${index}`, 30 + index),
+  );
+  h.emit(others);
+  const reads = h.query.mock.calls.length;
+  for (const [index, other] of others.entries()) {
+    h.emit([h.untagged(h.alice, 100 + index, other.id)]);
+    await h.feed.ensure();
+  }
+  expect(h.query.mock.calls.length).toBe(reads);
+});
+
+it("keeps the viewer's reactions in a channel archived during a refresh", async () => {
+  const h = setup();
+  const mine = Array.from({ length: 60 }, (_, index) =>
+    message(h.viewer, "room", `Mine ${index}`, 11 + index),
+  );
+  h.events.push(...mine);
+  for (const [index, own] of mine.entries())
+    h.emit([h.react(h.alice, 100 + index, own.id)]);
+  await h.feed.ensure();
+  expect(h.feed.snapshot().items).toHaveLength(60);
+  h.archive(true);
+  await h.feed.refresh();
+  h.archive(false);
+  await h.feed.ensure();
+  expect(h.feed.snapshot().items).toHaveLength(60);
+});
+
 it.each(["live", "history"] as const)(
   "drops a forged viewer p tag on someone else's message (%s)",
   async (path) => {

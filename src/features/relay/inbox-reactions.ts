@@ -67,6 +67,12 @@ export function createInboxReactions({
   // else's is never fetched again. Unread targets are not remembered: access
   // to them can return.
   const foreign = new Set<string>();
+  const rememberForeign = (event: RelayEvent) => {
+    if (messageAuthor(event, signingAuthority) === viewer) return;
+    foreign.add(event.id);
+    const oldest = foreign.values().next().value;
+    if (foreign.size > 1000 && oldest) foreign.delete(oldest);
+  };
   // Every channel reaction reaches receive(), so only untagged reactions and
   // those tagging the viewer may cost a target fetch.
   const eligible = (event: RelayEvent) => {
@@ -155,14 +161,7 @@ export function createInboxReactions({
       : [];
     signal.throwIfAborted();
     for (const event of targets)
-      if (
-        ids.includes(event.id) &&
-        messageAuthor(event, signingAuthority) !== viewer
-      ) {
-        foreign.add(event.id);
-        const oldest = foreign.values().next().value;
-        if (foreign.size > 1000 && oldest) foreign.delete(oldest);
-      }
+      if (ids.includes(event.id)) rememberForeign(event);
     // Missing, foreign and revoked targets never establish a reaction row.
     const owned = targets.filter(
       (event) =>
@@ -256,7 +255,9 @@ export function createInboxReactions({
     }
     items.sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
     known = new Set(evidence.map((event) => event.id));
-    retained = relevant;
+    // Keep owned and unresolved targets through archive or access loss, so a
+    // restore recovers them beyond the 50 the history read returns.
+    retained = reactions.filter((event) => !foreign.has(targetOf(event) ?? ""));
     for (const reaction of reactions) pending.delete(reaction.id);
     publish({ status: "ready", items: Object.freeze(items) });
     signal.throwIfAborted();
@@ -361,6 +362,10 @@ export function createInboxReactions({
     receive(events: readonly RelayEvent[], phase?: "live" | "replay") {
       if (closed) return;
       let changed = false;
+      // Channel messages arrive in these same batches; learning their authors
+      // here spares a target read for reactions to them.
+      for (const event of events)
+        if ([9, 40002, 40008].includes(event.kind)) rememberForeign(event);
       const ids = new Set([
         ...known,
         ...pending.keys(),

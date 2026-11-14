@@ -1040,6 +1040,49 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
   );
   expect(f.processes[0]?.end).toHaveBeenCalled();
 });
+it("saves Apps and plugins on and off, and keeps them off for a protected agent", async () => {
+  const f = fixture();
+  const save = vi.fn(async () => {});
+  const { unmount } = render(
+    <f.tabs.SettingsTab {...f.props(defaults, save)} />,
+  );
+  const user = userEvent.setup();
+  const allow = screen.getByRole("checkbox", {
+    name: "Apps and plugins",
+  });
+  expect(allow).not.toBeChecked();
+  await user.click(allow);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenLastCalledWith({ ...defaults, apps: true }),
+  );
+  unmount();
+  render(
+    <f.tabs.SettingsTab {...f.props({ ...defaults, apps: true }, save)} />,
+  );
+  await user.click(screen.getByRole("checkbox", { name: "Apps and plugins" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(save).toHaveBeenLastCalledWith(defaults));
+  cleanup();
+  const props = f.props({ ...defaults, apps: true }, save);
+  render(
+    <f.tabs.SettingsTab
+      {...props}
+      agent={{
+        ...props.agent,
+        protection: { provider: "security", policy: {} },
+      }}
+    />,
+  );
+  const locked = screen.getByRole("checkbox", {
+    name: "Apps and plugins",
+  });
+  expect(locked).not.toBeChecked();
+  expect(locked).toHaveAttribute("aria-disabled", "true");
+  expect(
+    screen.getByText("Protected agents never use Codex Apps or plugins."),
+  ).toBeInTheDocument();
+});
 it("renders provider, model, and thinking as direct settings inputs", async () => {
   const f = fixture();
   const save = vi.fn(async () => {});

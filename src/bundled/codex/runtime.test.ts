@@ -782,6 +782,46 @@ it("hands over promptly and runs conversations independently on one server", asy
     tags: expect.arrayContaining([["e", root, "", "reply"]]),
   });
 });
+it("leaves Codex's Apps and plugins to its configuration only for an agent that allows them", async () => {
+  const f = fixture();
+  const delivery = f.delivery("@Codex check my mail");
+  await f.runtime.run({
+    ...delivery,
+    config: { ...(delivery.config as object), apps: true },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const started = f.sent.find((wire) => wire.method === "thread/start")
+    ?.params as { config: Record<string, unknown> };
+  const { config } = started;
+  expect(config).not.toHaveProperty("features.apps");
+  expect(config).not.toHaveProperty("features.plugins");
+  // Everything else inherited stays off.
+  expect(config).toMatchObject({
+    web_search: "disabled",
+    mcp_servers: { "company.tools": { enabled: false } },
+  });
+  f.complete(0, "DONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+});
+it("keeps Codex's Apps and plugins off for a protected agent that allows them", async () => {
+  const f = protectedPreview();
+  try {
+    await f.runtime.run({
+      ...f.delivery("@Codex check my mail"),
+      agent: f.handle as unknown as Delivery["agent"],
+      config: { ...(f.agent.config as object), apps: true },
+    });
+    await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(1));
+    expect(
+      f.worker.sent.find((wire) => wire.method === "thread/start")?.params,
+    ).toMatchObject({
+      config: { "features.apps": false, "features.plugins": false },
+    });
+    await f.worker.complete(0, "");
+  } finally {
+    f.runtime.dispose();
+  }
+});
 /** A second agent on the same runtime, with its own identity and publisher. */
 function second(f: ReturnType<typeof fixture>) {
   const other = "9".repeat(64);

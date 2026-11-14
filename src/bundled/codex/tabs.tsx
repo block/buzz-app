@@ -49,6 +49,7 @@ import { PanelSubview } from "../../features/panels/PanelSubview";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -1428,7 +1429,7 @@ export function createTabs(
               description={
                 bound
                   ? "The adapter selects a workspace for each conversation session."
-                  : "Codex starts here with full access to your files and network. Buzz tools run inside the app. Inherited MCP/Apps/plugin tools are disabled."
+                  : "Codex starts here with full access to your files and network. Buzz tools run inside the app. Inherited MCP tools are disabled."
               }
             >
               <Input
@@ -1454,6 +1455,26 @@ export function createTabs(
                 })
               }
             />
+            {!bound && (
+              <Field
+                label="Apps and plugins"
+                description={
+                  agent.protection
+                    ? "Protected agents never use Codex Apps or plugins."
+                    : "Lets Codex use the Apps (such as Gmail or Google Drive) and plugins connected to its sign-in on this computer. Applies on this computer only."
+                }
+              >
+                <Checkbox
+                  label="Allow for this agent"
+                  checked={!!draft.apps && !agent.protection}
+                  disabled={saving || !!agent.protection}
+                  onCheckedChange={(checked) => {
+                    const { apps: _apps, ...rest } = draft;
+                    setDraft(checked ? { ...rest, apps: true } : rest);
+                  }}
+                />
+              </Field>
+            )}
           </>
         )}
         <AgentSaveButton form={form} saving={saving} disabled={!changed} />

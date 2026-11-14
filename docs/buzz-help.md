@@ -1004,6 +1004,11 @@ available rather than silently discarding it.
   uses. Available types and models depend on the platform, active plugins, and
   provider setup. Tools and connections depend on that agent's configuration;
   naming a service or adding instructions does not connect it.
+- Codex agents don't use Codex Apps (ChatGPT connectors such as Gmail or
+  Google Drive) or Codex plugins unless **Apps and plugins** is allowed in
+  that agent's settings on this computer. They then get the Apps connected to
+  Codex's ChatGPT sign-in here. Codex's `/plugins` can list an App before it
+  is connected; connect it in ChatGPT first. Protected agents never get them.
 - On desktop, Buzz starts every agent with `BUZZ_VERSION` set to the app's
   version, and agents usually pass it on to the shell commands they run. A
   script or shell config can check for it to tell it is running under Buzz.

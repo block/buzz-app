@@ -2631,7 +2631,10 @@ export class CodexRuntime {
    * model and effort its turn runs on: `pick`'s when available. */
   private async prepare(
     rpc: AppServer,
-    agent: Pick<AgentHandle, "key" | "name" | "pubkey" | "relay">,
+    // Protected when it has a policy, bound or not yet.
+    agent: Pick<AgentHandle, "key" | "name" | "pubkey" | "relay"> & {
+      protection?: unknown;
+    },
     settings: Config,
     workspace: string,
     pick: Readonly<{ model?: string; effort?: string }>,
@@ -2688,8 +2691,9 @@ export class CodexRuntime {
         ...(hooks ? { "hooks.state": hooks } : {}),
         web_search: "disabled",
         mcp_servers: { ...mcp, ...bridge?.config },
-        "features.plugins": false,
-        "features.apps": false,
+        ...(settings.apps && !agent.protection
+          ? {}
+          : { "features.plugins": false, "features.apps": false }),
         ...(credential && {
           [`shell_environment_policy.set.${CREDENTIAL_ENV}`]: credential,
         }),

@@ -50,7 +50,7 @@ it("keeps listening channels distinct from destinations and respects rearmed tim
         expires_at: null,
       },
       110,
-      2,
+      { armedAt: 100, nextDue: 220, used: 2 },
     ).spent,
   ).toBe(true);
 });

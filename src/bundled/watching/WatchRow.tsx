@@ -102,22 +102,14 @@ export function createWatchComponents({
     const command =
       watch.type === "source" && watch.provider === "attention/command";
     const timer = agent.timers[slug];
-    const description = describe(
-      watch,
-      Date.now() / 1000,
-      watch.type === "timer" && timer?.armedAt === watch.armed_at
-        ? timer.used
-        : undefined,
-    );
+    const paused = interestPaused(agent.attention, watch.interest_id);
+    const description = describe(watch, Date.now() / 1000, timer, paused);
     // Timers have no name; a nameless watch is labelled by its Interest.
     const ownName = "name" in watch && watch.name;
     const label = heading(ownName || title(watch.interest_id ?? slug.slice(6)));
     const completed = sourceCompleted(agent.sourceRuns, agent.attention[slug]);
     const state =
-      watch.enabled &&
-      !interestPaused(agent.attention, watch.interest_id) &&
-      !completed &&
-      !description.spent
+      watch.enabled && !paused && !completed && !description.spent
         ? "Active"
         : "Paused";
     const section = (label: string, content: React.ReactNode) => (

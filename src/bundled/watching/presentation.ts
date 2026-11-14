@@ -1,3 +1,9 @@
+import {
+  timerSpent,
+  timerState,
+  type TimerState,
+} from "../../features/agents/attention";
+import { formatItemTimestamp } from "../../shared/datetime";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import {
   ChatCircleIcon,
@@ -32,23 +38,15 @@ export function heading(value: string) {
 export function describe(
   watch: Watch,
   now = Date.now() / 1000,
-  usedOccurrences?: number,
+  saved?: TimerState,
+  /** Its Interest is paused, so the runner skips it. */
+  paused = false,
 ) {
   if (watch.type === "timer") {
-    const used =
-      usedOccurrences ??
-      Math.max(0, Math.floor((now - watch.armed_at) / watch.interval_secs));
-    const nextAt = watch.armed_at + watch.interval_secs;
-    const next = new Date(nextAt * 1000);
-    const date = next.toLocaleDateString();
-    const day =
-      date === new Date(now * 1000).toLocaleDateString() ? "today" : date;
-    const time = next.toLocaleTimeString([], {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-    const minutes = Math.ceil(Math.abs(nextAt - now) / 60);
-    const relative = nextAt > now ? `in ${minutes}m` : `${minutes}m ago`;
+    // The runner's saved state while it describes this schedule: after a late
+    // run, an edit or a rearm, only it knows when the timer runs next.
+    const state = timerState(watch, saved, now);
+    const spent = timerSpent(watch, state, now);
     const interval =
       watch.interval_secs % 3600 === 0
         ? `${watch.interval_secs / 3600}h`
@@ -57,16 +55,21 @@ export function describe(
           : `${watch.interval_secs}s`;
     const runs =
       watch.max_occurrences === null ? "" : ` · ${watch.max_occurrences} runs`;
+    const when = (at: number) =>
+      formatItemTimestamp(at, { withTime: true, nowSeconds: now });
+    // A paused timer, or a run due at or after the deadline, never starts.
+    const next =
+      watch.enabled &&
+      !paused &&
+      !spent &&
+      (watch.expires_at === null || state.nextDue < watch.expires_at)
+        ? ` · next ${when(state.nextDue)}`
+        : "";
     const schedule =
       watch.max_occurrences === 1
-        ? `Once · ${day} ${time} (${relative})`
-        : `Every ${interval}${runs}`;
-    return {
-      title: schedule,
-      spent:
-        (watch.max_occurrences !== null && used >= watch.max_occurrences) ||
-        (watch.expires_at !== null && now >= watch.expires_at),
-    };
+        ? `Once · ${when(watch.armed_at + watch.interval_secs)}`
+        : `Every ${interval}${runs}${next}`;
+    return { title: schedule, spent };
   }
   if (watch.type === "source")
     return {

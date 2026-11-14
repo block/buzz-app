@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import type { Watch } from "./model";
+import { timerState } from "../../features/agents/attention";
 import { describe } from "./presentation";
 
 /** Local-time unix seconds, so labels read in the zone the formatter uses. */
@@ -78,15 +79,26 @@ it("shows the runner's next run after a late run, an edit or a rearm", () => {
       used: 5,
     }).title,
   ).toBe("Every 1h · 10 runs · next 1:00 PM");
-  // A one-shot that ran late reads when it ran.
-  const once = timer(at(10, 13, 3) - 60, 60, { max_occurrences: 1 });
-  expect(
-    describe(once, NOW, {
-      armedAt: once.armed_at,
-      nextDue: at(10, 13, 9) + 60,
-      used: 1,
-    }),
-  ).toEqual({ title: "Once · 9:00 AM", spent: true });
+});
+
+it("keeps a missed one-shot's configured time once state is saved", () => {
+  // Due yesterday at 3:00 and never run: state first saved at noon counts
+  // the missed occurrences as used.
+  const missed = timer(at(10, 12, 3) - 60, 60, { max_occurrences: 1 });
+  expect(describe(missed, NOW, timerState(missed, undefined, NOW))).toEqual({
+    title: "Once · Yesterday at 3:00 AM",
+    spent: true,
+  });
+});
+
+it("does not infer a one-shot's run time across an interval edit", () => {
+  // It ran at 9:00; an interval edit keeps that state but moves its time.
+  const ran = { armedAt: at(10, 13, 8), nextDue: at(10, 13, 10), used: 1 };
+  const once = timer(at(10, 13, 8), 3_600, { max_occurrences: 1 });
+  expect(describe(once, NOW, ran).title).toBe("Once · 9:00 AM");
+  expect(describe({ ...once, interval_secs: 7_200 }, NOW, ran).title).toBe(
+    "Once · 10:00 AM",
+  );
 });
 
 it("promises no run at or after the timer expires", () => {

@@ -121,7 +121,7 @@ export function createPresence(
     }
     if (!selected.size) {
       nextRead = Infinity;
-      controller?.abort();
+      controller = undefined; // Retire, do not abort: see clear().
     }
     schedule();
     if (admitted || evicted)
@@ -215,7 +215,9 @@ export function createPresence(
     stopObservation?.();
     stopObservation = undefined;
     observedKeys = "";
-    controller?.abort();
+    // Retire, do not abort, a sent read: an abort settles here before the
+    // broker may admit it and start its gate, so pacing from that settlement
+    // would send the next read into the broker's busy window.
     controller = undefined;
     nextRead = Math.max(Date.now() + 100, readGate);
     if (publication) {
@@ -370,7 +372,7 @@ export function createPresence(
         }
         if (!subjects.size) {
           nextRead = Infinity;
-          controller?.abort();
+          controller = undefined; // Retire, do not abort: see clear().
           clearTimeout(timer);
           observe();
         } else if (selected.size < 256 || priority !== subject.profiles > 0)

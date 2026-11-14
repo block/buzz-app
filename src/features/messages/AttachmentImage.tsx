@@ -297,19 +297,22 @@ function ImagePixels({
       // show it: the row can unmount before its ready state commits.
       if (session && decoded && !original.isConnected) {
         original.remove();
-        original.style.visibility = "visible";
+        original.style.opacity = "1";
         retainDecodedImage(session, source, original, capture);
       }
     };
   }, [retained, session, source, hash, onDecoded]);
   if (retained) return <span ref={host} />;
+  // Placeholders stay beneath the original while it fades in; styles hide them
+  // once it settles.
   return (
     <>
-      {hash && !ready && (
+      {hash && (
         <canvas
           ref={canvas}
           width={BLURHASH_SIZE}
           height={BLURHASH_SIZE}
+          data-retired={ready || undefined}
           tabIndex={-1}
           aria-hidden="true"
         />
@@ -319,16 +322,18 @@ function ImagePixels({
         src={source}
         alt=""
         loading="lazy"
-        style={{ visibility: ready ? "visible" : "hidden" }}
+        style={{ opacity: ready ? 1 : 0 }}
       />
-      {/* After the original, so preview queries still find the original first. */}
-      {thumbnail && !ready && (
+      {/* After the original, so preview queries still find the original first.
+          An unloaded thumbnail has nothing to fade from; drop its request. */}
+      {thumbnail && (!ready || thumbnailLoaded) && (
         <img
           src={thumbnail}
           alt=""
           loading="lazy"
           data-thumbnail=""
-          style={{ visibility: thumbnailLoaded ? "visible" : "hidden" }}
+          data-retired={ready || undefined}
+          style={{ opacity: thumbnailLoaded && !ready ? 1 : 0 }}
           onLoad={() => setThumbnailLoaded(true)}
         />
       )}

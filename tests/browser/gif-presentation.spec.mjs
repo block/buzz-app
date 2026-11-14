@@ -40,7 +40,7 @@ test("sent images and extensionless GIFs keep full frames with captions and mult
         for (const preview of await previews.all()) {
           await preview.scrollIntoViewIfNeeded();
           const img = preview.locator("img");
-          await expect(img).toHaveCSS("visibility", "visible");
+          await expect(img).toHaveCSS("opacity", "1");
           await expect(img).toHaveCSS("object-fit", "contain");
           const bounds = await preview.boundingBox();
           expect(bounds.width).toBeGreaterThanOrEqual(1);

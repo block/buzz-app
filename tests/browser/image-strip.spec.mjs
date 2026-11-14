@@ -296,8 +296,7 @@ test("posted image previews keep every image reachable beside documents", async 
             .locator("img")
             .evaluate(
               (el) =>
-                el.naturalWidth > 0 &&
-                getComputedStyle(el).visibility === "visible",
+                el.naturalWidth > 0 && getComputedStyle(el).opacity === "1",
             ),
         )
         .toBe(true);

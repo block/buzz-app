@@ -103,7 +103,7 @@ for (const metadata of [undefined, { width: 700, height: 900 }]) {
     });
     expect(next.getByRole("link")).not.toHaveAttribute("data-image-ready");
     expect(next.container.querySelector("img")).toHaveStyle({
-      visibility: "hidden",
+      opacity: "0",
     });
     const retry = decode(next);
     await retry.fail();
@@ -121,7 +121,7 @@ it("re-adopts a decoded original across remount without decoding again", async (
   const next = mount(owner);
   const adopted = next.container.querySelector("img");
   expect(adopted).toBe(original);
-  expect(adopted).toHaveStyle({ visibility: "visible" });
+  expect(adopted).toHaveStyle({ opacity: "1" });
   expect(adopted?.decode).toHaveBeenCalledOnce();
   expect(next.getByRole("link")).toHaveAttribute("data-image-ready");
   expect(next.getByRole("link")).toHaveStyle({ aspectRatio: "360 / 30" });
@@ -130,13 +130,13 @@ it("re-adopts a decoded original across remount without decoding again", async (
   const concurrent = mount(owner);
   const own = concurrent.container.querySelector("img");
   expect(own).not.toBe(original);
-  expect(own).toHaveStyle({ visibility: "hidden" });
+  expect(own).toHaveStyle({ opacity: "0" });
   next.unmount();
   concurrent.unmount();
   const other = mount(session());
   expect(other.container.querySelector("img")).not.toBe(original);
   expect(other.container.querySelector("img")).toHaveStyle({
-    visibility: "hidden",
+    opacity: "0",
   });
 });
 
@@ -145,11 +145,11 @@ it("shows a re-adopted original whose row unmounted before ready committed", asy
   const first = mount(owner);
   await decode(first).resolveUncommitted();
   const original = first.container.querySelector("img");
-  expect(original).toHaveStyle({ visibility: "hidden" });
+  expect(original).toHaveStyle({ opacity: "0" });
   first.unmount();
   const next = mount(owner);
   expect(next.container.querySelector("img")).toBe(original);
-  expect(original).toHaveStyle({ visibility: "visible" });
+  expect(original).toHaveStyle({ opacity: "1" });
 });
 
 it("retains neither undecoded originals nor those decoded before media disposal", async () => {
@@ -167,7 +167,7 @@ it("retains neither undecoded originals nor those decoded before media disposal"
   const later = mount(owner);
   expect(later.container.querySelector("img")).not.toBe(stale);
   expect(later.container.querySelector("img")).toHaveStyle({
-    visibility: "hidden",
+    opacity: "0",
   });
 });
 
@@ -224,23 +224,34 @@ const relayThumbnail = `https://relay.test/media/${"a".repeat(64)}.thumb.jpg`;
 const thumbnailOf = (view: ReturnType<typeof render>) =>
   view.container.querySelector<HTMLImageElement>("img[data-thumbnail]");
 
-it("shows the thumbnail once it loads and drops it when the original decodes", async () => {
+it("shows the thumbnail once it loads and keeps it beneath the original's fade", async () => {
   const view = mount(session(), relaySource, undefined, relayThumbnail);
   const thumbnail = thumbnailOf(view);
   expect(thumbnail).toHaveAttribute("src", relayThumbnail);
   expect(thumbnail).toHaveAttribute("loading", "lazy");
-  expect(thumbnail).toHaveStyle({ visibility: "hidden" });
+  expect(thumbnail).toHaveStyle({ opacity: "0" });
   fireEvent.load(thumbnail as HTMLImageElement);
-  expect(thumbnailOf(view)).toHaveStyle({ visibility: "visible" });
+  expect(thumbnailOf(view)).toHaveStyle({ opacity: "1" });
   const original = view.container.querySelector("img");
   expect(original).toHaveAttribute("src", relaySource);
-  expect(original).toHaveStyle({ visibility: "hidden" });
+  expect(original).toHaveStyle({ opacity: "0" });
+  expect(thumbnail).not.toHaveAttribute("data-retired");
   await decode(view).release();
-  expect(thumbnailOf(view)).toBeNull();
-  expect(original).toHaveStyle({ visibility: "visible" });
+  // Styles fade it out once the original settles.
+  expect(thumbnailOf(view)).toBe(thumbnail);
+  expect(thumbnail).toHaveAttribute("data-retired");
+  expect(thumbnail).toHaveStyle({ opacity: "0" });
+  expect(original).toHaveStyle({ opacity: "1" });
 });
 
-it("falls back to the blurhash placeholder when the thumbnail fails", () => {
+it("drops a thumbnail that had not loaded when the original decodes", async () => {
+  const view = mount(session(), relaySource, undefined, relayThumbnail);
+  await decode(view).release();
+  expect(thumbnailOf(view)).toBeNull();
+  expect(view.container.querySelector("img")).toHaveStyle({ opacity: "1" });
+});
+
+it("falls back to the blurhash placeholder when the thumbnail fails", async () => {
   const view = render(
     <AttachmentImage
       session={session()}
@@ -255,9 +266,13 @@ it("falls back to the blurhash placeholder when the thumbnail fails", () => {
   );
   expect(view.container.querySelector("canvas")).not.toBeNull();
   fireEvent.error(thumbnailOf(view) as HTMLImageElement);
-  expect(thumbnailOf(view)).toHaveStyle({ visibility: "hidden" });
+  expect(thumbnailOf(view)).toHaveStyle({ opacity: "0" });
   expect(view.container.querySelector("canvas")).not.toBeNull();
   expect(view.queryByRole("status")).toBeNull();
+  await decode(view).release();
+  expect(view.container.querySelector("canvas")).toHaveAttribute(
+    "data-retired",
+  );
 });
 
 it("requests no thumbnail for third-party images", () => {

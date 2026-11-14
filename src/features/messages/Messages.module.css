@@ -581,6 +581,9 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 }
 .attachmentImage {
   --media-preview-radius: 16px;
+  /* Settle, not state: 150ms reads as a pop for a whole image. The fill and
+     placeholders retire after the same delay. */
+  --image-fade: var(--duration-settle);
   isolation: isolate;
   cursor: zoom-in;
   /* Reserve geometry even across virtualizer remounts and failed/lazy loads.
@@ -611,8 +614,22 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   clip-path: var(--media-corner-clip, none);
   background: var(--surface-inset);
 }
+/* Once the original's fade settles, the fill and placeholders fade out behind
+   it, so a transparent or letterboxed original never shows them or pops. */
 .attachmentImage[data-image-ready] .attachmentImagePixels {
   background: transparent;
+}
+/* A re-adopted original is already shown, so only a fading one holds the fill. */
+.attachmentImage[data-image-ready] .attachmentImagePixels:has(> img) {
+  transition: background-color var(--image-fade) var(--easing-state)
+    var(--image-fade);
+}
+.attachmentImage [data-retired] {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--image-fade) var(--easing-state) var(--image-fade),
+    visibility 0s calc(var(--image-fade) * 2);
 }
 .attachmentImage.mediaPlaceholder {
   border-radius: var(--media-preview-radius);
@@ -629,14 +646,26 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 }
 .attachmentImage img {
   object-fit: contain;
+  transition: opacity var(--image-fade) var(--easing-state);
 }
 .attachmentImage video {
   object-fit: contain;
+}
+/* Beneath the original, which fades in over them; both, so the thumbnail
+   still covers the blurhash. */
+.attachmentImage canvas,
+.attachmentImage img[data-thumbnail] {
+  z-index: -1;
 }
 /* The scale hides the blur's faded edge. */
 .attachmentImage img[data-thumbnail] {
   filter: blur(12px);
   transform: scale(1.1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .attachmentImage {
+    --image-fade: 0s;
+  }
 }
 .mediaGridBadge {
   position: absolute;

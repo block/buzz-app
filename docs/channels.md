@@ -1786,16 +1786,18 @@ Exceptionally small frames can clip the visible label while retaining the comple
 accessible status.
 Valid message-carried `imeta blurhash` is decoded locally into a 32×32 canvas in
 that same frame when it intersects the viewport. Relay-hosted images also lazily
-request the relay's small thumbnail and, once it loads, show it blurred above the
-blurhash. PNG, GIF, WebP and AVIF originals request the WebP variant, which keeps
-transparency; uploads that predate it fail and keep the blurhash. Third-party
-images and re-adopted decoded originals request none, and a failed thumbnail
-leaves the blurhash. These previews are removed entirely
-(including behind transparency) only after the lazy original decodes; failure
-retains them. Missing/invalid hashes or canvas
-failures keep the existing background. Syntax validation bounds hashes to 166
-base83 characters / 9×9 components; folding does no pixel work. Blurhash work is
-per-mounted-image and uncached, visibility-gated even in nonvirtualized threads.
+request the relay's small thumbnail and, once it loads, fade it in blurred above
+the blurhash. PNG, GIF, WebP and AVIF originals request the WebP variant, which
+keeps transparency; uploads that predate it fail and keep the blurhash.
+Third-party images and re-adopted decoded originals request none, and a failed
+thumbnail leaves the blurhash. Once the lazy original decodes it fades in over
+these previews (`duration-settle`, `easing-state`), which then fade out behind
+it, including behind transparency; a thumbnail still loading is dropped. Re-adopted
+originals and reduced motion appear immediately. Failure retains the previews.
+Missing/invalid hashes or canvas failures keep the existing background. Syntax
+validation bounds hashes to 166 base83 characters / 9×9 components; folding does
+no pixel work. Blurhash work is per-mounted-image and uncached, visibility-gated
+even in nonvirtualized threads.
 Without IntersectionObserver, no blurhash is painted.
 This favors bounded visible work over instant offscreen previews on scrolling.
 `tests/browser/image-scroll.spec.mjs` covers delayed/failed loads, actual remounts,

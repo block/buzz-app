@@ -33,6 +33,17 @@ export function AgentResponsePreview({
   const avatars: typeof participants = participants.length
     ? participants.slice(0, 3)
     : [{ id: "primary", name, picture }];
+  // A byline for several agents names them all, as its avatars show them, and
+  // leaves out the hint, which describes one agent.
+  const names = participants.map((agent) => agent.name);
+  const several = names.length > 1;
+  const byline = several
+    ? new Intl.ListFormat(undefined, { type: "conjunction" }).format(
+        names.length > 3
+          ? [...names.slice(0, 2), `${names.length - 2} others`]
+          : names,
+      )
+    : name;
   return (
     <div
       className={styles.message}
@@ -48,11 +59,7 @@ export function AgentResponsePreview({
               className={styles.agentAvatarGroup}
               data-count={Math.max(1, Math.min(participants.length, 3))}
               role="img"
-              aria-label={
-                participants.length
-                  ? participants.map((agent) => agent.name).join(", ")
-                  : name
-              }
+              aria-label={names.length ? names.join(", ") : name}
             >
               {avatars.map((agent) => (
                 <span
@@ -79,9 +86,9 @@ export function AgentResponsePreview({
                     aria-hidden="true"
                     className={styles.authorAgentIcon}
                   />
-                  {name}
+                  {byline}
                 </strong>
-                {bylineHint}
+                {!several && bylineHint}
               </div>
             </div>
           )}

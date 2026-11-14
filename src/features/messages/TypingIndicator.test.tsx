@@ -833,7 +833,11 @@ it.each([
       "[data-conversation-activity]",
     );
     if (!tail) throw new Error("Missing conversation activity");
-    expect(within(tail).getByText("Agent", { exact: true })).toBeVisible();
+    expect(
+      within(tail).getByText(team ? "Agent and Other" : "Agent", {
+        exact: true,
+      }),
+    ).toBeVisible();
     view.rerender(renderFlow(true));
     if (!local) {
       f.update([...pulses, entry(agent, secondRoot)]);

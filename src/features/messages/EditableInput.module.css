@@ -110,6 +110,7 @@ html[data-keyboard-navigation] .input:focus-visible:not([aria-disabled]) {
   border-radius: var(--radius-chip);
   background: var(--affordance-subtle);
   padding: var(--space-half) var(--space-1h);
+  color: var(--text-inline-code);
 }
 .input code,
 .input pre {
@@ -145,6 +146,7 @@ html[data-keyboard-navigation] .input:focus-visible:not([aria-disabled]) {
 }
 .input pre code {
   padding: 0;
+  color: inherit;
   border-radius: 0;
   background: transparent;
 }

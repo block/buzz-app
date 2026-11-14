@@ -94,6 +94,7 @@
   border-radius: var(--radius-chip);
   background: var(--affordance-subtle);
   padding: var(--space-half) var(--space-1h);
+  color: var(--text-inline-code);
   font-family: var(--font-system-mono);
   font-size: var(--text-mono-sm);
   line-height: var(--text-mono-sm--line-height);
@@ -111,6 +112,7 @@
 }
 .document pre code {
   display: block;
+  color: inherit;
   overflow-x: auto;
   border-radius: 0;
   background: transparent;

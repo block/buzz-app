@@ -610,6 +610,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "text-inline-code",
+        variable: "--text-inline-code",
+        pointsAt: "red-11 light / orange-11 dark",
+        use: "Inline code in messages, Markdown, and the composer, on affordance-subtle. Not code blocks.",
+        status: "proposed",
+        owner: "Messages",
+      },
+      {
         token: "text-call-leave",
         variable: "--text-call-leave",
         pointsAt: "red-10 light / red-10 dark",

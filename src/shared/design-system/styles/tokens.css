@@ -1149,6 +1149,8 @@
   --text-inverse: var(--neutral-1);
   --text-unavailable: var(--neutral-7);
   --text-danger: var(--red-text);
+  /* Inline code reads as code, not body text: red here, orange in dark. */
+  --text-inline-code: var(--red-11);
   --text-call-leave: var(--red-10);
   --text-warning: var(--amber-12);
   --text-success: var(--green-text);
@@ -1305,6 +1307,7 @@
   --text-inverse: var(--neutral-1);
   --text-unavailable: var(--neutral-7);
   --text-danger: var(--red-12);
+  --text-inline-code: var(--orange-11);
   --text-call-leave: var(--red-10);
   --text-warning: var(--amber-12);
   --text-success: var(--green-12);
@@ -2107,6 +2110,7 @@
   --color-surface-status-danger: var(--surface-status-danger);
   --text-color-unavailable: var(--text-unavailable);
   --text-color-danger: var(--text-danger);
+  --text-color-inline-code: var(--text-inline-code);
   --text-color-call-leave: var(--text-call-leave);
   --text-color-warning: var(--text-warning);
   --text-color-success: var(--text-success);

@@ -3132,9 +3132,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   color: inherit;
   border-color: currentColor;
 }
-.messageBubble[data-own] .text :is(code, pre, .codeBlock) {
-  color: var(--text-standard);
-}
 .messageBubble[data-own] .spoilerMask {
   color: inherit;
 }

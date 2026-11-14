@@ -515,6 +515,7 @@ export function assemblePart(
       : "";
   const opaqueClose = "";
   if (block?.deep) return plain(false, true);
+  if (start.inline || end.inline) return plain(false);
   const blockLength =
     (startFence ? 0 : (block?.prefix.length ?? 0)) +
     (block?.table

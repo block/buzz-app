@@ -39,18 +39,17 @@ function fragment(href: string): string {
 
 function PartLink(props: ComponentProps<"a"> & ExtraProps) {
   const { onAnchor } = useContext(PartContext);
-  const { href, children } = props;
+  const { node: _node, href, onClick: _onClick, ...rest } = props;
   if (!href?.startsWith("#")) return <SharedLink {...props} />;
   return (
     <a
+      {...rest}
       href={href}
       onClick={(event) => {
         event.preventDefault();
         onAnchor(fragment(href));
       }}
-    >
-      {children}
-    </a>
+    />
   );
 }
 

@@ -459,3 +459,41 @@ it("counts Unicode Markdown words while plain files skip reading metadata", () =
   for (const kind of ["code", "text"] as const)
     expect(indexDocument(source, kind).words).toBe(0);
 });
+
+describe("forced cuts inside one long line", () => {
+  it("cut between inline spans, never inside one", () => {
+    const sentence =
+      "Some prose with `a code span inside` and *emphasis here*. ";
+    const text = sentence.repeat(Math.ceil((PART_CHARS * 3) / sentence.length));
+    const indexed = indexDocument(text, "markdown");
+    expect(indexed.parts.length).toBeGreaterThan(2);
+    expect(
+      indexed.parts.map((part) => text.slice(part.start, part.end)).join(""),
+    ).toBe(text);
+    indexed.parts.forEach((part, index) => {
+      const slice = text.slice(part.start, part.end);
+      expect((slice.match(/`/g)?.length ?? 0) % 2).toBe(0);
+      expect((slice.match(/\*/g)?.length ?? 0) % 2).toBe(0);
+      expect(indexed.partFallback(index)).toBeUndefined();
+    });
+  });
+
+  it("shows both sides as text when a span fills the whole window", () => {
+    const text = `x \`${"y ".repeat(Math.floor(PART_CHARS * 0.6))}\` z`;
+    const indexed = indexDocument(text, "markdown");
+    expect(indexed.parts.length).toBe(2);
+    expect(indexed.partFallback(0)).toBe("context");
+    expect(indexed.partFallback(1)).toBe("context");
+  });
+
+  it("renders the parts after an unsafe cut normally", () => {
+    const span = `x \`${"y ".repeat(Math.floor(PART_CHARS * 0.6))}\` `;
+    const text = span + "plain words ".repeat(PART_CHARS / 2);
+    const indexed = indexDocument(text, "markdown");
+    expect(indexed.parts.length).toBeGreaterThan(3);
+    expect(indexed.partFallback(0)).toBe("context");
+    expect(indexed.partFallback(1)).toBe("context");
+    for (let index = 2; index < indexed.parts.length; index++)
+      expect(indexed.partFallback(index)).toBeUndefined();
+  });
+});

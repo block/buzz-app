@@ -30,6 +30,7 @@ import {
 import type { ReferenceDefinition } from "./markdown-references";
 import { fenceLine } from "./markdown-fences";
 import type { Fence as CodeFence, FenceState, Owner } from "./markdown-fences";
+import { inlineCut } from "./markdown-inline-cut";
 import { startsBlankHtmlBlock, isStandaloneHtmlTag } from "./markdown-html";
 import { explicitHtmlStart, explicitHtmlEnd } from "./markdown-html-explicit";
 import type { ExplicitHtml } from "./markdown-html-explicit";
@@ -162,6 +163,8 @@ type Cursor = Readonly<{
   syntax?: FenceState | undefined;
   /** Present only when a forced cut continues the same original source line. */
   current?: Line | undefined;
+  /** The forced cut splits a code span, link or emphasis. */
+  inline?: true | undefined;
 }>;
 const lineEnding = /[\r\n]/g;
 
@@ -1655,7 +1658,25 @@ function chooseCut(
         if (offset > closeStart && offset < line.explicitEnd)
           offset = closeStart;
       }
-      return { ...cursor, offset, current: line, paragraph: line.paragraph };
+      let inline = false;
+      if (markdown && !line.code && !line.opaque && !cursor.fence) {
+        const safe = inlineCut(
+          text,
+          cursor.offset,
+          Math.max(lower, cursor.offset + 1),
+          offset,
+          Math.min(line.end, offset + PART_CHARS),
+        );
+        if (safe === undefined) inline = true;
+        else offset = safe;
+      }
+      return {
+        ...cursor,
+        offset,
+        current: line,
+        paragraph: line.paragraph,
+        inline: inline ? true : undefined,
+      };
     }
     cursor = nextLine(cursor, line);
   }

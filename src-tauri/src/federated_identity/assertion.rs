@@ -78,6 +78,32 @@ pub(super) fn monotonic_expiry(
     Some((monotonic_now.checked_add(remaining)?, remaining))
 }
 
+/// When a token arrived, on both clocks. It ages by the larger of their
+/// elapsed times: the monotonic clock stops while the device sleeps, and a
+/// wall clock set back counts as no time passing.
+#[derive(Clone, Copy)]
+pub(super) struct Received {
+    at: Instant,
+    wall: std::time::SystemTime,
+}
+impl Received {
+    #[cfg(test)]
+    pub(super) fn sample() -> Self {
+        Self::at(Instant::now(), protocol::wall_now())
+    }
+    pub(super) fn at(at: Instant, wall: std::time::SystemTime) -> Self {
+        Self { at, wall }
+    }
+    /// The monotonic instant this token has aged to, for comparing with its deadlines.
+    pub(super) fn now(&self) -> Instant {
+        let now = Instant::now();
+        let wall = protocol::wall_now()
+            .duration_since(self.wall)
+            .unwrap_or_default();
+        self.at.checked_add(wall).map_or(now, |aged| aged.max(now))
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Assertion {
     pub(crate) header: Zeroizing<String>,
@@ -86,6 +112,7 @@ pub(crate) struct Assertion {
     pub(crate) viewer: String,
     pub(crate) relay: String,
     refresh_at: Instant,
+    received: Received,
     /// The server that issued it; every later check asks that server.
     server: Weak<super::Inner>,
 }
@@ -153,6 +180,7 @@ pub(crate) async fn test_live_authorization(
             viewer: identity.viewer().await.unwrap(),
             relay: relay.into(),
             refresh_at: Instant::now(),
+            received: Received::sample(),
             server: Arc::downgrade(&host.0),
         }),
         unsigned: None,
@@ -178,12 +206,14 @@ impl Assertion {
             .cancellation_for(&self.revision)
     }
     pub(crate) fn remaining(&self) -> std::time::Duration {
-        self.expires_at.saturating_duration_since(Instant::now())
+        self.expires_at
+            .saturating_duration_since(self.received.now())
     }
     /// Time until a socket should renew: past this point a new connection
     /// mints a fresh assertion rather than reusing this one.
     pub(crate) fn renew_in(&self) -> std::time::Duration {
-        self.refresh_at.saturating_duration_since(Instant::now())
+        self.refresh_at
+            .saturating_duration_since(self.received.now())
     }
 }
 #[derive(Default)]
@@ -524,7 +554,7 @@ impl FederatedIdentity {
         if let Some(assertion) = cached
             .as_ref()
             .and_then(|result| result.as_ref().ok())
-            .filter(|assertion| Instant::now() < assertion.refresh_at)
+            .filter(|assertion| assertion.received.now() < assertion.refresh_at)
         {
             self.note_clock_offset(None);
             authorization.assertion = Some(assertion.clone());
@@ -865,6 +895,7 @@ impl FederatedIdentity {
             viewer: viewer.into(),
             relay: relay.into(),
             refresh_at: expires_at - refresh_margin(lifetime),
+            received: Received::at(monotonic_now, wall_now),
             server: Arc::downgrade(&self.0),
         })
     }
@@ -997,6 +1028,10 @@ mod tests {
         let (first, again) = (first.assertion.unwrap(), again.assertion.unwrap());
         assert_eq!(first.expires_at, again.expires_at);
         assert_eq!(first.header.as_str(), again.header.as_str());
+        // After an hour of sleep the monotonic clock hasn't moved, but the token is not reused.
+        let woke = protocol::wall_now() + std::time::Duration::from_secs(3600);
+        let slept = protocol::WALL_NOW.scope(woke, host.assertion_for_relay(&identity, &url));
+        assert!(slept.await.is_err());
         drop(host);
         assert_eq!(bodies.await.unwrap().len(), 1);
     }
@@ -1072,6 +1107,7 @@ mod tests {
                 viewer: identity.viewer().await.unwrap(),
                 relay: relay.into(),
                 refresh_at: Instant::now(),
+                received: Received::sample(),
                 server: Arc::downgrade(&host.0),
             }),
             relay: relay.into(),
@@ -1100,6 +1136,7 @@ mod tests {
                 viewer: identity.viewer().await.unwrap(),
                 relay: relay.into(),
                 refresh_at: Instant::now(),
+                received: Received::sample(),
                 server: Arc::downgrade(&host.0),
             }),
             relay: relay.into(),
@@ -1367,6 +1404,7 @@ mod tests {
             viewer: identity.viewer().await.unwrap(),
             relay: relay.into(),
             refresh_at: Instant::now(),
+            received: Received::sample(),
             server: Arc::downgrade(&host.0),
         };
         let authorization = Authorization {
@@ -1685,6 +1723,7 @@ mod tests {
             viewer: identity.viewer().await.unwrap(),
             relay: "wss://relay.example".into(),
             refresh_at: Instant::now(),
+            received: Received::sample(),
             server: Arc::downgrade(&host.0),
         };
         {
@@ -2132,6 +2171,7 @@ mod tests {
             viewer,
             relay: "wss://relay.example".into(),
             refresh_at: Instant::now(),
+            received: Received::sample(),
             server: Arc::downgrade(&host.0),
         };
         let (started, observed) = tokio::sync::oneshot::channel();

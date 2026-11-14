@@ -130,6 +130,7 @@ struct Cached {
     header: Zeroizing<String>,
     refresh_at: tokio::time::Instant,
     expires_at: tokio::time::Instant,
+    received: super::assertion::Received,
     grants: u64,
 }
 
@@ -169,7 +170,7 @@ impl Admission {
         if self
             .cached
             .as_ref()
-            .is_some_and(|cached| cached.expires_at <= tokio::time::Instant::now())
+            .is_some_and(|cached| cached.expires_at <= cached.received.now())
         {
             return Err("Agent assertion expired before dispatch".into());
         }
@@ -582,8 +583,8 @@ impl AgentTokens {
                     .as_ref()
                     .is_none_or(|account| *account == cached.account)
                 && cached.relay == relay
-                && cached.refresh_at > tokio::time::Instant::now()
-                && cached.expires_at > tokio::time::Instant::now() + valid_for
+                && cached.refresh_at > cached.received.now()
+                && cached.expires_at > cached.received.now() + valid_for
             {
                 return Ok(Some(cached.clone()));
             }
@@ -664,7 +665,7 @@ impl AgentTokens {
             ..cached
         };
         slot.assertion = Some(cached.clone());
-        if cached.expires_at <= tokio::time::Instant::now() + valid_for {
+        if cached.expires_at <= cached.received.now() + valid_for {
             return Err(SHORT_LIVED.into());
         }
         Ok(Some(cached))
@@ -936,6 +937,7 @@ impl AgentTokens {
                 .checked_sub(std::time::Duration::from_secs(30))
                 .unwrap_or(monotonic_now),
             expires_at,
+            received: super::assertion::Received::at(monotonic_now, wall_now),
             grants: 0,
             retirements: 0,
             account: grant.account.clone(),

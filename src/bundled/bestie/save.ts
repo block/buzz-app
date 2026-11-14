@@ -5,10 +5,14 @@ import {
 } from "../../features/agents/attention";
 import type { Agent, Agents } from "../../features/agents/service";
 import {
+  dream,
   FEATURES,
   type Feature,
   featureState,
   hasFeature,
+  LEGACY,
+  memory,
+  notes,
   restoredFeature,
   withFeature,
 } from "./features";
@@ -50,22 +54,36 @@ export function cannotEdit(
   return agent.configProblem;
 }
 
-/** Whether `agent` has `feature` on: its section, and its timer if it has
- * one. Half of one, such as a timer deleted in Watching, reads as off. */
+/** Whether `agent` has `feature` on: its section if it has one, and its
+ * Interest and timer if it has a timer. Half of one, such as a timer deleted
+ * in Watching, reads as off. */
 export function featureOn(agent: Agent, feature: Feature) {
   return (
-    hasFeature(instructionsOf(agent), feature) &&
-    (!feature.timer || !!agent.attention[watchSlug(feature.timer.id)])
+    (!feature.text || hasFeature(instructionsOf(agent), feature)) &&
+    (!feature.timer ||
+      (!!agent.attention[interestSlug(feature.timer.id)] &&
+        !!agent.attention[watchSlug(feature.timer.id)]))
   );
 }
 
 /** Whether any of the feature's parts is there: its section, whole or
- * edited, or its timer. */
+ * edited, or its Interest or timer. */
 export function featurePresent(agent: Agent, feature: Feature) {
   return (
     featureState(instructionsOf(agent), feature) !== "off" ||
-    (!!feature.timer && !!agent.attention[watchSlug(feature.timer.id)])
+    (!!feature.timer &&
+      (!!agent.attention[interestSlug(feature.timer.id)] ||
+        !!agent.attention[watchSlug(feature.timer.id)]))
   );
+}
+
+/** The latest time at or before `now` that it is `hour` o'clock where this
+ * device is, in unix seconds. */
+function lastHour(hour: number, now: Date) {
+  const at = new Date(now);
+  at.setHours(hour, 0, 0, 0);
+  if (at > now) at.setDate(at.getDate() - 1);
+  return Math.floor(at.getTime() / 1000);
 }
 
 /** Turns `feature` on or off as its switch does, revising the synced
@@ -114,7 +132,11 @@ export async function saveFeature(
       prompt: timer.prompt,
       enabled: true,
       interval_secs: timer.everySecs,
-      armed_at: Math.floor(Date.now() / 1000),
+      // A timer is next due one interval after it is armed.
+      armed_at:
+        timer.atHour === undefined
+          ? Math.floor(Date.now() / 1000)
+          : lastHour(timer.atHour, new Date()),
       max_occurrences: null,
       expires_at: null,
       channel,
@@ -151,6 +173,43 @@ export async function saveFeature(
           );
         });
     throw cause;
+  }
+}
+
+/** Replaces the hourly check-in of an earlier version, which keeps its steps
+ * in the instructions, with Hourly notes and Nightly review. If it was on,
+ * with memory, they are turned on in the DM its timer was delivered to,
+ * before the old section, Interest and timer are taken away, so a failure
+ * leaves it to be tried again. If it was not on, as when half of it was
+ * deleted, it is only removed. With `timerOnly`, the instructions, which each
+ * of the agent's communities shares, are left as they are. */
+export async function replaceCheckIn(
+  agents: FeatureAgents,
+  agent: Agent,
+  options: { timerOnly?: boolean; signal?: AbortSignal } = {},
+) {
+  const old = LEGACY.filter((feature) => featurePresent(agent, feature));
+  if (!old.length) return;
+  const [channel] = old.flatMap(({ timer }) => {
+    const wake = timer && agent.attention[watchSlug(timer.id)]?.value;
+    return wake?.type === "timer" && wake.channel ? [wake.channel] : [];
+  });
+  // On is its section, whole, and its timer, which says where it ran.
+  if (
+    channel &&
+    featureOn(agent, memory) &&
+    old.some((feature) => hasFeature(instructionsOf(agent), feature))
+  )
+    for (const feature of [notes, dream]) {
+      options.signal?.throwIfAborted();
+      await saveFeature(agents, agent, feature, true, {
+        channel,
+        ...(options.signal && { signal: options.signal }),
+      });
+    }
+  for (const feature of old) {
+    options.signal?.throwIfAborted();
+    await saveFeature(agents, agent, feature, false, options);
   }
 }
 

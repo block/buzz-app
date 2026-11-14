@@ -381,6 +381,104 @@ it("leaves a saved chat's failed Create to New workspace's Retry", async () => {
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
+it.each([
+  { failed: "the workspace write", error: "Offline", writes: 2, filings: 1 },
+  {
+    failed: "the region's filing",
+    error: "Region offline",
+    writes: 1,
+    filings: 2,
+  },
+])(
+  "creates a region chat's workspace once and files it through its region, retrying after $failed fails",
+  async ({ failed, error, writes, filings }) => {
+    vi.stubGlobal("crypto", webcrypto);
+    const h = createSoloRegionFixture();
+    try {
+      const { session, write, assign, save } = await storeFixture();
+      Object.assign(h.session, {
+        scope: session.scope,
+        channelKit: session.channelKit,
+        soloPreferences: session.soloPreferences,
+      });
+      let id: string | undefined = "buzz";
+      let revision = 1;
+      const file = vi.fn(async (next: string | undefined) => {
+        id = next;
+        region.update({
+          status: "ready",
+          binding: region.binding(),
+          revision: ++revision,
+        });
+      });
+      (failed === "the workspace write" ? write : file).mockRejectedValueOnce(
+        new Error(error),
+      );
+      const region = await h.register({
+        workspace: (_binding, channelId) =>
+          channelId === "owned" ? { ...(id ? { id } : {}), file } : undefined,
+      });
+      const user = userEvent.setup();
+      const relay = h.session as unknown as RelaySession;
+      render(<WorkspaceControl session={relay} channelId="owned" />);
+      const control = await screen.findByRole("button", {
+        name: "Workspace: Buzz App",
+      });
+      await user.click(control);
+      await user.click(
+        await screen.findByRole("menuitem", { name: "New workspace" }),
+      );
+      const dialog = await screen.findByRole("dialog", {
+        name: "New workspace",
+      });
+      await user.type(
+        within(dialog).getByRole("textbox", { name: "Name" }),
+        "Planning",
+      );
+      await user.type(
+        within(dialog).getByRole("textbox", { name: /^Folders/ }),
+        "~/repo",
+      );
+      await user.click(within(dialog).getByRole("button", { name: "Add" }));
+      await user.click(within(dialog).getByRole("button", { name: "Create" }));
+      // The region's own reason, not "This chat is managed by Work."
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent(error);
+      expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveValue(
+        "Planning",
+      );
+      expect(within(dialog).getByText("~/repo")).toBeInTheDocument();
+      // The workspace is created on its own: the region files the chat.
+      const created = { id: expect.any(String), name: "Planning" };
+      expect(write).toHaveBeenCalledExactlyOnceWith(
+        { createSection: created },
+        expect.anything(),
+      );
+      expect(file).toHaveBeenCalledTimes(filings - 1);
+      expect(id).toBe("buzz");
+      expect(save).not.toHaveBeenCalled();
+      await user.click(within(dialog).getByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(dialog).not.toBeInTheDocument());
+      // Retry writes the workspace again only when that write failed, and
+      // then with the same ID; a failed filing leaves the workspace alone.
+      expect(write).toHaveBeenCalledTimes(writes);
+      const workspace = write.mock.calls[0]?.[0].createSection?.id;
+      expect(write.mock.calls.at(-1)?.[0]).toEqual(write.mock.calls[0]?.[0]);
+      expect(file).toHaveBeenCalledTimes(filings);
+      expect(file.mock.calls).toEqual(Array(filings).fill([workspace]));
+      expect(id).toBe(workspace);
+      expect(assign).not.toHaveBeenCalled();
+      expect(session.soloPreferences.snapshot().data?.assignments).toEqual({
+        chat: "buzz",
+      });
+      expect(save).toHaveBeenCalledOnce();
+      expect(control).toHaveAccessibleName("Workspace: Planning");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
 it("keeps focus on the control while workspaces reload after Create", async () => {
   vi.stubGlobal("crypto", webcrypto);
   const { session, reads } = await storeFixture();

@@ -38,15 +38,11 @@ import {
 import { writeView } from "../../shared/view-state";
 import type { Navigation } from "../../features/navigation/controller";
 import { useChannelTabState } from "./useChannelTabState";
-import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
 import { SOLO_LABEL } from "../../features/solo/labels";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { ChannelsPage } from "./ChannelsPage";
 import type { CommunityMembership } from "../moderation/membership";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
-import { BrowserHostView } from "../../features/browser/BrowserHostView";
-import { BrowserSessions } from "../../features/browser/sessions";
-import type { BrowserPlatform } from "../../features/browser/platform";
 
 composerDOMFixture();
 
@@ -71,7 +67,6 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   for (const owner of owners.splice(0)) owner.dispose();
-  setThreadPlacementPreference("side");
   localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -368,47 +363,43 @@ it.each([
   },
 );
 
-it.each(["side", "main"] as const)(
-  "agent-opened apps preserve their routed %s thread",
-  async (pane) => {
-    setThreadPlacementPreference(pane);
-    const open = vi.fn(async () => ({ status: "opened" as const }));
-    const h = await page(
-      "stream",
-      {
-        open,
-        snapshot: () => threadVisitSnapshot,
-        subscribe: () => () => {},
-      } as unknown as Navigation,
-      true,
-    );
-    const root = h.root;
-    if (!root) throw new Error("Routed thread root unavailable");
-    const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
-    await screen.findByRole("tabpanel", { name: "Initiating thread" });
-    act(() =>
-      expect(
-        h.panels.requestOpen({
-          channelId: "alpha",
-          rootId: root,
-          target: "https://app.example/",
-        }),
-      ).toBe(true),
-    );
-    expect(screen.getByRole("tabpanel", { name: "App" })).toBeVisible();
-    expect(open).not.toHaveBeenCalled();
-    expect(tabs.result.current.tabs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ kind: "thread", messageId: root }),
-      ]),
-    );
-    await h.user.click(screen.getByRole("button", { name: "Close App tab" }));
+it("agent-opened apps preserve their routed thread", async () => {
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  const h = await page(
+    "stream",
+    {
+      open,
+      snapshot: () => threadVisitSnapshot,
+      subscribe: () => () => {},
+    } as unknown as Navigation,
+    true,
+  );
+  const root = h.root;
+  if (!root) throw new Error("Routed thread root unavailable");
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  await screen.findByRole("tabpanel", { name: "Initiating thread" });
+  act(() =>
     expect(
-      await screen.findByRole("tabpanel", { name: "Initiating thread" }),
-    ).toBeVisible();
-    expect(open).not.toHaveBeenCalled();
-  },
-);
+      h.panels.requestOpen({
+        channelId: "alpha",
+        rootId: root,
+        target: "https://app.example/",
+      }),
+    ).toBe(true),
+  );
+  expect(screen.getByRole("tabpanel", { name: "App" })).toBeVisible();
+  expect(open).not.toHaveBeenCalled();
+  expect(tabs.result.current.tabs).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "thread", messageId: root }),
+    ]),
+  );
+  await h.user.click(screen.getByRole("button", { name: "Close App tab" }));
+  expect(
+    await screen.findByRole("tabpanel", { name: "Initiating thread" }),
+  ).toBeVisible();
+  expect(open).not.toHaveBeenCalled();
+});
 
 /** A page over `events` with no saved selection and no registered panels. */
 function workspace(
@@ -650,87 +641,6 @@ it("keeps the computed channel across a New chat draft opened and closed meanwhi
   expect(screen.queryByRole("textbox", { name: "Message #Beta" })).toBeNull();
 });
 
-it("restoring an app with old main placement keeps its live browser guest in the sheet", async () => {
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
-    new DOMRect(0, 0, 800, 500),
-  );
-  const pages = new Map<string, string>();
-  const attached = vi.fn(async (url: string) => {
-    const id = `guest-${pages.size + 1}`;
-    pages.set(id, url);
-    return id;
-  });
-  const detached = vi.fn(async (id: string) => {
-    pages.delete(id);
-  });
-  const observed: string[] = [];
-  const platform: BrowserPlatform = {
-    available: true,
-    attach: attached,
-    detach: detached,
-    openExternal: vi.fn(async () => {}),
-    setBounds: async () => {},
-    setMediaSuspended: async () => {},
-    navigate: async (id, url) => {
-      pages.set(id, url);
-    },
-    action: async () => {},
-    status: async (id) => {
-      const url = pages.get(id) ?? "";
-      observed.push(url);
-      return { url, title: "App", loading: false, error: null };
-    },
-  };
-  const sessions = new BrowserSessions(platform);
-  const App = () => (
-    <BrowserHostView
-      url="https://app.example/"
-      storage="builderlab-apps"
-      platform={platform}
-      sessions={sessions}
-    />
-  );
-  const h = await page("stream", undefined, false, App);
-  act(() =>
-    expect(
-      h.panels.requestOpen({
-        channelId: "alpha",
-        target: "https://app.example/",
-      }),
-    ).toBe(true),
-  );
-  await vi.waitFor(() => expect(attached).toHaveBeenCalledTimes(1));
-  const address = screen.getByRole("textbox", { name: "Address" });
-  await h.user.clear(address);
-  await h.user.type(address, "https://app.example/second.html{Enter}");
-  await vi.waitFor(() =>
-    expect(observed).toContain("https://app.example/second.html"),
-  );
-  const sheet = screen.getByRole("tabpanel", { name: "App" });
-  const guest = sheet
-    .querySelector("[data-browser-session]")
-    ?.getAttribute("data-browser-session");
-  expect(guest).toBe("guest-1");
-  const state = renderHook(() => useChannelTabState(h.session, "alpha"));
-  const entry = state.result.current.selected;
-  // Persisted workspaces may still contain main entries. Restoration must not
-  // discard the browser session, even though sheet UI no longer offers Move.
-  act(() => state.result.current.moveEntry(entry, "main"));
-  await vi.waitFor(() => {
-    expect(state.result.current.mainEntries).toBeUndefined();
-    expect(
-      screen
-        .getByRole("tabpanel", { name: "App" })
-        .querySelector("[data-browser-session]"),
-    ).toHaveAttribute("data-browser-session", guest);
-  });
-  expect(attached).toHaveBeenCalledTimes(1);
-  expect(detached).not.toHaveBeenCalled();
-  expect(screen.getByRole("textbox", { name: "Address" })).toHaveValue(
-    "https://app.example/second.html",
-  );
-});
-
 const closeTabs = (tabEvent = "buzz:close-all-tabs") => {
   let handled = false;
   act(() => {
@@ -757,9 +667,7 @@ it("solo composer retains side-tab cycling and close focus", async () => {
   const h = await page("solo");
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   const root = "b".repeat(64);
-  act(() =>
-    tabs.result.current.openThreadTab("alpha", root, root, undefined, "side"),
-  );
+  act(() => tabs.result.current.openThreadTab("alpha", root, root));
   await h.open();
   const thread = screen.getByRole("tab", { name: "Thread · Alpha" });
   const notes = screen.getByRole("tab", { name: "Notes" });
@@ -787,9 +695,7 @@ it("leaves Shift+Escape (Mark all as read) to a side thread, closing it on Escap
   const h = await page();
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   const root = "c".repeat(64);
-  act(() =>
-    tabs.result.current.openThreadTab("alpha", root, root, undefined, "side"),
-  );
+  act(() => tabs.result.current.openThreadTab("alpha", root, root));
   const thread = await screen.findByRole("tabpanel", {
     name: "Thread · Alpha",
   });
@@ -885,13 +791,11 @@ it("the detail sheet actions clear the page's retained tabs too", async () => {
   expect(h.composer).toBeInTheDocument();
 });
 
-it("close-all closes a thread restored from the old main placement", async () => {
+it("close-all closes a thread tab", async () => {
   const h = await page();
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   const root = "a".repeat(64);
-  act(() =>
-    tabs.result.current.openThreadTab("alpha", root, root, undefined, "main"),
-  );
+  act(() => tabs.result.current.openThreadTab("alpha", root, root));
   expect(
     await screen.findByRole("tabpanel", { name: "Thread · Alpha" }),
   ).toBeVisible();
@@ -909,15 +813,7 @@ it.each([false, true])(
     if (anotherTab) {
       const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
       const root = "b".repeat(64);
-      act(() =>
-        tabs.result.current.openThreadTab(
-          "alpha",
-          root,
-          root,
-          undefined,
-          "side",
-        ),
-      );
+      act(() => tabs.result.current.openThreadTab("alpha", root, root));
     }
     await h.open();
     expect(screen.getByRole("tabpanel", { name: "Notes" })).toBeInTheDocument();
@@ -938,14 +834,12 @@ it.each([false, true])(
 );
 
 it.each(["Notes", "Thread · Alpha"] as const)(
-  "closing others retains %s and its focus after restoring an old main thread",
+  "closing others retains %s and its focus",
   async (name) => {
     const h = await page();
     const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
     const root = "c".repeat(64);
-    act(() =>
-      tabs.result.current.openThreadTab("alpha", root, root, undefined, "main"),
-    );
+    act(() => tabs.result.current.openThreadTab("alpha", root, root));
     await h.open();
     const thread = screen.getByRole("tab", { name: "Thread · Alpha" });
     const notes = screen.getByRole("tab", { name: "Notes" });
@@ -1198,7 +1092,7 @@ it("opens another conversation's tab in its channel, but not the current channel
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   const root = "d".repeat(64);
   act(() => {
-    tabs.result.current.openThreadTab("alpha", root, root, undefined, "side");
+    tabs.result.current.openThreadTab("alpha", root, root);
     tabs.result.current.setTabs((items) => [
       ...items,
       { id: "conversation:beta", kind: "conversation", channelId: "beta" },

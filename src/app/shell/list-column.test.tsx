@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, expect, test } from "vitest";
 import type { Navigation } from "../../features/navigation/controller";
 import type { OpenTarget } from "../../features/navigation/targets";
@@ -42,7 +43,10 @@ function harness() {
     },
     snapshot: () => snapshot,
   } as unknown as Navigation;
-  const view = renderHook(() => useListColumn(navigator));
+  // Strict Mode renders twice: rendering must not spend what an open asked.
+  const view = renderHook(() => useListColumn(navigator), {
+    wrapper: StrictMode,
+  });
   return {
     list: () => view.result.current.list,
     column: () => view.result.current,

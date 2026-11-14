@@ -33,7 +33,7 @@ test("relay reads recover automatically after the network returns", async ({
   // The quiet delay is 30 s; a controlled clock jumps it.
   await page.clock.install();
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,

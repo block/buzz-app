@@ -1,44 +1,39 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { channelRow } from "./navigation.mjs";
+import { addToNewSection, railSection, showChannels } from "./rail-helpers.mjs";
 
-test.use({ productionBroker: true, savedSidebar: true, sidebarIcons: true });
+test.use({ productionBroker: true, historyCounts: { alpha: 1, beta: 1 } });
 
-// The fixture groups use custom-emoji icons; serve every one as a plain image.
-test.beforeEach(({ page }) =>
-  page.route("**/media?*", (route) =>
-    route.fulfill({
-      contentType: "image/svg+xml",
-      body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>',
-    }),
-  ),
-);
-
-test("renaming a saved group from its menu persists and keeps its channels", async ({
+test("renaming a section from its menu persists and keeps its conversations", async ({
   page,
   app,
 }) => {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
-  const work = page.locator('[data-sidebar-section="group:work"]');
-  await expect(work.locator('[data-channel-id="beta"]')).toBeVisible();
+  await showChannels(page);
+  await addToNewSection(page, channelRow(page, "beta"), "Work");
+  const work = railSection(page, "Work");
+  const beta = work.locator('[data-rail-row="channel:beta"]');
+  await expect(beta).toBeVisible();
+  const id = await work.getAttribute("data-rail-section");
+  const section = page.locator(`[data-rail-section="${id}"]`);
 
-  await page.getByRole("button", { name: "More actions for Work" }).click();
+  await section
+    .getByRole("button", { name: "Work", exact: true })
+    .click({ button: "right" });
   await page.getByRole("menuitem", { name: "Rename section" }).click();
-  const dialog = page.getByRole("dialog", { name: "Rename section" });
-  const input = dialog.getByRole("textbox", { name: "Section name" });
+  // The section renames in place: its title becomes the name field.
+  const input = section.getByRole("textbox", { name: "Section name" });
+  await expect(input).toBeFocused();
   await expect(input).toHaveValue("Work");
   await input.fill("Projects");
-  await dialog.getByRole("button", { name: "Rename" }).click();
+  await input.press("Enter");
 
-  await expect(dialog).toHaveCount(0);
-  await expect(work.locator("summary")).toHaveAccessibleName("Projects");
-  await expect(work.locator('[data-channel-id="beta"]')).toBeVisible();
-  await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(1);
-  const { blob } = app.report.sidebarPublications.at(-1);
-  expect(blob.meta.s.work.name[2]).toBe("Projects");
+  const title = section.getByRole("button", { name: "Projects", exact: true });
+  await expect(input).toHaveCount(0);
+  await expect(title).toBeFocused();
+  await expect(section.locator('[data-rail-row="channel:beta"]')).toBeVisible();
 
-  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
   await page.reload();
-  await openPage(page, "Messages");
-  await expect(work.locator("summary")).toHaveAccessibleName("Projects");
+  await expect(title).toBeVisible();
+  await expect(section.locator('[data-rail-row="channel:beta"]')).toBeVisible();
 });

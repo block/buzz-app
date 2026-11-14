@@ -1,7 +1,7 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { openPage } from "./navigation.mjs";
+import { channelRow, openChannel, rail } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
-import { open, settle } from "./timeline.mjs";
+import { settle } from "./timeline.mjs";
 import {
   readJournal as journal,
   holdReadingFocus,
@@ -20,9 +20,20 @@ test.use({
 });
 const history = (page) =>
   page.getByRole("region", { name: "Channel message history" });
-const alpha = (page) => page.getByRole("button", { name: /^Alpha/ });
+// Alpha's row in Team's Channels list.
+const alpha = (page) => channelRow(page, alphaId);
 const composer = (page) =>
   page.getByRole("textbox", { name: "Message #Alpha", exact: true });
+// Team's Channels list opens Alpha beside it.
+async function open(page, app) {
+  await page.goto(app.origin);
+  await openChannel(page, alphaId);
+  await composer(page).waitFor();
+  await expect(
+    history(page).locator("[data-message-id]").first(),
+  ).toBeVisible();
+  await settle(page);
+}
 // Focus outside the reading surface. The timeline and its own composer both
 // read after dwell; a focused sidebar row selects and reads nothing.
 const park = (page) => alpha(page).focus();
@@ -66,7 +77,9 @@ async function options(page, clockPaused = false) {
       }),
     ).toHaveAttribute("aria-busy", "false");
     await expect(
-      page.getByRole("button", { name: "Leave channel", exact: true }),
+      page
+        .getByRole("complementary", { name: "Channel settings", exact: true })
+        .getByRole("button", { name: "Leave channel", exact: true }),
     ).toBeVisible();
     await page.getByText("Diagnostics", { exact: true }).click();
   }
@@ -112,12 +125,15 @@ test("Messages startup waits for channel discovery before loading templates", as
   );
   try {
     await page.goto(app.origin);
+    // Team's Channels view mounts the Messages workspace.
+    await rail(page).locator('[data-rail-team-view="channels"]').click();
     await workspaceStarted;
     expect(catalogRequested).toBe(false);
   } finally {
     release();
   }
   await catalogLoaded;
+  await openChannel(page, alphaId);
   await composer(page).waitFor();
   await settle(page);
   await expect(page.getByRole("alert")).toHaveCount(0);
@@ -181,7 +197,7 @@ test("built sidebar → visible dwell → durable journal → encrypted broker p
   expect(event.content).not.toContain(ids[0]);
   expect(blob.contexts[alphaId]).toBeUndefined();
   await page.reload();
-  await openPage(page, "Messages");
+  await openChannel(page, alphaId);
   await composer(page).waitFor();
   await settle(page);
   expect((await journal(page)).slot).toBe(stored.slot);
@@ -281,7 +297,7 @@ test("focus cancellation and local manual-unread survive reload until explicit m
   await page.clock.resume();
   app.relay.holdContent(); // Reload must use verified disk evidence, not wait for network repair.
   await page.reload();
-  await openPage(page, "Messages");
+  await openChannel(page, alphaId);
   await composer(page).waitFor();
   await expect(
     alpha(page).getByRole("img", {
@@ -500,10 +516,8 @@ test.describe("automatic catch-up after membership rows", () => {
           (await journal(page))?.state.frontiers[`activity:${alphaId}`],
       )
       .toBe(latest.created_at);
-    await expect(alpha(page).getByText("Alpha", { exact: true })).toHaveCSS(
-      "font-weight",
-      "400",
-    );
+    // Team's list row is quiet: read, with no unread cue.
+    await expect(alpha(page)).toHaveAttribute("data-state", "read");
   });
 });
 
@@ -626,7 +640,7 @@ test.describe("local receipt reserve", () => {
       ),
     ).toBe(false);
     await page.reload();
-    await openPage(page, "Messages");
+    await openChannel(page, alphaId);
     await composer(page).waitFor();
     await settle(page);
     await page.evaluate(() =>

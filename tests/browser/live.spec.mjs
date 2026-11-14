@@ -311,7 +311,7 @@ test("automatic recovery restores an empty paused roster without restarting heal
   await page.clock.install();
   await page.goto(app.origin);
   try {
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
     await expect.poll(() => rosterHeld).toBe(true);
     await pauseClock(page, 1000);
   } finally {

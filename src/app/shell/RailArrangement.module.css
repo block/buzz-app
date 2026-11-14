@@ -50,14 +50,6 @@
   padding-block: var(--space-4);
   padding-block-end: calc(var(--space-8) + var(--space-2));
 }
-.rows {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  gap: var(--space-half);
-}
 .avatarGrid {
   display: grid;
   width: 100%;

@@ -6,13 +6,8 @@
   flex-direction: column;
   min-width: 0;
 }
-/* The filter strip stays above the existing conversation scrollport. */
+/* A collection's heading and view strip stay above its scrollport. */
 .filters {
-  margin-block-end: var(--space-3);
-  --tabs-button-gutter: calc(var(--sidebar-padding) + var(--space-1));
-  margin-inline: calc(-1 * var(--sidebar-padding));
-}
-.filters[data-layout="collection"] {
   --content-header-inline-inset: var(
     --collection-content-inset,
     var(--space-panel-inset)
@@ -24,17 +19,5 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-  margin-inline: 0;
   margin-block-end: var(--space-4);
-}
-.rows {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-half);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.empty {
-  padding: var(--space-6) var(--space-2);
 }

@@ -1,5 +1,4 @@
 import { test, expect } from "./fixture.mjs";
-import { generateSecretKey, getPublicKey } from "nostr-tools";
 
 test.use({
   productionBroker: true,
@@ -16,35 +15,22 @@ test("the combined rail pins destinations and opens centered Messages", async ({
   page,
   app,
 }, testInfo) => {
-  const identities = Array.from({ length: 5 }, (_, index) => ({
-    pubkey: getPublicKey(generateSecretKey()),
-    name: `Agent ${index + 1}`,
-  }));
-  await page.route("**/agent-library", (route) =>
-    route.fulfill({ json: { definitions: [], identities } }),
-  );
   await page.goto(app.origin, { waitUntil: "domcontentloaded" });
   const rail = page.getByRole("navigation", { name: "Apps", exact: true });
-  for (const name of ["Pins", "Messages", "Solo", "Agents"])
+  for (const name of ["Pins", "Team", "Solo"])
     await expect(
       rail.getByRole("heading", { name, exact: true }),
     ).toBeVisible();
-  for (const name of ["Agent 1", "Agent 2", "Agent 3", "Agent 4"])
-    await expect(rail.getByRole("button", { name, exact: true })).toBeVisible();
-  await expect(
-    rail.getByRole("button", { name: "Agent 5", exact: true }),
-  ).toHaveCount(0);
+  // Agents is a plugin page, not a card of its own.
+  await expect(rail.locator('[data-rail-section="agents"]')).toHaveCount(0);
   await expect(
     page.getByRole("complementary", { name: "Discover", exact: true }),
   ).toHaveCount(0);
-  const railHeader = rail
-    .locator("header")
-    .filter({ has: page.getByRole("heading", { name: "Buzz", exact: true }) });
+  // The rail's header row holds the community, profile, search and create
+  // controls; it has no title of its own.
+  const railHeader = rail;
   const community = await railHeader
     .getByRole("button", { name: /^Community switcher:/ })
-    .boundingBox();
-  const buzz = await railHeader
-    .getByRole("heading", { name: "Buzz", exact: true })
     .boundingBox();
   const headerNew = railHeader.getByRole("button", {
     name: "Create",
@@ -58,11 +44,10 @@ test("the combined rail pins destinations and opens centered Messages", async ({
     )
     .toBe(true);
   const plus = await headerNew.boundingBox();
-  expect(community.x + community.width).toBeLessThanOrEqual(buzz.x);
-  expect(plus.x).toBeGreaterThan(buzz.x + buzz.width);
+  expect(community.x + community.width).toBeLessThanOrEqual(plus.x);
   await headerNew.click();
   for (const action of [
-    "New chat",
+    "New solo chat",
     "New workspace",
     "New message",
     "New channel",
@@ -468,67 +453,6 @@ test("the combined rail pins destinations and opens centered Messages", async ({
   await expect(editor).toBeInViewport();
 });
 
-// Host wiring: an agent shortcut must use the shared DM opener, including its
-// readiness failure, while View all continues to navigate to the directory.
-test("agent rail rows open DMs and keep View all for the directory", async ({
-  page,
-  app,
-}) => {
-  const peer = app.histories.get("primary/dm-peer").at(-1).pubkey;
-  await page.route("**/agent-library", (route) =>
-    route.fulfill({
-      json: {
-        definitions: [],
-        identities: [
-          { pubkey: peer, name: "DM agent" },
-          {
-            pubkey: getPublicKey(generateSecretKey()),
-            name: "Unavailable agent",
-          },
-        ],
-      },
-    }),
-  );
-  await page.goto(app.origin, { waitUntil: "domcontentloaded" });
-  const rail = page.getByRole("navigation", { name: "Apps", exact: true });
-  const agents = rail.locator("section").filter({
-    has: page.getByRole("heading", { name: "Agents", exact: true }),
-  });
-  await expect(
-    agents
-      .getByRole("button", { name: "DM agent", exact: true })
-      .getByRole("img", { name: "Unread", exact: true }),
-  ).toBeVisible();
-  await agents
-    .getByRole("button", { name: "Unavailable agent", exact: true })
-    .click();
-  await expect(rail.getByRole("alert")).toHaveText(
-    "This agent is not ready to message in this community.",
-  );
-  await agents.getByRole("button", { name: "DM agent", exact: true }).click();
-  await expect(page).toHaveURL(/dm-peer/);
-  await expect(
-    page
-      .getByRole("article", { name: "Conversation", exact: true })
-      .getByRole("textbox"),
-  ).toBeVisible();
-  await expect(
-    agents.getByRole("button", { name: "DM agent", exact: true }),
-  ).toHaveAttribute("aria-current", "page");
-  await expect(
-    agents
-      .getByRole("button", { name: "DM agent", exact: true })
-      .getByRole("img", { name: "Unread", exact: true }),
-  ).toHaveCount(0);
-  await expect(rail.getByRole("alert")).toHaveCount(0);
-  await rail.getByRole("button", { name: "Open Agents", exact: true }).click();
-  await expect(page).toHaveURL(/buzz.agents/);
-  await page.goBack();
-  await expect(page).toHaveURL(/dm-peer/);
-});
-
-// Browser-only: pointer collision geometry, the animated footer drop target,
-// context-menu handoff, and remounted shell rows cannot be proved in jsdom.
 test("rail sections and rows can be arranged and a drop creates a named section", async ({
   page,
   app,
@@ -536,7 +460,7 @@ test("rail sections and rows can be arranged and a drop creates a named section"
   await page.goto(app.origin, { waitUntil: "domcontentloaded" });
   const rail = page.getByRole("navigation", { name: "Apps", exact: true });
   const messages = rail.locator('[data-rail-section="messages"]');
-  const agents = rail.locator('[data-rail-section="agents"]');
+  const solo = rail.locator('[data-rail-section="solo"]');
   const beta = messages.getByRole("button", { name: "Beta", exact: true });
   await expect(beta).toBeVisible();
   const primary = rail.locator("section").filter({
@@ -592,18 +516,12 @@ test("rail sections and rows can be arranged and a drop creates a named section"
   await dropOn(
     navigation.getByRole("heading", { name: "Plugins", exact: true }),
   );
-  await expect
-    .poll(order)
-    .toEqual(["pins", "navigation", "messages", "solo", "agents"]);
+  await expect.poll(order).toEqual(["pins", "navigation", "messages", "solo"]);
   await page.reload();
-  await expect
-    .poll(order)
-    .toEqual(["pins", "navigation", "messages", "solo", "agents"]);
-  await startDrag(agents.getByRole("heading", { name: "Agents", exact: true }));
+  await expect.poll(order).toEqual(["pins", "navigation", "messages", "solo"]);
+  await startDrag(solo.getByRole("heading", { name: "Solo", exact: true }));
   await dropOn(messages.getByRole("heading", { name: "Team", exact: true }));
-  await expect
-    .poll(order)
-    .toEqual(["pins", "navigation", "agents", "messages", "solo"]);
+  await expect.poll(order).toEqual(["pins", "navigation", "solo", "messages"]);
 
   await startDrag(beta);
   const newSection = rail.getByRole("region", {
@@ -618,12 +536,7 @@ test("rail sections and rows can be arranged and a drop creates a named section"
   await expect(newSection).toBeHidden();
   await expect(beta).toBeVisible();
 
-  await startDrag(beta);
-  await dropOn(agents.getByRole("heading", { name: "Agents", exact: true }));
-  const movedBeta = agents.getByRole("button", { name: "Beta", exact: true });
-  await expect(movedBeta).toBeVisible();
-  await expect(beta).toHaveCount(0);
-  await expect(movedBeta.getByRole("img", { name: "Unread" })).toBeVisible();
+  const movedBeta = beta;
 
   await startDrag(movedBeta);
   await expect(newSection).toHaveCSS("opacity", "1");
@@ -681,9 +594,8 @@ test("rail sections and rows can be arranged and a drop creates a named section"
     .toEqual([
       "pins",
       "navigation",
-      "agents",
-      "messages",
       "solo",
+      "messages",
       await custom.getAttribute("data-rail-section"),
     ]);
   await expect(
@@ -709,13 +621,12 @@ test("rail sections and rows can be arranged and a drop creates a named section"
     exact: true,
   });
   const dockIcons = dock.getByRole("button");
-  await expect(dockIcons).toHaveCount(6);
+  await expect(dockIcons).toHaveCount(5);
   for (const [index, name] of [
     "Pins",
     "Plugins",
-    "Agents",
-    "Messages",
     "Solo",
+    "Team",
     "Project chats",
   ].entries())
     await expect(dockIcons.nth(index)).toHaveAccessibleName(name);
@@ -759,7 +670,7 @@ test("rail sections and rows can be arranged and a drop creates a named section"
   await page.evaluate(() => {
     document.documentElement.style.fontSize = "";
   });
-  await dock.getByRole("button", { name: "Agents", exact: true }).focus();
+  await dock.getByRole("button", { name: "Solo", exact: true }).focus();
   await page.keyboard.press("Tab");
   await expect(
     dock.getByRole("button", { name: "Team", exact: true }),
@@ -783,9 +694,8 @@ test("rail sections and rows can be arranged and a drop creates a named section"
     .toEqual([
       "pins",
       "navigation",
-      "agents",
-      "messages",
       "solo",
+      "messages",
       await custom.getAttribute("data-rail-section"),
     ]);
   await page.getByRole("button", { name: "Hide sidebar", exact: true }).click();
@@ -850,13 +760,11 @@ test("rail sections and rows can be arranged and a drop creates a named section"
     .click();
   await expect(custom).toHaveCount(0);
 
-  await agents
-    .getByRole("button", { name: "Move Agents section", exact: true })
+  await solo
+    .getByRole("button", { name: "Move Solo section", exact: true })
     .focus();
   await page.keyboard.press("ArrowDown");
-  await expect
-    .poll(order)
-    .toEqual(["pins", "navigation", "messages", "agents", "solo"]);
+  await expect.poll(order).toEqual(["pins", "navigation", "messages", "solo"]);
   await messages.getByRole("button", { name: /^Team$/i }).click();
   const fullBeta = messagesPage.locator(
     '[data-activity-row="beta"] [data-conversation-row]',
@@ -893,7 +801,7 @@ test("rail sections and rows can be arranged and a drop creates a named section"
   await page.keyboard.press("Shift+F10");
   await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
   await expect(pinnedBeta).toBeVisible();
-  await rail.getByRole("button", { name: "Open Agents", exact: true }).click();
+  await navigation.getByRole("button", { name: "Agents", exact: true }).click();
   const agentPage = page.getByRole("region", { name: "Agents", exact: true });
   await expect(
     agentPage.getByRole("heading", { name: "Agents", exact: true }),

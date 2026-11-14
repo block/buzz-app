@@ -38,15 +38,12 @@ import type { Navigation } from "../../features/navigation/controller";
 import { useChannelPanels } from "./useChannelPanels";
 import { focusDock } from "./useCoveredByDock";
 import {
-  entryPane,
   panelContentTarget,
   profileContentPanel,
   panelTabId,
   rootOfTab,
   selectedTabId,
-  tabPane,
   type ConversationTab as Tab,
-  type TabPane,
   type useChannelTabState,
 } from "./useChannelTabState";
 import styles from "./Channels.module.css";
@@ -81,10 +78,7 @@ export function useConversationTabs({
   threadId,
   onOpenDrawer,
   openMembers,
-  mainPane = false,
-  anyMainThread = false,
-  threadPane,
-  hostPanes,
+  withholdThreads = false,
   visits = true,
   navigation,
   routed,
@@ -121,15 +115,9 @@ export function useConversationTabs({
   threadId?: string | undefined;
   onOpenDrawer?(): void;
   openMembers?(): void;
-  /** This page hosts thread tabs in its main pane too. */
-  mainPane?: boolean | undefined;
-  /** Any thread may use the main pane, not only the current conversation's. */
-  anyMainThread?: boolean | undefined;
-  /** Where new thread tabs open; by default, per the thread placement setting. */
-  threadPane?: TabPane | undefined;
-  /** Panes whose thread content renders now; by default both. A page withholds
-   * a pane's threads while something covers them; they mount afresh after. */
-  hostPanes?: readonly TabPane[] | undefined;
+  /** A page withholds thread content while something covers it; it mounts
+   * afresh after. */
+  withholdThreads?: boolean | undefined;
   /** Showing a tab visits its conversation; a page may only reveal it. */
   visits?: boolean | undefined;
   /** Opens another conversation's tab where it lives, from the tab's menu. */
@@ -213,32 +201,8 @@ export function useConversationTabs({
     );
   };
   type Opening = PanelOpening;
-  // Only pages with a main tab strip place panel tabs there.
-  const { mainEntries } = tabState;
-  const inMain = useCallback(
-    (entry: Opening) => mainPane && entryPane(mainEntries, entry) === "main",
-    [mainPane, mainEntries],
-  );
-  // Retained visits from the former split layout keep their content and
-  // dismissal records; only their placement changes to the shared sheet.
-  useLayoutEffect(() => {
-    if (mainPane) return;
-    const threads = tabState.tabs.filter((tab) => tabPane(tab) === "main");
-    const panels = entries.filter(
-      (entry) => entryPane(mainEntries, entry) === "main",
-    );
-    if (!threads.length && !panels.length) return;
-    const selected = tabState.mainSelected ?? tabState.selected;
-    const open = !!tabState.mainSelected || tabState.paneOpen;
-    for (const [index, tab] of threads.entries())
-      tabState.moveTab(tab.id, "side", index);
-    for (const entry of panels) tabState.moveEntry(panelTabId(entry), "side");
-    if (selected) tabState.select(selected);
-    tabState.selectMain(undefined);
-    tabState.setPaneOpen(open);
-  }, [mainPane, tabState, entries, mainEntries]);
   const opened = entries.find(
-    (entry) => panelTabId(entry) === tabState.selected && !inMain(entry),
+    (entry) => panelTabId(entry) === tabState.selected,
   );
   const entryList = useRef<Opening[]>(entries);
   const opening = useRef<Opening | undefined>(opened);
@@ -252,18 +216,14 @@ export function useConversationTabs({
     opening.current = opened;
   }
   const selectOpening = useCallback(
-    (next: Opening | undefined, pane?: TabPane) => {
-      if (next && (pane ? pane === "main" : inMain(next))) {
-        tabState.selectMain(panelTabId(next));
-        return;
-      }
+    (next: Opening | undefined) => {
       opening.current = next;
       tabState.select(next ? panelTabId(next) : "thread");
     },
-    [inMain, tabState.select, tabState.selectMain],
+    [tabState.select],
   );
   const open = useCallback(
-    (next: Opening | undefined, append = false, pane?: TabPane) => {
+    (next: Opening | undefined, append = false) => {
       const found = next
         ? entryList.current.find(
             (entry) =>
@@ -313,10 +273,9 @@ export function useConversationTabs({
       if (selected && historyPanel(selected))
         panelHistory.current.onVisitPanel?.(selected);
       setEntries(updated);
-      if (selected && pane) tabState.moveEntry(panelTabId(selected), pane);
-      selectOpening(selected, pane);
+      selectOpening(selected);
     },
-    [selectOpening, setEntries, tabState.moveEntry],
+    [selectOpening, setEntries],
   );
   const panelTabs = entries.filter(
     (entry) =>
@@ -330,8 +289,6 @@ export function useConversationTabs({
             entry.panel.channelMenu?.eligible(current, queries)) &&
           current.id === entry.channelId)),
   );
-  const sidePanelTabs = panelTabs.filter((entry) => !inMain(entry));
-  const mainPanelTabs = panelTabs.filter(inMain);
   const panel = opened && panelTabs.includes(opened) ? opened.panel : undefined;
   useEffect(() => {
     if (entries.length !== panelTabs.length) {
@@ -340,21 +297,14 @@ export function useConversationTabs({
     }
     if (opened && !panel) selectOpening(undefined);
   }, [entries.length, panelTabs, opened, panel, setEntries, selectOpening]);
-  const panelActive = (entry: Opening) => {
-    if (inMain(entry))
-      return (
-        active() &&
-        tabState.mainSelected === panelTabId(entry) &&
-        panels.snapshot().includes(entry.panel)
-      );
-    return !!(
+  const panelActive = (entry: Opening) =>
+    !!(
       active() &&
       opened &&
       panel &&
       opening.current === entry &&
       panels.snapshot().includes(panel)
     );
-  };
   const panelContext = (entry: Opening) => ({
     channelId: entry.channelId,
     ...(entry.rootId && { rootId: entry.rootId }),
@@ -373,10 +323,7 @@ export function useConversationTabs({
         .map((item) => (item === entry ? replacement : item))
         .filter((item, index, all) => all.indexOf(item) === index);
       setEntries(entryList.current);
-      // An app-like replacement takes its place in the main pane.
-      if (inMain(entry) && movableEntry(replacement))
-        tabState.moveEntry(panelTabId(replacement), "main");
-      else selectOpening(replacement);
+      selectOpening(replacement);
       return true;
     },
     push: (target: string) => {
@@ -390,21 +337,10 @@ export function useConversationTabs({
   const tabId = panelTabId;
   const closeTab = (entry: Opening) => {
     if (!currentVisit() || !entryList.current.includes(entry)) return;
-    const main = inMain(entry);
     const remaining = entryList.current.filter((item) => item !== entry);
     entryList.current = remaining;
     setEntries(remaining);
-    if (!main) {
-      afterClose(tabId(entry), panelTrigger.current);
-      panelHistory.current.onClosePanel?.(entry, remaining);
-      return;
-    }
-    // The conversation remains; the neighbouring main tab takes over.
-    const order = mainTabIds();
-    const index = order.indexOf(tabId(entry));
-    const rest = order.filter((id) => id !== tabId(entry));
-    if (tabState.mainSelected === tabId(entry))
-      tabState.selectMain(rest[Math.min(index, rest.length - 1)]);
+    afterClose(tabId(entry), panelTrigger.current);
     panelHistory.current.onClosePanel?.(entry, remaining);
   };
   const drawerContext = useMemo(
@@ -427,40 +363,11 @@ export function useConversationTabs({
         : undefined,
     [scope, viewer, current, threadId],
   );
-  const mainThread = (channelId: string) =>
-    mainPane && (anyMainThread || channelId === currentId);
-  const sideTabs = tabState.tabs.filter((tab) => tabPane(tab) === "side");
-  const mainTabs = mainPane
-    ? tabState.tabs.filter((tab) => tabPane(tab) === "main")
-    : [];
   const rootTabIds = [
     ...leadingIds,
-    ...sideTabs.map((tab) => tab.id),
-    ...sidePanelTabs.map(tabId),
+    ...tabState.tabs.map((tab) => tab.id),
+    ...panelTabs.map(tabId),
   ];
-  const mainTabIds = () => [
-    ...mainTabs.map((tab) => tab.id),
-    ...mainPanelTabs.map(tabId),
-  ];
-  // App-like panels keep their page wherever they go, so they may move panes.
-  // A flat solo chat shows no main tab strip.
-  const movableEntry = (entry: Opening) =>
-    mainPane &&
-    current?.channelType !== "solo" &&
-    !!entry.panel.keepOpen &&
-    !entry.channelContext;
-  const placeEntry = (id: string, pane: TabPane) => {
-    flushSync(() => tabState.moveEntry(id, pane));
-    // Whichever panel tab the side pane now shows is its active one.
-    const shown = tabState.getSelected();
-    opening.current = panelTabs.find((entry) => tabId(entry) === shown);
-    document
-      .querySelector<HTMLElement>(
-        `[role="tab"][data-tab-value="${CSS.escape(id)}"]`,
-      )
-      ?.focus({ preventScroll: true });
-    setAnnouncement(`Moved to the ${pane} pane.`);
-  };
   const selectedTab = selectedTabId(tabState.selected, rootTabIds);
   // A tab-placed channel launcher keeps one retained tab per channel.
   const channelTab = (panel: Opening["panel"], channelId: string) =>
@@ -561,111 +468,49 @@ export function useConversationTabs({
   };
   const closeConversationTab = (id: string) => {
     const closing = tabState.tabs.find((tab) => tab.id === id);
-    const wasActive =
-      closing && tabPane(closing) === "main"
-        ? tabState.mainSelected === id
-        : tabState.paneOpen && selectedTab === id;
+    const wasActive = tabState.paneOpen && selectedTab === id;
     tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== id));
-    // Once its pane empties, the page's own focus return (to the opener) is
-    // the last word; until then focus stays with the remaining tabs.
-    const notify = (last: boolean) => {
-      if (closing?.kind === "thread")
-        onCloseThread?.(closing, !!wasActive, last);
-    };
-    if (closing && tabPane(closing) === "main") {
-      // The conversation remains; neighbours keep their order.
-      const order = mainTabIds();
-      const index = order.indexOf(id);
-      const remaining = order.filter((tabId) => tabId !== id);
-      if (tabState.mainSelected === id)
-        tabState.selectMain(remaining[Math.min(index, remaining.length - 1)]);
-      notify(!remaining.length);
-      return;
-    }
     afterClose(id);
-    if (rootTabIds.length === 1) focusSplit.current = true;
-    notify(rootTabIds.length === 1);
+    const last = rootTabIds.length === 1;
+    if (last) focusSplit.current = true;
+    // Once the pane empties, the page's own focus return (to the opener) is
+    // the last word; until then focus stays with the remaining tabs.
+    if (closing?.kind === "thread") onCloseThread?.(closing, wasActive, last);
   };
   const [announcement, setAnnouncement] = useState("");
   // Place the tab and focus it where it landed in the same task. Reinserting
   // the tab's element blurs it, and a frame-deferred refocus would take focus
   // back from wherever the user has since moved it.
-  const placeTab = (id: string, pane: TabPane, index: number) => {
-    flushSync(() => tabState.moveTab(id, pane, index));
+  const placeTab = (id: string, index: number) => {
+    flushSync(() => tabState.moveTab(id, index));
     document
       .querySelector<HTMLElement>(
         `[role="tab"][data-tab-value="${CSS.escape(id)}"]`,
       )
       ?.focus({ preventScroll: true });
   };
-  // One keyboard gesture both reorders and crosses panes at an edge.
   const moveBy = (tab: Tab, delta: -1 | 1) => {
     if (!currentVisit() || tab.kind !== "thread") return;
-    const pane = tabPane(tab);
-    const order = pane === "main" ? mainTabs : sideTabs;
-    const index = order.indexOf(tab);
-    const crossing =
-      mainThread(tab.channelId) &&
-      ((pane === "main" && delta === 1 && index === order.length - 1) ||
-        (pane === "side" && delta === -1 && index === 0));
-    let target: TabPane = pane;
-    let position = index + delta;
-    if (crossing) {
-      target = pane === "main" ? "side" : "main";
-      position = target === "side" ? 0 : mainTabs.length;
-    } else if (position < 0 || position >= order.length) return;
-    placeTab(tab.id, target, position);
-    setAnnouncement(
-      crossing
-        ? `Moved to the ${target === "main" ? "main" : "side"} pane.`
-        : `Moved to position ${position + 1} of ${order.length}.`,
-    );
+    const order = tabState.tabs;
+    const position = order.indexOf(tab) + delta;
+    if (position < 0 || position >= order.length) return;
+    placeTab(tab.id, position);
+    setAnnouncement(`Moved to position ${position + 1} of ${order.length}.`);
   };
   const drag = useTabDrag({
     visit,
     navigationSignal,
-    movable: new Set([
-      ...tabState.tabs
-        .filter((tab) => tab.kind === "thread")
-        .map((tab) => tab.id),
-      ...panelTabs.filter(movableEntry).map(tabId),
-    ]),
+    movable: new Set(
+      tabState.tabs.filter((tab) => tab.kind === "thread").map((tab) => tab.id),
+    ),
     order: new Set(tabState.tabs.map((tab) => tab.id)),
-    closedSideIndex:
-      mainPane &&
-      (!tabState.paneOpen || (rootTabIds.length === 0 && !drawer.side))
-        ? sideTabs.length
-        : undefined,
-    canMove: (id, pane) => {
-      const entry = panelTabs.find((item) => tabId(item) === id);
-      // Panel tabs only cross panes; they keep their order within one.
-      if (entry)
-        return (
-          currentVisit() &&
-          movableEntry(entry) &&
-          inMain(entry) !== (pane === "main")
-        );
-      const tab = tabState.tabs.find((item) => item.id === id);
-      return (
-        currentVisit() &&
-        tab?.kind === "thread" &&
-        (pane === "side" || mainThread(tab.channelId))
-      );
-    },
-    move: (id, pane, index) => {
+    move: (id, index) => {
       if (!currentVisit()) return;
-      // Panel tabs follow the pane's threads in their opening order.
-      const entry = panelTabs.find((item) => tabId(item) === id);
-      if (entry) {
-        if (inMain(entry) !== (pane === "main")) placeEntry(id, pane);
-        return;
-      }
-      const moving = tabState.tabs.find((tab) => tab.id === id);
-      const order = tabState.tabs.filter((tab) => tabPane(tab) === pane);
-      if (moving && tabPane(moving) === pane && order.indexOf(moving) === index)
-        return;
-      placeTab(id, pane, index);
-      setAnnouncement(`Moved to position ${index + 1} in the ${pane} pane.`);
+      if (tabState.tabs.findIndex((tab) => tab.id === id) === index) return;
+      placeTab(id, index);
+      setAnnouncement(
+        `Moved to position ${index + 1} of ${tabState.tabs.length}.`,
+      );
     },
   });
   const openConversationThread = (
@@ -675,14 +520,7 @@ export function useConversationTabs({
     intent?: "reply" | "reveal" | "focus",
   ) => {
     if (!currentVisit()) return;
-    // Flat sessions keep their side-only host; channels support both panes.
-    tabState.openThreadTab(
-      channelId,
-      messageId,
-      rootId,
-      intent,
-      threadPane ?? (mainPane ? undefined : "side"),
-    );
+    tabState.openThreadTab(channelId, messageId, rootId, intent);
     if (
       opening.current &&
       panelTabId(opening.current) !== tabState.getSelected()
@@ -764,7 +602,7 @@ export function useConversationTabs({
     return target && usableChannel(target) ? target : undefined;
   }
   // Message rows are memoized: links read one stable opener that consults the
-  // live workspace when chosen. Only current-channel threads use the main pane.
+  // live workspace when chosen.
   const linkedThread = useRef<
     (channelId: string, messageId: string, rootId: string) => boolean
   >(() => false);
@@ -772,13 +610,7 @@ export function useConversationTabs({
     linkedThread.current = (channelId, messageId, rootId) => {
       if (!currentVisit() || !tabChannel({ kind: "thread", channelId }))
         return false;
-      tabState.openThreadTab(
-        channelId,
-        messageId,
-        rootId,
-        "reveal",
-        threadPane ?? (mainThread(channelId) ? undefined : "side"),
-      );
+      tabState.openThreadTab(channelId, messageId, rootId, "reveal");
       if (
         opening.current &&
         panelTabId(opening.current) !== tabState.getSelected()
@@ -923,14 +755,8 @@ export function useConversationTabs({
   }
 
   function panelItem(entry: Opening) {
-    const main = inMain(entry);
     const id = tabId(entry);
-    if (
-      main
-        ? tabState.mainSelected === id
-        : tabState.paneOpen && selectedTab === id
-    )
-      visitTab.shown.add(id);
+    if (tabState.paneOpen && selectedTab === id) visitTab.shown.add(id);
     return {
       id,
       instance: entry,
@@ -939,13 +765,6 @@ export function useConversationTabs({
         icon: <InfoIcon size="1rem" />,
       }),
       close: () => closeTab(entry),
-      // Panel tabs cross panes at the edge between them, never reorder.
-      ...(movableEntry(entry) && {
-        move: (delta: -1 | 1) => {
-          if (currentVisit() && delta === (main ? 1 : -1))
-            placeEntry(tabId(entry), main ? "side" : "main");
-        },
-      }),
       content:
         !entry.panel.deferUntilShown || visitTab.shown.has(id) ? (
           <PanelCard
@@ -960,25 +779,19 @@ export function useConversationTabs({
     };
   }
 
-  // Close all tabs and Close other tabs: one store update for both panes,
-  // including hidden tabs. False when the visit ended or nothing would
-  // change: nothing to close and the kept tab already selected.
+  // Close all tabs and Close other tabs: one store update, including hidden
+  // tabs. False when the visit ended or nothing would change: nothing to
+  // close and the kept tab already selected.
   const closeTabsExcept = (keep?: string) => {
     const closing = tabState.tabs.filter((tab) => tab.id !== keep);
     const closingEntries = tabState.entries.filter(
       (entry) => panelTabId(entry) !== keep,
     );
-    const kept = tabState.tabs.find((tab) => tab.id === keep);
-    const keptEntry = tabState.entries.find(
-      (entry) => panelTabId(entry) === keep,
-    );
     const unselected =
-      (kept && tabPane(kept) === "main") || (keptEntry && inMain(keptEntry))
-        ? tabState.mainSelected !== keep
-        : (!!kept ||
-            tabState.entries.some((entry) => panelTabId(entry) === keep) ||
-            (!!tabState.settings && keep === "settings")) &&
-          !(tabState.paneOpen && selectedTab === keep);
+      (tabState.tabs.some((tab) => tab.id === keep) ||
+        tabState.entries.some((entry) => panelTabId(entry) === keep) ||
+        (!!tabState.settings && keep === "settings")) &&
+      !(tabState.paneOpen && selectedTab === keep);
     if (
       !currentVisit() ||
       navigationSignal?.aborted ||
@@ -1038,20 +851,13 @@ export function useConversationTabs({
       !!tabChannel({ kind: "conversation", channelId }),
     announcement,
     drag,
-    mainItems: [...mainTabs.map(tabItem), ...mainPanelTabs.map(panelItem)],
-    selectedMain:
-      mainTabIds().find((id) => id === tabState.mainSelected) ?? "conversation",
-    // Thread content renders here once and is attached to whichever pane holds it.
+    // Thread content renders here once and is attached to its tab's slot.
     hosts: tabState.tabs.flatMap((tab) => {
-      if (tab.kind !== "thread") return [];
-      if (hostPanes && !hostPanes.includes(tabPane(tab))) return [];
+      if (tab.kind !== "thread" || withholdThreads) return [];
       const node = nodes.get(tab.id);
       const target = tabChannel(tab);
       if (!node || !target) return [];
-      const active =
-        tabPane(tab) === "main"
-          ? tabState.mainSelected === tab.id
-          : tabState.paneOpen && selectedTab === tab.id;
+      const active = tabState.paneOpen && selectedTab === tab.id;
       if (active) visitTab.shown.add(tab.id);
       else if (!visitTab.shown.has(tab.id)) return [];
       const route =
@@ -1113,6 +919,6 @@ export function useConversationTabs({
         ),
       ];
     }),
-    items: [...sideTabs.map(tabItem), ...sidePanelTabs.map(panelItem)],
+    items: [...tabState.tabs.map(tabItem), ...panelTabs.map(panelItem)],
   };
 }

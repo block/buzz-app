@@ -1,6 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 import { generateSecretKey } from "nostr-tools";
-import { openPage } from "./navigation.mjs";
+import { openChannel } from "./navigation.mjs";
+import { conversationActions } from "./rail-helpers.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 
 const chat = "33333333-3333-4333-8333-333333333333";
@@ -156,10 +157,7 @@ test("Outbox Retry reconciles a recorded then removed Solo invitation without re
     );
     await page.reload();
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
-    await openPage(page, "Messages");
-    await page
-      .getByRole("button", { name: "Project updates", exact: true })
-      .click();
+    await openChannel(page, channel);
     await expect(
       page.getByRole("textbox", {
         name: "Message #Project updates",
@@ -210,10 +208,7 @@ test("Outbox Retry reconciles a recorded then removed Solo invitation without re
   await expect(outbox.getByRole("alert")).toHaveCount(0);
   expect(publications).toHaveLength(0);
   await page.reload();
-  await openPage(page, "Messages");
-  await page
-    .getByRole("button", { name: "Project updates", exact: true })
-    .click();
+  await openChannel(page, channel);
   await expect(
     page.getByRole("textbox", {
       name: "Message #Project updates",
@@ -238,9 +233,7 @@ test("Outbox Retry reconciles a recorded then removed Solo invitation without re
       }),
     )}`,
   );
-  await expect(
-    page.getByRole("button", { name: "Chat actions", exact: true }),
-  ).toBeVisible();
+  await expect(conversationActions(page)).toBeVisible();
   await page
     .getByRole("button", { name: /^Share access to /, exact: true })
     .last()
@@ -271,10 +264,7 @@ test("Outbox Retry reconciles a recorded then removed Solo invitation without re
       .getByRole("button", { name: "Actions for Aria", exact: true }),
   ).toBeVisible();
   await page.reload();
-  await openPage(page, "Messages");
-  await page
-    .getByRole("button", { name: "Project updates", exact: true })
-    .click();
+  await openChannel(page, channel);
   await expect(
     page.getByRole("textbox", {
       name: "Message #Project updates",

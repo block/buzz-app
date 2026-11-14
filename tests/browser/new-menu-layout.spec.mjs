@@ -8,7 +8,7 @@ test("New remains clickable beside enlarged navigation filters", async ({
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();

@@ -24,7 +24,7 @@ const PAGE_SIZE = 20;
 
 export type SearchSort = "relevance" | "newest";
 
-export type SearchMessage = Readonly<{
+type SearchMessage = Readonly<{
   id: string;
   channelId: string;
   authorId: string;

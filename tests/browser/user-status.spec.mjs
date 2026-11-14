@@ -28,10 +28,6 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/user-status.html`,
     );
-    const navigation = page.getByRole("region", {
-      name: "Navigation",
-      exact: true,
-    });
     const chat = page.getByRole("region", { name: "Chat", exact: true });
     const second = page.getByRole("region", {
       name: "Second device",
@@ -162,70 +158,6 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
       chat.getByRole("img", { name: ":party:", exact: true }),
     ).toHaveCount(0);
     await page.getByRole("button", { name: "Update Bob", exact: true }).click();
-    await expect(
-      navigation.locator('[aria-label="🏠 Working remotely"]'),
-    ).toBeVisible();
-    const dmName = navigation.locator(
-      '[data-channel-id="status-dm"] .navigation-item-label',
-    );
-    await expect(dmName).toContainText("Bob");
-    await expect(
-      dmName.locator('[aria-label="🏠 Working remotely"]'),
-    ).toBeVisible();
-    const dmStatusLayout = await dmName.evaluate((label) => {
-      const nameContent = label.firstElementChild;
-      const name = nameContent?.firstElementChild;
-      const status = label.querySelector('[aria-label="🏠 Working remotely"]');
-      if (!(name instanceof HTMLElement) || !(status instanceof HTMLElement))
-        throw new Error("Missing DM name or status");
-      const nameBounds = name.getBoundingClientRect();
-      const statusBounds = status.getBoundingClientRect();
-      const contentBounds = nameContent.getBoundingClientRect();
-      return {
-        hasAccessoryContract: nameContent.hasAttribute("data-name-accessory"),
-        nameWidth: nameBounds.width,
-        nameScrollWidth: name.scrollWidth,
-        nameRight: nameBounds.right,
-        statusLeft: statusBounds.left,
-        statusRight: statusBounds.right,
-        contentRight: contentBounds.right,
-        labelRight: label.getBoundingClientRect().right,
-      };
-    });
-    expect(dmStatusLayout.hasAccessoryContract).toBe(true);
-    expect(dmStatusLayout.nameWidth).toBeCloseTo(
-      dmStatusLayout.nameScrollWidth,
-      0,
-    );
-    expect(dmStatusLayout.statusLeft - dmStatusLayout.nameRight).toBe(8);
-    expect(dmStatusLayout.contentRight).toBe(dmStatusLayout.statusRight);
-    expect(
-      dmStatusLayout.labelRight - dmStatusLayout.statusRight,
-    ).toBeGreaterThan(20);
-    await expect(dmName.locator("[tabindex]")).toHaveCount(0);
-    // Real text geometry catches a full-width label pushing the status away.
-    const expectStatusBesideName = async () => {
-      await expect
-        .poll(() =>
-          dmName.evaluate((element) => {
-            const label = element.firstElementChild.firstElementChild;
-            const status = element.querySelector("[data-compact]");
-            const range = document.createRange();
-            range.selectNodeContents(label);
-            const textRight = Math.min(
-              range.getBoundingClientRect().right,
-              label.getBoundingClientRect().right,
-            );
-            return Math.round(status.getBoundingClientRect().left - textRight);
-          }),
-        )
-        .toBe(8);
-    };
-    await expectStatusBesideName();
-    await dmName.locator('[aria-label="🏠 Working remotely"]').hover();
-    await expect(page.locator('[role="tooltip"][data-open]')).toContainText(
-      "Working remotely",
-    );
     const bobByline = chat
       .locator('[data-message-id="Bob"] strong')
       .locator("..");
@@ -256,10 +188,6 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     await expect(page.getByText("Stale", { exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "Custom Bob", exact: true }).click();
     await expect(
-      dmName.getByRole("img", { name: ":party: Celebrating", exact: true }),
-    ).toBeVisible();
-    await expectStatusBesideName();
-    await expect(
       bobByline.getByRole("img", { name: ":party: Celebrating", exact: true }),
     ).toBeVisible();
     await profileStatus
@@ -276,8 +204,6 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     const buzzin =
       "Buzzin' between hives all afternoon, so replies may wait until the honey run is done";
     const unresolved = `[aria-label=":bee-intensifies: ${buzzin}"]`;
-    await expect(dmName.locator(unresolved)).toHaveText("💬");
-    await expectStatusBesideName();
     await expect(bobByline.locator(unresolved)).toHaveText("💬");
     const code = (scope) =>
       scope.getByText(":bee-intensifies:", { exact: true });
@@ -292,48 +218,38 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
       page.getByRole("region", { name: "Profile", exact: true }),
     );
     const unresolvedTip = page.locator('[role="tooltip"][data-open]');
-    for (const status of [dmName, bobByline]) {
-      await status.locator(unresolved).hover();
-      await expect(unresolvedTip).toContainText(":bee-intensifies:");
-      await expectTextSized(unresolvedTip);
-      // The tooltip is where a compact slot shows the code, so long text
-      // beside it must not clip it.
-      expect(
-        await code(unresolvedTip).evaluate(
-          (element) => element.scrollWidth <= element.clientWidth,
-        ),
-      ).toBe(true);
-    }
+    await bobByline.locator(unresolved).hover();
+    await expect(unresolvedTip).toContainText(":bee-intensifies:");
+    await expectTextSized(unresolvedTip);
+    // The tooltip is where a compact slot shows the code, so long text
+    // beside it must not clip it.
+    expect(
+      await code(unresolvedTip).evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBe(true);
     // The status's own image URL renders without the catalog listing the code.
     await page
       .getByRole("button", { name: "Uncatalogued Bob with image", exact: true })
       .click();
-    for (const status of [dmName, bobByline]) {
-      const image = status.locator(
-        `[aria-label=":bee-intensifies: Buzzin'"] img`,
-      );
-      await expect(image).toHaveAttribute(
-        "src",
-        "https://emoji.test/bee-intensifies.svg",
-      );
-      await expect
-        .poll(() => image.evaluate((element) => element.naturalWidth))
-        .toBeGreaterThan(0);
-    }
+    const image = bobByline.locator(
+      `[aria-label=":bee-intensifies: Buzzin'"] img`,
+    );
+    await expect(image).toHaveAttribute(
+      "src",
+      "https://emoji.test/bee-intensifies.svg",
+    );
+    await expect
+      .poll(() => image.evaluate((element) => element.naturalWidth))
+      .toBeGreaterThan(0);
     await page
       .getByRole("button", { name: "Text-only Bob", exact: true })
       .click();
-    await expect(dmName.locator('[aria-label="Buzzy"]')).toHaveText("💬");
-    await dmName.locator('[aria-label="Buzzy"]').hover();
-    await expect(page.locator('[role="tooltip"][data-open]')).toContainText(
-      "Buzzy",
-    );
     await expect(bobByline.locator('[aria-label="Buzzy"]')).toHaveText("💬");
     await bobByline.locator('[aria-label="Buzzy"]').hover();
     await expect(page.locator('[role="tooltip"][data-open]')).toContainText(
       "Buzzy",
     );
-    await expect(navigation.getByText("Buzzy", { exact: true })).toHaveCount(0);
     await expect(
       page
         .getByRole("region", { name: "Profile", exact: true })
@@ -341,7 +257,6 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     ).toBeVisible();
     await page.getByRole("button", { name: "Clear Bob", exact: true }).click();
     await page.getByRole("button", { name: "Replay older Bob" }).click();
-    await expect(dmName.locator("[data-compact]")).toHaveCount(0);
     await expect(bobByline.locator("[data-compact]")).toHaveCount(0);
     await expect(page.getByText("Stale", { exact: true })).toHaveCount(0);
     // Text or several emoji in the emoji tag, from another client, use the
@@ -404,39 +319,13 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
         }),
       )
       .toEqual({ clipped: true, aboveFloor: true, wrapped: false });
-    // A long name must still shrink/fade and leave the status visible.
     await page.goto(
       new URL(
-        "?name=Bob with a very long display name that needs to fade in the sidebar",
+        "?name=Bob with a very long display name that needs to fade in the byline",
         page.url(),
       ).href,
     );
     await page.getByRole("button", { name: "Update Bob", exact: true }).click();
-    for (const width of [1440, 800, 1440]) {
-      await page.setViewportSize({ width, height: 950 });
-      await expect(dmName.locator("[data-overflowing]")).toHaveCount(1);
-      await expectStatusBesideName();
-      const status = dmName.locator("[data-compact]");
-      await expect(status).toBeVisible();
-      await expect
-        .poll(() =>
-          status.evaluate((element) => {
-            const bounds = element.getBoundingClientRect();
-            const glyph = element.firstElementChild.getBoundingClientRect();
-            const row = element.closest("button").getBoundingClientRect();
-            return (
-              bounds.width >= 15 &&
-              glyph.right <= bounds.right + 0.5 &&
-              bounds.right <= row.right
-            );
-          }),
-        )
-        .toBe(true);
-      await expect(dmName.locator("[data-overflowing]")).toHaveCSS(
-        "mask-image",
-        /linear-gradient/,
-      );
-    }
     // When a long byline name runs out of room, the glyph keeps its rendered
     // width instead of shrinking and painting past its box.
     const glyph = bobByline.locator('[aria-label="🏠 Working remotely"]');
@@ -458,49 +347,45 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
       .toEqual({ fits: true, wrapped: true });
     // An image keeps its size beside the long name as well.
     await page.getByRole("button", { name: "Custom Bob", exact: true }).click();
-    for (const scope of [dmName, bobByline]) {
-      const image = scope
-        .getByRole("img", { name: ":party: Celebrating", exact: true })
-        .locator("img");
-      await expect
-        .poll(() =>
-          image.evaluate((element) => {
-            const { width, height } = element.getBoundingClientRect();
-            return width > 0 && width === height;
-          }),
-        )
-        .toBe(true);
-    }
+    const customImage = bobByline
+      .getByRole("img", { name: ":party: Celebrating", exact: true })
+      .locator("img");
+    await expect
+      .poll(() =>
+        customImage.evaluate((element) => {
+          const { width, height } = element.getBoundingClientRect();
+          return width > 0 && width === height;
+        }),
+      )
+      .toBe(true);
     // Text yields to the long name only down to its first grapheme and an
     // ellipsis, never a bare ellipsis.
     await page
       .getByRole("button", { name: "Free-text Bob", exact: true })
       .click();
-    for (const scope of [dmName, bobByline]) {
-      const status = scope.locator(`[aria-label="${freeText}"]`);
-      await expect
-        .poll(() =>
-          status.evaluate((element) => {
-            const text = element.firstElementChild;
-            const first = document.createRange();
-            first.setStart(text.firstChild, 0);
-            first.setEnd(text.firstChild, "🐝".length);
-            const style = getComputedStyle(text);
-            const canvas = document.createElement("canvas").getContext("2d");
-            canvas.font = `${style.fontSize} ${style.fontFamily}`;
-            const shown = text.getBoundingClientRect();
-            return {
-              clipped: text.scrollWidth > text.clientWidth,
-              floor:
-                shown.width + 0.5 >=
-                first.getBoundingClientRect().width +
-                  canvas.measureText("…").width,
-              fits: shown.right <= element.getBoundingClientRect().right + 0.5,
-            };
-          }),
-        )
-        .toEqual({ clipped: true, floor: true, fits: true });
-    }
+    const status = bobByline.locator(`[aria-label="${freeText}"]`);
+    await expect
+      .poll(() =>
+        status.evaluate((element) => {
+          const text = element.firstElementChild;
+          const first = document.createRange();
+          first.setStart(text.firstChild, 0);
+          first.setEnd(text.firstChild, "🐝".length);
+          const style = getComputedStyle(text);
+          const canvas = document.createElement("canvas").getContext("2d");
+          canvas.font = `${style.fontSize} ${style.fontFamily}`;
+          const shown = text.getBoundingClientRect();
+          return {
+            clipped: text.scrollWidth > text.clientWidth,
+            floor:
+              shown.width + 0.5 >=
+              first.getBoundingClientRect().width +
+                canvas.measureText("…").width,
+            fits: shown.right <= element.getBoundingClientRect().right + 0.5,
+          };
+        }),
+      )
+      .toEqual({ clipped: true, floor: true, fits: true });
     expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();

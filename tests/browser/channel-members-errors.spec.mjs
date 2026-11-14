@@ -54,7 +54,7 @@ test("member action errors stay in view above a long roster", async ({
     return route.fallback();
   });
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await page
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Lifecycle channel", exact: true })

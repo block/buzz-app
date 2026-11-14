@@ -202,9 +202,34 @@ it("activity uses the purpose-bound 128-channel broker route without widening ge
     ["channel-activity", [{ ...filters[0], limit: 2 }]],
     ["channel-activity", [{ ...filters[0], kinds: [0] }]],
     ["channel-activity", [{ ...filters[0], authors: [h.viewer] }]],
+    ["channel-activity", [{ ...filters[0], top_level: false }]],
+    ["channel-activity", [{ ...filters[0], top_level: "true" }]],
+    ["channel-activity", [{ ...filters[0], top_level: 1 }]],
+    ["channel-activity", [{ ...filters[0], top_level: null }]],
+    [
+      "channel-activity",
+      [{ ...filters[0], top_level: true, include_aux: true }],
+    ],
   ])
     expect((await h.post(body, undefined, route)).status).toBe(400);
   expect(h.calls).toHaveLength(before);
+  // The top-level pass asks the same route for each newest top-level event.
+  expect(
+    await h.transport.channelActivity(
+      ids.slice(0, 2),
+      new AbortController().signal,
+      true,
+    ),
+  ).toEqual([]);
+  expect(h.calls).toHaveLength(before + 1);
+  expect(h.calls.at(-1).body).toEqual(
+    ids.slice(0, 2).map((id) => ({
+      kinds: [9, 40002, 40008, 45001, 45003],
+      "#h": [id],
+      limit: 1,
+      top_level: true,
+    })),
+  );
   h.setActivity([{ kind: 9, content: "unsigned" }]);
   await expect(
     h.transport.channelActivity(["room-0"], new AbortController().signal),

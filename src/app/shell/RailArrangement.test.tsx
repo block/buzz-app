@@ -23,6 +23,7 @@ beforeEach(() => {
     removeEventListener() {},
   }));
 });
+const noEntries = new Map<string, RailEntry>();
 afterEach(() => {
   cleanup();
   localStorage.clear();
@@ -63,7 +64,9 @@ test.each([false, true])(
     }));
     const listeners = new Set<() => void>();
     const unreadChannels = new Set(["chat-0"]);
+    let subscriptions = 0;
     const subscribe = (_target: unknown, listener: () => void) => {
+      subscriptions++;
       listeners.add(listener);
       return () => listeners.delete(listener);
     };
@@ -82,8 +85,10 @@ test.each([false, true])(
         snapshot: () => ({ data: { muted: [] } }),
       },
     } as unknown as RelaySession;
-    render(
+    const noChannels: never[] = [];
+    const rail = () => (
       <RailArrangement
+        current={noEntries}
         partition="preview-test"
         selectedSection="solo"
         isPinned={() => false}
@@ -101,7 +106,7 @@ test.each([false, true])(
                 renderOpen={(hidden, open) => (
                   <RailOpenConversations
                     session={session}
-                    channels={[]}
+                    channels={noChannels}
                     hidden={hidden}
                     label="Open Solo"
                     onClick={open}
@@ -116,8 +121,13 @@ test.each([false, true])(
             ),
           },
         ]}
-      />,
+      />
     );
+    const view = render(rail());
+    // Another rail render lists the same hidden rows: nothing resubscribes.
+    const subscribed = subscriptions;
+    view.rerender(rail());
+    expect(subscriptions).toBe(subscribed);
     expect(screen.getByRole("button", { name: "Chat 4" })).not.toBeNull();
     expect(screen.queryByRole("button", { name: "Chat 5" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Chat 6" })).toBeNull();
@@ -161,124 +171,120 @@ test.each([false, true])(
   },
 );
 
-test("saved Plugins shortcuts move to Team and can still be moved afterward", async () => {
-  const entry: RailEntry = {
-    id: "buzz.inbox/inbox",
-    label: "Activity",
+test("Pins are one list: its drop target and the row menu both pin, and neither moves the row", async () => {
+  const page: RailEntry = {
+    id: "example.notes/notes",
+    label: "Notes",
     kind: "page",
     target: {
       version: 1,
       kind: "page",
-      pluginId: "buzz.inbox",
-      pageId: "inbox",
+      pluginId: "example.notes",
+      pageId: "notes",
     },
   };
-  writeView("saved-shortcuts", "navigation-layout:v1", {
-    order: ["navigation", "messages"],
-    sections: [],
-    placements: [{ section: "navigation", entry }],
+  const placements = [{ section: "custom:work", entry: page }];
+  writeView("pins", "navigation-layout:v2", {
+    order: [],
+    sections: [{ id: "custom:work", title: "Work" }],
+    placements,
   });
-  const view = render(
+  const pinned = new Set<string>();
+  const onTogglePin = vi.fn((entry: RailEntry, next: boolean) => {
+    if (next) pinned.add(entry.id);
+    else pinned.delete(entry.id);
+  });
+  const cards = () => (
     <RailArrangement
-      partition="saved-shortcuts"
+      current={noEntries}
+      partition="pins"
+      isPinned={(entry) => pinned.has(entry.id)}
+      onTogglePin={onTogglePin}
+      openSection={() => {}}
+      renderEntry={(item) => <NavigationItem label={item.label} />}
+      sections={[
+        {
+          id: "pins",
+          title: "Pins",
+          content: (
+            <RailGroup
+              id="pins"
+              title="Pins"
+              rows={[...pinned].map(() => ({
+                entry: page,
+                content: <NavigationItem label={page.label} />,
+              }))}
+            />
+          ),
+        },
+      ]}
+    />
+  );
+  const view = render(cards());
+  const card = (id: string) => {
+    const node = view.container.querySelector(`[data-rail-section="${id}"]`);
+    if (!(node instanceof HTMLElement)) throw new Error(`Missing ${id}`);
+    return node;
+  };
+  // Moving a row to Pins is a pin: the arrangement's drop goes there too.
+  fireEvent.contextMenu(
+    within(card("custom:work")).getByRole("button", { name: "Notes" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Move page" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Pins" }));
+  expect(onTogglePin).toHaveBeenLastCalledWith(page, true);
+  view.rerender(cards());
+  // A pinned page placed in a section shows in both, and its menu unpins.
+  expect(
+    within(card("pins")).getByRole("button", { name: "Notes" }),
+  ).not.toBeNull();
+  fireEvent.contextMenu(
+    within(card("custom:work")).getByRole("button", { name: "Notes" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Unpin" }));
+  expect(onTogglePin).toHaveBeenLastCalledWith(page, false);
+  view.rerender(cards());
+  expect(within(card("pins")).queryByRole("button", { name: "Notes" })).toBe(
+    null,
+  );
+  // Pinning and unpinning leave the page where it was placed.
+  expect(
+    within(card("custom:work")).getByRole("button", { name: "Notes" }),
+  ).not.toBeNull();
+  expect(onTogglePin).toHaveBeenCalledTimes(2);
+});
+
+test("a row saved in a section shows the conversation's current name", () => {
+  const saved: RailEntry = {
+    id: "channel:planning",
+    label: "Planning",
+    kind: "channel",
+    target: {
+      version: 1,
+      kind: "conversation",
+      channelId: "planning",
+      scope: { viewer: "a".repeat(64), communityOrigin: "https://example.org" },
+    },
+  };
+  writeView("renamed", "navigation-layout:v2", {
+    order: [],
+    sections: [{ id: "custom:work", title: "Work" }],
+    placements: [{ section: "custom:work", entry: saved }],
+  });
+  render(
+    <RailArrangement
+      partition="renamed"
+      current={new Map([[saved.id, { ...saved, label: "Roadmap" }]])}
       isPinned={() => false}
       onTogglePin={() => {}}
       openSection={() => {}}
       renderEntry={(item) => <NavigationItem label={item.label} />}
-      sections={["navigation", "messages"].map((id) => ({
-        id,
-        title: id === "navigation" ? "Plugins" : "Team",
-        content: (
-          <RailGroup
-            id={id}
-            title={id === "navigation" ? "Plugins" : "Team"}
-            leadingEntryIds={id === "messages" ? [entry.id] : []}
-            rows={
-              id === "messages"
-                ? [{ entry, content: <NavigationItem label={entry.label} /> }]
-                : []
-            }
-          />
-        ),
-      }))}
+      sections={[]}
     />,
   );
-  const team = view.container.querySelector('[data-rail-section="messages"]');
-  const plugins = view.container.querySelector(
-    '[data-rail-section="navigation"]',
-  );
-  if (!(team instanceof HTMLElement) || !(plugins instanceof HTMLElement))
-    throw new Error("Missing sidebar cards");
-  const activity = within(team).getByRole("button", {
-    name: "Activity",
-  });
-  expect(
-    within(plugins).queryByRole("button", { name: "Activity" }),
-  ).toBeNull();
-  fireEvent.contextMenu(activity);
-  // Section moves sit under one submenu, beside the row's own actions.
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Move page" }));
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Plugins" }));
-  expect(
-    within(plugins).getByRole("button", { name: "Activity" }),
-  ).not.toBeNull();
-  expect(within(team).queryByRole("button", { name: "Activity" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Roadmap" })).not.toBeNull();
+  expect(screen.queryByRole("button", { name: "Planning" })).toBeNull();
 });
-
-test.each(["pins", "custom:work", "agents"])(
-  "the Agents card retains an agent placed in %s without duplicating it",
-  (destination) => {
-    const entry: RailEntry = {
-      id: "agent:owned",
-      label: "Owned agent",
-      kind: "agent",
-      target: { kind: "person", pubkey: "a".repeat(64) },
-    };
-    writeView("agent-placement", "navigation-layout:v1", {
-      order: [],
-      sections: [{ id: "custom:work", title: "Work" }],
-      placements: [{ section: destination, entry }],
-    });
-    const view = render(
-      <RailArrangement
-        partition="agent-placement"
-        isPinned={() => false}
-        onTogglePin={() => {}}
-        openSection={() => {}}
-        renderEntry={(item) => <NavigationItem label={item.label} />}
-        sections={[
-          {
-            id: "pins",
-            title: "Pins",
-            content: <RailGroup id="pins" title="Pins" />,
-          },
-          {
-            id: "agents",
-            title: "Agents",
-            content: (
-              <RailGroup
-                id="agents"
-                title="Agents"
-                rows={[
-                  { entry, content: <NavigationItem label={entry.label} /> },
-                ]}
-              />
-            ),
-          },
-        ]}
-      />,
-    );
-    const agents = view.container.querySelector('[data-rail-section="agents"]');
-    if (!(agents instanceof HTMLElement))
-      throw new Error("Missing Agents card");
-    expect(
-      within(agents).getAllByRole("button", { name: "Owned agent" }),
-    ).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "Owned agent" })).toHaveLength(
-      destination === "agents" ? 1 : 2,
-    );
-  },
-);
 
 test("a section a person made is renamed by double-clicking its title", async () => {
   writeView("rename", "navigation-layout:v2", {
@@ -288,6 +294,7 @@ test("a section a person made is renamed by double-clicking its title", async ()
   });
   render(
     <RailArrangement
+      current={noEntries}
       partition="rename"
       renderEntry={() => null}
       isPinned={() => false}
@@ -324,6 +331,7 @@ test("a section a person made is renamed by double-clicking its title", async ()
 test("a restriction shows one card under its banner and no way to add sections", () => {
   const cards = (only?: { section: string; banner: React.ReactNode }) => (
     <RailArrangement
+      current={noEntries}
       partition="restricted"
       isPinned={() => false}
       onTogglePin={() => {}}

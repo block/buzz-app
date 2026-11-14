@@ -77,6 +77,7 @@ import styles from "./RailNavigation.module.css";
 import {
   useConversationCount,
   useConversationKeys,
+  type ConversationFilter,
   type ConversationQuery,
 } from "../../features/conversation/conversation-index";
 import { useChannelRoster } from "../../features/relay/react";
@@ -85,13 +86,12 @@ import {
   CollectionFilters,
   useActivityView,
   withoutAgentViews,
-  type ActivityView,
 } from "../../features/conversation/ConversationList";
 
 export function RailNavigation({
   session,
   scope,
-  navigator: directNavigator,
+  navigator,
   pages,
   selected,
   onSelect,
@@ -99,7 +99,6 @@ export function RailNavigation({
   sidebarSections,
   sidebarScope,
   section: pageSection,
-  listNavigator = directNavigator,
   openInSection,
   compact = false,
 }: {
@@ -119,8 +118,6 @@ export function RailNavigation({
   /** Shows this section's full list instead of the cards: the shell's list
    * column renders one beside the cards, under the same `RailDrag`. */
   section?: string | undefined;
-  /** Opens from the list column, which keep that column as it is. */
-  listNavigator?: Navigation;
   /** Opens a conversation with the list showing the section it was opened from. */
   openInSection?: ((section: string, target: OpenTarget) => void) | undefined;
   compact?: boolean;
@@ -162,8 +159,7 @@ export function RailNavigation({
     session.sidebarPreferences.snapshot,
   );
   const resolveName = useIdentityNames(session.names);
-  const { layout: railLayout, reset: resetPlacement } =
-    useRailLayout(partition);
+  const { layout: railLayout } = useRailLayout(partition);
   const [savedMessageView, setMessageView] = useActivityView(partition);
   // Team offers no agent views; a saved one shows All.
   const messageView = useMemo(
@@ -187,8 +183,8 @@ export function RailNavigation({
   // Only the shown entry draws the rail. An opening visit's other steps,
   // its start and its settling, change nothing here and render nothing.
   const shownEntry = useSyncExternalStore(
-    directNavigator.subscribe,
-    useCallback(() => directNavigator.snapshot().entry, [directNavigator]),
+    navigator.subscribe,
+    useCallback(() => navigator.snapshot().entry, [navigator]),
   );
   const navigation = { entry: shownEntry };
   const sectionRoute =
@@ -207,16 +203,16 @@ export function RailNavigation({
   const hidden = useSavedHiddenDmIds(partition);
   // A new visit cancels a previous person-open attempt.
   useEffect(() => {
-    let attempt = directNavigator.snapshot().attempt.id;
-    return directNavigator.subscribe(() => {
-      const next = directNavigator.snapshot().attempt.id;
+    let attempt = navigator.snapshot().attempt.id;
+    return navigator.subscribe(() => {
+      const next = navigator.snapshot().attempt.id;
       if (next === attempt) return;
       attempt = next;
       pending.current?.abort();
       pending.current = undefined;
       setOpening(undefined);
     });
-  }, [directNavigator]);
+  }, [navigator]);
   useEffect(() => () => pending.current?.abort(), []);
 
   const channels = useMemo(
@@ -334,16 +330,13 @@ export function RailNavigation({
   );
   const pinned = new Set(pins.map((pin) => pin.id));
   const togglePin = (entry: RailEntry, nextPinned = !pinned.has(entry.id)) => {
-    // A conversation's copies in other sections outlive its pin.
-    const saved =
-      resetPlacement(entry.id, entry.kind === "page" ? undefined : "pins") &&
-      setPinned(entry, nextPinned);
+    const saved = setPinned(entry, nextPinned);
     setError(
       saved ? undefined : "Couldn’t save pins on this device. Try again.",
     );
     return saved;
   };
-  const open = async (entry: RailEntry, navigator: Navigation) => {
+  const open = async (entry: RailEntry) => {
     setError(undefined);
     if (entry.target.kind !== "person") {
       void navigator.open(entry.target);
@@ -459,12 +452,12 @@ export function RailNavigation({
   }, [soloOrder, channelsById, soloRegions]);
   // New returns to an ordinary draft that is already open rather than
   // replacing its editor.
-  const newSoloChat = (to: Navigation) => {
+  const newSoloChat = () => {
     const target = navigation.entry.target;
     const destination = resumeSoloDraftTarget(session.scope, target);
     const input = destination === target ? soloDraftInput() : null;
     if (input) input.focus();
-    else void to.open(destination);
+    else void navigator.open(destination);
   };
   // Leaving a Solo chat opens the row that takes its place.
   const neighborsRef = channelNavigation?.soloNeighbors;
@@ -518,7 +511,6 @@ export function RailNavigation({
 
   /** The cards, or one section's full list for the shell's list column. */
   const view = () => {
-    const navigator = pageSection ? listNavigator : directNavigator;
     // A list shows one section: the others' rows are not built for it.
     const shown = (id: string, content: () => ReactNode) =>
       pageSection && pageSection !== id ? null : content();
@@ -545,7 +537,7 @@ export function RailNavigation({
         "aria-label": entry.label,
         selected: isSelected(entry),
         disabled: opening === entry.id,
-        onClick: () => void open(entry, navigator),
+        onClick: () => void open(entry),
       };
       const control = feed ? (
         <RailConversationItem
@@ -604,10 +596,7 @@ export function RailNavigation({
 
     const sourceRow = (entry: RailEntry, section: string) => ({
       entry,
-      content: row(
-        entry,
-        (section === "pins" || section === "agents") && pageSection !== section,
-      ),
+      content: row(entry, section === "pins" && pageSection !== section),
     });
     const pageRow = (page: RegisteredPage) => {
       const entry = byId.get(page.key);
@@ -672,7 +661,7 @@ export function RailNavigation({
         />
       );
     }
-    const teamCount = (filter: ActivityView["filter"]) => (
+    const teamCount = (filter: ConversationFilter) => (
       <TeamCount session={session} filter={filter} />
     );
     const activityPage = teamPages.find(
@@ -680,7 +669,7 @@ export function RailNavigation({
     );
     const activityEntry = activityPage && byId.get(activityPage.key);
     const teamViews: {
-      filter: ActivityView["filter"];
+      filter: ConversationFilter;
       label: string;
       icon: ReactElement;
     }[] = [
@@ -713,7 +702,7 @@ export function RailNavigation({
                       selected={teamOpen && messageView.filter === "all"}
                       onClick={() => {
                         setMessageView({ ...messageView, filter: "all" });
-                        void directNavigator.open(
+                        void navigator.open(
                           sidebarSectionTarget(scope, "messages"),
                         );
                       }}
@@ -735,9 +724,7 @@ export function RailNavigation({
             selected={teamOpen && messageView.filter === item.filter}
             onClick={() => {
               setMessageView({ ...messageView, filter: item.filter });
-              void directNavigator.open(
-                sidebarSectionTarget(scope, "messages"),
-              );
+              void navigator.open(sidebarSectionTarget(scope, "messages"));
             }}
           />
         ))}
@@ -754,6 +741,7 @@ export function RailNavigation({
       <RailArrangement
         key={partition}
         partition={partition}
+        current={byId}
         renderSectionList={(id, title, entries, action) => (
           <RailConversationList
             section={id}
@@ -822,7 +810,7 @@ export function RailNavigation({
             )?.focus();
         }}
         renderEntry={(entry, section) => {
-          if (section === "pins" || section === "agents")
+          if (section === "pins")
             return row(byId.get(entry.id) ?? entry, pageSection !== section);
           const contribution = contributed.find((section) =>
             entry.id.startsWith(`contributed:${section.key}:`),
@@ -987,19 +975,16 @@ export function RailNavigation({
                   />
                 }
               >
-                {!pins.length &&
-                  !railLayout.placements.some(
-                    (item) => item.section === "pins",
-                  ) && (
-                    <NavigationItem
-                      label="Pin a chat, person, or channel"
-                      icon={<PinIcon size={18} />}
-                      onClick={() => {
-                        setQuery("");
-                        setPicker(true);
-                      }}
-                    />
-                  )}
+                {!pins.length && (
+                  <NavigationItem
+                    label="Pin a chat, person, or channel"
+                    icon={<PinIcon size={18} />}
+                    onClick={() => {
+                      setQuery("");
+                      setPicker(true);
+                    }}
+                  />
+                )}
               </RailGroup>
             )),
           },
@@ -1037,7 +1022,7 @@ export function RailNavigation({
                     variant={pageSection ? "glass" : "ghost"}
                     aria-label="New Solo chat"
                     icon={<PlusIcon size={16} strokeWidth={2} />}
-                    onClick={() => newSoloChat(navigator)}
+                    onClick={() => newSoloChat()}
                   />
                 }
               >
@@ -1094,8 +1079,8 @@ export function RailNavigation({
               icon={<PlusIcon size={20} aria-hidden="true" />}
               onClick={() =>
                 pageSection === "solo"
-                  ? newSoloChat(listNavigator)
-                  : void listNavigator.open({
+                  ? newSoloChat()
+                  : void navigator.open({
                       version: 1,
                       kind: "page",
                       pluginId: "buzz.channels",
@@ -1143,7 +1128,7 @@ const TeamCount = memo(function TeamCount({
   filter,
 }: {
   session: RelaySession;
-  filter: ActivityView["filter"];
+  filter: ConversationFilter;
 }) {
   const count = useConversationCount(session, unreadIn[filter]);
   return count ? (
@@ -1159,7 +1144,7 @@ const unreadIn = Object.fromEntries(
     // Team's views: All keeps Solo in its own collection.
     { filter, unread: true, home: "team" },
   ]),
-) as Record<ActivityView["filter"], ConversationQuery>;
+) as Record<ConversationFilter, ConversationQuery>;
 const soloView: ConversationQuery = {
   filter: "all",
   unread: false,

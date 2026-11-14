@@ -2,8 +2,6 @@ import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 // Real UI and signed session traffic; all state and publications stay in this fixture.
 import { createRoot } from "react-dom/client";
 import { ProfileButton } from "../../src/app/shell/ProfileButton";
-import { ChannelSidebarItem } from "../../src/bundled/channels/ChannelSidebarItem";
-import channelStyles from "../../src/bundled/channels/Channels.module.css";
 import { MessageRow } from "../../src/features/messages/MessageRow";
 import { UserStatusDisplay } from "../../src/features/user-status/StatusDisplay";
 import { createRelaySession } from "../../src/features/relay/session";
@@ -161,29 +159,6 @@ createRoot(root).render(
         />
       </div>
       <div className="grid grid-cols-2 gap-8">
-        <section
-          aria-label="Navigation"
-          className="rounded-2xl border border-line p-4"
-        >
-          <h2>Navigation</h2>
-          {/* The real sidebar's row metrics, including its emoji size. */}
-          <div className={channelStyles.sidebar}>
-            <ChannelSidebarItem
-              channel={{
-                id: "status-dm",
-                name: bobName,
-                channelType: "dm",
-                participants: [other.pubkey],
-              }}
-              session={first}
-              working={false}
-              selected={undefined}
-              onSelect={() => {}}
-              onOpenThread={() => {}}
-              onOpenMessage={() => {}}
-            />
-          </div>
-        </section>
         <section
           aria-label="Chat"
           className="rounded-2xl border border-line p-4"

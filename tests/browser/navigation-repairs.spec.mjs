@@ -1,4 +1,4 @@
-import { selectCommunity } from "./navigation.mjs";
+import { channelRow, rail, selectCommunity } from "./navigation.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -23,22 +23,21 @@ test("Back restores Personal space without inheriting the active community", asy
     rail.getByRole("button", { name: "Community switcher: Personal space" }),
   ).toBeVisible();
   const personal = await entry(page);
+  // A community opens on Team's list.
   await selectCommunity(page, "Primary");
-  await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-  ).toBeVisible();
+  await expect(channelRow(page, "alpha")).toBeVisible();
   await button(page, "Go back").click();
   await expect(
     rail.getByRole("button", { name: "Community switcher: Personal space" }),
   ).toBeVisible({ timeout: 1500 });
   expect(await entry(page)).toEqual(personal);
   await expect(
-    page.getByRole("heading", { name: "Your channels, one conversation." }),
+    page.getByRole("heading", {
+      name: "Choose a community to see your activity",
+    }),
   ).toBeVisible();
   await button(page, "Go forward").click();
-  await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-  ).toBeVisible();
+  await expect(channelRow(page, "alpha")).toBeVisible();
 });
 
 // A missing page fails again synchronously, so its Retry control stays.
@@ -64,7 +63,7 @@ test("keyboard Retry keeps focus when the retry fails in place", async ({
   await expect(retry).toBeFocused();
 });
 
-test("keyboard Retry hands off focus while reconnecting a failed Messages tab opening", async ({
+test("keyboard Retry hands off focus while reconnecting a failed Team opening", async ({
   page,
   app,
 }) => {
@@ -79,7 +78,7 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
     await held;
     return route.continue();
   });
-  // Start outside Messages so its header activation owns preserve-focus intent.
+  // Start outside Team so its rail activation owns preserve-focus intent.
   // Settings also reads the community profile through /session, racing this gate.
   await page.goto(
     `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify({ version: 1, kind: "page", pluginId: "buzz.workflows", pageId: "workflows" }))}`,
@@ -87,9 +86,9 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   await expect
     .poll(async () => (await entry(page)).target.pageId)
     .toBe("workflows");
-  const messages = page.getByRole("tab", { name: "Team", exact: true });
-  await messages.focus();
-  await messages.press("Enter");
+  const team = rail(page).getByRole("button", { name: "Team", exact: true });
+  await team.focus();
+  await team.press("Enter");
   // A refused connection is a connection failure, whatever the visit was.
   await expect(
     page.getByRole("heading", { name: "Can’t connect" }),
@@ -111,24 +110,25 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   } finally {
     release();
   }
+  // Team opens its list with nothing selected, in the same visit.
+  await expect(channelRow(page, "alpha")).toBeVisible();
   await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+    page.getByRole("heading", {
+      name: "No conversation selected",
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(main).toBeFocused();
-  // Resolving Messages chooses its conversation in the same visit.
   expect(await entry(page)).toEqual({
     id: visit.id,
     target: {
       version: 1,
-      kind: "conversation",
-      channelId: "alpha",
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
       scope: visit.target.scope,
     },
   });
-  await page.keyboard.press("Tab");
-  await expect(
-    page.getByRole("tabpanel", { name: "Team", exact: true }),
-  ).toBeFocused();
 });
 
 test("a refused account is explained once, as access", async ({
@@ -234,7 +234,9 @@ launchTest(
     await expect(button(card, "Go to Team")).toBeVisible();
     await openPage(page, "Workflows");
     await expect(failed).toBeHidden();
-    await page.getByRole("tab", { name: "Agents", exact: true }).click();
+    await rail(page)
+      .getByRole("button", { name: "Agents", exact: true })
+      .click();
     await page.evaluate(() => {
       location.hash = "#buzz=%7B";
     });

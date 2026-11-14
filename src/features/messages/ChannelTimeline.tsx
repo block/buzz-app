@@ -212,8 +212,6 @@ export type ChannelTimelineProps = {
   historyControl?: "button" | "scroll";
   /** Personal chats keep their compact initial history spacing. */
   chatPresentation?: boolean | undefined;
-  /** False: rows open existing threads but offer none to start; see MessageRow. */
-  startsThreads?: boolean | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -284,7 +282,6 @@ function Timeline({
   onReply,
   onOpenMediaReview,
   chatPresentation = false,
-  startsThreads = true,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
   const shownIntro =
@@ -2321,7 +2318,6 @@ function Timeline({
                   onOpenLink={onOpenLink}
                   canOpenLink={canOpenLink}
                   onOpenThread={onOpenThread}
-                  startsThreads={startsThreads}
                   {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
                   retry={queries.outbox?.retry}
                   keepMounted={keepRowMounted}

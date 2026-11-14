@@ -1,6 +1,12 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { hoverMessage } from "./message-actions.mjs";
-import { openPage, settlePanelMotion } from "./navigation.mjs";
+import {
+  channelRow,
+  openChannel,
+  openPage,
+  rail,
+  settlePanelMotion,
+} from "./navigation.mjs";
 import { fileURLToPath } from "node:url";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -10,7 +16,8 @@ test("channel settings owns its responsive side panel and returns keyboard focus
   app,
 }) => {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   const conversation = page.getByRole("article", { name: "Conversation" });
   await expect(
     conversation.getByRole("button", {
@@ -19,7 +26,7 @@ test("channel settings owns its responsive side panel and returns keyboard focus
     }),
   ).toBeVisible();
   const trigger = page.getByRole("button", {
-    name: "Channel actions",
+    name: "Conversation actions",
     exact: true,
   });
   const workspace = page.locator("[data-panel-workspace]");
@@ -27,6 +34,10 @@ test("channel settings owns its responsive side panel and returns keyboard focus
     name: "Channel settings",
     exact: true,
   });
+  await page.mouse.move(0, 0);
+  const restingTrigger = await trigger.evaluate(
+    (button) => getComputedStyle(button).backgroundColor,
+  );
   await openChannelDetails(page);
   await expect(panel).toBeVisible();
   // Joined panels share the workspace frame and keep a token-based header divider.
@@ -51,7 +62,8 @@ test("channel settings owns its responsive side panel and returns keyboard focus
   }
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await page.mouse.move(0, 0);
-  await expect(trigger).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  // The glass trigger returns to its resting fill, not a hover or open tint.
+  await expect(trigger).toHaveCSS("background-color", restingTrigger);
   const settingsTab = workspace.getByRole("tab", {
     name: "Channel settings",
     exact: true,
@@ -96,9 +108,9 @@ test("channel settings owns its responsive side panel and returns keyboard focus
   await expect(
     panel.getByRole("button", { name: "Refresh channels", exact: true }),
   ).toBeHidden();
-  await page.getByRole("button", { name: "Beta", exact: true }).click();
+  await channelRow(page, "beta").click();
   await expect(panel).toHaveCount(0);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await channelRow(page, "alpha").click();
   await expect(panel).toBeVisible();
   await settlePanelMotion(page);
   await close.click();
@@ -121,14 +133,9 @@ test("channel settings owns its responsive side panel and returns keyboard focus
   await page.setViewportSize({ width: 1440, height: 950 });
   await openChannelDetails(page);
   await expect(panel).toBeVisible();
-  const messages = page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .locator("summary")
-    .filter({ hasText: /^Direct messages$/ });
-  await messages.hover();
+  await rail(page).getByRole("button", { name: "Create", exact: true }).click();
   await page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: "New message", exact: true })
+    .getByRole("menuitem", { name: "New message", exact: true })
     .click();
   await expect(
     page.getByRole("region", { name: "New message", exact: true }),
@@ -244,32 +251,6 @@ test("an image review keeps Channel settings open and hands the thread draft to 
   await expect(viewer).toHaveCount(0);
   await expect(threadDraft).toHaveText("Handoff draft, edited in the viewer");
   await expect(tile).toBeFocused();
-
-  // A thread in the main pane is not under the dock and keeps its place
-  // through a review: the same composer stays mounted, never leaving the DOM.
-  const main = page.locator("[data-main-workspace]");
-  const threadTabs = (host) =>
-    host.locator('[role="tab"][data-tab-value^="thread:"]');
-  await threadTabs(workspace).focus();
-  await page.keyboard.press("Alt+Shift+ArrowLeft");
-  await expect(threadTabs(main)).toHaveCount(1);
-  const mainDraft = main.getByRole("textbox", {
-    name: "Reply to thread",
-    exact: true,
-  });
-  await expect(mainDraft).toHaveText("Handoff draft, edited in the viewer");
-  const mainEditor = await mainDraft.elementHandle();
-  await main.getByRole("tab", { name: "Alpha", exact: true }).click();
-  await expect(tile).toBeVisible();
-  await tile.click();
-  await expect(viewer).toBeVisible();
-  await expect(hiddenThread).toHaveCount(1);
-  expect(await mainEditor.evaluate((node) => node.isConnected)).toBe(true);
-  await page.keyboard.press("Escape");
-  await expect(viewer).toHaveCount(0);
-  expect(await mainEditor.evaluate((node) => node.isConnected)).toBe(true);
-  await expect(threadTabs(main)).toHaveCount(1);
-  await expect(tile).toBeFocused();
 });
 
 test.describe("description links", () => {
@@ -300,8 +281,8 @@ test.describe("description links", () => {
       ["about", `R2 runbook: ${runbook} · see #Beta`],
     ]);
     await page.goto(app.origin);
-    await openPage(page, "Messages");
-    await page.locator(`button[data-channel-id="${id}"]`).click();
+    await openPage(page, "Team");
+    await openChannel(page, id);
     await openChannelDetails(page);
     const panel = page.getByRole("complementary", {
       name: "Channel settings",

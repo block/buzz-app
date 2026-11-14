@@ -18,8 +18,6 @@ import {
   unreadFirstPreference,
 } from "../features/search/unread-first-preference";
 
-import { setThreadPlacementPreference } from "../features/messages/thread-preferences";
-
 import {
   namePreference,
   setNamePreference,
@@ -49,7 +47,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   for (const appearance of preferenceAppearances.splice(0))
     appearance.dispose();
-  setThreadPlacementPreference("side");
   setFollowUpBehaviorPreference("immediate");
   setMessageAutocorrectPreference(false);
   setUnreadFirstPreference(true);

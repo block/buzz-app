@@ -1,4 +1,5 @@
 import { openChannelDetails } from "./channel-details.mjs";
+import { channelRow } from "./navigation.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -82,12 +83,10 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
     // The actual label hook has >1,000 missing participants. Keep its profile
     // response held through cold opening; do not bypass that production caller.
     expect(heads(app, "beta")).toHaveLength(0);
-    await page
-      .getByRole("button", { name: "Beta", exact: true })
-      .evaluate((button) => {
-        performance.mark("cold-beta-click");
-        button.click();
-      });
+    await channelRow(page, "beta").evaluate((button) => {
+      performance.mark("cold-beta-click");
+      button.click();
+    });
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
@@ -112,76 +111,74 @@ test("cold opening bypasses held DM labels; warm switching paints without a head
     const targetMs = 100;
     // Browser-clock click → first visible row → paint, excluding Playwright IPC.
     for (const name of ["Alpha", "Beta", "Alpha", "Beta"]) {
-      const timing = await page
-        .getByRole("button", { name, exact: true })
-        .evaluate(
-          async (button, { name, ids }) => {
-            const start = performance.now();
-            button.click();
-            const clickDispatchMs = performance.now() - start;
-            const frames = [];
-            let firstVisibleMs;
-            let paintOpportunity;
-            await new Promise((resolve, reject) => {
-              const deadline = setTimeout(
-                () => reject(new Error("warm switch did not paint")),
-                1000,
+      const timing = await channelRow(page, name.toLowerCase()).evaluate(
+        async (button, { name, ids }) => {
+          const start = performance.now();
+          button.click();
+          const clickDispatchMs = performance.now() - start;
+          const frames = [];
+          let firstVisibleMs;
+          let paintOpportunity;
+          await new Promise((resolve, reject) => {
+            const deadline = setTimeout(
+              () => reject(new Error("warm switch did not paint")),
+              1000,
+            );
+            const check = (timestamp) => {
+              frames.push({
+                frameMs: timestamp - start,
+                callbackMs: performance.now() - start,
+              });
+              const composer = document.querySelector(
+                `[role="textbox"][aria-label="Message #${name}"]`,
               );
-              const check = (timestamp) => {
-                frames.push({
+              const history = document.querySelector(
+                '[aria-label="Channel message history"]',
+              );
+              const rect = history?.getBoundingClientRect();
+              const visible =
+                rect &&
+                [...history.querySelectorAll("[data-message-id]")].some(
+                  (row) => {
+                    const bounds = row.getBoundingClientRect();
+                    return (
+                      ids.includes(row.dataset.messageId) &&
+                      bounds.height > 0 &&
+                      bounds.bottom > rect.top &&
+                      bounds.top < rect.bottom
+                    );
+                  },
+                );
+              if (!visible || !composer) return requestAnimationFrame(check);
+              firstVisibleMs = performance.now() - start;
+              requestAnimationFrame((timestamp) => {
+                paintOpportunity = {
                   frameMs: timestamp - start,
                   callbackMs: performance.now() - start,
-                });
-                const composer = document.querySelector(
-                  `[role="textbox"][aria-label="Message #${name}"]`,
-                );
-                const history = document.querySelector(
-                  '[aria-label="Channel message history"]',
-                );
-                const rect = history?.getBoundingClientRect();
-                const visible =
-                  rect &&
-                  [...history.querySelectorAll("[data-message-id]")].some(
-                    (row) => {
-                      const bounds = row.getBoundingClientRect();
-                      return (
-                        ids.includes(row.dataset.messageId) &&
-                        bounds.height > 0 &&
-                        bounds.bottom > rect.top &&
-                        bounds.top < rect.bottom
-                      );
-                    },
-                  );
-                if (!visible || !composer) return requestAnimationFrame(check);
-                firstVisibleMs = performance.now() - start;
-                requestAnimationFrame((timestamp) => {
-                  paintOpportunity = {
-                    frameMs: timestamp - start,
-                    callbackMs: performance.now() - start,
-                  };
-                  clearTimeout(deadline);
-                  resolve();
-                });
-              };
-              requestAnimationFrame(check);
-            });
-            const warmVisibleMs = performance.now() - start;
-            return {
-              warmVisibleMs,
-              // Synchronous button.click() only, not all React/render work.
-              clickDispatchMs,
-              frames,
-              firstVisibleMs,
-              paintOpportunity,
+                };
+                clearTimeout(deadline);
+                resolve();
+              });
             };
-          },
-          {
-            name,
-            ids: app.histories
-              .get(`primary/${name.toLowerCase()}`)
-              .map((event) => event.id),
-          },
-        );
+            requestAnimationFrame(check);
+          });
+          const warmVisibleMs = performance.now() - start;
+          return {
+            warmVisibleMs,
+            // Synchronous button.click() only, not all React/render work.
+            clickDispatchMs,
+            frames,
+            firstVisibleMs,
+            paintOpportunity,
+          };
+        },
+        {
+          name,
+          ids: app.histories
+            .get(`primary/${name.toLowerCase()}`)
+            .map((event) => event.id),
+        },
+      );
       app.report.measurements.push({ name, ...timing });
       // Surface target misses without truncating samples or functional checks.
       if (timing.warmVisibleMs >= targetMs)

@@ -11,10 +11,6 @@ test("Escape dismisses the sidebar from its own controls, not from the list it p
   const slot = document.body.appendChild(document.createElement("div"));
   render(
     <AppDock
-      search={null}
-      community={null}
-      profile={null}
-      settings={null}
       showPrimaryNavigation={false}
       pages={[]}
       selected=""

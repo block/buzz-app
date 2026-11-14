@@ -1,7 +1,7 @@
-// Use the production sidebar/page ownership with real navigation in standalone fixtures.
+// Render the production Channels page with real navigation in standalone
+// fixtures. The rail beside it belongs to the shell, which fixtures omit.
 import { useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { ChannelNavigationProvider } from "../../src/features/channel-navigation/ChannelNavigationState";
-import { PrimarySidebar } from "../../src/app/shell/PrimarySidebar";
 import { ChannelsPage } from "../../src/bundled/channels/ChannelsPage";
 import type { RelayData } from "../../src/features/relay/service";
 import type { Panels } from "../../src/features/panels/service";
@@ -43,13 +43,6 @@ export function ChannelWorkspaceFixture({
   return (
     <ChannelNavigationProvider relay={relay}>
       <div style={{ display: "flex", height: "100%", minWidth: 0 }}>
-        <PrimarySidebar
-          relay={relay}
-          navigator={host.navigation}
-          target={state.entry.target}
-        >
-          {null}
-        </PrimarySidebar>
         <div style={{ flex: 1, minWidth: 0 }}>
           <ChannelsPage
             relay={relay}

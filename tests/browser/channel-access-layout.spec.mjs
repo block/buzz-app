@@ -44,7 +44,7 @@ test("general access starts the member list and footer actions stay reachable wi
     });
   });
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await page
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Lifecycle channel", exact: true })
@@ -307,7 +307,7 @@ for (const outcome of ["rejected", "uncertain"]) {
       },
     );
     await page.goto(app.origin);
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
     await page
       .getByRole("navigation", { name: "Subscribed channels" })
       .getByRole("button", { name: "Lifecycle channel", exact: true })

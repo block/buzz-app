@@ -130,6 +130,7 @@ async function fixture({
   let omitTimelineTarget = false;
   let targetReadGate: Promise<void> | undefined;
   let targetReadStarted = () => {};
+  let targetReads = 0;
   const publish = vi.fn(async (_event: RelayEvent) => {});
   const owner = createRelaySession(
     {
@@ -138,6 +139,7 @@ async function fixture({
       media: () => undefined,
       query: async (filters) => {
         if (filters.some((filter) => filter.ids?.includes(root.id))) {
+          targetReads++;
           targetReadStarted();
           await targetReadGate;
         }
@@ -248,6 +250,7 @@ async function fixture({
   return {
     user,
     message,
+    targetReads: () => targetReads,
     pauseTargetRead() {
       let release = () => {};
       const started = new Promise<void>((resolve) => {
@@ -326,6 +329,31 @@ it.each(["stream", "solo"] as const)(
   },
 );
 
+it.each([false, true])(
+  "Escape cancels a reply target only from the reader that owns it (tab=%s)",
+  async (tab) => {
+    const h = await fixture({ tab });
+    await h.hold();
+    const cancel = () =>
+      screen.queryByRole("button", { name: "Cancel reply target" });
+    expect(cancel()).toBeInTheDocument();
+    // Focus outside the owning reader keeps its own Escape.
+    const outside = screen.getByRole("button", { name: "Outside control" });
+    act(() => outside.focus());
+    fireEvent.keyDown(outside, { key: "Escape" });
+    expect(cancel()).toBeInTheDocument();
+    // A row in the owning reader cancels the target.
+    const row = h.mounted.container.querySelector<HTMLElement>(
+      `[data-message-id="${h.root.id}"]`,
+    );
+    assert(row);
+    row.tabIndex = -1;
+    act(() => row.focus());
+    fireEvent.keyDown(row, { key: "Escape" });
+    expect(cancel()).not.toBeInTheDocument();
+  },
+);
+
 it("does not replay a local reply focus when a secondary tab's external request expires", async () => {
   const h = await fixture({ tab: true });
   await h.hold();
@@ -354,7 +382,9 @@ it("updates the selected target after edits and blocks a deleted target without 
   );
   await h.evictTimelineTarget();
   expect(within(preview).getByText("Edited reply target")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
+  );
   h.receive(h.overlay(5));
   await screen.findByText("Reply target is no longer available.");
   expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
@@ -367,13 +397,36 @@ it("updates the selected target after edits and blocks a deleted target without 
   expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
 });
 
-it("presents the reply immediately and keeps typing available while only Send waits for verification", async () => {
+it("replies to a message on screen without reading it from the relay", async () => {
   const h = await fixture();
+  const reads = h.targetReads();
+  await h.hold();
+  const composer = screen.getByRole("form", { name: "Reply to thread" });
+  act(() => h.input.insertText("Sent straight away"));
+  expect(
+    within(composer).getByRole("button", { name: "Send message" }),
+  ).toBeEnabled();
+  await h.user.click(h.input);
+  await h.user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(
+      h.publish.mock.calls.some(
+        ([event]) =>
+          event.content === "Sent straight away" &&
+          event.tags.some((tag) => tag[0] === "e" && tag[1] === h.root.id),
+      ),
+    ).toBe(true),
+  );
+  expect(h.targetReads()).toBe(reads);
+});
+
+it("verifies a target that left the loaded window, keeping typing available while only Send waits", async () => {
+  const h = await fixture();
+  await h.hold();
   const gate = h.pauseTargetRead();
   try {
-    await h.user.pointer({ target: h.message, keys: "[MouseLeft>]" });
+    await h.evictTimelineTarget();
     await gate.started;
-    await h.user.pointer({ keys: "[/MouseLeft]" });
     const composer = screen.getByRole("form", { name: "Reply to thread" });
     expect(within(composer).getByText("Reply target")).toBeVisible();
     expect(within(composer).getByText(/Replying to/)).toBeVisible();
@@ -399,7 +452,6 @@ it("presents the reply immediately and keeps typing available while only Send wa
     expect(h.input).toHaveTextContent("Keep writing while checking");
   } finally {
     gate.release();
-    await h.user.pointer({ keys: "[/MouseLeft]" });
   }
 });
 

@@ -2,6 +2,7 @@ import { setPluginEnabled } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import {
+  channelRow,
   openPage,
   openSettings,
   settingsDialog,
@@ -22,7 +23,7 @@ providerTest(
   async ({ page, app }) => {
     await open(page, app);
     const alpha = await entry(page);
-    await button(page, "Beta").click();
+    await channelRow(page, "beta").click();
     await expect(composer(page, "Beta")).toBeVisible();
     const beta = await entry(page);
     await openSettings(page);
@@ -140,7 +141,7 @@ test("Settings Back is reversible; explicit Close retires every section visit", 
 }) => {
   await open(page, app);
   const alpha = await entry(page);
-  await button(page, "Beta").click();
+  await channelRow(page, "beta").click();
   await expect(composer(page, "Beta")).toBeVisible();
   const beta = await entry(page);
   await openSettings(page);
@@ -238,7 +239,7 @@ test("channel visits, toolbar, browser traversal and Settings sections share one
   await open(page, app);
   const alpha = await entry(page);
   expect(alpha.target.channelId).toBe("alpha");
-  await button(page, "Beta").click();
+  await channelRow(page, "beta").click();
   await expect(composer(page, "Beta")).toBeVisible();
   const beta = await entry(page);
   expect(beta.id).not.toBe(alpha.id);
@@ -246,7 +247,7 @@ test("channel visits, toolbar, browser traversal and Settings sections share one
   await expect(composer(page, "Alpha")).toBeVisible();
   expect((await entry(page)).id).toBe(alpha.id);
   // Reclick is retry, not a new visit or forward-stack truncation.
-  await button(page, "Alpha").click();
+  await channelRow(page, "alpha").click();
   expect((await entry(page)).id).toBe(alpha.id);
   await expect(button(page, "Go forward")).toBeEnabled();
   await button(page, "Go forward").click();

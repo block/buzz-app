@@ -207,7 +207,6 @@ export function SoloDraft({
   embedded = false,
   navigation,
   draftPrefix,
-  onDraftChange,
   onBusyChange,
 }: {
   draft?: SoloDraftStart["draft"];
@@ -217,7 +216,6 @@ export function SoloDraft({
   navigation?: ReactNode;
   /** An embedded New message host can retain its draft when switching to Solo. */
   draftPrefix?: string;
-  onDraftChange?: ((draft: MentionDraft) => void) | undefined;
   /** The creation host locks destination changes throughout a Solo submission. */
   onBusyChange?: ((busy: boolean) => void) | undefined;
   /** The visit presenting this draft, a Back stop only once drafted. */
@@ -863,10 +861,7 @@ export function SoloDraft({
           unsaved: (held) => {
             unsaved.current = held;
           },
-          onDraftChange: (draft) => {
-            draftEdited(draft);
-            onDraftChange?.(draft);
-          },
+          onDraftChange: draftEdited,
           submit: (draft, files, addressed, picks, draftPicks, revision) => {
             void start(draft, files, addressed, picks, draftPicks, revision);
           },

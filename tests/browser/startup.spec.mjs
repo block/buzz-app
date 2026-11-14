@@ -1,6 +1,7 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, edge, settle } from "./timeline.mjs";
+import { channelRow, rail } from "./navigation.mjs";
 
 // These journeys cover real document boot, IndexedDB reload, React session
 // replacement and DOM continuity. Failure/corruption matrices live in Vitest.
@@ -64,10 +65,10 @@ test("reload restores the selected conversation/groups before handshake and upda
     }),
   );
   await open(page, app);
-  await page.getByRole("button", { name: "Beta", exact: true }).click();
+  await channelRow(page, "beta").click();
   const history = page.getByRole("region", { name: "Channel message history" });
   await expect(history).toContainText("primary beta message 39");
-  await expect(page.getByText("Work", { exact: true })).toBeVisible();
+  await expect(channelRow(page, "beta")).toBeVisible();
   const composer = page.getByRole("textbox", {
     name: "Message #Beta",
     exact: true,
@@ -96,7 +97,7 @@ test("reload restores the selected conversation/groups before handshake and upda
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect.poll(() => requested).toBe(true);
     await expect(history).toContainText("primary beta message 39");
-    await expect(page.getByText("Work", { exact: true })).toBeVisible();
+    await expect(channelRow(page, "beta")).toBeVisible();
     await expect(
       page.getByText("Loading your sidebar…", { exact: true }),
     ).toHaveCount(0);
@@ -241,7 +242,7 @@ test("fresh roster omission removes cached conversation and its next-launch reco
     ).toContainText("primary alpha message 0");
     app.omitChannel("alpha");
     gate.release();
-    await expect(page.locator('[data-channel-id="alpha"]')).toHaveCount(0);
+    await expect(channelRow(page, "alpha")).toHaveCount(0);
     await expect(
       page.getByText("primary alpha message 0", { exact: false }),
     ).toHaveCount(0);
@@ -360,12 +361,12 @@ for (const theme of ["light", "dark"]) {
   });
 }
 
-test("launch waits for the initial sidebar and message history before revealing the workspace", async ({
+// Landing opens nothing, so a link names the conversation the launch waits for.
+test("launch waits for a linked conversation's message history before revealing the workspace", async ({
   page,
   app,
 }) => {
   await page.clock.install();
-  app.relay.holdUnread();
   const head = held();
   let requested = false;
   await page.route("**/api/relay/**/query", async (route) => {
@@ -381,7 +382,16 @@ test("launch waits for the initial sidebar and message history before revealing 
     await route.continue().catch(() => {});
   });
   try {
-    await page.goto(app.origin, { waitUntil: "domcontentloaded" });
+    const target = {
+      version: 1,
+      kind: "conversation",
+      channelId: "alpha",
+      scope: { viewer: app.viewer, communityOrigin: "https://primary.example" },
+    };
+    await page.goto(
+      `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify(target))}`,
+      { waitUntil: "domcontentloaded" },
+    );
     const launch = page.getByRole("status", { name: "Opening Buzz" });
     await expect(launch).toBeVisible();
     await expect(page.locator("#root")).toHaveAttribute("inert", "");
@@ -391,17 +401,7 @@ test("launch waits for the initial sidebar and message history before revealing 
       "aria-hidden",
       "true",
     );
-    await expect(
-      page.locator('[aria-label="Sidebar"][data-buzz-launch-pending]'),
-    ).toBeAttached();
-    await page.clock.runFor(1900);
-    await expect(launch).toBeVisible();
-
-    app.relay.releaseUnread();
     await expect.poll(() => requested).toBe(true);
-    await expect(
-      page.locator('[aria-label="Sidebar"][data-buzz-launch-pending]'),
-    ).toHaveCount(0);
     const composer = page.locator(
       '#root [role="textbox"][contenteditable="true"]',
     );
@@ -425,7 +425,6 @@ test("launch waits for the initial sidebar and message history before revealing 
       "aria-hidden",
     );
   } finally {
-    app.relay.releaseUnread();
     head.release();
   }
 });
@@ -575,13 +574,15 @@ test.describe("populated device cache", () => {
 
 test.describe("saved DM labels", () => {
   test.use({ dmLabels: true });
-  test("restores the sidebar name even when the DM was never opened", async ({
+  test("restores the Team list name even when the DM was never opened", async ({
     page,
     app,
   }) => {
     await open(page, app);
-    const dm = page.getByRole("button", { name: "Alice Fixture", exact: true });
-    await expect(dm).toBeVisible();
+    const dms = () => rail(page).locator('[data-rail-team-view="dms"]').click();
+    const dm = channelRow(page, "dm-peer");
+    await dms();
+    await expect(dm).toContainText("Alice Fixture");
     await expect
       .poll(async () =>
         (await cached(page)).startup.some(
@@ -601,13 +602,17 @@ test.describe("saved DM labels", () => {
     try {
       await page.reload({ waitUntil: "domcontentloaded" });
       await expect.poll(() => requested).toBe(true);
-      await expect(dm).toBeVisible();
+      await expect(dm).toContainText("Alice Fixture");
       app.relay.holdProfiles(app.participants);
       gate.release();
+      // The live session opens Alpha; its profiles are still held.
+      await rail(page).locator('[data-rail-team-view="channels"]').click();
+      await channelRow(page, "alpha").click();
       await expect(
         page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
       ).toBeEditable();
-      await expect(dm).toBeVisible();
+      await dms();
+      await expect(dm).toContainText("Alice Fixture");
     } finally {
       app.relay.releaseProfiles();
       gate.release();
@@ -724,9 +729,7 @@ test.describe("pending startup navigation", () => {
     try {
       await page.reload({ waitUntil: "domcontentloaded" });
       await expect.poll(() => requested).toBe(true);
-      await expect(
-        page.getByRole("button", { name: "Alpha", exact: true }),
-      ).toBeVisible();
+      await expect(channelRow(page, "alpha")).toBeVisible();
       await expect(page.getByText("Reconnecting…")).toHaveCount(0);
       await page.evaluate((viewer) => {
         window.startupNavigation = undefined;

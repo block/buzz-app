@@ -1,3 +1,4 @@
+import { channelRow } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -28,7 +29,7 @@ test("mark-read retains focus through a gated storage failure, working transitio
   app,
 }) => {
   await open(page, app);
-  const row = page.locator('button[data-channel-id="alpha"]');
+  const row = channelRow(page, "alpha");
   const popup = page.getByRole("dialog", { name: "Activity in Alpha" });
   // The open channel's row is quiet; its activity popup still lists threads.
   await expect
@@ -126,7 +127,7 @@ for (const destination of ["reply", "off-window root"]) {
     ).toHaveCount(0);
     const key = generateSecretKey();
     app.observer(activity("turn_started", target.id), key);
-    const row = page.locator('button[data-channel-id="alpha"]');
+    const row = channelRow(page, "alpha");
     await expect(
       row.getByRole("img", { name: /working in Alpha/ }),
     ).toBeVisible();

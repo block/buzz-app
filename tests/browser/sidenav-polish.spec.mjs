@@ -181,7 +181,7 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
   ).toBeVisible();
   await expect(sidebar).toHaveCount(0);
   expect(await node.evaluate((element) => element.isConnected)).toBe(true);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await expect(alpha).toBeVisible();
   await alpha.click();
   await expect(

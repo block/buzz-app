@@ -35,7 +35,6 @@ import { MessageComposer } from "../messages/MessageComposer";
 import type { MentionDraft, MentionRecipient } from "../messages/mention-draft";
 import { directMessageWith } from "../relay/direct-message-policy";
 import { clearView, readView, writeView } from "../../shared/view-state";
-import { Button } from "../../shared/design-system/ui/Button";
 import {
   useVerifiedNames,
   withVerifiedNames,
@@ -45,7 +44,7 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { PlusIcon } from "../../shared/design-system/icons";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
-import { usePeople, type Recipient } from "./usePeople";
+import type { Recipient } from "./usePeople";
 import { usePassThroughUntilDrafted } from "../messages/draft-visit";
 import type { PageNavigation } from "../navigation/service";
 import styles from "./NewMessage.module.css";
@@ -55,11 +54,6 @@ const draftKey = "direct-message:new-draft";
 const channelViewKey = "direct-message:channel";
 const teamViewKey = "direct-message:team-for";
 type Kind = "solo" | "team";
-const keyFor = (people: readonly Recipient[]) =>
-  people
-    .map((person) => person.pubkey)
-    .sort()
-    .join(":");
 // Earlier versions held a first message here until the relay confirmed it.
 const heldMessageKey = "direct-message:new";
 
@@ -76,17 +70,12 @@ export function NewMessage({
   onStarted,
   visit,
   allowChannels = false,
-  layout = "page",
   expanded = false,
-  onAddressed,
   contentContainer,
   solo,
   onOpenChat,
 }: {
-  /** Activity embeds the same draft and delivery owner without a second history. */
-  layout?: "page" | "composer";
   expanded?: boolean;
-  onAddressed?: (() => void) | undefined;
   /** Move the presentation into the host's expanded surface; this owner stays mounted. */
   contentContainer?: HTMLElement | null;
   /** To may also name a channel: Send posts a new message there. */
@@ -139,11 +128,7 @@ export function NewMessage({
     session.profiles.subscribe,
     session.profiles.snapshot,
   );
-  const agents = useAgentChoices(
-    session,
-    layout === "composer",
-    layout === "composer",
-  );
+  const agents = useAgentChoices(session, false, false);
   const named = useMemo(
     () =>
       withVerifiedNames(
@@ -166,50 +151,7 @@ export function NewMessage({
     [recipients, verified, profiles, agents.identities],
   );
   const recipientNames = named.map((person) => person.name).join(", ");
-  const [inlineQuery, setInlineQuery] = useState<string>();
-  const directory = usePeople(
-    session,
-    inlineQuery ?? "",
-    layout === "composer" && inlineQuery !== undefined,
-  );
-  const inlinePeople = useMemo(() => {
-    const eligible = new Set(
-      agents.identities.filter(canMessageAgent).map((agent) => agent.pubkey),
-    );
-    return [
-      ...new Map(
-        [
-          ...[...profiles].map(([pubkey, profile]) => ({ ...profile, pubkey })),
-          ...directory.people,
-          ...agents.selectable.map((agent) => ({
-            ...agent,
-            isAgent: true as const,
-          })),
-          ...named,
-        ]
-          .filter(
-            (person) =>
-              person.pubkey !== session.viewer &&
-              (!person.isAgent || eligible.has(person.pubkey)),
-          )
-          .map((person) => [person.pubkey, person]),
-      ).values(),
-    ];
-  }, [
-    agents.identities,
-    agents.selectable,
-    profiles,
-    directory.people,
-    named,
-    session.viewer,
-  ]);
-  const roster = useMemo(
-    () =>
-      layout === "composer"
-        ? { recipients: inlinePeople, onQuery: setInlineQuery }
-        : { recipients },
-    [layout, inlinePeople, recipients],
-  );
+  const roster = useMemo(() => ({ recipients }), [recipients]);
   // Text still in the To field may be a recipient not chosen yet, so Send
   // waits for it to become one or be cleared.
   const [typed, setTyped] = useState(false);
@@ -270,17 +212,6 @@ export function NewMessage({
     saveCreationDestination(scope, next);
     setError("");
     setUploadFailed(false);
-  }
-  function syncInlineRecipients(draft: MentionDraft) {
-    if (layout !== "composer") return;
-    const people = draft.recipients.map(
-      (person) =>
-        inlinePeople.find((candidate) => candidate.pubkey === person.pubkey) ??
-        person,
-    );
-    if (keyFor(people) === keyFor(recipients)) return;
-    change(people);
-    if (people.length) onAddressed?.();
   }
   function chooseChannel(channel: ChannelSummary | undefined) {
     if (locked || attempt.current) return;
@@ -468,64 +399,60 @@ export function NewMessage({
   const content = (
     <section
       className={styles.page}
-      data-layout={layout}
+      data-layout="page"
       data-expanded={expanded || undefined}
       aria-label="New message"
       data-attachment-drop-zone
     >
-      {layout === "page" && (
-        <RecipientPicker
-          session={session}
-          scope={scope}
-          initiallyOpen={layout === "page"}
-          selected={recipients}
-          labels={named}
-          disabled={locked}
-          onChange={change}
-          onComplete={focusComposer}
-          onTyped={setTyped}
-          channelOptions={channelChoices}
-          selectedChannel={target}
-          onChooseChannel={allowChannels ? chooseChannel : undefined}
-          trailing={kindControl}
-        />
-      )}
+      <RecipientPicker
+        session={session}
+        scope={scope}
+        initiallyOpen
+        selected={recipients}
+        labels={named}
+        disabled={locked}
+        onChange={change}
+        onComplete={focusComposer}
+        onTyped={setTyped}
+        channelOptions={channelChoices}
+        selectedChannel={target}
+        onChooseChannel={allowChannels ? chooseChannel : undefined}
+        trailing={kindControl}
+      />
       {soloAgent && solo ? (
         <>
-          {(layout === "page" || expanded) && (
-            <div className={styles.solo} data-new-message-body="">
-              {recipientArtwork(true)}
-              {recent.length > 0 && (
-                <nav
-                  className={styles.recent}
-                  aria-label={`Recent chats with ${agentLabel}`}
-                >
-                  <h3>Recent with {agentLabel}</h3>
+          <div className={styles.solo} data-new-message-body="">
+            {recipientArtwork(true)}
+            {recent.length > 0 && (
+              <nav
+                className={styles.recent}
+                aria-label={`Recent chats with ${agentLabel}`}
+              >
+                <h3>Recent with {agentLabel}</h3>
+                <NavigationItem
+                  selected
+                  aria-current="true"
+                  icon={<PlusIcon size={16} aria-hidden="true" />}
+                  label="New chat"
+                  onClick={focusComposer}
+                />
+                {recent.map((chat) => (
                   <NavigationItem
-                    selected
-                    aria-current="true"
-                    icon={<PlusIcon size={16} aria-hidden="true" />}
-                    label="New chat"
-                    onClick={focusComposer}
+                    key={chat.id}
+                    label={chat.name}
+                    trailing={
+                      chat.lastActivityAt ? (
+                        <span className={styles.agent}>
+                          {relativeTimestamp(chat.lastActivityAt)}
+                        </span>
+                      ) : undefined
+                    }
+                    onClick={() => onOpenChat?.(chat.id)}
                   />
-                  {recent.map((chat) => (
-                    <NavigationItem
-                      key={chat.id}
-                      label={chat.name}
-                      trailing={
-                        chat.lastActivityAt ? (
-                          <span className={styles.agent}>
-                            {relativeTimestamp(chat.lastActivityAt)}
-                          </span>
-                        ) : undefined
-                      }
-                      onClick={() => onOpenChat?.(chat.id)}
-                    />
-                  ))}
-                </nav>
-              )}
-            </div>
-          )}
+                ))}
+              </nav>
+            )}
+          </div>
           <div className={styles.soloComposer}>
             <SoloDraft
               key={soloAgent}
@@ -536,9 +463,6 @@ export function NewMessage({
               extensions={extensions}
               agent={soloAgent}
               focusRequest={composerFocus}
-              onDraftChange={
-                layout === "composer" ? syncInlineRecipients : undefined
-              }
               onBusyChange={setSoloBusy}
               {...solo}
             />
@@ -546,39 +470,27 @@ export function NewMessage({
         </>
       ) : (
         <>
-          {(layout === "page" || expanded) && (
-            <div className={styles.blank} data-new-message-body="">
-              {displayed ? (
-                <ExistingDiscussion
-                  key={displayed.id}
-                  session={session}
-                  scope={scope}
-                  channel={displayed}
-                  extensions={extensions}
-                  host={host}
-                  onRecovered={focusComposer}
-                  onOpen={(messageId, threadRootId, intent) =>
-                    onOpenThread(displayed.id, messageId, threadRootId, intent)
-                  }
-                />
-              ) : recipients.length > 0 ? (
-                <div className={styles.introduction}>
-                  {recipientArtwork(false)}
-                </div>
-              ) : null}
-            </div>
-          )}
+          <div className={styles.blank} data-new-message-body="">
+            {displayed ? (
+              <ExistingDiscussion
+                key={displayed.id}
+                session={session}
+                scope={scope}
+                channel={displayed}
+                extensions={extensions}
+                host={host}
+                onRecovered={focusComposer}
+                onOpen={(messageId, threadRootId, intent) =>
+                  onOpenThread(displayed.id, messageId, threadRootId, intent)
+                }
+              />
+            ) : recipients.length > 0 ? (
+              <div className={styles.introduction}>
+                {recipientArtwork(false)}
+              </div>
+            ) : null}
+          </div>
           <div className={styles.feedback}>
-            {layout === "composer" &&
-              inlineQuery !== undefined &&
-              directory.error && (
-                <div role="alert">
-                  <p>Could not search people. Your draft is kept.</p>
-                  <Button type="button" onClick={directory.loadMore}>
-                    Retry loading people
-                  </Button>
-                </div>
-              )}
             {busy && (
               <p role="status">
                 {busy === "uploading" ? "Uploading files…" : "Sending message…"}
@@ -610,23 +522,14 @@ export function NewMessage({
               focusRequest={composerFocus}
               channelName={composerName || "new message"}
               label={composerName ? `Message ${composerName}` : "New message"}
-              placeholder={
-                composerName
-                  ? undefined
-                  : layout === "composer"
-                    ? "@mention someone to start a message…"
-                    : ""
-              }
-              disabled={layout === "page" && !recipients.length && !target}
+              placeholder={composerName ? undefined : ""}
+              disabled={!recipients.length && !target}
               submission={{
                 channel: target ? true : undefined,
                 draftKey,
                 attachments: true,
                 allowAttachmentOnly: true,
-                onDraftChange: (draft) => {
-                  draftEdited(draft);
-                  syncInlineRecipients(draft);
-                },
+                onDraftChange: draftEdited,
                 locked,
                 disabled:
                   !!busy ||

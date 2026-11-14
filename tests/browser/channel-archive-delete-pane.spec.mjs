@@ -1,5 +1,10 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { openPage } from "./navigation.mjs";
+import {
+  channelRow,
+  conversationList,
+  openChannel,
+  openPage,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { animationsSettled } from "./animations.mjs";
 
@@ -43,12 +48,10 @@ for (const action of ["archive", "delete"]) {
       const initialPresence = presenceAccepted();
       await page.goto(app.origin);
       await initialPresence;
-      await openPage(page, "Messages");
-      const sidebar = page.getByRole("navigation", {
-        name: "Subscribed channels",
-      });
-      const row = sidebar.locator(`[data-channel-id="${channelId}"]`);
-      await row.click();
+      await openPage(page, "Team");
+      const sidebar = conversationList(page);
+      const row = channelRow(page, channelId);
+      await openChannel(page, channelId);
       const composer = page.getByRole("textbox", {
         name: "Message #Lifecycle channel",
         exact: true,
@@ -181,9 +184,7 @@ for (const action of ["archive", "delete"]) {
         await expect(pending).toBeVisible();
         await expect(pending).not.toHaveAttribute("aria-modal", "true");
         await expect(panel).toBeVisible();
-        await expect(
-          page.locator(`[data-channel-id="${channelId}"]`),
-        ).toBeVisible();
+        await expect(channelRow(page, channelId)).toBeVisible();
         expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
       } finally {
         release();
@@ -230,7 +231,7 @@ for (const action of ["archive", "delete"]) {
         ).toHaveCount(0);
       } else {
         await expect(panel).toHaveCount(0);
-        await expect(sidebar.locator("button[data-channel-id]")).toHaveCount(0);
+        await expect(sidebar.locator("[data-activity-row]")).toHaveCount(0);
         await expect(
           page.getByRole("textbox", { name: /^Message #/ }),
         ).toHaveCount(0);
@@ -259,9 +260,7 @@ for (const action of ["archive", "delete"]) {
           })
           .click();
         // Leave intentionally, then prove the explicit search return path.
-        await sidebar
-          .getByRole("button", { name: "Alpha", exact: true })
-          .click();
+        await channelRow(page, "alpha").click();
       } else await expect(destination).toBeVisible();
       await expect(row).toHaveCount(0);
       expect(
@@ -430,38 +429,37 @@ test.describe("owner-role agent without direct ownership", () => {
     app,
   }) => {
     await page.goto(app.origin);
-    await openPage(page, "Messages");
-    const sidebar = page.getByRole("navigation", {
-      name: "Subscribed channels",
-    });
-    const row = sidebar.getByRole("button", {
-      name: "Lifecycle channel",
-      exact: true,
-    });
-    await row.click();
+    await openPage(page, "Team");
+    const row = channelRow(page, channelId);
+    await openChannel(page, channelId);
     await expect(
       page.getByRole("textbox", {
         name: "Message #Lifecycle channel",
         exact: true,
       }),
     ).toBeVisible();
-    await row.focus();
-    await page.keyboard.press("Shift+F10");
-    const menu = page.getByRole("menu", {
-      name: "Actions for Lifecycle channel",
+    // List rows have no menu; the header's actions are the other surface.
+    const actions = page.getByRole("button", {
+      name: "Conversation actions",
+      exact: true,
+    });
+    await actions.click();
+    const menu = page.getByRole("dialog", {
+      name: "Conversation actions",
+      exact: true,
     });
     // Visible permitted actions are the completion barrier for negative assertions.
     await expect(
-      menu.getByRole("menuitem", { name: "Archive channel", exact: true }),
+      menu.getByRole("button", { name: "Archive channel", exact: true }),
     ).toBeVisible();
     await expect(
-      menu.getByRole("menuitem", { name: "Leave channel", exact: true }),
+      menu.getByRole("button", { name: "Leave channel", exact: true }),
     ).toBeVisible();
     await expect(
-      menu.getByRole("menuitem", { name: "Delete channel", exact: true }),
+      menu.getByRole("button", { name: "Delete channel", exact: true }),
     ).toBeVisible();
     await menu
-      .getByRole("menuitem", { name: "Delete channel", exact: true })
+      .getByRole("button", { name: "Delete channel", exact: true })
       .click();
     const dialog = page.getByRole("dialog", {
       name: "Delete Lifecycle channel?",
@@ -469,8 +467,7 @@ test.describe("owner-role agent without direct ownership", () => {
     });
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(row).toBeFocused();
-    await page.keyboard.press("Escape");
+    await expect(actions).toBeFocused();
     await expect(menu).toHaveCount(0);
     await openChannelDetails(page);
     const panel = panelFor(page);
@@ -516,9 +513,7 @@ test.describe("owner-role agent without direct ownership", () => {
       exact: true,
     });
     await expect(failure).toContainText("Only the channel owner can delete");
-    await expect(
-      page.locator(`[data-channel-id="${channelId}"]`),
-    ).toBeVisible();
+    await expect(channelRow(page, channelId)).toBeVisible();
     expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
     await failure.getByRole("button", { name: "Dismiss notification" }).click();
     await trigger.click();

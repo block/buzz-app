@@ -2,6 +2,7 @@ import { test as appTest } from "./fixture.mjs";
 import { test as sourceTest } from "./source-fixture.mjs";
 import { expect } from "./playwright-test.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
+import { channelRow } from "./navigation.mjs";
 import {
   anchor,
   expectAnchor,
@@ -204,7 +205,7 @@ appTest(
     // history, which cannot place the line above the first row. Re-enter the
     // loaded history while read sync stays unavailable, so recovery can
     // exercise divider insertion.
-    await page.getByRole("button", { name: /^Beta/ }).click();
+    await channelRow(page, "beta").click();
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
@@ -357,7 +358,7 @@ appTest(
 
     const targetId = await messageAfter(separator(page));
     expect(targetId).toBe(boundaryId);
-    const alphaSidebar = page.getByRole("button", { name: /^Alpha/ });
+    const alphaSidebar = channelRow(page, "alpha");
     await alphaSidebar.focus();
     await expect(alphaSidebar).toBeFocused();
     await composer(page).focus();
@@ -365,7 +366,7 @@ appTest(
     await expect(separator(page)).toHaveCount(1);
     expect(await messageAfter(separator(page))).toBe(boundaryId);
 
-    await page.getByRole("button", { name: /^Beta/ }).click();
+    await channelRow(page, "beta").click();
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
@@ -619,7 +620,7 @@ appTest.describe("history longer than one page", () => {
         )
         .toBeGreaterThanOrEqual(seeded.at(-1).created_at);
 
-      await page.getByRole("button", { name: /^Beta/ }).click();
+      await channelRow(page, "beta").click();
       await expect(
         page.getByRole("textbox", { name: "Message #Beta", exact: true }),
       ).toBeVisible();
@@ -715,7 +716,7 @@ const fiveChannels = {
   historyCounts: { alpha: 15, beta: 15, gamma: 5, delta: 5, epsilon: 5 },
 };
 const go = async (page, name) => {
-  await page.getByRole("button", { name: new RegExp(`^${name}`) }).click();
+  await channelRow(page, name.toLowerCase()).click();
   await expect(
     page.getByRole("textbox", { name: `Message #${name}`, exact: true }),
   ).toBeVisible();

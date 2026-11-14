@@ -245,7 +245,5 @@ export function useChannelPanels(
         </div>
       </Panel>
     ),
-    // Legacy bottom launchers now share the full-height companion pane.
-    content: null,
   };
 }

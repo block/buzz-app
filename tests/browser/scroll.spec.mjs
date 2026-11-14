@@ -1,4 +1,4 @@
-import { selectCommunity } from "./navigation.mjs";
+import { channelRow, openChannel, selectCommunity } from "./navigation.mjs";
 import { test, expect, historySize } from "./fixture.mjs";
 import { streamEvidence } from "./stream-evidence.mjs";
 
@@ -23,7 +23,6 @@ const editTest = readingTest.extend({
 const rowSelector = "[data-message-id]";
 const history = (page) =>
   page.getByRole("region", { name: "Channel message history" });
-const button = (page, name) => page.getByRole("button", { name, exact: true });
 const composer = (page, name) =>
   page.getByRole("textbox", { name: `Message #${name}`, exact: true });
 
@@ -120,12 +119,14 @@ readingTest(
     await expectOutsidePrefetch(page);
     // No direct service calls or view-state preparation. Real UI cleanup saves it.
     for (let cycle = 0; cycle < 3; cycle++) {
-      await button(page, "Beta").click();
+      await channelRow(page, "beta").click();
       await composer(page, "Beta").waitFor();
-      await button(page, "Alpha").click();
+      await channelRow(page, "alpha").click();
       await settle(page);
       await expectAnchor(page, saved);
       await selectCommunity(page, "Secondary");
+      // A community switch lands on Activity; reopen Alpha from the Team list.
+      await openChannel(page, "alpha");
       await composer(page, "Alpha").waitFor();
       await expect(composer(page, "Alpha")).toHaveJSProperty(
         "value",
@@ -147,6 +148,8 @@ readingTest(
       expect(persisted?.anchor?.id).toBe(saved.id);
       await composer(page, "Alpha").fill("B draft");
       await selectCommunity(page, "Primary");
+      // A community switch lands on Activity; reopen Alpha from the Team list.
+      await openChannel(page, "alpha");
       await expect(composer(page, "Alpha")).toHaveJSProperty(
         "value",
         "A draft",
@@ -254,9 +257,9 @@ sendTest(
     await expect(input).toHaveJSProperty("value", "");
     const saved = await upper(page);
     await expectOutsidePrefetch(page);
-    await button(page, "Beta").click();
+    await channelRow(page, "beta").click();
     await composer(page, "Beta").waitFor();
-    await button(page, "Alpha").click();
+    await channelRow(page, "alpha").click();
     await settle(page);
     await expectAnchor(page, saved);
     app.report.measurements.push({
@@ -368,18 +371,18 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
     await cdp.send("HeapProfiler.collectGarbage");
     return cdp.send("Runtime.getHeapUsage");
   };
-  await button(page, "Beta").click();
+  await channelRow(page, "beta").click();
   await composer(page, "Beta").waitFor();
-  await button(page, "Alpha").click();
+  await channelRow(page, "alpha").click();
   await settle(page);
   await expectReading();
   const heapBefore = await heap();
   const switches = [];
   for (let i = 0; i < 5; i++) {
-    await button(page, "Beta").click();
+    await channelRow(page, "beta").click();
     await composer(page, "Beta").waitFor();
     const start = performance.now();
-    await button(page, "Alpha").click();
+    await channelRow(page, "alpha").click();
     await expectReading();
     switches.push(performance.now() - start); // Includes automation round trips.
     await settle(page);

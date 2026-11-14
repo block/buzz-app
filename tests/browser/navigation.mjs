@@ -11,8 +11,72 @@ export async function pageChoices(page, query = "") {
   );
 }
 
+// The rail is the app's primary navigation: cards for Pins, Team, Solo and
+// the rest, each opening its list beside the conversation.
+export function rail(page) {
+  return page.getByRole("navigation", { name: "Apps", exact: true });
+}
+
+// Activity is Team's All view, the first row of the rail's Team card.
+export function activityRow(page) {
+  return rail(page).locator('[data-rail-team-view="all"]');
+}
+
+// Team's list, whichever view the rail selected. Its rows open conversations
+// in the reader beside it.
+export function conversationList(page) {
+  return page.locator("[data-activity-sidebar]");
+}
+
+// A channel's row in Team's list, by channel id.
+export function channelRow(page, channelId) {
+  return conversationList(page).locator(
+    `[data-activity-row="${channelId}"] [data-conversation-row]`,
+  );
+}
+
+// Team's Channels view lists every channel; its row opens the channel beside
+// the list.
+// A conversation opened directly, as from a link, collapses its list.
+export async function showConversationList(page) {
+  const show = page.getByRole("button", { name: /^Show .+ list$/ });
+  if (await show.isVisible()) await show.click();
+  await expect(conversationList(page)).toBeVisible();
+}
+// A narrow detail column lays the list over the reader, and an open from the
+// list keeps it open; close it as a reader would to reach the conversation.
+export async function hideNarrowConversationList(page) {
+  const narrow = page.locator("[data-detail-workspace][data-narrow]");
+  if (!(await narrow.count())) return;
+  const hide = page.getByRole("button", { name: /^Hide .+ list$/ }).first();
+  if (await hide.isVisible()) await hide.click();
+  await expect(conversationList(page)).toBeHidden();
+}
+// A conversation's row in Team's list, by the place it names: a DM's people,
+// a Solo chat's title or a channel's name.
+export function conversationRow(page, name) {
+  return conversationList(page)
+    .locator("[data-conversation-row]")
+    .filter({ has: page.getByText(name, { exact: true }) });
+}
+
+// Team's DMs view lists direct messages by their people.
+export async function openDm(page, name) {
+  await revealRail(page);
+  await rail(page).locator('[data-rail-team-view="dms"]').click();
+  await conversationRow(page, name).click();
+}
+
+export async function openChannel(page, channelId) {
+  await revealRail(page);
+  await rail(page).locator('[data-rail-team-view="channels"]').click();
+  await channelRow(page, channelId).click();
+}
+
 export async function openPage(page, name, { connected = true } = {}) {
-  // The community switcher appears after local startup has replaced the launch view.
+  // The community switcher appears after local startup has replaced the launch
+  // view, in the rail's header; a narrow window keeps the rail behind its toggle.
+  await revealRail(page);
   await expect(
     page.getByRole("button", { name: /^Community switcher:/ }),
   ).toBeVisible();
@@ -20,43 +84,43 @@ export async function openPage(page, name, { connected = true } = {}) {
   await selectPage(page, name, { connected });
 }
 
-// Nexus composes chat creation inside Chats; ordinary Buzz keeps the global menu.
+// The rail's Create menu starts a Solo chat; a source that composes
+// workspaces leaves that to the Solo card's own New Solo chat action.
+// A narrow window keeps the rail behind its navigation toggle; its header
+// holds the community, profile, search and create controls.
+export async function revealRail(page) {
+  if (page.viewportSize().width > 650) return;
+  await settleShellToggle(page);
+  const show = page.getByRole("button", {
+    name: "Show navigation",
+    exact: true,
+  });
+  if (await show.isVisible()) await show.click();
+  await expect(rail(page)).toBeVisible();
+}
+
 export async function newChat(page) {
   // The community switcher appears after local startup has replaced the launch view.
+  await revealRail(page);
   await expect(
     page.getByRole("button", { name: /^Community switcher:/ }),
   ).toBeVisible();
-  await openPage(page, "Messages");
-  // The narrow drawer retains its startup owner while hidden from the AX tree.
-  const sidebar = page.locator('aside[aria-label="Sidebar"]');
-  await expect(sidebar).not.toHaveAttribute("data-buzz-launch-pending");
-  await expect(sidebar).not.toHaveAttribute("aria-busy", "true");
-  if (page.viewportSize().width <= 650) {
-    await settleShellToggle(page);
-    const show = page.getByRole("button", {
-      name: "Show navigation",
-      exact: true,
-    });
-    if (await show.isVisible()) await show.click();
-  }
-  await page.getByRole("button", { name: "New", exact: true }).click();
-  const menu = page.getByRole("menu");
+  await rail(page).getByRole("button", { name: "Create", exact: true }).click();
+  const menu = page.getByRole("menu", { name: "New", exact: true });
   await expect(menu).toBeVisible();
-  const globalChat = menu.getByRole("menuitem", {
-    name: "New chat",
+  const soloChat = menu.getByRole("menuitem", {
+    name: "New solo chat",
     exact: true,
   });
-  if (await globalChat.isVisible()) {
-    await globalChat.click();
+  if (await soloChat.isVisible()) {
+    await soloChat.click();
     return;
   }
   await page.keyboard.press("Escape");
-  await page.getByRole("tab", { name: "Solo", exact: true }).click();
-  await expect(
-    page.getByRole("tab", { name: "Solo", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
-  await page
-    .getByRole("button", { name: "New chat in Chats", exact: true })
+  await expect(menu).toBeHidden();
+  await rail(page)
+    .locator('[data-rail-section="solo"]')
+    .getByRole("button", { name: "New Solo chat", exact: true })
     .click();
 }
 
@@ -166,6 +230,7 @@ export function settingsSections(page) {
 }
 
 export async function openSettings(page) {
+  await revealRail(page);
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(settingsDialog(page)).toBeVisible();

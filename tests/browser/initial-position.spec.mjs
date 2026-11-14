@@ -64,7 +64,7 @@ sized(
     await bottom(page, app, "warm Alpha");
     await openPage(page, "Workflows");
     await page.reload();
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
     await bottom(page, app, "persisted bottom Alpha");
     await select(page, "Beta");
     await bottom(page, app, "persisted bottom Beta");
@@ -118,7 +118,7 @@ readingTest(
     const reading = await anchor(page);
     await openPage(page, "Workflows");
     await page.reload();
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
     await settle(page);
     await expectAnchor(page, reading);
   },
@@ -184,7 +184,7 @@ activityHead(
       if (visit === "cold") await open(page, app);
       else {
         await page.reload();
-        await openPage(page, "Messages");
+        await openPage(page, "Team");
       }
       await expect(latest).toBeVisible();
       await expect

@@ -16,10 +16,7 @@ export type RailLayout = {
 const KEY = "navigation-layout:v2";
 
 function readLayout(scope: string): RailLayout {
-  const saved = readView<Partial<RailLayout> | null>(scope, KEY, null);
-  const raw =
-    saved ??
-    readView<Partial<RailLayout> | null>(scope, "navigation-layout:v1", null);
+  const raw = readView<Partial<RailLayout> | null>(scope, KEY, null);
   const sections = Array.isArray(raw?.sections)
     ? raw.sections.filter(
         (section) =>
@@ -30,21 +27,11 @@ function readLayout(scope: string): RailLayout {
       )
     : [];
   const placements: Placement[] = [];
-  // Upgrade old Plugins assignments to the Team defaults. Subsequent moves
-  // save under v2, so the person can still place these shortcuts elsewhere.
   if (Array.isArray(raw?.placements))
     for (const item of raw.placements) {
       const entry = parseRailEntries([item?.entry])[0];
-      if (!entry || typeof item.section !== "string") continue;
-      const section =
-        !saved &&
-        (item.section === "plugins" || item.section === "navigation") &&
-        (entry.id === "buzz.inbox/inbox" ||
-          entry.id === "buzz.drafts-and-sent/drafts-sent")
-          ? "messages"
-          : item.section === "plugins"
-            ? "navigation"
-            : item.section;
+      const section = item?.section;
+      if (!entry || typeof section !== "string") continue;
       // An app row has one place; a conversation has one copy per section.
       if (
         !placements.some(
@@ -58,15 +45,7 @@ function readLayout(scope: string): RailLayout {
   const order = Array.isArray(raw?.order)
     ? [...new Set(raw.order.filter((id) => typeof id === "string"))]
     : [];
-  // The former plugin bucket lived in the fixed first card. Keep that card
-  // first on upgrade, preserving the relative order of all movable sections.
-  if (order.includes("plugins") && !order.includes("navigation"))
-    order.unshift("navigation");
-  return {
-    order: order.filter((id) => id !== "plugins"),
-    sections,
-    placements,
-  };
+  return { order, sections, placements };
 }
 
 /** The rail's local arrangement never writes to a conversation or plugin's data. */
@@ -112,11 +91,14 @@ export function useRailLayout(scope: string) {
         { section, entry },
       ],
     }));
-  const reorder = (id: string, over: string, available: string[]) =>
+  /** Moves a section to another's place. `shown` are the sections in the
+   * order the rail shows them. A saved section that isn't shown now, like a
+   * plugin's that is starting or disabled, keeps its place. */
+  const reorder = (id: string, over: string, shown: string[]) =>
     save((current) => {
       const order = [
-        ...current.order.filter((key) => available.includes(key)),
-        ...available.filter((key) => !current.order.includes(key)),
+        ...current.order,
+        ...shown.filter((key) => !current.order.includes(key)),
       ];
       const from = order.indexOf(id);
       const to = order.indexOf(over);
@@ -125,21 +107,16 @@ export function useRailLayout(scope: string) {
       order.splice(to, 0, id);
       return { ...current, order };
     });
+  /** A new section follows every placed one: it has no saved position yet. */
   const create = (
     id: string,
     title: string,
-    entry: RailEntry | undefined,
-    available: string[],
+    entry?: RailEntry,
     from?: string,
   ) =>
     save((current) => ({
       ...current,
       sections: [...current.sections, { id: `custom:${id}`, title }],
-      order: [
-        ...current.order,
-        ...available.filter((key) => !current.order.includes(key)),
-        `custom:${id}`,
-      ],
       placements: entry
         ? [
             ...others(current, entry, `custom:${id}`, from),

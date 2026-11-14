@@ -1,5 +1,5 @@
 import { pluginAction } from "./plugin-settings.mjs";
-import { closeSettings, openPage } from "./navigation.mjs";
+import { channelRow, closeSettings, openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
@@ -33,7 +33,7 @@ test("web hides the unusable terminal and does not consume its shortcut, includi
   expect(await page.evaluate(() => window.terminalChordPrevented)).toBe(false);
   await expect(drawer).toHaveCount(0);
   await expect(composer).toHaveJSProperty("value", "Keep this draft");
-  await button(page, "Beta").click();
+  await channelRow(page, "beta").click();
   await expect(launcher).toHaveCount(0);
   await page.keyboard.press(`${modifier}+,`);
   await button(page, "Manage plugins").click();
@@ -43,7 +43,7 @@ test("web hides the unusable terminal and does not consume its shortcut, includi
   await toggle.click();
   await expect(toggle).toHaveAccessibleName(/^Disable /);
   await closeSettings(page);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await expect(launcher).toHaveCount(0);
   await page.keyboard.press(`${modifier}+j`);
   await expect(drawer).toHaveCount(0);

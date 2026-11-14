@@ -1,9 +1,10 @@
 import { test, expect } from "./fixture.mjs";
-import { anchor, end, expectAnchor, open, settle, upper } from "./timeline.mjs";
+import { anchor, end, expectAnchor, open, settle } from "./timeline.mjs";
 
 // A link stays in the channel timeline only for a top-level message without
 // replies inside the latest 20 rows; any other link opens a thread, whose
-// Back/Forward behaviour navigation-thread-history.spec.mjs covers.
+// Back/Forward behaviour navigation-thread-history.spec.mjs covers. A link to
+// another channel's message opens it as a thread beside the conversation.
 test.use({
   productionBroker: true,
   pluginFixtures: true,
@@ -12,12 +13,6 @@ test.use({
 
 const history = (page) =>
   page.getByRole("region", { name: "Channel message history" });
-const composer = (page, name) =>
-  page.getByRole("textbox", { name: `Message #${name}`, exact: true });
-const sidebar = (page, id) =>
-  page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .locator(`button[data-channel-id="${id}"]`);
 const alphaMessage = (app, n) =>
   app.histories
     .get("primary/alpha")
@@ -34,12 +29,6 @@ async function follow(page, link) {
   await opened(page);
   await settle(page);
 }
-const focusedRow = (page) =>
-  page.evaluate(
-    () =>
-      document.activeElement?.closest("[data-message-id]")?.dataset.messageId ??
-      null,
-  );
 const gap = (page) =>
   history(page).evaluate(
     (node) => node.scrollHeight - node.clientHeight - node.scrollTop,
@@ -129,77 +118,6 @@ const sampledFrames = (page) =>
     window.channelFrames = undefined;
     return frames;
   });
-
-test("Back and Forward return a link-opened channel to the reader's place; a fresh link reveals it again", async ({
-  page,
-  app,
-}) => {
-  const target = alphaMessage(app, 3);
-  const opener = app.append(
-    "primary",
-    "beta",
-    `Older decision: <buzz://message?channel=alpha&id=${target.id}>`,
-    false,
-    false,
-  );
-  await open(page, app);
-  const link = page
-    .locator(`[data-channel-timeline] [data-message-id="${opener.id}"]`)
-    .getByRole("link", { name: /in #Alpha$/ });
-  const leaveForBeta = async () => {
-    await sidebar(page, "beta").click();
-    await expect(composer(page, "Beta")).toBeVisible();
-    await opened(page);
-  };
-  await leaveForBeta();
-  await follow(page, link);
-  await expectRevealed(page, target.id);
-  await end(page);
-  await leaveForBeta();
-
-  // Back remounts #Alpha where it was left, the end, with no frame of the
-  // link's row and without focusing it.
-  await sampleFrames(page, target.id);
-  await page.goBack();
-  await expect(composer(page, "Alpha")).toBeVisible();
-  await opened(page);
-  await settle(page);
-  expect(await gap(page)).toBeLessThan(4);
-  const atEnd = await sampledFrames(page);
-  expect(atEnd.length).toBeGreaterThan(0);
-  expect(atEnd.filter((frame) => frame.linked || frame.gap >= 4)).toEqual([]);
-  expect(await focusedRow(page)).toBeNull();
-
-  // A place within the channel survives Forward then Back.
-  const saved = await upper(page);
-  await page.goForward();
-  await expect(composer(page, "Beta")).toBeVisible();
-  await opened(page);
-  await sampleFrames(page, target.id);
-  await page.goBack();
-  await expect(composer(page, "Alpha")).toBeVisible();
-  await opened(page);
-  await settle(page);
-  await expectAnchor(page, saved);
-  const midway = await sampledFrames(page);
-  expect(midway.length).toBeGreaterThan(0);
-  expect(midway.filter((frame) => frame.linked)).toEqual([]);
-  expect(await focusedRow(page)).toBeNull();
-
-  // A later sidebar visit opens where the reader left, not at the link.
-  await leaveForBeta();
-  await sidebar(page, "alpha").click();
-  await expect(composer(page, "Alpha")).toBeVisible();
-  await opened(page);
-  await settle(page);
-  await expectAnchor(page, saved);
-
-  // Following the link again is a new opening: it reveals the message.
-  await leaveForBeta();
-  await expectVerifiedAlpha(page, app);
-  await follow(page, link);
-  await expectRevealed(page, target.id);
-});
 
 test("Back between two links in one channel returns to the reader's place; the same link reveals it again", async ({
   page,

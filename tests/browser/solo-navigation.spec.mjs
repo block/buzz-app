@@ -1,6 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 import { newChat } from "./navigation.mjs";
 import { settle } from "./timeline.mjs";
+import { soloRow } from "./rail-helpers.mjs";
 
 // The production app's exact-reader -> DOM focus/visibility -> navigation
 // completion boundary requires real layout and both browser engines.
@@ -96,9 +97,6 @@ test.describe("Solo layout", () => {
     await page.goto(app.origin);
     await newChat(page);
     const workspace = page;
-    const sidebar = page.getByRole("navigation", {
-      name: "Solo conversations",
-    });
     const composer = workspace.getByRole("textbox", {
       name: "Message your agents",
       exact: true,
@@ -133,7 +131,7 @@ test.describe("Solo layout", () => {
       await expect(composer).toHaveText("Scaled Solo draft");
     };
     await expectReachable();
-    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+    await soloRow(page, soloChannel).click();
     await expect(
       workspace.getByRole("button", {
         name: "Share access to Alpha",

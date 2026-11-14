@@ -246,7 +246,7 @@ test("Channels stays enabled despite saved disabled settings and has no disable 
   await expect(pluginAction(page, "Channels")).toHaveCount(0);
   // The workspace behind Settings is inert; close it before opening a page.
   await closeSettings(page);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await expect(messages(page)).toBeVisible();
 });
 

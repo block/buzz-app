@@ -595,16 +595,6 @@ confirmedPresence(
     });
     await appearance.click();
     await expect(remember).toHaveCount(0);
-    const placement = page.getByRole("combobox", {
-      name: "Open threads in",
-      exact: true,
-    });
-    await placement.click();
-    await page.getByRole("option", { name: "Main pane", exact: true }).click();
-    await expect(placement).toHaveText("Main pane");
-    await profile.click();
-    await appearance.click();
-    await expect(placement).toHaveText("Main pane");
     await profile.click();
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });

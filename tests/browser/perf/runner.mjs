@@ -233,7 +233,7 @@ export const test = base.extend({
       cdp,
       async setup(id) {
         await page.goto(app.origin);
-        await openPage(page, "Messages");
+        await openPage(page, "Team");
         await page.evaluate(async () => {
           await Promise.all([...document.fonts].map((font) => font.load()));
         });

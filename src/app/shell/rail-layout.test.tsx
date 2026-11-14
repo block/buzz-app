@@ -4,7 +4,6 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { useRailLayout } from "./rail-layout";
 import type { RailEntry } from "./rail-pins";
-import { writeView } from "../../shared/view-state";
 
 const entry: RailEntry = {
   id: "channel:planning",
@@ -23,40 +22,34 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test("the former fixed card becomes movable without losing saved order or rows", () => {
-  writeView("legacy-layout", "navigation-layout:v1", {
-    order: ["agents", "pins", "messages", "plugins"],
-    sections: [],
-    placements: [{ section: "plugins", entry }],
-  });
-  const { result, unmount } = renderHook(() => useRailLayout("legacy-layout"));
-  expect(result.current.layout.order).toEqual([
-    "navigation",
-    "agents",
-    "pins",
-    "messages",
-  ]);
-  expect(result.current.layout.placements).toEqual([
-    { section: "navigation", entry },
-  ]);
+test("a saved section that isn't shown keeps its place through reorders and new sections", () => {
+  const { result, unmount } = renderHook(() => useRailLayout("order"));
   act(() => {
-    result.current.reorder("pins", "navigation", [
-      "navigation",
-      "agents",
+    result.current.reorder("solo", "pins", [
       "pins",
-      "messages",
+      "example.plugin/section",
+      "solo",
     ]);
   });
+  expect(result.current.layout.order).toEqual([
+    "solo",
+    "pins",
+    "example.plugin/section",
+  ]);
+  // The plugin is starting or disabled: its section isn't shown.
+  act(() => {
+    result.current.reorder("pins", "solo", ["solo", "pins"]);
+    result.current.create("project", "Project");
+  });
   unmount();
-  const restored = renderHook(() => useRailLayout("legacy-layout"));
+  const restored = renderHook(() => useRailLayout("order"));
   expect(restored.result.current.layout.order).toEqual([
     "pins",
-    "navigation",
-    "agents",
-    "messages",
+    "solo",
+    "example.plugin/section",
   ]);
-  expect(restored.result.current.layout.placements).toEqual([
-    { section: "navigation", entry },
+  expect(restored.result.current.layout.sections).toEqual([
+    { id: "custom:project", title: "Project" },
   ]);
 });
 
@@ -67,18 +60,12 @@ test("a saved arrangement survives remounts, stays scoped, and retains confirmed
     initialProps: { scope: "account-a:community-a" },
   });
   act(() => {
+    expect(first.result.current.create("project", "Project", entry)).toBe(true);
     expect(
-      first.result.current.create("project", "Project", entry, [
+      first.result.current.reorder("solo", "pins", [
         "pins",
         "messages",
-        "agents",
-      ]),
-    ).toBe(true);
-    expect(
-      first.result.current.reorder("agents", "pins", [
-        "pins",
-        "messages",
-        "agents",
+        "solo",
         "custom:project",
       ]),
     ).toBe(true);
@@ -90,7 +77,7 @@ test("a saved arrangement survives remounts, stays scoped, and retains confirmed
   first.unmount();
   const restored = renderHook(() => useRailLayout("account-a:community-a"));
   expect(restored.result.current.layout.order).toEqual([
-    "agents",
+    "solo",
     "pins",
     "messages",
     "custom:project",
@@ -104,7 +91,7 @@ test("a saved arrangement survives remounts, stays scoped, and retains confirmed
       throw new Error("Storage unavailable");
     });
   act(() => {
-    expect(restored.result.current.move(entry, "pins")).toBe(false);
+    expect(restored.result.current.move(entry, "custom:other")).toBe(false);
   });
   expect(restored.result.current.layout.placements).toEqual([
     { section: "custom:project", entry },

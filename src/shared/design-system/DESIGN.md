@@ -1383,9 +1383,8 @@ shared header.
 - **Conversation membership identity:** channels, DMs and Solo chats show the
   other members in a centered `SurfaceButton`; human previews exclude the viewer
   and Solo previews retain participating agents. The control opens the existing
-  membership manager. `PanelWorkspace identityPlacement="content"` presents the
-  avatar/name stack only for its permanent conversation; conversation tabs supply
-  their own membership identity. Other selected tabs keep compact pane chrome.
+  membership manager. Conversation tabs supply their own membership identity;
+  other selected tabs keep compact pane chrome.
   Anchored conversation dialogs use the same centered avatar/name stack, with
   Close at the leading edge and tools at the trailing edge.
 - **Trailing actions:** use `IconButton size="sm" variant="ghost"` with 1rem

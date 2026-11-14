@@ -29,7 +29,6 @@ export function PanelFrame({
   );
   return (
     <div
-      data-expando-scope=""
       ref={split.ref}
       style={split.style}
       className={`${styles.frame} ${styles.splitMotion}`}

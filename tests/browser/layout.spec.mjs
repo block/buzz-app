@@ -1,5 +1,10 @@
 import { pluginAction } from "./plugin-settings.mjs";
-import { selectCommunity, openCommunityPicker } from "./navigation.mjs";
+import {
+  channelRow,
+  openChannel,
+  openCommunityPicker,
+  selectCommunity,
+} from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import {
   closeSettings,
@@ -86,7 +91,8 @@ const panel = (page) =>
 
 async function open(page, app) {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .waitFor();
@@ -879,7 +885,7 @@ companionTest(
       exact: true,
     });
     const visitMessages = async () => {
-      await openPage(page, "Messages");
+      await openPage(page, "Team");
       await expect(composer).toBeVisible();
     };
     await visitMessages();
@@ -1065,7 +1071,7 @@ todosOverlapTest(
     await selectSettingsSection(page, "Manage plugins");
     await pluginAction(page, "Todos").click();
     await closeSettings(page);
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
     const todos = page.getByRole("region", {
       name: "Todos panel",
       exact: true,
@@ -1318,7 +1324,7 @@ sidebarActions(
     });
     await companionLauncher(page, "Companion fixture").click();
     await expect(companion).toBeVisible();
-    const alpha = page.locator('button[data-channel-id="alpha"]');
+    const alpha = channelRow(page, "alpha");
     for (const [index, action] of ["activity", "message"].entries()) {
       await link(page, app, `https://github.com/block/buzz/pull/${20 + index}`);
       if (action === "activity") {

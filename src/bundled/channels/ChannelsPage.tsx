@@ -32,12 +32,11 @@ import { useMessageOpening } from "../../features/messages/use-message-opening";
 import { useThreadJump, useThreadRootTime } from "./use-thread-jump";
 import { ChannelBody } from "./ChannelBody";
 import {
-  entryPane,
   panelTabId,
   rootOfTab,
-  tabPane,
   useChannelTabState,
 } from "./useChannelTabState";
+import { useCloseAllTabsCommand } from "./useCloseAllTabsCommand";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { ChannelHeaderIdentity, memberAccess } from "./ChannelHeaderIdentity";
 import {
@@ -78,7 +77,6 @@ import { UnreadOptions } from "./UnreadBadge";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
 import { placeExactOpening } from "../../features/conversation/exact-opening";
-import { flushSync } from "react-dom";
 import {
   useCallback,
   useContext,
@@ -834,8 +832,6 @@ function ChannelWorkspace({
     ),
     () => !!watched && newChat(queries.channels.window(watched)),
   );
-  // Solo has no main tab workspace; its threads open beside the chat.
-  const threadPane = "side" as const;
   // Confirmations belong to this visit; a Solo conversation that leaves the
   // owner's view opens its nearest sidebar neighbor, or else a new draft,
   // rather than an empty page.
@@ -1072,20 +1068,10 @@ function ChannelWorkspace({
             channelId: current.id,
             messageId: requestedMessage,
             rootId: exact.rootId ?? requestedThread ?? requestedMessage,
-            pane: detailReply ? ("main" as const) : threadPane,
             navigation,
           }
         : undefined,
-    [
-      cached,
-      current,
-      navigation,
-      requestedMessage,
-      requestedThread,
-      exact,
-      threadPane,
-      detailReply,
-    ],
+    [cached, current, navigation, requestedMessage, requestedThread, exact],
   );
   // Open in channel also shows the thread's root in the timeline, reading
   // older pages to find it. The thread keeps focus; Members covers both.
@@ -1207,23 +1193,15 @@ function ChannelWorkspace({
     [navigator, tabState.leaveVisit],
   );
   // Closing selects locally first. Retire the closed content while preserving
-  // its surviving neighbour, including a panel beside a main-pane thread.
-  const closeTarget = (
-    pane: "main" | "side",
-    entries = tabState.entries,
-  ): OpenTarget | undefined => {
+  // its surviving neighbour.
+  const closeTarget = (entries = tabState.entries): OpenTarget | undefined => {
     const target = navigator?.snapshot().entry.target;
     if (target?.kind !== "conversation") return;
-    const selected =
-      pane === "main" ? tabState.getMainSelected() : tabState.getSelected();
+    const selected = tabState.getSelected();
     const detail = entries.find(
       (entry) => panelTabId(entry) === selected && historyPanel(entry),
     );
-    const thread =
-      tabState.tabs.find((tab) => tab.id === selected) ??
-      (pane === "side"
-        ? tabState.tabs.find((tab) => tab.id === tabState.getMainSelected())
-        : undefined);
+    const thread = tabState.tabs.find((tab) => tab.id === selected);
     return {
       version: 1,
       kind: "conversation",
@@ -1252,7 +1230,6 @@ function ChannelWorkspace({
     from: string;
     target: string;
     id: string;
-    pane: "main" | "side";
     /** The side pane's visibility to restore: a kept tab shows, and a
      * launcher's side panel keeps the visibility it had before the close. */
     paneOpen: boolean;
@@ -1260,22 +1237,17 @@ function ChannelWorkspace({
   const dismissContent = (
     visits: readonly string[],
     fallback: OpenTarget,
-    pane: "main" | "side",
     entries = tabState.entries,
   ) => {
     keptTabReturn.current = undefined;
     if (!navigator) return;
-    const keep =
-      pane === "main" ? tabState.getMainSelected() : tabState.getSelected();
+    const keep = tabState.getSelected();
     const keptTab = tabState.tabs.find((tab) => tab.id === keep);
     const keptEntry = entries.find((entry) => panelTabId(entry) === keep);
     const current = navigator.snapshot().entry;
     if (
       keep !== undefined &&
-      (keptTab ||
-        keptEntry ||
-        keep === "settings" ||
-        (pane === "side" && tabState.sidePanel)) &&
+      (keptTab || keptEntry || keep === "settings" || tabState.sidePanel) &&
       visits.includes(current.id) &&
       keptTab?.kind !== "thread" &&
       !(keptEntry && historyPanel(keptEntry))
@@ -1286,7 +1258,6 @@ function ChannelWorkspace({
         from: current.id,
         target: targetKey(fallback),
         id: keep,
-        pane,
         paneOpen:
           !!(keptTab || keptEntry || keep === "settings") || tabState.paneOpen,
       };
@@ -1357,14 +1328,12 @@ function ChannelWorkspace({
     extensions,
     leadingIds: settings ? ["settings"] : [],
     threadId: routedThread?.messageId,
-    mainPane: false,
-    // Side thread tabs leave during an image or video review; this is what
-    // hands the thread draft back from the viewer. The viewer's comment
-    // composer reads the thread's saved draft when it mounts, and a thread
-    // composer reads a draft only when it mounts, so a side thread kept
-    // mounted under the hidden dock would still show the text the viewer
-    // replaced. Main-pane threads keep their place and state, as before.
-    hostPanes: showingMediaReview ? ["main"] : undefined,
+    // Thread tabs leave during an image or video review; this is what hands
+    // the thread draft back from the viewer. The viewer's comment composer
+    // reads the thread's saved draft when it mounts, and a thread composer
+    // reads a draft only when it mounts, so a thread kept mounted under the
+    // hidden dock would still show the text the viewer replaced.
+    withholdThreads: !!showingMediaReview,
     navigation: navigator,
     routed: routedThread,
     onVisitPanel: visitPanel,
@@ -1372,19 +1341,10 @@ function ChannelWorkspace({
       const remaining = tabState.entries.filter(
         (entry) => panelTabId(entry) === keep,
       );
-      const keptTab = tabState.tabs.find((tab) => tab.id === keep);
-      const keptEntry = remaining[0];
       // A launcher's side panel outlives the tabs, as when its last tab
       // closes. The return keeps the pane as it was, shown or hidden, even
       // when the channel visit it lands on had saved an open pane.
-      const pane = keptTab
-        ? tabPane(keptTab)
-        : keptEntry
-          ? entryPane(tabState.mainEntries, keptEntry)
-          : tabState.sidePanel
-            ? "side"
-            : "main";
-      const fallback = closeTarget(pane, remaining);
+      const fallback = closeTarget(remaining);
       if (!navigator || !fallback) return;
       const visits = [
         ...tabs.flatMap((tab) =>
@@ -1398,34 +1358,26 @@ function ChannelWorkspace({
             : [],
         ),
       ];
-      dismissContent(
-        visits,
-        fallback,
-        keep === "settings" ? "side" : pane,
-        remaining,
-      );
+      dismissContent(visits, fallback, remaining);
     },
     onClosePanel: (entry, remaining) => {
       if (!historyPanel(entry)) return;
-      const pane = entryPane(tabState.mainEntries, entry);
-      const fallback = closeTarget(pane, remaining);
+      const fallback = closeTarget(remaining);
       if (fallback)
         dismissContent(
           tabState.detailVisits(entry.channelId, entry.target),
           fallback,
-          pane,
           remaining,
         );
     },
     onCloseThread: (tab, active, last) => {
       // X is explicit dismissal; Back/Forward never comes through this path.
       // Retire this tab's addressed visits, including ones behind the cursor.
-      const fallback = closeTarget(tabPane(tab));
+      const fallback = closeTarget();
       if (navigator && fallback) {
         dismissContent(
           tabState.threadVisits(tab.channelId, rootOfTab(tab)),
           fallback,
-          tabPane(tab),
         );
       }
       const trigger = threadTrigger.current;
@@ -1435,11 +1387,7 @@ function ChannelWorkspace({
         (last ||
           trigger
             .closest("[data-panel-workspace], [data-main-workspace]")
-            ?.hasAttribute(
-              tabPane(tab) === "main"
-                ? "data-main-workspace"
-                : "data-panel-workspace",
-            ))
+            ?.hasAttribute("data-panel-workspace"))
       )
         returnFocus.current = { trigger, channelId: currentId };
       if (active && tab.channelId === currentId) highlightReturn(tab.rootId);
@@ -1482,26 +1430,10 @@ function ChannelWorkspace({
     closeOthers: closeOtherTabs,
   };
   // The channel owns this command, including Solo chats without a main tab strip.
-  useLayoutEffect(() => {
-    const close = (event: Event) => {
-      const workspace = historyContainer.current?.closest(
-        "[data-channel-workspace]",
-      );
-      if (
-        event.defaultPrevented ||
-        !workspace?.isConnected ||
-        workspace.closest('[hidden], [inert], [aria-hidden="true"]') ||
-        !workspace.getClientRects().length ||
-        document.querySelector('dialog[open], [aria-modal="true"]')
-      )
-        return;
-      flushSync(() => {
-        if (closeAllTabs()) event.preventDefault();
-      });
-    };
-    window.addEventListener("buzz:close-all-tabs", close);
-    return () => window.removeEventListener("buzz:close-all-tabs", close);
-  });
+  useCloseAllTabsCommand(
+    () => historyContainer.current?.closest("[data-channel-workspace]"),
+    closeAllTabs,
+  );
   // The page's thread opener wins after the tab owner restores its fallback.
   useLayoutEffect(() => {
     if (focusConversation.current) {
@@ -1525,9 +1457,7 @@ function ChannelWorkspace({
             : undefined) ??
           channelConversation.current
             ?.closest("[data-main-workspace]")
-            ?.querySelector<HTMLElement>(
-              '[role="tab"][data-tab-value="conversation"], [data-workspace-identity] button',
-            ) ??
+            ?.querySelector<HTMLElement>("[data-workspace-identity] button") ??
           settingsTrigger.current ??
           historyContainer.current;
         // A dock that outlives the close, as a launcher's side panel does,
@@ -1587,11 +1517,7 @@ function ChannelWorkspace({
           ? navigation.target.detail
           : undefined;
       const kept = keptTabReturn.current;
-      const retained =
-        kept &&
-        (kept.pane === "main"
-          ? tabState.getMainSelected()
-          : tabState.getSelected()) === kept.id;
+      const retained = kept && tabState.getSelected() === kept.id;
       // A panel opened before the close's return landed supersedes that
       // close, unless it has since closed or the return went elsewhere.
       const returned = pendingReturn.current;
@@ -1599,9 +1525,7 @@ function ChannelWorkspace({
         returned?.reopen &&
         navigation.entryId !== returned.from &&
         targetKey(navigation.target) === returned.target &&
-        [tabState.getSelected(), tabState.getMainSelected()].includes(
-          panelTabId(returned.reopen),
-        )
+        tabState.getSelected() === panelTabId(returned.reopen)
           ? returned.reopen
           : undefined;
       if (returned && navigation.entryId !== returned.from)
@@ -1609,7 +1533,6 @@ function ChannelWorkspace({
       tabState.enterVisit(
         `${navigation.entryId}:${detail ? "detail" : routedThread ? "thread" : "channel"}`,
         detail && !detailReply ? undefined : routedThread,
-        !!detail,
         detail && currentId
           ? { channelId: currentId, target: detail.target }
           : undefined,
@@ -1623,21 +1546,16 @@ function ChannelWorkspace({
           detail.target,
           detail.rootId,
         );
-        if (entry && historyPanel(entry)) {
-          open(entry, false, detailSource ? "side" : undefined);
-          if (detailSource && !detailReply) tabState.selectMain(undefined);
-        } else navigation.complete({ status: "failed", reason: "unavailable" });
+        if (entry && historyPanel(entry)) open(entry);
+        else navigation.complete({ status: "failed", reason: "unavailable" });
       }
       // Reselect it over the restored selection and give it its own visit.
       if (reopen) open(reopen);
       if (kept && navigation.entryId !== kept.from) {
         keptTabReturn.current = undefined;
         if (retained && targetKey(navigation.target) === kept.target) {
-          if (kept.pane === "main") tabState.selectMain(kept.id);
-          else {
-            tabState.select(kept.id);
-            tabState.setPaneOpen(kept.paneOpen);
-          }
+          tabState.select(kept.id);
+          tabState.setPaneOpen(kept.paneOpen);
           focusKept.current = kept.id;
         }
       }
@@ -1692,13 +1610,10 @@ function ChannelWorkspace({
     exact?.inTimeline,
     routedThread,
     detailReply,
-    detailSource,
     tabState.enterVisit,
     tabState.select,
-    tabState.selectMain,
     tabState.setPaneOpen,
     tabState.getSelected,
-    tabState.getMainSelected,
     handoff?.activityAgent,
     currentId,
     panels,
@@ -1733,13 +1648,7 @@ function ChannelWorkspace({
       open(undefined);
       // Every opening keeps existing work: a new thread adds a tab and an
       // open one is selected wherever it was placed.
-      tabState.openThreadTab(
-        channelId,
-        messageId,
-        threadRootId,
-        intent,
-        threadPane,
-      );
+      tabState.openThreadTab(channelId, messageId, threadRootId, intent);
       const target = navigator?.snapshot().entry.target;
       if (
         navigator &&
@@ -1769,7 +1678,6 @@ function ChannelWorkspace({
       scope,
       open,
       setSettings,
-      threadPane,
       tabState.openThreadTab,
       tabState.leaveVisit,
     ],
@@ -2024,9 +1932,9 @@ function ChannelWorkspace({
             tab.kind === "thread" &&
             tab.channelId === routedThread.channelId &&
             tab.messageId === routedThread.messageId &&
-            (tabPane(tab) === "main"
-              ? tabState.mainSelected === tab.id
-              : showingChannelPanel && !companion && selectedTab === tab.id),
+            showingChannelPanel &&
+            !companion &&
+            selectedTab === tab.id,
         )?.id
       : undefined;
   const routedVisit = useRef<AbortSignal | string | undefined>(undefined);
@@ -2155,7 +2063,7 @@ function ChannelWorkspace({
   );
   // The conversation: full width for Solo, or the first main-pane tab.
   const body = (
-    <div className={styles.conversationBody}>
+    <div ref={inlineReply.surface} className={styles.conversationBody}>
       <MessageManagementStatus />
       <section
         data-channel-history
@@ -2318,7 +2226,6 @@ function ChannelWorkspace({
       data-thread-alone={threadAlone ? "" : undefined}
       data-companion={companion ? "" : undefined}
       ref={split.ref}
-      data-expando-scope=""
       style={split.style}
       className={`${styles.board} ${panelStyles.splitMotion}`}
     >
@@ -2386,10 +2293,7 @@ function ChannelWorkspace({
             </>
           ) : composingMessage ? (
             <LiveNewMessage
-              {...(composingTeam && {
-                layout: "page" as const,
-                expanded: true,
-              })}
+              expanded={composingTeam}
               host={{ relay, panels, navigation: navigator }}
               session={queries}
               scope={scope}
@@ -2548,10 +2452,8 @@ function ChannelWorkspace({
                   <PanelWorkspace
                     main
                     leadingActions={current ? listToggle : undefined}
-                    identityPlacement="content"
                     headerDivider={false}
                     tabMenu={tabMenu}
-                    drag={secondary.drag.main}
                     label="Channel tabs"
                     identity={
                       current && (
@@ -2568,12 +2470,8 @@ function ChannelWorkspace({
                     }
                     focusOnMount={false}
                     adoptSelection={preservedVisit}
-                    value={secondary.selectedMain}
-                    select={(id) =>
-                      tabState.selectMain(
-                        id === "conversation" ? undefined : id,
-                      )
-                    }
+                    value="conversation"
+                    select={() => {}}
                     actions={
                       <>
                         {drawer.launchers}
@@ -2694,12 +2592,10 @@ function ChannelWorkspace({
                           </div>
                         ),
                       },
-                      ...secondary.mainItems,
                     ]}
                   />
                 </div>
               )}
-              {drawer.content}
             </>
           )}
         </div>
@@ -2799,7 +2695,7 @@ function ChannelWorkspace({
                     )
                   }
                   tabMenu={tabMenu}
-                  drag={secondary.drag.side}
+                  drag={secondary.drag.host}
                   value={selectedTab}
                   focusOnMount={
                     !membersOpen && (continuingVisit || !!routedThread)

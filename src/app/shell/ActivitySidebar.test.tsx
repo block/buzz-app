@@ -1,21 +1,10 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import {
-  act,
-  cleanup,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
-import {
-  createChannelPreviews,
-  loadedPreview,
-} from "../../features/relay/channel-previews";
 import type { RelaySession } from "../../features/relay/session";
 import type { InboxItem } from "../../features/relay/inbox";
 import type { Navigation } from "../../features/navigation/controller";
@@ -25,14 +14,16 @@ import {
   type ActivityView,
 } from "../../features/conversation/ConversationList";
 
-const previewOwners: (() => void)[] = [];
 /** Solo offers Working and Waiting; Team offers DMs, Mentions and Channels. */
 let soloViews = false;
+/** The roster head read's progress, which the test moves by hand. */
+let headsStatus: ReturnType<RelaySession["channelHeads"]["status"]> = "ready";
+const headListeners = new Set<(ids?: readonly string[]) => void>();
 afterEach(() => {
   soloViews = false;
+  headsStatus = "ready";
+  headListeners.clear();
   cleanup();
-  for (const stop of previewOwners.splice(0)) stop();
-  vi.unstubAllGlobals();
 });
 
 const viewer = "c".repeat(64);
@@ -50,7 +41,6 @@ function setup(
   > = {},
   workingIn: readonly string[] = [],
   dmParticipants: readonly string[] = [alice],
-  snapshotRead?: RelaySession["snapshotRead"],
 ) {
   const base = createRelaySession(null).session;
   const channels = [
@@ -140,24 +130,21 @@ function setup(
     [reply, { name: "Eli" }],
   ]);
   const markChannelRead = vi.fn(async () => ({}) as never);
-  const previews = createChannelPreviews({
-    read: snapshotRead
-      ? (filters, options) => snapshotRead(filters, options ?? {})
-      : undefined,
-    loaded: (id) => loadedPreview(base.channels.window(id)),
-    latest: (id) => snapshots.get(id)?.latestTopLevel,
-    readable: () => true,
-    notify: (listener) => listener(),
-  });
-  previewOwners.push(previews.dispose);
   const sidebar = {
     status: "ready" as const,
     data: { sections: [], assignments: {}, starred: [], muted: [] },
   };
   const session: RelaySession = {
     ...base,
-    channelPreviews: previews.capability,
-    snapshotRead,
+    channelHeads: {
+      latest: (id) => snapshots.get(id)?.latestTopLevel,
+      settled: () => headsStatus === "ready",
+      status: () => headsStatus,
+      subscribe: (listener) => {
+        headListeners.add(listener);
+        return () => headListeners.delete(listener);
+      },
+    },
     viewer,
     channels: {
       ...base.channels,
@@ -221,6 +208,7 @@ function setup(
     return (
       <>
         <ActivityFilters
+          title="Team"
           view={view}
           onChange={setView}
           agentViews={soloViews}
@@ -247,55 +235,32 @@ const rowNames = () =>
     .filter((li) => li.hasAttribute("data-activity-row"))
     .map((li) => li.getAttribute("data-activity-row"));
 
-test("only visible conversation rows request missing previews", async () => {
-  let intersect: IntersectionObserverCallback = () => {};
-  vi.stubGlobal(
-    "IntersectionObserver",
-    class {
-      constructor(callback: IntersectionObserverCallback) {
-        intersect = callback;
-      }
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
-  const snapshotRead = vi.fn<NonNullable<RelaySession["snapshotRead"]>>(
-    async () => [],
-  );
-  setup([], {}, [], [alice], snapshotRead);
-  // React has committed the rows and run their effects, but none intersects.
-  await act(async () => {});
-  expect(snapshotRead).not.toHaveBeenCalled();
-  const row = screen.getByRole("button", { name: /fresh/ }).closest("li");
-  expect(row).not.toBeNull();
-  if (!row) throw new Error("Missing conversation row");
-  act(() =>
-    intersect(
-      [
-        {
-          target: row,
-          isIntersecting: true,
-          intersectionRatio: 1,
-          boundingClientRect: row.getBoundingClientRect(),
-          intersectionRect: row.getBoundingClientRect(),
-          rootBounds: null,
-          time: 0,
-        },
-      ],
-      {} as IntersectionObserver,
-    ),
-  );
-  await waitFor(() => expect(snapshotRead).toHaveBeenCalledTimes(1));
-  expect(snapshotRead.mock.calls[0]?.[0]).toEqual([
-    {
-      kinds: [9, 40002, 40008],
-      "#h": ["new"],
-      limit: 1,
-      top_level: true,
-      include_aux: true,
-    },
-  ]);
+test.each(["loading", "idle"] as const)(
+  "Waiting says nothing is waiting only once every head is read (%s)",
+  async (status) => {
+    soloViews = true;
+    headsStatus = status;
+    setup();
+    await userEvent.click(screen.getByRole("tab", { name: "Waiting" }));
+    expect(rowNames()).toEqual([]);
+    // Until the roster read lands, an empty answer proves nothing.
+    expect(
+      screen.queryByText("Nothing is waiting on you"),
+    ).not.toBeInTheDocument();
+    act(() => {
+      headsStatus = "ready";
+      for (const listener of [...headListeners]) listener([]);
+    });
+    expect(screen.getByText("Nothing is waiting on you")).toBeInTheDocument();
+  },
+);
+
+test("Working answers at once without waiting for heads", async () => {
+  soloViews = true;
+  headsStatus = "loading";
+  setup();
+  await userEvent.click(screen.getByRole("tab", { name: "Working" }));
+  expect(screen.getByText("No agent is working right now")).toBeInTheDocument();
 });
 
 test("All interleaves chats, DMs, and channels by their newest activity", () => {
@@ -325,12 +290,15 @@ test("a thread row opens the thread on its own", async () => {
 
 test("Unread filters the combined list and can restore every kind of conversation", async () => {
   setup();
-  await userEvent.click(screen.getByRole("button", { name: "Showing all" }));
+  const menu = screen.getByRole("button", {
+    name: "Filter and sort conversations",
+  });
+  await userEvent.click(menu);
   await userEvent.click(
     await screen.findByRole("menuitemradio", { name: "Unread only" }),
   );
   expect(rowNames()).toEqual(["old"]);
-  await userEvent.click(screen.getByRole("button", { name: "Showing unread" }));
+  await userEvent.click(menu);
   await userEvent.click(
     await screen.findByRole("menuitemradio", { name: "All conversations" }),
   );

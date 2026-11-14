@@ -1,5 +1,6 @@
-import { openPage } from "./navigation.mjs";
+import { openChannel, openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
+import { open } from "./timeline.mjs";
 
 const gifResult = (id, title, height) => ({
   id,
@@ -125,7 +126,8 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await page.route("https://gif.fixture.invalid/**", fulfillGifImage);
 
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   const draft = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -451,7 +453,8 @@ for (const initial of ["invalid response", "unsupported relay"]) {
     });
 
     await page.goto(app.origin);
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
+    await openChannel(page, "alpha");
     const trigger = page.getByRole("button", {
       name: "Emoji and GIFS",
       exact: true,
@@ -502,7 +505,8 @@ test("GIF shortcut retry keeps keyboard focus through repeated discovery failure
     route.fulfill({ json: { result: true, data: { data: [] } } }),
   );
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .focus();
@@ -541,7 +545,8 @@ test("a GIF draft preview takes its own row so prose and the caret keep text hei
 }) => {
   await page.route("https://gif.fixture.invalid/**", fulfillGifImage);
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   const draft = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -624,16 +629,31 @@ test.describe("GIF send roundtrip", () => {
       await route.fulfill({ response, json: receipt });
     });
 
-    await page.goto(app.origin);
-    await openPage(page, "Messages");
+    await open(page, app);
 
     const draft = page.getByRole("textbox", {
       name: "Message #Alpha",
       exact: true,
     });
-    await page
-      .getByRole("region", { name: "Channel message history", exact: true })
-      .click({ position: { x: 20, y: 20 } });
+    // The conversation header floats over the top of the history. Its box has
+    // no height of its own, so click below the lowest of its controls.
+    const timeline = page.getByRole("region", {
+      name: "Channel message history",
+      exact: true,
+    });
+    const historyBox = await timeline.boundingBox();
+    const headerBottom = await page
+      .locator("header[data-history-overlay]")
+      .evaluate((header) =>
+        Math.max(
+          ...Array.from(header.querySelectorAll("*"))
+            .filter((node) => getComputedStyle(node).pointerEvents !== "none")
+            .map((node) => node.getBoundingClientRect().bottom),
+        ),
+      );
+    await timeline.click({
+      position: { x: 20, y: headerBottom - historyBox.y + 20 },
+    });
     await expect(draft).not.toBeFocused();
     await page.keyboard.press("ControlOrMeta+g");
     await expect(

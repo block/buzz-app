@@ -18,7 +18,7 @@ test("hidden-conversation exhaustion exposes the existing action and manual retr
   let failing = true;
   let reads = 0;
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   // Startup can supersede visibility reads as roster evidence arrives. Count
   // one explicit visibility refresh after the live roster and visibility settle.
   await expect

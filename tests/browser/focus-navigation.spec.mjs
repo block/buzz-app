@@ -1,6 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 import {
   closeSettings,
+  openChannel,
   openPage,
   settlePanelMotion,
   settleShellToggle,
@@ -742,7 +743,8 @@ test("escaping a restored side panel over the conversation returns focus to the 
   await expect(todos).toBeVisible();
   await openPage(page, "Agents");
   await expect(todos).toHaveCount(0);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   await expect(todos).toBeVisible();
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })

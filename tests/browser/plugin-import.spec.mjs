@@ -315,6 +315,75 @@ async function nativeImports(
   }, input);
 }
 
+// Scrolling must not change the pixels behind the fixed review title.
+test("scrolling a long update review keeps its heading readable", async ({
+  page,
+  app,
+}, info) => {
+  await page.setViewportSize({ width: 1230, height: 820 });
+  await page.clock.install();
+  await nativeImports(
+    page,
+    [
+      {
+        path: "dist",
+        revision: "one",
+        manifest: {
+          id: "example.counter",
+          name: "Counter playground",
+          apiVersion: 1,
+        },
+      },
+    ],
+    {
+      warnings: Array.from(
+        { length: 32 },
+        (_, i) =>
+          `dist: Optional asset ${i + 1} could not be read from the plugin folder`,
+      ),
+    },
+  );
+  await openPlugins(page, app.origin);
+  await button(page, "Add").click();
+  await page.getByLabel("Git or GitHub repository").fill("example/plugins");
+  await button(page, "Find plugins").click();
+  await button(page, "Install plugin").click();
+  await expectOnlySettings(page);
+  await button(page, "View Counter playground details").click();
+  await page.evaluate(() => {
+    window.importCategory = "productivity";
+  });
+  await button(page, "Check for updates").click();
+  await button(page, "Update").click();
+  const review = page.getByRole("dialog", {
+    name: "Update Counter playground",
+    exact: true,
+  });
+  await expect(
+    review
+      .getByRole("region", { name: "Skipped folders" })
+      .getByRole("listitem"),
+  ).toHaveCount(32);
+  await settleDialogMotion(review);
+  const heading = review.locator(".buzz-dialog-heading");
+  const before = await heading.screenshot();
+  await review.screenshot({
+    path: info.outputPath("update-review-before.png"),
+  });
+  await review.hover();
+  await page.mouse.wheel(0, 210);
+  await expect
+    .poll(() => review.evaluate((node) => node.scrollTop))
+    .toBeGreaterThan(100);
+  const after = await heading.screenshot();
+  await review.screenshot({
+    path: info.outputPath("update-review-scrolled.png"),
+  });
+  expect(after.equals(before)).toBe(true);
+  await review.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(review).toHaveCount(0);
+});
+
 test("browser omits native import acquisition controls", async ({
   page,
   app,
@@ -2082,10 +2151,9 @@ test("a Git-installed plugin reviews its URL self-update and survives requester 
     .poll(() => page.evaluate(() => typeof window.requestMigration))
     .toBe("function");
   await page.evaluate(() => window.requestMigration());
-  const review = page.getByRole("dialog", {
-    name: "Update Artifact",
-    exact: true,
-  });
+  const review = page
+    .getByRole("dialog", { name: "Update Artifact", exact: true })
+    .filter({ has: page.getByRole("button", { name: "Update", exact: true }) });
   await expect(review).toContainText(
     "This update switches this plugin from Git to a packaged download.",
   );
@@ -2110,7 +2178,11 @@ test("a Git-installed plugin reviews its URL self-update and survives requester 
       window.importCalls.filter(({ command }) => command === "plugin_change"),
     ),
   ).toEqual([]);
-  expect(await importCalls(page)).toEqual([
+  // Startup may check the installed Git source before this URL migration.
+  const migrationCalls = (await importCalls(page)).filter(
+    ({ command, args }) => command !== "plugin_import_git" || !args?.checkOnly,
+  );
+  expect(migrationCalls).toEqual([
     {
       command: "plugin_import_url",
       args: { url: artifactUrl, sha256: artifactSha },

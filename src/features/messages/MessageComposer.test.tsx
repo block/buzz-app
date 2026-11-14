@@ -10791,6 +10791,38 @@ it("Enter right after the prompt opens invites a nonmember and sends", async () 
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
 });
 
+it("keeps focus on Invite while the invite runs and fails", async () => {
+  const h = mount();
+  const failed = deferred<void>();
+  const add = vi.fn().mockReturnValueOnce(failed.promise);
+  const list = {
+    status: "ready",
+    channels: [
+      { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+    ],
+  };
+  Object.assign(h.session, {
+    viewer: "d".repeat(64),
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+  });
+  act(() => h.commands().insertMention(first));
+  fireEvent.submit(screen.getByRole("form"));
+  const invite = screen.getByRole("button", { name: "Invite" });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
+  );
+  invite.focus();
+  await userEvent.setup().keyboard("{Enter}");
+  expect(add).toHaveBeenCalledOnce();
+  expect(invite).toHaveAttribute("aria-busy", "true");
+  expect(invite).toHaveFocus();
+  await act(async () => failed.reject(new Error("No relay.")));
+  expect(await screen.findByRole("alert")).toHaveTextContent("No relay.");
+  expect(invite).toHaveFocus();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
 it("invites mentioned nonmembers together so they share one addition", async () => {
   const h = mount();
   const held = deferred<void>();
@@ -11046,7 +11078,11 @@ it.each(["retry", "unmount", "retarget", "disabled", "suspended"])(
         fireEvent.click(screen.getByRole("button", { name: "Invite" }));
       }
       expect(screen.getByRole("button", { name: "Do nothing" })).toBeDisabled();
-      expect(screen.getByRole("button", { name: "Inviting…" })).toBeDisabled();
+      // Loading keeps the running action focusable while blocking re-entry.
+      expect(screen.getByRole("button", { name: "Inviting…" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
       if (outcome === "unmount") h.unmount();
       else if (outcome === "retarget") h.retarget({ channelId: "other" });
       else if (outcome === "disabled") h.retarget({ disabled: true });

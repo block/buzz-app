@@ -228,7 +228,6 @@ export function ClaudeSettings({
                   and paste it below.
                 </>
               }
-              headerGap="compact"
               preventClose={saving}
               onOpenChange={(open) => !open && changeConnection(false)}
               initialFocus={() =>

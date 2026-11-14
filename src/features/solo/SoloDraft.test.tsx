@@ -1230,11 +1230,24 @@ it("a new Solo chat starts with the default lifetime unless its settings chose a
   expect(f.channelWrites.create.mock.calls[1]?.[2]).toBeUndefined();
 });
 
-it("a new Solo chat for a named agent starts with it in the pill, not the default", async () => {
+it("a named agent route replaces an empty draft's saved pill and sends to that agent", async () => {
   const f = setup();
   const user = userEvent.setup();
   const started = vi.fn();
   const agent = "b".repeat(64);
+  const first = render(
+    <SoloDraft
+      session={f.session}
+      scope="me-route-agent"
+      extensions={withPill}
+      onStarted={started}
+    />,
+  );
+  await waitFor(() => expect(sendingTo("Member agent")).toBeInTheDocument());
+  await user.click(
+    screen.getByRole("button", { name: "Send to Member agent" }),
+  );
+  first.unmount();
   render(
     <SoloDraft
       agent={agent}

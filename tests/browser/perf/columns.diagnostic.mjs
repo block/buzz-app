@@ -6,7 +6,9 @@ import { test, expect } from "../fixture.mjs";
 test.use({
   productionBroker: true,
   readState: true,
-  largeSidebar: true,
+  // PERF_SMALL=1 drops the 128 extra conversations: the difference between
+  // the two runs is the cost that grows with how many conversations exist.
+  largeSidebar: process.env.PERF_SMALL !== "1",
   historyCounts: { alpha: 40, beta: 1 },
 });
 
@@ -63,21 +65,14 @@ test("columns: messages arriving elsewhere, and switching conversations", async 
 }, testInfo) => {
   test.skip(browserName !== "chromium", "DevTools counters are Chromium-only");
   await page.goto(app.origin);
-  const rail = page.getByRole("navigation", { name: "Apps", exact: true });
-  // PERF_LIST=closed measures the same work with only the sidebar cards.
-  const listed = process.env.PERF_LIST !== "closed";
-  if (listed)
-    await rail.getByRole("button", { name: "Open Team", exact: true }).click();
-  const team = page.getByRole("region", { name: "Team", exact: true });
+  // The app lands on the list; rows are found wherever the shell places it.
   const row = (id) =>
-    listed
-      ? team.locator(`[data-activity-row="${id}"] [data-conversation-row]`)
-      : rail.locator(`[data-rail-channel="${id}"]`);
+    page.locator(`[data-activity-row="${id}"] [data-conversation-row]`);
   await row("alpha").click();
   await expect(
     page.locator('section[data-channel-timeline="alpha"] [data-message-id]'),
   ).not.toHaveCount(0);
-  const rows = listed ? await team.locator("[data-activity-row]").count() : 0;
+  const rows = await page.locator("[data-activity-row]").count();
   const measure = await meter(page);
   await idle(page);
 
@@ -87,8 +82,7 @@ test("columns: messages arriving elsewhere, and switching conversations", async 
     for (let index = 0; index < burst; index++) {
       const text = `columns diagnostic ${index}`;
       app.append("primary", "beta", text, true, false);
-      if (listed) await expect(row("beta")).toContainText(text);
-      else await idle(page);
+      await expect(row("beta")).toContainText(text);
     }
     await idle(page);
   });
@@ -117,6 +111,7 @@ test("columns: messages arriving elsewhere, and switching conversations", async 
     );
   const result = {
     listRows: rows,
+    conversations: process.env.PERF_SMALL === "1" ? "small" : "large",
     cpu: Number(process.env.PERF_CPU ?? 4),
     perArrivingMessage: per(arrival, burst),
     perConversationSwitch: per(switching, switches),

@@ -16,13 +16,16 @@ function setup(
     untrusted?: boolean;
     lagging?: boolean;
     human?: boolean;
+    /** A member the DM holds that the viewer did not name. */
+    extra?: "agent" | "person";
   } = {},
 ) {
   const viewer = keypair(),
     other = keypair(),
     agentOwner = keypair(),
     relay = keypair(),
-    stranger = keypair();
+    stranger = keypair(),
+    unnamed = keypair();
   const authority = options.untrusted ? stranger : relay;
   const discovery = [
     signed(authority, {
@@ -36,6 +39,7 @@ function setup(
     roster(authority, id, [
       viewer.pubkey,
       options.badRoster ? stranger.pubkey : other.pubkey,
+      ...(options.extra ? [unnamed.pubkey] : []),
     ]),
   ];
   const query = vi.fn(async (filters: readonly ReadFilter[]) => {
@@ -54,6 +58,18 @@ function setup(
               }),
               tags: [["auth", agentOwner.pubkey, "", "a".repeat(128)]],
             }),
+        ...(options.extra
+          ? [
+              signed(unnamed, {
+                kind: 0,
+                content: JSON.stringify({ name: "Unnamed" }),
+                tags:
+                  options.extra === "agent"
+                    ? [["auth", agentOwner.pubkey, "", "a".repeat(128)]]
+                    : [],
+              }),
+            ]
+          : []),
       ];
     return options.lagging &&
       !filters.every((filter) => filter.consistency === "strong")
@@ -180,6 +196,55 @@ it.each([{ badRoster: true }, { untrusted: true }])(
     }
   },
 );
+it("opens the DM of these people when it also holds an agent they did not name", async () => {
+  const t = setup({ extra: "agent" });
+  try {
+    await expect(
+      t.dm.open([t.other.pubkey], new AbortController().signal),
+    ).resolves.toBe(id);
+  } finally {
+    t.owner.dispose();
+  }
+});
+it("refuses a DM that holds a person the viewer did not name", async () => {
+  const t = setup({ extra: "person" });
+  try {
+    await expect(
+      t.dm.open([t.other.pubkey], new AbortController().signal),
+    ).rejects.toThrow("participants");
+  } finally {
+    t.owner.dispose();
+  }
+});
+it("adds to a DM through the host and confirms the signed membership", async () => {
+  const t = setup();
+  const opened = vi.fn();
+  t.dm.subscribeOpened(opened);
+  try {
+    await expect(
+      t.dm.add(id, [t.other.pubkey], true, new AbortController().signal),
+    ).resolves.toBe(id);
+    expect(t.openDirectMessage).toHaveBeenCalledWith(
+      [t.other.pubkey],
+      expect.any(AbortSignal),
+      { channelId: id, includeHistory: true },
+    );
+    // Growing in place is not opening another conversation.
+    expect(opened).not.toHaveBeenCalled();
+  } finally {
+    t.owner.dispose();
+  }
+});
+it("refuses an addition the signed membership does not show", async () => {
+  const t = setup({ badRoster: true });
+  try {
+    await expect(
+      t.dm.add(id, [t.other.pubkey], false, new AbortController().signal),
+    ).rejects.toThrow("participants");
+  } finally {
+    t.owner.dispose();
+  }
+});
 it("rejects self, duplicate, empty and over-limit recipients before contacting the host", async () => {
   const t = setup();
   try {

@@ -170,15 +170,17 @@ function setup(
     );
   });
   let rosterTime = 1_700_000_000;
-  const openDirectMessage = vi.fn(async (pubkeys: readonly string[]) => {
-    events[events.length - 1] = roster(
-      relay,
-      channel,
-      [viewer.pubkey, ...pubkeys],
-      ++rosterTime,
-    );
-    return channel;
-  });
+  const openDirectMessage = vi.fn(
+    async (pubkeys: readonly string[], ..._options: unknown[]) => {
+      events[events.length - 1] = roster(
+        relay,
+        channel,
+        [viewer.pubkey, ...pubkeys],
+        ++rosterTime,
+      );
+      return channel;
+    },
+  );
   const create = () => {
     const owner = createRelaySession(
       {
@@ -818,6 +820,31 @@ it("loads matching DM history inline and keeps the draft while recipients change
   expect(screen.getByRole("textbox")).toHaveTextContent("Keep this draft");
 });
 
+it("sends to the DM it shows with that DM's history, and otherwise opens the exact DM", async () => {
+  const t = setup();
+  const owner = t.create();
+  t.mount(owner);
+  await t.compose();
+  await screen.findByRole("region", { name: "Channel message history" });
+  await t.user.click(send());
+  await waitFor(() => expect(t.openDirectMessage).toHaveBeenCalledOnce());
+  expect(t.openDirectMessage.mock.calls[0]?.[2]).toEqual({
+    includeHistory: true,
+  });
+  cleanup();
+
+  const fresh = setup();
+  fresh.mount(fresh.create());
+  await fresh.user.click(await screen.findByRole("option", { name: "Zoe" }));
+  expect(
+    screen.queryByRole("region", { name: "Channel message history" }),
+  ).not.toBeInTheDocument();
+  await fresh.user.type(screen.getByRole("textbox"), "Hello Zoe");
+  await fresh.user.click(send());
+  await waitFor(() => expect(fresh.openDirectMessage).toHaveBeenCalledOnce());
+  expect(fresh.openDirectMessage.mock.calls[0]?.[2]).toBeUndefined();
+});
+
 /** A group DM with Avery and Zoe, plus one earlier message in each DM. */
 function groupHistory(t: ReturnType<typeof setup>) {
   t.events.unshift(
@@ -943,6 +970,37 @@ it("previews only the DM whose participants exactly match, in any order", async 
   await showsHistory(owner, channel, "Earlier conversation");
   expect(t.openDirectMessage).not.toHaveBeenCalled();
   expect(t.publish).not.toHaveBeenCalled();
+});
+
+it("previews a group DM of the same people even when it also holds an agent", async () => {
+  const t = setup();
+  groupHistory(t);
+  const bot = keypair();
+  t.events.unshift(
+    signed(bot, {
+      kind: 0,
+      content: JSON.stringify({ name: "Bot" }),
+      tags: [["auth", viewer.pubkey, "", "a".repeat(128)]],
+    }),
+  );
+  const at = t.events.findIndex(
+    (event) =>
+      event.kind === 39002 &&
+      event.tags.some(([name, value]) => name === "d" && value === group),
+  );
+  t.events[at] = roster(relay, group, [
+    viewer.pubkey,
+    other.pubkey,
+    another.pubkey,
+    bot.pubkey,
+  ]);
+  const owner = t.create();
+  t.mount(owner);
+  await owner.session.profiles.ensure([bot.pubkey]);
+  await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
+  await addRecipient(t, "Avery");
+  await showsHistory(owner, group, "Group history");
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
 });
 
 it("never shows a previous match's history that finishes loading after an edit", async () => {

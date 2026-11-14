@@ -3,6 +3,7 @@ import { agentUnavailable, canMessageAgent } from "../agents/choices";
 import { avatarMedia } from "../../shared/avatar-source";
 import { useChannelWindow } from "../relay/react";
 import type { ChannelSummary } from "../relay/contracts";
+import { sameDirectMessage } from "../relay/direct-message-policy";
 import {
   ConversationChannel,
   ConversationTimeline,
@@ -396,6 +397,9 @@ export function NewMessage({
             : await session.directMessages.open(
                 recipients.map((person) => person.pubkey),
                 controller.signal,
+                // Sending goes to the DM shown here, which named agents join
+                // with its history, as the page says.
+                existing !== undefined,
               );
         controller.signal.throwIfAborted();
         prepared.current = { key, id };
@@ -456,7 +460,12 @@ export function NewMessage({
     }
   }
   const existing = useMemo(() => {
-    if (!recipients.length) return undefined;
+    if (!recipients.length || !session.viewer) return undefined;
+    const agents = new Set(
+      recipients
+        .filter((person) => person.isAgent)
+        .map((person) => person.pubkey),
+    );
     const members = new Set([
       session.viewer,
       ...recipients.map((person) => person.pubkey),
@@ -470,8 +479,12 @@ export function NewMessage({
         channel.readOnly ||
         channel.pending ||
         channel.huddle ||
-        channel.members?.length !== members.size ||
-        !channel.members.every((member) => members.has(member))
+        !channel.members ||
+        !sameDirectMessage(
+          channel.members,
+          members,
+          (key) => agents.has(key) || !!profiles.get(key)?.isAgent,
+        )
       )
         continue;
       const activity = channel.lastActivityAt ?? 0;
@@ -484,7 +497,11 @@ export function NewMessage({
         match = channel;
     }
     return match;
-  }, [channels, recipients, session.viewer]);
+  }, [channels, recipients, session.viewer, profiles]);
+  // Agents named for an existing DM of these people join it, with its history.
+  const joining = existing
+    ? named.filter((person) => !existing.members?.includes(person.pubkey))
+    : [];
   return (
     <section
       className={styles.page}
@@ -532,6 +549,16 @@ export function NewMessage({
         ) : null}
       </div>
       <div className={styles.feedback}>
+        {joining.length > 0 && (
+          <p role="status">
+            Sending adds{" "}
+            {new Intl.ListFormat(undefined, { type: "conjunction" }).format(
+              joining.map((person) => person.name),
+            )}{" "}
+            to this DM. {joining.length === 1 ? "It" : "They"} can read its
+            earlier messages.
+          </p>
+        )}
         {busy && (
           <p role="status">
             {busy === "uploading" ? "Uploading files…" : "Sending message…"}

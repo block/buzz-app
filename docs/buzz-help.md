@@ -1450,14 +1450,8 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
 ## Optional features and limits
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
-  them. Unsigned external plugins can install and run by default. Launch Buzz
-  with `BUZZ_REQUIRE_PLUGIN_SIGNATURES=1` to require signatures; restart with
-  the variable unset or set to `0` to turn enforcement off. When enforcement is
-  enabled, unsigned installations remain blocked until replaced with signed
-  releases. Use **Update** in the plugin’s Settings details to apply a signed
-  release, even when its code has not changed. Supplied signatures are always
-  verified. Plugins built into Buzz are exempt.
-  Do not assume a particular optional plugin is on.
+  them. Do not assume a particular optional plugin is on. Manage plugins uses the background checker’s retained results and shows **Update** when a newer version is available. Opening the list or returning to the window does not start a separate check. Git plugins need to declare update support; saved folder and Git sources also offer **Check for updates** in their details. An **Update** button opens the review before anything is installed.
+  Unsigned external plugins can install and run by default. Launch Buzz with `BUZZ_REQUIRE_PLUGIN_SIGNATURES=1` to require signatures; restart with the variable unset or set to `0` to turn enforcement off. When enforcement is enabled, unsigned installations remain blocked until replaced with signed releases. Use **Update** in the plugin’s Settings details to apply a signed release, even when its code has not changed. Supplied signatures are always verified. Plugins built into Buzz are exempt.
   A page whose plugin is turned off says so, and its **Manage plugins** opens
   that plugin, where **Enable** turns it back on.
   If a plugin hides the focused Team sidebar row, keyboard focus moves to a
@@ -1475,12 +1469,8 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
 - On desktop, plugins can support update checks and set them on or off by default.
   Use **Check for updates automatically** in the plugin's actions menu to change
   this choice. Buzz saves your choice across updates and restarts. Plugins without
-  update support keep their existing manual import flow. Buzz checks eligible Git
-  sources at startup and once per hour while the app is visible. Checks do not
-  install or reload plugins. A notice offers **Update and reload**, or
-  **Review permissions** when access increases; either opens the update review.
-  Even when access is unchanged, choose **Update** in that review to install and
-  reload the candidate.
+  update support keep their existing manual import flow. Buzz checks saved folder sources and eligible Git sources silently at startup and once per hour while the app is visible. Saved-folder checks work offline; automatic Git checks wait for a connection. Checks do not
+  install or reload plugins. A notice offers **Update and reload**, or **Review permissions** when access increases; either opens the update review. Even when access is unchanged, choose **Update** in that review to install and reload the candidate.
   Click the notice body to open that plugin’s update checkbox in Manage plugins.
   Its Update, Later, and Dismiss controls keep their own actions.
   Save unfinished forms and stop active plugin workers before you update.

@@ -92,14 +92,13 @@ export function PluginUpdates({
       plugins,
       async (repository) =>
         (await relay.snapshot().session.authorizeGit?.(repository)) ?? null,
+      () => navigator.onLine !== false,
     );
     setStore(updates);
     const unregisterUpdates = installRequests.registerUpdates(updates);
     let timer: ReturnType<typeof setTimeout> | undefined;
     let disposed = false;
-    // Being offline is normal, so background checks wait for a connection.
-    const ready = () =>
-      document.visibilityState !== "hidden" && navigator.onLine !== false;
+    const ready = () => document.visibilityState !== "hidden";
     // A check that failed when the connection dropped is throttled like any
     // other, so the connection's return checks it again at once. The intent
     // lasts until a check can run: the window may be hidden. A check that
@@ -117,7 +116,10 @@ export function PluginUpdates({
         force ||= failed();
       }
       running++;
-      const delay = await updates.check(force).finally(() => running--);
+      const pending = updates.check(force).finally(() => running--);
+      const localDelay = updates.nextCheck();
+      if (localDelay !== undefined) timer = setTimeout(scheduled, localDelay);
+      const delay = await pending;
       if (disposed || !ready()) return;
       if (reconnect) {
         reconnect = false;

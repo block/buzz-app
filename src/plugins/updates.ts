@@ -2,6 +2,12 @@ import { gitScope } from "./git-scope";
 import { samePluginRelease } from "./same-release";
 import { managedBy } from "./managed";
 import type { PluginManager } from "./manager";
+import {
+  sharedPluginUpdateChecks,
+  pluginUpdateCheck,
+  type PluginUpdateChecks,
+} from "./update-checks";
+import type { PluginInfo } from "./types";
 import type { ImportPreview } from "./types";
 
 export type GitUpdateSource = {
@@ -267,6 +273,7 @@ export function createPluginUpdates(
   authorizeGit: (
     repository: string,
   ) => Promise<{ repository: string; token: string } | null>,
+  online: () => boolean = () => true,
 ) {
   const ownerId = crypto.randomUUID() as PluginUpdateOwnerId;
   const lifetime = { ownerId, retired: false };
@@ -276,10 +283,13 @@ export function createPluginUpdates(
   let refreshing: Promise<PluginUpdateSnapshot> | undefined;
   let lastCallerRefresh: number | undefined;
   let retry = false;
+  let forceNext = false;
+  const checked = new Map<string, { identity: string; at: number }>();
+  let observedChecks: PluginUpdateChecks | undefined;
+  let unsubscribeChecks = () => {};
   let checking = false;
   let lastCheck: number | undefined;
   let lastSources = "";
-  let lastErrors = false;
   let freshnessTimer: ReturnType<typeof setTimeout> | undefined;
   let revision = 0;
   const dismissed = new Set<string>();
@@ -356,19 +366,29 @@ export function createPluginUpdates(
       ? `The update was installed, but activation failed: ${activation.error ?? "Unknown activation error"}`
       : undefined;
   };
+  const freshnessAt = () =>
+    lastCheck === undefined
+      ? undefined
+      : Math.min(
+          lastCheck,
+          ...[...checked]
+            .filter(([id]) => pluginUpdateSource(plugins, id))
+            .map(([, value]) => value.at),
+        );
   const snapshotStatus = (): PluginUpdateStatus => {
     const { configuration } = plugins.snapshot();
     if (closed || !plugins.imports || configuration.status !== "ready")
       return "unavailable";
     if (checking) return "checking";
     if (!getEligibleCount()) return "disabled";
+    const at = freshnessAt();
     if (
-      lastCheck === undefined ||
-      Date.now() - lastCheck >= 3_600_000 ||
+      at === undefined ||
+      Date.now() - at >= 3_600_000 ||
       getSources() !== lastSources
     )
       return "stale";
-    return lastErrors ? "error" : "fresh";
+    return updates.some((update) => update.error) ? "error" : "fresh";
   };
   const makeSnapshot = (): PluginUpdateSnapshot => {
     return freezeSnapshot({
@@ -412,6 +432,14 @@ export function createPluginUpdates(
     refreshPublicSnapshot();
     notify();
   };
+  function installed(id: string): PluginInfo | undefined {
+    const { configuration } = plugins.snapshot();
+    return configuration.status === "ready"
+      ? configuration.catalog.plugins.find(
+          (plugin) => plugin.manifest.id === id,
+        )
+      : undefined;
+  }
   function current(update: PluginUpdate) {
     const { configuration } = plugins.snapshot();
     const plugin =
@@ -431,7 +459,90 @@ export function createPluginUpdates(
     );
   }
   const prune = () => {
-    const next = updates.filter(current);
+    const results = observedChecks?.snapshot() ?? {};
+    const records = [...updates];
+    const { configuration } = plugins.snapshot();
+    if (configuration.status === "ready") {
+      for (const plugin of configuration.catalog.plugins) {
+        const id = plugin.manifest.id;
+        const source = pluginUpdateSource(plugins, id);
+        const result = pluginUpdateCheck(results, plugin, source);
+        if (
+          !source ||
+          !result ||
+          result.checking ||
+          (!result.error &&
+            (!result.candidate ||
+              samePluginRelease(result.candidate, plugin))) ||
+          records.some(
+            (update) =>
+              update.id === id &&
+              current({ ...update, installedEnabled: plugin.enabled }),
+          )
+        )
+          continue;
+        records.push({
+          id,
+          source,
+          installedRevision: plugin.revision,
+          installedPublisher: plugin.publisher ?? null,
+          installedEnabled: plugin.enabled,
+          updateChoice: plugin.updateChecks ?? null,
+        });
+      }
+    }
+    const next = records.flatMap((update): PluginUpdate[] => {
+      const plugin = installed(update.id);
+      if (plugin && plugin.enabled !== update.installedEnabled)
+        update = {
+          ...update,
+          installedEnabled: plugin.enabled,
+          ...(update.token && {
+            token: crypto.randomUUID() as PluginUpdateToken,
+          }),
+        };
+      if (!current(update)) return [];
+      const result = pluginUpdateCheck(results, plugin, update.source);
+      if (!result || result.checking) return [update];
+      if (result.error) {
+        if (result.error === update.error) return [update];
+        const failed = { ...update, error: result.error };
+        delete failed.candidate;
+        delete failed.token;
+        return [failed];
+      }
+      if (
+        result.candidate &&
+        !samePluginRelease(result.release, {
+          revision: update.installedRevision,
+          publisher: update.installedPublisher,
+        }) &&
+        (update.error || !samePluginRelease(result.release, update.candidate))
+      ) {
+        const recovery =
+          update.error &&
+          activeReview &&
+          activeReview.update.id === update.id &&
+          current(activeReview.update) &&
+          activeReview.update.candidate?.revision ===
+            result.candidate.revision &&
+          (activeReview.update.candidate.publisher ?? null) ===
+            (result.candidate.publisher ?? null);
+        const discovered = {
+          ...update,
+          token:
+            (recovery ? activeReview?.token : undefined) ??
+            (crypto.randomUUID() as PluginUpdateToken),
+          candidate: result.candidate,
+        };
+        delete discovered.error;
+        return [discovered];
+      }
+      return !update.error &&
+        samePluginRelease(result.release, update.candidate)
+        ? [update]
+        : [];
+    });
     let queueChanged = false;
     const snapshot = plugins.snapshot();
     for (const queue of queues.values()) {
@@ -461,29 +572,98 @@ export function createPluginUpdates(
         queueChanged = true;
       }
     }
-    if (next.length !== updates.length) publish(next);
+    if (
+      next.length !== updates.length ||
+      next.some((item, index) => item !== updates[index])
+    )
+      publish(next);
     else if (queueChanged) {
       refreshPublicSnapshot();
       notify();
     } else if (publicSnapshot.status !== snapshotStatus()) publish();
   };
   const unsubscribe = plugins.subscribe(prune);
+  function updateChecks() {
+    const checks = sharedPluginUpdateChecks(plugins.imports);
+    if (observedChecks !== checks) {
+      unsubscribeChecks();
+      observedChecks = checks;
+      unsubscribeChecks = checks.subscribe(prune);
+    }
+    return checks;
+  }
+  function checkFolders(force: boolean) {
+    const { configuration } = plugins.snapshot();
+    if (closed || !plugins.imports || configuration.status !== "ready") return;
+    const checks = updateChecks();
+    const now = Date.now();
+    for (const id of checked.keys())
+      if (
+        !configuration.catalog.plugins.some(
+          (plugin) => plugin.manifest.id === id,
+        )
+      )
+        checked.delete(id);
+    for (const plugin of configuration.catalog.plugins) {
+      const id = plugin.manifest.id;
+      const folder =
+        plugin.source === "external" &&
+        plugin.updateSource &&
+        "root" in plugin.updateSource &&
+        !managedBy(configuration.managed, id);
+      if (!folder) {
+        if (!pluginUpdateSource(plugins, id)) checked.delete(id);
+        continue;
+      }
+      const identity = JSON.stringify([
+        plugin.revision,
+        plugin.publisher ?? null,
+        plugin.updateSource,
+      ]);
+      const previous = checked.get(id);
+      if (
+        !force &&
+        previous?.identity === identity &&
+        now - previous.at < 3_600_000
+      )
+        continue;
+      checked.set(id, { identity, at: now });
+      const eligible = () => {
+        const live = installed(id);
+        return (
+          !closed &&
+          samePluginRelease(live, plugin) &&
+          JSON.stringify(live?.updateSource) ===
+            JSON.stringify(plugin.updateSource)
+        );
+      };
+      void checks.check(plugin, authorizeGit, eligible);
+    }
+  }
   async function run(force: boolean) {
-    if (closed || !plugins.imports) return;
+    if (closed || !plugins.imports || (!force && !online())) return;
     const { configuration } = plugins.snapshot();
     if (configuration.status !== "ready") return;
     const now = Date.now();
     const sources = getSources();
+    const remaining = delay(false);
     if (
       !force &&
       sources === lastSources &&
       lastCheck !== undefined &&
-      now - lastCheck < 3_600_000
+      remaining !== undefined &&
+      remaining > 0
     )
       return;
     lastSources = sources;
+    const checks = updateChecks();
+    const batch = configuration.catalog.plugins.flatMap((plugin) => {
+      const source = pluginUpdateSource(plugins, plugin.manifest.id);
+      return source
+        ? [{ plugin, source, observe: checks.observe(plugin, source) }]
+        : [];
+    });
     checking = true;
-    lastErrors = false;
     publish();
     try {
       const repositories = new Map<string, Promise<ImportPreview | null>>();
@@ -497,22 +677,28 @@ export function createPluginUpdates(
         let result = repositories.get(key);
         if (!result) {
           result = (async () => {
+            const eligible = () => {
+              const live = plugins.snapshot().configuration;
+              return (
+                !closed &&
+                live.status === "ready" &&
+                live.catalog.plugins.some((plugin) => {
+                  const current = pluginUpdateSource(
+                    plugins,
+                    plugin.manifest.id,
+                  );
+                  return (
+                    current?.repository === source.repository &&
+                    current.reference === source.reference &&
+                    current.path === source.path &&
+                    current.commit === source.commit
+                  );
+                })
+              );
+            };
+            if (!eligible()) return null;
             const signed = await authorizeGit(source.repository);
-            const live = plugins.snapshot().configuration;
-            if (
-              closed ||
-              live.status !== "ready" ||
-              !live.catalog.plugins.some((plugin) => {
-                const current = pluginUpdateSource(plugins, plugin.manifest.id);
-                return (
-                  current?.repository === source.repository &&
-                  current.reference === source.reference &&
-                  current.path === source.path &&
-                  current.commit === source.commit
-                );
-              })
-            )
-              return null;
+            if (!eligible()) return null;
             return (
               plugins.imports?.checkGit(
                 signed?.repository ?? source.repository,
@@ -526,11 +712,22 @@ export function createPluginUpdates(
         }
         return result;
       };
-      for (const plugin of configuration.catalog.plugins) {
+      for (const { plugin, source, observe } of batch) {
         if (closed) return;
         const id = plugin.manifest.id;
-        const source = pluginUpdateSource(plugins, id);
-        if (!source) continue;
+        const identity = JSON.stringify([
+          plugin.revision,
+          plugin.publisher ?? null,
+          source,
+        ]);
+        const previousCheck = checked.get(id);
+        if (
+          !force &&
+          previousCheck?.identity === identity &&
+          now - previousCheck.at < 3_600_000
+        )
+          continue;
+        checked.set(id, { identity, at: now });
         const update: PluginUpdate = {
           id,
           source,
@@ -556,50 +753,63 @@ export function createPluginUpdates(
             throw new Error(
               "The saved repository has no plugin at its installed path.",
             );
-          if (!samePluginRelease(candidate, plugin)) {
+          if (!samePluginRelease(candidate, plugin))
             update.candidate = candidate;
-            const previous = updates.find(
-              (item) =>
-                item.id === id &&
-                item.installedRevision === update.installedRevision &&
-                item.installedPublisher === update.installedPublisher &&
-                item.installedEnabled === update.installedEnabled &&
-                item.updateChoice === update.updateChoice &&
-                updateSourceKey(item.source) === updateSourceKey(source) &&
-                item.candidate?.revision === candidate.revision &&
-                (item.candidate.publisher ?? null) ===
-                  (candidate.publisher ?? null),
-            );
-            update.token =
-              previous?.token ?? (crypto.randomUUID() as PluginUpdateToken);
-          }
         } catch (reason) {
           update.error =
             reason instanceof Error ? reason.message : String(reason);
-          lastErrors = true;
         }
-        if (current(update))
-          publish([
-            ...updates.filter((item) => item.id !== id),
-            ...(update.candidate || update.error ? [update] : []),
-          ]);
+        if (!current(update)) continue;
+        checked.set(id, { identity, at: Date.now() });
+        if (
+          !observe(
+            update.candidate ?? plugin,
+            update.error ?? null,
+            update.candidate,
+          )
+        ) {
+          prune();
+          continue;
+        }
+        const candidate = update.candidate;
+        if (candidate) {
+          const previous = updates.find(
+            (item) =>
+              item.id === id &&
+              item.installedRevision === update.installedRevision &&
+              item.installedPublisher === update.installedPublisher &&
+              item.installedEnabled === update.installedEnabled &&
+              item.updateChoice === update.updateChoice &&
+              updateSourceKey(item.source) === updateSourceKey(source) &&
+              item.candidate?.revision === candidate.revision &&
+              (item.candidate.publisher ?? null) ===
+                (candidate.publisher ?? null),
+          );
+          update.token =
+            previous?.token ?? (crypto.randomUUID() as PluginUpdateToken);
+        }
+        publish([
+          ...updates.filter((item) => item.id !== id),
+          ...(update.candidate || update.error ? [update] : []),
+        ]);
       }
       if (closed) return;
       lastCheck = Date.now();
       if (getSources() !== sources) {
         lastCheck = undefined;
-        lastErrors = false;
         retry = true;
+        forceNext = true;
       }
     } finally {
       checking = false;
       clearTimeout(freshnessTimer);
       if (!closed) {
         // Notify observers at expiry even when the hidden host does not run discovery.
-        if (lastCheck !== undefined)
+        const at = freshnessAt();
+        if (at !== undefined)
           freshnessTimer = setTimeout(
             () => publish(),
-            Math.max(0, lastCheck + 3_600_000 - Date.now()),
+            Math.max(0, at + 3_600_000 - Date.now()),
           );
         publish();
       }
@@ -610,13 +820,24 @@ export function createPluginUpdates(
     const update = updates.find((item) => item.token === token);
     return update?.candidate && current(update) ? update : undefined;
   };
-  const isCurrentToken = (token: PluginUpdateToken) =>
-    !closed &&
-    !!plugins.imports &&
-    !checking &&
-    lastCheck !== undefined &&
-    Date.now() - lastCheck < 3_600_000 &&
-    !!resolveCandidate(token);
+  const isCurrentToken = (token: PluginUpdateToken) => {
+    const update = resolveCandidate(token);
+    const checkedAt =
+      update &&
+      pluginUpdateCheck(
+        observedChecks?.snapshot() ?? {},
+        installed(update.id),
+        update.source,
+      )?.checkedAt;
+    return (
+      !closed &&
+      !!plugins.imports &&
+      !checking &&
+      checkedAt !== undefined &&
+      Date.now() - checkedAt < 3_600_000 &&
+      !!update
+    );
+  };
   const snapshotQueue = (queue: UpdateQueueRecord) => {
     if (queue.snapshot) return queue.snapshot;
     const statuses = queue.items.map((item) => item.status);
@@ -865,21 +1086,36 @@ export function createPluginUpdates(
     if (error) void check(true);
     return true;
   };
+  function delay(localOnly: boolean) {
+    if (
+      closed ||
+      !plugins.imports ||
+      plugins.snapshot().configuration.status !== "ready"
+    )
+      return;
+    const at = Math.min(
+      Date.now(),
+      ...[...checked]
+        .filter(
+          ([id]) =>
+            (!localOnly && online()) || !pluginUpdateSource(plugins, id),
+        )
+        .map(([, value]) => value.at),
+    );
+    return Math.max(0, at + 3_600_000 - Date.now());
+  }
   function check(force = false): Promise<number | undefined> {
-    retry ||= force;
+    checkFolders(force);
+    retry ||= !!pending && (force || getSources() !== lastSources);
+    forceNext ||= force;
     pending ??= (async () => {
       do {
-        const forced = retry;
+        const forced = forceNext;
         retry = false;
+        forceNext = false;
         await run(forced);
       } while (retry && !closed);
-      if (
-        closed ||
-        !plugins.imports ||
-        plugins.snapshot().configuration.status !== "ready"
-      )
-        return;
-      return Math.max(0, (lastCheck ?? Date.now()) + 3_600_000 - Date.now());
+      return delay(false);
     })().finally(() => {
       pending = undefined;
     });
@@ -1007,10 +1243,12 @@ export function createPluginUpdates(
       publish([...updates]);
     },
     check,
+    nextCheck: () => delay(!!pending),
     dispose() {
       closed = true;
       clearTimeout(freshnessTimer);
       unsubscribe();
+      unsubscribeChecks();
       for (const queue of queues.values()) {
         for (const item of queue.items) {
           if (item.status === "queued") item.status = "cancelled";

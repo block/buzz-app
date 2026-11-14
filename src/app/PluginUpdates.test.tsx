@@ -13,6 +13,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { Context as CordisContext } from "@deepseek-ai/cordis";
 import {
+  sharedPluginUpdateChecks,
+  pluginUpdateAvailable,
+} from "../plugins/update-checks";
+import {
   PluginUpdateFailure,
   PluginUpdates,
   PluginUpdatesMenu,
@@ -914,9 +918,9 @@ it.each(["drift", "missing"] as const)(
       kind === "drift"
         ? "The update candidate changed after it was checked. Check for updates again before reviewing it."
         : "The saved folder or repository no longer contains this plugin at its installed path.";
-    const refusal = await screen.findByText(failure, { exact: false });
+    const review = await screen.findByRole("dialog");
+    const refusal = await within(review).findByText(failure, { exact: false });
     expect(refusal).toBeVisible();
-    const review = screen.getByRole("dialog");
     expect(capability.getQueue(accepted.id)?.items[0]?.status).toBe(
       "reviewing",
     );
@@ -975,6 +979,13 @@ it("keeps a queued update retryable after its fresh preview cannot be loaded", a
   expect(within(review).getByRole("button", { name: "Update" })).toBeEnabled();
   expect(capability.getQueue(accepted.id)?.items[0]?.status).toBe("reviewing");
   expect(f.installImport).not.toHaveBeenCalled();
+  fireEvent.click(within(review).getByRole("button", { name: "Update" }));
+  await waitFor(() => expect(f.installImport).toHaveBeenCalledOnce());
+  await waitFor(() =>
+    expect(capability.getQueue(accepted.id)?.items[0]?.status).toBe(
+      "installed",
+    ),
+  );
 });
 
 it("ends a queued review when the host invalidates its action before confirmation", async () => {
@@ -1307,6 +1318,25 @@ it("requires review when a fresh update removes a process artifact constraint", 
   await waitFor(() => expect(f.installImport).toHaveBeenCalledOnce());
 });
 
+it.each(["unchanged", "failed"])(
+  "shares a notification review's fresh %s result with Manage plugins",
+  async (outcome) => {
+    const f = fixture();
+    f.freshCandidate.revision = f.plugin.revision;
+    if (outcome === "failed")
+      f.imports.git.mockRejectedValueOnce(new Error("source unavailable"));
+    f.mount();
+    await screen.findByText("Update Notes");
+    const checks = sharedPluginUpdateChecks(f.manager.imports);
+    expect(pluginUpdateAvailable(checks.snapshot(), f.plugin)).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Update and reload" }));
+    await waitFor(() =>
+      expect(pluginUpdateAvailable(checks.snapshot(), f.plugin)).toBe(false),
+    );
+    expect(f.installImport).not.toHaveBeenCalled();
+  },
+);
+
 const OFFLINE =
   "Git could not read this repository: fatal: unable to access 'https://example.com/plugins.git/': Could not resolve host: example.com";
 const noticeTitle = (name: string) => `Couldn’t check ${name} for updates`;
@@ -1522,6 +1552,29 @@ it("keeps Check again and the generic sentence when an authorized HTTPS check is
   expect(screen.queryByText(/Git needs a sign-in/)).toBeNull();
 });
 
+it("opens an offline explicit-check notification on its first click without another discovery", async () => {
+  const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+  try {
+    const f = fixture();
+    f.mount();
+    await act(async () => {
+      await sharedPluginUpdateChecks(f.manager.imports).check(f.plugin);
+    });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Update and reload" }),
+    );
+    const review = await screen.findByRole("dialog", { name: "Update Notes" });
+    expect(
+      await within(review).findByRole("button", { name: "Update" }),
+    ).toBeEnabled();
+    expect(f.imports.checkGit).toHaveBeenCalledOnce();
+    expect(f.imports.git).toHaveBeenCalledOnce();
+    expect(f.installImport).not.toHaveBeenCalled();
+  } finally {
+    online.mockRestore();
+  }
+});
+
 it("doesn’t check in the background while offline, and checks when the connection returns", async () => {
   const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
   try {
@@ -1650,5 +1703,115 @@ it("keeps the connection's return for a hidden window, and checks again once it 
     );
   } finally {
     visibility.mockRestore();
+  }
+});
+
+it("discovers saved-folder updates on its hourly cadence while offline without reading Git", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(0);
+  const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+  try {
+    const f = fixture();
+    const configuration = f.state().configuration;
+    if (configuration.status !== "ready") throw new Error("Expected catalog");
+    const folder = {
+      ...f.plugin,
+      manifest: { ...f.plugin.manifest, id: "example.folder" },
+      updateSource: { root: "/plugins/folder", path: "." },
+    };
+    const checkFolder = vi.fn(async () => ({ revision: "folder-new" }));
+    Object.assign(f.imports, { checkFolder });
+    f.emit({
+      configuration: {
+        ...configuration,
+        catalog: { ...configuration.catalog, plugins: [f.plugin, folder] },
+      },
+    });
+    f.mount();
+    await waitFor(() =>
+      expect(
+        pluginUpdateAvailable(
+          sharedPluginUpdateChecks(f.manager.imports).snapshot(),
+          folder,
+        ),
+      ).toBe(true),
+    );
+    expect(checkFolder).toHaveBeenCalledExactlyOnceWith(folder.manifest.id);
+    expect(f.imports.checkGit).not.toHaveBeenCalled();
+    vi.setSystemTime(3_600_000);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(checkFolder).toHaveBeenCalledTimes(2);
+    expect(f.imports.checkGit).not.toHaveBeenCalled();
+    online.mockReturnValue(true);
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+    });
+    expect(f.imports.checkGit).toHaveBeenCalledOnce();
+    expect(checkFolder).toHaveBeenCalledTimes(2);
+  } finally {
+    online.mockRestore();
+  }
+});
+
+it("lets an explicit Check again try Git even when the browser reports offline", async () => {
+  const f = fixture();
+  f.imports.checkGit.mockRejectedValueOnce(OFFLINE);
+  f.mount();
+  const again = await screen.findByRole("button", { name: "Check again" });
+  const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+  try {
+    fireEvent.click(again);
+    await waitFor(() => expect(f.imports.checkGit).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.queryByText("Couldn’t check for updates.")).toBeNull(),
+    );
+  } finally {
+    online.mockRestore();
+  }
+});
+
+it("keeps the folder cadence running while background Git is pending", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const configuration = f.state().configuration;
+  if (configuration.status !== "ready") throw new Error("Expected catalog");
+  const folder = {
+    ...f.plugin,
+    manifest: { ...f.plugin.manifest, id: "example.folder" },
+    updateSource: { root: "/plugins/folder", path: "." },
+  };
+  const checkFolder = vi.fn(async () => ({ revision: "folder-new" }));
+  Object.assign(f.imports, { checkFolder });
+  f.emit({
+    configuration: {
+      ...configuration,
+      catalog: { ...configuration.catalog, plugins: [f.plugin, folder] },
+    },
+  });
+  let release!: () => void;
+  f.imports.checkGit.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve(f.discovered);
+      }),
+  );
+  f.mount();
+  try {
+    await act(async () => {});
+    expect(f.imports.checkGit).toHaveBeenCalledOnce();
+    expect(checkFolder).toHaveBeenCalledOnce();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_600_000);
+    });
+    expect(checkFolder).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_600_000);
+    });
+    expect(checkFolder).toHaveBeenCalledTimes(3);
+    expect(f.imports.checkGit).toHaveBeenCalledOnce();
+  } finally {
+    await act(async () => release());
   }
 });

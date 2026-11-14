@@ -69,6 +69,7 @@ import { KeyLost } from "./KeyLost";
 import { KeyRestore } from "./KeyRestore";
 import { LinkedKeyCheck, useSession } from "./LinkedKeyCheck";
 import { useLegacyIdentityOffer } from "./LegacyIdentityOffer";
+import { NextCommunity } from "./NextCommunity";
 import { OnboardingScreen } from "./OnboardingScreen";
 import { OnboardingWordmark } from "./OnboardingWordmark";
 import { ProfileStep } from "./ProfileStep";
@@ -486,6 +487,34 @@ export function Welcome({
             : progress.status === "paused"
               ? `paused:${progress.at}`
               : progress.status;
+  // A failed setup that nothing on its page continues: the link was refused
+  // for good, the restart's sign-in reached another account, or the failure
+  // can't be tried again and offers no other way on. Only leaving is offered,
+  // which drops a held community.
+  const stuck =
+    progress.status === "failed" &&
+    (progress.bound ||
+      progress.error === WRONG_ACCOUNT ||
+      (!progress.retryable && !progress.unsupportedBackup));
+  // The community held to join, named as the step after the page showing,
+  // with the lookup's answer when a link kept it, else the host alone. The one
+  // rule for where: the browser step in either state, then every setup page
+  // that still leads to its join, which is setup running, paused past the
+  // connect choice (already about the community), or failed with a way to
+  // continue. Nowhere else, so no page whose only way on drops it promises a
+  // join.
+  const nextCommunity =
+    finding &&
+    (page === "auth-waiting" ||
+      page === "auth-timeout" ||
+      progress.status === "running" ||
+      (progress.status === "paused" && progress.at !== "connect-choice") ||
+      (progress.status === "failed" && !stuck)) ? (
+      <NextCommunity
+        community={invited?.found ?? { host: new URL(finding).host }}
+        failed={progress.status === "failed"}
+      />
+    ) : undefined;
   // Existing identities, restore errors and a link that launched Buzz bypass
   // the landing, whose entrance alone uses the parser's hidden-window hold.
   // Release it as soon as that outcome is known, so no later landing starts
@@ -1112,6 +1141,7 @@ export function Welcome({
           <KeyImport
             expectedPubkey={linked}
             automaticBackup={!!current && (backedUp ? "kept" : true)}
+            next={nextCommunity}
             onLost={
               linked && current
                 ? () =>
@@ -1231,6 +1261,7 @@ export function Welcome({
             recovery={current.recovery}
             email={auth.account?.email}
             expectedPubkey={linked}
+            next={nextCommunity}
             onBack={() => back("welcome-back", "restore")}
             onImport={() => pause("key-import")}
             onLost={() =>
@@ -1257,6 +1288,7 @@ export function Welcome({
         return linked ? (
           <KeyLost
             owned={owned}
+            next={nextCommunity}
             onBack={() =>
               back("welcome-back", restorable ? "restore" : "import")
             }
@@ -1380,12 +1412,7 @@ export function Welcome({
       <WireframeScreen>
         <BrowserSignIn
           timedOut={timedOut}
-          // The lookup's answer when a link kept it, else the host alone.
-          community={
-            finding
-              ? (invited?.found ?? { host: new URL(finding).host })
-              : undefined
-          }
+          next={nextCommunity}
           onOpen={timedOut ? resumeSignIn : () => start(opened.current)}
           onLeave={cancelSignIn}
         />
@@ -1562,8 +1589,13 @@ export function Welcome({
         onCreate={creatable ? () => setCreating(true) : undefined}
       />
     );
+  // Couldn’t finish setup and Lost your key? place the next community above
+  // their own actions; the frame adds it under the pages that end without any.
+  const ownActions =
+    progress.status === "failed" ||
+    (progress.status === "paused" && progress.at === "key-lost");
   return (
-    <WireframeScreen>
+    <WireframeScreen next={ownActions ? undefined : nextCommunity}>
       {progress.status === "done" ? (
         profileStep ? (
           <ProfileStep
@@ -1653,11 +1685,9 @@ export function Welcome({
           // with a key from an earlier launch.
           onBack={reads.current ? undefined : backToLanding}
           onSwitchAccount={reads.current ? leaveFailedSetup : undefined}
+          next={nextCommunity}
           onRetry={
-            !progress.retryable ||
-            progress.unsupportedBackup ||
-            progress.bound ||
-            progress.error === WRONG_ACCOUNT
+            progress.unsupportedBackup || stuck
               ? undefined
               : () => void setup.retry()
           }
@@ -1749,6 +1779,7 @@ function Failure({
   title,
   error,
   note,
+  next,
   onBack,
   backLabel = "Back",
   publicKey,
@@ -1762,6 +1793,8 @@ function Failure({
   error: string;
   /** Setup failed after the key was saved: say it is not lost, and what is undone. */
   note?: string | undefined;
+  /** What first run does once the failure is past, shown above the actions. */
+  next?: ReactNode;
   /** The way back or on; absent where the failure blocks and only Try again is offered. */
   onBack?: (() => void) | undefined;
   backLabel?: string | undefined;
@@ -1801,6 +1834,7 @@ function Failure({
         />
       )}
       {publicKey && <PublicKeyPanel publicKey={publicKey} />}
+      {next}
       {/* Footer order: secondary first, primary last. */}
       <div data-onboarding-actions="">
         {onBack && (

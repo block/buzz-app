@@ -15,11 +15,14 @@ export function OnboardingScreen({
   labelledBy,
   welcome = false,
   intro,
+  next,
   children,
 }: {
   labelledBy: string;
   welcome?: boolean;
   intro: ReactNode;
+  /** What first run does after this page, shown between it and its actions. */
+  next?: ReactNode;
   children: ReactNode;
 }) {
   const introPhase = useWelcomeIntro(welcome);
@@ -28,6 +31,7 @@ export function OnboardingScreen({
   const content = (
     <>
       <div className={styles.brand}>{intro}</div>
+      {next}
       <div className={styles.actions} inert={introPhase !== "done"}>
         {children}
       </div>

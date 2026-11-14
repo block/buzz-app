@@ -68,6 +68,11 @@ mention anyone. Explicit agent watches on that room can still receive them.
   stops waiting, the page changes to **Finish in your browser**: finish there,
   then choose **Continue**, or the back arrow to return to the page you
   started from.
+  After you sign in, Buzz keeps naming that community while it gets your
+  account ready: on **Getting ready**, on any page that asks about an existing
+  key, and on **Couldn’t finish setup** while **Try again** or **Continue
+  without backup** can still finish it. It stops once you reach **Join
+  Community**, or once the app opens and asks you to join there.
   Opening a community invite or **Open in Buzz** link before this computer has
   an identity brings the desktop app forward on that community instead of the
   plain welcome screen: Buzz looks the community up, then, for a community

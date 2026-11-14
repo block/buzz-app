@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { type ReactNode, useEffect, useRef, useSyncExternalStore } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { Recovery } from "./builderlab-account";
 import { OnboardingBack } from "./OnboardingBack";
@@ -14,6 +14,7 @@ export function KeyRestore({
   onLost,
   onImport,
   onInstalled,
+  next,
 }: {
   recovery: Recovery;
   expectedPubkey: string;
@@ -22,6 +23,8 @@ export function KeyRestore({
   onLost?: (() => void) | undefined;
   onImport: () => void;
   onInstalled: () => void;
+  /** What first run does after the restore, shown above the actions. */
+  next?: ReactNode;
 }) {
   const state = useSyncExternalStore(recovery.subscribe, recovery.snapshot);
   const candidate =
@@ -68,6 +71,7 @@ export function KeyRestore({
   return (
     <OnboardingScreen
       labelledBy="welcome-title"
+      next={next}
       intro={
         <>
           <h1

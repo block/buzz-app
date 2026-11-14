@@ -1961,10 +1961,15 @@ it("Use an existing key from the choice imports the key with no sign-in, no link
     </Welcome>,
   );
   await connectChoicePage(user, relay);
+  // The choice is about the community already; the import it opens names it
+  // as the step after.
+  expect(screen.queryByText(JOIN_NEXT)).toBeNull();
   await user.click(screen.getByRole("button", { name: "Use an existing key" }));
   expect(
     screen.getByRole("heading", { name: "Enter your private key" }),
   ).toBeVisible();
+  expect(screen.getByText(JOIN_NEXT)).toBeVisible();
+  expect(connectChoiceHost()).toBeVisible();
   // No account, so no linked key to expect: any valid nsec is accepted.
   await user.paste(ownedNsec);
   expect(screen.queryByRole("alert")).toBeNull();
@@ -1985,6 +1990,7 @@ it("Use an existing key from the choice imports the key with no sign-in, no link
   expect(invoke).toHaveBeenCalledWith("identity_import", { nsec: ownedNsec });
   expect(screen.getByRole("heading", { name: "Getting ready" })).toBeVisible();
   expect(screen.getByRole("status")).toHaveTextContent("Importing your key…");
+  expect(screen.getByText(JOIN_NEXT)).toBeVisible();
   expect(screen.queryByLabelText("Private key (nsec)")).toBeNull();
   expectNoImportActions();
   expect(screen.queryByText("Signed in")).toBeNull();
@@ -5008,6 +5014,8 @@ it.each(["launches Buzz", "arrives on the landing"])(
       expect(await waitingHeading()).toHaveFocus();
       expect(screen.getByText(JOIN_NEXT)).toBeVisible();
       expect(screen.getByText("relay.example.com:8443")).toBeVisible();
+      expectNextBefore("Cancel");
+      expectNextBefore(REOPEN);
       expect(screen.queryByRole("heading", { name: "Buzz" })).toBeNull();
       expect(relay.calls).toEqual(lookupCalls(relay));
       await act(async () => signedIn.resolve(credential));
@@ -5554,6 +5562,8 @@ it("a failed sign-in from the invited page leaves through Back to the plain land
   expect(
     await screen.findByRole("heading", { name: "Couldn’t sign in" }),
   ).toBeVisible();
+  // Its only way on drops the invite, so the page promises no join.
+  expect(screen.queryByText(JOIN_NEXT)).toBeNull();
   // Opened again over the failure: looked up again, and asks again.
   links.arrive(link);
   expect(await invitedHeading("design")).toBeVisible();
@@ -6126,6 +6136,327 @@ it("Open Buzz that launches Buzz for the first time releases the landing's hidde
     mark.remove();
     signedIn.resolve(credential);
     identity.dispose();
+  }
+});
+
+/** What a failed setup says of the held community instead of `JOIN_NEXT`. */
+const JOIN_AFTER_SETUP = "After setup, you’ll join this community.";
+const HELD = ["an invite link", "a typed address"] as const;
+/**
+ * First run signed in as `account` while holding `nativeRelay`'s community,
+ * from its invite link or from its address typed under Other options, on a
+ * build whose Builderlab hosts it.
+ */
+async function signedInHolding(
+  how: (typeof HELD)[number],
+  account: AccountFor,
+) {
+  const relay = nativeRelay(keypair());
+  const first = firstRunWithLinks({
+    launch: how === "an invite link" ? [osInvite(relay.origin)] : [],
+    connect: vi.fn().mockResolvedValue(credential),
+    servers: hostingServers,
+    account,
+  });
+  const user = userEvent.setup();
+  if (how === "an invite link") {
+    await invitedHeading("relay.example.com:8443");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+  } else {
+    await screen.findByRole("button", { name: SIGN_IN });
+    await user.type(urlField(), "relay.example.com:8443{Enter}");
+  }
+  return { relay, user, ...first };
+}
+/**
+ * The held community named as the step after the page showing: `line` above
+ * its row, which keeps the lookup's icon for a link and the host alone for a
+ * typed address.
+ */
+function expectNext(
+  container: HTMLElement,
+  how: (typeof HELD)[number],
+  line = JOIN_NEXT,
+) {
+  expect(screen.getByText(line)).toBeVisible();
+  expect(screen.getByText("relay.example.com:8443")).toBeVisible();
+  expect(
+    container.querySelector('img[src="https://cdn.example.com/icon.png"]') !==
+      null,
+  ).toBe(how === "an invite link");
+}
+/**
+ * The page reads in the order it shows: the held community's line and row
+ * come before the action named `action`, in the document as on screen.
+ */
+function expectNextBefore(action: string, line = JOIN_NEXT) {
+  const control = screen.getByRole("button", { name: action });
+  for (const text of [line, "relay.example.com:8443"])
+    expect(
+      screen.getByText(text).compareDocumentPosition(control) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+}
+const expectNoNext = () => {
+  expect(screen.queryByText(JOIN_NEXT)).toBeNull();
+  expect(screen.queryByText(JOIN_AFTER_SETUP)).toBeNull();
+};
+
+it.each(HELD)(
+  "%s is named as the next step on setup's progress page, and no longer on Join Community or a join error, which are about it",
+  async (how) => {
+    const linked = deferred<string | null>();
+    const { relay, user, container } = await signedInHolding(
+      how,
+      (...args) => ({ ...unlinked(...args), linkedKey: () => linked.promise }),
+    );
+    try {
+      // Setup holds on its first step, the account check.
+      expect(
+        await screen.findByRole("heading", { name: "Getting ready" }),
+      ).toBeVisible();
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Checking your account…",
+      );
+      expectNext(container, how);
+      // The relay refuses the join: the code a link carries, the key otherwise.
+      relay.admitted = false;
+      relay.refusal = "invite_expired";
+      await act(async () => linked.resolve(null));
+      expect(
+        await screen.findByRole("heading", { name: "Join Community" }),
+      ).toBeVisible();
+      expect(screen.getByText(relay.origin)).toBeVisible();
+      expectNoNext();
+      await user.click(screen.getByRole("button", { name: "Join" }));
+      expect(
+        await screen.findByRole("heading", {
+          name: "This community needs an invite",
+        }),
+      ).toBeVisible();
+      expectNoNext();
+    } finally {
+      linked.resolve(null);
+    }
+  },
+);
+
+it.each(HELD)(
+  "%s is named as the next step where setup pauses for a linked account: on Welcome back, on the key import it opens and on Lost your key?, above each page's actions",
+  async (how) => {
+    const { user, container } = await signedInHolding(
+      how,
+      linkedTo(owned.pubkey),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Continue with this key" }),
+    ).toBeVisible();
+    expectNext(container, how);
+    await user.click(screen.getByRole("button", { name: /^Saved key,/ }));
+    expect(
+      screen.getByRole("heading", { name: "Enter your private key" }),
+    ).toBeVisible();
+    expectNext(container, how);
+    expectNextBefore("Continue with this key");
+    await user.click(screen.getByRole("button", { name: "I lost my key" }));
+    expect(
+      await screen.findByRole("heading", { name: "Lost your key?" }),
+    ).toBeVisible();
+    expectNext(container, how);
+    expectNextBefore("Go back");
+    expectNextBefore("Start over with a new key");
+  },
+);
+
+it.each(HELD)(
+  "%s is named as the next step while Restore your key restores the account's backed-up key",
+  async (how) => {
+    // A restore the browser holds: the page rests on its waiting state.
+    const waitingOnBrowser = { status: "waiting" } as const;
+    const beginRecovery = vi.fn(() => Promise.resolve());
+    const { container } = await signedInHolding(
+      how,
+      linkedTo(owned.pubkey, [], {
+        backupStatus: () => Promise.resolve([owned.pubkey]),
+        recovery: {
+          subscribe: () => () => {},
+          snapshot: () => waitingOnBrowser,
+          beginRecovery,
+          installRecovery: unexpectedRecovery,
+          cancelRecovery: () => Promise.resolve(true),
+        },
+      }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Restore your key" }),
+    ).toBeVisible();
+    expect(beginRecovery).toHaveBeenCalledTimes(1);
+    expectNext(container, how);
+    expectNextBefore("Cancel");
+  },
+);
+
+it.each(HELD)(
+  "%s is named on a failed setup as what follows it, and no longer once Try again reaches Join Community and the profile step",
+  async (how) => {
+    const linkedKey = vi
+      .fn<FirstRunAccount["linkedKey"]>()
+      .mockRejectedValueOnce(
+        new Error("Builderlab account check failed (HTTP 500)"),
+      )
+      .mockResolvedValue(null);
+    const { user, container } = await signedInHolding(how, (...args) => ({
+      ...unlinked(...args),
+      linkedKey,
+    }));
+    expect(
+      await screen.findByRole("heading", { name: "Couldn’t finish setup" }),
+    ).toBeVisible();
+    // Nothing comes next by itself here, so the line says what setup leads to.
+    expectNext(container, how, JOIN_AFTER_SETUP);
+    expect(screen.queryByText(JOIN_NEXT)).toBeNull();
+    expectNextBefore("Use a different account", JOIN_AFTER_SETUP);
+    expectNextBefore("Try again", JOIN_AFTER_SETUP);
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(
+      await screen.findByRole("heading", { name: "Join Community" }),
+    ).toBeVisible();
+    expectNoNext();
+    await user.click(screen.getByRole("button", { name: "Join" }));
+    expect(
+      await screen.findByRole("heading", { name: "Set up your profile" }),
+    ).toBeVisible();
+    expectNoNext();
+  },
+);
+
+it.each(HELD)(
+  "%s is not named on a failed setup that only leaving is left for: Builderlab refused the link for good, and Use a different account drops it",
+  async (how) => {
+    const { identity, user } = await signedInHolding(
+      how,
+      unlinkedWith(() =>
+        Promise.reject(new ApiFailure("identity_already_bound", "Refused.")),
+      ),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Couldn’t finish setup" }),
+    ).toBeVisible();
+    expect(screen.getByText(keyUnlinkedNote)).toBeVisible();
+    // Nothing here continues setup, so the page promises no join.
+    expect(landingButtons()).toEqual(["Use a different account"]);
+    expectNoNext();
+    expect(screen.queryByText("relay.example.com:8443")).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Use a different account" }),
+    );
+    expect(welcomeHeading()).toBeVisible();
+    expectNoNext();
+    identity.dispose();
+  },
+);
+
+it("a typed address is not named when the sign-in after Replace's restart reached another account, which only leaving is left for", async () => {
+  const relay = nativeRelay(keypair());
+  localStorage.setItem(
+    AFTER_RESTART,
+    JSON.stringify({ at: Date.now(), expected: owned.pubkey }),
+  );
+  // The restart's own sign-in waits on the browser; the next one answers.
+  const connect = vi
+    .fn<(signal: AbortSignal, options: SignInOptions) => Promise<Credential>>()
+    .mockImplementationOnce(() => new Promise(() => {}))
+    .mockResolvedValue(credential);
+  firstRunWithLinks({ connect, servers: hostingServers });
+  const user = userEvent.setup();
+  // Cancel keeps the key the restart expects; the typed address signs in for
+  // it, as an account with no linked key.
+  await waitingHeading();
+  await user.click(cancelWaiting());
+  await user.type(urlField(), "relay.example.com:8443{Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "You signed in to a different Builderlab account than the one whose key Buzz restarted to restore.",
+  );
+  expect(
+    screen.getByRole("heading", { name: "Couldn’t finish setup" }),
+  ).toBeVisible();
+  expect(landingButtons()).toEqual(["Use a different account"]);
+  expectNoNext();
+  expect(screen.queryByText("relay.example.com:8443")).toBeNull();
+  expect(relay.calls).toEqual(lookupCalls(relay));
+});
+
+it("an invite link stays named on a failed setup that Continue without backup can still finish", async () => {
+  const { user, container } = await signedInHolding(
+    "an invite link",
+    unlinkedWith(() => Promise.resolve(), {
+      backUp: () => Promise.reject(new BackupError("unavailable")),
+    }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Couldn’t finish setup" }),
+  ).toBeVisible();
+  expect(landingButtons()).toEqual([
+    "Use a different account",
+    "Continue without backup",
+  ]);
+  expectNext(container, "an invite link", JOIN_AFTER_SETUP);
+  expectNextBefore("Continue without backup", JOIN_AFTER_SETUP);
+  await user.click(
+    screen.getByRole("button", { name: "Continue without backup" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  expectNoNext();
+});
+
+it("an invite link is not named on a failed setup that offers no Try again, which only leaving is left for", async () => {
+  // What the account client throws when the Builderlab sign-in has ended.
+  await signedInHolding(
+    "an invite link",
+    unlinkedWith(() =>
+      Promise.reject(
+        Object.assign(new Error("Your Builderlab sign-in ended."), {
+          retryable: false,
+        }),
+      ),
+    ),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Couldn’t finish setup" }),
+  ).toBeVisible();
+  expect(landingButtons()).toEqual(["Use a different account"]);
+  expectNoNext();
+});
+
+it("no community is named as a next step when first run holds none: not on setup's progress page, on Connect to a community or on Create a community", async () => {
+  const backedUp = deferred<void>();
+  const page = connectPage(creatingWith({ backUp: () => backedUp.promise }));
+  try {
+    // Setup holds on the backup, with no address typed and no link opened.
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Backing up your key…",
+      ),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Getting ready" }),
+    ).toBeVisible();
+    expectNoNext();
+    await act(async () => backedUp.resolve());
+    const { identity, user } = await page;
+    expectNoNext();
+    await user.click(
+      screen.getByRole("button", { name: "Or create a community" }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Create a community" }),
+    ).toBeVisible();
+    expectNoNext();
+    identity.dispose();
+  } finally {
+    backedUp.resolve();
   }
 });
 

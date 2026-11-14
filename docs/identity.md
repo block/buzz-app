@@ -45,7 +45,8 @@ address that signs in at once, or a sign-in resumed after a restart or by
 **Open Buzz**. It is headed **Continue in your browser** and says to create the
 account or sign in there, and that Buzz is waiting and carries on by itself.
 When first run holds a community to join afterwards, it adds *Next, you’ll join
-this community* above that community's row (`FoundCommunityRow.tsx`): the
+this community* above that community's row (`NextCommunity.tsx`, with the row
+of `FoundCommunityRow.tsx`): the
 lookup's name, icon and host for a link to a community this build's Builderlab
 hosts, whose answer the invited page keeps; the host alone for a typed address
 and for any community reached through **Connect to your community**, by link
@@ -78,6 +79,31 @@ the browser's session finishes, and waits again. The back arrow is named
 **Cancel** does for that sign-in, keeping the invite or typed address the page
 names and looking nothing up again; only **Back** from a failed sign-in
 (*Couldn’t sign in*) returns to the plain welcome screen.
+
+The same element stays from the sign-in's answer until first run hands the
+held address on: setup ends on **Join Community** for it, or, when the
+account's saved communities open the app first, the gate lifts and the join
+dialog takes it. So signing in, setup and joining read as separate steps, and
+a pause or failure still shows the community. It shows on **Getting ready**,
+whichever step runs; on the pauses after sign-in (**Welcome back**, **Enter
+your private key**, **Restore your key** and **Lost your key?**), and on
+**Enter your private key** opened from **Connect to your community**; and on
+**Couldn’t finish setup** while an action there continues setup (**Try again**
+or **Continue without backup**), where the line reads *After setup, you’ll
+join this community*, since nothing follows by itself there. It is the last
+thing before a page's footer actions, in reading order as on screen;
+**Getting ready** and **Welcome back**, whose choices are rows in the page,
+have no footer and end with it. It shows only what first run already holds: nothing is
+looked up or stored for it, and it does not move as setup's steps change. It
+is absent where the community is the page's own subject (the lookup, **Connect
+to your community**, **Join Community**, a join error and the profile step);
+on a page whose only way on drops the address, which is *Couldn’t sign in*
+and **Couldn’t finish setup** with only **Use a different account** left
+(Builderlab refused the link for good, or the sign-in after a restart reached
+another account); on **Create a community**; and whenever no address is held.
+It adds no action: **Use a different account** still returns to the welcome
+screen with no community held, whether it came from a link or a typed address
+(the typed text stays in its field).
 
 A build's Builderlab is its first sign-in server, the built-in one unless the
 build adds another (see

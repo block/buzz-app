@@ -494,17 +494,24 @@ it("switches message density, restores it, and retries a failed save", async () 
   const user = userEvent.setup();
   const density = screen.getByRole("combobox", { name: "Message density" });
   const preview = screen.getByRole("figure", { name: "Appearance preview" });
-  expect(preview.querySelector("[data-message-density]")).toHaveAttribute(
-    "data-message-density",
-    "default",
+  // The preview is drawn by the timeline's own rows, with the viewer's
+  // message aligned as theirs.
+  expect(preview).toHaveTextContent("Could you skim them before standup?");
+  // Bylines read as today's clock, not as a past date ("Jan 15 at 9:41 AM").
+  const byline = preview.querySelector('time > [aria-hidden="true"]');
+  expect(byline).toHaveTextContent("9:41");
+  expect(byline).not.toHaveTextContent(" at ");
+  expect(preview.querySelector("[data-viewer-message]")).toHaveTextContent(
+    "On it. Comments by 10.",
   );
   expect(density).toHaveTextContent("Default");
   await user.click(density);
   await user.click(await screen.findByRole("option", { name: "Compact" }));
-  expect(preview.querySelector("[data-message-density]")).toHaveAttribute(
-    "data-message-density",
-    "compact",
+  // A flat list no longer aligns the viewer's message apart.
+  await waitFor(() =>
+    expect(preview.querySelector("[data-viewer-message]")).toBeNull(),
   );
+  expect(preview).toHaveTextContent("On it. Comments by 10.");
   expect(preview.querySelector("[data-message-width]")).toHaveAttribute(
     "data-message-width",
     "wide",

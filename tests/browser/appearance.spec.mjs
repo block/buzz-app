@@ -261,10 +261,9 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
       "background-color",
       colors["surface-panel"],
     );
-    await expect(preview.locator("[data-own]")).toHaveCSS(
-      "background-color",
-      colors["surface-message-own"],
-    );
+    await expect(
+      preview.locator("[data-own][data-message-action-anchor]"),
+    ).toHaveCSS("background-color", colors["surface-message-own"]);
   }
   await button(page, "Magenta accent color").click();
   const pink = await button(page, "Magenta accent color").evaluate((el) => {
@@ -275,10 +274,9 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     probe.remove();
     return color;
   });
-  await expect(preview.locator("[data-own]")).toHaveCSS(
-    "background-color",
-    pink,
-  );
+  await expect(
+    preview.locator("[data-own][data-message-action-anchor]"),
+  ).toHaveCSS("background-color", pink);
   await page
     .getByRole("region", { name: "Appearance", exact: true })
     .screenshot({
@@ -632,7 +630,8 @@ test("Message width defaults to Narrow, widens the conversation by 50%, and rest
   await expect(choice).toHaveText("Narrow");
   const previewColumn = page
     .getByRole("figure", { name: "Appearance preview" })
-    .locator("[data-message-width]");
+    .locator("[data-message-width] [data-layout]")
+    .first();
   const previewWidth = () =>
     previewColumn.evaluate((node) => node.getBoundingClientRect().width);
   const narrowPreview = await previewWidth();

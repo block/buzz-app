@@ -7,8 +7,10 @@
   margin-block-end: var(--space-3);
   margin-inline: var(--space-1);
 }
+/* Wrap from the tabs' own width, so New leaves the row only when the labels
+   cannot fit beside it, not at every narrow sidebar width. */
 .sidebarScope {
-  flex: 1 1 10rem;
+  flex: 1 1 auto;
   min-width: 0;
 }
 .sidebarGroup + .sidebarGroup:not([hidden]) {

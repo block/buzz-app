@@ -274,6 +274,15 @@ export function continuedMention(
       .length > 0
   );
 }
+/** Whether one of the choice's known names equals the query (README section 5). */
+export function namesQuery(choice: MentionChoice, query: string) {
+  const needle = normalized(query);
+  return (
+    !!needle &&
+    choice.aliases.length > 0 &&
+    choiceNames(choice).some((name) => normalized(name) === needle)
+  );
+}
 /**
  * Space is intent only for one exact key across the full, uncapped choice set.
  * A longer name blocks it as `continuedMention` says; only choices `among`

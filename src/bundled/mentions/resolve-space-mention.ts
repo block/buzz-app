@@ -6,7 +6,11 @@ import { allowsOutsideMentions } from "../../features/messages/mention-admission
 import type { MentionRecipient } from "../../features/messages/mention-draft";
 import type { MentionRoster } from "../../features/messages/draft-mention-roster";
 import type { Agent } from "../../features/agents/service";
-import { mentionCandidates } from "./mention-candidates";
+import {
+  elsewhereMatches,
+  mentionCandidates,
+  offeredElsewhere,
+} from "./mention-candidates";
 import { continuingNames } from "./mention-ranking";
 import { namedCandidates, spaceMention } from "./use-mention-choices";
 import { teamBlocksSpace } from "./use-team-mentions";
@@ -30,7 +34,7 @@ export type SpaceMentionScope = {
   selected: readonly MentionRecipient[];
   /** Current saved names, also read after asynchronous directory resolution. */
   teamNames?: (() => readonly string[]) | undefined;
-  /** The owner's agents in their other communities, as the chooser offers them. */
+  /** The owner's agents in their other communities (`Agents.joinable()`). */
   elsewhere?: readonly Pick<Agent, "pubkey" | "name" | "relay">[] | undefined;
 };
 
@@ -127,14 +131,25 @@ async function resolve(
         "background",
       )
       .catch(() => {});
-  if (invite) {
+  // The chooser holds the owner's agents from other communities until a
+  // complete read lists the owner's agents here, for a name one of them
+  // matches; invited agents may be partial.
+  const elsewhereNamed = elsewhereMatches(
+    session,
+    channelId,
+    inviteAgents,
+    roster,
+    elsewhere,
+    name,
+  );
+  if (invite || elsewhereNamed) {
     const release = session.agentChoices.retain();
     try {
       session.agentChoices.ensure(true);
       await settled(
         session.agentChoices.subscribe,
         session.agentChoices.snapshot,
-        (agents) => !agents.pending || agents.status === "ready",
+        (agents) => !agents.pending || (invite && agents.status === "ready"),
         signal,
       );
     } finally {
@@ -144,16 +159,6 @@ async function resolve(
   const kit = fullSession(session)?.channelKit;
   if (teamBlocksSpace(kit?.snapshot() ?? { entries: [] }, name, teamNames?.()))
     return null;
-  const local = new Set(
-    mentionCandidates(
-      session,
-      channelId,
-      inviteAgents,
-      roster,
-      undefined,
-      elsewhere,
-    ).map((c) => c.recipient.pubkey),
-  );
   const profiles = session.profiles.snapshot();
   const unnamed = session.profiles.unnamed?.();
   const missingNames = channel?.members?.some(
@@ -168,6 +173,19 @@ async function resolve(
       teamBlocksSpace(kit?.snapshot() ?? { entries: [] }, query, teamNames?.())
     )
       return null;
+    // Read when deciding, as the chooser does on each render: a library read
+    // that lands during the directory lookup offers its agents here too.
+    const offered = offeredElsewhere(session, elsewhere, query);
+    const local = new Set(
+      mentionCandidates(
+        session,
+        channelId,
+        inviteAgents,
+        roster,
+        undefined,
+        offered,
+      ).map((c) => c.recipient.pubkey),
+    );
     const choices = namedCandidates(
       session,
       channelId,
@@ -175,7 +193,7 @@ async function resolve(
       roster,
       selected,
       people,
-      elsewhere,
+      offered,
     );
     const pubkey = spaceMention(choices, local, query, {
       pending: false,
@@ -211,6 +229,9 @@ async function resolve(
   // directory, as it does in the chooser.
   const direct = decide([], false, name);
   if (direct) return direct;
+  // A failed read keeps them held, and directory people with them: the full
+  // choice set stays unknown, as in the chooser.
+  if (elsewhereNamed && !session.agentChoices.snapshot().complete) return null;
   const outside =
     !roster &&
     !invite &&

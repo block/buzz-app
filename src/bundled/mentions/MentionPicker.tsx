@@ -183,6 +183,21 @@ export function MentionPicker({
   // Underline with the same rule that ranks mentions.
   const matched = (label: string) =>
     search.trim() ? matchPerson(label, search)?.positions : undefined;
+  // Agent rows may still arrive: the agent list is loading, or the chooser
+  // waits on a read of it (inviting, or the hold of README section 6) that
+  // the combined status misses once native inventory is ready. Members and a
+  // roster have their own status text.
+  const agentsLoading = agents.status === "loading" || model.agentsPending;
+  const agentsFailed = agents.status === "error" || !!agents.error;
+  // No results is only known once nothing is pending and the agent read has
+  // not failed: Retry may still bring rows.
+  const empty =
+    !!members &&
+    !model.pending &&
+    !agentsLoading &&
+    !agentsFailed &&
+    !candidates.length &&
+    !teams.choices.length;
   return (
     <PopoverRoot
       open={open && !disabled}
@@ -340,15 +355,15 @@ export function MentionPicker({
                 </Button>
               </>
             )}
-            {agents.status === "loading" && !candidates.length && (
+            {agentsLoading && !candidates.length && (
               <p role="status">Loading agents…</p>
             )}
-            {(agents.status === "error" || !!agents.error) && (
+            {agentsFailed && (
               <Button
                 type="button"
                 onClick={() =>
                   void session.agentChoices.refresh(
-                    !!inviteAgents || teams.includeLegacy,
+                    model.includeLegacy || teams.includeLegacy,
                   )
                 }
               >
@@ -526,9 +541,7 @@ export function MentionPicker({
                   onClick={() => chooseTeam(team)}
                 />
               ))}
-              {members && !candidates.length && !teams.choices.length && (
-                <p>No matching channel members.</p>
-              )}
+              {empty && <p>No matching channel members.</p>}
               {audience?.named && (
                 <p className="text-caption text-subtle">
                   Your message tags{" "}

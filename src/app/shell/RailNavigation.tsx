@@ -433,7 +433,7 @@ export function RailNavigation({
       ? entry.target.channelId === target.channelId &&
           (!entry.target.messageId ||
             entry.target.messageId === target.messageId)
-      : targetKey(entry.target) === targetKey(target);
+      : keyOf(entry.target) === keyOf(target);
   };
   const artwork = (entry: RailEntry, avatarOnly = false, feed = false) => (
     <RailEntryArtwork
@@ -481,9 +481,9 @@ export function RailNavigation({
   const current = entries.find(
     (entry) =>
       entry.target.kind !== "person" &&
-      targetKey(entry.target) === targetKey(navigation.entry.target),
+      keyOf(entry.target) === keyOf(navigation.entry.target),
   ) ?? {
-    id: `view:${targetKey(navigation.entry.target)}`,
+    id: `view:${keyOf(navigation.entry.target)}`,
     label: pages.find((page) => page.key === selected)?.title ?? "Current view",
     kind: "page" as const,
     target: navigation.entry.target,
@@ -1128,6 +1128,16 @@ const unreadIn = Object.fromEntries(
     },
   ]),
 ) as Record<ActivityView["filter"], ConversationQuery>;
+/** Entries and visits keep their targets, so each is serialized once. */
+const targetKeys = new WeakMap<object, string>();
+function keyOf(target: Exclude<RailEntry["target"], { kind: "person" }>) {
+  let key = targetKeys.get(target);
+  if (key === undefined) {
+    key = targetKey(target);
+    targetKeys.set(target, key);
+  }
+  return key;
+}
 const noSubscription = () => () => {};
 const pluginCatalog: RailEntry = {
   id: "settings:plugins",

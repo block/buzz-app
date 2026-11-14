@@ -96,6 +96,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
           "buzz.file-viewer",
           "buzz.drafts-and-sent",
           "buzz.changesets",
+          "buzz.link-previews",
         ].includes(plugin.manifest.id),
         plugin.manifest.id,
       );

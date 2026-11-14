@@ -382,6 +382,28 @@ test("Team's All is a feed: a channel's row gives way to the event showing its m
   ]);
 });
 
+test("a mention that started a thread is one row in the feed, the thread", () => {
+  const { session, thread, inbox } = fixture([{ id: "a" }]);
+  const index = conversationIndex(session);
+  index.watch(feed, () => {});
+  thread("a", { rootId: "r1", createdAt: 7, unreadCount: 1 });
+  // The inbox names a mention by its channel and group, as it does a thread.
+  const mention = {
+    id: "a:r1",
+    channelId: "a",
+    messageId: "r1",
+    authorId: "them",
+    preview: "hey",
+    createdAt: 5,
+    unreadCount: 1,
+    manual: false,
+  };
+  inbox([{ ...mention, mention }]);
+
+  expect(index.keys(feed)).toEqual(["e:a:r1"]);
+  expect(index.keys({ ...feed, filter: "mentions" })).toEqual(["e:a:r1"]);
+});
+
 test("a sender filter keeps what people, or agents, sent", () => {
   const { session, message, thread, profile, agents } = fixture([
     { id: "a" },

@@ -358,9 +358,13 @@ function createConversationIndex(session: RelaySession): ConversationIndex {
     };
     const all = feed(query);
     if (query.filter === "threads" || all) events(threads, () => true);
-    // A mention inside a thread is that thread's row in the feed.
+    // A mention inside a thread, or one that started a thread, is that
+    // thread's row in the feed.
     if (query.filter === "mentions" || all)
-      events(mentions, (event) => !all || !event.rootId);
+      events(
+        mentions,
+        (event) => !all || (!event.rootId && !threads.has(event.key)),
+      );
     if (query.filter === "reactions" || (all && !query.unread))
       for (const item of reactionsOf(query.sender).values()) {
         const record = records.get(item.channelId);

@@ -45,6 +45,10 @@ type Line = {
  * rows reads only where someone stops. A followed highlight waits as long as
  * search does after each key, and for its results. */
 const DWELL = 150;
+/** Windows after a message hit, in seconds, read in turn until one holds its
+ * next two messages: a minute, an hour, a week. */
+const SUCCESSOR_SPANS = [60, 3600, 7 * 86_400];
+const SUCCESSOR_PAGE = 20;
 const cache = new WeakMap<RelaySession, Map<string, readonly Line[]>>();
 
 const keyOf = (target: PeekTarget) =>
@@ -94,24 +98,35 @@ async function readLines(
     );
   if (target.kind === "message") {
     const where = { kinds: SEARCH_KINDS, "#h": [target.channelId] };
+    const others = (lines: readonly Line[]) =>
+      lines.filter(({ id }) => id !== target.messageId);
+    // Relay reads return the newest first, so a full page of a window may
+    // skip the replies just after the hit. Widen from a short window, and
+    // keep the last one that came back whole.
+    const successors = async () => {
+      let whole: Line[] = [];
+      for (const span of SUCCESSOR_SPANS) {
+        const page = await read({
+          ...where,
+          since: target.createdAt,
+          until: target.createdAt + span,
+          limit: SUCCESSOR_PAGE,
+        });
+        if (page.length >= SUCCESSOR_PAGE) break;
+        whole = others(page);
+        if (whole.length >= 2) break;
+      }
+      return whole;
+    };
     const [before, after] = await Promise.all([
       read({ ...where, until: target.createdAt, limit: 3 }),
-      read({
-        ...where,
-        since: target.createdAt,
-        until: target.createdAt + 6 * 3600,
-        limit: 20,
-      }),
+      successors(),
     ]);
-    const earlier = before
-      .filter(({ id }) => id !== target.messageId)
+    const earlier = others(before)
       .sort((a, b) => b.createdAt - a.createdAt)
       .slice(0, 2)
       .reverse();
-    const later = after
-      .filter(({ id }) => id !== target.messageId)
-      .sort((a, b) => a.createdAt - b.createdAt)
-      .slice(0, 2);
+    const later = after.sort((a, b) => a.createdAt - b.createdAt).slice(0, 2);
     return [
       ...earlier,
       {
@@ -212,8 +227,15 @@ export function SearchPreview({
     session.profiles.subscribe,
     session.profiles.snapshot,
   );
+  // Losing access to a channel republishes the list; held lines from a
+  // channel the viewer can no longer read drop out, cached or shown.
+  useSyncExternalStore(session.channels.subscribeList, session.channels.list);
+  const readable = (line: { channelId: string }) =>
+    !!session.channels.get?.(line.channelId);
   const target = row?.peek;
-  const { lines, failed } = useLines(session, target, follow);
+  const read = useLines(session, target, follow);
+  const lines = read.lines?.filter(readable);
+  const { failed } = read;
   const card = useRef<HTMLDivElement>(null);
   // Each row's preview opens at its top, then scrolls only as far as the hit
   // needs: a hit taller than the view starts at its own top, the last line of
@@ -235,7 +257,7 @@ export function SearchPreview({
     const past = rect.bottom + pad + edge - box.bottom;
     if (past > 0)
       view.scrollTop = Math.min(past, rect.top - box.top - edge - sliver);
-  }, [target && keyOf(target), lines, failed]);
+  }, [target && keyOf(target), read.lines, failed]);
   if (!row) return <p className="search-peek-empty">Nothing highlighted</p>;
   const message = target?.kind === "message" ? target : undefined;
   const Icon = (message ? row.detailIcon : undefined) ?? row.icon;
@@ -255,7 +277,7 @@ export function SearchPreview({
             createdAt: message.createdAt,
             text: message.text,
           },
-        ]
+        ].filter(readable)
       : []);
   return (
     <div ref={card} className="search-peek-card">

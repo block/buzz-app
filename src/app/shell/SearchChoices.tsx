@@ -369,7 +369,13 @@ export function SearchChoices({
   // biome-ignore lint/correctness/useExhaustiveDependencies: Freezes the order just shown, once per text.
   useLayoutEffect(() => {
     if (!moved || frozen.current) return;
-    frozen.current = { query, labels: merged.map(({ label }) => label) };
+    // Only groups on screen keep a place; one still empty arrives later.
+    frozen.current = {
+      query,
+      labels: merged
+        .filter((group) => group.destinations.length)
+        .map(({ label }) => label),
+    };
   }, [moved, query]);
   // A highlight is kept only while its row is in view: one scrolled away
   // would reopen with Enter choosing a row nobody can see.

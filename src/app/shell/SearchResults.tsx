@@ -254,11 +254,11 @@ export function SearchResults({
     () => parseSearchOperators(asking ? "" : query.trim()),
     [query, asking],
   );
-  // `in:@` names a person too, so it shares the author picker.
-  const authorPrompt = operatorMatches(
-    query,
-    /(?:^|\s)(from:@?|in:@)([^\s]*)$/gi,
-  ).at(-1);
+  // `in:@` names a person too, so it shares the author picker. A question
+  // for an agent is prose: its operators open no picker.
+  const authorPrompt = asking
+    ? undefined
+    : operatorMatches(query, /(?:^|\s)(from:@?|in:@)([^\s]*)$/gi).at(-1);
   // `me` is the viewer, never a name to pick.
   const pickerPrompt =
     !!authorPrompt &&
@@ -372,10 +372,11 @@ export function SearchResults({
     remote: readonly EventData[];
   }>();
   // Completing either from:name or from:@name selects an exact signed key.
-  const datePrompt = operatorMatches(
-    query,
-    /(?:^|\s)(after|before|on|during):([^\s]*)$/gi,
-  ).at(-1);
+  const datePrompt = asking
+    ? undefined
+    : operatorMatches(query, /(?:^|\s)(after|before|on|during):([^\s]*)$/gi).at(
+        -1,
+      );
   const showDateChoices =
     !!datePrompt && parseSearchOperators(datePrompt[0]).text !== "";
   const dateOperator = showDateChoices ? datePrompt?.[1]?.toLowerCase() : "";
@@ -542,10 +543,9 @@ export function SearchResults({
   const operatorChannelAmbiguous = inMatches.length > 1;
   // An unfinished `in:` or `in:#` names a channel to pick, as `from:` names a
   // person.
-  const channelPrompt = operatorMatches(
-    query,
-    /(?:^|\s)in:(?!@)(#?)([^\s]*)$/gi,
-  ).at(-1);
+  const channelPrompt = asking
+    ? undefined
+    : operatorMatches(query, /(?:^|\s)in:(?!@)(#?)([^\s]*)$/gi).at(-1);
   const showChannelPicker =
     !!channelPrompt && !isChannelUuid(channelPrompt[2] ?? "");
   const channelNeedle = (channelPrompt?.[2] ?? "").toLowerCase();

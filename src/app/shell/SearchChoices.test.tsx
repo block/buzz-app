@@ -229,6 +229,44 @@ it("keeps Peek's group order once the highlight moves, adding late groups at the
   expect(order()).toEqual(["People", "Chats", "Messages"]);
 });
 
+it("puts a group that was still empty when the order froze after the ones shown", () => {
+  const row = (key: string) => ({ key, label: key, icon: ChatCircleIcon, run });
+  const palette = (groups: { label: string; rows: string[] }[]) => (
+    <SearchChoices
+      query="lau"
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      peek={{ ranked: true, preview: () => null }}
+      groups={groups.map(({ label, rows }) => ({
+        label,
+        destinations: rows.map(row),
+      }))}
+    />
+  );
+  const order = () =>
+    screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"));
+  // People is still looking: an empty group, not drawn.
+  const { rerender } = render(
+    palette([
+      { label: "Channels", rows: ["channel"] },
+      { label: "People", rows: [] },
+      { label: "Messages", rows: ["message"] },
+    ]),
+  );
+  expect(order()).toEqual(["Channels", "Messages"]);
+  fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+  rerender(
+    palette([
+      { label: "Channels", rows: ["channel"] },
+      { label: "People", rows: ["lau"] },
+      { label: "Messages", rows: ["message"] },
+    ]),
+  );
+  expect(order()).toEqual(["Channels", "Messages", "People"]);
+});
+
 it("keeps Tab in the field before Peek has any group to show", () => {
   const action = {
     key: "scope:a",

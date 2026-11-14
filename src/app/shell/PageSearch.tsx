@@ -35,7 +35,13 @@ import {
 } from "./SearchChoices";
 import { SearchResults } from "./SearchResults";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
-import { writeView } from "../../shared/view-state";
+import { readView, writeView } from "../../shared/view-state";
+import {
+  hasDraftContent,
+  mentionDraft,
+} from "../../features/messages/mention-draft";
+import { attachmentDraftCount } from "../../features/messages/attachment-draft";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { usageScope } from "../../features/search/usage";
 import { unreadFirstPreference } from "../../features/search/unread-first-preference";
 
@@ -364,6 +370,9 @@ export function PageSearch({
   );
 }
 
+/** New chat's own draft, outside any workspace (SoloDraft's `solo` key). */
+const NEW_CHAT_DRAFT = "solo:new-draft";
+
 function CommunitySearch({
   place,
   services,
@@ -411,6 +420,7 @@ function CommunitySearch({
     services.communities.snapshot,
   );
   const connection = useRelayConnection(services.communities.relay);
+  const notify = useToastNotification();
   // Saved conversations stay searchable while the community connects or is
   // unreachable; message, people and open-channel search wait for the relay.
   const saved = !!connection.cached && !scopedChannelId;
@@ -563,23 +573,39 @@ function CommunitySearch({
           )
             return;
           // New chat opens with the question addressed to the agent; Enter
-          // sends it.
+          // sends it. An unsent draft there is kept unless the person asks to
+          // replace it.
+          const scopeKey = relay.scope;
           const tag = `@${agent.name}`;
-          writeView(relay.scope, "solo:new-draft", {
-            text: `${tag} Search Buzz to answer: ${question}`,
-            recipients: [
-              {
-                pubkey: agent.pubkey,
-                name: agent.name,
-                start: 0,
-                end: tag.length,
-              },
-            ],
-          });
+          const ask = () =>
+            writeView(scopeKey, NEW_CHAT_DRAFT, {
+              text: `${tag} Search Buzz to answer: ${question}`,
+              recipients: [
+                {
+                  pubkey: agent.pubkey,
+                  name: agent.name,
+                  start: 0,
+                  end: tag.length,
+                },
+              ],
+            });
+          const kept = hasDraftContent(
+            mentionDraft(readView<unknown>(scopeKey, NEW_CHAT_DRAFT, "")),
+            attachmentDraftCount(
+              connection.session,
+              `${scopeKey}:${NEW_CHAT_DRAFT}`,
+            ),
+          );
+          if (!kept) ask();
           close();
           void services.navigation.open(
-            soloDraftTarget(relay.scope, { agent: agent.pubkey }),
+            soloDraftTarget(scopeKey, { agent: agent.pubkey }),
           );
+          if (kept)
+            notify("New chat already has an unsent draft", "info", {
+              label: "Replace it",
+              onClick: ask,
+            });
         }}
         openAgentSession={(pubkey) => {
           const current = services.communities.snapshot();

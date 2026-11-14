@@ -3161,6 +3161,39 @@ it("does not read messages for punctuation-only operands after normalization", a
   }
 });
 
+it.each([
+  "ask: summarize in:#rel",
+  "ask: what did from:ali",
+  "ask: plans before:tom",
+])("keeps %s a question, opening no operator picker", async (query) => {
+  const relay = keypair(),
+    viewer = keypair();
+  const owner = createRelaySession(
+    scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+  );
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query={query}
+        onQueryChange={vi.fn()}
+        input={createRef<HTMLInputElement>()}
+        pages={[]}
+        openConversation={vi.fn()}
+        openAsk={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByRole("group", { name: /^New chat with/ }),
+    ).toBeInTheDocument();
+    for (const picker of ["Channels", "People", "Dates"])
+      expect(screen.queryByRole("group", { name: picker })).toBeNull();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 /** Message searches (not people or channel lookups) a session sends. */
 const isMessageSearch = (filters: readonly Filter[]) =>
   filters.some(

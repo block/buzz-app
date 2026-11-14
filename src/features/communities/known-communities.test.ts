@@ -206,3 +206,16 @@ it("reads old or malformed saved sync fields as empty and drops malformed entrie
     outbox: [{ url: a, removed: false }],
   });
 });
+
+it("never uploads a policy build's seeded pin, and still uploads its other memberships", () => {
+  const merged = mergeList(
+    emptySync(),
+    [
+      { id: "https://a.example", seeded: true },
+      { id: "https://b.example:8443" },
+    ],
+    [],
+    "alice",
+  );
+  expect(merged.state.outbox).toEqual([{ url: b, removed: false }]);
+});

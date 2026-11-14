@@ -1565,6 +1565,7 @@ pub(crate) async fn federated_identity_requires(
     relay: String,
 ) -> Result<bool, String> {
     let relay = config::canonical_relay(&relay)?;
+    crate::relay_policy::allowed(&relay)?;
     host.server_for(&relay)?
         .requires_federated_identity(&relay)
         .await

@@ -771,8 +771,10 @@ test.describe("reaction control rendering", () => {
     await emoji
       .locator("[data-reaction-glyph] > :first-child")
       .evaluate((el) => {
-        el.addEventListener(
-          "transitionrun",
+        // Capture during pointer entry: transitionrun is queued and can arrive
+        // after a short transition has already finished on a busy renderer.
+        el.closest("button").addEventListener(
+          "mouseenter",
           () => {
             for (const animation of el.getAnimations()) {
               animation.pause();

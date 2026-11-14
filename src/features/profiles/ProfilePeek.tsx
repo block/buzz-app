@@ -17,6 +17,7 @@ import {
 } from "react";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
 import { AgentAvatar } from "../agents/AgentAvatar";
+import { useMessageActionsClearance } from "../messages/useFloatingActionBar";
 import { usePresenceStatus } from "../presence/react";
 import { useMessageDensity } from "../../shared/theme/message-density";
 import type { RelaySession } from "../relay/session";
@@ -42,6 +43,8 @@ type ProfilePeekProps = {
   target: string;
   onOpen(target: string): boolean;
   onFocusChange?(focused: boolean): void;
+  /** A mention in message text: opens above it, clear of the message's actions. */
+  inline?: boolean;
 };
 
 /** The verified name this reader does not go by. Mounted only in an open
@@ -99,6 +102,7 @@ export function ProfilePeek({
   channelId,
   viewer,
   onFocusChange,
+  inline = false,
 }: ProfilePeekProps) {
   const [open, setOpen] = useState(false);
   const compact = useMessageDensity() === "compact";
@@ -109,6 +113,9 @@ export function ProfilePeek({
   const pointerLeft = useRef(false);
   const triggerId = useId();
   const previewId = useId();
+  const clearance = useMessageActionsClearance(() =>
+    document.getElementById(triggerId),
+  );
   useEffect(() => {
     if (!watchReturnPointer) return;
     // The profile can obscure its trigger, so a real pointer exit may not
@@ -207,6 +214,7 @@ export function ProfilePeek({
         // there they do not mark a route.
         const avatar = document.getElementById(triggerId);
         if (
+          !inline &&
           next &&
           !compact &&
           details.reason === "trigger-hover" &&
@@ -234,10 +242,15 @@ export function ProfilePeek({
           details.cancel();
           return;
         }
-        if (next) setHoveredAction(undefined);
+        if (next) {
+          setHoveredAction(undefined);
+          clearance.reset();
+        }
         setOpen(next);
       }}
-      side="right"
+      {...(inline
+        ? { side: "top", sideOffset: clearance.sideOffset }
+        : { side: "right" })}
       className={styles.card ?? ""}
       aria-label={`${name} profile preview`}
       actionRef={profileButton}

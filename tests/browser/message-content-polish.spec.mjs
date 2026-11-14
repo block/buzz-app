@@ -175,9 +175,20 @@ for (const theme of ["light", "dark"]) {
         specimen(page, "code-diff").getByText("greeting.ts", { exact: true }),
       );
     }
-    // Real keyboard input reaches and activates the link.
+    // Real keyboard input reaches and activates the link. A mention reached
+    // with the keyboard previews its profile; Tab passes through its action.
+    await page.mouse.move(0, 0);
     await received.locator('button[data-mention-kind="person"]').focus();
     await page.keyboard.press(tabKey(browserName));
+    await expect(
+      received.locator('button[data-mention-kind="agent"]'),
+    ).toBeFocused();
+    const action = page
+      .getByRole("dialog", { name: "Studio assistant profile preview" })
+      .getByRole("button", { name: "View profile" });
+    await expect(action).toBeVisible();
+    await page.keyboard.press(tabKey(browserName));
+    await expect(action).toBeFocused();
     await page.keyboard.press(tabKey(browserName));
     await expect(receivedLink).toBeFocused();
     await page.keyboard.press("Enter");

@@ -631,6 +631,42 @@ describe("Markdown profile mentions", () => {
     },
   );
 
+  it("previews a focused mention's profile and opens it from the preview", async () => {
+    // jsdom has no native top layer. Rendered placement is checked in the browser.
+    HTMLElement.prototype.showPopover = function () {
+      this.style.display = "block";
+    };
+    const owned = createRelaySession(null);
+    const onOpenLink = vi.fn((_target: string) => true);
+    const user = userEvent.setup();
+    try {
+      renderDom(
+        <MessageMarkdown
+          {...props("Ask @Mic", {
+            session: owned.session,
+            canOpenLink: () => true,
+            onOpenLink,
+          })}
+        />,
+      );
+      await user.tab();
+      expect(
+        screen.getByRole("button", { name: "View Mic profile" }),
+      ).toHaveFocus();
+      const preview = await screen.findByRole("dialog", {
+        name: "Mic profile preview",
+      });
+      expect(preview).toHaveTextContent("Mic");
+      await user.tab();
+      await user.keyboard("{Enter}");
+      expect(onOpenLink).toHaveBeenCalledExactlyOnceWith(profileTarget(mic));
+    } finally {
+      cleanup();
+      owned.dispose();
+      Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
+    }
+  });
+
   it("focuses the clicked mention before opening its exact profile target", () => {
     const calls: string[] = [];
     const canOpenLink = vi.fn((_target: string) => true);

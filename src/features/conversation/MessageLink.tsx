@@ -54,6 +54,7 @@ import {
 import { namedChannel, useChannelReference } from "./channel-reference";
 import { useLinkedMessageByline } from "./linked-message";
 import { messageViewKey } from "../messages/view-key";
+import { useMessageActionsClearance } from "../messages/useFloatingActionBar";
 import { soloChatLinkName } from "../solo/labels";
 import styles from "./LinkPreview.module.css";
 import { writeClipboardText } from "../../shared/clipboard";
@@ -68,22 +69,6 @@ export const resolveLink = (
   url: string,
   renderers: readonly Contribution<LinkRenderer>[],
 ) => resolveMatch(renderers, url);
-
-const previewGap = 8;
-
-/** Lift a preview above the hovered message's actions, not over them. */
-function clearMessageActions(link: HTMLElement | null) {
-  const actions = link
-    ?.closest("[data-actions-revealed]")
-    ?.querySelector("[data-message-actions]");
-  if (!link || !actions) return previewGap;
-  return Math.max(
-    previewGap,
-    link.getBoundingClientRect().top -
-      actions.getBoundingClientRect().top +
-      previewGap,
-  );
-}
 
 export function MessageLink({
   url,
@@ -127,8 +112,7 @@ export function MessageLink({
   const offeredAction = useRef<HTMLDivElement>(null);
   if (!active && previewOpen) setPreviewOpen(false);
   const trigger = useRef<HTMLAnchorElement>(null);
-  // Entering the card hides the row's actions; keep its lift while it's open.
-  const lift = useRef(previewGap);
+  const clearance = useMessageActionsClearance(() => trigger.current);
   const panelTarget = !safeLinkUrl(url) && !isBuzzLink(url) && !!canOpenLink;
   const internal = isBuzzLink(url) || panelTarget;
   const parsed = internal ? parseBuzzLink(url) : null;
@@ -432,18 +416,11 @@ export function MessageLink({
           : { link: <a href={url} {...navigation} /> })}
         open={previewOpen && !!card && !menuOpen}
         onOpenChange={(next) => {
-          if (next) lift.current = previewGap;
+          if (next) clearance.reset();
           setPreviewOpen(next);
         }}
         side="top"
-        sideOffset={({ side }) => {
-          if (side !== "top") return previewGap;
-          lift.current = Math.max(
-            lift.current,
-            clearMessageActions(trigger.current),
-          );
-          return lift.current;
-        }}
+        sideOffset={clearance.sideOffset}
         className={styles.popup ?? ""}
         aria-label={root.label}
       >

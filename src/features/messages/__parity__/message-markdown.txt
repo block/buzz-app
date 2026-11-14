@@ -169,7 +169,7 @@
 <div class="_text_7a7508">
   <p>
     "hi "
-    <button aria-label="View Mic profile" class="_link_594017" data-mention-kind="person" data-mention-name="Mic" data-profile-target="nostr:npub1hwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwasxw04hu" type="button">
+    <button aria-label="View Mic profile" class="_link_594017" data-mention-kind="person" data-mention-name="Mic" data-preview-card-trigger="" data-profile-target="nostr:npub1hwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwasxw04hu" id="_r_14_" type="button">
       <span class="_lead_594017">
         <svg aria-hidden="true" class="tabler-icon tabler-icon-at _icon_594017" fill="none" height="1em" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg">
           <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0">

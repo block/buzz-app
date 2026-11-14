@@ -13,6 +13,43 @@ import {
   observeOverlays,
 } from "../../shared/design-system/overlayLayer";
 
+/** A preview's default distance from its trigger. */
+export const previewGap = 8;
+
+/** Lift a preview above the hovered message's actions, not over them. */
+function clearMessageActions(trigger: HTMLElement | null) {
+  const actions = trigger
+    ?.closest("[data-actions-revealed]")
+    ?.querySelector("[data-message-actions]");
+  if (!trigger || !actions) return previewGap;
+  return Math.max(
+    previewGap,
+    trigger.getBoundingClientRect().top -
+      actions.getBoundingClientRect().top +
+      previewGap,
+  );
+}
+
+/**
+ * Places a preview opening above its trigger clear of the message's actions.
+ * Entering the card hides those actions, so the lift holds until `reset`
+ * starts the next open; a later reposition would otherwise drop the card
+ * from under the pointer.
+ */
+export function useMessageActionsClearance(trigger: () => HTMLElement | null) {
+  const lift = useRef(previewGap);
+  return {
+    reset() {
+      lift.current = previewGap;
+    },
+    sideOffset({ side }: { side: string }) {
+      if (side !== "top") return previewGap;
+      lift.current = Math.max(lift.current, clearMessageActions(trigger()));
+      return lift.current;
+    },
+  };
+}
+
 const contentSelector =
   "[data-message-action-anchor], [data-message-attachments] > *";
 

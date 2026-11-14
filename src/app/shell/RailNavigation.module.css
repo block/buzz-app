@@ -73,3 +73,26 @@
   gap: var(--space-4);
   min-width: 0;
 }
+
+/* Team collapsed: one row of round view buttons, counts on their corners. */
+.teamIcons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1h);
+  padding-block-start: var(--space-1);
+}
+.teamIcon {
+  position: relative;
+  display: flex;
+}
+.teamIconCount {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: calc(-1 * var(--space-1));
+  transform: translateY(-25%);
+  pointer-events: none;
+}
+.teamIconCount > [role="img"] {
+  background: var(--surface-dock-count);
+  color: var(--text-dock-count);
+}

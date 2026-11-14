@@ -465,6 +465,7 @@ export function RailGroup({
   avatarGrid = id === "pins",
   leadingEntryIds = [],
   views,
+  icons,
   trailingEntryId,
   sortEntries,
   pageContent,
@@ -482,6 +483,8 @@ export function RailGroup({
   leadingEntryIds?: readonly string[];
   /** Rows that open this section's views, under its leading entries. */
   views?: ReactNode;
+  /** The card collapsed to one row of icons, in place of its rows. */
+  icons?: ReactNode;
   trailingEntryId?: string;
   sortEntries?: (a: RailEntry, b: RailEntry) => number;
   pageContent?: ReactNode;
@@ -698,40 +701,46 @@ export function RailGroup({
         }
         action={action && <span data-rail-card-actions="">{action}</span>}
       >
-        {leading}
-        {views}
-        {rowsLabel ? (
-          <ul aria-label={rowsLabel} className={styles.rows}>
-            {shown.map((row) => (
-              <li key={row.key}>{row}</li>
-            ))}
-          </ul>
-        ) : avatarGrid ? (
-          <div
-            className={styles.avatarGrid}
-            data-pins-grid={id === "pins" ? "" : undefined}
-          >
-            {shown}
-          </div>
+        {icons ? (
+          icons
         ) : (
-          shown
-        )}
-        {notes}
-        {(more || footer) && renderOpen ? (
-          renderOpen(
-            preview.slice(shown.length).map((row) => row.props.entry),
-            () => arrangement?.openSection(id),
-          )
-        ) : more ? (
-          <NavigationItem
-            label={`Open ${title}`}
-            data-rail-view-more=""
-            aria-label={`Open ${title}`}
-            icon={<ArrowRightIcon size={18} />}
-            onClick={() => arrangement?.openSection(id)}
-          />
-        ) : (
-          footer
+          <>
+            {leading}
+            {views}
+            {rowsLabel ? (
+              <ul aria-label={rowsLabel} className={styles.rows}>
+                {shown.map((row) => (
+                  <li key={row.key}>{row}</li>
+                ))}
+              </ul>
+            ) : avatarGrid ? (
+              <div
+                className={styles.avatarGrid}
+                data-pins-grid={id === "pins" ? "" : undefined}
+              >
+                {shown}
+              </div>
+            ) : (
+              shown
+            )}
+            {notes}
+            {(more || footer) && renderOpen ? (
+              renderOpen(
+                preview.slice(shown.length).map((row) => row.props.entry),
+                () => arrangement?.openSection(id),
+              )
+            ) : more ? (
+              <NavigationItem
+                label={`Open ${title}`}
+                data-rail-view-more=""
+                aria-label={`Open ${title}`}
+                icon={<ArrowRightIcon size={18} />}
+                onClick={() => arrangement?.openSection(id)}
+              />
+            ) : (
+              footer
+            )}
+          </>
         )}
       </NavigationSection>
     </div>

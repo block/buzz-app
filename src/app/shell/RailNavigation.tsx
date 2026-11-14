@@ -49,6 +49,8 @@ import {
   AtIcon,
   BellIcon,
   BellSlashIcon,
+  CaretDownIcon,
+  CaretUpIcon,
   ChatCircleIcon,
   HashIcon,
   MessageReplyIcon,
@@ -65,6 +67,8 @@ import type { SidebarSections } from "../../features/channel-navigation/sidebar-
 import type { SidebarScope } from "../../features/channel-navigation/sidebar-scope-service";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
 import { PageNavigation } from "./PageNavigation";
+import { PageIcon } from "./PageIcon";
+import { pagePresentation } from "./presentation";
 import { RailConversationList } from "./RailConversationList";
 import { useRailPins, type RailEntry } from "./rail-pins";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
@@ -165,6 +169,7 @@ export function RailNavigation({
   const { layout: railLayout, reset: resetPlacement } =
     useRailLayout(partition);
   const [savedMessageView, setMessageView] = useActivityView(partition);
+  const [teamExpanded, setTeamExpanded] = useTeamExpanded();
   // Team offers no agent views; a saved one shows All.
   const messageView = useMemo(
     () => withoutAgentViews(savedMessageView),
@@ -694,6 +699,70 @@ export function RailNavigation({
       { filter: "channels", label: "Channels", icon: <HashIcon size={18} /> },
     ];
     const teamOpen = routedSection(navigation.entry.target) === "messages";
+    const openTeamView = (filter: ActivityView["filter"]) => {
+      setMessageView({ ...messageView, filter });
+      void directNavigator.open(sidebarSectionTarget(scope, "messages"));
+    };
+    const teamIcon = (
+      key: string,
+      label: string,
+      icon: ReactElement,
+      current: boolean,
+      open: () => void,
+      count?: ReactNode,
+    ) => (
+      <span key={key} className={styles.teamIcon}>
+        <Tooltip content={label}>
+          <IconButton
+            aria-label={label}
+            icon={icon}
+            size="md"
+            shape="round"
+            variant={current ? "solid" : "inset"}
+            aria-current={current ? "page" : undefined}
+            data-rail-team-view={key}
+            onClick={open}
+          />
+        </Tooltip>
+        <span className={styles.teamIconCount}>{count}</span>
+      </span>
+    );
+    // Collapsed, Team is one row of its views; the list is a click away.
+    const teamIcons = !teamExpanded && (
+      <div className={styles.teamIcons} data-rail-team-icons="">
+        {activityEntry &&
+          teamIcon(
+            "all",
+            "Activity",
+            <ChatCircleIcon size={18} />,
+            teamOpen && messageView.filter === "all",
+            () => openTeamView("all"),
+            teamCount("all"),
+          )}
+        {teamViews.map((item) =>
+          teamIcon(
+            item.filter,
+            item.label,
+            item.icon,
+            teamOpen && messageView.filter === item.filter,
+            () => openTeamView(item.filter),
+            teamCount(item.filter),
+          ),
+        )}
+        {teamPages
+          .filter((page) => page !== activityPage)
+          .map((page) => {
+            const { icon, image, label } = pagePresentation(page);
+            return teamIcon(
+              page.key,
+              label,
+              <PageIcon icon={icon} image={image} size={18} />,
+              selected === page.key,
+              () => onSelect(page.key),
+            );
+          })}
+      </div>
+    );
     const messageCard = shown("messages", () => (
       <RailGroup
         id="messages"
@@ -747,7 +816,26 @@ export function RailNavigation({
           Number(b.id === "buzz.drafts-and-sent/drafts-sent") -
           Number(a.id === "buzz.drafts-and-sent/drafts-sent")
         }
-        action={creationAction}
+        icons={teamIcons}
+        action={
+          <>
+            <Tooltip content={teamExpanded ? "Show icons" : "Show list"}>
+              <IconButton
+                aria-label={teamExpanded ? "Show Team icons" : "Show Team list"}
+                data-rail-team-expand=""
+                icon={
+                  teamExpanded ? (
+                    <CaretUpIcon size={18} />
+                  ) : (
+                    <CaretDownIcon size={18} />
+                  )
+                }
+                onClick={() => setTeamExpanded(!teamExpanded)}
+              />
+            </Tooltip>
+            {creationAction}
+          </>
+        }
       />
     ));
     return (
@@ -1138,6 +1226,28 @@ export function RailNavigation({
 
 /** Unread rows in one Team view; nothing when all are read. It follows the
  * conversations themselves, not the visit the rail is showing. */
+/** Whether Team shows its rows rather than its icons, kept on this device. */
+function useTeamExpanded() {
+  const key = "buzz.rail.team-expanded";
+  const [expanded, setExpanded] = useState(() => {
+    try {
+      return localStorage.getItem(key) === "1";
+    } catch {
+      return false;
+    }
+  });
+  return [
+    expanded,
+    (next: boolean) => {
+      setExpanded(next);
+      try {
+        localStorage.setItem(key, next ? "1" : "0");
+      } catch {
+        // Storage is unavailable: the choice lasts for this window.
+      }
+    },
+  ] as const;
+}
 const TeamCount = memo(function TeamCount({
   session,
   filter,

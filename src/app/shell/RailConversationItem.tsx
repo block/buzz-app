@@ -1,3 +1,4 @@
+import { ChatIconSlot } from "../../features/conversation/ChatIconSlot";
 import {
   useCallback,
   useMemo,
@@ -90,6 +91,11 @@ export function RailConversationItem({
   const unread = useRailUnread(session, destination, channel);
   return (
     <ConversationRow
+      placeIcon={
+        channel?.channelType === "solo" && !avatarOnly ? (
+          <ChatIconSlot session={session} channelId={channel.id} />
+        ) : undefined
+      }
       {...props}
       layout={avatarOnly ? "avatar" : layout}
       time={null}

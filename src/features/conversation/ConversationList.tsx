@@ -53,6 +53,7 @@ import {
   ClockIcon,
   SmileyIcon,
 } from "../../shared/design-system/icons/index";
+import { ChatIconSlot } from "./ChatIconSlot";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { HeaderIcon } from "../../shared/design-system/ui/HeaderIcon";
 import { Header } from "../../shared/design-system/ui/Header";
@@ -988,7 +989,13 @@ export const ChannelActivityRow = memo(function ChannelActivityRow({
           />
         )
       }
-      placeIcon={privateIcon(channel)}
+      placeIcon={
+        solo ? (
+          <ChatIconSlot session={session} channelId={channel.id} />
+        ) : (
+          privateIcon(channel)
+        )
+      }
       place={
         dm
           ? label

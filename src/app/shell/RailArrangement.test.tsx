@@ -320,3 +320,31 @@ test("a section a person made is renamed by double-clicking its title", async ()
   ).not.toBeNull();
   expect(screen.queryByRole("button", { name: "Work" })).toBeNull();
 });
+
+test("a restriction shows one card under its banner and no way to add sections", () => {
+  const cards = (only?: { section: string; banner: React.ReactNode }) => (
+    <RailArrangement
+      partition="restricted"
+      isPinned={() => false}
+      onTogglePin={() => {}}
+      openSection={() => {}}
+      renderEntry={(item) => <NavigationItem label={item.label} />}
+      only={only}
+      sections={["messages", "solo"].map((id) => ({
+        id,
+        title: id === "solo" ? "Solo" : "Team",
+        content: <RailGroup id={id} title={id === "solo" ? "Solo" : "Team"} />,
+      }))}
+    />
+  );
+  const view = render(cards());
+  expect(screen.getByRole("heading", { name: "Team" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "New section" })).toBeTruthy();
+  view.rerender(cards({ section: "solo", banner: <p>Focus is on</p> }));
+  expect(screen.getByText("Focus is on")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Solo" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Team" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "New section" })).toBeNull();
+  view.rerender(cards());
+  expect(screen.getByRole("heading", { name: "Team" })).toBeTruthy();
+});

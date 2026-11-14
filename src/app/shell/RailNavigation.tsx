@@ -59,6 +59,8 @@ import { useRailLayout } from "./rail-layout";
 import { RailArrangement, RailGroup } from "./RailArrangement";
 import { ContributedRailSections } from "../../features/channel-navigation/ContributedRailSections";
 import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
+import type { SidebarScope } from "../../features/channel-navigation/sidebar-scope-service";
+import { OwnedContribution } from "../../plugins/OwnedContribution";
 import { PageNavigation } from "./PageNavigation";
 import { RailConversationList } from "./RailConversationList";
 import { useRailPins, type RailEntry } from "./rail-pins";
@@ -92,6 +94,7 @@ export function RailNavigation({
   onSelect,
   creationAction,
   sidebarSections,
+  sidebarScope,
   section: pageSection,
   listNavigator = directNavigator,
   openInSection,
@@ -108,6 +111,8 @@ export function RailNavigation({
   ): void;
   creationAction?: ReactNode;
   sidebarSections?: SidebarSections | undefined;
+  /** A plugin's restriction narrows the cards to Solo under its banner. */
+  sidebarScope?: SidebarScope | undefined;
   /** Shows this section's full list instead of the cards: the shell's list
    * column renders one beside the cards, under the same `RailDrag`. */
   section?: string | undefined;
@@ -121,6 +126,10 @@ export function RailNavigation({
   const contributed = useSyncExternalStore(
     sidebarSections?.subscribe ?? noSubscription,
     sidebarSections?.snapshot ?? noSections,
+  );
+  const restriction = useSyncExternalStore(
+    sidebarScope?.subscribe ?? noSubscription,
+    () => sidebarScope?.snapshot()[0],
   );
   const channelNavigation = useChannelNavigation();
   const closeMuteMenu = useRef<(() => void) | undefined>(undefined);
@@ -747,6 +756,22 @@ export function RailNavigation({
         )}
         pageSection={pageSection}
         compact={!pageSection && compact}
+        only={
+          restriction && !pageSection
+            ? {
+                section: "solo",
+                banner: (
+                  <OwnedContribution
+                    entry={restriction}
+                    registry={sidebarScope ?? noRestrictions}
+                    fallback={null}
+                  >
+                    {({ banner: Banner }) => <Banner />}
+                  </OwnedContribution>
+                ),
+              }
+            : undefined
+        }
         selectedSection={activeDockSection}
         openSection={(id) => {
           // A section a person made has no page of its own: open its first
@@ -1138,6 +1163,7 @@ function keyOf(target: Exclude<RailEntry["target"], { kind: "person" }>) {
   return key;
 }
 const noSubscription = () => () => {};
+const noRestrictions = { snapshot: () => [] as const };
 const pluginCatalog: RailEntry = {
   id: "settings:plugins",
   label: "Plugins",

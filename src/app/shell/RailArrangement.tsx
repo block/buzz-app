@@ -190,9 +190,12 @@ function Arrangement({
   selectedSection,
   openSection,
   compact = false,
+  only,
 }: {
   partition: string;
   sections: Group[];
+  /** Show this one card under a notice: a plugin has narrowed the rail. */
+  only?: { section: string; banner: ReactNode } | undefined;
   renderEntry(entry: RailEntry, section?: string): ReactNode;
   renderSectionList?:
     | ((
@@ -233,6 +236,9 @@ function Arrangement({
   ];
   const order = [...layout.order, ...groups.map((group) => group.id)];
   groups.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+  const cards = only
+    ? groups.filter((group) => group.id === only.section)
+    : groups;
   const saved = (ok: boolean) => {
     setError(ok ? "" : "Couldn’t save the sidebar on this device. Try again.");
     return ok;
@@ -340,7 +346,7 @@ function Arrangement({
           <>
             {compact && (
               <section className={styles.dock} aria-label="Sidebar sections">
-                {groups.map((group) => (
+                {cards.map((group) => (
                   <div key={group.id} className={styles.dockTile}>
                     <Tooltip content={group.title} hint="dock" side="right">
                       <IconButton
@@ -364,6 +370,7 @@ function Arrangement({
               </section>
             )}
             <div hidden={compact}>
+              {only?.banner}
               <div
                 className={styles.groups}
                 onKeyDownCapture={(event) => {
@@ -372,7 +379,7 @@ function Arrangement({
                 }}
               >
                 <FirstSectionTarget />
-                {groups.map((group) => (
+                {cards.map((group) => (
                   <motion.div
                     key={group.id}
                     layout="position"
@@ -391,17 +398,21 @@ function Arrangement({
                   </motion.div>
                 ))}
               </div>
-              <div className={styles.createSection}>
-                <Button
-                  ref={newSectionButton}
-                  size="sm"
-                  variant="subtle"
-                  onClick={() => setCreating({})}
-                >
-                  New section
-                </Button>
-              </div>
-              <NewSectionTarget />
+              {!only && (
+                <>
+                  <div className={styles.createSection}>
+                    <Button
+                      ref={newSectionButton}
+                      size="sm"
+                      variant="subtle"
+                      onClick={() => setCreating({})}
+                    >
+                      New section
+                    </Button>
+                  </div>
+                  <NewSectionTarget />
+                </>
+              )}
             </div>
           </>
         )}

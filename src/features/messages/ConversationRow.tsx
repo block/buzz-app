@@ -73,7 +73,12 @@ export function ConversationRow({
           label={place}
           trailing={
             layout === "avatar" ? undefined : (
-              <span className={styles.navigationState}>{status}</span>
+              <span className={styles.navigationState}>
+                {placeIcon && (
+                  <span className={styles.placeIcon}>{placeIcon}</span>
+                )}
+                {status}
+              </span>
             )
           }
         />

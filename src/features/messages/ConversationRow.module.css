@@ -40,6 +40,7 @@
 .navigationState {
   display: flex;
   align-items: center;
+  gap: var(--space-2);
 }
 .navigationAvatar {
   display: inline-flex;
@@ -133,6 +134,10 @@
   flex: none;
   align-self: center;
   color: var(--text-metadata);
+}
+/* A plugin's icon slot with nothing to show takes no room. */
+.placeIcon:empty {
+  display: none;
 }
 .place {
   min-width: 0;

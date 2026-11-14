@@ -56,6 +56,8 @@ export type SearchServices = Pick<
       | "plugins"
       | "adminAccess"
       | "settingsCards"
+      | "conversation"
+      | "sidebarScope"
     >
   >;
 const SEARCH_ID = "global-search";

@@ -279,45 +279,6 @@
     place-content: center;
     place-items: center;
   }
-  .shell-navigation,
-  .shell-navigation-content {
-    display: contents;
-  }
-  /* A single fr track animates from the sidebar's real extent (not a larger
-     ceiling) to zero, so movement starts on the first frame. */
-  .shell-navigation[data-sidebar-collapsible] {
-    display: grid;
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr);
-    justify-content: end;
-    min-width: 0;
-    flex: none;
-    width: max-content;
-    overflow: visible;
-    /* Release resize help once open; preserve the panel's shadow while moving. */
-    clip-path: none;
-    visibility: visible;
-    transition:
-      grid-template-columns var(--duration-settle) ease-in-out,
-      clip-path var(--duration-settle) step-end allow-discrete,
-      visibility var(--duration-settle);
-  }
-  /* Portalled controls may hide outside regions from assistive tech; only the
-     shell's own state controls whether this track visually collapses. */
-  .shell-navigation[data-sidebar-collapsible]:not([data-sidebar-open]) {
-    grid-template-columns: 0fr;
-    clip-path: inset(
-      calc(-1 * var(--space-2)) 0 calc(-1 * var(--space-2))
-        calc(-1 * var(--space-2))
-    );
-    visibility: hidden;
-    transition-timing-function: ease-in-out, step-start, ease;
-  }
-  .shell-navigation[data-sidebar-collapsible] > .shell-navigation-content {
-    display: flex;
-    justify-content: flex-end;
-    min-width: 0;
-  }
   .shell-body {
     @apply relative grid min-h-0 min-w-0 flex-1;
     /* One surface spans the reading track and its balancing gutter. Subgrid
@@ -442,18 +403,6 @@
   .shell-sidebar-default > * {
     @apply min-w-0 flex-1;
   }
-  .shell-navigation[data-sidebar-collapsible]
-    > .shell-navigation-content
-    > :is(.shell-sidebar, .shell-sidebar-default) {
-    flex: none;
-    /* Clamp against the stable shell, not the animated navigation track. */
-    max-width: max(220px, calc(100cqi - 336px));
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .shell-navigation[data-sidebar-collapsible] {
-      transition: none;
-    }
-  }
   .shell-actions {
     @apply flex items-center justify-end;
     justify-self: end;
@@ -491,28 +440,6 @@
     .shell-sidebar-default {
       width: 220px;
       max-width: 220px;
-    }
-    .shell-navigation {
-      display: none;
-    }
-    .shell-navigation[data-sidebar-collapsible] {
-      display: none;
-    }
-    .shell-navigation[data-expanded="true"] {
-      @apply absolute inset-y-0 left-0 z-20 flex;
-      max-width: calc(100% - 1rem);
-    }
-    .shell-navigation .shell-sidebar,
-    .shell-navigation .shell-sidebar-default {
-      max-width: 220px;
-      margin-inline-end: 0;
-    }
-    .shell-navigation .shell-sidebar-collection {
-      /* A reading list keeps its comfortable width in the narrow overlay. */
-      max-width: calc(100vw - 2 * var(--space-panel-gap));
-    }
-    .shell-navigation-content > hr {
-      display: none;
     }
   }
 
@@ -635,26 +562,4 @@
 }
 @utility bg-primary-hover {
   background-color: var(--affordance-prominent-hover);
-}
-
-@layer components {
-  .shell-navigation[data-sidebar-collapsible] {
-    position: relative;
-  }
-  .shell-navigation[data-sidebar-collapsible]::after {
-    content: "";
-    position: absolute;
-    inset-block: 0;
-    inset-inline-end: 0;
-    width: 1px;
-    background: var(--border-standard);
-    opacity: 1;
-    pointer-events: none;
-  }
-  /* Keep the retained navigation out of layout and keyboard traversal on apps
-     without a sidebar, including after a narrow drawer was open. This must
-     follow the collapsible and narrow-drawer display rules above. */
-  .shell-navigation[hidden] {
-    display: none;
-  }
 }

@@ -13,7 +13,8 @@ export type PageProps = {
   navigation?: import("../navigation/service").PageNavigation | undefined;
 };
 
-/** Props for a page-owned replacement in the shell's sidebar slot. */
+/** Props of the retired page sidebar.
+ * @deprecated The shell no longer has a page sidebar slot. */
 export type PageSidebarProps = {
   target: import("../navigation/targets").OpenTarget;
   /** Shell-generated primary Pages navigation, when available. */
@@ -30,9 +31,11 @@ export type Page = Readonly<{
   id: string;
   title: string;
   component: ComponentType<PageProps>;
-  /** Replace the conversation sidebar while this page is selected. */
+  /** Accepted and ignored: the shell's rail and list column replaced the
+   * page sidebar slot. A page lays out any list of its own.
+   * @deprecated */
   sidebar?: ComponentType<PageSidebarProps>;
-  /** Keep the Messages sidebar and dock selection while this page is open. */
+  /** Keep Messages selected in the rail while this page is open. */
   conversationNavigation?: boolean;
   layout?: "document" | "workspace";
   // Opt in only when every page state places the supplied companion card.

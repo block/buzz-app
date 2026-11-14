@@ -46,9 +46,6 @@ import { SettingsSidebar } from "./SettingsSidebar";
 import { pendingManaged } from "../plugins/managed";
 import { RecoveryScreen } from "./RecoveryScreen";
 import { PageView } from "../features/pages/PageView";
-import { OwnedContribution } from "../plugins/OwnedContribution";
-import { SidebarFrame } from "../features/channel-navigation/SidebarFrame";
-import { SidebarList } from "../features/channel-navigation/SidebarList";
 import { useAppNavigation, type PendingSettingsDeparture } from "./navigation";
 import { NavigationControls } from "./shell/NavigationControls";
 import { registerNavigationShortcuts } from "./shortcuts";
@@ -363,12 +360,6 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     (settings
       ? !!workspace.request
       : !route.failure && !route.waiting && !failedPage);
-  // A registration lookup does not admit the target's parameters and scope.
-  const pageSidebarReady =
-    startup === "ready" &&
-    (settings
-      ? !!workspace.request
-      : !route.failure && !route.waiting && !failedPage);
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
     return document.getElementById("buzz-launch") ? null : (
@@ -629,7 +620,6 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
       )}
       <ChannelNavigationProvider relay={services.relay}>
         <AppShell
-          creationInSidebar={!workspace.page?.sidebar}
           creationAction={(
             open,
             onOpenChange,
@@ -648,53 +638,6 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             />
           )}
           workspaceRef={setWorkspaceElement}
-          sidebar={(pageNavigation) =>
-            workspace.page?.sidebar && pageSidebarReady ? (
-              <Presented
-                store={route.presented}
-                resolve={route.workspaceRequestFor}
-              >
-                {(request) =>
-                  workspace.page && (
-                    <OwnedContribution
-                      entry={workspace.page}
-                      registry={services.pages}
-                      resetIdentity={request}
-                      fallback={
-                        <div className="shell-sidebar-default">
-                          <SidebarFrame
-                            label={`${workspace.page.title} sidebar`}
-                          >
-                            <SidebarList>
-                              <p role="alert">
-                                This page’s sidebar is unavailable.
-                              </p>
-                              {pageNavigation}
-                            </SidebarList>
-                          </SidebarFrame>
-                        </div>
-                      }
-                    >
-                      {(entry) => {
-                        const Sidebar = entry.sidebar;
-                        return Sidebar ? (
-                          <Sidebar target={workspace.target}>
-                            {pageNavigation}
-                          </Sidebar>
-                        ) : null;
-                      }}
-                    </OwnedContribution>
-                  )
-                }
-              </Presented>
-            ) : workspace.page?.sidebar ? (
-              <div className="shell-sidebar-default">
-                <SidebarFrame label="Page navigation">
-                  <SidebarList>{pageNavigation}</SidebarList>
-                </SidebarFrame>
-              </div>
-            ) : null
-          }
           navigationControls={
             <NavigationControls navigation={services.navigation} />
           }

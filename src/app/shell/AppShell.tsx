@@ -10,7 +10,7 @@ import { ListColumn } from "./ListColumn";
 import { SidePanelPresence } from "../../features/panels/side-panel-presence";
 import { useListSection } from "./list-section";
 import { routedSection, useListColumn } from "./list-column";
-import { navigationOwner, orderPages, pagePlacement } from "./presentation";
+import { navigationOwner, orderPages } from "./presentation";
 import {
   useCallback,
   useEffect,
@@ -36,7 +36,6 @@ import type { RegisteredPage } from "../../features/pages/service";
 import type { AccountActionsService } from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
-import { ResizableSidebar } from "../../features/channel-navigation/ResizableSidebar";
 import type { JoinRequest } from "../../features/communities/invite-intent";
 import type { OpenTarget } from "../../features/navigation/targets";
 import {
@@ -90,7 +89,6 @@ function AppShellContent({
   tone,
   workspace,
   workspaceRef,
-  sidebar,
   communities,
   invite,
   onInviteClose,
@@ -107,7 +105,6 @@ function AppShellContent({
   backdrop,
   companion,
   creationAction,
-  creationInSidebar = true,
   children,
 }: {
   pages: readonly RegisteredPage[];
@@ -121,7 +118,6 @@ function AppShellContent({
   workspace?: boolean;
   /** Centered modal frame below window chrome. */
   workspaceRef?: Ref<HTMLDivElement>;
-  sidebar?: (pages: ReactNode, creationAction: ReactNode) => ReactNode;
   communities: Communities;
   invite?: (JoinRequest & { requestId: number }) | undefined;
   onInviteClose?: ((requestId: number) => void) | undefined;
@@ -148,7 +144,6 @@ function AppShellContent({
     /** Opens what was created the way the sidebar does: without the list. */
     navigator: AppNavigation | undefined,
   ) => ReactNode;
-  creationInSidebar?: boolean;
   children: ReactNode;
 }) {
   const detailPane = useConversationDetailPane();
@@ -168,11 +163,7 @@ function AppShellContent({
     setSwitcherOpen(true);
   }, []);
   const connection = useRelayConnection(communities.relay);
-  const sidebarScope = connection.scope ?? "disconnected";
   const owner = navigationOwner(pages, selected);
-  const hasNavigation = pages.some(
-    (page) => page.key === selected && !!page.sidebar,
-  );
   const [narrow, setNarrow] = useState(
     () => window.matchMedia("(max-width: 650px)").matches,
   );
@@ -183,11 +174,6 @@ function AppShellContent({
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, []);
-  const collapsibleSidebar =
-    selected === "settings" ||
-    pages.some(
-      (page) => page.key === selected && (page.primary || !!page.sidebar),
-    );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const listColumn = useListColumn(searchServices?.navigation);
   const askList = listColumn.ask;
@@ -262,11 +248,9 @@ function AppShellContent({
   };
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationToggle = useRef<HTMLButtonElement>(null);
-  const visibleSidebar =
-    hasNavigation && (narrow ? navigationOpen : sidebarOpen);
   const visibleRail = narrow ? navigationOpen : sidebarOpen;
   const compactRail = !narrow && !sidebarOpen;
-  const creationInNavigation = !!creationAction && creationInSidebar;
+  const creationInNavigation = !!creationAction;
   useEffect(
     () =>
       searchServices?.shortcuts.registerHost({
@@ -300,37 +284,6 @@ function AppShellContent({
     }
     setNavigationOpen(false);
   }, [navigationAttempt]);
-  // Toggling the sidebar changes only this shell's own state. Keep the
-  // navigation element stable across those renders so React skips the whole
-  // sidebar subtree instead of re-rendering every row on each click.
-  const navigation = useMemo(() => {
-    const selectedPageHasSidebar = pages.some(
-      (page) => page.key === selected && !!page.sidebar,
-    );
-    // Sidebars retain their documented app-link and creation slots.
-    const content = sidebar
-      ? sidebar(
-          <nav aria-label="Pages" className="shell-pages">
-            <PageNavigation
-              pages={orderPages(
-                pages.filter((page) => pagePlacement(page) === "sidebar"),
-              )}
-              selected={selected}
-              onSelect={onSelect}
-              previews
-            />
-          </nav>,
-          null,
-        )
-      : null;
-    return selectedPageHasSidebar ? (
-      <ResizableSidebar scope={sidebarScope} className="shell-sidebar">
-        {content}
-      </ResizableSidebar>
-    ) : (
-      content
-    );
-  }, [pages, selected, sidebar, sidebarScope, onSelect]);
   const dockPages = useMemo(
     () =>
       orderPages(
@@ -573,39 +526,6 @@ function AppShellContent({
               <div className="relative flex min-h-0 min-w-0 flex-1">
                 <Panel as="div" joined flat>
                   <div className="shell-content">
-                    <div
-                      id="shell-navigation"
-                      hidden={!hasNavigation}
-                      className="shell-navigation"
-                      data-sidebar-collapsible={
-                        (collapsibleSidebar && !narrow) || undefined
-                      }
-                      data-sidebar-open={visibleSidebar || undefined}
-                      aria-hidden={
-                        (collapsibleSidebar || narrow) && !visibleSidebar
-                      }
-                      inert={(collapsibleSidebar || narrow) && !visibleSidebar}
-                      data-expanded={navigationOpen}
-                      onKeyDown={(event) => {
-                        if (
-                          event.key === "Escape" &&
-                          !event.shiftKey &&
-                          navigationOpen &&
-                          !event.defaultPrevented &&
-                          event.target instanceof Node &&
-                          event.currentTarget.contains(event.target)
-                        ) {
-                          // Closing the drawer consumes Escape, so it marks nothing read.
-                          event.preventDefault();
-                          setNavigationOpen(false);
-                          navigationToggle.current?.focus();
-                        }
-                      }}
-                    >
-                      <div className="shell-navigation-content">
-                        {hasNavigation ? navigation : null}
-                      </div>
-                    </div>
                     <main
                       id="main-content"
                       tabIndex={-1}

@@ -82,9 +82,8 @@ export function pagePlacement(page: RegisteredPage) {
   }
 }
 
-/** The app whose navigation lists a destination: the dock selects it and the
- * shell shows its sidebar unless the page supplies its own. Pages listed in
- * the Messages sidebar belong to Messages while it is registered;
+/** The app whose navigation lists a destination: the rail selects it. Pages
+ * listed with Messages belong to Messages while it is registered;
  * conversations already select the Messages page. Every other destination,
  * including Settings and unlisted pages, owns itself. */
 export function navigationOwner(

@@ -21,9 +21,8 @@ import { message, metadata, roster } from "../features/relay/testing";
 import type { ComposerInputElement } from "../features/messages/composer-dom";
 import { composerDOMFixture } from "../features/messages/composer-testing";
 import * as communityApi from "../features/communities/api";
-import { communityDestination } from "../features/communities/destination";
-import { readView, writeView } from "../shared/view-state";
-import { sidebarFixtureState } from "./sidebar-plugin.fixture";
+import { writeView } from "../shared/view-state";
+import { pageFixtureState } from "./page-plugin.fixture";
 
 /** Any variant of the App-owned "page couldn't open" card. */
 const pageFailure =
@@ -54,7 +53,7 @@ vi.mock("../bundled", async () => {
           name: "Sidebar fixture",
           apiVersion: 1,
         },
-        module: await import("./sidebar-plugin.fixture"),
+        module: await import("./page-plugin.fixture"),
       },
       {
         manifest: { id: "buzz.profiles", name: "Profiles", apiVersion: 1 },
@@ -110,8 +109,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   localStorage.clear();
-  sidebarFixtureState.broken = true;
-  sidebarFixtureState.onTarget = undefined;
+  pageFixtureState.onMount = undefined;
   window.history.replaceState(null, "", "/");
 });
 
@@ -231,7 +229,7 @@ async function setup(
   return user;
 }
 
-async function openSidebarPage(pageId: string, params?: string) {
+async function openFixturePage(pageId: string, params?: string) {
   await act(async () => {
     await services?.navigation.open({
       version: 1,
@@ -242,211 +240,6 @@ async function openSidebarPage(pageId: string, params?: string) {
     });
   });
 }
-
-it("updates an owned page sidebar target without remounting its healthy draft", async () => {
-  await setup();
-  await openSidebarPage("main", "first");
-  expect(await screen.findByText("Beacon page content")).toBeVisible();
-  expect(
-    screen.getByRole("complementary", { name: "Beacon sidebar" }),
-  ).toHaveTextContent("main:first");
-  const sidebarDraft = screen.getByRole("textbox", { name: "Sidebar draft" });
-  fireEvent.change(sidebarDraft, { target: { value: "keep this draft" } });
-  expect(
-    within(
-      screen.getByRole("complementary", { name: "Beacon sidebar" }),
-    ).getByRole("navigation", { name: "Pages" }),
-  ).toBeVisible();
-  expect(screen.getByRole("button", { name: "Hide sidebar" })).toBeVisible();
-
-  await openSidebarPage("main", "second");
-  expect(
-    await within(
-      screen.getByRole("complementary", { name: "Beacon sidebar" }),
-    ).findByText("main:second"),
-  ).toBeVisible();
-  expect(screen.getByRole("textbox", { name: "Sidebar draft" })).toHaveValue(
-    "keep this draft",
-  );
-  expect(screen.getByRole("textbox", { name: "Sidebar draft" })).toBe(
-    sidebarDraft,
-  );
-});
-
-it("retains an owned page sidebar and its draft through Settings sections and Close", async () => {
-  const user = await setup();
-  await openSidebarPage("main", "first");
-  const sidebarDraft = await screen.findByRole("textbox", {
-    name: "Sidebar draft",
-  });
-  fireEvent.change(sidebarDraft, { target: { value: "keep this draft" } });
-
-  if (!services) throw new Error("Missing services");
-  const current = services;
-  await act(async () => {
-    void current.navigation.open({
-      version: 1,
-      kind: "settings",
-      section: "appearance",
-    });
-  });
-  const settings = await screen.findByRole("dialog", { name: "Settings" });
-  expect(sidebarDraft).toBeInTheDocument();
-  expect(sidebarDraft).toHaveValue("keep this draft");
-  // A section button opens its section with the selected community's scope
-  // (openSettingsSection in App.tsx). Make that same navigation here; clicking
-  // the buttons is covered by the unsent-conversation journey below.
-  const { viewer, selected } = current.communities.snapshot();
-  if (!viewer || !selected) throw new Error("Missing selected community");
-  await act(async () => {
-    void current.navigation.open({
-      version: 1,
-      kind: "settings",
-      section: "notifications",
-      scope: { viewer, communityOrigin: communityDestination(selected).url },
-    });
-  });
-  await within(settings).findByRole("heading", { name: "Notifications" });
-  expect(sidebarDraft).toBeInTheDocument();
-  await user.click(
-    within(settings).getByRole("button", { name: "Close Settings" }),
-  );
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
-  );
-  expect(screen.getByRole("textbox", { name: "Sidebar draft" })).toBe(
-    sidebarDraft,
-  );
-  expect(sidebarDraft).toHaveValue("keep this draft");
-});
-
-it("isolates a sidebar failure and recovers it on target change before restoring the default sidebar", async () => {
-  await setup();
-  await openSidebarPage("main", "first");
-  await screen.findByRole("textbox", { name: "Sidebar draft" });
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  try {
-    await openSidebarPage("main", "broken-sidebar");
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "This page’s sidebar is unavailable.",
-    );
-    expect(screen.getByText("Beacon page content")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Your profile" })).toBeVisible();
-    expect(screen.getByRole("navigation", { name: "Pages" })).toBeVisible();
-
-    await openSidebarPage("main", "recovered");
-    expect(
-      await screen.findByRole("complementary", { name: "Beacon sidebar" }),
-    ).toHaveTextContent("main:recovered");
-
-    await openSidebarPage("plain");
-    expect(await screen.findByText("Plain page content")).toBeVisible();
-    expect(
-      screen.queryByRole("complementary", { name: "Sidebar" }),
-    ).not.toBeInTheDocument();
-  } finally {
-    error.mockRestore();
-  }
-});
-
-it("recovers a failed sidebar registration after disabling and re-enabling its plugin", async () => {
-  await setup();
-  await openSidebarPage("plain");
-  await screen.findByText("Plain page content");
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  try {
-    await openSidebarPage("broken");
-    expect(await screen.findByText("Broken Beacon page content")).toBeVisible();
-    const fallback = screen.getByRole("complementary", {
-      name: "Broken Beacon sidebar",
-    });
-    expect(fallback).toContainElement(within(fallback).getByRole("alert"));
-    expect(
-      within(fallback).getByRole("navigation", { name: "Pages" }),
-    ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Hide sidebar" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Your profile" })).toBeVisible();
-
-    await act(async () => {
-      await services?.plugins.change("disable", "test.sidebar");
-    });
-    sidebarFixtureState.broken = false;
-    await act(async () => {
-      await services?.plugins.change("enable", "test.sidebar");
-    });
-    expect(
-      await screen.findByRole("complementary", {
-        name: "Recovered Beacon sidebar",
-      }),
-    ).toBeVisible();
-    expect(screen.getByText("Broken Beacon page content")).toBeVisible();
-  } finally {
-    error.mockRestore();
-  }
-});
-
-it("retains contributed-sidebar width across leaving, remounting and its fallback", async () => {
-  await setup();
-  const appServices = services;
-  if (!appServices) throw new Error("Expected app services after setup");
-  const scope =
-    appServices.communities.relay.snapshot().scope ?? "disconnected";
-  act(() => writeView(scope, "channel-sidebar", { width: 344 }));
-  const sidebarColumn = () =>
-    screen.getByRole("separator", { name: "Resize sidebar" })
-      .previousElementSibling as HTMLElement;
-
-  await openSidebarPage("main", "first");
-  expect(await screen.findByText("Beacon page content")).toBeVisible();
-  expect(sidebarColumn()).toHaveStyle({ width: "344px" });
-  fireEvent.keyDown(screen.getByRole("separator", { name: "Resize sidebar" }), {
-    key: "End",
-  });
-  expect(sidebarColumn()).toHaveStyle({ width: "520px" });
-  expect(readView(scope, "channel-sidebar", null)).toMatchObject({
-    width: 520,
-  });
-
-  await act(async () => {
-    await appServices.navigation.open({
-      version: 1,
-      kind: "page",
-      pluginId: "buzz.channels",
-      pageId: "channels",
-    });
-  });
-  expect(await screen.findByRole("region", { name: "Team" })).toBeVisible();
-  const team = screen.getByRole("region", { name: "Team" });
-  expect(
-    within(team).getByRole("separator", { name: "Resize sidebar" })
-      .previousElementSibling,
-  ).toHaveStyle({ width: "352px" });
-
-  await openSidebarPage("main", "second");
-  expect(
-    await within(
-      screen.getByRole("complementary", { name: "Beacon sidebar" }),
-    ).findByText("main:second"),
-  ).toBeVisible();
-  expect(sidebarColumn()).toHaveStyle({ width: "520px" });
-  fireEvent.keyDown(screen.getByRole("separator", { name: "Resize sidebar" }), {
-    key: "Home",
-  });
-  expect(sidebarColumn()).toHaveStyle({ width: "220px" });
-  expect(readView(scope, "channel-sidebar", null)).toMatchObject({
-    width: 220,
-  });
-
-  await openSidebarPage("main", "broken-sidebar");
-  expect(
-    await screen.findByText("This page’s sidebar is unavailable."),
-  ).toBeVisible();
-  expect(sidebarColumn()).toHaveStyle({ width: "220px" });
-  fireEvent.keyDown(screen.getByRole("separator", { name: "Resize sidebar" }), {
-    key: "End",
-  });
-  expect(sidebarColumn()).toHaveStyle({ width: "520px" });
-});
 
 it.each([
   { when: "before leaving", action: "Dismiss", from: "Messages" },
@@ -507,17 +300,13 @@ it.each([
         await fail();
         await screen.findByRole("dialog", { name: "Couldn’t mute Planning" });
       }
-      await openSidebarPage("main", "mute-recovery");
-      const contributed = await screen.findByRole("complementary", {
-        name: "Beacon sidebar",
-      });
+      await openFixturePage("main", "mute-recovery");
+      await screen.findByText("Beacon page content");
       // Universal rail controls stay mounted while the contributed page opens.
       expect(row).toBeInTheDocument();
       if (from === "the contributed page") {
         // A deliberate move to the contributed editor owns focus during recovery.
-        await user.click(
-          within(contributed).getByRole("textbox", { name: "Sidebar draft" }),
-        );
+        await user.click(screen.getByRole("textbox", { name: "Page draft" }));
       }
       if (when === "while away") await fail();
       if (when === "before leaving") {
@@ -579,9 +368,6 @@ it.each([
         ).toBeNull(),
       );
       if (from === "the contributed page") {
-        expect(
-          screen.getByRole("complementary", { name: "Beacon sidebar" }),
-        ).toBeVisible();
         expect(screen.getByText("Beacon page content")).toBeVisible();
         await returnToMessages(action === "Retry");
         expect(
@@ -613,12 +399,12 @@ it.each([
     scope: { viewer, communityOrigin: "https://other.example" },
     reason: "denied",
   },
-])("withholds a page sidebar for $name", async ({ params, scope, reason }) => {
+])("withholds a page for $name", async ({ params, scope, reason }) => {
   await setup();
   const current = services;
   if (!current) throw new Error("Missing services");
   const delivered = vi.fn();
-  sidebarFixtureState.onTarget = delivered;
+  pageFixtureState.onMount = delivered;
   await act(async () => {
     expect(
       await current.navigation.open({
@@ -635,14 +421,11 @@ it.each([
     await screen.findByRole("heading", { name: pageFailure }),
   ).toBeVisible();
   expect(screen.queryByText("Beacon page content")).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("complementary", { name: "Beacon sidebar" }),
-  ).not.toBeInTheDocument();
-  expect(screen.getByRole("navigation", { name: "Pages" })).toBeVisible();
+  expect(screen.getByRole("navigation", { name: "Apps" })).toBeVisible();
   expect(delivered).not.toHaveBeenCalled();
 });
 
-it("delivers a page sidebar target only after selecting its personal scope", async () => {
+it("mounts a page only after selecting its personal scope", async () => {
   await setup();
   const current = services;
   if (!current) throw new Error("Missing services");
@@ -650,7 +433,7 @@ it("delivers a page sidebar target only after selecting its personal scope", asy
     selected: string | null;
     relayScope: string | undefined;
   }[] = [];
-  sidebarFixtureState.onTarget = () => {
+  pageFixtureState.onMount = () => {
     observed.push({
       selected: current.communities.snapshot().selected,
       relayScope: current.relay.snapshot().scope,

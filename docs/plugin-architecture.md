@@ -92,18 +92,17 @@ bundled/inbox/          builtin Inbox page for unread conversations and mentions
 ```
 
 The host composes the conversation sidebar (Solo and Team inventories) beside
-independently mounted pages. Settings supplies its own modal navigation; a selected
-page can replace the conversation sidebar through its optional `sidebar` contribution.
-A page can set `conversationNavigation: true` to keep the Messages sidebar and
-dock selection. This also applies to pages with `primary: false`; it does not add
+independently mounted pages. Settings supplies its own modal navigation. A page's
+optional `sidebar` contribution is retired: the registry accepts it and the shell
+ignores it, so a page lays out any list of its own beside its content.
+A page can set `conversationNavigation: true` to keep Messages selected in the
+rail. This also applies to pages with `primary: false`; it does not add
 a navigation row. Without this option, the page keeps its own navigation owner.
 The conversation sidebar reuses session-owned roster, unread, creation and
 preferences capabilities; it does not
 retain a hidden Channels page or message reader. Sidebar and page render errors
-have separate boundaries. A page sidebar is isolated by the same owned-contribution
-boundary, so a failure falls back to a concise alert without taking down the page,
-Settings, or shell. The host owns the slot, collapse state, labels, and narrow drawer;
-the page owns its sidebar content and local interaction state. Sidebar presentation
+have separate boundaries. The host owns the rail, its collapse state, labels, and
+narrow drawer. Sidebar presentation
 helpers remain importable from `bundled/channels`; the conversation sidebar also
 exposes a versioned section contribution for plugins.
 
@@ -334,9 +333,7 @@ point exporting
 several pages or none. Page IDs are unique within their plugin. Add `primary: true` (with the
 default `placement`) for a row in the Messages sidebar's page navigation; every active page
 is listed in search.
-While that page is open, Messages stays selected in the app dock and the conversation
-sidebar stays visible, unless the page registers its own `sidebar`, which then
-replaces it. Buzz supplies React
+While that page is open, Messages stays selected in the rail. Buzz supplies React
 and owns the Cordis runtime (`@deepseek-ai/cordis` 4.0.2). Import their types only
 in external plugins; runtime imports are rejected by the scaffold's builder.
 
@@ -843,7 +840,7 @@ sections. There is no automatic reorder-without-menu hook and no insertion hook
 in this version; use `sidebarSections` for new rows.
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
-`ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with
+`ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component })`. Panels register with
 `ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
@@ -1097,55 +1094,10 @@ ctx.pages.register({
 });
 ```
 
-A page may replace the conversation sidebar while selected. Its component receives
-the current read-only `OpenTarget` and, when present, shell-generated primary
-Pages navigation as `children`. It supplies only its sidebar contents within the
-existing sidebar slot. The host places the contribution and its unavailable
-fallback in the same resizable track as the conversation sidebar. Both use one
-saved width per community and viewer workspace, with a 260px default, 220px
-minimum, 520px maximum, and the shell's existing available-width clamp. The host
-owns the resize handle, keyboard controls, reset, and persistence; switching
-between Messages and a page sidebar preserves that shared width. Wrap the content
-in the existing `shell-sidebar-default` layout role so it fills the host track.
-That role does not provide an inner surface, frame, padding, or content layout;
-the contributor owns those details.
-External authors use this CSS role and their own markup; internal source components
-such as `SidebarFrame` are not part of the author SDK. The host owns the slot and
-collapse/drawer interaction. Pages do not manage a separate sidebar width
-preference, receive navigation completion authority, or own routing. On wide
-layouts the shell keeps its generic Show/Hide sidebar toggle; on narrow layouts the existing
-Show/Hide navigation drawer, focus handoff, Escape, inert, and ARIA behavior remain
-shell-owned. Pages without `sidebar` continue to
-use the conversation sidebar. The host isolates sidebar rendering with
-`OwnedContribution`; a throwing sidebar shows a concise alert with scrollable page
-navigation inside the standard fallback frame while the selected page and shell
-remain usable. A new page navigation request retries a failed sidebar without
-remounting healthy sidebar state. The sidebar shares the page's admitted workspace
-target and stays mounted beneath Settings; invalid destinations are not delivered
-to it.
-
-```tsx
-import type { PageSidebarProps } from "@buzz/author";
-
-function ActivitySidebar({ target, children }: PageSidebarProps) {
-  return (
-    <div className="shell-sidebar-default">
-      <aside className="activity-sidebar" aria-label="Activity sidebar">
-        <header>Activity</header>
-        <p>Current destination: {target.kind}</p>
-        {children}
-      </aside>
-    </div>
-  );
-}
-
-ctx.pages.register({
-  id: "activity",
-  title: "Activity",
-  component: ActivityPage,
-  sidebar: ActivitySidebar,
-});
-```
+The page `sidebar` contribution is retired. The shell shows its rail and, for
+conversations, one list column; it has no slot for a page-owned sidebar. The
+registry still accepts `sidebar` so existing plugins activate, and the shell
+never renders it. A page that needs a list renders it inside its own component.
 
 Header entries move into the labelled More pages popover when they cannot fit,
 including at narrow widths. Toolbar and overflow entries use native-button

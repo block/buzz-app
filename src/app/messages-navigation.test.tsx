@@ -26,11 +26,6 @@ vi.mock("../bundled", async () => ({
       module: await import("../bundled/drafts-sent"),
       enabledByDefault: true,
     },
-    {
-      manifest: { id: "test.sidebar", name: "Sidebar fixture", apiVersion: 1 },
-      module: await import("./sidebar-plugin.fixture"),
-      enabledByDefault: true,
-    },
   ],
 }));
 
@@ -86,37 +81,6 @@ it("opens the Drafts & sent plugin page from global search from the shared rail"
   );
 });
 
-it("opens Drafts & sent from a plugin-owned sidebar's shared Pages navigation", async () => {
-  services = createServices();
-  render(<App services={services} />);
-  await waitFor(() =>
-    expect(services?.navigation.snapshot().status).toBe("opened"),
-  );
-  act(() => {
-    void services?.navigation.open({
-      version: 1,
-      kind: "page",
-      pluginId: "test.sidebar",
-      pageId: "main",
-    });
-  });
-  const sidebar = await screen.findByRole("complementary", {
-    name: "Beacon sidebar",
-  });
-  const pages = within(sidebar).getByRole("navigation", { name: "Pages" });
-  await userEvent.click(
-    within(pages).getByRole("button", { name: "Drafts & sent" }),
-  );
-  expect(
-    await screen.findByRole("region", { name: "Drafts & sent" }),
-  ).toBeVisible();
-  expect(screen.getByRole("navigation", { name: "Apps" })).toContainElement(
-    screen.getByRole("button", { name: "Drafts & sent" }),
-  );
-  expect(
-    screen.queryByRole("complementary", { name: "Beacon sidebar" }),
-  ).toBeNull();
-});
 afterEach(async () => {
   cleanup();
   await services?.dispose();

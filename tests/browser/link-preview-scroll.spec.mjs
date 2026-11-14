@@ -80,11 +80,15 @@ test("link previews never move the reader in the real timeline", async ({
       () => window.linkPreviewScroll.asked.length,
     );
     const start = await feed.evaluate((element) => element.scrollTop);
-    for (let i = 0; i < 30; i++) await page.mouse.wheel(0, -400);
+    // Loaded WebKit runners coalesce some of a burst's wheel events, so keep
+    // flinging until it has covered several screens.
+    await expect(async () => {
+      for (let i = 0; i < 10; i++) await page.mouse.wheel(0, -400);
+      expect(
+        start - (await feed.evaluate((element) => element.scrollTop)),
+      ).toBeGreaterThan(3000);
+    }).toPass({ intervals: [0] });
     await settle(page);
-    expect(
-      start - (await feed.evaluate((element) => element.scrollTop)),
-    ).toBeGreaterThan(3000);
     await releaseAndHold(page);
     const fling = await page.evaluate(
       (sent) => window.linkPreviewScroll.asked.slice(sent),

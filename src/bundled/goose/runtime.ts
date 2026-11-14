@@ -831,6 +831,9 @@ export class GooseRuntime {
         id: channelId,
         ...(summary?.name ? { name: summary.name } : {}),
         dm,
+        ...(summary?.viewerRole === "guest"
+          ? { viewingOnly: true as const }
+          : {}),
       },
       ...(thread ? { thread } : {}),
       context: unseen,

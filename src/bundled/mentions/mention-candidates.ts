@@ -58,6 +58,15 @@ export function managedByDetail(
   return name ? `Managed by ${name}` : undefined;
 }
 
+/** Row detail for a member the roster marks Guest. An agent that only views
+ * cannot reply here; the viewer's own agent answers them elsewhere. */
+export function guestMentionDetail(agent: boolean, own: boolean) {
+  if (!agent) return "Viewing only";
+  return own
+    ? "Viewing only · Answers in your DM or a Solo chat"
+    : "Viewing only · Can’t reply here";
+}
+
 type DirectoryPerson = MentionRecipient & {
   isAgent?: true;
   /** A community-verified full name (useVerifiedNames). */

@@ -83,6 +83,8 @@ export type Channel = Readonly<{
   id: string;
   name?: string;
   dm?: boolean;
+  /** The agent is a Guest here (Viewing only): it can read, not post. */
+  viewingOnly?: true;
 }>;
 export type TurnInput = Readonly<{
   /** The agent's membership key, which finds its sessions among others' in a

@@ -67,6 +67,8 @@ export type ChannelSummary = Readonly<{
   /** Members the signed roster marks as owners. Offers lifecycle actions;
    * the relay authorizes each command. */
   owners?: readonly string[];
+  /** Members the relay-signed roster makes Guests (Viewing only). */
+  guests?: readonly string[];
   /** Relay-published NIP-CL labels. Any channel admin can set them: grouping, never trust. */
   labels?: readonly string[];
   /** Relay-written creator (NIP-CL `P`): the kind:9007 signer. Ownership can move later. */

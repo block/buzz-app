@@ -1514,9 +1514,30 @@ it("creates a Solo chat in its single durable outbox command, with validated lif
     undefined,
     undefined,
   );
+  h.service.create(id, "Work", undefined, false, [], undefined, [], "  Notes ");
+  expect(h.outbox.send).toHaveBeenLastCalledWith(
+    command([
+      ["about", "Notes"],
+      ["t", SOLO_LABEL],
+    ]),
+    undefined,
+    undefined,
+  );
   for (const ttl of [0, -1, 1.5, 2147483648, NaN])
     expect(() => h.service.create(id, "Work", ttl)).toThrow("duration");
-  expect(h.outbox.send).toHaveBeenCalledTimes(3);
+  expect(() =>
+    h.service.create(
+      id,
+      "Work",
+      undefined,
+      false,
+      [],
+      undefined,
+      [],
+      "x".repeat(1001),
+    ),
+  ).toThrow("description");
+  expect(h.outbox.send).toHaveBeenCalledTimes(4);
 });
 
 it("creates a NIP-CL system channel with its labels", () => {

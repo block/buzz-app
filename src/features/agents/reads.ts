@@ -24,6 +24,8 @@ export type ChannelFacts = Readonly<{
   about?: string;
   dm: boolean;
   members: readonly string[];
+  /** The signed roster makes this agent a Guest here: it reads, it can't post. */
+  viewingOnly?: true;
   /** The owner's device is still creating it, so it has nothing to read yet. */
   starting?: true;
 }>;
@@ -103,6 +105,10 @@ export function ownerReads(
             ...(summary.description ? { about: summary.description } : {}),
             dm: summary.channelType === "dm",
             members: summary.members ?? [],
+            // The agent's own role: `viewerRole` is its owner's here.
+            ...(summary.guests?.includes(pubkey)
+              ? { viewingOnly: true as const }
+              : {}),
             ...(summary.pending ? { starting: true as const } : {}),
           }
         : undefined;

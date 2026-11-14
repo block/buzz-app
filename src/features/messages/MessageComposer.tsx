@@ -193,6 +193,14 @@ import { followUpBehaviorPreference } from "./follow-up-preference";
 import { followUpQueue } from "./follow-up-queue";
 import { followUpMessage } from "./follow-up-message";
 import { QueuedFollowUps } from "./QueuedFollowUps";
+import {
+  joinOffer,
+  useGuestAgentMentions,
+  type UnheardAgent,
+} from "./useGuestAgentMentions";
+import { guestKeys, useChannelRoles } from "../channel-members/guests";
+import { askInSolo } from "./solo-ask";
+import { ChatNotStarted } from "../relay/channel-writes";
 
 const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   status: "idle",
@@ -246,6 +254,19 @@ function notifyRecovered(
   byKey.set(key, recovered);
   for (const listener of recoveryListeners.get(session)?.get(key) ?? [])
     listener(recovered);
+}
+/** A saved draft with nothing in it, like the one a send leaves. */
+function blankDraft(raw: string) {
+  try {
+    const draft = mentionDraft(JSON.parse(raw));
+    return (
+      !draft.text.trim() &&
+      !draft.recipients.length &&
+      !composerMarkdown(draft).trim()
+    );
+  } catch {
+    return false;
+  }
 }
 function errorForRecovery(reason: unknown) {
   return reason instanceof Error
@@ -1082,6 +1103,15 @@ function Composer({
   const nonmembers = useNonmemberMentions(session, channelId, () => {
     if (permitted.current) input.current?.focus();
   });
+  const unheard = useGuestAgentMentions(() => {
+    if (permitted.current) input.current?.focus();
+  });
+  // Reads this channel's roles so a send can offer to make a Viewing-only
+  // agent a member.
+  useChannelRoles(
+    session,
+    soloConversation || ownSoloConversation ? undefined : channelId,
+  );
   const oldAgents = useOldAgentMentions(agents, () => {
     if (permitted.current) input.current?.focus();
   });
@@ -2850,6 +2880,8 @@ function Composer({
       }
       let references: readonly string[] = [];
       let recipients = capturedRecipients.map((item) => item.pubkey);
+      // Outside agents already decided in the can't-reply dialog.
+      let decided: readonly string[] = [];
       let declinedImports: readonly string[] = [];
       if (soloConversation || ownSoloConversation) {
         admission.current = true;
@@ -2859,6 +2891,183 @@ function Composer({
           routing && !captured.recipients.length,
         );
       } else if (recipients.length) {
+        // An agent that can't reply here (Viewing only, or not in the channel)
+        // can be asked in your Solo chat with it instead of posting here.
+        const here = session.channels
+          .list()
+          .channels.find((item) => item.id === channelId);
+        const relaySession = fullSession(session);
+        if (
+          here?.members &&
+          here.channelType !== "dm" &&
+          here.channelType !== "solo"
+        ) {
+          const guests = guestKeys(here);
+          const known = session.profiles.snapshot();
+          const agentsHere = captured.recipients.flatMap(
+            (person): UnheardAgent[] => {
+              const profile = known.get(person.pubkey);
+              if (!profile?.isAgent) return [];
+              const reason = guests.has(person.pubkey)
+                ? "viewing-only"
+                : here.members?.includes(person.pubkey)
+                  ? undefined
+                  : "not-in-channel";
+              return reason
+                ? [
+                    {
+                      pubkey: person.pubkey,
+                      name: person.name,
+                      reason,
+                      own: profile.ownerPubkey === session.viewer,
+                    },
+                  ]
+                : [];
+            },
+          );
+          // A draft addressed only to your own such agent can make it a
+          // member first, when you may, or ask it in a Solo chat; that offer
+          // also adds it from outside, in place of §7's Invite. Someone
+          // else's agent is its owner's call: it keeps today's flow (the
+          // chooser label, then §7 for outside people).
+          const [agent] = agentsHere;
+          const single =
+            agentsHere.length === 1 && captured.recipients.length === 1;
+          const solo =
+            single &&
+            !!agent?.own &&
+            !capturedAttachments.length &&
+            !!relaySession?.channelWrites.available;
+          // Your agent from another community joins through §7's bring
+          // prompt instead, which also sets it up here.
+          const elsewhere =
+            !!agent &&
+            (agents?.joinable() ?? []).some(
+              (item) => item.pubkey === agent.pubkey,
+            );
+          const join =
+            single &&
+            agent?.own &&
+            !elsewhere &&
+            (agent.reason === "viewing-only" || solo)
+              ? joinOffer(session, here, agent)
+              : undefined;
+          if (solo || join) {
+            setSending(true);
+            setError(undefined);
+            const choice = await unheard.prepare(
+              {
+                agents: agentsHere,
+                channel: here.name,
+                solo,
+                join,
+                current: () =>
+                  valueRef.current === captured &&
+                  sameAttachmentSelection(
+                    attachments.store.snapshot(),
+                    capturedAttachments,
+                  ) &&
+                  permitted.current,
+              },
+              attempt.signal,
+            );
+            if (choice === null) return;
+            if (agent?.reason === "not-in-channel" && !elsewhere) {
+              // This dialog settles the outside agent, so §7 doesn't ask
+              // again. Send here anyway names it without notifying it, like
+              // §7's "Do nothing".
+              decided = [agent.pubkey];
+              if (choice === "send") {
+                references = [agent.pubkey];
+                recipients = recipients.filter((key) => key !== agent.pubkey);
+              }
+            }
+            if (choice === "solo" && agent && relaySession) {
+              // The ordinary send's final checks: a draft another window
+              // replaced while the dialog was open is never asked.
+              attempt.signal.throwIfAborted();
+              if (
+                valueRef.current !== captured ||
+                !sameAttachmentSelection(
+                  attachments.store.snapshot(),
+                  capturedAttachments,
+                )
+              )
+                return;
+              const askRevision = viewRevision(scope, draftKey);
+              if (askRevision !== savedRevision) {
+                diagnose("send-prepare-conflict", savedRevision, askRevision);
+                setConflict(true);
+                return;
+              }
+              const asked = askInSolo(relaySession, {
+                agent: { pubkey: agent.pubkey, name: agent.name },
+                question: composerMarkdown(captured),
+                channelId,
+                channelName: here.name,
+                ...(threadRootId ? { threadRootId } : {}),
+                ...(tokens.length ? { tokens } : {}),
+              });
+              // The question moved to the Solo chat; clear it like a send.
+              const handed = {
+                next: mentionDraft(""),
+                revision: savedRevision,
+              };
+              recoveryFor(session).set(recoveryKey, handed);
+              setAccepted(handed);
+              completion.invalidate();
+              valueRef.current = handed.next;
+              updateDraft(handed.next);
+              setPicks({});
+              input.current?.reset(handed.next);
+              setError(undefined);
+              finishDraft(handed);
+              // The confirmation waits for the relay to have the chat. A chat
+              // the relay never made is withdrawn with the question (see
+              // askInSolo), and the question returns to this draft, unless
+              // something new was written there since.
+              const link = `buzz://channel/${encodeURIComponent(asked.channelId)}`;
+              void asked.ready.then(
+                () =>
+                  notify(
+                    `Asked ${agent.name} in your Solo chat from #${here.name}.`,
+                    "success",
+                    // The page opens its own buzz: links; canOpenLink covers
+                    // only panel targets.
+                    onOpenLink
+                      ? { label: "Open", onClick: () => void onOpenLink(link) }
+                      : undefined,
+                  ),
+                (reason: unknown) => {
+                  if (!(reason instanceof ChatNotStarted)) return;
+                  const failed = `Couldn’t start your Solo chat with ${agent.name}, so the question wasn’t sent.`;
+                  const current = viewRevision(scope, draftKey);
+                  const restored =
+                    current !== undefined &&
+                    (current === null || blankDraft(current)) &&
+                    (!live.current ||
+                      blankDraft(JSON.stringify(valueRef.current))) &&
+                    replaceView(scope, draftKey, current, captured) === "saved";
+                  if (restored)
+                    notifyRecovered(session, recoveryKey, {
+                      draft: captured,
+                      picks: capturedPicks,
+                      preparationError: new Error(
+                        `${failed} Your draft is back.`,
+                      ),
+                    });
+                  notify(
+                    restored
+                      ? `${failed} It’s back in your draft in #${here.name}.`
+                      : failed,
+                    "error",
+                  );
+                },
+              );
+              return;
+            }
+          }
+        }
         // An agent only an earlier Buzz runs would not answer; offer it here first.
         const lookup = oldAgents.find(captured.recipients);
         const old = lookup instanceof Promise ? await lookup : lookup;
@@ -2897,7 +3106,9 @@ function Composer({
           );
           const bring = captured.recipients.flatMap((person) => {
             const agent = elsewhere.get(person.pubkey);
-            return agent && !channel.members?.includes(person.pubkey)
+            return agent &&
+              !channel.members?.includes(person.pubkey) &&
+              !decided.includes(person.pubkey)
               ? [agent]
               : [];
           });
@@ -2915,7 +3126,8 @@ function Composer({
           const missing = captured.recipients.filter(
             (person) =>
               !channel.members?.includes(person.pubkey) &&
-              !added.includes(person.pubkey),
+              !added.includes(person.pubkey) &&
+              !decided.includes(person.pubkey),
           );
           if (missing.length && channel?.channelType === "dm") {
             // Nobody can be added to a DM, so there is no choice to offer:
@@ -2931,7 +3143,7 @@ function Composer({
               current,
             );
             if (decision === null) return;
-            references = decision;
+            references = [...references, ...decision];
             recipients = recipients.filter((key) => !references.includes(key));
           }
         }
@@ -3371,6 +3583,7 @@ function Composer({
       {context}
       {active && bringing.dialog}
       {active && nonmembers.dialog}
+      {active && unheard.dialog}
       {active && oldAgents.dialog}
       {active && linkSharing.dialog}
       {!submission && !threadRootId && host && (

@@ -84,6 +84,7 @@ function setup(
     publish?: (event: RelayEvent) => Promise<void>;
     sign?: (event: RelayEvent) => Promise<void>;
     legacy?: ReturnType<typeof memoryThreadFollows>;
+    beforeRead?: () => Promise<void>;
     capacity?: Parameters<typeof createThreadFollowSync>[0]["capacity"];
   } = {},
 ) {
@@ -105,7 +106,10 @@ function setup(
     },
   };
   const reader = {
-    read: async () => [...r.heads.values()],
+    read: async () => {
+      await options.beforeRead?.();
+      return [...r.heads.values()];
+    },
   } as unknown as RelayReader;
   return createThreadFollowSync({
     viewer,
@@ -402,4 +406,50 @@ it("counts follow events toward the shared snapshot limit before sending", async
     1,
   );
   expect(sync.read().get(K)).toBe(true);
+});
+
+it("a second window's import never overwrites a choice saved since it read the relay", async () => {
+  const r = relay();
+  const clock = { now: 1000 };
+  const legacy = memoryThreadFollows();
+  legacy.write(new Map([[K, true]]));
+  const disk = memoryStorage();
+  // Window B reads the relay first, then A imports and the user unfollows.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const b = setup(r, clock, {
+    storage: disk.storage,
+    legacy,
+    beforeRead: () => held,
+  });
+  const reading = b.refresh();
+  const a = setup(r, clock, { storage: disk.storage, legacy });
+  await a.refresh();
+  await a.set(K, false);
+  release();
+  await reading;
+  const edit = disk.backup().follows?.state.edits[K];
+  expect(edit).toMatchObject({ origin: "explicit", entry: { follow: false } });
+});
+
+it("a refused import reservation saves nothing, and the retry imports once", async () => {
+  const r = relay();
+  const legacy = memoryThreadFollows();
+  legacy.write(new Map([[K, true]]));
+  const disk = memoryStorage();
+  const clock = { now: 4_294_967_295 + 1 }; // past uint32: reservation refused
+  const sync = setup(r, clock, { storage: disk.storage, legacy });
+  await sync.refresh();
+  expect(sync.snapshot().status).toBe("failed");
+  expect(disk.backup().follows?.imported).toBeUndefined();
+  expect(disk.backup().follows?.state.edits ?? {}).toEqual({});
+  expect(legacy.read().get(K)).toBe(true);
+  clock.now = 1000;
+  await sync.refresh();
+  expect(disk.backup().follows?.imported).toBe(true);
+  expect(disk.backup().follows?.state.edits[K]).toMatchObject({
+    origin: "legacy-import",
+  });
 });

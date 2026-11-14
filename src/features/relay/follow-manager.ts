@@ -578,11 +578,15 @@ export function createThreadFollowSync({
               (head) => new Map(Object.entries(head.payload?.threads ?? {})),
             ),
           ]);
+          // Decided inside the transaction: another window may have imported,
+          // or tapped a key, since this one read the relay.
           await save((current, journal) => {
+            if (current.imported) return current;
             let next = shared(current, journal);
+            const own = ownChoices(current.state, journal.clientId);
             let batch: number | undefined;
             for (const [key, follow] of local) {
-              if (known.has(key)) continue;
+              if (known.has(key) || own.has(key)) continue;
               const placed = place(next, key, follow);
               next = {
                 ...placed.current,

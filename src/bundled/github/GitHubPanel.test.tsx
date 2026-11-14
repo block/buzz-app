@@ -275,6 +275,65 @@ it("links the PR owner and repository and moves its number to the title", async 
   ).not.toBeInTheDocument();
 });
 
+it("opens Command-clicked panel links in the desktop browser", async () => {
+  const invoke = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("isTauri", true);
+  vi.stubGlobal("__TAURI_INTERNALS__", { invoke });
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ title: "A small improvement" })),
+      ),
+  );
+  const target = "https://github.com/block/buzz-app/pull/629";
+  render(<GitHubPanel target={target} close={() => {}} />, {
+    wrapper: ToastProvider,
+  });
+  const title = await screen.findByRole("link", {
+    name: "A small improvement #629",
+  });
+  const plain = new MouseEvent("click", { bubbles: true, cancelable: true });
+  fireEvent(title, plain);
+  // A plain click stays with Tauri's own link opener.
+  expect(plain.defaultPrevented).toBe(false);
+  expect(invoke).not.toHaveBeenCalled();
+  for (const [link, url] of [
+    [title, target],
+    [
+      screen.getByRole("link", { name: "buzz-app" }),
+      "https://github.com/block/buzz-app",
+    ],
+  ] as const) {
+    invoke.mockClear();
+    const command = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      metaKey: true,
+    });
+    fireEvent(link, command);
+    expect(command.defaultPrevented).toBe(true);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith(
+      "plugin:opener|open_url",
+      { url },
+      undefined,
+    );
+  }
+  expect(
+    screen.queryByText("Couldn’t open the link in your browser."),
+  ).not.toBeInTheDocument();
+  // A failed open says so, as message links do.
+  invoke.mockRejectedValueOnce(new Error("denied"));
+  fireEvent(
+    title,
+    new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true }),
+  );
+  expect(
+    await screen.findByText("Couldn’t open the link in your browser."),
+  ).toBeVisible();
+});
+
 it.each([
   ["https://github.com/example/project", "Repository project"],
   ["https://github.com/example/project/issues/2", "Issue #2"],

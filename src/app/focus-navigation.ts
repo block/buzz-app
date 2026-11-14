@@ -1,8 +1,7 @@
 import { focusWithKeyboard } from "../shared/design-system/useKeyboardFocusVisibility";
 
 const PRIMARY = "[data-main-workspace], [data-solo-focus-pane]";
-const SECONDARY =
-  "[data-panel-workspace], [data-panel-sheet-body]:not(:has([data-panel-workspace]))";
+const SECONDARY = "[data-panel-workspace]";
 const WORKSPACE = `${PRIMARY}, ${SECONDARY}`;
 const COVERING = `${WORKSPACE}, [data-panel-dock]`;
 
@@ -84,10 +83,7 @@ export function paneFocusTarget(pane?: "main" | "side") {
     .map(
       (pane) =>
         composerIn(pane) ??
-        pane.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]') ??
-        (pane.tabIndex >= -1 && pane.closest("[data-panel-sheet-body]")
-          ? pane
-          : undefined),
+        pane.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]'),
     )
     .filter((target): target is HTMLElement => !!target && available(target));
   if (pane) return targets[0];

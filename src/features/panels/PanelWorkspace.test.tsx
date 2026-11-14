@@ -238,7 +238,7 @@ for (const action of ["close", "escape"]) {
           <button ref={trigger} type="button" onClick={() => setOpening({})}>
             Open profile
           </button>
-          <PanelDock presentation="inline" open={open} className="">
+          <PanelDock open={open} className="">
             {opening && (
               <PanelWorkspace
                 value="profile"

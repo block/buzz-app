@@ -1,7 +1,6 @@
 import { visibleTeams } from "../../features/agents/visible-teams";
 import { profileKey } from "../../features/profiles/target";
 import type { JsonValue } from "../../features/navigation/targets";
-import { usePanelSheet } from "../../features/panels/PanelSheet";
 import {
   historyActive,
   historyRoute,
@@ -1681,7 +1680,6 @@ function PeekIdentity({
   detail: string;
   onClose(): void;
 }) {
-  const sheet = usePanelSheet();
   return (
     <div className={styles.peekIdentity}>
       <span className={styles.portraitLarge}>
@@ -1691,14 +1689,12 @@ function PeekIdentity({
         <h3 className="m-0 truncate text-heading">{agent.name}</h3>
         <p className="m-0 text-body-sm text-secondary">{detail}</p>
       </div>
-      {!sheet && (
-        <IconButton
-          aria-label="Close"
-          size="sm"
-          icon={<XIcon size={16} aria-hidden="true" />}
-          onClick={onClose}
-        />
-      )}
+      <IconButton
+        aria-label="Close"
+        size="sm"
+        icon={<XIcon size={16} aria-hidden="true" />}
+        onClick={onClose}
+      />
     </div>
   );
 }

@@ -31,13 +31,13 @@ afterEach(() => {
 test("closing content becomes inert immediately and unmounts after its transition", async () => {
   const exit = pendingExit();
   const view = render(
-    <PanelDock presentation="inline" open className="">
+    <PanelDock open className="">
       <button type="button">Close panel</button>
     </PanelDock>,
   );
   try {
     view.rerender(
-      <PanelDock presentation="inline" open={false} className="">
+      <PanelDock open={false} className="">
         {null}
       </PanelDock>,
     );
@@ -57,19 +57,19 @@ test("reopening preserves the live subtree and ignores an old exit completion", 
   const exit = pendingExit();
   const content = <input aria-label="Draft" defaultValue="Keep me" />;
   const view = render(
-    <PanelDock presentation="inline" open className="">
+    <PanelDock open className="">
       {content}
     </PanelDock>,
   );
   const input = screen.getByRole("textbox");
   try {
     view.rerender(
-      <PanelDock presentation="inline" open={false} className="">
+      <PanelDock open={false} className="">
         {null}
       </PanelDock>,
     );
     view.rerender(
-      <PanelDock presentation="inline" open className="">
+      <PanelDock open className="">
         {content}
       </PanelDock>,
     );
@@ -85,12 +85,12 @@ test("reopening preserves the live subtree and ignores an old exit completion", 
 
 test("layouts without a running transition remove closed content immediately", () => {
   const view = render(
-    <PanelDock presentation="inline" open className="">
+    <PanelDock open className="">
       <span>Panel content</span>
     </PanelDock>,
   );
   view.rerender(
-    <PanelDock presentation="inline" open={false} className="">
+    <PanelDock open={false} className="">
       {null}
     </PanelDock>,
   );
@@ -105,20 +105,20 @@ test("releasing kept content during an exit does not remount an obsolete panel",
     return <span>Plugin content</span>;
   }
   const view = render(
-    <PanelDock presentation="inline" open keepMounted className="">
+    <PanelDock open keepMounted className="">
       <Plugin />
     </PanelDock>,
   );
   const dock = screen.getByText("Plugin content").parentElement;
   try {
     view.rerender(
-      <PanelDock presentation="inline" open={false} keepMounted className="">
+      <PanelDock open={false} keepMounted className="">
         {null}
       </PanelDock>,
     );
     expect(screen.queryByText("Plugin content")).not.toBeInTheDocument();
     view.rerender(
-      <PanelDock presentation="inline" open={false} className="">
+      <PanelDock open={false} className="">
         {null}
       </PanelDock>,
     );
@@ -139,7 +139,7 @@ test("a retained tab pane leaves layout after its exit and reopens the same cont
   const exit = pendingExit();
   const content = <input aria-label="Draft" defaultValue="Keep me" />;
   const view = render(
-    <PanelDock presentation="inline" open keepMounted className="">
+    <PanelDock open keepMounted className="">
       {content}
     </PanelDock>,
   );
@@ -147,7 +147,7 @@ test("a retained tab pane leaves layout after its exit and reopens the same cont
   const dock = input.parentElement;
   try {
     view.rerender(
-      <PanelDock presentation="inline" open={false} keepMounted className="">
+      <PanelDock open={false} keepMounted className="">
         {content}
       </PanelDock>,
     );
@@ -157,7 +157,7 @@ test("a retained tab pane leaves layout after its exit and reopens the same cont
     expect(dock).toHaveAttribute("hidden");
     expect(input).toBeInTheDocument();
     view.rerender(
-      <PanelDock presentation="inline" open keepMounted className="">
+      <PanelDock open keepMounted className="">
         {content}
       </PanelDock>,
     );

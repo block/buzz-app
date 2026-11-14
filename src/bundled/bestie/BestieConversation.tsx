@@ -656,8 +656,6 @@ export function BestieConversation({
               </div>
               <PanelDock
                 open={paneOpen}
-                title={secondary.drawer.title}
-                close={secondary.drawer.close}
                 keepMounted={
                   state.entries.length > 0 ||
                   (sideItems.length > 0 && !state.paneOpen) ||

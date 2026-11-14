@@ -2719,8 +2719,6 @@ function ChannelWorkspace({
       </p>
       <PanelDock
         open={!!showingPanel && !showingMediaReview}
-        title={drawer.title}
-        close={drawer.close}
         keepMounted={
           tabState.entries.length > 0 ||
           (!!hasPanel && !tabState.paneOpen) ||

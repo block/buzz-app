@@ -22,9 +22,6 @@ import {
 } from "../../shared/design-system/ui/Tabs";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import styles from "./Panels.module.css";
-import { usePanelSheet } from "./PanelSheet";
-import { Button } from "../../shared/design-system/ui/Button";
-import { PopoverClose } from "../../shared/design-system/ui/Popover";
 import type { TabDragHost } from "./useTabDrag";
 
 type Item = {
@@ -259,20 +256,6 @@ export function PanelWorkspace({
       const element = root.current;
       const from = source(event);
       const dialog = from?.closest('[role="dialog"]');
-      const modalSheet = element?.closest(
-        '[role="dialog"][aria-modal="true"]:has([data-panel-sheet-body])',
-      );
-      // Native menu requests can arrive before the opening sheet's autofocus.
-      // Its modal scope owns them while the old conversation still holds focus.
-      if (
-        visible() &&
-        modalSheet &&
-        !(event.target instanceof Element) &&
-        !document.querySelector(
-          'dialog[open]:not(:has([data-panel-sheet-body])), [aria-modal="true"]:not(:has([data-panel-sheet-body]))',
-        )
-      )
-        return true;
       return (
         visible() &&
         (from?.closest("[data-panel-workspace], [data-main-workspace]") ??
@@ -370,12 +353,11 @@ export function PanelWorkspace({
         ) ??
         root.current?.querySelector<HTMLElement>(
           "[data-workspace-identity] button",
-        ) ??
-        (sheet && previous.current !== undefined ? root.current : undefined);
+        );
       awaitContent.current?.();
       awaitContent.current = undefined;
       const panel =
-        (focusContent.current && previous.current !== selected) || sheet
+        focusContent.current && previous.current !== selected
           ? document.getElementById(panelId(selected))
           : undefined;
       const content = panel?.querySelector<HTMLElement>(contentTarget);
@@ -416,48 +398,6 @@ export function PanelWorkspace({
         {actions}
       </>
     ) : null;
-  const sheet = usePanelSheet(
-    active?.close
-      ? {
-          title: active.label,
-          composer: "composer" in active && active.composer === true,
-          icon: active.icon,
-          actions: (
-            <>
-              {activeToolbar}
-              {("actions" in active ? active.actions : undefined)?.map(
-                (action) => (
-                  <PopoverClose
-                    key={action.label}
-                    render={
-                      <Button size="sm" variant="ghost">
-                        {action.label}
-                      </Button>
-                    }
-                    onClick={() => {
-                      root.current?.focus({ preventScroll: true });
-                      action.run();
-                    }}
-                  />
-                ),
-              )}
-              {tabMenu && (
-                <PopoverClose
-                  render={
-                    <Button size="sm" variant="ghost">
-                      Close all details
-                    </Button>
-                  }
-                  onClick={() => tabMenu.closeAll()}
-                />
-              )}
-            </>
-          ),
-          source: root,
-          close: active.close,
-        }
-      : undefined,
-  );
   const identityOnly = !!identity && tabs.length === 1 && !tabs[0]?.close;
   const heading = identity ? (
     <div data-workspace-identity="" className={styles.workspaceIdentity}>
@@ -487,7 +427,7 @@ export function PanelWorkspace({
   const conversationTitle =
     identityPlacement === "content" ? items[0]?.label : active?.label;
   const standaloneIdentity = !!conversationIdentity && identityOnly;
-  const tools = sheet ? undefined : conversationTools ? (
+  const tools = conversationTools ? (
     <ConversationHeaderTools actions={headerTools} />
   ) : (
     headerTools
@@ -544,7 +484,7 @@ export function PanelWorkspace({
         }
       }}
     >
-      {(!sheet || tabs.length > 1) && !standaloneIdentity && (
+      {!standaloneIdentity && (
         <PanelHeader
           divider={headerDivider}
           navigation={
@@ -576,10 +516,10 @@ export function PanelWorkspace({
                     "attentionRequest" in tab
                       ? tab.attentionRequest
                       : undefined,
-                  onMove: !sheet && "move" in tab ? tab.move : undefined,
+                  onMove: "move" in tab ? tab.move : undefined,
                   onRename: "rename" in tab ? tab.rename : undefined,
                   actions: "actions" in tab ? tab.actions : undefined,
-                  draggable: !sheet && !!drag && "move" in tab && !!tab.move,
+                  draggable: !!drag && "move" in tab && !!tab.move,
                   onClose: tab.close
                     ? () => {
                         // Recover focus only when removing its current owner.
@@ -653,7 +593,7 @@ export function PanelWorkspace({
             slots={slots}
           >
             <div
-              {...(identityOnly || (sheet && tabs.length === 1)
+              {...(identityOnly
                 ? { role: "region", "aria-label": item.label }
                 : {
                     role: "tabpanel",

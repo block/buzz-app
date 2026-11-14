@@ -1898,17 +1898,27 @@ Claude implements it from the transcripts Claude Code keeps for the agent's
 workspace: sessions whose first prompt names the agent, plus those this app saved
 for it (prompts from before agents were named), with their subagents' requests.
 Streamed responses repeat their usage on each line, so each request is counted
-once.
+once. A watch's or timer's standalone turn opens with no context, so only the
+app's record of the session it started says it is the agent's. That record is
+kept apart from saved prompts, for 32 days from the session's start, longer than
+Usage reads back, with no limit on how many sessions it holds. Each day's starts
+are saved as one value, and a day's value is removed once all of it is past
+keeping. The snapshot has no `channelId`, and a session from before that
+record was kept is not counted.
 
 Codex finds the agent's threads through app-server by the agent's name in their
 thread names, keeps those whose rollout's developer instructions name the agent's
 pubkey, and reads each rollout's per-response `token_usage_record` entries, adding
-the subagent threads each one spawned. Codex records no cost.
+the subagent threads each one spawned. Codex records no cost. A standalone turn
+runs on an ephemeral thread, which Codex keeps no rollout for, so Usage does not
+count it.
 
 Goose lists the agent's sessions in its workspace through `goose-acp`, as its
 Activity tab does, and reads the usage goose saves on each reply, with goose's
 own cost estimate where it has one. Both count a request's cached tokens in its
-input, which the readers subtract.
+input, which the readers subtract. Goose and Pi also count a standalone turn's
+session, which has no `channelId`; Pi finds it by the same kept record and
+counts it by when it last answered.
 
 All three read only the harness's own session history; none reads Buzz's saved
 agent activity or turn metrics.

@@ -15,6 +15,7 @@ import {
 } from "./execution";
 import type { JsonValue } from "../navigation/targets";
 import { removeSessionPrompts } from "./session-prompts";
+import { removeStandaloneSessions } from "./standalone-sessions";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
 import { respondExternal } from "../../buzz-mcp/external";
@@ -6526,6 +6527,7 @@ export class AgentsService extends Service implements Agents {
       if (this.storage.get(recordKey(key)) !== null)
         await removeRecord(this.storage, key);
       await removeSessionPrompts(this.storage, key);
+      await removeStandaloneSessions(this.storage, key);
     }
     const { [key]: _, ...others } = this.records;
     this.records = next ? { ...others, [key]: next } : others;

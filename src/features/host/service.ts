@@ -227,8 +227,12 @@ export interface Host {
   ) => Promise<Uint8Array>;
   /** `path`, absolute or `~/…`, as an absolute directory without symbolic
    * links, created if missing, for a plugin whose manifest declares
-   * `host.files`. Desktop only. */
-  resolveDirectory?: (path: string) => Promise<string>;
+   * `host.files`. With `create: false`, a missing path or one that is not a
+   * directory rejects instead. Desktop only. */
+  resolveDirectory?: (
+    path: string,
+    options?: Readonly<{ create?: boolean }>,
+  ) => Promise<string>;
   /** The immediate folders, sorted by name, of the repositories folder that
    * `binding`'s community and account configured, for a plugin whose manifest
    * declares `host.files`. Never creates it or follows a linked child. Rejects
@@ -646,7 +650,10 @@ export class HostService extends Service implements Host {
     return new Uint8Array(data);
   }
 
-  async resolveDirectory(path: string): Promise<string> {
+  async resolveDirectory(
+    path: string,
+    { create = true }: Readonly<{ create?: boolean }> = {},
+  ): Promise<string> {
     const owner = this.ctx.pluginOwner;
     if (!owner || !isTauri())
       throw new Error("Files require an installed desktop plugin");
@@ -654,6 +661,7 @@ export class HostService extends Service implements Host {
       id: owner.id,
       revision: owner.revision,
       path,
+      ...(create ? {} : { create }),
     }).catch(rethrow);
   }
 

@@ -472,6 +472,78 @@ it("looks for the catalog again after a discovery that listed nothing", async ()
   expect(sessions).toHaveLength(1);
 });
 
+it("looks for a stale catalog again, keeping the listed one meanwhile", async () => {
+  const { spawn, sessions } = discoverable();
+  const setup = new ClaudeSetup(spawn);
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    await setup.catalog();
+    const listed = setup.snapshot().models;
+    expect(sessions).toHaveLength(1);
+    // Within the hour, the list is current.
+    vi.setSystemTime(Date.now() + 60 * 60_000 - 1);
+    await setup.loadModels();
+    expect(sessions).toHaveLength(1);
+    // A failed refresh neither hides nor faults the listed models.
+    vi.setSystemTime(Date.now() + 1);
+    spawn.mockRejectedValueOnce(new Error("probe failed"));
+    const failing = setup.loadModels();
+    expect(setup.snapshot().modelsChecking).toBe(false);
+    await failing;
+    expect(setup.snapshot()).toMatchObject({
+      models: listed,
+      modelsChecking: false,
+      modelsError: "",
+    });
+    // It waits another hour. A surface asking then gets the listed catalog
+    // at once while the refresh runs; the same listing leaves it as it was.
+    await setup.loadModels();
+    expect(sessions).toHaveLength(1);
+    vi.setSystemTime(Date.now() + 60 * 60_000);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started = false;
+    spawn.mockImplementationOnce((id, options) => {
+      started = true;
+      return held.then(() => spawn(id, options));
+    });
+    try {
+      await expect(setup.catalog()).resolves.toBe(listed);
+      expect(started).toBe(true);
+      expect(sessions).toHaveLength(1);
+    } finally {
+      release();
+    }
+    await setup.loadModels();
+    expect(sessions).toHaveLength(2);
+    expect(setup.snapshot().models).toBe(listed);
+    // A changed listing replaces it once the refresh finishes.
+    vi.setSystemTime(Date.now() + 60 * 60_000);
+    spawn.mockImplementationOnce((id, options) =>
+      spawn(id, {
+        ...options,
+        onStdout: (data) =>
+          options?.onStdout?.(
+            data.replace("claude-haiku-5-5", "claude-haiku-5-6"),
+          ),
+      }),
+    );
+    await expect(setup.catalog()).resolves.toBe(listed);
+    await setup.loadModels();
+    expect(sessions).toHaveLength(3);
+    const refreshed = await setup.catalog();
+    expect(refreshed).not.toBe(listed);
+    expect(
+      refreshed.find((model) => model.value === "haiku")?.resolvedModel,
+    ).toBe("claude-haiku-5-6");
+  } finally {
+    setup.dispose();
+    vi.useRealTimers();
+  }
+});
+
 it("bounds a stalled discovery and releases it for an explicit retry", async () => {
   const checks = scripted({
     "claude --version": { stdout: "2.1.280" },
@@ -516,7 +588,16 @@ const CHECKSUM = "a".repeat(64);
 /** Buzz's copy on a fake disk, and downloads.claude.ai offering `latest`. */
 function releases(
   latest: string,
-  { current, broken }: { current?: string; broken?: string } = {},
+  {
+    current,
+    broken,
+    quits,
+  }: {
+    current?: string;
+    broken?: string;
+    /** Reports its version, then quits with this on stderr when driven. */
+    quits?: Readonly<{ version: string; stderr: string }>;
+  } = {},
 ) {
   const state = {
     current,
@@ -527,9 +608,19 @@ function releases(
   const claude = fakeSpawn();
   const spawn = async (id: string, options: HostProcessOptions = {}) => {
     const args = options.args ?? [];
-    if (id === "claude" && args.includes("stream-json"))
-      return claude.spawn(id, options);
     const version = options.env?.BUZZ_CLAUDE_VERSION ?? state.current;
+    if (id === "claude" && args.includes("stream-json")) {
+      if (!quits || version !== quits.version) return claude.spawn(id, options);
+      queueMicrotask(() => options.onStderr?.(quits.stderr));
+      return {
+        write: async () => undefined,
+        end: async () => undefined,
+        kill: async () => undefined,
+        exited: new Promise<number | null>((resolve) =>
+          setTimeout(() => resolve(1), 0),
+        ),
+      };
+    }
     let result: { stdout?: string; stderr?: string; code: number } = {
       code: 0,
     };
@@ -613,6 +704,24 @@ it("keeps the copy in use when a new release fails its test", async () => {
   expect(state.fetched).toHaveLength(1);
   await setup.run("install");
   expect(state.fetched).toHaveLength(2);
+});
+
+it("says why a new release quit during its test", async () => {
+  const { spawn, request, state } = releases("2.1.300", {
+    current: "2.1.280",
+    quits: {
+      version: "2.1.300",
+      stderr: "Starting Claude\nError: bypassPermissions is disabled\n",
+    },
+  });
+  const setup = new ClaudeSetup(spawn, request);
+  await setup.update(false);
+  expect(state.used).toEqual([]);
+  expect(setup.snapshot()).toMatchObject({
+    notice:
+      "Claude 2.1.300 failed its test: Error: bypassPermissions is disabled. Buzz keeps using 2.1.280.",
+    status: { state: "ready", version: "2.1.280" },
+  });
 });
 
 it("does nothing when the copy is already the latest", async () => {

@@ -631,9 +631,13 @@ test.describe("GIF send roundtrip", () => {
       name: "Message #Alpha",
       exact: true,
     });
+    // A click in history resumes typing in the message box.
     await page
       .getByRole("region", { name: "Channel message history", exact: true })
       .click({ position: { x: 20, y: 20 } });
+    await expect(draft).toBeFocused();
+    // The GIF shortcut also works with focus outside the message box.
+    await draft.evaluate((node) => node.blur());
     await expect(draft).not.toBeFocused();
     await page.keyboard.press("ControlOrMeta+g");
     await expect(

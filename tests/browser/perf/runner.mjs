@@ -247,9 +247,9 @@ export const test = base.extend({
         await virtuaIdle(page, page.locator(timeline(id)));
       },
       // Wheel input uses the timeline gutter, avoiding message hover. Pointer
-      // modality ends setup with a real press there, which focuses the list as
-      // clicking into a conversation does. Keyboard modality keeps the palette's
-      // arrow-key state, with focus outside the list.
+      // modality ends setup with a real press there, which resumes typing in
+      // the message box as clicking into a conversation does. Keyboard modality
+      // keeps the palette's arrow-key state. Focus stays outside the list.
       async gutter(id, modality) {
         const scroller = page.locator(timeline(id));
         const point = await scroller.evaluate((element) => {
@@ -269,23 +269,30 @@ export const test = base.extend({
             button: type === "mouseMoved" ? "none" : "left",
             clickCount: 1,
           });
-        expect(
-          await scroller.evaluate(
-            (element, { x, y }) => ({
-              inside: element.contains(document.elementFromPoint(x, y)),
-              keyboard: document.documentElement.hasAttribute(
-                "data-keyboard-navigation",
+        // The message box takes focus a frame after the press.
+        await expect
+          .poll(
+            () =>
+              scroller.evaluate(
+                (element, { x, y }) => ({
+                  inside: element.contains(document.elementFromPoint(x, y)),
+                  keyboard: document.documentElement.hasAttribute(
+                    "data-keyboard-navigation",
+                  ),
+                  listFocused: element.contains(document.activeElement),
+                  composerFocused:
+                    !!document.activeElement?.matches("[data-tab-focus]"),
+                }),
+                point,
               ),
-              listFocused: element.contains(document.activeElement),
-            }),
-            point,
-          ),
-          `pointer inside the timeline, ${modality} modality`,
-        ).toEqual({
-          inside: true,
-          keyboard: modality === "keyboard",
-          listFocused: modality === "pointer",
-        });
+            { message: `pointer inside the timeline, ${modality} modality` },
+          )
+          .toEqual({
+            inside: true,
+            keyboard: modality === "keyboard",
+            listFocused: false,
+            composerFocused: modality === "pointer",
+          });
         return point;
       },
       // `selector` and `ids` measure another surface than the channel

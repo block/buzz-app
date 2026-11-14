@@ -16,6 +16,8 @@ import type { Agent, Delivery } from "../../features/agents/service";
 import type { AgentProtection } from "../../features/agent-protection/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
+import { eventDto } from "../../features/relay/events";
+import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import { fakeSpawn, flush, gated } from "./goose-testing";
 import { REQUEST_TIMEOUT_MS } from "./goose";
@@ -90,6 +92,8 @@ function setup(
       slug?: string,
     ) => Promise<Memories>;
     thinking?: NonNullable<Parameters<typeof fakeSpawn>[0]>["thinking"];
+    /** The community's relay workflow key. */
+    workflowAuthority?: string;
     /** Wraps the fake's `spawn`, as `gated(…).wrap` does. */
     wrap?: (spawn: ReturnType<typeof fakeSpawn>["spawn"]) => Host["spawn"];
     /** What agents on Recommended run on. */
@@ -139,6 +143,7 @@ function setup(
     dispose: () => {},
   };
   const session = {
+    workflowAuthority: options.workflowAuthority,
     read,
     agentMemories: {
       open: vi.fn(() => memories),
@@ -1827,6 +1832,29 @@ it.each([
   } finally {
     f.runtime.dispose();
   }
+});
+
+it("gives the workflow reason for its owner's workflow mention that doesn't name it", async () => {
+  const relay = keypair();
+  const f = setup({ workflowAuthority: relay.pubkey });
+  const ignored = vi.fn();
+  await f.deliver(
+    eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Agent workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+        ],
+      }),
+    ),
+    { ignored },
+  );
+  expect(ignored).toHaveBeenCalledExactlyOnceWith("workflow");
+  expect(f.goose()).toBeUndefined();
 });
 
 it("takes a wake with no thread only in a Solo chat", async () => {

@@ -1007,11 +1007,6 @@ available rather than silently discarding it.
 - On desktop, Buzz starts every agent with `BUZZ_VERSION` set to the app's
   version, and agents usually pass it on to the shell commands they run. A
   script or shell config can check for it to tell it is running under Buzz.
-- In communities where your build restricts workflows, workflow messages do
-  not automatically start or steer local Claude, Codex, Goose, or Pi agents. To
-  have one act on a workflow result, send it a direct request explaining what
-  to do with that result. Other communities still let a workflow you or your
-  agents created mention your agents.
 - **Agents** is where people create and manage agents. For supported types,
   open an agent there and use **Identity → Instructions**. Opening its avatar or
   name in a conversation shows its profile, where **Settings → Instructions**
@@ -1735,6 +1730,35 @@ When creating a workflow, direct-message choices use participant names when avai
 matches the displayed participant name. When no participant name is available, Buzz shows a short
 public-key prefix. A direct message with yourself is labeled **Notes to self**.
 These labels only help identify the conversation you select.
+
+## When your agent ignores a mention
+
+Your agents act only on messages from you, from your other agents, and from
+workflows that you or your agents own and that direct them. When your own
+workflow posts a message that mentions one of your agents on this computer but
+doesn’t direct it, a short note under the message says so. On a relay that uses
+owner-only agent mentions it reads: **“‹Agent› didn’t respond to this workflow
+message. This community limits which workflows can use agents, so other people
+can’t use yours. The workflow’s Runs tab shows why it didn’t respond this
+time.”** Elsewhere it reads: **“‹Agent› didn’t respond because this workflow
+message wasn’t set up to direct agents.”** Only you see it, on this device;
+nothing is posted.
+Other ignored mentions show no note.
+
+On a relay that uses owner-only agent mentions, the desktop workflow editor
+warns when a message step mentions an agent in the channel:
+
+Each warning ends with “This community limits which workflows can use agents,
+so other people can’t use yours.”
+
+- **“Agents you mention respond only when you start this workflow, not when
+  someone else does.”** The workflow starts on a message, reaction or diff.
+- **“Agents won’t respond to workflows started by a webhook.”** It starts on a
+  webhook, whatever its steps.
+- **“Agents won’t respond to this workflow because it has steps other than Send
+  Message and Delay.”** It has a step other than a message or a delay.
+
+A schedule with only message and delay steps shows no warning.
 
 ## Deleting an agent’s workflow
 

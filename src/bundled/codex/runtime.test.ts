@@ -2843,7 +2843,8 @@ it("ignores non-owner messages without spawning", async () => {
   if ("event" in other.trigger) other.trigger.event.pubkey = "f".repeat(64);
   const ignored = vi.fn();
   await f.runtime.run({ ...other, ignored });
-  expect(ignored).toHaveBeenCalledOnce();
+  // No reason, so no note for its owner.
+  expect(ignored).toHaveBeenCalledExactlyOnceWith(undefined);
   expect(f.spawn).not.toHaveBeenCalled();
   expect(f.publish).not.toHaveBeenCalled();
 });
@@ -2871,6 +2872,28 @@ it("runs a verified relay workflow mention for its owner", async () => {
   expect(ignored).not.toHaveBeenCalled();
   await f.complete();
   expect(f.publish).toHaveBeenCalled();
+});
+it("gives the workflow reason for its owner's workflow mention that doesn't name it", async () => {
+  const f = fixture();
+  const relay = keypair();
+  f.snapshot.session.workflowAuthority = relay.pubkey;
+  const ask = f.delivery("@Codex workflow");
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Agent workflow",
+      tags: [
+        ["h", "channel"],
+        ["p", pubkey],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", owner],
+      ],
+    }),
+  );
+  const ignored = vi.fn();
+  await f.runtime.run({ ...ask, trigger: { type: "mention", event }, ignored });
+  expect(ignored).toHaveBeenCalledExactlyOnceWith("workflow");
+  expect(f.spawn).not.toHaveBeenCalled();
 });
 it.each([false, true])(
   "handles sibling workflow authorization with cancellation=%s",

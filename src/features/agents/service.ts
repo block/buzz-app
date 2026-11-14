@@ -799,8 +799,9 @@ export type Delivery<Config = unknown> = Readonly<{
   workingUntil(done: PromiseLike<unknown>): void;
   /** Optional presentation evidence supplied by the harness, not inferred by the UI. */
   step?(tool: string, target?: string): void;
-  /** The plugin declined this request; no work or successful outcome is implied. */
-  ignored?(): void;
+  /** The plugin declined this request; no work or successful outcome is implied.
+   * A `refusal` shows its owner, on this device, why the agent didn't act. */
+  ignored?(refusal?: MentionRefusal): void;
   /** The harness acknowledged this exact request. Not proof of model consumption. */
   acknowledged?(input?: Readonly<{ steering?: true }>): void;
   /** A newer acknowledged request owns this turn's activity; hide this message's
@@ -1884,7 +1885,8 @@ export function teamPrompt(
     })
     .join("\n\n");
 }
-export { fromOwner } from "./owner-attestation";
+export { fromOwner, mentionAuthority } from "./owner-attestation";
+import type { MentionRefusal } from "./owner-attestation";
 
 /** What Agents needs of the communities: the viewer, the selected one, and
  * a connection to any joined one without selecting it. */

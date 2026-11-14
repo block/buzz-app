@@ -2321,6 +2321,32 @@ it("shows no typing for a mention its runtime ignores", async () => {
   expect(await published(native, 20002)).toEqual([]);
 });
 
+it("keeps a runtime's refusal reason for its owner's decline note", async () => {
+  const { service, run, emit, activity } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  run.mockImplementationOnce(async ({ ignored }) => ignored?.("workflow"));
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() =>
+    expect(activity.reader.declined?.()).toEqual([
+      expect.objectContaining({
+        agent: bot,
+        channelId: channel,
+        refusal: "workflow",
+      }),
+    ]),
+  );
+});
+
 it("wakes on a reply in a thread it started only by a mention or a watch", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

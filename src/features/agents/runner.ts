@@ -28,6 +28,7 @@ import type {
   Trigger,
 } from "./service";
 import type { LocalAgentActivity, WorkOutcome } from "./local-activity";
+import type { MentionRefusal } from "./owner-attestation";
 import { threadReference } from "../relay/thread-reference";
 import {
   hasEventProof,
@@ -2797,7 +2798,7 @@ export class AgentRunners {
         workingUntil: working.hold,
         ...(job.work
           ? {
-              ignored: () => job.work?.remove(),
+              ignored: (refusal?: MentionRefusal) => job.work?.remove(refusal),
               acknowledged: (input?: Readonly<{ steering?: true }>) => {
                 job.work?.started();
                 job.work?.acknowledged(input);

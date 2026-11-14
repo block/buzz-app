@@ -4062,3 +4062,10 @@ html[data-keyboard-navigation] .activityExpansion {
 .activityGroupHeader[data-expanded] > div:last-child {
   flex-shrink: 0;
 }
+.agentNote {
+  margin: var(--space-1h) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}

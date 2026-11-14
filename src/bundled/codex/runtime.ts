@@ -12,7 +12,10 @@ import { isFinalMessage } from "../../buzz-mcp/session-tools";
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import type { AgentProtection } from "../../features/agent-protection/service";
 import { nativeProtectionBridge } from "../../features/agent-protection/native-bridge";
-import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
+import {
+  mentionAuthority,
+  workflowOf,
+} from "../../features/agents/owner-attestation";
 import {
   type ConversationWake,
   wakeAnchor,
@@ -1682,16 +1685,13 @@ export class CodexRuntime {
     const event =
       trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const reads = this.reads(agent.key);
-    if (
-      trigger.type === "mention" &&
-      !(await fromOwner(
+    if (trigger.type === "mention") {
+      const authority = await mentionAuthority(
         trigger.event,
         agent.owner,
         workflowOf(reads, agent.pubkey),
-      ))
-    ) {
-      delivery.ignored?.();
-      return;
+      );
+      if (authority !== "owner") return delivery.ignored?.(authority);
     }
     delivery.signal.throwIfAborted();
     if (!reads) throw new Error("Connect to the agent's community first");

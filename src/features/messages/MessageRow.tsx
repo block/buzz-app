@@ -85,6 +85,7 @@ import {
 } from "../conversation/ContributionBoundary";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { AttachmentImage } from "./AttachmentImage";
+import { AgentDeclineNotes } from "./AgentDeclineNotes";
 import { DeliveryNotice } from "./DeliveryNotice";
 import { AttachmentView } from "../conversation/AttachmentView";
 import { AudioAttachment } from "./AudioAttachment";
@@ -1624,6 +1625,14 @@ function MessageRowContent({
           </div>
           {!reactionsInBubble && reactionContent}
           <DeliveryNotice row={row} retry={retry} />
+          {session && scope && (
+            <AgentDeclineNotes
+              session={session}
+              scope={scope}
+              channelId={row.channelId}
+              messageId={row.id}
+            />
+          )}
           {active && session && scope && extensions?.accessories && (
             <ComposerAccessories
               registry={extensions.accessories}

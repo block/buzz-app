@@ -678,12 +678,10 @@ and are asked to sign in again in Buzz.
   phrase. Each message shows the words around the match. A panel beside the
   results previews the highlighted row: the message with the ones just before
   and after it, or a channel's or person's latest messages. Tab and Shift+Tab
-  show one group whole (as does **See all**); Escape goes back. When the
-  community offers decisions, the first page of message results is reordered
-  by likely relevance a moment after it appears, and the heading says
-  **Reranked**. Groups reorder as slower results arrive until you move the
-  highlight; after that they stay put and later groups join at the end. The
-  panel and key hints hide in narrow windows.
+  show one group whole (as does **See all**); Escape goes back. Groups
+  reorder as slower results arrive until you move the highlight; after that
+  they stay put and later groups join at the end. The panel and key hints hide
+  in narrow windows.
 - **Ask an agent**: start with `ask:` to write a question for your default
   agent, or choose **Ask** under a long query. Enter opens New chat with the
   question addressed to that agent; press Enter again to send it. With an empty

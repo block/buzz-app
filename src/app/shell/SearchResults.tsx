@@ -48,7 +48,6 @@ import {
   UserIcon,
   UsersIcon,
 } from "../../shared/design-system/icons/index";
-import type { Decisions } from "../../features/decisions/service";
 import { useDefaultAgent } from "../../features/solo/default-agent";
 import type { MentionRecipient } from "../../features/messages/mention-draft";
 import { searchTerms, snippet } from "../../features/search/snippet";
@@ -56,7 +55,6 @@ import {
   readRecentSearches,
   recordRecentSearch,
 } from "../../features/search/recent-searches";
-import { useMessageRerank } from "./message-rerank";
 import { SearchPreview } from "./SearchPreview";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -217,15 +215,9 @@ export function SearchResults({
   sidebarScope,
   views,
   offline,
-  decisions,
-  community,
   openAsk,
 }: {
   session: RelaySession;
-  /** Reranks message hits by how well each answers the query. */
-  decisions?: Decisions | undefined;
-  /** The community's relay URL, for the decision provider. */
-  community?: string | undefined;
   /** Open a new chat with `agent` that starts with `question`. */
   openAsk?:
     | ((question: string, agent: { pubkey: string; name: string }) => void)
@@ -1508,32 +1500,7 @@ export function SearchResults({
       : name;
   };
   const terms = useMemo(() => searchTerms(parsed.text), [parsed.text]);
-  // The text whose results the person has started moving through: from then
-  // on nothing reorders.
-  const [frozenFor, setFrozenFor] = useState<string>();
-  const rerank = useMessageRerank(
-    decisions,
-    community,
-    parsed.text,
-    search.messages,
-    !!parsed.text && !search.newestFirst && !search.loading,
-    (message) => {
-      const channel = session.channels.get?.(message.channelId);
-      return {
-        where:
-          channel?.channelType === "dm"
-            ? `Direct message: ${whereOf(message.channelId)}`
-            : whereOf(message.channelId),
-        author: nameOf(
-          message.workflowOwnerId ?? message.authorId,
-          message.channelId,
-        ),
-        mine: message.authorId === session.viewer,
-      };
-    },
-    frozenFor === query,
-  );
-  const messages: SearchDestination[] = rerank.messages.map((message) => {
+  const messages: SearchDestination[] = search.messages.map((message) => {
     // Every listed hit's channel is readable here, with settled metadata.
     const channel = session.channels.get?.(message.channelId);
     const displayId = message.workflowOwnerId ?? message.authorId;
@@ -1568,7 +1535,7 @@ export function SearchResults({
       run: () => {
         cancelPersonOpen();
         remember();
-        openConversation(message.channelId, message.id, message.threadRootId);
+        openConversation(message.channelId, message.id);
       },
     };
   });
@@ -1844,7 +1811,9 @@ export function SearchResults({
     tone: "message",
     rank: messageLead === 0 ? -Infinity : Infinity,
     why: hits
-      ? `${words >= 3 ? "Reads like a topic" : `${messageCount ?? hits} mention it`}${rerank.reranked ? " · Reranked" : ""}`
+      ? words >= 3
+        ? "Reads like a topic"
+        : `${messageCount ?? hits} mention it`
       : undefined,
     count: messageCount,
     destinations: messageRows,
@@ -1941,10 +1910,8 @@ export function SearchResults({
                   rank: Infinity,
                   icon: ChatCircleIcon,
                   why: scopedChannelId
-                    ? rerank.reranked
-                      ? "Reranked"
-                      : undefined
-                    : `Filters apply to messages${rerank.reranked ? " · Reranked" : ""}`,
+                    ? undefined
+                    : "Filters apply to messages",
                   destinations: messageRows,
                   headingStatus: slowMessages ? "Searching…" : undefined,
                   empty: messageEmpty,
@@ -2164,7 +2131,6 @@ export function SearchResults({
           ranked: !asking && !scopedChannelId && !hasOperator && resultsShown,
           hints,
           busy: !!query.trim() && (messagesPending || directoryPending),
-          onFreeze: () => setFrozenFor(query),
           preview: (row, tone, follow) => (
             <SearchPreview
               session={session}

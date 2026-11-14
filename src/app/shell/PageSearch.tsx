@@ -51,7 +51,6 @@ export type SearchServices = Pick<
       | "plugins"
       | "adminAccess"
       | "settingsCards"
-      | "decisions"
     >
   >;
 const SEARCH_ID = "global-search";
@@ -552,8 +551,6 @@ function CommunitySearch({
         views={views}
         offline={saved ? offline : undefined}
         openConversation={openConversation}
-        decisions={services.decisions}
-        community={scope.communityOrigin}
         openAsk={(question, agent) => {
           const current = services.communities.snapshot();
           const relay = services.communities.relay.snapshot();

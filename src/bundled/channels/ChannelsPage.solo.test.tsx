@@ -36,9 +36,6 @@ import {
   type ArchiveShortcut,
   type ReadShortcut,
 } from "./ChannelsPage";
-import { SoloWorkspaces } from "./SoloWorkspaces";
-import type { RelaySession } from "../../features/relay/session";
-import type { RegisteredSidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
 import type { ReadTarget } from "../../features/relay/read-state-model";
 
 vi.mock(
@@ -76,9 +73,7 @@ function fixture({
   viewOnly = false,
   canLeave,
   preview,
-  sidebarRows,
 }: {
-  sidebarRows?: readonly RegisteredSidebarRows[];
   /** Observed unread messages in this chat; fakes the read state when given. */
   unread?: number;
   /** What the read state can do on this connection. */
@@ -398,21 +393,8 @@ function fixture({
   } as unknown as Navigation;
   const archive: ArchiveShortcut = {};
   const read: ReadShortcut = {};
-  const page = (sidebar = false) => (
+  const page = () => (
     <ChannelNavigationProvider relay={relay}>
-      {sidebar && (
-        <SoloWorkspaces
-          session={session as unknown as RelaySession}
-          navigator={navigator}
-          scope={scope}
-          sidebarRows={sidebarRows}
-          chats={[channel, ...neighbors].map((chat) => ({
-            id: chat.id,
-            title: chat.name,
-          }))}
-          renderChat={(item) => <button type="button">{item.title}</button>}
-        />
-      )}
       <ChannelsPage
         relay={relay}
         panels={{
@@ -441,7 +423,6 @@ function fixture({
       navigation = { ...navigation, target: next };
       rendered?.rerender(<ToastProvider>{page()}</ToastProvider>);
     },
-    mountWithSidebar: () => render(page(true)),
     abort,
     archive,
     read,
@@ -1183,193 +1164,6 @@ it.each([
   },
 );
 
-it.each([
-  ["open", true],
-  ["another", false],
-] as const)(
-  "archives the %s chat from its sidebar row; only leaving the open chat opens a new Solo draft",
-  async (_, open) => {
-    const f = fixture(
-      open ? {} : { target: (scope) => soloDraftTarget(scope) },
-    );
-    f.mountWithSidebar();
-    const user = userEvent.setup();
-    await user.click(
-      await screen.findByRole("button", { name: "Actions for Planning" }),
-    );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Archive chat" }),
-    );
-    await waitFor(() => expect(f.run).toHaveBeenCalled());
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(f.run).toHaveBeenCalledExactlyOnceWith(
-      "archive",
-      id,
-      expect.any(AbortSignal),
-    );
-    if (open)
-      expect(f.open).toHaveBeenCalledExactlyOnceWith(soloDraftTarget(f.scope));
-    else expect(f.open).not.toHaveBeenCalled();
-  },
-);
-
-it.each([
-  ["Chat actions", "archive", "Archive chat", undefined],
-  ["Chat actions", "delete", "Delete chat", "Delete Planning?"],
-  ["Actions for Planning", "archive", "Archive chat", undefined],
-] as const)(
-  "from %s, %s leaves the open chat for its sidebar neighbor",
-  async (trigger, action, label, title) => {
-    const other = "22222222-2222-4222-8222-222222222222";
-    const f = fixture({ others: [other] });
-    f.mountWithSidebar();
-    const user = userEvent.setup();
-    await user.click(await headerAction(trigger));
-    await user.click(
-      await screen.findByRole(
-        trigger === "Chat actions" ? "button" : "menuitem",
-        { name: label },
-      ),
-    );
-    // Archive is undoable from its result toast, so only Delete confirms.
-    if (title) {
-      const dialog = await screen.findByRole("dialog", { name: title });
-      await user.click(within(dialog).getByRole("button", { name: label }));
-    }
-    await waitFor(() => expect(f.open).toHaveBeenCalled());
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(f.run).toHaveBeenCalledExactlyOnceWith(
-      action,
-      id,
-      expect.any(AbortSignal),
-    );
-    expect(f.open).toHaveBeenCalledExactlyOnceWith(
-      conversationTarget(f.scope, other),
-    );
-  },
-);
-
-it.each([
-  ["Chat actions", "confirmation"],
-  ["Chat actions", "pending"],
-  ["Chat actions", "all-hidden"],
-  ["Actions for Planning", "confirmation"],
-  ["Actions for Planning", "pending"],
-  ["Actions for Planning", "all-hidden"],
-] as const)(
-  "rechecks plugin-hidden successors from %s during %s",
-  async (trigger, phase) => {
-    const other = "22222222-2222-4222-8222-222222222222";
-    const last = "33333333-3333-4333-8333-333333333333";
-    const f = fixture({
-      others: [other, last],
-      sidebarRows: [
-        {
-          version: 1,
-          id: "hide",
-          key: "fixture.rows/hide",
-          pluginId: "fixture.rows",
-          revision: "one",
-          render: (row, Default) =>
-            row.channel.lastActivityAt === 1 ? null : Default,
-        },
-      ],
-    });
-    let release = () => {};
-    const pending = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const run = f.run.getMockImplementation();
-    if (!run) throw new Error("Missing lifecycle fixture implementation");
-    f.run.mockImplementationOnce(async (...args) => {
-      await pending;
-      await run(...args);
-    });
-    f.mountWithSidebar();
-    const user = userEvent.setup();
-    try {
-      await user.click(await headerAction(trigger));
-      await user.click(
-        await screen.findByRole(
-          trigger === "Chat actions" ? "button" : "menuitem",
-          { name: "Delete chat" },
-        ),
-      );
-      const dialog = await screen.findByRole("dialog", {
-        name: "Delete Planning?",
-      });
-      if (phase === "confirmation")
-        act(() => f.updateChat(other, { lastActivityAt: 1 }));
-      await user.click(
-        within(dialog).getByRole("button", { name: "Delete chat" }),
-      );
-      await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
-      expect(f.open).not.toHaveBeenCalled();
-      if (phase !== "confirmation")
-        act(() => {
-          f.updateChat(other, { lastActivityAt: 1 });
-          if (phase === "all-hidden") f.updateChat(last, { lastActivityAt: 1 });
-        });
-      expect(screen.queryByRole("button", { name: "Other 1" })).toBeNull();
-      await act(async () => {
-        release();
-      });
-      await waitFor(() =>
-        expect(f.open).toHaveBeenCalledExactlyOnceWith(
-          phase === "all-hidden"
-            ? soloDraftTarget(f.scope)
-            : conversationTarget(f.scope, last),
-        ),
-      );
-    } finally {
-      release();
-    }
-  },
-);
-
-it("offers the header's chat actions from the sidebar row, plus inline Rename", async () => {
-  const f = fixture();
-  f.mountWithSidebar();
-  const user = userEvent.setup();
-  const items = async (trigger: string) => {
-    await user.click(await headerAction(trigger));
-    const role = trigger === "Chat actions" ? "button" : "menuitem";
-    const surface = trigger === "Chat actions" ? "dialog" : "menu";
-    const name = trigger === "Chat actions" ? "Conversation actions" : trigger;
-    const menu = await screen.findByRole(surface, { name });
-    await within(menu).findByRole(role, { name: "Delete chat" });
-    const names = within(menu)
-      .getAllByRole(role)
-      .map((item) => item.textContent);
-    await user.keyboard("{Escape}");
-    await waitFor(() =>
-      expect(screen.queryByRole(surface, { name })).toBeNull(),
-    );
-    return names;
-  };
-  const header = await items("Chat actions");
-  expect(header).toEqual([
-    "Chat settings",
-    "Share access",
-    "Copy link",
-    "Convert to channel",
-    "Work",
-    "New workspace",
-    "Archive chat",
-    "Delete chat",
-  ]);
-  expect(await items("Actions for Planning")).toEqual([
-    "Rename",
-    "Chat settings",
-    "Share access",
-    "Copy link",
-    "Convert to channel",
-    "Move to",
-    "Archive chat",
-    "Delete chat",
-  ]);
-});
-
 it("runs the header's own chat actions and returns focus to Chat actions", async () => {
   const f = fixture();
   const assign = vi.fn(async () => {});
@@ -1473,9 +1267,7 @@ it("keeps Chat settings in the chat actions menu, not as a separate heading butt
 it("names the owner on the access controls of someone else's shared chat", async () => {
   const person = "e".repeat(64);
   const f = fixture({ placed: false, ownedBy: person, people: [person] });
-  f.mountWithSidebar();
-  const user = userEvent.setup();
-  // The header names the owner; the sidebar mark retains the owner avatar.
+  f.mount();
   const header = await screen.findByRole("button", {
     name: "Share access to Planning, Teammate’s chat",
   });
@@ -1483,16 +1275,6 @@ it("names the owner on the access controls of someone else's shared chat", async
   expect(header).toHaveAccessibleName(
     "Share access to Planning, Teammate’s chat",
   );
-  const mark = screen.getByRole("button", { name: "Teammate’s chat" });
-  expect(mark).toHaveTextContent("T");
-  await user.click(mark);
-  expect(
-    await screen.findByRole("dialog", { name: /Share access/ }),
-  ).toBeInTheDocument();
-  // Closing returns focus to the mark, not the row's select button.
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(mark).toHaveFocus();
 });
 
 it.each([
@@ -1507,7 +1289,7 @@ it.each([
     },
   ],
 ])("names no owner on %s", async (_, options) => {
-  fixture(options).mountWithSidebar();
+  fixture(options).mount();
   expect(
     await screen.findByRole("button", { name: "Share access to Planning" }),
   ).toBeInTheDocument();
@@ -1550,13 +1332,11 @@ it.each([
 
 it("lets a joined Solo viewer cancel Leave and restores focus to Chat actions", async () => {
   const f = fixture({ placed: false, viewOnly: true });
-  f.mountWithSidebar();
-  const row = await screen.findByRole("button", { name: /^Planning/ });
-  expect(row).toBeVisible();
-  expect(screen.queryByRole("textbox")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
+  f.mount();
   const user = userEvent.setup();
   const actions = await headerAction("Chat actions");
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
   await user.click(actions);
   const leave = await screen.findByRole("button", { name: "Leave chat" });
   expect(screen.queryByRole("button", { name: "Archive chat" })).toBeNull();

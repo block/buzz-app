@@ -2,7 +2,6 @@
 import { AgentAvatarArtworkProvider } from "../features/agents/AgentAvatarArtworkProvider";
 import { Welcome } from "../features/identity/Welcome";
 import { NewMenu } from "./shell/NewMenu";
-import { PrimarySidebar } from "./shell/PrimarySidebar";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { AgentsContext } from "../features/agents/react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
@@ -649,7 +648,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             />
           )}
           workspaceRef={setWorkspaceElement}
-          sidebar={(pageNavigation, creationAction) =>
+          sidebar={(pageNavigation) =>
             workspace.page?.sidebar && pageSidebarReady ? (
               <Presented
                 store={route.presented}
@@ -694,24 +693,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
                   <SidebarList>{pageNavigation}</SidebarList>
                 </SidebarFrame>
               </div>
-            ) : (
-              <PrimarySidebar
-                creationAction={creationAction}
-                federatedIdentity={services.federatedIdentity}
-                memberships={client.memberships}
-                relay={services.relay}
-                navigator={services.navigation}
-                agents={services.agents}
-                chatIcons={services.conversation.chatIcons}
-                chatMenus={services.conversation.chatMenus}
-                sidebarSections={services.sidebarSections}
-                sidebarScope={services.sidebarScope}
-                sidebarRows={services.sidebarRows}
-                target={workspace.target}
-              >
-                {pageNavigation}
-              </PrimarySidebar>
-            )
+            ) : null
           }
           navigationControls={
             <NavigationControls navigation={services.navigation} />

@@ -3,6 +3,7 @@ import type {
   AgentSessionAssociation,
   AgentSessionSource,
 } from "./session-admission";
+import { onAutomatic } from "./recommended";
 // The agent runner: one queue per agent, its rate limit, mention and watch
 // matching, due timers, the run deadline and the claim that lets exactly one
 // host run each agent. It knows nothing of where it runs: everything it needs
@@ -173,6 +174,9 @@ async function pickFor(
     trigger.event.pubkey !== agent.owner
   )
     return {};
+  // An agent on Automatic runs on the recommendation; a pick for it, as one
+  // saved before it switched, is ignored.
+  if (onAutomatic(agent.config, type.id)) return {};
   const asked = (name: string) =>
     trigger.event.tags.find(
       (tag) => tag[0] === name && tag[1] === agent.pubkey,
@@ -542,6 +546,12 @@ export type RunnerHost = {
   instructions?(
     agent: Agent,
   ): ReturnType<NonNullable<AgentHandle["instructions"]>>;
+  /** The instructions a plugin gave the agent in one conversation. */
+  conversationInstructions?(
+    agent: Agent,
+    channelId: string,
+    root?: string,
+  ): ReturnType<NonNullable<AgentHandle["conversationInstructions"]>>;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   soloWorkspaces?(agent: Agent): SoloWorkspaces | undefined;
@@ -549,6 +559,8 @@ export type RunnerHost = {
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
   /** Buzz settings on this device, where there are any. */
   settings?(): DeviceSettings | undefined;
+  /** The owner's Bestie as the agent's run handle offers it. */
+  bestie(agent: Agent): ReturnType<NonNullable<AgentHandle["bestie"]>>;
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
@@ -606,6 +618,9 @@ export class AgentRunners {
   private readonly readAddressable = new WeakMap<RelayEvent, boolean>();
   private readonly sourceJobs = new Map<Job, string>();
   private readonly failedSources = new WeakSet<AttentionObject>();
+  /** Wakes whose failure to start was reported, until one of their turns
+   * starts again, so a failing repeat reports once. */
+  private readonly reportedWakes = new Set<string>();
   /** A terminal producer retains its registration until every queued turn settles. */
   async completeSource(key: AgentKey, object: AttentionObject) {
     await this.host.change(key, (record) => {
@@ -709,6 +724,11 @@ export class AgentRunners {
     return new Set(
       Object.keys(this.left).filter((key) => !this.resuming.has(key)),
     );
+  }
+  /** The mentions the app left `key` working on, each with its channel or
+   * "" without one. */
+  interruptedTurns(key: AgentKey): Readonly<Record<string, string>> {
+    return this.left[key] ?? {};
   }
   /** Gives each of `keys` again the turns it was left working on, once
    * its community is connected. */
@@ -2544,6 +2564,12 @@ export class AgentRunners {
             }
           : {}),
         threadRootId: threadRootId ?? event.id,
+        sourceRootId:
+          channel?.channelType === "solo" ||
+          channel?.channelType === "dm" ||
+          (wake && !wake.root)
+            ? null
+            : (threadRootId ?? event.id),
         ...(thread ? { thread: true } : {}),
         ...(soloChat ? { soloChat: true } : {}),
         ...(soloChat && conversationName ? { conversationName } : {}),
@@ -2558,6 +2584,9 @@ export class AgentRunners {
                   : trigger,
               ...(job.channelId ? { channelId: job.channelId } : {}),
             })
+        : undefined,
+      trigger.type === "mention"
+        ? { author: trigger.event.pubkey, text: trigger.event.content }
         : undefined,
     );
     if (
@@ -2706,6 +2735,7 @@ export class AgentRunners {
         ? (title: string) => this.host.named(agent, trigger.event, title)
         : undefined;
     let attempted = false;
+    let rootRefused = false;
     const woke = () => {
       attempted = true;
       if (!addressed(trigger) && job.matched)
@@ -2768,8 +2798,9 @@ export class AgentRunners {
         ...(job.work
           ? {
               ignored: () => job.work?.remove(),
-              acknowledged: () => {
+              acknowledged: (input?: Readonly<{ steering?: true }>) => {
                 job.work?.started();
+                job.work?.acknowledged(input);
                 void admission?.then((admitted) => admitted?.acknowledged());
               },
               superseded: () => job.work?.supersede(),
@@ -2798,8 +2829,10 @@ export class AgentRunners {
       if (anchor) {
         if (!delivery.current()) return;
         if (anchor.root) {
-          if (!(await this.rootInChannel(agent, anchor.channel, anchor.root)))
+          if (!(await this.rootInChannel(agent, anchor.channel, anchor.root))) {
+            rootRefused = true;
             throw new Error("The delivery root is not in its channel");
+          }
           if (!delivery.current()) return;
         }
         const wakeText = async () => {
@@ -2876,15 +2909,53 @@ export class AgentRunners {
       .catch((error) =>
         console.warn("Completed subscription was not removed", error),
       );
+    // Set only for a wake that delivers to a conversation.
+    const reported =
+      destination &&
+      trigger.type !== "mention" &&
+      trigger.type !== "plugin" &&
+      trigger.type !== "attention"
+        ? { key: `${agent.key}\0${trigger.slug}`, trigger, destination }
+        : undefined;
     // Handover expiry releases the queue, never the actual work's outcome.
     void completion.then(
       () => {
         if (!attempted) job.work?.remove();
         working.release();
+        if (reported) this.reportedWakes.delete(reported.key);
       },
       (error) => {
         if (!attempted && !this.stillCurrent(runner, job)) job.work?.remove();
         working.release({ ok: false, error: message(error) });
+        // A wake that fails before its turn is handed over has no harness to
+        // report it, so it says so where its turn would have been, once until
+        // one of its turns starts again.
+        if (
+          !reported ||
+          lifetime.aborted ||
+          this.reportedWakes.has(reported.key) ||
+          !this.stillCurrent(runner, job) ||
+          this.host.member(agent, wakeAnchor(reported.destination)) !== true
+        )
+          return;
+        this.reportedWakes.add(reported.key);
+        const what = reported.trigger.type === "timer" ? "timer" : "watch";
+        const slug = reported.trigger.slug.replace(/^watch\//, "");
+        // A root refused as not in its channel is not replied to.
+        const root = rootRefused ? undefined : reported.destination.root;
+        void handle
+          .publish({
+            kind: 9,
+            content: `⚠️ My ${what} ${slug} woke me but its turn couldn't start: ${message(error).slice(0, 500)}`,
+            tags: [
+              ["h", reported.destination.channel],
+              ...(root ? [["e", root, "", "reply"]] : []),
+              ["p", agent.owner],
+            ],
+          })
+          .catch((failure) =>
+            console.warn("A failed wake could not be reported", failure),
+          );
       },
     );
     const aborted = new Promise<never>((_, reject) => {
@@ -2955,7 +3026,16 @@ export class AgentRunners {
           const destination = event.tags?.find((tag) => tag[0] === "h")?.[1];
           const ownReply =
             event.kind === 9 && !!work && destination === work.channelId;
-          const sent = ownReply ? work.sending() : undefined;
+          const reference = threadReference({ tags: event.tags ?? [] });
+          const inSource =
+            work &&
+            (reference
+              ? reference.rootId === work.threadRootId
+              : !event.tags?.some(([name]) => name === "e"));
+          const sent = ownReply
+            ? work.sending(inSource ? event.content : undefined)
+            : undefined;
+          let confirmed: boolean | undefined = false;
           try {
             const published = await this.publish(
               runner,
@@ -2963,6 +3043,7 @@ export class AgentRunners {
               lifetime,
               check,
             );
+            confirmed = true;
             if (workspaces && event.kind === 9007) {
               const id = published.tags.find(([key]) => key === "h")?.[1];
               if (id) {
@@ -2984,10 +3065,13 @@ export class AgentRunners {
             return published;
           } catch (error) {
             const uncertain = ownReply && unconfirmedAgentEvent(error);
-            if (uncertain) work.reply(uncertain);
+            if (uncertain) {
+              confirmed = undefined;
+              work.reply(uncertain);
+            }
             throw error;
           } finally {
-            sent?.();
+            sent?.(confirmed);
           }
         },
         query: async (filters: readonly object[]) => {
@@ -3043,13 +3127,33 @@ export class AgentRunners {
           lifetime.throwIfAborted();
           return this.host.updateTeam(agent, input);
         },
-        // Only a run hands off or manages plugins: through `Agents.handle` a
-        // plugin's call would read as the agent's own.
+        // Only a run hands off, manages plugins or changes the Bestie: through
+        // `Agents.handle` a plugin's call would read as the agent's own.
         ...(run && {
           plugins: this.host.plugins?.(agent),
           handoff: (handoff: AgentHandoff) => {
             lifetime.throwIfAborted();
             this.host.handoff(agent, handoff);
+          },
+          // The control outlives this call, so each of its calls checks the
+          // run's lifetime, and set again once it has read the agents.
+          bestie: () => {
+            const control = this.host.bestie(agent);
+            const live = () => lifetime.throwIfAborted();
+            return (
+              control &&
+              guarded(
+                {
+                  ...control,
+                  set: async (pubkey: string, check?: () => void) =>
+                    control.set(pubkey, () => {
+                      live();
+                      check?.();
+                    }),
+                },
+                live,
+              )
+            );
           },
         }),
         ...(workspaces && {
@@ -3092,6 +3196,8 @@ export class AgentRunners {
         }),
         templates: () => this.host.templates(agent),
         instructions: () => this.host.instructions?.(agent) ?? [],
+        conversationInstructions: (channelId: string, root?: string) =>
+          this.host.conversationInstructions?.(agent, channelId, root),
         tabs: () => this.host.tabs(agent),
         // Only a run's: a plugin acting through the agent doesn't get them.
         ...(settings && { settings }),

@@ -966,6 +966,15 @@ keep it short: it is sent with every turn. `addInstructions` throws on text over
 4096 UTF-8 bytes after trimming. Context for one turn belongs in a note, which
 the agent reads as data.
 
+`ctx.agents.setConversationInstructions(agent, { channelId, root? }, text)`
+gives one of the owner's local agents standing instructions in one
+conversation, at most 8192 UTF-8 bytes after trimming; empty text clears them.
+Each of that agent's turns there shows them in an `<owner-instructions
+source="…">` section after the plugin instructions, escaped the same way, and
+the base prompt ranks them below the owner's messages and above a Solo chat's
+Canvas. They are kept on this device for now. `conversationInstructions(agent,
+place)` resolves with the text. See [Agents](agents.md).
+
 ### Agent operation proofs
 
 A plugin can provide an operation that another installed plugin calls from a
@@ -1475,6 +1484,14 @@ in a workspace visit, then retain it for that visit. The default remains eager.
 Component-provided titles (`usePanelTabTitle`) and local detail tabs (`PanelLocalTab`)
 are also deferred; opt in when the contribution's static title is sufficient until
 selection.
+
+A plugin panel, which cannot import host modules, names its tab with
+`ctx.panels.useTabTitle(label)`, a React hook called in the panel component (for
+example `ctx.panels.useTabTitle("#12554892")` for a build opened from a link). The
+label replaces the static `title` while the component is mounted and the static
+`title` returns when it unmounts; outside a panel tab the call does nothing. It
+takes a label only, no icon. Hosts that predate it lack the hook, so plugins that
+support them test `typeof ctx.panels.useTabTitle === "function"` first.
 
 Channels keeps layout and channel/thread selection. The Terminal plugin binds its
 mounted launcher into the existing shortcut dispatcher, and owns sessions separately

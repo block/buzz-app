@@ -13,8 +13,7 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { RegisteredPage } from "../../features/pages/service";
 import { communityDestination } from "../../features/communities/destination";
-import { useChannelList, useRelayConnection } from "../../features/relay/react";
-import type { ChannelQueries } from "../../features/relay/contracts";
+import { useRelayConnection } from "../../features/relay/react";
 import type { KeyBinding } from "../../features/shortcuts/bindings";
 import {
   formatBinding,
@@ -34,6 +33,7 @@ import {
   type SearchPlace,
 } from "./SearchChoices";
 import { SearchResults } from "./SearchResults";
+import { CHANNELS_TO_JOIN } from "./useChannelsToJoin";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
 import { writeView } from "../../shared/view-state";
 import { usageScope } from "../../features/search/usage";
@@ -79,6 +79,8 @@ export function PageSearch({
   const [contentPresent, setContentPresent] = useState(false);
   const [query, setQuery] = useState("");
   const [scopedChannelId, setScopedChannelId] = useState<string>();
+  // The browse group search opens on, such as Channels to join.
+  const [initialGroup, setInitialGroup] = useState<string>();
   // Search reopens where it was left, so someone checking channels one by
   // one returns to the same list. Escape, or a while away, starts fresh, as
   // does an empty All view while it leads with unread: it shows what is
@@ -143,7 +145,26 @@ export function PageSearch({
     selectKept.current = !!kept && !!memory.query;
     place.current = kept ? { ...memory.place } : { top: 0, key: "" };
     setScopedChannelId(undefined);
+    setInitialGroup(undefined);
     setSearchOpen(true);
+  }, [setSearchOpen]);
+  // The sidebar's Browse channels opens an empty search on Channels to join.
+  useEffect(() => {
+    const browse = () => {
+      if (openRef.current) return;
+      composerChannel.current = undefined;
+      returnFocus.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : trigger.current;
+      setQuery("");
+      place.current = { top: 0, key: "" };
+      setScopedChannelId(undefined);
+      setInitialGroup(CHANNELS_TO_JOIN);
+      setSearchOpen(true);
+    };
+    window.addEventListener("buzz:browse-channels", browse);
+    return () => window.removeEventListener("buzz:browse-channels", browse);
   }, [setSearchOpen]);
   useEffect(() => {
     if (!open || !selectKept.current) return;
@@ -171,6 +192,7 @@ export function PageSearch({
     setQuery("");
     place.current = { top: 0, key: "" };
     setScopedChannelId(currentChannelId);
+    setInitialGroup(undefined);
     setSearchOpen(true);
   }, [currentChannelId, setSearchOpen]);
   useEffect(
@@ -333,6 +355,7 @@ export function PageSearch({
                 (page) => page.key === "buzz.channels/channels",
               )}
               scopedChannelId={scopedChannelId}
+              initialGroup={initialGroup}
               currentChannelId={currentChannelId}
               onScopeChange={(channelId) => {
                 setScopedChannelId(channelId);
@@ -374,6 +397,7 @@ function CommunitySearch({
   open,
   enabled,
   scopedChannelId,
+  initialGroup,
   currentChannelId,
   onScopeChange,
   isOpen,
@@ -386,6 +410,7 @@ function CommunitySearch({
   pages: readonly SearchDestination[];
   enabled: boolean;
   scopedChannelId?: string | undefined;
+  initialGroup?: string | undefined;
   currentChannelId?: string | undefined;
   onScopeChange: (channelId?: string) => void;
   /** Whether the palette is still open. A choice that resolves after it
@@ -532,83 +557,81 @@ function CommunitySearch({
         }
       : undefined;
   return (
-    <>
-      {views && <PreloadDirectory channels={connection.session.channels} />}
-      <SearchResults
-        inlineSettings={inlineSettings}
-        key={`${client.selected}:${connection.scope}:${connection.generation}`}
-        session={connection.session}
-        query={query}
-        onQueryChange={onQueryChange}
-        input={input}
-        open={open}
-        pages={pages}
-        scopedChannelId={scopedChannelId}
-        currentChannelId={currentChannelId}
-        onScopeChange={onScopeChange}
-        usageScope={usageScope(scope)}
-        sidebarScope={connection.scope}
-        views={views}
-        offline={saved ? offline : undefined}
-        openConversation={openConversation}
-        openAsk={(question, agent) => {
-          const current = services.communities.snapshot();
-          const relay = services.communities.relay.snapshot();
-          if (
-            !isOpen() ||
-            current.viewer !== scope.viewer ||
-            current.selected !== client.selected ||
-            relay.session !== connection.session ||
-            !relay.scope
-          )
-            return;
-          // New chat opens with the question addressed to the agent; Enter
-          // sends it.
-          const tag = `@${agent.name}`;
-          writeView(relay.scope, "solo:new-draft", {
-            text: `${tag} Search Buzz to answer: ${question}`,
-            recipients: [
-              {
-                pubkey: agent.pubkey,
-                name: agent.name,
-                start: 0,
-                end: tag.length,
-              },
-            ],
-          });
-          close();
-          void services.navigation.open(
-            soloDraftTarget(relay.scope, { agent: agent.pubkey }),
-          );
-        }}
-        openAgentSession={(pubkey) => {
-          const current = services.communities.snapshot();
-          const relay = services.communities.relay.snapshot();
-          if (
-            !isOpen() ||
-            current.viewer !== scope.viewer ||
-            current.selected !== client.selected ||
-            relay.session !== connection.session ||
-            !relay.scope
-          )
-            return;
-          close();
-          void services.navigation.open(
-            soloDraftTarget(relay.scope, { agent: pubkey }),
-          );
-        }}
-      />
-    </>
+    <SearchResults
+      inlineSettings={inlineSettings}
+      key={`${client.selected}:${connection.scope}:${connection.generation}`}
+      session={connection.session}
+      query={query}
+      onQueryChange={onQueryChange}
+      input={input}
+      open={open}
+      pages={pages}
+      scopedChannelId={scopedChannelId}
+      currentChannelId={currentChannelId}
+      onScopeChange={onScopeChange}
+      usageScope={usageScope(scope)}
+      sidebarScope={connection.scope}
+      views={views}
+      offline={saved ? offline : undefined}
+      openConversation={openConversation}
+      browseChannel={(channelId) => {
+        // Not a joined channel yet: its preview resolves it.
+        if (!current()) return;
+        close();
+        void services.navigation.open({
+          version: 1,
+          kind: "conversation",
+          scope,
+          channelId,
+        });
+      }}
+      initialGroup={initialGroup}
+      openAsk={(question, agent) => {
+        const current = services.communities.snapshot();
+        const relay = services.communities.relay.snapshot();
+        if (
+          !isOpen() ||
+          current.viewer !== scope.viewer ||
+          current.selected !== client.selected ||
+          relay.session !== connection.session ||
+          !relay.scope
+        )
+          return;
+        // New chat opens with the question addressed to the agent; Enter
+        // sends it.
+        const tag = `@${agent.name}`;
+        writeView(relay.scope, "solo:new-draft", {
+          text: `${tag} Search Buzz to answer: ${question}`,
+          recipients: [
+            {
+              pubkey: agent.pubkey,
+              name: agent.name,
+              start: 0,
+              end: tag.length,
+            },
+          ],
+        });
+        close();
+        void services.navigation.open(
+          soloDraftTarget(relay.scope, { agent: agent.pubkey }),
+        );
+      }}
+      openAgentSession={(pubkey) => {
+        const current = services.communities.snapshot();
+        const relay = services.communities.relay.snapshot();
+        if (
+          !isOpen() ||
+          current.viewer !== scope.viewer ||
+          current.selected !== client.selected ||
+          relay.session !== connection.session ||
+          !relay.scope
+        )
+          return;
+        close();
+        void services.navigation.open(
+          soloDraftTarget(relay.scope, { agent: pubkey }),
+        );
+      }}
+    />
   );
-}
-
-/** Starts the open-channel directory read as search opens, so the Channels
- * tab usually has it by the time it's chosen. The store shares one read, and
- * leaving search lets it finish for next time. */
-function PreloadDirectory({ channels }: { channels: ChannelQueries }) {
-  const ready = useChannelList(channels).status === "ready";
-  useEffect(() => {
-    if (ready) channels.readDirectory?.().catch(() => {});
-  }, [ready, channels]);
-  return null;
 }

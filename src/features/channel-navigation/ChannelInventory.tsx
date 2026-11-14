@@ -1491,6 +1491,14 @@ export function ChannelInventory({
                     }
                   : undefined
               }
+              browseChannels={
+                section.key === "channels" &&
+                !cached &&
+                queries.channels.readDirectory
+                  ? () =>
+                      window.dispatchEvent(new Event("buzz:browse-channels"))
+                  : undefined
+              }
               createSection={
                 section.key === "channels"
                   ? {

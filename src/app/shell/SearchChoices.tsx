@@ -207,6 +207,7 @@ export function SearchChoices({
   highlightEmpty = false,
   onRowsShown,
   peek,
+  initialGroup,
 }: SearchInputProps & {
   groups: readonly SearchGroup[];
   children?: ReactNode;
@@ -227,6 +228,8 @@ export function SearchChoices({
    * reading only for the rows someone can see. */
   onRowsShown?: ((keys: readonly string[]) => void) | undefined;
   peek?: SearchPeek | undefined;
+  /** Opens on this browse group, shown whole as if chosen in the rail. */
+  initialGroup?: string | undefined;
 }) {
   const palette = useRef<HTMLDivElement>(null);
   const resultsViewport = useRef<HTMLDivElement>(null);
@@ -283,7 +286,7 @@ export function SearchChoices({
     merged.splice(index < 0 ? merged.length : index, 0, group);
   }
   // Peek: Top results, or one group whole.
-  const [peekScope, setPeekScope] = useState<string>();
+  const [peekScope, setPeekScope] = useState(initialGroup);
   // Once the person moves, the groups shown keep their places for this text,
   // and groups that arrive later go after them.
   const frozen = useRef<{ query: string; labels: string[] }>(undefined);
@@ -300,7 +303,12 @@ export function SearchChoices({
   const resultRows = (group: SearchGroup) =>
     group.destinations.filter((row) => !isAction?.(row.key));
   const ranked = peek?.ranked
-    ? merged.filter((group) => resultRows(group).length)
+    ? merged.filter(
+        (group) =>
+          resultRows(group).length ||
+          // A browse group shown whole stays, to say it is loading or empty.
+          (group.browse && group.label === peekScope),
+      )
     : [];
   const scoped = ranked.find((group) => group.label === peekScope);
   const countOf = (group: SearchGroup) =>
@@ -355,7 +363,8 @@ export function SearchChoices({
     open,
     pending,
     isAction,
-    highlightEmpty,
+    // A group shown whole is the list to choose from, as when chosen.
+    highlightEmpty: highlightEmpty || !!scoped,
     followFirst: !!peek?.ranked,
     // A kept place keeps its row: Enter never chooses a row scrolled away.
     ...(place?.key && keys.includes(place.key)

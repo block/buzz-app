@@ -37,6 +37,7 @@ import {
   CalendarIcon,
   ChatCircleIcon,
   ChatsCircleIcon,
+  ArrowClockwiseIcon,
   ClockIcon,
   GearIcon,
   HashIcon,
@@ -84,6 +85,7 @@ import {
 } from "../../features/search/usage";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
 import { useMemberCounts } from "../../features/channels/useChannelDirectory";
+import { CHANNELS_TO_JOIN, useChannelsToJoin } from "./useChannelsToJoin";
 import {
   channelIcon,
   channelIconLabel,
@@ -210,6 +212,8 @@ export function SearchResults({
   currentChannelId,
   onScopeChange,
   openConversation,
+  browseChannel,
+  initialGroup,
   openAgentSession,
   usageScope,
   sidebarScope,
@@ -233,6 +237,11 @@ export function SearchResults({
     messageId?: string,
     threadRootId?: string,
   ) => void;
+  /** Opens an open channel's read-only preview, where Join lives. Without it,
+   * search offers no Channels to join. */
+  browseChannel?: ((channelId: string) => void) | undefined;
+  /** Opens on this browse group, such as Channels to join. */
+  initialGroup?: string | undefined;
   /** Open a new Solo chat with one of the viewer's agents. Without it,
    * choosing one of their agents opens a direct message, as for anyone else. */
   openAgentSession?: ((pubkey: string) => void) | undefined;
@@ -1179,6 +1188,15 @@ export function SearchResults({
   const memberCounts = useMemberCounts(session.channels);
   const memberCount = (channel: ChannelSummary) =>
     channel.members?.length || memberCounts.counts.get(channel.id);
+  // An empty search browses the open channels left to join. Typed text finds
+  // them among Channels instead.
+  const browsing = !!views && !!browseChannel && list.status === "ready";
+  const toJoin = useChannelsToJoin(
+    session.channels,
+    list.channels,
+    browsing && !query.trim(),
+  );
+  const slowToJoin = useDelayedSearch(toJoin.loading);
   // A chat found by its agent, not its name, says which agent it has.
   const soloDetail = (channel: ChannelSummary) => {
     const agent = newChatAmong(channel.members);
@@ -1847,6 +1865,70 @@ export function SearchResults({
     !messagesPending &&
     !rankedGroups.some((group) => group.destinations.length);
   const offerAsk = !!parsed.text && (words >= 4 || settledEmpty);
+  const joinCount = `${toJoin.channels.length}${toJoin.partial ? "+" : ""}`;
+  const channelsToJoin: SearchGroup = {
+    label: CHANNELS_TO_JOIN,
+    tone: "channel",
+    icon: HashIcon,
+    browse: true,
+    count: joinCount,
+    headingStatus: slowToJoin ? "Loading…" : undefined,
+    destinations: [
+      ...toJoin.channels.map((channel): SearchDestination => {
+        const key = `join:${channel.id}`;
+        const count = memberCounts.counts.get(channel.id);
+        const detail = [
+          count && `${count} ${count === 1 ? "member" : "members"}`,
+          channel.description,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        return {
+          key,
+          label: channel.name,
+          ...(detail ? { detail } : {}),
+          icon: channelIcon(channel),
+          peek: {
+            kind: "channel",
+            channelId: channel.id,
+            about: channel.description,
+          },
+          run: choose(key, () => browseChannel?.(channel.id)),
+        };
+      }),
+      ...(toJoin.error
+        ? [
+            {
+              key: "join-retry",
+              label: "Retry loading channels",
+              detail: toJoin.channels.length
+                ? "Couldn’t load all open channels."
+                : "Couldn’t load open channels.",
+              icon: ArrowClockwiseIcon,
+              kind: "page" as const,
+              action: "Retry loading channels",
+              run: () => {
+                toJoin.retry();
+                input.current?.focus();
+              },
+            },
+          ]
+        : []),
+    ],
+    notice:
+      toJoin.partial && toJoin.channels.length ? (
+        <p className="search-peek-note text-body-sm text-subtle">
+          <InfoIcon size={14} aria-hidden="true" />
+          <span>Only the newest open channels are shown.</span>
+        </p>
+      ) : undefined,
+    // Nothing shows for a first second of loading, then the heading says so.
+    empty: toJoin.loading
+      ? ""
+      : toJoin.partial
+        ? "You’ve joined all of the newest open channels."
+        : "You’ve joined every open channel.",
+  };
   const groups: readonly SearchGroup[] =
     pickerPrompt || showAmbiguousPicker
       ? [
@@ -1962,17 +2044,22 @@ export function SearchResults({
                       )
                       .map(channelDestination)
                       .map((row) => ({ ...row, key: `browse:${row.key}` }));
-                    return rows.length
-                      ? [
-                          {
-                            label,
-                            tone,
-                            icon,
-                            browse: true,
-                            destinations: rows,
-                          },
-                        ]
-                      : [];
+                    return [
+                      ...(rows.length
+                        ? [
+                            {
+                              label,
+                              tone,
+                              icon,
+                              browse: true,
+                              destinations: rows,
+                            },
+                          ]
+                        : []),
+                      ...(tone === "channel" && browsing
+                        ? [channelsToJoin]
+                        : []),
+                    ];
                   }),
                   ...(recentSearches.length
                     ? [
@@ -2040,7 +2127,11 @@ export function SearchResults({
           );
           memberCounts.show(
             keys.flatMap((key) =>
-              unknown.has(key) ? [key.slice("channel:".length)] : [],
+              unknown.has(key)
+                ? [key.slice("channel:".length)]
+                : key.startsWith("join:")
+                  ? [key.slice("join:".length)]
+                  : [],
             ),
           );
         }}
@@ -2104,6 +2195,7 @@ export function SearchResults({
             : undefined
         }
         groups={groups}
+        initialGroup={initialGroup}
         open={open}
         highlightEmpty={!scopedChannelId && !query.trim() && unread.length > 0}
         // Enter before any row, or on search actions alone, waits for a

@@ -3672,3 +3672,38 @@ it("moves a mounted session-backed sidebar on a CLI hint without clearing stars 
   );
   expect(reads).toHaveLength(2);
 });
+
+it("offers Browse channels on Channels only, asking search to browse them", async () => {
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [{ id: "laptop", name: "Laptop", icon: "💻", order: 0 }],
+      assignments: { beta: "laptop" },
+      starred: ["alpha"],
+      muted: [],
+    }),
+    available: true,
+    write: async () => ({ sections: [], assignments: {} }),
+    writeStar: async () => [],
+  });
+  await preferences.queries.ensure();
+  const h = fixture(preferences.queries);
+  const browse = vi.fn();
+  window.addEventListener("buzz:browse-channels", browse);
+  try {
+    render(h.view("alpha"));
+    await screen.findByRole("button", { name: /Laptop/ });
+    const browseButtons = screen.getAllByRole("button", {
+      name: "Browse channels",
+    });
+    expect(browseButtons).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "More actions for Channels" })
+        .parentElement,
+    ).toContainElement(browseButtons[0] ?? null);
+    fireEvent.click(browseButtons[0] as HTMLElement);
+    expect(browse).toHaveBeenCalledTimes(1);
+  } finally {
+    window.removeEventListener("buzz:browse-channels", browse);
+    preferences.dispose();
+  }
+});

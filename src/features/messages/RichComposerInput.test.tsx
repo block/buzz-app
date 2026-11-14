@@ -4,7 +4,7 @@ import { act, cleanup, render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, useLayoutEffect, useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { ComposerFormat, ComposerInputElement } from "./composer-dom";
+import type { ActiveFormat, ComposerInputElement } from "./composer-dom";
 import { composerMarkdown } from "./composer-markdown";
 import type { ComposerSession } from "./composer-session";
 import {
@@ -90,7 +90,7 @@ function mount(initial?: MentionDraft) {
   // reports a draft or a toolbar state.
   function Host() {
     const [value, setValue] = useState<MentionDraft>(draft);
-    const [, setFormats] = useState<readonly ComposerFormat[]>([]);
+    const [, setFormats] = useState<readonly ActiveFormat[]>([]);
     useLayoutEffect(() => {
       commits++;
     });

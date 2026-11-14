@@ -357,8 +357,11 @@ test("copied office text pastes as text, not its picture", async ({
     );
   await input.click();
   await paste();
-  await expect(input).toHaveJSProperty("value", cells);
-  await input.fill("");
+  await expect(input.locator("tr")).toHaveCount(2);
+  await expect(input).toHaveJSProperty("value", "Q3\n12\nQ4\n15\n");
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("Backspace");
+  await expect(input.locator("table")).toHaveCount(0);
   await paste(true);
   await expect(input).toHaveJSProperty("value", cells);
   await input.fill("");

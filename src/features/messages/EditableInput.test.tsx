@@ -26,7 +26,7 @@ import {
   type EditableInputProps,
   type EditorDecoration,
 } from "./EditableInput";
-import type { ComposerFormat, ComposerInputElement } from "./composer-dom";
+import type { ActiveFormat, ComposerInputElement } from "./composer-dom";
 import { composerDOMFixture } from "./composer-testing";
 import { composerMarkdown } from "./composer-markdown";
 import {
@@ -98,7 +98,7 @@ function mount(
 ) {
   const ref = createRef<ComposerInputElement>();
   let draft: MentionDraft = mentionDraft(initial);
-  let formats: readonly ComposerFormat[] = [];
+  let formats: readonly ActiveFormat[] = [];
   const text = draft.text;
   function Editor() {
     const [value, setValue] = useState(draft);
@@ -3893,7 +3893,9 @@ it.each([
     expect(copied.text).toBe(plain);
     const target = mount();
     paste(target.input, copied.text, copied.html);
-    expect(target.markdown()).toBe(content.startsWith("|") ? plain : content);
+    expect(target.markdown()).toBe(
+      content.startsWith("|") ? "| a | b |\n| --- | --- |\n| 1 | 2 |" : content,
+    );
     // The composer shows the copied blocks, not their source.
     for (const selector of shown ? shown.split(", ") : [])
       expect(target.input.querySelector(selector)).not.toBeNull();
@@ -5023,5 +5025,224 @@ describe("quoting timeline content", () => {
     });
     expect(onPasteTooLong).toHaveBeenCalledOnce();
     expect(h.markdown()).toBe("keep");
+  });
+});
+
+describe("editable tables", () => {
+  const source = "| a | b |\n| :-- | --: |\n| 1 | 2 |";
+  const cells = (input: ComposerInputElement) =>
+    Array.from(input.querySelectorAll("tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("th, td")).map((c) => c.textContent),
+    );
+  const activeCell = (input: ComposerInputElement) =>
+    input.querySelector("[data-active]")?.textContent;
+
+  it("turns inserted Markdown into a grid and sends the same Markdown", () => {
+    const h = mount();
+    act(() => {
+      h.input.insertText(source);
+    });
+    expect(h.input.querySelectorAll("table")).toHaveLength(1);
+    expect(cells(h.input)).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
+    expect(h.input.querySelectorAll("th")).toHaveLength(2);
+    expect(h.input.querySelector("th")).toHaveAttribute("scope", "col");
+    expect(h.markdown()).toBe("| a | b |\n| :--- | ---: |\n| 1 | 2 |");
+  });
+
+  it("places a Markdown table inserted from a cell below the current table", () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    act(() => {
+      h.input.insertText(source);
+    });
+    expect(h.input.querySelectorAll("table")).toHaveLength(2);
+    expect(cells(h.input).slice(2)).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
+    expect(cells(h.input).slice(0, 2)).toEqual([
+      ["", "", ""],
+      ["", "", ""],
+    ]);
+  });
+
+  it("turns a pasted Markdown table into a grid", () => {
+    const h = mount();
+    paste(h.input, source);
+    expect(cells(h.input)).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
+  });
+
+  it("turns spreadsheet cells into a grid", () => {
+    const h = mount();
+    paste(h.input, "Name\tQty\nTea\t2\n");
+    expect(cells(h.input)).toEqual([
+      ["Name", "Qty"],
+      ["Tea", "2"],
+    ]);
+    expect(h.markdown()).toBe("| Name | Qty |\n| --- | --- |\n| Tea | 2 |");
+  });
+
+  it("keeps a table in a restored draft", () => {
+    const first = mount();
+    act(() => {
+      first.input.insertText(source);
+    });
+    cleanup();
+    const again = mount(first.draft());
+    expect(cells(again.input)).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
+  });
+
+  it("starts a table from the formatting control", () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    expect(cells(h.input)).toEqual([
+      ["", "", ""],
+      ["", "", ""],
+    ]);
+    expect(h.formats()).toEqual(
+      expect.arrayContaining(["table", "table_header"]),
+    );
+  });
+
+  it("moves with Tab and adds a row from the last cell", async () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    await h.user.keyboard("a{Tab}b{Tab}c{Tab}d{Tab}e{Tab}f");
+    expect(cells(h.input)).toEqual([
+      ["a", "b", "c"],
+      ["d", "e", "f"],
+    ]);
+    await h.user.keyboard("{Tab}g");
+    expect(cells(h.input)).toEqual([
+      ["a", "b", "c"],
+      ["d", "e", "f"],
+      ["g", "", ""],
+    ]);
+    await h.user.keyboard("{Shift>}{Tab}{/Shift}!");
+    expect(cells(h.input)[1]?.[2]).toBe("f!");
+  });
+
+  it("types a literal pipe as an escaped pipe", async () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    await h.user.keyboard("a|b");
+    expect(h.markdown()).toContain("| a\\|b |");
+  });
+
+  it("moves down with Shift+Enter and adds a row after the last one", async () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    await h.user.keyboard("a{Tab}{Tab}{Tab}d");
+    await h.user.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(activeCell(h.input)).toBe("");
+    expect(h.input.querySelectorAll("tr")).toHaveLength(3);
+    expect(h.input.querySelector("[data-active]")?.closest("tr")).toBe(
+      h.input.querySelectorAll("tr")[2],
+    );
+    expect(h.input.querySelector("[data-active]")).toBe(
+      h.input.querySelectorAll("tr")[2]?.firstElementChild,
+    );
+  });
+
+  it("runs the table commands for the caret's cell", () => {
+    const h = mount();
+    act(() => {
+      h.input.insertText(source);
+      h.input.setSelectionRange(0, 0);
+    });
+    act(() => {
+      h.input.runTableCommand("column_right");
+    });
+    expect(cells(h.input)).toEqual([
+      ["a", "", "b"],
+      ["1", "", "2"],
+    ]);
+    act(() => {
+      h.input.runTableCommand("row_below");
+    });
+    expect(cells(h.input)).toHaveLength(3);
+    act(() => {
+      h.input.runTableCommand("delete_column");
+    });
+    expect(cells(h.input)[0]).toEqual(["a", "b"]);
+    act(() => {
+      h.input.runTableCommand("delete_row");
+    });
+    expect(cells(h.input)).toHaveLength(2);
+    act(() => {
+      expect(h.input.runTableCommand("delete_table")).toBe(true);
+    });
+    expect(h.input.querySelector("table")).toBeNull();
+  });
+
+  it("removes an empty table with Backspace", async () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    expect(fireEvent.keyDown(h.input, { key: "Backspace" })).toBe(false);
+    expect(h.input.querySelector("table")).toBeNull();
+    expect(h.markdown()).toBe("");
+  });
+
+  it("keeps the table when Backspace has text to delete", async () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    await h.user.keyboard("ab");
+    expect(fireEvent.keyDown(h.input, { key: "Backspace" })).toBe(true);
+    expect(h.input.querySelector("table")).not.toBeNull();
+    expect(cells(h.input)[0]?.[0]).toBe("ab");
+  });
+
+  it("undoes a table insertion in one step", () => {
+    const h = mount();
+    act(() => {
+      h.input.toggleFormat("table");
+    });
+    act(() => h.input.undo(false));
+    expect(h.input.querySelector("table")).toBeNull();
+  });
+
+  it("leaves the table above with ArrowUp", async () => {
+    const h = mount("before");
+    act(() => {
+      h.input.setSelectionRange(6, 6);
+      h.input.toggleFormat("table");
+    });
+    await h.user.keyboard("x");
+    await h.user.keyboard("{ArrowUp}");
+    expect(h.input.querySelector("[data-active]")).toBeNull();
+    expect(h.input.querySelector("p")?.textContent).toBe("before");
+  });
+
+  it("clamps a pasted selection that spans two cells", () => {
+    const h = mount();
+    act(() => {
+      h.input.insertText(source);
+      h.input.setSelectionRange(0, 3);
+    });
+    paste(h.input, "z");
+    expect(cells(h.input).flat().length).toBe(4);
   });
 });

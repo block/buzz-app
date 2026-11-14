@@ -20,6 +20,7 @@ import {
   ListBulletsIcon,
   ListNumbersIcon,
   QuotesIcon,
+  TableIcon,
   TextAaIcon,
   TextBIcon,
   TextItalicIcon,
@@ -29,8 +30,10 @@ import {
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { formatBinding, isApplePlatform } from "../shortcuts/format";
 import {
+  blockFormats,
   composerFormats,
   linkBindings,
+  type ActiveFormat,
   type ComposerFormat,
 } from "./composer-dom";
 import styles from "./ComposerFormattingTools.module.css";
@@ -47,6 +50,7 @@ const options = [
   ["Bullet list", ListBulletsIcon],
   ["Ordered list", ListNumbersIcon],
   ["Quote", QuotesIcon],
+  ["Table", TableIcon],
   ["Spoiler", DetectiveIcon],
 ] as const;
 
@@ -80,7 +84,7 @@ export function ComposerFormattingTools({
   trailing?: ReactNode;
   disabled: boolean;
   singleRow?: boolean;
-  activeFormats: readonly ComposerFormat[];
+  activeFormats: readonly ActiveFormat[];
   toggleFormat(format: ComposerFormat): void;
   editLink(): void;
 }) {
@@ -175,6 +179,9 @@ export function ComposerFormattingTools({
                   const binding =
                     format?.binding ?? (isLink ? linkBindings[0] : undefined);
                   const active = format && activeFormats.includes(format.mark);
+                  const blocked =
+                    activeFormats.includes("table") &&
+                    blockFormats.some((item) => item.mark === format?.mark);
                   const apple = isApplePlatform(navigator.platform);
                   return (
                     <IconButton
@@ -202,7 +209,7 @@ export function ComposerFormattingTools({
                             ? editLink
                             : undefined
                       }
-                      disabled={disabled}
+                      disabled={disabled || blocked}
                       onMouseDown={(event) => event.preventDefault()}
                       icon={<Icon size={16} />}
                     />

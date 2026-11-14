@@ -657,3 +657,26 @@ export const FoldIcon = defineIcon("tabler", TablerFoldIcon);
 
 import TablerCircleDottedIcon from "@tabler/icons-react/dist/esm/icons/IconCircleDotted.mjs";
 export const CircleDottedIcon = defineIcon("tabler", TablerCircleDottedIcon);
+import TablerRowInsertTopIcon from "@tabler/icons-react/dist/esm/icons/IconRowInsertTop.mjs";
+export const RowInsertTopIcon = defineIcon("tabler", TablerRowInsertTopIcon);
+import TablerRowInsertBottomIcon from "@tabler/icons-react/dist/esm/icons/IconRowInsertBottom.mjs";
+export const RowInsertBottomIcon = defineIcon(
+  "tabler",
+  TablerRowInsertBottomIcon,
+);
+import TablerColumnInsertLeftIcon from "@tabler/icons-react/dist/esm/icons/IconColumnInsertLeft.mjs";
+export const ColumnInsertLeftIcon = defineIcon(
+  "tabler",
+  TablerColumnInsertLeftIcon,
+);
+import TablerColumnInsertRightIcon from "@tabler/icons-react/dist/esm/icons/IconColumnInsertRight.mjs";
+export const ColumnInsertRightIcon = defineIcon(
+  "tabler",
+  TablerColumnInsertRightIcon,
+);
+import TablerRowRemoveIcon from "@tabler/icons-react/dist/esm/icons/IconRowRemove.mjs";
+export const RowRemoveIcon = defineIcon("tabler", TablerRowRemoveIcon);
+import TablerColumnRemoveIcon from "@tabler/icons-react/dist/esm/icons/IconColumnRemove.mjs";
+export const ColumnRemoveIcon = defineIcon("tabler", TablerColumnRemoveIcon);
+import TablerTableOffIcon from "@tabler/icons-react/dist/esm/icons/IconTableOff.mjs";
+export const TableOffIcon = defineIcon("tabler", TablerTableOffIcon);

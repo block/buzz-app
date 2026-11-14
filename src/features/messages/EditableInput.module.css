@@ -167,6 +167,64 @@ html[data-keyboard-navigation] .input:focus-visible:not([aria-disabled]) {
 .input ol {
   list-style: decimal;
 }
+.input [data-composer-table] {
+  width: max-content;
+  max-width: 100%;
+  max-height: 10rem;
+  margin-block: var(--space-1);
+  overflow: auto;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  scrollbar-width: thin;
+}
+.input [data-composer-table] table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  overflow-wrap: normal;
+  white-space: pre;
+}
+.input [data-composer-table] :is(th, td) {
+  min-width: 5rem;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-right: 1px solid var(--border-standard);
+  border-bottom: 1px solid var(--border-standard);
+  text-align: left;
+  vertical-align: top;
+}
+.input [data-composer-table] :is(th, td):last-child {
+  border-right: 0;
+}
+.input [data-composer-table] tr:last-child > :is(th, td) {
+  border-bottom: 0;
+}
+.input [data-composer-table] th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background:
+    linear-gradient(var(--affordance-subtle), var(--affordance-subtle)),
+    var(--surface-composer);
+  font-weight: var(--type-weight-medium);
+}
+.input [data-composer-table] [data-align="center"] {
+  text-align: center;
+}
+.input [data-composer-table] [data-align="right"] {
+  text-align: right;
+}
+.input [data-composer-table] [data-active] {
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--border-focus) 28%, transparent);
+}
+.input [data-composer-table] td[data-active] {
+  background: color-mix(in srgb, var(--border-focus) 5%, transparent);
+}
 .annotation {
   text-decoration: underline wavy var(--text-danger);
   text-decoration-skip-ink: none;

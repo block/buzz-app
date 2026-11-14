@@ -197,6 +197,13 @@ function blocksMarkdown(container: EditorNode, exits: boolean): string {
   let lastList: NodeType | undefined;
   let alternate = false;
   doc.forEach((block, offset) => {
+    if (
+      previous?.type.name === "table" &&
+      block.type.name === "paragraph" &&
+      !block.content.size &&
+      offset + block.nodeSize === doc.content.size
+    )
+      return;
     // Blank separation prevents lazy quote continuation and adjacent blocks
     // merging on send; ordinary authored paragraph newlines remain unchanged.
     if (previous)
@@ -225,6 +232,8 @@ function blocksMarkdown(container: EditorNode, exits: boolean): string {
         },
         { fences: true },
       ).slice(0, -1);
+    } else if (block.type.name === "table") {
+      output = tableMarkdown(block);
     } else if (block.type.name === "blockquote") {
       output = blocksMarkdown(block, exits)
         .split("\n")
@@ -262,6 +271,40 @@ function blocksMarkdown(container: EditorNode, exits: boolean): string {
     previous = block;
   });
   return blocks.join("");
+}
+
+const alignmentRules = {
+  left: ":---",
+  center: ":---:",
+  right: "---:",
+} as const;
+
+function cellMarkdown(cell: EditorNode): string {
+  return paragraphMarkdown(cell)
+    .replace(/\s*\n\s*/g, " ")
+    .trim()
+    .replace(/(\\*)\|/g, (all, slashes: string) =>
+      slashes.length % 2 ? all : `${slashes}\\|`,
+    );
+}
+
+function tableMarkdown(block: EditorNode): string {
+  const lines: string[] = [];
+  block.forEach((item, _offset, index) => {
+    const cells: string[] = [];
+    item.forEach((cell) => {
+      cells.push(cellMarkdown(cell));
+    });
+    lines.push(`| ${cells.join(" | ")} |`);
+    if (index) return;
+    const rules: string[] = [];
+    item.forEach((cell) => {
+      const align = cell.attrs.align as keyof typeof alignmentRules | null;
+      rules.push(align ? alignmentRules[align] : "---");
+    });
+    lines.push(`| ${rules.join(" | ")} |`);
+  });
+  return lines.join("\n");
 }
 
 /** Parse each contiguous paragraph run once, lazily. Rich text is masked so

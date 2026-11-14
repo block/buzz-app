@@ -62,9 +62,23 @@ export const blockFormats = [
     binding: { key: "b", mod: true, shift: true },
     aliases: [{ key: "9", mod: true, shift: true }],
   },
+  {
+    mark: "table",
+    label: "Table",
+    binding: { key: "t", mod: true, alt: true, shift: false },
+  },
 ] as const;
 export type BlockFormat = (typeof blockFormats)[number]["mark"];
 export type ComposerFormat = InlineFormat | BlockFormat;
+export type ActiveFormat = ComposerFormat | "table_header";
+export type TableCommand =
+  | "row_above"
+  | "row_below"
+  | "column_left"
+  | "column_right"
+  | "delete_row"
+  | "delete_column"
+  | "delete_table";
 export const composerFormats = [...inlineFormats, ...blockFormats];
 export type ComposerFormatBinding = Readonly<{
   key: string;
@@ -147,6 +161,7 @@ export type ComposerInputElement = HTMLDivElement & {
     range: { start: number; end: number },
   ): boolean;
   toggleFormat(format: ComposerFormat): void;
+  runTableCommand(command: TableCommand): boolean;
   insertLineBreak(): boolean;
   editLink(): ComposerLinkEdit | null;
   /** Append source links and this app's copied `text/html` as a quote. Leave

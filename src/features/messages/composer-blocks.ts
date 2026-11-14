@@ -24,9 +24,15 @@ import {
   composerSchema as schema,
   projectComposerDocument,
 } from "./composer-document";
-import type { BlockFormat } from "./composer-dom";
+import type { ActiveFormat, BlockFormat } from "./composer-dom";
+import {
+  convertTypedTable,
+  insertTable,
+  tableCursor,
+  tableLineBreak,
+} from "./composer-table";
 
-export function activeBlockFormats(state: EditorState): BlockFormat[] {
+export function activeBlockFormats(state: EditorState): ActiveFormat[] {
   const selection =
     state.selection instanceof AllSelection
       ? TextSelection.between(
@@ -35,7 +41,12 @@ export function activeBlockFormats(state: EditorState): BlockFormat[] {
         )
       : state.selection;
   const { $from, from, to } = selection;
-  const active: BlockFormat[] = [];
+  const active: ActiveFormat[] = [];
+  const cursor = tableCursor($from);
+  if (cursor) {
+    active.push("table");
+    if (cursor.row === 0) active.push("table_header");
+  }
   if ($from.parent.type === schema.nodes.code_block) {
     let all = true;
     state.doc.nodesBetween(from, to, (node) => {
@@ -54,9 +65,9 @@ export function activeBlockFormats(state: EditorState): BlockFormat[] {
     if (
       ["blockquote", "bullet_list", "ordered_list"].includes(name) &&
       to <= $from.end(depth) &&
-      !active.includes(name as BlockFormat)
+      !active.includes(name as ActiveFormat)
     )
-      active.push(name as BlockFormat);
+      active.push(name as ActiveFormat);
   }
   return active;
 }
@@ -144,10 +155,24 @@ export function apply(tr: Transaction, command: Command) {
   });
 }
 
+function touchesTable(state: EditorState) {
+  const { from, to, $from } = state.selection;
+  if (tableCursor($from)) return true;
+  let found = false;
+  state.doc.nodesBetween(from, to, (node) => {
+    if (node.type === schema.nodes.table) found = true;
+    return !found;
+  });
+  return found;
+}
+
 export function toggleComposerBlock(
   state: EditorState,
   format: BlockFormat,
 ): Transaction | undefined {
+  if (format === "table")
+    return touchesTable(state) ? undefined : insertTable(state);
+  if (touchesTable(state)) return;
   const tr = state.tr;
   const formats = activeBlockFormats(state);
   const active = formats.includes(format);
@@ -536,6 +561,9 @@ export function composerBlockLineBreak(
 ): Transaction | undefined {
   const { $from, empty } = state.selection;
   const tr = state.tr;
+  if (tableCursor($from)) return tableLineBreak(state);
+  const typed = convertTypedTable(state);
+  if (typed) return typed;
   if ($from.parent.type === schema.nodes.code_block) {
     if (
       empty &&

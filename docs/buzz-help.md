@@ -773,6 +773,11 @@ and are asked to sign in again in Buzz.
   grammar checker, adds its own wavy underlines; right-click one, or put the
   caret in it and press ⌘. (Ctrl+. elsewhere), to see what it found and pick a
   replacement. ⌘Z undoes the change.
+- **Nested replies**: in a thread, a reply to a reply is folded behind
+  **View N replies** until you open it. Turn on **Settings → Appearance →
+  Expand nested replies** to show them open, including new ones as they
+  arrive. You can still collapse any branch; changing the setting resets those
+  choices. Replying works the same either way. The choice is saved on this device.
 - **Message density**: **Settings → Appearance → Message density → Compact**
   shows conversations, including threads, as a flat, left-aligned list without
   bubbles, across the window's full width, to fit more on screen. Hover or focus

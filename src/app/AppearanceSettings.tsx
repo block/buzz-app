@@ -24,6 +24,10 @@ import {
   setThreadPlacementPreference,
   useThreadPlacementPreference,
 } from "../features/messages/thread-preferences";
+import {
+  setExpandNestedRepliesPreference,
+  useExpandNestedRepliesPreference,
+} from "../features/messages/nested-replies-preference";
 
 import {
   useFollowUpBehaviorPreference,
@@ -83,6 +87,7 @@ export function AppearanceSettings({
   const names = useNamePreference();
   const verifiedCommunity = useVerifiedCommunity(communities?.relay);
   const { placement, unsaved } = useThreadPlacementPreference();
+  const expandNested = useExpandNestedRepliesPreference();
   const increaseButton = useRef<HTMLButtonElement>(null);
   const pendingFocus = useRef<HTMLButtonElement | null>(null);
   const resetRef = useCallback((node: HTMLButtonElement | null) => {
@@ -474,6 +479,12 @@ export function AppearanceSettings({
                 />
               }
             />
+            <SwitchPreferenceRow
+              label="Expand nested replies"
+              description="Show replies to replies open in threads instead of behind View replies. You can still collapse any of them."
+              checked={expandNested.enabled}
+              onCheckedChange={setExpandNestedRepliesPreference}
+            />
             {autocorrectAvailable && (
               <SwitchPreferenceRow
                 label="Allow automatic spelling correction"
@@ -557,6 +568,22 @@ export function AppearanceSettings({
               onClick={() => setUnreadFirstPreference(unreadFirst.enabled)}
             >
               Retry saving search preference
+            </Button>
+          </ToastNotice>
+        )}
+        {active && expandNested.unsaved && (
+          <ToastNotice
+            title="Nested replies preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() =>
+                setExpandNestedRepliesPreference(expandNested.enabled)
+              }
+            >
+              Retry saving nested replies preference
             </Button>
           </ToastNotice>
         )}

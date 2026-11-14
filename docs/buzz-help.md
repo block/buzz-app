@@ -935,6 +935,10 @@ and are asked to sign in again in Buzz.
   for that community and identity. Collapsed section headings highlight when
   their channels have unread messages or thread replies. Muted channels do not
   highlight the heading.
+- **Reorder sidebar sections**: drag any section's header (Starred, your
+  saved groups, Channels, Forums or Direct messages) to a new place, or choose
+  **Move up** or **Move down** from its **More actions** menu. The order is saved
+  with your sidebar groups and follows you to other devices.
 - Saved sidebar groups, stars, mutes, sorting and filters from another device or
   a paired CLI update the open sidebar automatically while connected, in hosts
   that support saved sidebar preferences. A CLI section-only move keeps a

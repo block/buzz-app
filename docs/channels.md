@@ -166,7 +166,7 @@ preference writes and repeats a writer read invalidated by a concurrent write.
 Ordinary startup remains replica-eligible. Dragging a channel into
 the gap above the first custom section expands an **Add to new section** drop
 target inside the sidebar. With no custom sections, the target is above
-**Channels**; **Starred** keeps its pinned position. The created section appears
+**Channels**, wherever Channels sits. The created section appears
 at that same first position. The target stays revealed for the rest of that drag, with
 reduced motion opening it immediately; other section destinations remain available.
 Dropping there opens the existing create-and-move dialog; cancelling leaves the
@@ -179,12 +179,21 @@ not reveal an empty section. Use the row menu to star the first channel.
 Dropping into Starred stars the channel; dropping out assigns the destination
 and clears its star, just like the row menu. Forums and Direct
 messages take no part in dragging, and the row menu remains the keyboard path.
-A saved group also drags by its header, expanded or collapsed, onto another saved
-group; an accent line shows where it lands, and Escape cancels. Its section menu's
-**Move up** and **Move down** are the keyboard and single-pointer path. Each move
-rewrites every live section's `order` register with one stamp, so channels, sort
-and collapsed state stay with the group's id; the order shows optimistically and
-a failure rolls back with the same move notice and Retry. **Rename section**
+Every section (Starred, saved groups, Channels, Forums and Direct messages) drags
+by its header, expanded or collapsed, onto another; an accent line shows where it
+lands, and Escape cancels. Its section menu's **Move up** and **Move down** are the
+keyboard and single-pointer path; they step past sections that are hidden while
+empty. Each move rewrites every live group's `order` register with one stamp, so
+channels, sort and collapsed state stay with the group's id. It also saves the
+full section-key list (`starred`, `group:<id>`, `channels`, `forums`, `dms`) as
+one `sectionOrder` register, `[version, device, keys]`, beside `meta` in the
+`channel-sections` record. Older writers carry that field forward untouched, and
+the signer admits it only with every built-in key exactly once. A built-in
+section is shown just before the saved group that followed it, so a group-only
+reorder from an older client moves it with that group, and a new group joins the
+groups. Without a saved list the default order applies, and an unreadable one
+falls back to it. The order shows optimistically and a failure rolls back with
+the same move notice and Retry. **Rename section**
 in the same menu rewrites only that group's `name` register (a dialog keeps the
 entry and shows the error if the save fails), so its channels, order and sort stay
 put. The

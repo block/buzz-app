@@ -9,10 +9,12 @@ import {
   type SidebarFilterMode,
 } from "./sidebar-preferences.ts";
 import {
+  editSidebarLayout,
   editSidebarRecord,
   editSidebarSortRecord,
   nextSidebarSectionOrder,
   projectSidebarRecord,
+  validSidebarLayout,
 } from "./sidebar-registers.ts";
 
 /** Tombstone the section and reset its live placements in the same record. */
@@ -56,19 +58,21 @@ export function editSidebarSectionRename(
   );
 }
 
-/** Requested live sections first, then unlisted live ones; every order is restamped. */
+/** Requested live sections first, then unlisted live ones; every order is restamped.
+ * A layout also places the built-in sections among them. */
 export function editSidebarSectionOrder(
   current: Record<string, unknown>,
   createdAt: number,
   sectionIds: readonly string[],
   now = Date.now(),
+  layout?: readonly string[],
 ): Record<string, unknown> {
   const live = projectSidebarPreferences(current, undefined).sections.map(
     ({ id }) => id,
   );
   const wanted = new Set(sectionIds.filter((id) => live.includes(id)));
   const ids = [...wanted, ...live.filter((id) => !wanted.has(id))];
-  return editSidebarRecord(
+  const next = editSidebarRecord(
     "channel-sections",
     current,
     createdAt,
@@ -76,6 +80,7 @@ export function editSidebarSectionOrder(
     now,
     true,
   );
+  return layout ? editSidebarLayout(next, layout, now) : next;
 }
 
 // Typed intent policy; host adapters retain untrusted-envelope validation.
@@ -114,11 +119,13 @@ export function validSidebarSectionRename(
 
 export function validSidebarSectionOrder(
   sectionIds: readonly string[],
+  layout?: readonly string[],
 ): boolean {
   return (
     sectionIds.length <= 100 &&
     sectionIds.every(validSidebarChannelId) &&
-    new Set(sectionIds).size === sectionIds.length
+    new Set(sectionIds).size === sectionIds.length &&
+    (layout === undefined || validSidebarLayout(layout))
   );
 }
 

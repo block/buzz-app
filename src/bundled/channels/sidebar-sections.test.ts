@@ -4,6 +4,7 @@ import {
   orderContributedSidebarSections,
   isChannelDropSectionKey,
   isChannelSectionKey,
+  sidebarLayout,
   sidebarSections,
 } from "./sidebar-sections";
 
@@ -273,3 +274,71 @@ it.each(["starred", "section:work", "channels", "forums", "dms"])(
     );
   },
 );
+
+it("keeps each built-in section before the saved group that followed it", () => {
+  expect(sidebarLayout(["a", "b"])).toEqual([
+    "starred",
+    "group:a",
+    "group:b",
+    "channels",
+    "forums",
+    "dms",
+  ]);
+  const layout = ["forums", "group:a", "dms", "group:b", "starred", "channels"];
+  expect(sidebarLayout(["a", "b"], layout)).toEqual(layout);
+  // Another device reorders groups only; built-ins travel with their group.
+  expect(sidebarLayout(["b", "a"], layout)).toEqual([
+    "dms",
+    "group:b",
+    "forums",
+    "group:a",
+    "starred",
+    "channels",
+  ]);
+  // A deleted group hands its sections to the next one; a new group joins the groups.
+  expect(sidebarLayout(["b", "c"], layout)).toEqual([
+    "forums",
+    "dms",
+    "group:b",
+    "group:c",
+    "starred",
+    "channels",
+  ]);
+  // A group the layout doesn't list follows the group before it, or Starred.
+  const moved = ["dms", "starred", "group:a", "channels", "forums"];
+  expect(sidebarLayout(["a", "new"], moved)).toEqual([
+    "dms",
+    "starred",
+    "group:a",
+    "group:new",
+    "channels",
+    "forums",
+  ]);
+  expect(sidebarLayout(["new", "a"], moved)).toEqual([
+    "dms",
+    "starred",
+    "group:new",
+    "group:a",
+    "channels",
+    "forums",
+  ]);
+  // The first group of all goes just before Channels.
+  expect(
+    sidebarLayout(["new"], ["dms", "starred", "channels", "forums"]),
+  ).toEqual(["dms", "starred", "group:new", "channels", "forums"]);
+  expect(
+    sidebarSections(
+      [
+        { id: "x", name: "x", channelType: "dm" },
+        { id: "f", name: "f", channelType: "forum" },
+      ],
+      {
+        sections: [],
+        assignments: {},
+        starred: [],
+        muted: [],
+        layout: ["dms", "forums", "starred", "channels"],
+      },
+    ).map(({ key }) => key),
+  ).toEqual(["dms", "forums", "channels"]);
+});

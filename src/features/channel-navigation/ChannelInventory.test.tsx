@@ -2409,11 +2409,85 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
     expect(order).toHaveBeenLastCalledWith(
       ["later", "work"],
       expect.any(AbortSignal),
+      ["starred", "group:later", "group:work", "channels", "forums", "dms"],
     );
     expect(screen.queryByRole("button", { name: "Retry move" })).toBeNull();
     expect(
       document.querySelector('[data-sidebar-section="group:work"]'),
     ).toContainElement(screen.getByRole("button", { name: "beta" }));
+  } finally {
+    preferences.dispose();
+  }
+});
+
+it("moves built-in sections from their menus and saves the layout", async () => {
+  const data: SidebarPreferences = {
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: {},
+    starred: [],
+    muted: [],
+  };
+  const order = vi.fn(
+    async (
+      ids: readonly string[],
+      _signal: AbortSignal,
+      layout?: readonly string[],
+    ) => ({
+      sections: ids.map((id, index) => ({ id, name: "Work", order: index })),
+      assignments: {},
+      ...(layout ? { layout } : {}),
+    }),
+  );
+  const preferences = createSidebarPreferencesStore({
+    read: async () => data,
+    available: true,
+    write: async () => data,
+    writeStar: async () => [],
+    writeOrder: order,
+  });
+  await preferences.queries.ensure();
+  const h = fixture(preferences.queries, "ready", [
+    { id: "beta", name: "beta", channelType: "stream" },
+    { id: "ideas", name: "ideas", channelType: "forum" },
+    { id: "dm", name: "Alice", channelType: "dm" },
+  ]);
+  const user = userEvent.setup();
+  const sections = () =>
+    [...document.querySelectorAll<HTMLElement>("[data-sidebar-section]")]
+      .map((section) => section.dataset.sidebarSection)
+      .filter((key) => !key?.startsWith("scope:"));
+  try {
+    render(h.view("beta"));
+    await waitFor(() =>
+      expect(sections()).toEqual(["group:work", "channels", "forums", "dms"]),
+    );
+    const moveUp = async (title: string, times: number) => {
+      for (let step = 0; step < times; step++) {
+        await user.click(
+          screen.getByRole("button", { name: `More actions for ${title}` }),
+        );
+        await user.click(
+          await screen.findByRole("menuitem", { name: "Move up" }),
+        );
+      }
+    };
+    await moveUp("Direct messages", 3);
+    await waitFor(() =>
+      expect(sections()).toEqual(["dms", "group:work", "channels", "forums"]),
+    );
+    expect(order).toHaveBeenLastCalledWith(["work"], expect.any(AbortSignal), [
+      "starred",
+      "dms",
+      "group:work",
+      "channels",
+      "forums",
+    ]);
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Direct messages" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Move up" }),
+    ).toHaveAttribute("aria-disabled", "true");
   } finally {
     preferences.dispose();
   }

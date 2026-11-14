@@ -88,6 +88,7 @@ import {
   isChannelSectionKey,
   isChannelDropSectionKey,
   orderContributedSidebarSections,
+  sidebarLayout,
 } from "../../bundled/channels/sidebar-sections";
 import { activityTranscript } from "../../bundled/channels/working-agents";
 import { SidebarContributionSection } from "./SidebarContributionSection";
@@ -726,6 +727,7 @@ export function ChannelInventory({
   // Group drags land on the placement drop targets, so they need both writers.
   const orderWritable = placementWritable && preferences.sectionOrderWritable;
   const groupIds = preferences.data?.sections.map(({ id }) => id) ?? [];
+  const layoutKeys = sidebarLayout(groupIds, preferences.data?.layout);
   // Saved order uses the same section keys as collapse and drag.
   const orderedContributions = orderContributedSidebarSections(
     contributions.map((entry) => ({
@@ -759,10 +761,21 @@ export function ChannelInventory({
     order.push(...ids.slice(nextActive));
     sidebar.setContributionOrder(order);
   };
-  const moveGroup = (sectionId: string, to: number) => {
-    const ids = groupIds.filter((id) => id !== sectionId);
-    ids.splice(to, 0, sectionId);
-    void preferences.reorderSections(sectionId, ids).catch(() => {});
+  /** Place a section just before or after another; hidden sections keep their slots. */
+  const moveSection = (sectionKey: string, overKey: string, after: boolean) => {
+    const keys = layoutKeys.filter((key) => key !== sectionKey);
+    const at = keys.indexOf(overKey);
+    if (at < 0) return;
+    keys.splice(after ? at + 1 : at, 0, sectionKey);
+    void preferences
+      .reorderSections(
+        sectionKey,
+        keys.flatMap((key) =>
+          key.startsWith("group:") ? [key.slice("group:".length)] : [],
+        ),
+        keys,
+      )
+      .catch(() => {});
   };
   const setSectionSort = (key: string, mode: SidebarSortMode) => {
     void preferences
@@ -1336,9 +1349,10 @@ export function ChannelInventory({
           onReorder={(sectionKey, overKey) =>
             sectionKey.startsWith("plugin:")
               ? reorderContributions(sectionKey, overKey)
-              : moveGroup(
-                  sectionKey.slice("group:".length),
-                  groupIds.indexOf(overKey.slice("group:".length)),
+              : moveSection(
+                  sectionKey,
+                  overKey,
+                  layoutKeys.indexOf(sectionKey) < layoutKeys.indexOf(overKey),
                 )
           }
           overlay={(id, group) => {
@@ -1387,25 +1401,24 @@ export function ChannelInventory({
                 section.key === firstChannelSection &&
                 preferences.sectionCreationWritable
               }
-              groupIndex={groupIds.indexOf(section.key.slice("group:".length))}
+              groupIndex={layoutKeys.indexOf(section.key)}
               disabled={
                 !placementWritable || !isChannelDropSectionKey(section.key)
               }
-              reorderable={orderWritable && section.key.startsWith("group:")}
+              reorderable={orderWritable}
               move={
-                orderWritable && section.key.startsWith("group:")
+                orderWritable
                   ? (() => {
-                      const id = section.key.slice("group:".length);
-                      const index = groupIds.indexOf(id);
+                      const index = filteredSections.indexOf(section);
+                      const above = filteredSections[index - 1]?.key;
+                      const below = filteredSections[index + 1]?.key;
                       return {
-                        up:
-                          index > 0
-                            ? () => moveGroup(id, index - 1)
-                            : undefined,
-                        down:
-                          index < groupIds.length - 1
-                            ? () => moveGroup(id, index + 1)
-                            : undefined,
+                        up: above
+                          ? () => moveSection(section.key, above, false)
+                          : undefined,
+                        down: below
+                          ? () => moveSection(section.key, below, true)
+                          : undefined,
                       };
                     })()
                   : undefined
@@ -1729,8 +1742,7 @@ export function ChannelInventory({
             <p>
               Couldn’t save the move for{" "}
               {sections.find(
-                ({ key }) =>
-                  key === `group:${preferences.orderError?.sectionId}`,
+                ({ key }) => key === preferences.orderError?.sectionId,
               )?.title ?? "this section"}
               . {preferences.orderError.error}
             </p>
@@ -1750,9 +1762,13 @@ export function ChannelInventory({
                 const failed = preferences.orderError;
                 if (!failed) return;
                 void preferences
-                  .reorderSections(failed.sectionId, failed.sectionIds)
+                  .reorderSections(
+                    failed.sectionId,
+                    failed.sectionIds,
+                    failed.layout,
+                  )
                   .catch(() => {});
-                setGroupFocus(`group:${failed.sectionId}`);
+                setGroupFocus(failed.sectionId);
               }}
             >
               Retry move
@@ -1762,7 +1778,7 @@ export function ChannelInventory({
               onClick={() => {
                 const failed = preferences.orderError;
                 preferences.dismissOrderError();
-                if (failed) setGroupFocus(`group:${failed.sectionId}`);
+                if (failed) setGroupFocus(failed.sectionId);
               }}
             >
               Dismiss

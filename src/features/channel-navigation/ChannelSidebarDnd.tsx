@@ -36,7 +36,9 @@ const sidebarCollisions: CollisionDetection = (args) => {
     return pointerWithin({
       ...args,
       droppableContainers: args.droppableContainers.filter(
-        ({ data }) => (data.current?.groupDomain ?? "channels") === domain,
+        ({ data }) =>
+          (data.current?.groupDomain ?? "channels") === domain &&
+          data.current?.channels !== false,
       ),
     });
   const groups = args.droppableContainers
@@ -231,7 +233,8 @@ export function DraggableChannel({
   );
 }
 
-/** A reorderable saved group drags by its header, never its rows or actions. */
+/** A reorderable section drags by its header, never its rows or actions.
+ * `disabled` only refuses channel drops; section reordering still lands. */
 export function DroppableSidebarSection({
   disabled,
   reorderable,
@@ -248,8 +251,8 @@ export function DroppableSidebarSection({
 }) {
   const { setNodeRef, isOver, active } = useDroppable({
     id: section.sectionKey,
-    data: { group: reorderable, groupIndex, groupDomain },
-    disabled,
+    data: { group: reorderable, groupIndex, groupDomain, channels: !disabled },
+    disabled: disabled && !reorderable,
     // dnd-kit queues a re-measure of only the droppable that resized and clears
     // that queue after each render, losing ids queued in between: a section
     // resized mid-drag (text size) could keep a stale drop target. An empty list

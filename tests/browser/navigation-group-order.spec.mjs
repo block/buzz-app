@@ -123,7 +123,7 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   await header(page, "laptop").click();
   await expect(laptop.locator("details")).not.toHaveAttribute("open");
 
-  // Built-in sections are not group targets.
+  // Built-in sections are section targets too; a cancelled drag changes nothing.
   const channels = await page
     .locator('[data-sidebar-section="channels"] summary')
     .boundingBox();
@@ -136,8 +136,10 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   );
   await expect(laptop).toHaveAttribute("data-section-dragging");
   await expect(
-    page.locator("[data-drop-edge], [data-drop-target]"),
-  ).toHaveCount(0);
+    page.locator('[data-sidebar-section="channels"]'),
+  ).toHaveAttribute("data-drop-edge", "after");
+  await expect(page.locator("[data-drop-target]")).toHaveCount(0);
+  await page.keyboard.press("Escape");
   await page.mouse.up();
   await expect
     .poll(() => groups(page))
@@ -172,9 +174,6 @@ test("dragging a group header moves the whole group, keeps its state, and persis
 
   // The section menu is the single-pointer and keyboard path.
   await page.getByRole("button", { name: "More actions for Work" }).click();
-  await expect(
-    page.getByRole("menuitem", { name: "Move down", exact: true }),
-  ).toBeDisabled();
   await page.getByRole("menuitem", { name: "Move up", exact: true }).click();
   await expect
     .poll(() => groups(page))

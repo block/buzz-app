@@ -2030,7 +2030,7 @@ export function createRelaySession(
     writeOrder: (() => {
       const write = transport?.writeSidebarSectionOrder;
       return write
-        ? (sectionIds, signal) =>
+        ? (sectionIds, signal, layout) =>
             write(
               sectionIds,
               AbortSignal.any([
@@ -2038,6 +2038,7 @@ export function createRelaySession(
                 AbortSignal.timeout(20_000),
                 signal,
               ]),
+              layout,
             )
         : undefined;
     })(),

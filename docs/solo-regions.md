@@ -157,6 +157,23 @@ audience. Keep the previous presentation as a fallback when the component is abs
 
 ## Personal workspaces
 
+A source with `composeWorkspaces: true` receives optional `ui.Workspace`,
+`ui.Chats`, and `ui.ChatList` components. `ui.Chats` shows unfiled ordinary
+chats. Passing `all` includes named workspaces with their headers and frames.
+`ui.ChatList` includes the same ordinary chats without workspace headers or
+frames, even when their saved workspace is collapsed. It keeps workspace order
+and each workspace's Show more / Show less controls. It does not change saved
+assignments or collapse preferences. Region-owned chats remain with the source.
+
+The host retains row identity, menus, rename editors, and pending saves when a
+source switches between these presentations. Render each ordinary inventory
+once: use `ui.ChatList` alone, `ui.Chats` with `all`, or `ui.Workspace` for each
+named workspace plus `ui.Chats` for unfiled chats.
+
+Feature-detect `ui.ChatList` before use. On older hosts, fall back to `ui.Chats`
+with `all: true` to keep named-workspace chats reachable. That fallback retains
+workspace chrome. Existing `ui.Chats` behavior is unchanged.
+
 `ctx.soloNavigation.workspaces` exposes the bound user's Solo workspace catalog.
 Pass the current region binding to `snapshot`, `subscribe`, `refresh`, and
 `create({id, name})`. The snapshot contains IDs, names, status, creation

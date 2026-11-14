@@ -14,6 +14,7 @@ import {
   WorkspaceCompositionContext,
   RegionWorkspace,
   RegionChats,
+  RegionChatList,
   type ComposeWorkspaces,
 } from "../../features/channel-navigation/WorkspaceComposition";
 import userEvent from "@testing-library/user-event";
@@ -446,6 +447,82 @@ it("shares a workspace frame while keeping selection, disclosure and chat creati
     expect(create[0]).toHaveAccessibleName("New chat in Chats");
     await user.click(screen.getByRole("button", { name: "New chat in Chats" }));
     expect(h.onNew).toHaveBeenCalledExactlyOnceWith(undefined);
+  } finally {
+    store.dispose();
+  }
+});
+
+it("lists filed and unfiled chats without workspace chrome while preserving filing and pagination", async () => {
+  const h = fixture();
+  const store = h.store();
+  const filed = Array.from({ length: SOLO_CHAT_CAP + 1 }, (_, index) => ({
+    id: index === 0 ? "chat" : `filed-${index}`,
+    title: `Filed chat ${index}`,
+  }));
+  await store.queries.ensure();
+  for (const item of filed) await store.queries.assign(item.id, "work");
+  const assignments = { ...h.saved().assignments };
+  h.write.mockClear();
+  function View() {
+    const [list, setList] = useState(false);
+    return (
+      <>
+        <button type="button" onClick={() => setList(!list)}>
+          Switch layout
+        </button>
+        {h.view(
+          store.queries,
+          "chat-list",
+          undefined,
+          [...filed, { id: "other", title: "Unfiled chat" }],
+          (parts) => (
+            <WorkspaceCompositionContext value={parts}>
+              {list ? <RegionChatList /> : <RegionChats all />}
+            </WorkspaceCompositionContext>
+          ),
+        )}
+      </>
+    );
+  }
+  render(<View />);
+  const user = userEvent.setup();
+  try {
+    await user.click(await screen.findByRole("button", { name: "Work" }));
+    expect(screen.queryByRole("button", { name: "Filed chat 0" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Switch layout" }));
+    expect(screen.queryByRole("button", { name: "Work" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Chats" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Unfiled chat" })).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: /^Filed chat \d+$/ }),
+    ).toHaveLength(SOLO_CHAT_CAP);
+    await user.click(
+      screen.getByRole("button", { name: "Show more chats in Work" }),
+    );
+    expect(
+      screen.getAllByRole("button", { name: /^Filed chat \d+$/ }),
+    ).toHaveLength(filed.length);
+    await user.click(
+      screen.getByRole("button", { name: "Show fewer chats in Work" }),
+    );
+    expect(
+      screen.getAllByRole("button", { name: /^Filed chat \d+$/ }),
+    ).toHaveLength(SOLO_CHAT_CAP);
+    await user.click(
+      screen.getByRole("button", { name: "Actions for Filed chat 0" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Move to" }),
+    ).toBeVisible();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Switch layout" }));
+    expect(screen.getByRole("button", { name: "Work" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.queryByRole("button", { name: "Filed chat 0" })).toBeNull();
+    expect(h.saved().assignments).toEqual(assignments);
+    expect(h.write).not.toHaveBeenCalled();
   } finally {
     store.dispose();
   }

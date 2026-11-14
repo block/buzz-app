@@ -114,6 +114,8 @@ export type SoloRegionProps = Readonly<{
     /** A joined channel's native heading and actions around source-owned content. */
     ChannelGroup?: ComponentType<SoloChannelGroupProps>;
     Chats?: ComponentType<Readonly<{ all?: boolean }>>;
+    /** All ordinary chats without workspace chrome; keeps host rows and filing. */
+    ChatList?: ComponentType;
   }>;
 }>;
 export type SoloChannelGroupProps = Readonly<{

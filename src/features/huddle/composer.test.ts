@@ -540,6 +540,30 @@ it("keeps the main window's image-preparation refusal on the detached composer's
   expect(h.session.attachments.upload).not.toHaveBeenCalled();
 });
 
+it("keeps the main window's refusal of an animated image on the detached composer's failed tile", async () => {
+  retainFiles();
+  const h = harness();
+  const { remote } = await h.connect();
+  const chunk = (kind: string, payload: number[] = []) => [
+    ...[0, 0, 0, payload.length],
+    ...[...kind].map((char) => char.charCodeAt(0)),
+    ...payload,
+    ...[0, 0, 0, 0],
+  ];
+  // An animated PNG with a color profile: refused from its bytes alone.
+  const bytes = new Uint8Array([
+    ...[137, 80, 78, 71, 13, 10, 26, 10],
+    ...chunk("IHDR", Array<number>(13).fill(0)),
+    ...chunk("acTL", [0]),
+    ...chunk("iCCP", [0]),
+    ...chunk("IEND"),
+  ]);
+  expect(await failedTile(remote, new File([bytes], "spin.png"))).toBe(
+    "spin.png: This animated image has a color profile, which can’t be kept. Export it without one, or choose another image.",
+  );
+  expect(h.session.attachments.upload).not.toHaveBeenCalled();
+});
+
 it("projects owned model choices and carries validated picks through the companion transport", async () => {
   const pubkey = "cd".repeat(32);
   const agent = { pubkey, name: "Helper", type: "fixture" };

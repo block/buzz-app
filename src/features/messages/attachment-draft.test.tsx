@@ -260,6 +260,101 @@ it.each([
   },
 );
 
+const ascii = (text: string) => [...text].map((char) => char.charCodeAt(0));
+/** A PNG chunk: length, kind, payload, then a CRC that preparation never reads. */
+const pngChunk = (kind: string, payload: number[] = []) => [
+  ...[0, 0, 0, payload.length],
+  ...ascii(kind),
+  ...payload,
+  ...[0, 0, 0, 0],
+];
+/** A RIFF chunk with an even-length payload. */
+const riffChunk = (kind: string, payload: number[]) => [
+  ...ascii(kind),
+  ...[payload.length, 0, 0, 0],
+  ...payload,
+];
+const webp = (...chunks: number[][]) => [
+  ...ascii("RIFF"),
+  ...[4 + chunks.flat().length, 0, 0, 0],
+  ...ascii("WEBP"),
+  ...chunks.flat(),
+];
+// A little-endian TIFF directory whose one entry is orientation 6 (rotated).
+const rotatedExif = [
+  ...ascii("II"),
+  ...[42, 0, 8, 0, 0, 0, 1, 0],
+  ...[0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0],
+];
+it.each([
+  [
+    "an animated PNG with a color profile",
+    "spin.png",
+    [
+      ...[137, 80, 78, 71, 13, 10, 26, 10],
+      ...pngChunk("IHDR", Array<number>(13).fill(0)),
+      ...pngChunk("acTL", [0]),
+      ...pngChunk("iCCP", [0]),
+      ...pngChunk("IEND"),
+    ],
+    "This animated image has a color profile, which can’t be kept. Export it without one, or choose another image.",
+  ],
+  [
+    "an animated WebP with a color profile",
+    "spin.webp",
+    webp(
+      riffChunk("ANIM", Array<number>(6).fill(0)),
+      riffChunk("ICCP", [0, 0]),
+    ),
+    "This animated image has a color profile, which can’t be kept. Export it without one, or choose another image.",
+  ],
+  [
+    "an animated PNG rotated by its metadata",
+    "spin.png",
+    [
+      ...[137, 80, 78, 71, 13, 10, 26, 10],
+      ...pngChunk("IHDR", Array<number>(13).fill(0)),
+      ...pngChunk("acTL", [0]),
+      ...pngChunk("eXIf", rotatedExif),
+      ...pngChunk("IEND"),
+    ],
+    "This animated image is rotated by its metadata, which can’t be kept. Export it upright, or choose another image.",
+  ],
+  [
+    "an animated WebP rotated by its metadata",
+    "spin.webp",
+    webp(
+      riffChunk("ANIM", Array<number>(6).fill(0)),
+      riffChunk("EXIF", rotatedExif),
+    ),
+    "This animated image is rotated by its metadata, which can’t be kept. Export it upright, or choose another image.",
+  ],
+  [
+    "a GIF cut short",
+    "clip.gif",
+    [...ascii("GIF89a"), 0, 0, 0, 0, 0, 0, 0],
+    "This image file can’t be read. Choose another image.",
+  ],
+])(
+  "words the preparation refusal of %s for the tile",
+  async (_name, name, bytes, text) => {
+    // No decoder stub: the draft's own preparation refuses these from their
+    // bytes, before it decodes or uploads anything.
+    const h = fixture();
+    const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));
+    const image = new File([new Uint8Array(bytes)], name);
+    act(() =>
+      draft.result.current.store.add([image as unknown as globalThis.File]),
+    );
+    await waitFor(() =>
+      expect(draft.result.current.items[0]?.status).toBe("error"),
+    );
+    expect(draft.result.current.items[0]?.error).toBe(text);
+    expect(draft.result.current.blocked).toBe(true);
+    expect(h.upload).not.toHaveBeenCalled();
+  },
+);
+
 it("does not mark a cancelled upload as failed", async () => {
   const h = fixture();
   const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));

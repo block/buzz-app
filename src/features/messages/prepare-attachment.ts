@@ -10,6 +10,7 @@ import {
   cleanWebp,
   cleanGif,
   cleanPng,
+  PreparationError,
   pngChunks,
   pngNeedsPixelTransform,
   snapshotChunk,
@@ -17,9 +18,7 @@ import {
   webpNeedsPixelTransform,
 } from "./image-metadata";
 
-/** A preparation refusal already written for people, such as the pixel limit;
- * callers may show its message as is. */
-export class PreparationError extends Error {}
+export { PreparationError };
 
 /** Prepare pixels before the byte-exact upload contract; the relay still validates. */
 export async function prepareAttachment(

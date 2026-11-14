@@ -597,6 +597,8 @@ it("prints the inherited no-proxy lists and whether a proxy is set, never the pr
     "https_proxy",
     "HTTP_PROXY",
     "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
   ]) {
     const stdout = await read({
       [name]: secret,

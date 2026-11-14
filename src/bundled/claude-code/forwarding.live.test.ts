@@ -169,32 +169,38 @@ it.skipIf(!binary)(
     proxy.server.close();
     const dead = proxy.url;
     try {
-      const claude = await ClaudeProcess.start(
-        nativeSpawn(home, {
+      // ALL_PROXY alone takes Claude's requests too.
+      for (const proxies of [
+        {
           HTTPS_PROXY: dead,
           HTTP_PROXY: dead,
           https_proxy: dead,
           http_proxy: dead,
-          NO_PROXY: "corp.example",
-        }),
-        {
-          cwd: home,
-          systemPrompt: "Reply briefly.",
-          model: "claude-sonnet-4-6",
-          forward: {
-            url: generation.url,
-            noProxy: "corp.example,127.0.0.1,localhost",
-          },
         },
-      );
-      try {
-        expect(await claude.send("hi")).toEqual({ ok: true });
-      } finally {
-        await claude.kill();
+        { ALL_PROXY: dead, all_proxy: dead },
+      ]) {
+        generation.paths.length = 0;
+        const claude = await ClaudeProcess.start(
+          nativeSpawn(home, { ...proxies, NO_PROXY: "corp.example" }),
+          {
+            cwd: home,
+            systemPrompt: "Reply briefly.",
+            model: "claude-sonnet-4-6",
+            forward: {
+              url: generation.url,
+              noProxy: "corp.example,127.0.0.1,localhost",
+            },
+          },
+        );
+        try {
+          expect(await claude.send("hi")).toEqual({ ok: true });
+        } finally {
+          await claude.kill();
+        }
+        expect(
+          generation.paths.some((path) => path.startsWith("/v1/messages")),
+        ).toBe(true);
       }
-      expect(
-        generation.paths.some((path) => path.startsWith("/v1/messages")),
-      ).toBe(true);
     } finally {
       generation.server.close();
       await rm(home, { recursive: true, force: true });

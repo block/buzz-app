@@ -154,7 +154,7 @@ readingTest(
       await settle(page);
       await expectAnchor(page, saved);
     }
-    expect(app.report.sessions).toEqual(["primary", "secondary"]);
+    expect(app.report.sessions.toSorted()).toEqual(["primary", "secondary"]);
     // Each community keeps one stream; discovered interests update that owner
     // in place. Repeated channel/community switches must not churn either.
     // Every joined community connects at startup, so their order is a race.

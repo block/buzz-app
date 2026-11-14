@@ -208,6 +208,7 @@ mention anyone. Explicit agent watches on that room can still receive them.
 - Some organization builds ask you to sign in to your organization when Buzz
   opens, and again when that sign-in ends. Before it ends, a notice offers
   **Sign in again** so Buzz stays open. Finish in the browser and Buzz opens.
+  If the browser doesn't open, **Copy sign-in link** and paste it into a browser.
   The callback tab attempts to close after three seconds. On macOS, Buzz can
   regain focus after verification while the sign-in browser is still foreground.
   If the tab stays open, you can close it yourself.
@@ -402,6 +403,11 @@ and are asked to sign in again in Buzz.
   message in that DM. The link previews the original message; the
   recipient still needs access to its conversation. Forwarding is unavailable
   when the connection cannot start DMs or the message has no link yet.
+- Select text in a message, such as by double-clicking a word, and choose
+  **Quote** (or press Q) to add it to the end of that conversation's draft as a
+  quote, ready for your reply below it. A selection in a thread quotes into the
+  thread's reply box. Quoting keeps formatting and links but does not notify
+  anyone mentioned in the quoted text.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.
@@ -456,6 +462,8 @@ and are asked to sign in again in Buzz.
   community and account only. It covers chats started with **New chat**; a
   chat's own settings can still choose another lifetime, and existing chats do
   not change.
+  Chats reorder by recent activity with the same short slides and fades as Team
+  channels. Reduced motion applies the new order immediately.
   Deleting or archiving the open chat keeps you in Solo and opens another chat
   or a new draft.
 - **Team** contains community channels and their threads. Use the **@** picker
@@ -474,6 +482,9 @@ and are asked to sign in again in Buzz.
   channel does not grant access; inviting them requires an explicit decision
   from someone with permission.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
+  Plugins can also group tasks under joined channels. On supported hosts, each
+  channel group keeps the native channel actions and details. New task appears
+  only when the channel permits starting a chat.
   With Nexus enabled, each workspace also contains its tasks and can have a Lead
   task. Nexus saves and chooses Leads, so they exist only while Nexus is enabled.
   Creating a workspace selects it so you can start a conversation with its Lead.
@@ -748,6 +759,7 @@ and are asked to sign in again in Buzz.
   an empty composer, Up selects a message unless **Edit last message with Up Arrow**
   is on. With a message selected, E edits it, R reacts, T or → replies in thread,
   U marks it unread, and Delete deletes your own message.
+  With message text selected, Q quotes it into the draft.
   ⌘1–9 switch communities, and ⇧Esc marks everything read. If a plugin uses
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
   by"; change one of them to choose which fires. In the Mac app, **Buzz →
@@ -962,6 +974,12 @@ After restart, saved messages stay paused. **Send** sends a selected row, and
 and unpauses saved follow-ups in those chats, sending them in order as turns finish.
 **Don’t resume** leaves them paused. Chats outside that recovery stay paused too.
 
+Before choosing, open the notice's mention count to see where each interrupted
+agent was working: the channel, whether the mention is in a thread, and its text.
+Mentions in one conversation share a row. A mention Buzz cannot find shows
+**Details unavailable**; Resume reads it again and may still find it. If the
+details could not load, close and reopen them to try again.
+
 If another window may be sending a message, check the conversation before sending
 again. Remove is unavailable once delivery owns the message; use its delivery
 recovery controls instead. A save or recovery error keeps the draft or queued row
@@ -1015,6 +1033,11 @@ available rather than silently discarding it.
   same channel share context. This setting changes what the agent remembers
   together, not where its reply appears. A DM, huddle room, or Solo chat is one
   continuing conversation under either choice.
+- An agent's own messages do not wake it, even when they mention its name.
+  To pass work to the same agent in another conversation, use `self_handoff`
+  with the channel, text, and a thread message ID outside a Solo chat.
+  Message tools refuse self-mentions. A successful handoff receipt means the
+  host queued the work. It does not confirm execution or completion.
 - A desktop plugin can run native Codex or Claude on another computer. The plugin manages the target, workspace, credentials, and expiry. A saved
   remote choice stays remote after an app restart. If the target cannot be
   restored, Buzz shows an error and requires a new session.
@@ -1566,6 +1589,10 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   watched commands stop when their Buzz process exits.
   During a handoff between Buzz builds, the new copy waits for the previous
   command to stop, then continues the watch.
+  When a timer or watch that delivers to a conversation wakes the agent but its
+  turn can't start, the agent posts a ⚠️ notice there that mentions its owner.
+  That occurrence is used, not retried, and a wake that keeps failing is
+  reported again only after one of its turns starts.
 - **Shared compute** is off by default; enable it in Settings → Plugins, then
   turn on sharing separately. **Mesh agents**, when it is enabled, use saved Interest
   instructions for watched turns in both Chat and Agent mode. Watched messages

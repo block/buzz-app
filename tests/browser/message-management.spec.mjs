@@ -194,7 +194,9 @@ test("manage a channel message, peer unread state, and its thread", async ({
   ).toBeFocused();
   // The row leaves before the relay records the deletion.
   await expect
-    .poll(() => app.report.publications.some(({ event }) => event.kind === 5))
+    .poll(() =>
+      app.report.publications.some(({ event: item }) => item.kind === 5),
+    )
     .toBe(true);
   const deletion = app.report.publications.find(
     ({ event: item }) => item.kind === 5,

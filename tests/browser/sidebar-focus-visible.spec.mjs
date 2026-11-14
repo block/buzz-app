@@ -85,8 +85,8 @@ test("closing a heading's dialog with the mouse leaves its menu button visible",
   await openPage(page, "Messages");
   const more = page.getByRole("button", { name: "More actions for Work" });
   await more.click();
-  await page.getByRole("menuitem", { name: "Rename section" }).click();
-  const dialog = page.getByRole("dialog", { name: "Rename section" });
+  await page.getByRole("menuitem", { name: "Edit section" }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit section" });
   await dialog.getByRole("button", { name: "Cancel" }).click();
   await expect(dialog).toHaveCount(0);
   await page.mouse.move(0, 0);

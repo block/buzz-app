@@ -37,6 +37,7 @@ import {
   type SidebarAssignmentMutator,
   type SidebarSectionOrderMutator,
   type SidebarSectionRenameMutator,
+  type SidebarSectionEdit,
   type SidebarSectionRemovalMutator,
   type SidebarStarMutator,
   type SidebarSortMutator,
@@ -1135,7 +1136,7 @@ export async function connectBrokerTransport(
     ...(session.sidebarSectionRename
       ? {
           async renameSidebarSection(
-            intent: { sectionId: string; name: string },
+            intent: SidebarSectionEdit & Readonly<{ sectionId: string }>,
             signal: AbortSignal,
           ) {
             const response = await fetch(`${endpoint}/sidebar-section-rename`, {

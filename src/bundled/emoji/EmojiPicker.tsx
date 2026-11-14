@@ -53,7 +53,7 @@ export function EmojiPicker({
   externalTrigger,
   gifShortcut,
 }: {
-  session: ComposerSession;
+  session: Pick<ComposerSession, "emoji" | "media">;
   gifShortcut?: GifShortcut;
   scope: string;
   disabled: boolean;
@@ -62,6 +62,10 @@ export function EmojiPicker({
   gifRequests?: GifRequests | undefined;
   externalTrigger?: {
     ref: RefObject<HTMLButtonElement | null>;
+    /** Form pickers can anchor to the complete field without changing toolbar defaults. */
+    anchor?: RefObject<HTMLDivElement | null>;
+    side?: "top" | "bottom";
+    remove?: (() => void) | undefined;
     id: string;
     close(): void;
     finalFocus(): HTMLButtonElement | false;
@@ -322,6 +326,24 @@ export function EmojiPicker({
   );
   const picker = (
     <div className={styles.emojiContent} data-tabs={showGifTab || undefined}>
+      {externalTrigger?.remove && (
+        <div className={styles.emojiRemove}>
+          <Button
+            type="button"
+            variant="ghost"
+            shape="control"
+            size="row"
+            style={{ width: "100%" }}
+            onClick={() => {
+              externalTrigger.remove?.();
+              accepted.current = true;
+              setOpen(false);
+            }}
+          >
+            Remove emoji
+          </Button>
+        </div>
+      )}
       <Tabs
         variant="panel"
         label="Media type"
@@ -413,14 +435,22 @@ export function EmojiPicker({
       )}
       <PopoverPopup
         colorMode={colorMode}
-        side={reaction && !externalTrigger ? "bottom" : "top"}
+        side={
+          externalTrigger?.side ??
+          (reaction && !externalTrigger ? "bottom" : "top")
+        }
         anchor={
           reaction
-            ? externalTrigger?.ref
+            ? (externalTrigger?.anchor ?? externalTrigger?.ref)
             : () => controls.current?.closest("form") ?? trigger.current
         }
         sideOffset={reaction ? 6 : 4}
         collisionPadding={16}
+        collisionAvoidance={
+          externalTrigger?.anchor
+            ? { side: "flip", align: "shift", fallbackAxisSide: "none" }
+            : undefined
+        }
         // Each media panel focuses its search after its asynchronous content mounts.
         initialFocus={false}
         padding="none"

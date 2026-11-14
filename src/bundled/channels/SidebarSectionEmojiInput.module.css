@@ -1,0 +1,12 @@
+.icon {
+  display: inline-grid;
+  place-items: center;
+  line-height: 1;
+  --sidenav-emoji-size: var(--space-4);
+}
+
+/* Restoring focus after picking an emoji keeps keyboard navigation visible, but
+   ordinary pointer entry must not inherit the dialog's action-button ring. */
+html:not([data-keyboard-navigation]) [data-section-emoji-trigger]:focus {
+  outline: none;
+}

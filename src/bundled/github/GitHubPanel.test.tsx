@@ -361,13 +361,18 @@ it.each([400])(
 const pull = "https://github.com/block/private/pull/9";
 /** The store's `gh` answer for an open pull request, with `pull` overrides:
  * the panel reads it as the first alias of the store's query. */
-function pullData(over: Record<string, unknown> = {}) {
+function pullData(
+  over: Record<string, unknown> = {},
+  repository: Record<string, unknown> = {},
+) {
   return {
     r0: {
       viewerDefaultMergeMethod: "SQUASH",
       squashMergeAllowed: true,
       mergeCommitAllowed: true,
       rebaseMergeAllowed: false,
+      autoMergeAllowed: false,
+      ...repository,
       pullRequest: {
         id: "PR_9",
         title: "Private change",
@@ -675,11 +680,14 @@ it.each([
   "does not offer queueing an ineligible or already queued pull (%j)",
   async (over) => {
     const gh = vi.fn(async () =>
-      pullData({
-        isMergeQueueEnabled: true,
-        viewerCanEnableAutoMerge: true,
-        ...over,
-      }),
+      pullData(
+        {
+          isMergeQueueEnabled: true,
+          viewerCanEnableAutoMerge: true,
+          ...over,
+        },
+        { autoMergeAllowed: true },
+      ),
     );
     render(
       <GitHubPanel
@@ -697,6 +705,185 @@ it.each([
     ).not.toBeInTheDocument();
   },
 );
+
+const waitingChecks = (
+  conclusion: string,
+  status = "COMPLETED",
+  totalCount = 1,
+) => ({
+  nodes: [
+    {
+      commit: {
+        statusCheckRollup: {
+          contexts: {
+            totalCount,
+            nodes: [
+              { __typename: "CheckRun", name: "unit", status, conclusion },
+            ],
+          },
+        },
+      },
+    },
+  ],
+});
+const notReady = [
+  {
+    mergeStateStatus: "BLOCKED",
+    reviewDecision: "REVIEW_REQUIRED",
+    latestOpinionatedReviews: { nodes: [] },
+  },
+  {
+    mergeStateStatus: "BLOCKED",
+    reviewDecision: "CHANGES_REQUESTED",
+    latestOpinionatedReviews: {
+      nodes: [{ author: { login: "wes" }, state: "CHANGES_REQUESTED" }],
+    },
+  },
+  {
+    mergeStateStatus: "BLOCKED",
+    commits: waitingChecks("FAILURE"),
+  },
+  {
+    mergeStateStatus: "BEHIND",
+    commits: waitingChecks("", "IN_PROGRESS"),
+  },
+  // Checks past the page read are unknown, so they may still be required.
+  {
+    mergeStateStatus: "BLOCKED",
+    commits: waitingChecks("SUCCESS", "COMPLETED", 2),
+  },
+  // The branch may require conversations to be resolved first.
+  {
+    mergeStateStatus: "BLOCKED",
+    reviewThreads: { totalCount: 1, nodes: [{ isResolved: false }] },
+  },
+];
+
+it.each(
+  notReady.flatMap((over) => [
+    { over, queue: true },
+    { over, queue: false },
+  ]),
+)(
+  "offers Merge when ready, not an erroring merge or queue button, where auto-merge is allowed (queue=$queue, $over.mergeStateStatus)",
+  async ({ over, queue }) => {
+    const user = userEvent.setup();
+    let enabled = false;
+    const gh = vi.fn(async (query: string, _variables?: unknown) => {
+      if (query.startsWith("mutation")) {
+        enabled = true;
+        return {};
+      }
+      return pullData(
+        {
+          ...over,
+          isMergeQueueEnabled: queue,
+          viewerCanEnableAutoMerge: true,
+          autoMergeRequest: enabled
+            ? { mergeMethod: "SQUASH", enabledBy: { login: "me" } }
+            : null,
+        },
+        { autoMergeAllowed: true },
+      );
+    });
+    render(
+      <GitHubPanel
+        target={pull}
+        close={() => {}}
+        gh={gh as unknown as GitHubCli}
+      />,
+    );
+    const button = await screen.findByRole("button", {
+      name: "Merge when ready",
+    });
+    expect(gh.mock.calls[0]?.[0]).toContain("autoMergeAllowed");
+    for (const name of ["Queue for merge", "Merge", "Squash and merge"])
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    await user.click(button);
+    await screen.findByText(/Merges automatically when ready/);
+    expect(gh.mock.calls[1]).toEqual([
+      "mutation($input:EnablePullRequestAutoMergeInput!){enablePullRequestAutoMerge(input:$input){clientMutationId}}",
+      {
+        input: {
+          pullRequestId: "PR_9",
+          expectedHeadOid: "abc123",
+          mergeMethod: "SQUASH",
+        },
+      },
+      undefined,
+    ]);
+  },
+);
+
+it.each(
+  notReady.flatMap((over) => [
+    { over, queue: true },
+    { over, queue: false },
+  ]),
+)(
+  "offers no merge, queue or auto-merge button where the repository disallows auto-merge (queue=$queue, $over.mergeStateStatus)",
+  async ({ over, queue }) => {
+    const gh = vi.fn(async () =>
+      pullData(
+        { ...over, isMergeQueueEnabled: queue, viewerCanEnableAutoMerge: true },
+        { autoMergeAllowed: false },
+      ),
+    );
+    render(
+      <GitHubPanel
+        target={pull}
+        close={() => {}}
+        gh={gh as unknown as GitHubCli}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Private change #9" });
+    for (const name of [
+      "Merge when ready",
+      "Queue for merge",
+      "Squash and merge",
+    ])
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+  },
+);
+
+it("does not offer auto-merge when the viewer cannot enable it", async () => {
+  const gh = vi.fn(async () =>
+    pullData(
+      { mergeStateStatus: "BLOCKED", viewerCanEnableAutoMerge: false },
+      { autoMergeAllowed: true },
+    ),
+  );
+  render(
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Private change #9" });
+  expect(
+    screen.queryByRole("button", { name: "Merge when ready" }),
+  ).not.toBeInTheDocument();
+});
+
+it("keeps merging a mergeable pull request directly, without Merge when ready", async () => {
+  const gh = vi.fn(async () =>
+    pullData({ viewerCanEnableAutoMerge: true }, { autoMergeAllowed: true }),
+  );
+  render(
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+    />,
+  );
+  expect(
+    await screen.findByRole("button", { name: "Squash and merge" }),
+  ).toHaveAttribute("data-variant", "prominent");
+  expect(
+    screen.queryByRole("button", { name: "Merge when ready" }),
+  ).not.toBeInTheDocument();
+});
 
 it("shows GitHub's queue rejection and allows retrying the confirmed head", async () => {
   const user = userEvent.setup();
@@ -1014,7 +1201,10 @@ it("marks a draft ready for review, and offers auto-merge while blocked", async 
   ).not.toBeInTheDocument();
   // Where the repository allows it, a blocked pull request can merge itself.
   gh.mockImplementation(async () =>
-    pullData({ mergeStateStatus: "BLOCKED", viewerCanEnableAutoMerge: true }),
+    pullData(
+      { mergeStateStatus: "BLOCKED", viewerCanEnableAutoMerge: true },
+      { autoMergeAllowed: true },
+    ),
   );
   rerender(
     <GitHubPanel

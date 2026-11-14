@@ -73,6 +73,8 @@ pub(crate) struct Failure {
     /// `clock_offset` of a refusal's response: a diagnostic beside `code`,
     /// which keeps its meaning and handling.
     pub(crate) clock_offset: Option<i64>,
+    /// The last answer before giving up, by retries or the deadline, was a 429.
+    pub(crate) rate_limited: bool,
 }
 impl From<&'static str> for Failure {
     fn from(code: &'static str) -> Self {
@@ -80,6 +82,7 @@ impl From<&'static str> for Failure {
             code,
             session_denied: false,
             clock_offset: None,
+            rate_limited: false,
         }
     }
 }
@@ -135,10 +138,17 @@ where
     // Set when a refusal's headers arrive, with their clock offset, so a
     // body that then outlasts the deadline still reports both.
     let terminal_headers = std::sync::Mutex::new(None::<Option<i64>>);
+    let rate_limited = std::sync::atomic::AtomicBool::new(false);
     tokio::time::timeout(DEADLINE, async {
         for attempt in 0..3u64 {
             let started = tokio::time::Instant::now();
             let response = request().await?.send().await;
+            rate_limited.store(
+                response
+                    .as_ref()
+                    .is_ok_and(|response| response.status().as_u16() == 429),
+                std::sync::atomic::Ordering::Relaxed,
+            );
             let retry = match response {
                 Err(_) => Some(None),
                 Ok(response) => {
@@ -214,6 +224,7 @@ where
                             code,
                             session_denied,
                             clock_offset,
+                            rate_limited: false,
                         });
                     }
                 }
@@ -231,18 +242,24 @@ where
         Err("network-unavailable".into())
     })
     .await
-    .map_err(|_| {
-        match *terminal_headers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-        {
-            Some(clock_offset) => Failure {
-                clock_offset,
-                .."adapter-refused".into()
+    .unwrap_or_else(|_| {
+        Err(
+            match *terminal_headers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+            {
+                Some(clock_offset) => Failure {
+                    clock_offset,
+                    .."adapter-refused".into()
+                },
+                None => "network-timeout".into(),
             },
-            None => "network-timeout".into(),
-        }
-    })?
+        )
+    })
+    .map_err(|failure| Failure {
+        rate_limited: rate_limited.load(std::sync::atomic::Ordering::Relaxed),
+        ..failure
+    })
 }
 
 fn retry_after(value: &str) -> Option<Duration> {
@@ -314,5 +331,40 @@ mod tests {
             requests, 2,
             "successful body transport failures should recover"
         );
+    }
+
+    #[tokio::test]
+    async fn a_retry_after_past_the_deadline_keeps_the_rate_limit() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let (answered, waiting) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                socket.read_exact(&mut byte).await.unwrap();
+                request.push(byte[0]);
+            }
+            socket
+                .write_all(b"HTTP/1.1 429 Test\r\nRetry-After: 60\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            // The client closes only after classifying the 429.
+            let _ = socket.read_to_end(&mut Vec::new()).await;
+            answered.send(()).unwrap();
+        });
+        let client = client().unwrap();
+        let advance = async {
+            waiting.await.unwrap();
+            tokio::time::pause();
+            tokio::time::advance(DEADLINE + Duration::from_secs(1)).await;
+        };
+        let (result, ()) = tokio::join!(json::<serde_json::Value>(|| client.get(&url)), advance);
+        tokio::time::resume();
+        server.await.unwrap();
+        let failure = result.unwrap_err();
+        assert_eq!(failure.code, "network-timeout");
+        assert!(failure.rate_limited);
     }
 }

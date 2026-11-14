@@ -1029,6 +1029,7 @@ export function useConversationTabs({
     drawerContext,
     splitTrigger,
     panelTrigger,
+    canOpenLink,
     openConversationLink,
     openConversationThread,
     openLinkedThread,

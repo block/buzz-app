@@ -34,7 +34,7 @@ import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { SoloDraft } from "../../features/solo/SoloDraft";
 import { ConversationPresentation } from "../../features/conversation/ConversationPresentation";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
-import { useChannelList } from "../../features/relay/react";
+import { useChannelRoster } from "../../features/relay/react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { ConversationTab } from "../channels/ConversationTab";
 import { ChannelMembersButton } from "../channels/ChannelMembersDialog";
@@ -102,7 +102,7 @@ export function InboxSheet({
   host: ConversationHostServices;
   extensions: ConversationExtensions;
 }) {
-  const list = useChannelList(session.channels);
+  const list = useChannelRoster(session.channels);
   const listVisibility = useContext(ConversationListVisibility);
   const controlledList = !!listVisibility;
   const reader = useRef<HTMLElement>(null);

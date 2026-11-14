@@ -17,7 +17,7 @@ import {
   isBuzzLink,
 } from "../../features/navigation/buzz-links";
 import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
-import { useChannelList } from "../../features/relay/react";
+import { useChannelRoster } from "../../features/relay/react";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { PanelDock } from "../../features/panels/PanelDock";
@@ -91,7 +91,7 @@ export function PageTabs({
   extensions?: ConversationExtensions | undefined;
 }) {
   const tabState = useChannelTabState(session, undefined, `page:${id}`);
-  const list = useChannelList(session.channels);
+  const list = useChannelRoster(session.channels);
   const { channels, profiles } = useChannelLabels(
     // As in Channels, a Huddle room's tabs show the unavailable placeholder.
     list.channels.filter(
@@ -594,9 +594,7 @@ export function PageTabs({
                                     origin,
                                   )
                                 }
-                                canOpenLink={(target) =>
-                                  !!host.panels.resolve(target)
-                                }
+                                canOpenLink={secondary.canOpenLink}
                                 openThread={(messageId, rootId, intent) =>
                                   secondary.openConversationThread(
                                     primaryChannel.id,

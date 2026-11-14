@@ -73,6 +73,7 @@ import {
   type ConversationQuery,
 } from "../../features/conversation/conversation-index";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import { useChannelRoster } from "../../features/relay/react";
 import {
   CollectionCreationAction,
   CollectionFilters,
@@ -155,9 +156,25 @@ export function RailNavigation({
     [savedMessageView],
   );
   const { pins, setPinned } = useRailPins(partition);
-  const list = useSyncExternalStore(
+  // The roster: a message replaces the list, but not who is in it.
+  const list = useChannelRoster(session.channels);
+  const soloRecency = useSyncExternalStore(
     session.channels.subscribeList,
-    session.channels.list,
+    useCallback(
+      () =>
+        session.channels
+          .list()
+          .channels.filter((channel) => channel.channelType === "solo")
+          .sort(
+            (a, b) =>
+              (b.lastActivityAt ?? b.createdAt ?? b.updatedAt ?? 0) -
+                (a.lastActivityAt ?? a.createdAt ?? a.updatedAt ?? 0) ||
+              a.id.localeCompare(b.id),
+          )
+          .map((channel) => channel.id)
+          .join("\n"),
+      [session],
+    ),
   );
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
@@ -432,17 +449,14 @@ export function RailNavigation({
       agentEntries={agentEntries}
     />
   );
+  // Most recent first; the order is read apart from the roster.
   const soloChats = useMemo(
     () =>
-      channels
-        .filter((channel) => channel.channelType === "solo")
-        .sort(
-          (a, b) =>
-            (b.lastActivityAt ?? b.createdAt ?? b.updatedAt ?? 0) -
-              (a.lastActivityAt ?? a.createdAt ?? a.updatedAt ?? 0) ||
-            a.id.localeCompare(b.id),
-        ),
-    [channels],
+      soloRecency
+        .split("\n")
+        .flatMap((id) => channelsById.get(id) ?? [])
+        .filter((channel) => channel.channelType === "solo"),
+    [soloRecency, channelsById],
   );
   const visited = navigation.entry.target;
   const currentChannel =

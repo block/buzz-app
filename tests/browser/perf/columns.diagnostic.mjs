@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { test, expect } from "../fixture.mjs";
 
 // Diagnostic for the list/page columns: main-thread cost of work that should
@@ -34,10 +35,24 @@ async function meter(page) {
       ]),
     );
   };
+  // PERF_PROFILE=<dir> also writes a CPU profile of each measured phase.
+  const profiles = process.env.PERF_PROFILE;
+  let phase = 0;
   return async (act) => {
+    if (profiles) {
+      await cdp.send("Profiler.enable");
+      await cdp.send("Profiler.start");
+    }
     const before = await read();
     await act();
     const after = await read();
+    if (profiles) {
+      const { profile } = await cdp.send("Profiler.stop");
+      await writeFile(
+        `${profiles}/columns-${phase++}.cpuprofile`,
+        JSON.stringify(profile),
+      );
+    }
     return Object.fromEntries(
       Object.keys(after).map((key) => [
         key,

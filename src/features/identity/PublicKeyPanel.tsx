@@ -6,7 +6,7 @@ import { WireframePanel } from "./Wireframe";
 
 /**
  * A full npub — never hex or an abbreviation — with Copy and inline copy
- * feedback, for first-run pages that render outside ToastProvider. The
+ * feedback, for first-run pages. The
  * Profile panel's public-key recipe.
  */
 export function PublicKeyPanel({

@@ -50,7 +50,10 @@ export function UpdateSettings({
     unavailable:
       "Automatic updates aren't available on this build. Download the latest release manually.",
     available: "Preparing update…",
-    downloading: "Downloading update…",
+    downloading:
+      status.state === "downloading" && status.progress !== null
+        ? `Downloading update… ${status.progress}%`
+        : "Downloading update…",
     installing: "Installing update…",
     ready: "Ready to install. Buzz will restart.",
     error: "",

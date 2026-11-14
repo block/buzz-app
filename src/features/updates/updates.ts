@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { check } from "@tauri-apps/plugin-updater";
+import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
 
 export type UpdateStatus =
   | { state: "idle" }
@@ -7,7 +7,8 @@ export type UpdateStatus =
   | { state: "up-to-date" }
   | { state: "unavailable" }
   | { state: "available"; version: string }
-  | { state: "downloading" }
+  /** Whole percent downloaded, or null until the size is known. */
+  | { state: "downloading"; version: string; progress: number | null }
   | { state: "installing" }
   | { state: "ready" }
   | { state: "error"; message: string };
@@ -15,7 +16,10 @@ export type UpdateStatus =
 /** The subset of the Tauri updater handle this owner uses. */
 export type UpdateHandle = {
   version: string;
-  download(onEvent: undefined, options: { timeout: number }): Promise<void>;
+  download(
+    onEvent: (event: DownloadEvent) => void,
+    options: { timeout: number },
+  ): Promise<void>;
   install(): Promise<void>;
   close(): Promise<void>;
 };
@@ -31,7 +35,7 @@ export const BACKGROUND_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 // The updater does not carry the check timeout over to the download.
 export const UPDATE_CHECK_TIMEOUT_MS = 30 * 1000;
 export const UPDATE_DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
-const BACKGROUND_BLOCKED_STATES = new Set<UpdateStatus["state"]>([
+const CHECK_BLOCKED_STATES = new Set<UpdateStatus["state"]>([
   "checking",
   "available",
   "downloading",
@@ -68,15 +72,19 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
   let manualResultRequested = false;
   let inlineViews = 0;
   let noticeDismissed = false;
-  let noticeRecovery = false;
+  let noticePinned = false;
   const listeners = new Set<() => void>();
   const notify = () => {
     for (const listener of listeners) listener();
   };
   const setStatus = (next: UpdateStatus) => {
     status = next;
-    if (next.state === "ready") noticeRecovery = false;
-    if (next.state !== "ready" && next.state !== "installing")
+    if (next.state === "ready") noticePinned = false;
+    if (
+      next.state !== "downloading" &&
+      next.state !== "ready" &&
+      next.state !== "installing"
+    )
       noticeDismissed = false;
     notify();
   };
@@ -92,11 +100,25 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
     const current = update;
     if (downloadInFlight || !current) return;
     downloadInFlight = true;
+    const { version } = current;
+    let total = 0;
+    let received = 0;
+    const progress = () =>
+      total > 0 ? Math.min(100, Math.floor((received / total) * 100)) : null;
     try {
-      setStatus({ state: "downloading" });
-      await current.download(undefined, {
-        timeout: UPDATE_DOWNLOAD_TIMEOUT_MS,
-      });
+      setStatus({ state: "downloading", version, progress: null });
+      await current.download(
+        (event) => {
+          if (event.event === "Started") total = event.data.contentLength ?? 0;
+          else if (event.event === "Progress") {
+            const before = progress();
+            received += event.data.chunkLength;
+            if (progress() === before) return;
+          } else return;
+          setStatus({ state: "downloading", version, progress: progress() });
+        },
+        { timeout: UPDATE_DOWNLOAD_TIMEOUT_MS },
+      );
       setStatus({ state: "ready" });
     } catch (err) {
       setStatus({ state: "error", message: toErrorMessage(err) });
@@ -115,7 +137,7 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
       update = null;
       await platform.relaunch();
     } catch (err) {
-      noticeRecovery = true;
+      noticePinned = true;
       setStatus({ state: "error", message: toErrorMessage(err) });
     } finally {
       installInFlight = false;
@@ -134,7 +156,16 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
       }
       return;
     }
-    if (background && BACKGROUND_BLOCKED_STATES.has(status.state)) return;
+    // A menu request reveals the current update without replacing its handle.
+    if (CHECK_BLOCKED_STATES.has(status.state)) {
+      if (!background) {
+        noticeDismissed = false;
+        noticePinned =
+          status.state === "available" || status.state === "downloading";
+        notify();
+      }
+      return;
+    }
 
     checkInFlight = true;
     manualResultRequested = false;
@@ -144,6 +175,8 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
       const found = await platform.check();
       if (found) {
         update = found;
+        // Someone asked: the notice follows this update to its restart.
+        if (!background || manualResultRequested) noticePinned = true;
         setStatus({ state: "available", version: found.version });
         void download();
       } else if (!background || manualResultRequested) {
@@ -185,15 +218,15 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
       };
     },
     inlineVisible: () => inlineViews > 0,
-    /** The ready notice stays dismissed across remounts until the update resolves. */
+    /** Keep dismissal through download and readiness; another request reveals it. */
     dismissNotice() {
       noticeDismissed = true;
-      noticeRecovery = false;
+      noticePinned = false;
       notify();
     },
     noticeDismissed: () => noticeDismissed,
-    /** Keep failed installs and their retry results reachable outside Settings. */
-    noticeRecovery: () => noticeRecovery,
+    /** Keep requested downloads, failed installs and their retry results reachable outside Settings. */
+    noticePinned: () => noticePinned,
     checkForUpdate: () => runCheck(false),
     installAndRelaunch,
     dispose() {

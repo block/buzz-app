@@ -10,6 +10,8 @@ import { READ_STATE_MAX, record, uint32 } from "./read-state-model";
 
 export const FOLLOW_PLAINTEXT_BYTES = 40 * 1024;
 export const FOLLOW_SLOTS = 16;
+/** The signing host's created_at window. */
+export const FOLLOW_CLOCK_SKEW = 60;
 
 export type FollowEntry = Readonly<{
   follow: boolean;
@@ -208,6 +210,10 @@ export function capture(
   )
     throw new Error("Follow choices do not fit");
   const [next, created_at] = reserve(state, now);
+  // The host refuses created_at more than 60s from now; never clamp below the
+  // reservation, which would let an older-looking packet lose to a seen head.
+  if (created_at - now > FOLLOW_CLOCK_SKEW)
+    throw new Error("Follow choices are ahead of this device's clock");
   return [
     next,
     {

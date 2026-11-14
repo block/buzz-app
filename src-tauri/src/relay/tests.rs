@@ -3465,6 +3465,72 @@ async fn read_state_codec_round_trips_and_rejects_foreign_intent() {
     assert!(host.decode_read_state(vec![signed; 17]).await.is_err());
 }
 
+#[tokio::test]
+async fn thread_follows_codec_is_a_separate_exact_shape() {
+    let host = IdentityHost::fixture();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let key = format!("room:{}", "1".repeat(64));
+    let payload = serde_json::json!({"v":1,"client_id":"fixture","later":true,
+        "threads":{key.clone():{"follow":true,"at":now,"x":1}}});
+    let signed = host
+        .sign_thread_follows("b".repeat(32), now, payload.clone())
+        .await
+        .unwrap();
+    verify(&signed);
+    assert_eq!(
+        signed["tags"],
+        serde_json::json!([
+            ["d", format!("thread-follows:{}", "b".repeat(32))],
+            ["t", "thread-follows"]
+        ])
+    );
+    let decoded = host
+        .decode_thread_follows(vec![signed.clone()])
+        .await
+        .unwrap();
+    assert_eq!(decoded[0]["payload"], payload);
+    // The shapes never cross.
+    assert!(host.decode_read_state(vec![signed.clone()]).await.is_err());
+    let read = host
+        .sign_read_state(
+            "a".repeat(32),
+            now,
+            serde_json::json!({"v":1,"client_id":"f","contexts":{}}),
+        )
+        .await
+        .unwrap();
+    assert!(host.decode_thread_follows(vec![read]).await.is_err());
+    assert!(host
+        .sign_read_state("a".repeat(32), now, payload.clone())
+        .await
+        .is_err());
+    // Strict intent: slot, window and payload.
+    assert!(host
+        .sign_thread_follows("B".repeat(32), now, payload.clone())
+        .await
+        .is_err());
+    assert!(host
+        .sign_thread_follows("b".repeat(32), now + 61, payload.clone())
+        .await
+        .is_err());
+    assert!(host
+        .sign_thread_follows("b".repeat(32), now - 120, payload.clone())
+        .await
+        .is_err());
+    let bad = serde_json::json!({"v":1,"client_id":"f","threads":{"bad":{"follow":true,"at":1}}});
+    assert!(host
+        .sign_thread_follows("b".repeat(32), now, bad)
+        .await
+        .is_err());
+    let mut tampered = signed.clone();
+    tampered["tags"] = serde_json::json!([["d", "channel-sort"], ["t", "thread-follows"]]);
+    assert!(host.decode_thread_follows(vec![tampered]).await.is_err());
+    assert!(host.decode_thread_follows(vec![signed; 17]).await.is_err());
+}
+
 #[test]
 fn general_signing_never_accepts_read_state_kind() {
     let event = EventTemplate {

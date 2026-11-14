@@ -203,3 +203,17 @@ it("merges slots by greater `at`, unfollow winning ties", () => {
     ]),
   );
 });
+
+it("a future-dated head that pushes the reservation past the host window fails visibly, never clamped", () => {
+  const now = 1_000;
+  let w = recovered(head(now + 100, { [K]: { follow: true, at: now + 100 } }));
+  w = tap(w, SLOT, K, false, now);
+  expect(() => capture(w, SLOT, CLIENT, now)).toThrow(
+    "Follow choices are ahead of this device's clock",
+  );
+  // The choice stays pending, so it is retried once the clock catches up.
+  expect(Object.keys(w.edits)).toEqual([K]);
+  expect(w.packets).toEqual({});
+  const [, later] = capture(w, SLOT, CLIENT, now + 60) ?? [];
+  expect(later?.created_at).toBe(now + 102);
+});

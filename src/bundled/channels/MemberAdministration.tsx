@@ -9,6 +9,7 @@ import type { RelaySession } from "../../features/relay/session";
 import {
   canManageMember,
   canRemoveMember,
+  canTransferOwnership,
   editableMemberRoles,
   type MemberChange,
 } from "../../features/channel-members/administration-protocol";
@@ -72,6 +73,7 @@ export function MemberRow({
   channelId,
   pubkey,
   name,
+  person,
   verifiedOwner,
   onChange,
   returnFocus,
@@ -89,6 +91,8 @@ export function MemberRow({
   channelId: string;
   pubkey: string;
   name: string;
+  /** A loaded profile shows a person, not an agent. */
+  person: boolean;
   verifiedOwner?: string | undefined;
   onChange(change: MemberChange): void;
   returnFocus: React.RefObject<HTMLElement | null>;
@@ -140,6 +144,14 @@ export function MemberRow({
     !invitationAction && capability.available && state.status === "ready";
   const canEdit =
     permitted && canManageMember(state.authority, session.viewer ?? "", pubkey);
+  const canTransfer =
+    permitted &&
+    canTransferOwnership(
+      state.authority,
+      session.viewer ?? "",
+      pubkey,
+      !person,
+    );
   const canRemove =
     permitted &&
     canRemoveMember(
@@ -189,7 +201,7 @@ export function MemberRow({
           Send message
         </MenuItem>
       )}
-      {(canEdit || canRemove) && !locked && (
+      {(canEdit || canTransfer || canRemove) && !locked && (
         <>
           <MenuSeparator />
           {canEdit && (
@@ -210,6 +222,11 @@ export function MemberRow({
             </MenuRadioGroup>
           )}
           {canEdit && <MenuSeparator />}
+          {canTransfer && (
+            <MenuItem onClick={() => choose("owner")}>
+              Transfer ownership
+            </MenuItem>
+          )}
           {canRemove && (
             <MenuItem tone="danger" onClick={() => choose("remove")}>
               Remove from {place}

@@ -1182,14 +1182,17 @@ ownership once per removal attempt, independently of display hints.
 
 DMs, archived channels and session channels have no administration actions.
 In a Solo chat only owners and admins can remove members, including other people's agents.
-No ownership transfer, community-admin override or new invitation restriction is
-introduced. Personal Leave remains a separate lifecycle operation; removing a
-member neither deletes their identity nor stops their agents.
+An owner can also transfer ownership to another person whose profile has loaded;
+agents, Bots, owners and system channels are excluded. One `9000` makes that
+person Owner, then the previous owner Admin, so the relay's last-owner guard holds;
+success requires both roles in a fresh read. No community-admin override or new
+invitation restriction is introduced. Personal Leave remains a separate lifecycle
+operation; removing a member neither deletes their identity nor stops their agents.
 
-Role change and removal use deliberate confirmation steps in the same dialog,
-initially focused on Cancel. Removal shows only the avatar/name and actions;
-Cancel returns to the list. Leaving either step keeps the list's scroll position
-and returns focus to that member's actions, including while a confirmed change
+Role change, ownership transfer and removal use deliberate confirmation steps in
+the same dialog, initially focused on Cancel. Removal shows only the avatar/name
+and actions; Cancel returns to the list. Leaving any step keeps the list's scroll
+position and returns focus to that member's actions, including while a confirmed change
 is pending. When a confirmed removal takes the row away, focus moves to the
 actions of the member now in its place, the one before it, or Search when none
 is left, unless focus has moved elsewhere; a failed or uncertain removal leaves
@@ -1212,7 +1215,8 @@ recovery is in-memory, not durable across session disposal or restart.
 
 The development broker and native transport advertise a separate
 `memberAdministration` capability and admit only exact `9000` Admin/Member/Guest
-changes or `9001` other-member removals through purpose-bound routes. Generic
+changes, the signer's own ownership transfer or `9001` other-member removals
+through purpose-bound routes. Generic
 invitation signing is unchanged; the relay still enforces the authoritative ACL.
 Hosts without this writer can read verified roles but expose no management controls.
 Native support requires a rebuilt binary; no unrestricted writer fallback is used.

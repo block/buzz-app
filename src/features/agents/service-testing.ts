@@ -125,6 +125,10 @@ export function fakeRelay(origin = "https://relay.example.test") {
   const memories = new Map<string, string>();
   const session = {
     archives,
+    profiles: {
+      ensure: vi.fn(async () => {}),
+      snapshot: () => new Map(),
+    },
     agentChoices: { refresh: vi.fn(async () => {}) },
     agentMemories: {
       read: vi.fn(async (pubkey: string) => {

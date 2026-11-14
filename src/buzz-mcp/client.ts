@@ -141,7 +141,12 @@ export interface BuzzClient {
   /** Trusted connection authorities, never inferred from query results. */
   readonly relayAuthor?: string | undefined;
   readonly signingAuthority?: string | undefined;
-  /** Reads the community as the agent. Every filter names its kinds. */
+  /** Reads the community as the agent. Every filter names its kinds.
+   * Production native-desktop bundled-Goose added tools receive copied,
+   * signature/content-hash-verified immutable events; one invalid member rejects
+   * the whole query. This is not a guarantee of structural substitute clients,
+   * freshness, display state or caller intent. Callers own their binding fences.
+   * See docs/plugin-architecture.md, "Verified native added-tool queries". */
   query(filters: readonly Filter[]): Promise<readonly BuzzEvent[]>;
   /** Latest live attachment state, read as this agent from a primary snapshot. */
   effectiveEdit?(id: string, channel: string): Promise<BuzzEvent>;

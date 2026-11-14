@@ -81,6 +81,8 @@ export class AttentionSources {
   ) {
     const wanted = new Map<string, { agent: Agent; object: SourceObject }>();
     for (const agent of agents) {
+      // Also while its attention on the relay is not read yet
+      // (`attentionPending`): a run stops then, and starts again once it is.
       if (!agent.attentionEnabled) continue;
       for (const object of Object.values(agent.attention)) {
         const value = object.value;

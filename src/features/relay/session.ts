@@ -3041,6 +3041,9 @@ export function createRelaySession(
     },
     /** Whether read() search filters may ask for `search_sort: "newest"`. */
     searchSort: transport?.searchSort === true,
+    /** The relay advertises NIP-AR sync: `artifacts.sync` can give a complete
+     * set. */
+    artifactSync: transport?.artifactSync === true,
     /** NIP-AR sync: an exact, kept-current set of current artifacts for a
      * filter that names its channels with `#h`. Status `unsupported` means
      * this relay has no sync; use read() with `artifact: "current"` instead.

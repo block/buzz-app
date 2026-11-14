@@ -213,6 +213,18 @@ import {
 import { isHuddleRoom } from "../huddle/lifecycle";
 import { soloChat } from "./solo-chat";
 import {
+  addWritten,
+  agentSender,
+  attentionChanges,
+  mirrored,
+  ownerSender,
+  pendingSet,
+  publishChanges,
+  relayAttention,
+  type RelayAttention,
+  type Written,
+} from "./attention-relay";
+import {
   readCheckpoints,
   splitLegacyCheckpoints,
   writeCheckpoints,
@@ -278,6 +290,14 @@ export type Agent<Config = unknown> = Readonly<{
   /** Whether its watches and timers wake it: true while a plugin shows
    * Attention. Off keeps every object. */
   attentionEnabled: boolean;
+  /** Attention is shown, but its attention is on the relay and this session
+   * has not read its complete set yet: its watches and timers wait, and each
+   * watch keeps its checkpoint, so it catches up from there once the set is
+   * read. Attention off would move each checkpoint to now instead. */
+  attentionPending?: true;
+  /** Why the attention shown may not be its current attention: on the relay,
+   * while this device is still reading it or can't. */
+  attentionProblem?: string;
   /** Its type's settings, the same in each of its communities. */
   config: Config;
   /** The synced head each synced side's editor opens; Save revises it. */
@@ -2191,6 +2211,21 @@ export class AgentsService extends Service implements Agents {
   private readonly configStore: AgentConfigStore;
   /** Each bound community's config channels, while config sync is on. */
   private readonly communityConfigs = new Map<string, CommunityConfig>();
+  /** The relay attention of each agent whose attention is stored there, for
+   * the binding it reads through. */
+  private readonly relayAttention = new Map<
+    AgentKey,
+    { relay: RelayAttention; binding: Binding }
+  >();
+  /** Agents whose relay attention has shown a complete set in this session. */
+  private readonly attentionLive = new Set<AgentKey>();
+  /** What this device's last relay write of each agent's attention replaced,
+   * and when, until a set shows it or a minute passes: a removed record's
+   * removal looks the same in a set as a set made before it was created. */
+  private readonly attentionWritten = new Map<
+    AgentKey,
+    { written: Written; at: number }
+  >();
   /** Origins whose presence is being sent. */
   private announcing = new Set<string>();
 
@@ -2404,12 +2439,17 @@ export class AgentsService extends Service implements Agents {
         return this.recordOf(member);
       },
       change: async (key, apply) => {
-        const record = await this.change(key, () => {
-          const member = this.liveMember(key);
-          if (!member) throw new Error("No such agent on this device");
-          // In turn, so this is the newest saved record.
-          return apply(this.recordOf(member));
-        });
+        const record = await this.change(
+          key,
+          () => {
+            const member = this.liveMember(key);
+            if (!member) throw new Error("No such agent on this device");
+            // In turn, so this is the newest saved record.
+            return apply(this.recordOf(member));
+          },
+          undefined,
+          "agent",
+        );
         if (!record) throw new Error("No such agent on this device");
         return record;
       },
@@ -4683,8 +4723,11 @@ export class AgentsService extends Service implements Agents {
       own.watchEnabled ||
       own.attentionEnabled !== undefined
     )
-      await this.change(key, (saved) =>
-        changed(saved ?? this.recordOf(identity), own),
+      await this.change(
+        key,
+        (saved) => changed(saved ?? this.recordOf(identity), own),
+        undefined,
+        own.attention || own.watchEnabled ? "owner" : undefined,
       );
     const picture =
       change.picture === undefined ? undefined : change.picture || null;
@@ -6441,19 +6484,52 @@ export class AgentsService extends Service implements Agents {
    * nothing. The owner and the agent see a change once it is saved, and the
    * promise settles then. When the save fails, the promise rejects and they
    * keep the saved record, so a form keeps its unsaved changes. `saved`
-   * runs as the change is shown, before anyone is told. */
+   * runs as the change is shown, before anyone is told. `writer` signs an
+   * attention change of an agent whose attention is on the relay: the change
+   * applies to a fresh read of it, and is saved there before here. */
   private change(
     key: AgentKey,
     apply: (
       record: AgentRecord | undefined,
     ) => AgentRecord | null | Promise<AgentRecord | null>,
     saved?: (record: AgentRecord | null) => void,
+    writer?: "agent" | "owner",
   ): Promise<AgentRecord | null> {
     this.changing.set(key, (this.changing.get(key) ?? 0) + 1);
     return this.queued(key, async () => {
       try {
-        const base = this.records[key];
-        const next = await apply(base);
+        let base = this.records[key];
+        let next = await apply(base);
+        // Only a change to its objects goes to the relay; run state stays
+        // here, so it saves even when the relay can't be reached.
+        if (
+          writer &&
+          base?.attentionStorage === "relay" &&
+          next &&
+          attentionChanges(base, next).length
+        ) {
+          const relay = this.relayWriter(key, writer);
+          const set = await relay.attention.read();
+          // What the read found shows, even when the change then fails.
+          const fresh = mirrored(base, set);
+          if (fresh !== base) {
+            await this.commit(key, base, fresh);
+            this.update();
+            base = fresh;
+            next = await apply(base);
+          }
+          const changes = next ? attentionChanges(base, next) : [];
+          const replaced = await publishChanges(relay.io, set, changes);
+          // Kept with earlier writes: the live view can be behind this read.
+          if (replaced.size)
+            this.attentionWritten.set(key, {
+              written: addWritten(
+                this.attentionWritten.get(key)?.written,
+                replaced,
+              ),
+              at: Date.now(),
+            });
+        }
         await this.commit(key, base, next);
         saved?.(next);
         this.update();
@@ -6581,6 +6657,134 @@ export class AgentsService extends Service implements Agents {
     );
     return [...agents, ...[...unnamed].map((pubkey) => ({ pubkey }))];
   }
+  /** Whether its watches and timers wake it: while a plugin shows Attention,
+   * and, for attention on the relay, once this session has its complete set. */
+  private attentionRuns(key: AgentKey, record: AgentRecord) {
+    return (
+      this.attentionShown() &&
+      (record.attentionStorage !== "relay" || this.attentionLive.has(key))
+    );
+  }
+  /** Whether its watches and timers wait for this session to read its
+   * attention on the relay; they run once it is read. */
+  private attentionPending(key: AgentKey, record: AgentRecord) {
+    return (
+      this.attentionShown() &&
+      record.attentionStorage === "relay" &&
+      !this.attentionLive.has(key)
+    );
+  }
+  /** Why its attention on the relay is not current here, if it is not
+   * (Reader step 6): it is not read yet, can't be read, or may be stale. */
+  private attentionProblem(key: AgentKey, record: AgentRecord) {
+    if (record.attentionStorage !== "relay") return undefined;
+    const relay = this.relayAttention.get(key)?.relay;
+    if (!relay)
+      return "This agent's attention is on its community; connect to read it";
+    return (
+      relay.problem() ??
+      (this.attentionLive.has(key)
+        ? undefined
+        : "Reading this agent's attention from its community")
+    );
+  }
+  /** Keeps one relay attention for each live agent whose attention is on the
+   * relay, through its community's binding. */
+  private reconcileAttention(identities: readonly Member[]) {
+    const wanted = new Map<AgentKey, { identity: Member; binding: Binding }>();
+    for (const identity of identities) {
+      const binding = this.bindingOf(identity);
+      if (
+        !identity.deleting &&
+        binding &&
+        this.alive(identity) &&
+        this.recordOf(identity).attentionStorage === "relay"
+      )
+        wanted.set(identity.key, { identity, binding });
+    }
+    for (const [key, entry] of this.relayAttention)
+      if (wanted.get(key)?.binding !== entry.binding) {
+        entry.relay.dispose();
+        this.relayAttention.delete(key);
+        this.attentionLive.delete(key);
+        this.attentionWritten.delete(key);
+      }
+    const native = this.native;
+    for (const [key, { identity, binding }] of wanted) {
+      const relayAuthor = binding.session.relayAuthor;
+      if (this.relayAttention.has(key) || !native || !relayAuthor) continue;
+      const relay = relayAttention({
+        channel: {
+          agent: identity.pubkey,
+          owner: binding.viewer,
+          relayAuthor,
+          query: (filters) => native.query(identity, filters),
+          publish: (event) => native.publish(identity, event),
+        },
+        artifactSync: binding.session.artifactSync,
+        sync: (filter) => binding.session.artifacts.sync(filter),
+        changed: (set) =>
+          void this.change(key, (saved) => {
+            // A record that moved off the relay, or is gone, stays as it is.
+            if (saved?.attentionStorage !== "relay")
+              return saved as AgentRecord;
+            const written = this.attentionWritten.get(key);
+            if (!written || Date.now() - written.at > 60_000) {
+              this.attentionWritten.delete(key);
+              return mirrored(saved, set);
+            }
+            const shown = pendingSet(set, saved, written.written);
+            const left = new Map(written.written);
+            for (const slug of shown.settled) left.delete(slug);
+            if (left.size)
+              this.attentionWritten.set(key, {
+                written: left,
+                at: written.at,
+              });
+            else this.attentionWritten.delete(key);
+            return mirrored(saved, shown.set);
+          }).then(
+            () => {
+              if (this.relayAttention.get(key)?.relay !== relay) return;
+              if (this.attentionLive.has(key)) return;
+              this.attentionLive.add(key);
+              this.update();
+            },
+            (error) =>
+              console.warn(`Agent ${key} attention not applied`, error),
+          ),
+        reported: () => this.update(),
+        signal: binding.controller.signal,
+      });
+      this.relayAttention.set(key, { relay, binding });
+    }
+  }
+  /** The relay attention an attention change of `key` saves to, and how
+   * `writer` signs it there; throws when it can't be saved now. */
+  private relayWriter(key: AgentKey, writer: "agent" | "owner") {
+    const entry = this.relayAttention.get(key);
+    const identity = this.liveMember(key);
+    const native = this.native;
+    if (!entry || !identity || !native)
+      throw new Error(
+        "This agent's attention is on its community; connect to change it",
+      );
+    const { session, controller } = entry.binding;
+    const read = session.snapshotRead;
+    const artifacts = session.configArtifactWriter;
+    if (!read || (writer === "owner" && !artifacts))
+      throw new Error("This community can't save attention");
+    return {
+      attention: entry.relay,
+      io: {
+        read,
+        send:
+          writer === "owner" && artifacts
+            ? ownerSender(artifacts, controller.signal)
+            : agentSender((event) => native.publish(identity, event)),
+      },
+    };
+  }
   /** The membership of this key, unless it was deleted. */
   private liveMember(key: AgentKey) {
     return this.identities.find(
@@ -6680,6 +6884,7 @@ export class AgentsService extends Service implements Agents {
   private view(identity: Member, record: AgentRecord): Agent {
     const editor = this.editorConfig(identity, record.config as object);
     const executionBinding = this.executions.read(identity.key);
+    const attentionProblem = this.attentionProblem(identity.key, record);
     return Object.freeze({
       key: identity.key,
       pubkey: identity.pubkey,
@@ -6697,7 +6902,11 @@ export class AgentsService extends Service implements Agents {
       timers: record.timers ?? EMPTY,
       ...(record.sourceRuns ? { sourceRuns: record.sourceRuns } : {}),
       attentionHistory: record.attentionHistory,
-      attentionEnabled: this.attentionShown(),
+      attentionEnabled: this.attentionRuns(identity.key, record),
+      ...(this.attentionPending(identity.key, record) && {
+        attentionPending: true,
+      }),
+      ...(attentionProblem && { attentionProblem }),
       config: editor?.config ?? record.config,
       ...(editor && { configBase: editor.base }),
       ...(editor?.problem && { configProblem: editor.problem }),
@@ -7257,6 +7466,8 @@ export class AgentsService extends Service implements Agents {
   private update() {
     let notified = false;
     const identities = this.identities.filter((identity) => !identity.deleted);
+    // First, so the views show each relay attention's state.
+    this.reconcileAttention(identities);
     const alive: Agent[] = [];
     for (const identity of identities) {
       if (!this.alive(identity)) continue;
@@ -7283,7 +7494,11 @@ export class AgentsService extends Service implements Agents {
           prior.timers === (record.timers ?? EMPTY) &&
           prior.sourceRuns === record.sourceRuns &&
           prior.attentionHistory === record.attentionHistory &&
-          prior.attentionEnabled === this.attentionShown() &&
+          prior.attentionEnabled === this.attentionRuns(identity.key, record) &&
+          !!prior.attentionPending ===
+            this.attentionPending(identity.key, record) &&
+          prior.attentionProblem ===
+            this.attentionProblem(identity.key, record) &&
           sameConfig(prior, editor?.config ?? record.config, editor?.base) &&
           prior.configProblem === editor?.problem &&
           prior.archiveUnchecked === this.archiveUnchecked(identity.key) &&

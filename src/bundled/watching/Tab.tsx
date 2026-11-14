@@ -354,6 +354,11 @@ export function createAttentionComponents({
             />
           </section>
         </SettingsGroup>
+        {agent.attentionProblem && (
+          <p role="status" className="text-body-sm text-subtle">
+            {agent.attentionProblem}
+          </p>
+        )}
         {problem(action.error)}
         {skipped.map((object) => (
           <section key={object.slug} className="attention-card">

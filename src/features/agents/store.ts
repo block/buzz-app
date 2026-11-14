@@ -162,6 +162,9 @@ export type AgentRecord = Readonly<{
   /** Terminal source runs, matched to the exact registration. */
   sourceRuns?: Readonly<Record<string, string>>;
   attentionHistory?: Readonly<Record<string, AttentionHistory>>;
+  /** Where its attention is stored: absent for this record, "relay" for its
+   * attention channel, whose set `attention` and `skipped` then mirror. */
+  attentionStorage?: "relay";
 }>;
 type Stored = { version: 1; agents: Record<string, AgentRecord> };
 
@@ -366,6 +369,9 @@ function readRecord(
       : {}),
     timers,
     ...(record.attentionEnabled === true ? { attentionEnabled: true } : {}),
+    ...(record.attentionStorage === "relay"
+      ? { attentionStorage: "relay" as const }
+      : {}),
   };
 }
 

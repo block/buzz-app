@@ -1,6 +1,6 @@
 import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
-import { anchor, expectAnchor, settle, wheel, edge } from "./timeline.mjs";
+import { anchor, expectAnchor, settle, wheel } from "./timeline.mjs";
 
 // Real layout/virtualizer measurements are needed: history is inserted after
 // a retained opening row, and the identified reader must keep its viewport Y.
@@ -49,7 +49,17 @@ test("older pages behind a retained first row preserve reading and are not new a
     ).toBeVisible();
   }
   // A reader on the unchanged prefix must not be shifted past newly added rows.
-  await edge(page, -1);
+  // Establish that reading position directly: a long wheel gesture can stop
+  // short while the virtualizer replaces estimates with measured row heights.
+  const history = page.locator("[data-message-scroller]");
+  await history.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await settle(page, history);
+  await expect
+    .poll(() => history.evaluate((element) => element.scrollTop))
+    .toBeLessThan(2);
   const opening = await anchor(page);
   await prepend(page, 1);
   await expectAnchor(page, opening);

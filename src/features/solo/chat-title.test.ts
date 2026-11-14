@@ -3,6 +3,11 @@ import { startingChatTitle } from "./chat-title";
 import { mentionDraft } from "../messages/mention-draft";
 import { typedDraft } from "../messages/composer-testing";
 
+it.each(["\u200b", "\u200c\u200d", "\u2800", "\ufe0f"])(
+  "uses the fallback when an automatic title has no visible content: %j",
+  (message) => expect(startingChatTitle(message)).toBe("Chat"),
+);
+
 const link = `buzz://message?channel=design&id=${"c".repeat(64)}`;
 
 it("uses readable channel labels before truncating the title", () => {

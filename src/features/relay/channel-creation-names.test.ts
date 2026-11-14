@@ -74,6 +74,7 @@ it.each(
     { path, name: "  # Release  ", expected: "Release" },
     { path, name: "\u0085# \u0085#Release\u0085", expected: "Release" },
     { path, name: "\ufeffRelease\ufeff", expected: "\ufeffRelease\ufeff" },
+    { path, name: "👩‍💻", expected: "👩‍💻" },
     {
       path,
       name: `\u0085#${"😀".repeat(120)}\u0085`,
@@ -112,9 +113,14 @@ it.each(
 
 it.each(
   paths.flatMap((path) =>
-    ["\u0085# \u0085", "x".repeat(121), `\ufeff${"x".repeat(119)}\ufeff`].map(
-      (name) => ({ path, name }),
-    ),
+    [
+      "\u0085# \u0085",
+      "\u200b",
+      "\u200c\u200d",
+      "\ufe0f",
+      "x".repeat(121),
+      `\ufeff${"x".repeat(119)}\ufeff`,
+    ].map((name) => ({ path, name })),
   ),
 )(
   "$path rejects empty/over-limit canonical names before signing: $name",

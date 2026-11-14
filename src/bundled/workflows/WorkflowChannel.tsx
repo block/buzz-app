@@ -2,6 +2,7 @@ import {
   useEffect,
   useId,
   useCallback,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -22,12 +23,19 @@ import { ConfirmAction } from "./ConfirmAction";
 import { WorkflowEditor } from "./WorkflowEditor";
 import { messages, WorkflowOperations } from "./WorkflowOperations";
 import { WorkflowRuns } from "./WorkflowRuns";
+import {
+  type WebhookAddressSurface,
+  WorkflowWebhookAddress,
+} from "./WorkflowWebhookSecretDialog";
 import { ARCHIVED_REASON, saveAwaitsReadback } from "./WorkflowLanding";
 import { exactSaveReadback } from "./editor-model";
 import { DEFAULT_FORM_STATE, formStateToYaml } from "./workflowFormTypes";
 import { useWorkflowView } from "./useWorkflowView";
 import { useWorkflowCanDelete } from "./useWorkflowCanDelete";
-import { readWorkflowDocumentFields } from "./workflowYamlDocument";
+import {
+  readWorkflowDocumentFields,
+  readWorkflowTriggerOn,
+} from "./workflowYamlDocument";
 import {
   type ChannelLabel,
   channelIcon,
@@ -116,6 +124,25 @@ export function WorkflowChannel({
     !!draft?.operationId && (!operation || operation.outcome === "pending");
   const [localDraftAtRisk, setLocalDraftAtRisk] = useState(false);
   const readonly = !!draft?.original && draft.original.owner !== viewer;
+  // The relay keeps a webhook's secret across saves that keep the trigger, so
+  // the saved trigger, not the draft's, decides whether there is an address.
+  const savedYaml = draft?.original?.yaml;
+  const savedWebhook = useMemo(
+    () =>
+      savedYaml !== undefined && readWorkflowTriggerOn(savedYaml) === "webhook",
+    [savedYaml],
+  );
+  const savedHook = savedWebhook ? draft?.original : undefined;
+  const webhookAddress =
+    savedHook &&
+    ((surface: WebhookAddressSurface) => (
+      <WorkflowWebhookAddress
+        workflowId={savedHook.id}
+        hookUrl={capability.webhookUrl(savedHook.id)}
+        readOnly={readonly}
+        surface={surface}
+      />
+    ));
   const canDelete = useWorkflowCanDelete(capability, draft?.original);
   const dirty = !!draft && (draft.yaml !== draft.initial || localDraftAtRisk);
   const draftFields = draft && readWorkflowDocumentFields(draft.yaml);
@@ -436,6 +463,7 @@ export function WorkflowChannel({
                 </>
               )
             }
+            webhook={webhookAddress}
             runs={
               draft.original &&
               capability.availability.history && (

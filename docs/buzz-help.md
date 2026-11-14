@@ -1751,6 +1751,21 @@ Owning the agent does not grant permission to edit or run its workflow.
 
 In **Workflows**, an archived channel’s group says **Archived**, as do its workflows under **Recently updated**. Their runs would fail, so **Run now** and turning a workflow on are unavailable, and the editor saves a workflow only while it’s off. You can still turn an enabled workflow off, from its row or the editor, or delete it. **New workflow** doesn’t offer archived channels.
 
+## Webhook workflows
+
+When you save a workflow with the **Webhook** trigger for the first time,
+**Webhook ready** shows its URL and secret once. Senders post to the URL with
+the secret in the `X-Webhook-Secret` header. To find the URL later, open the
+workflow and select the **Webhook** trigger. If the workflow opens on the YAML
+tab because the form can’t show it, the URL is below the YAML. Anyone in the
+channel can copy it. Buzz can’t show the secret again. If it’s lost, the
+workflow’s author closes the trigger’s settings, turns off **Enabled in
+configuration**, changes the trigger and saves, which stops the old secret
+working. On the YAML tab, the switch is above the URL. Then they change the
+trigger back to **Webhook** and save again, with the switch still off, and
+**Webhook ready** shows a new secret. The new secret does not depend on the
+workflow being enabled, so turning it on again is a separate choice.
+
 ## Draft diagnostics
 
 Desktop builds save a small local trace when a draft conflict or save failure

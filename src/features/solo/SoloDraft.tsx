@@ -356,6 +356,7 @@ export function SoloDraft({
     picks?: MentionPicks,
     draftPicks?: DraftPicks,
     draftPicksRevision?: string | null,
+    assigned?: readonly string[],
   ) {
     const text = composerMarkdown(draft);
     if (submitting.current || !text.trim() || !available) return;
@@ -508,30 +509,34 @@ export function SoloDraft({
       void ready.catch(() => {});
       const firstPicks: MentionPicks = Object.fromEntries(
         Object.entries(picks ?? {}).filter(([pubkey]) =>
-          recipients.includes(pubkey),
+          (assigned ?? recipients).includes(pubkey),
         ),
       );
       const retainedPicks = firstChatPicks(
         startingDraftPicks,
-        firstPicks,
+        picks ?? firstPicks,
         recipients,
       );
       try {
+        const references = recipients.filter(
+          (key) => assigned && !assigned.includes(key),
+        );
         signMessageTokens(draftTokens(draft), () =>
-          Object.keys(firstPicks).length
+          Object.keys(firstPicks).length || references.length || assigned
             ? session.messages.send(
                 channelId,
                 text,
-                recipients,
+                assigned ?? recipients,
                 uploaded,
                 undefined,
-                [],
+                references,
                 firstPicks,
+                ...(assigned ? [recipients] : []),
               )
             : session.messages.send(
                 channelId,
                 text,
-                recipients,
+                assigned ?? recipients,
                 ...(uploaded.length ? [uploaded] : []),
               ),
         );
@@ -823,8 +828,24 @@ export function SoloDraft({
             unsaved.current = held;
           },
           onDraftChange: draftEdited,
-          submit: (draft, files, addressed, picks, draftPicks, revision) => {
-            void start(draft, files, addressed, picks, draftPicks, revision);
+          submit: (
+            draft,
+            files,
+            addressed,
+            picks,
+            draftPicks,
+            revision,
+            assigned,
+          ) => {
+            void start(
+              draft,
+              files,
+              addressed,
+              picks,
+              draftPicks,
+              revision,
+              assigned,
+            );
           },
         }}
       />

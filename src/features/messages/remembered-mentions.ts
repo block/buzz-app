@@ -34,17 +34,18 @@ export function rememberedMentions(
  * skipped, since a mention span must read `@Name`. */
 export function seedMentions(
   session: ComposerSession,
-  seed: Pick<ChannelMessage, "mentions">,
+  seed: Pick<ChannelMessage, "mentions" | "agentCandidates">,
 ): MentionDraft {
   const profiles = session.profiles.snapshot();
   const choices = session.agentChoices.snapshot().identities;
-  const candidates = [...new Set(seed.mentions)].flatMap((pubkey) => {
+  const selected = seed.agentCandidates ?? seed.mentions;
+  const candidates = [...new Set(selected)].flatMap((pubkey) => {
     const name =
       profiles.get(pubkey)?.name ??
       choices.find((agent) => agent.pubkey === pubkey)?.name;
     return name ? [{ pubkey, name }] : [];
   });
-  return rememberedMentions(session, followupDraft(candidates), seed.mentions);
+  return rememberedMentions(session, followupDraft(candidates), selected);
 }
 
 /** Whether the evidence classifying a message's tagged keys has settled: the
@@ -53,12 +54,12 @@ export function seedMentions(
  * provisional until then. */
 export function seedEvidenceSettled(
   session: ComposerSession,
-  seed: Pick<ChannelMessage, "mentions">,
+  seed: Pick<ChannelMessage, "mentions" | "agentCandidates">,
 ): boolean {
   const choices = session.agentChoices.snapshot();
   if (!choices.complete) return false;
   const profiles = session.profiles.snapshot();
-  return seed.mentions.every(
+  return (seed.agentCandidates ?? seed.mentions).every(
     (pubkey) =>
       profiles.has(pubkey) ||
       choices.identities.some((agent) => agent.pubkey === pubkey),
@@ -106,7 +107,9 @@ export function seedAgents(
   for (let index = rows.length - 1; index >= 0; index--) {
     const row = rows[index];
     if (!row || row.authorId !== session.viewer || row.threadRootId) continue;
-    const tagged = [...new Set(row.mentions.filter(usable))];
+    const tagged = [
+      ...new Set((row.agentCandidates ?? row.mentions).filter(usable)),
+    ];
     if (tagged.length) return tagged;
   }
   const members = (

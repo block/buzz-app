@@ -1447,6 +1447,32 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 Closing a team's editor with unsaved edits, by Escape, its Close or another
 tab, asks **Discard changes?** first; **Keep editing** keeps them.
 
+On builds with pre-send routing support, the optional **Solo Agents Router** plugin
+uses Settings → Decisions API to assign one, several, or all selected agents to
+each request in your own Solo chats. You can add agents ad hoc without creating
+a team or editing their instructions. The selected pool stays available for
+later requests; only the agents assigned to a particular message are notified.
+Routing supports up to eight selected agents. With more than eight, every selected
+agent is notified without a Decisions API call.
+Open-ended group requests for thoughts, opinions or feedback invite everyone
+to answer. Name particular agents or ask for one answer to narrow the audience.
+Work requiring agent coordination starts all selected agents. Agent replies and
+intermediate outputs continue normally without another routing decision.
+The plugin sends your request, profile bios and verified Marketplace instructions
+to your Decisions API provider. In Settings → Solo Agents Router, you can separately
+enable sharing local agent instructions and recent chat context; both start off.
+Private edits to Marketplace copies need the local-instructions opt-in. Older
+imports without verification need that opt-in or a new Marketplace import.
+Preferences apply to the current account and community on this device. The
+Decisions API provider can differ from an agent's own model/provider.
+If routing is uncertain, selects nobody, or fails, the plugin sends to all
+selected agents. Missing instructions do not prevent sending. Disable
+the plugin to restore ordinary sending to every selected agent. Routing selects
+who starts; it does not automatically combine multiple agents' final answers.
+If multiple routing plugins are enabled, sending pauses with an error naming
+their plugin/router IDs. Disable conflicting plugins in Settings → Plugins,
+leave one router enabled, and retry; your draft is preserved.
+
 ## Optional features and limits
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls

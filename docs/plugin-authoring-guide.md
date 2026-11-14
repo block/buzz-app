@@ -101,6 +101,49 @@ ctx.effect(() => {
 
 The table above covers the services most plugins use. The full contract for every service, with TypeScript types and examples, is in [Plugin architecture](https://github.com/block/buzz-app/blob/main/docs/plugin-architecture.md); the types are exported from [`src/plugins/author.ts`](https://github.com/block/buzz-app/blob/main/src/plugins/author.ts). Read it before you use a service that is not in this table. It describes the latest Buzz, which can have services this app does not. If a service in `inject` is missing, `apply` never runs, so check `plugin_status` after you install.
 
+## Pre-send agent routing
+
+A build with routing support exposes
+`ctx.conversation.registerAgentRouter({ id, async route(request) })` to plugins
+injecting `conversation`. The callback returns a nonempty array of candidate
+pubkeys. It receives the captured request text, channel ID, optional community
+origin, candidate `{ pubkey, name, description }` records, and up to six recent
+loaded messages as `{ author, text }`. No private agent configuration is passed.
+For model-based policy, reuse `ctx.decisions.decide`; the owner selects its provider.
+
+`ctx.agents.snapshot().agents` may expose `publicInstructions` evidence with
+`{ community, event, sha256 }`. The host derives it when importing an unchanged
+Marketplace definition, using one bounded read of the current catalog head.
+The digest covers the complete published instructions. Before treating current
+instructions as public, match both the request community and the SHA-256 digest
+of the full current text, before truncation. Edited or older imports can lack
+matching evidence. Publication means visible in that community; it does not
+approve sharing with any particular provider. This evidence is device-local.
+
+The owner Solo composer invokes one active router before signing, including new
+chats. Multiple active routers, invalid/empty assignments, timeout, errors, and
+plugin replacement while deciding keep the draft unsent. The host validates the
+subset, retains the original candidate pool, and sends ordinary `p` tags only
+to assigned agents. Queue restoration and Outbox retries preserve that captured
+assignment. Single-agent requests, people, ordinary channels, DMs and programmatic
+sends retain ordinary routing. This hook selects initial workers; it does not
+own subsequent agent collaboration or synthesize their final answers.
+
+Feature-check the method: older hosts do not support it. No extra host grant is
+needed beyond the injected trusted plugin services. Keep assignment policy in
+the plugin; the host does not require a particular model or decision provider.
+The installation description should explain which information the plugin sends
+to its provider and that it changes which selected agents receive a request.
+
+As with other injected services, a router runs as trusted, unsandboxed plugin
+code (see [the plugin trust model](plugin-architecture.md)).
+The callback's context is available to the local plugin; a plugin's sharing
+preferences govern what it forwards to its decision provider. Those preferences
+are not a host-enforced restriction on a plugin's local data access. The host
+restricts the returned recipient set and retains signing ownership. If multiple
+routers are active, the send error identifies their plugin/router IDs; disable
+conflicting plugins in Settings → Plugins and retry with one router enabled.
+
 ## Host access (`manifest.host`)
 
 Everything beyond the services above must be declared in `manifest.json`; the owner reviews it at install. Undeclared commands, origins, processes and file access are refused by the host. Limits: at most 16 each of `commands`, `processes`, `networkOrigins`, `agentHooks`. Program names are bare names (`[A-Za-z0-9._-]`, at most 80 bytes, no paths), at most 16 args of 1024 bytes each.

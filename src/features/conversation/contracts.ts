@@ -291,6 +291,11 @@ export type IdentityMarkProps = Readonly<{
   profiles: RelaySession["profiles"];
 }>;
 export type ConversationExtensions = Readonly<{
+  /** Optional pre-send assignment for owner-authored Solo requests. */
+  routeAgents?: (
+    request: import("./agent-routing").AgentRoutingRequest,
+    signal: AbortSignal,
+  ) => Promise<readonly string[] | undefined>;
   attachments?: ContributionReader<AttachmentRenderer>;
   messages?: ContributionReader<MessageRenderer>;
   actions?: ContributionReader<MessageAction>;

@@ -465,10 +465,12 @@ function SoloConversationRow({
     const document = button.ownerDocument;
     const sidebar = button.closest("nav");
     const panel = button.closest<HTMLElement>("[data-solo-project]");
+    const inventory = button.closest("[data-solo-chat-list]") ?? panel;
+    const region = button.closest("[data-sidebar-section]");
     return () => {
       if (document.activeElement !== button) return;
       const rows = [
-        ...(panel?.querySelectorAll<HTMLElement>(
+        ...(inventory?.querySelectorAll<HTMLElement>(
           "button[data-solo-channel-id]:not([inert] *)",
         ) ?? []),
       ];
@@ -497,6 +499,8 @@ function SoloConversationRow({
           sidebar.querySelector<HTMLElement>(
             `[data-solo-menu-id="project-${CSS.escape(panel?.dataset.soloProject ?? "")}"] button`,
           ),
+          region?.querySelector<HTMLElement>("summary"),
+          sidebar.querySelector<HTMLElement>("[data-solo-heading]"),
         ];
         for (const candidate of candidates) {
           if (!candidate?.isConnected || candidate.closest("[hidden], [inert]"))

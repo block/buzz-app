@@ -48,7 +48,8 @@ export function RegionChats({ all = false }: { all?: boolean }) {
 
 /** All ordinary chats without workspace headings or collapse controls. */
 export function RegionChatList() {
-  return useContext(WorkspaceCompositionContext)?.chatList ?? null;
+  const list = useContext(WorkspaceCompositionContext)?.chatList;
+  return list ? <div data-solo-chat-list="">{list}</div> : null;
 }
 
 /** One shared workspace surface. A source supplies its tasks and selection. */

@@ -1374,6 +1374,71 @@ it.each(["New"])(
   },
 );
 
+it.each(["neighbor", "heading", "moved"])(
+  "recovers plain-list focus after the last chat in a workspace disappears (%s)",
+  async (destination) => {
+    const h = createSoloRegionFixture(viewer);
+    const preferences = createSidebarPreferencesStore({
+      available: true,
+      groupsOnly: true,
+      read: async () => ({
+        sections: [{ id: "work", name: "Work", order: 0 }],
+        assignments: { chat: "work" },
+        starred: [],
+        muted: [],
+      }),
+    });
+    await preferences.queries.ensure();
+    Object.assign(h.session, { soloPreferences: preferences.queries });
+    h.roster([
+      { id: "chat", name: "Chat", channelType: "solo", creator: viewer },
+      { id: "other", name: "Other", channelType: "solo", creator: viewer },
+    ]);
+    await h.register({
+      composeWorkspaces: true,
+      component: ({ ui }) => (ui.ChatList ? <ui.ChatList /> : null),
+    });
+    const view = render(
+      <ToastProvider>
+        <PrimarySidebar
+          relay={h.relay}
+          navigator={h.navigator}
+          target={conversationTarget(h.scope, "chat")}
+        >
+          <button type="button">Elsewhere</button>
+        </PrimarySidebar>
+      </ToastProvider>,
+    );
+    try {
+      const heading = screen.getByLabelText("Work");
+      const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+      screen.getByRole("button", { name: "Chat" }).focus();
+      await act(async () => {
+        h.roster(
+          destination === "heading"
+            ? []
+            : h.session.channels
+                .list()
+                .channels.filter(({ id }) => id !== "chat"),
+        );
+        if (destination === "moved") elsewhere.focus();
+      });
+      expect(screen.queryByRole("button", { name: "Chat" })).toBeNull();
+      expect(
+        destination === "neighbor"
+          ? screen.getByRole("button", { name: "Other" })
+          : destination === "heading"
+            ? heading
+            : elsewhere,
+      ).toHaveFocus();
+    } finally {
+      view.unmount();
+      preferences.dispose();
+      await h.dispose();
+    }
+  },
+);
+
 it("keeps an ordinary chat editor and pending save through layout changes and task-source recovery", async () => {
   const h = createSoloRegionFixture(viewer);
   const preferences = createSidebarPreferencesStore({

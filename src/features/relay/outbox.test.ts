@@ -1407,3 +1407,83 @@ it("admits a live Canvas up to its own limits, persists it, and retries the same
   expect(second.sign).not.toHaveBeenCalled();
   expect(second.publications[0]?.event).toEqual(event);
 });
+function heldSend(
+  h: ReturnType<typeof setup>,
+  hold: (id: string) => Promise<void>,
+  content = "held",
+) {
+  // A plugin detects the capability by the method's presence.
+  assert.exists(h.outbox.sendHeld);
+  return h.outbox.sendHeld({ kind: 9, content, tags: [["h", "c"]] }, hold);
+}
+it("publishes a held send only after its hold, without delaying other sends", async () => {
+  const h = setup();
+  await h.open();
+  let release = () => {};
+  const hold = vi.fn(
+    (_id: string) =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const id = heldSend(h, hold);
+  await h.signNext();
+  expect(hold).toHaveBeenCalledExactlyOnceWith(id);
+  expect(h.publish).not.toHaveBeenCalled();
+  // Held, it takes no delivery slot: three other sends publish meanwhile.
+  const others = [h.send("one"), h.send("two"), h.send("three")];
+  for (const _ of others) await h.signNext();
+  expect(h.publications.map(({ event }) => event.id)).toEqual(others);
+  release();
+  await flush();
+  // Released, it waits for a free slot like any other delivery.
+  expect(h.publications).toHaveLength(3);
+  h.publications.shift()?.resolve();
+  await flush();
+  expect(h.publications.map(({ event }) => event.id)).toEqual([
+    ...others.slice(1),
+    id,
+  ]);
+  expect(hold).toHaveBeenCalledOnce();
+});
+it("fails a send whose hold rejects without publishing it, and holds it again on Retry", async () => {
+  const h = setup();
+  await h.open();
+  const hold = vi
+    .fn((_id: string) => Promise.resolve())
+    .mockRejectedValueOnce(new Error("Folder not ready"));
+  const id = heldSend(h, hold);
+  await h.signNext();
+  await flush();
+  expect(h.outbox.snapshot()[0]).toMatchObject({
+    delivery: "failed",
+    error: "Folder not ready",
+  });
+  expect(h.outbox.snapshot()[0]?.refused).toBeUndefined();
+  expect(h.publish).not.toHaveBeenCalled();
+  h.outbox.retry(id);
+  await flush();
+  expect(hold).toHaveBeenNthCalledWith(2, id);
+  expect(h.publications.map(({ event }) => event.id)).toEqual([id]);
+});
+it("fails a send whose hold never settles at its delivery deadline", async () => {
+  const h = setup(memoryStorage(), 100);
+  await h.open();
+  vi.useFakeTimers();
+  const hold = vi.fn((_id: string) => new Promise<void>(() => {}));
+  heldSend(h, hold);
+  await vi.advanceTimersByTimeAsync(0);
+  const request = h.signatures.shift();
+  assert.exists(request);
+  request.resolve(signed(viewer, request.event));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(hold).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(98);
+  expect(h.outbox.snapshot()[0]?.delivery).toBe("sending");
+  await vi.advanceTimersByTimeAsync(2);
+  expect(h.outbox.snapshot()[0]).toMatchObject({
+    delivery: "failed",
+    error: "Delivery timed out; check or retry this message",
+  });
+  expect(h.publish).not.toHaveBeenCalled();
+});

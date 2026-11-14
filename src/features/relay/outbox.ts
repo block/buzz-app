@@ -72,6 +72,18 @@ export interface Outbox {
     recovery?: OutboxRecovery,
     active?: () => boolean,
   ): string;
+  /** `send`, but each delivery attempt in this window calls `hold` with the
+   * event's id after signing and publishes only once it resolves. Only this
+   * event waits, and it uses no delivery slot meanwhile. The wait counts toward
+   * the attempt's deadline; a rejected or expired hold fails the delivery,
+   * which Retry may attempt again. An entry restored after reload has no hold.
+   * Older hosts may omit this method. */
+  sendHeld?(
+    input: OutboxInput,
+    hold: (id: string) => Promise<void>,
+    recovery?: OutboxRecovery,
+    active?: () => boolean,
+  ): string;
   /** Establish durable recovery, then synchronously consume its source while
    * holding the receipt's shared dismissal lock. */
   recover(
@@ -197,6 +209,8 @@ export function createOutbox(
     if (find(id)?.guarded && admissionGates.get(id)?.() !== true)
       throw new DOMException("Channel addition cancelled", "AbortError");
   };
+  // Transient, like admission gates: a restored write has no caller hold.
+  const sendHolds = new Map<string, (id: string) => Promise<void>>();
   let snapshot: readonly OutgoingEvent[] = Object.freeze([]);
   // Hydrated receipts are observations, not delivery owned by this window.
   const restoredReceipts = new Set<string>();
@@ -600,14 +614,27 @@ export function createOutbox(
       replace({ ...current, signed });
       await Promise.race([persist(id), aborted]);
       if (closed || signal.aborted || !find(id)) return;
+      const callerHold = sendHolds.get(id);
+      if (callerHold) {
+        // Spends this attempt's deadline, and ends before `holdPublish` can
+        // hand a starting chat's message to local agents.
+        attempt.held = true;
+        pumpDeliveries();
+        await Promise.race([callerHold(id), aborted]);
+        if (closed || signal.aborted || !find(id)) return;
+      }
       const hold = holdPublish?.(signed);
       if (hold) {
-        attempt.held = true;
+        if (!attempt.held) {
+          attempt.held = true;
+          pumpDeliveries();
+        }
         clearTimeout(attempt.timer);
-        pumpDeliveries();
         await Promise.race([hold, aborted]);
         attempt.expiresAt = Date.now() + timeoutMs;
         attempt.timer = setTimeout(() => expire(id), timeoutMs);
+      }
+      if (attempt.held) {
         while (inflight() >= 3) await Promise.race([nextSlot(), aborted]);
         delete attempt.held;
         if (closed || signal.aborted || !find(id)) return;
@@ -693,6 +720,7 @@ export function createOutbox(
         find(id)?.delivery === "seen"
       ) {
         admissionGates.delete(id);
+        sendHolds.delete(id);
       }
       total();
       clearTimeout(attempt.timer);
@@ -1047,6 +1075,17 @@ export function createOutbox(
       recovery?: OutboxRecovery,
       active?: () => boolean,
     ) => enqueue(input, recovery, active).id,
+    sendHeld(
+      input: OutboxInput,
+      hold: (id: string) => Promise<void>,
+      recovery?: OutboxRecovery,
+      active?: () => boolean,
+    ) {
+      const { id } = enqueue(input, recovery, active);
+      // Delivery reaches the hold only after async signing, so it is set first.
+      sendHolds.set(id, hold);
+      return id;
+    },
     retry(id: string, active?: () => boolean) {
       const item = find(id);
       if (item?.guarded && (active ?? admissionGates.get(id))?.() !== true)
@@ -1105,6 +1144,7 @@ export function createOutbox(
       const work = (storage.lock ? storage.lock(id, remove) : remove())
         .then(() => {
           admissionGates.delete(id);
+          sendHolds.delete(id);
         })
         .finally(() => dismissing.delete(id));
       dismissing.set(id, work);
@@ -1193,6 +1233,7 @@ export function createOutbox(
       finalVisible = visible;
       closed = true;
       admissionGates.clear();
+      sendHolds.clear();
       lifetime.abort();
       for (const attempt of attempts.values()) {
         attempt.controller?.abort(abortError());

@@ -7,7 +7,7 @@ import {
   formatBinding,
   isApplePlatform,
 } from "../../features/shortcuts/format";
-import { nativeBridge } from "./bridge";
+import { listFontFamilies, nativeBridge } from "./bridge";
 import { createSessions } from "./sessions";
 import { TerminalPanel } from "./TerminalPanel";
 import { createTerminalFontPreference } from "./font-preference";
@@ -23,6 +23,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
   if (!nativeBridge.available) return;
   const font = createTerminalFontPreference();
   const drafts = createTerminalSettingsDraft();
+  // One host listing per plugin lifetime; the font engine reads new fonts only
+  // after Buzz restarts.
+  let families: Promise<string[]> | undefined;
+  const fontFamilies = () => (families ??= listFontFamilies());
   const sessions = createSessions(
     nativeBridge,
     async () => {
@@ -43,7 +47,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     icon: TerminalWindowIcon,
     group: "Plugins",
     component: (props) => (
-      <TerminalSettings {...props} font={font} drafts={drafts} />
+      <TerminalSettings
+        {...props}
+        font={font}
+        drafts={drafts}
+        families={fontFamilies}
+      />
     ),
   });
   ctx.shortcuts.register({

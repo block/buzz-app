@@ -949,6 +949,10 @@ and are asked to sign in again in Buzz.
   that conversation when you go to another conversation or page and come back,
   until you close it. Reloading Buzz does not restore it. The Terminal drawer
   closes when you leave the conversation.
+- **Terminal font**: in **Settings → Plugins → Terminal**, pick a font from the
+  searchable **Font family** dropdown on macOS, or type an exact family name
+  where Buzz has no font list. Restart Buzz after installing a font. For Nerd
+  Font icons, choose a Nerd Font's Mono variant.
 - **Renamed thread tabs**: a name you or an agent give a thread tab is saved on
   this device for the account and community until the tab is closed. The
   thread's tab shows it again when it reopens after switching channels,

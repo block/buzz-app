@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { MessageRow } from "../../features/messages/MessageRow";
 import { CustomEmoji } from "./CustomEmoji";
 
 const emoji = { shortcode: "party", url: "https://emoji.test/party.png" };
@@ -57,4 +58,52 @@ it("gives a changed source its own retry budget and never requests denied media"
   expect(view.queryByRole("img")).toBeNull();
   expect(view.container).toHaveTextContent(":party:");
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("loads a virtualized row's custom emoji on mount; unbounded rows stay lazy", () => {
+  const reader = <T,>(items: readonly T[]) => ({
+    snapshot: () => items,
+    subscribe: () => () => {},
+  });
+  const inline = {
+    id: "custom",
+    title: "Custom emoji",
+    key: "buzz.emoji/custom",
+    pluginId: "buzz.emoji",
+    revision: "one",
+    matches: () => [{ start: 0, end: ":party:".length }],
+    component: ({ media }: { media(url: string): string | undefined }) => (
+      <CustomEmoji emoji={emoji} media={media} />
+    ),
+  };
+  const loading = (keepMounted?: (id: string) => () => void) =>
+    render(
+      <MessageRow
+        row={{
+          id: "row",
+          channelId: "c",
+          authorId: "a",
+          content: ":party:",
+          createdAt: 1,
+          mentions: [],
+          participants: [],
+          attachments: [],
+          reactions: [],
+          replyCount: 0,
+          emoji: [emoji],
+        }}
+        profile={undefined}
+        media={media}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{ tools: reader([]), inline: reader([inline]) }}
+        keepMounted={keepMounted}
+      />,
+    )
+      .getByRole("img", { name: ":party:" })
+      .getAttribute("loading");
+  expect(loading(() => () => {})).toBe("eager");
+  cleanup();
+  expect(loading()).toBe("lazy");
 });

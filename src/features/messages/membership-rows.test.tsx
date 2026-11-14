@@ -289,6 +289,40 @@ it.each([false, true])(
     expect(html).not.toContain("button");
   },
 );
+it("loads each member's avatar on mount, including people never shown before", () => {
+  const [pinkyPicture, brainPicture] = [
+    "https://image.test/pinky.png",
+    "https://image.test/brain.png",
+  ] as const;
+  const group = membershipRows([
+    row("0", joined(wes, pinky)),
+    row("1", joined(wes, brain)),
+  ])[0];
+  assert.exists(group);
+  const view = render(
+    <MembershipRow
+      row={group}
+      profiles={
+        new Map([
+          [pinky, { name: "Pinky", picture: pinkyPicture }],
+          [brain, { name: "Brain", picture: brainPicture }],
+        ])
+      }
+      media={(url) => url}
+      day={false}
+    />,
+  );
+  expect(
+    [...view.container.querySelectorAll("img")].map((img) => [
+      img.getAttribute("src"),
+      img.getAttribute("loading"),
+    ]),
+  ).toEqual([
+    [pinkyPicture, "eager"],
+    [brainPicture, "eager"],
+  ]);
+  view.unmount();
+});
 it("actor/subject profile enrichment invalidates cached system-row geometry", () => {
   const rows = [row("a", joined(wes, pinky))];
   const original = geometrySignature(rows, profiles);

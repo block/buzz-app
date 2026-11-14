@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { getLogger, logLevel, setLogLevel } from "../developer/logging";
 import {
+  avatarSources,
   createMediaPreparation,
   decodedImageCapture,
   hasDecodedImage,
@@ -186,4 +187,133 @@ it("bounds decoded images by size and owner and forgets them with session media"
   expect(hasDecodedImage(owner, "late")).toBe(false);
   retainDecodedImage(owner, "current", image(), decodedImageCapture());
   expect(hasDecodedImage(owner, "current")).toBe(true);
+});
+
+const avatar = (n: number) =>
+  `http://buzz-media.localhost/${encodeURIComponent(
+    `https://relay.test/media/${n.toString(16).padStart(64, "0")}.thumb.webp`,
+  )}`;
+function stubAvatarFetch(size = 100, init: ResponseInit = {}) {
+  const fetch = vi.fn(
+    async (_url: string) =>
+      new Response(new Uint8Array(size), {
+        headers: { "Content-Type": "image/webp" },
+        ...init,
+      }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  return fetch;
+}
+
+it("fetches a native avatar once per owner and shows other sources as they are", async () => {
+  createMediaPreparation().dispose();
+  const fetch = stubAvatarFetch();
+  const owner = {};
+  const sources = avatarSources(owner);
+  for (const other of [
+    "https://example.test/a.png",
+    "data:image/png;base64,AA",
+  ])
+    expect(sources.held(other)).toBe(other);
+  expect(sources.held(avatar(1))).toBeUndefined();
+  // Concurrent mounts share one request; later mounts reuse its bytes.
+  const [first, second] = await Promise.all([
+    sources.load(avatar(1)),
+    avatarSources(owner).load(avatar(1)),
+  ]);
+  expect(first).toMatch(/^blob:/);
+  expect(second).toBe(first);
+  expect(sources.held(avatar(1))).toBe(first);
+  await expect(sources.load(avatar(1))).resolves.toBe(first);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledWith(avatar(1), {
+    credentials: "omit",
+    referrerPolicy: "no-referrer",
+  });
+  // Another session never reads them; its own fetch replaces the entry.
+  const other = avatarSources({});
+  expect(other.held(avatar(1))).toBeUndefined();
+  await other.load(avatar(1));
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(sources.held(avatar(1))).toBeUndefined();
+  createMediaPreparation().dispose();
+});
+
+it("rejects unavailable avatars and lets unreadable windows load sources as they are", async () => {
+  createMediaPreparation().dispose();
+  const sources = avatarSources({});
+  stubAvatarFetch(100, { status: 404 });
+  await expect(sources.load(avatar(1))).rejects.toThrow("404");
+  stubAvatarFetch(100, { headers: { "Content-Type": "image/svg+xml" } });
+  await expect(sources.load(avatar(1))).rejects.toThrow("not an image");
+  expect(sources.held(avatar(1))).toBeUndefined();
+  // No response at all: this window cannot read the scheme.
+  const fetch = vi.fn(async () => {
+    throw new TypeError("Load failed");
+  });
+  vi.stubGlobal("fetch", fetch);
+  await expect(sources.load(avatar(1))).resolves.toBe(avatar(1));
+  expect(sources.held(avatar(2))).toBe(avatar(2));
+  await expect(sources.load(avatar(2))).resolves.toBe(avatar(2));
+  expect(fetch).toHaveBeenCalledTimes(1);
+  createMediaPreparation().dispose();
+  expect(sources.held(avatar(2))).toBeUndefined();
+});
+
+it("forgets an owner's held avatar on request, so the next load fetches it again", async () => {
+  createMediaPreparation().dispose();
+  const revoke = vi.spyOn(URL, "revokeObjectURL");
+  const fetch = stubAvatarFetch();
+  const owner = {};
+  const sources = avatarSources(owner);
+  const first = await sources.load(avatar(1));
+  // Another session's forget leaves this owner's bytes alone.
+  avatarSources({}).forget(avatar(1));
+  expect(sources.held(avatar(1))).toBe(first);
+  sources.forget(avatar(1));
+  expect(revoke).toHaveBeenCalledWith(first);
+  expect(sources.held(avatar(1))).toBeUndefined();
+  await sources.load(avatar(1));
+  expect(fetch).toHaveBeenCalledTimes(2);
+  createMediaPreparation().dispose();
+});
+
+it("bounds avatars by size and revokes them with session media", async () => {
+  createMediaPreparation().dispose();
+  const revoke = vi.spyOn(URL, "revokeObjectURL");
+  // 1 MiB each, the largest held; the 16 MiB budget holds sixteen.
+  stubAvatarFetch(1024 * 1024 + 1);
+  const sources = avatarSources({});
+  await expect(sources.load(avatar(0))).resolves.toBe(avatar(0));
+  expect(sources.held(avatar(0))).toBeUndefined();
+  stubAvatarFetch(1024 * 1024);
+  const urls: string[] = [];
+  for (let i = 1; i <= 17; i++) urls.push(await sources.load(avatar(i)));
+  expect(sources.held(avatar(1))).toBeUndefined();
+  expect(revoke).toHaveBeenCalledWith(urls[0]);
+  expect(sources.held(avatar(2))).toBe(urls[1]);
+
+  let release: (() => void) | undefined;
+  vi.stubGlobal(
+    "fetch",
+    () =>
+      new Promise<Response>((resolve) => {
+        release = () =>
+          resolve(
+            new Response(new Uint8Array(10), {
+              headers: { "Content-Type": "image/webp" },
+            }),
+          );
+      }),
+  );
+  const late = sources.load(avatar(30));
+  // The fetch has started before session media is disposed.
+  await vi.waitFor(() => expect(release).toBeDefined());
+  createMediaPreparation().dispose();
+  for (const url of urls.slice(1)) expect(revoke).toHaveBeenCalledWith(url);
+  expect(sources.held(avatar(2))).toBeUndefined();
+  // A fetch that began before disposal shows its source but is not held.
+  release?.();
+  await expect(late).resolves.toBe(avatar(30));
+  expect(sources.held(avatar(30))).toBeUndefined();
 });

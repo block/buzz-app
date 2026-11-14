@@ -1085,6 +1085,29 @@ it("requests a small profile image without downsizing message attachments", () =
   expect(media).toHaveBeenCalledWith("https://image.test/attachment.png");
 });
 
+it("loads virtualized rows' author avatars on mount, at WebKit's lazy margin elsewhere", () => {
+  // A source never shown before, so no earlier load marks it for eager loading.
+  const picture = (n: number) => `https://image.test/author-${n}.png`;
+  const html = (n: number, keepMounted?: () => () => void) =>
+    renderToStaticMarkup(
+      <MessageRow
+        row={row}
+        profile={{ name: "Author", picture: picture(n) }}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        keepMounted={keepMounted}
+      />,
+    );
+  expect(html(1, () => () => {})).toMatch(
+    new RegExp(`<img[^>]*src="${picture(1)}"[^>]*loading="eager"`),
+  );
+  expect(html(2)).toMatch(
+    new RegExp(`<img[^>]*src="${picture(2)}"[^>]*loading="lazy"`),
+  );
+});
+
 it("renders proxy audio attachments with an inline player", () => {
   const html = renderToStaticMarkup(
     <MessageRow

@@ -7,6 +7,8 @@ import { useChannelIdentityNames } from "../identity-names/react";
 import { useMessageSelectionCopy } from "./selection-copy";
 import { SelectionQuote } from "./SelectionQuote";
 import { Button } from "../../shared/design-system/ui/Button";
+import { AvatarSourceContext } from "../../shared/design-system/ui/Avatar";
+import { avatarSources } from "../relay/media";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
 import { MembershipRow } from "./MembershipRow";
@@ -31,7 +33,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  Fragment,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
@@ -313,6 +314,8 @@ function Timeline({
   const pendingRestore = useRef<number | undefined>(undefined);
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
+  // Rows remount as they scroll; their avatars keep the bytes they fetched.
+  const sources = useMemo(() => avatarSources(queries), [queries]);
   const visibleRows = useMemo(
     () =>
       chatPresentation
@@ -2205,7 +2208,7 @@ function Timeline({
               );
             };
             return (
-              <Fragment key={row.id}>
+              <AvatarSourceContext key={row.id} value={sources}>
                 {disclosure && (
                   <div
                     className={styles.activityDisclosure}
@@ -2284,7 +2287,7 @@ function Timeline({
                     renderMessage(row)
                   )}
                 </ActivityExpansion>
-              </Fragment>
+              </AvatarSourceContext>
             );
           })}
         </Virtualizer>

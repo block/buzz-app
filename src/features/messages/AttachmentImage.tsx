@@ -48,7 +48,11 @@ export function AttachmentImage({
   overlayCount?: number;
   onOpenReview?: (attachment: Attachment, seconds: number) => void;
   onOpenLink?: ((url: string) => boolean) | undefined;
-  /** Pins the owning row in a virtualized list; returns the release. */
+  /** Pins the owning row in a virtualized list; returns the release. Only
+   * virtualized rows have it, and their list already bounds which rows mount,
+   * so their pixels load on mount: WebKit's native lazy loading waits until
+   * about one viewport away, inside that buffer, too late for a fast-scrolled
+   * image to decode first. Unbounded thread rows keep native lazy loading. */
   keepMounted?: (() => () => void) | undefined;
 }) {
   const active = useConversationPresentation();
@@ -162,6 +166,7 @@ export function AttachmentImage({
               source={source}
               thumbnail={thumbnail}
               blurhash={attachment.blurhash}
+              loading={keepMounted ? "eager" : "lazy"}
               onDecoded={onDecoded}
             />
           )}
@@ -203,12 +208,14 @@ function ImagePixels({
   source,
   thumbnail,
   blurhash,
+  loading,
   onDecoded,
 }: {
   session: RelaySession | undefined;
   source: string;
   thumbnail: string | undefined;
   blurhash: string | undefined;
+  loading: "eager" | "lazy";
   onDecoded: (dimensions: NonNullable<Attachment["dimensions"]>) => void;
 }) {
   const image = useRef<HTMLImageElement>(null);
@@ -270,8 +277,8 @@ function ImagePixels({
     if (original.complete) void loaded();
     const preview = canvas.current;
     if (hash && preview && typeof IntersectionObserver !== "undefined") {
-      // Original requests keep native loading="lazy". Only preview CPU work is
-      // visibility-gated, including nonvirtualized thread rows. No new scheduler.
+      // Only preview CPU work is visibility-gated, including nonvirtualized
+      // thread rows; requests follow the loading attribute. No new scheduler.
       observer = new IntersectionObserver((entries) => {
         if (
           !active ||
@@ -318,7 +325,7 @@ function ImagePixels({
         ref={image}
         src={source}
         alt=""
-        loading="lazy"
+        loading={loading}
         style={{ visibility: ready ? "visible" : "hidden" }}
       />
       {/* After the original, so preview queries still find the original first. */}
@@ -326,7 +333,7 @@ function ImagePixels({
         <img
           src={thumbnail}
           alt=""
-          loading="lazy"
+          loading={loading}
           data-thumbnail=""
           style={{ visibility: thumbnailLoaded ? "visible" : "hidden" }}
           onLoad={() => setThumbnailLoaded(true)}

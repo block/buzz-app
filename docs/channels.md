@@ -1265,6 +1265,11 @@ The port retains the prepared-store implementation and its behavior tests:
   menu reads a whole large roster. Narrow row profile selectors,
   and request-warmed avatars (fetched and decoded, nothing retained; disabled
   under the Save-Data preference). Signature verification yields in batches.
+- Timeline avatars that the desktop app serves through its `buzz-media` scheme,
+  which WebKit does not cache, are fetched once into `blob:` URLs that
+  remounted rows reuse: at most 16 MiB, each only by the session that fetched
+  it, revoked when session media is disposed. Other avatar sources load as
+  they are.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour
   expiry. Signed cached events are reverified before display. The same database
   stores account/relay-scoped startup discovery and sidebar organization (a separate

@@ -1,3 +1,4 @@
+import { isNativeMediaSource } from "../messages/attachment-source";
 import { relayDebug } from "./debug";
 export function saveData(): boolean {
   try {
@@ -132,6 +133,96 @@ export function retainDecodedImage(
   }
 }
 
+/** Native relay avatars held as `blob:` URLs. WebKit keeps no cache for the
+ * `buzz-media` scheme, so each new avatar element signs and sends another
+ * relay read and paints only when it returns; a virtualized row remounts its
+ * avatars constantly. One fetch per source instead serves every later mount
+ * from local bytes. Only the fetching owner (session) reuses an entry.
+ * Bounded by size; disposing session media revokes them and refuses fetches
+ * that began before. Other sources show as they are. */
+const AVATAR_BUDGET = 16 * 1024 * 1024;
+const avatars = new Map<
+  string,
+  { owner: WeakRef<object>; url: string; bytes: number }
+>();
+const avatarFetches = new Map<
+  string,
+  { owner: object; pending: Promise<string> }
+>();
+let avatarBytes = 0;
+let avatarScope = 0;
+// The host answers every request with a status, so a fetch without a response
+// means this window cannot read the scheme: its elements load sources as is.
+let avatarsUnreadable = false;
+function forgetAvatar(source: string) {
+  const entry = avatars.get(source);
+  if (!entry) return;
+  avatars.delete(source);
+  avatarBytes -= entry.bytes;
+  URL.revokeObjectURL(entry.url);
+}
+function heldAvatar(owner: object, source: string): string | undefined {
+  if (avatarsUnreadable || !isNativeMediaSource(source)) return source;
+  const entry = avatars.get(source);
+  if (entry?.owner.deref() !== owner) return undefined;
+  // Least recently shown is evicted first.
+  avatars.delete(source);
+  avatars.set(source, entry);
+  return entry.url;
+}
+async function fetchAvatar(owner: object, source: string): Promise<string> {
+  const scope = avatarScope;
+  let response: Response;
+  try {
+    response = await fetch(source, {
+      credentials: "omit",
+      referrerPolicy: "no-referrer",
+    });
+  } catch {
+    if (scope === avatarScope) avatarsUnreadable = true;
+    return source;
+  }
+  if (!response.ok) throw new Error(`Avatar unavailable: ${response.status}`);
+  const blob = await response.blob();
+  // The host serves other types (and SVG) as downloads an <img> refuses.
+  if (!blob.type.startsWith("image/") || blob.type === "image/svg+xml")
+    throw new Error(`Avatar is not an image: ${blob.type}`);
+  if (scope !== avatarScope || blob.size > AVATAR_BUDGET / 16) return source;
+  forgetAvatar(source);
+  const url = URL.createObjectURL(blob);
+  avatars.set(source, { owner: new WeakRef(owner), url, bytes: blob.size });
+  avatarBytes += blob.size;
+  for (const oldest of avatars.keys()) {
+    if (avatarBytes <= AVATAR_BUDGET) break;
+    forgetAvatar(oldest);
+  }
+  return url;
+}
+/** The `AvatarSourceContext` value for an owner's avatars. */
+export function avatarSources(owner: object) {
+  return {
+    held: (source: string) => heldAvatar(owner, source),
+    // Bytes that arrived as an image but would not decode (truncated, or a
+    // thumbnail the relay since repaired) must not serve every later mount.
+    forget(source: string) {
+      if (avatars.get(source)?.owner.deref() === owner) forgetAvatar(source);
+    },
+    load(source: string): Promise<string> {
+      const held = heldAvatar(owner, source);
+      if (held) return Promise.resolve(held);
+      // Concurrent mounts of a source share its one request.
+      const shared = avatarFetches.get(source);
+      if (shared?.owner === owner) return shared.pending;
+      const pending = fetchAvatar(owner, source).finally(() => {
+        if (avatarFetches.get(source)?.pending === pending)
+          avatarFetches.delete(source);
+      });
+      avatarFetches.set(source, { owner, pending });
+      return pending;
+    },
+  };
+}
+
 /** Avatar request warming, the react-native-web Image model: fetch and
  * decode() into detached images, then retain nothing. The browser's own HTTP
  * and decoded-image caches serve the real <img> mounts. Never warms
@@ -247,7 +338,7 @@ export function createMediaPreparation() {
     }),
     dispose() {
       disposed = true;
-      // Frames and decoded images are module-wide, so disposing any session's
+      // Frames, decoded images and avatars are module-wide, so disposing any session's
       // media (including a handed-off or stale successor) forgets them all.
       // That only costs reuse.
       openingFrames.clear();
@@ -256,6 +347,10 @@ export function createMediaPreparation() {
       decodedImages.clear();
       decodedImageBytes = 0;
       decodedImageScope++;
+      for (const source of [...avatars.keys()]) forgetAvatar(source);
+      avatarFetches.clear();
+      avatarsUnreadable = false;
+      avatarScope++;
       queue = [];
       for (const image of active) {
         image.src = "";

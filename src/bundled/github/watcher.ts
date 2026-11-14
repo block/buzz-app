@@ -363,18 +363,20 @@ export function watchPulls(
               ...watch,
               failures: failed ? (watch.failures ?? 0) + 1 : 0,
             };
+            // Whether these reach the agent is the failure they report.
+            const tell = (text: string) => {
+              try {
+                emit(text);
+              } catch {}
+            };
             if (watch.failures === FAILURE_WARNING)
-              try {
-                emit(
-                  `${pull.url} could not be read with gh, or you could not be woken, for ${FAILURE_WARNING} minutes. The watch keeps trying for a day before it ends; check that gh is signed in and can see it.`,
-                );
-              } catch {}
+              tell(
+                `${pull.url} could not be read with gh, or you could not be woken, for ${FAILURE_WARNING} minutes. The watch keeps trying for a day before it ends; check that gh is signed in and can see it.`,
+              );
             if ((watch.failures ?? 0) >= FAILURE_LIMIT) {
-              try {
-                emit(
-                  `Stopped watching ${pull.url}: it could not be read with gh, or you could not be woken, for a day. Call github_watch_pr again to retry.`,
-                );
-              } catch {}
+              tell(
+                `Stopped watching ${pull.url}: it could not be read with gh, or you could not be woken, for a day. Call github_watch_pr again to retry.`,
+              );
               ended = true;
             }
           }

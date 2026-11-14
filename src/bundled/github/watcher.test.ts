@@ -598,11 +598,12 @@ describe("github_watch_pr", () => {
   it("keeps watching past many wakes, spacing them and joining news in between", async () => {
     const app = setup();
     await app.call({ url });
-    const pushed = (index: number) =>
+    const pushed = (index: number, comments: Comment[] = []) =>
       app.gh(
         answer({
           head: index.toString(16).padStart(10, "0"),
           checks: [{ name: "unit", conclusion: "SUCCESS" }],
+          comments,
         }),
       );
     for (let index = 0; index < 25; index++) {
@@ -618,13 +619,7 @@ describe("github_watch_pr", () => {
     // meanwhile, as one wake.
     pushed(100);
     await vi.advanceTimersByTimeAsync(POLL_MS);
-    app.gh(
-      answer({
-        head: (100).toString(16).padStart(10, "0"),
-        checks: [{ name: "unit", conclusion: "SUCCESS" }],
-        comments: [{ id: "I1", login: "wes", body: "Looks good" }],
-      }),
-    );
+    pushed(100, [{ id: "I1", login: "wes", body: "Looks good" }]);
     await vi.advanceTimersByTimeAsync(SPACING_MS - 3 * POLL_MS);
     expect(app.texts()).toHaveLength(26);
     await vi.advanceTimersByTimeAsync(2 * POLL_MS);

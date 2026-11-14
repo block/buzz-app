@@ -327,21 +327,24 @@ function idsOf(pull: StateData) {
 
 /** How far `pull` is on its way to merging, as a watch follows it. */
 function mergingOf(pull: StateData) {
-  const threads = pull.reviewThreads?.nodes ?? [];
-  const unresolved = threads.filter((thread) => !thread?.isResolved).length;
   return {
     merge: pull.mergeStateStatus,
     decision: pull.reviewDecision ?? undefined,
     ...(pull.autoMergeRequest && { autoMerge: true as const }),
     ...(pull.isInMergeQueue && { queued: true as const }),
-    // Threads beyond those listed are older; when none listed is open, they
-    // may be. A partial answer without them says nothing.
-    ...(pull.reviewThreads &&
-      (unresolved > 0 ||
-        (pull.reviewThreads.totalCount ?? 0) <= threads.length) && {
-        unresolved,
-      }),
+    ...unresolvedOf(pull.reviewThreads),
   };
+}
+
+/** How many review threads are open, when that is known: threads beyond
+ * those listed are older, so when none listed is open, they may be. A partial
+ * answer without them says nothing. */
+function unresolvedOf(threads: StateData["reviewThreads"]) {
+  if (!threads) return {};
+  const listed = threads.nodes ?? [];
+  const unresolved = listed.filter((thread) => !thread?.isResolved).length;
+  const complete = (threads.totalCount ?? 0) <= listed.length;
+  return unresolved > 0 || complete ? { unresolved } : {};
 }
 
 /** The state in `pull`, an alias's answer, without its feedback or details. */

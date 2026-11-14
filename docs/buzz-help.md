@@ -816,12 +816,13 @@ and are asked to sign in again in Buzz.
   The access dialog offers **View only** for community reading
   or **Private** for people added to the chat. Public is not offered in
   this UI; a Public policy set through another client appears as
-  **Public (existing)**. This is not protocol enforcement. View-only visitors
+  **Public**. Before changing it, the confirmation warns that you cannot switch
+  back to Public here. This is not protocol enforcement. View-only visitors
   cannot post; existing members keep their roles. Returning to Private warns
   about retained viewers unless verified roles show no Guests, including while
-  roles load or fail to load; remove them in People to end their access. Public
-  (existing) → Private also warns that joined members retain their access.
-  Manually changing Public (existing) to View only confirms that existing
+  roles load or fail to load; remove them in People to end their access.
+  Public → Private also warns that joined members retain their access.
+  Manually changing Public to View only confirms that existing
   members keep their access. Agents the owner adds through
   access search or a composer mention receive Bot access so they can reply,
   including with a Guest admission default. Conversion to a channel offers
@@ -1548,6 +1549,11 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   in. Scroll position isn’t kept, and reloading the window or turning the
   GitHub plugin off and on forgets all of this.
 - Some desktop plugins can upload images you provide to services they declare.
+- Plugin sharing search groups people who have not been added under **Not yet
+  added**, or a heading chosen by the plugin.
+- In plugins that use Buzz's sharing controls, switching a record to **Private**
+  keeps existing members' access. The confirmation warns about people who joined
+  while it was open; remove them in **People** to end their access.
 - Agents running on this computer can write plugins while the **Plugin
   development** plugin is on (it is by default). It gives them
   `plugin_authoring_guide`, `plugin_status` and `plugin_reload`. The person

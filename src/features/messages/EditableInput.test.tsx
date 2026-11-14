@@ -412,6 +412,25 @@ describe("Mac WebKit line breaks", () => {
     expect(clear).not.toHaveBeenCalled();
   });
 
+  it("an editor focused as it mounts draws its caret again once laid out", async () => {
+    const h = mount("message");
+    clear.mockClear();
+    await act(
+      () => new Promise<void>((done) => requestAnimationFrame(() => done())),
+    );
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(native()).toEqual([1, true, "message", 7]);
+
+    // A later return of focus draws it once, at once.
+    act(() => h.input.blur());
+    clear.mockClear();
+    act(() => h.input.focus());
+    await act(
+      () => new Promise<void>((done) => requestAnimationFrame(() => done())),
+    );
+    expect(clear).toHaveBeenCalledTimes(1);
+  });
+
   it("enabling a focused editor again draws its caret", () => {
     const text = "here is a message";
     const h = mount(text);
@@ -467,6 +486,10 @@ describe("Mac WebKit line breaks", () => {
       h.input.toggleFormat("bold");
       h.input.setSelectionRange(3, 3);
     });
+    // The editor was focused as it mounted; its caret is redrawn a frame on.
+    await act(
+      () => new Promise<void>((done) => requestAnimationFrame(() => done())),
+    );
     clear.mockClear();
     await h.user.keyboard("{Shift>}{Enter}{/Shift}");
     expect(clear).toHaveBeenCalledTimes(1);
@@ -484,6 +507,10 @@ describe("Mac WebKit line breaks", () => {
       h.input.toggleFormat("bold");
       h.input.setSelectionRange(4, 4);
     });
+    // The editor was focused as it mounted; its caret is redrawn a frame on.
+    await act(
+      () => new Promise<void>((done) => requestAnimationFrame(() => done())),
+    );
     clear.mockClear();
     await h.user.keyboard("{Shift>}{Enter}{/Shift}");
     expect(clear).toHaveBeenCalledTimes(1);

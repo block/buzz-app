@@ -499,6 +499,8 @@ export function EditableInput({
   >([]);
   const pointing = useRef(false);
   const nativeEditing = useRef(false);
+  /** The editor has been through a frame since it mounted. */
+  const laidOut = useRef(false);
   const plain = useRef<PlainLink[]>([]);
   const locked = useRef(false);
   const emitted = useRef(draft);
@@ -2392,6 +2394,10 @@ export function EditableInput({
       },
     );
     view.current = editor;
+    laidOut.current = false;
+    const firstFrame = requestAnimationFrame(() => {
+      laidOut.current = true;
+    });
     const root = editor.dom as ComposerInputElement;
     Object.defineProperties(root, {
       value: {
@@ -2678,6 +2684,7 @@ export function EditableInput({
       view.current = null;
       api.current = null;
       openAnnotation.current = undefined;
+      cancelAnimationFrame(firstFrame);
       for (const held of heldSettles.current.splice(0)) held.resolve(false);
       editor.destroy();
     };
@@ -2778,6 +2785,23 @@ export function EditableInput({
             event.target === event.currentTarget
           ) {
             resumeCaret(editor);
+            // An editor focused as it mounts has no layout yet, and Mac
+            // WebKit then draws no caret until the selection next changes.
+            // Draw it again once the editor has been laid out.
+            if (!laidOut.current && macWebKit())
+              requestAnimationFrame(() => {
+                laidOut.current = true;
+                if (
+                  view.current === editor &&
+                  editor.hasFocus() &&
+                  editor.state.selection.empty &&
+                  !pointing.current &&
+                  !nativeEditing.current &&
+                  !composing.current &&
+                  !editor.composing
+                )
+                  resumeCaret(editor);
+              });
           }
           events.onFocus?.(event as never);
         }}

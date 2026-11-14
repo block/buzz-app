@@ -78,7 +78,8 @@ export const TranscriptFocus = createContext<
 /** The item, else the turn, that one of `events` began or posted. */
 function focusedEntry(transcript: Transcript, events: readonly string[]) {
   const wanted = new Set(events);
-  for (const turn of transcript.turns) {
+  // Newest first: a retried request's latest attempt is the one that answered.
+  for (const turn of [...transcript.turns].reverse()) {
     const item = turn.items.find((entry) =>
       entry.type === "prompt"
         ? promptEventIds(entry.sections).some((id) => wanted.has(id))

@@ -505,7 +505,8 @@ it("opens at the latest turn and follows new ones until the reader scrolls up", 
 
 it("shows the turn a message began, its prompt open, instead of the latest, once", () => {
   const id = (n: number) => String(n).repeat(64);
-  const turn = (n: number): TranscriptTurn => ({
+  // A retry asks the same message again, so `event` can repeat.
+  const turn = (n: number, event = n): TranscriptTurn => ({
     turnId: `t${n}`,
     channelId: "channel",
     threadRootId: null,
@@ -526,10 +527,10 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
             tag: "buzz-event",
             body: eventBody(
               {
-                id: id(n),
+                id: id(event),
                 pubkey: "a".repeat(64),
                 kind: 9,
-                created_at: n,
+                created_at: event,
                 content: `Prompt ${n}`,
                 tags: [],
               },
@@ -585,6 +586,9 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
     view.scrollTop = 0;
     rerender(show([turn(1), turn(2), turn(3), turn(4)], ["reply", id(2)]));
     expect(view.scrollTop).toBe(0);
+    // A retried request shows its latest attempt, the one that answered.
+    rerender(show([turn(1), turn(2), turn(5, 2)], ["retry", id(2)]));
+    expect(shown.at(-1)).toBe("item:p5");
   } finally {
     // jsdom has no scrollIntoView of its own.
     Reflect.deleteProperty(Element.prototype, "scrollIntoView");

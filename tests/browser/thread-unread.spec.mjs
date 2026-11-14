@@ -550,6 +550,10 @@ test("thread buttons show observed unread independently, clear only after readin
     .click();
   await expect(alpha).toBeFocused();
   await page.clock.resume();
+  // The paused clock also held the timeline's animation frames, so the scroll
+  // that re-places it after the pane closed runs only now. Hovering first can
+  // leave the pointer over the row's old place.
+  await virtuaIdle(page);
   const beforeRect = await first.boundingBox();
   await first.hover();
   const afterRect = await first.boundingBox();

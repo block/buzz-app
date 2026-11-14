@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { nativeHookOutput, piHookOutput } from "./hook-output";
+import {
+  joinNativeContext,
+  nativeHookOutput,
+  piHookOutput,
+} from "./hook-output";
 
 it("attributes native hook explanations without rewriting decisions or tool payloads", () => {
   const output = {
@@ -77,4 +81,39 @@ it("attributes Pi blocks and replacement output without changing arguments or im
     output: [{ type: "text", text: "[Buzz plugin: policy]" }, ...output.output],
   });
   expect(piHookOutput(null, "policy")).toBeNull();
+});
+
+it("joins native responses only while each just adds context to the same event", () => {
+  const context = (additionalContext: string, hookEventName?: string) => ({
+    hookSpecificOutput: {
+      ...(hookEventName && { hookEventName }),
+      additionalContext,
+    },
+  });
+  const one = context("First", "UserPromptSubmit");
+  expect(joinNativeContext([one])).toBe(one);
+  expect(
+    joinNativeContext([one, context("Second", "UserPromptSubmit")]),
+  ).toEqual(context("First\n\nSecond", "UserPromptSubmit"));
+  expect(joinNativeContext([context("First"), context("Second")])).toEqual(
+    context("First\n\nSecond"),
+  );
+  for (const other of [
+    { decision: "block", reason: "Wait" },
+    { ...one, systemMessage: "Shown to the owner" },
+    {
+      hookSpecificOutput: {
+        ...one.hookSpecificOutput,
+        permissionDecision: "deny",
+      },
+    },
+    { hookSpecificOutput: { hookEventName: "UserPromptSubmit" } },
+    "text",
+  ]) {
+    expect(joinNativeContext([one, other])).toBeUndefined();
+    expect(joinNativeContext([other])).toBeUndefined();
+  }
+  expect(
+    joinNativeContext([one, context("Second", "SessionStart")]),
+  ).toBeUndefined();
 });

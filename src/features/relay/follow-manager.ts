@@ -563,6 +563,7 @@ export function createThreadFollowSync({
           ]);
           await save((current, journal) => {
             let next = shared(current, journal);
+            let batch: number | undefined;
             for (const [key, follow] of local) {
               if (known.has(key)) continue;
               const placed = place(next, key, follow);
@@ -575,8 +576,10 @@ export function createThreadFollowSync({
                   follow,
                   now(),
                   "legacy-import",
+                  batch,
                 ),
               };
+              batch ??= next.state.reserved;
             }
             return { ...next, imported: true };
           });

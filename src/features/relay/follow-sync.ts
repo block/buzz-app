@@ -102,6 +102,9 @@ export function tap(
   follow: boolean,
   now: number,
   origin: FollowEdit["origin"] = "explicit",
+  /** One reservation shared by a batch of distinct keys saved together
+   * (legacy import), so a large import doesn't run the clock ahead. */
+  shared?: number,
 ): FollowSyncState {
   const head = state.heads[slot];
   if (head && !head.payload)
@@ -110,7 +113,8 @@ export function tap(
     state.edits[key]?.slot === slot
       ? state.edits[key]?.entry
       : head?.payload?.threads[key];
-  const [next, r] = reserve(state, now);
+  const [next, r] =
+    shared === undefined ? reserve(state, now) : [state, shared];
   const at = origin === "legacy-import" ? 0 : now;
   if (!uint32(at)) throw new Error("Invalid follow choice time");
   return {

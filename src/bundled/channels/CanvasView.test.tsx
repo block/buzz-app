@@ -307,6 +307,21 @@ it("never runs raw HTML, inline images or unsafe links", () => {
   ]);
 });
 
+it("hides HTML comments", () => {
+  const { container } = render(
+    <CanvasMarkdown
+      openLink={() => true}
+      content={[
+        "### Status",
+        "<!-- What belongs in this tile. -->",
+        "Phase: Build <!-- inline note --> on track",
+      ].join("\n")}
+    />,
+  );
+  expect(container).not.toHaveTextContent("<!--");
+  expect(container).toHaveTextContent("Phase: Build on track");
+});
+
 it("renders every Canvas within the save limit", () => {
   const largest = "x".repeat(LIVE_CANVAS_BYTES);
   expect(renderable(largest)).toBe(true);

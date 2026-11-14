@@ -1670,7 +1670,9 @@ function ThreadMessages({
               <ReplySummary
                 count={descendants.length}
                 participants={[
-                  ...new Set(descendants.map((reply) => reply.authorId)),
+                  ...new Set(
+                    descendants.map((reply) => reply.authorId).reverse(),
+                  ),
                 ]}
                 profiles={profiles}
                 agentPubkeys={agentPubkeys}

@@ -83,6 +83,17 @@ it("prefills an editable review and creates only when the owner submits", async 
   expect(agents.create).not.toHaveBeenCalled();
 });
 
+it("names the plugin that asked for the agent", async () => {
+  fixture({
+    requester: "plugin:example.dash",
+    requesterName: "example.dash plugin",
+  });
+  await screen.findByDisplayValue("Child");
+  expect(
+    screen.getByText(/example\.dash plugin requested this agent\. Review/),
+  ).toBeVisible();
+});
+
 it("starts from a requested picture and creates the agent with it", async () => {
   const user = userEvent.setup();
   const agents = fixture({ picture: "https://example.test/kid.png" });

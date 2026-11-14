@@ -134,6 +134,19 @@ when another community is selected. Add the agent to a conversation separately
 after creation; see the [shared tool definitions](../src/buzz-mcp/tools.ts) for
 the available operations and arguments. Agent tools do not expose draft approval.
 
+An installed plugin can ask the same way with
+`ctx.agents.requestCreation({ type, name, instructions? })`. It uses the same
+checks and the same 16-request limit, and one plugin may have at most 4
+requests pending. The review form says the plugin asked (for example,
+"my.plugin plugin requested this agent"), and only the owner's review can
+create or dismiss it: a plugin calling `approveCreation` or `dismissCreation`
+gets an error. Each request opens the form, so call it from a user action. It returns
+`{ requestId, outcome }` at once and creates nothing; `outcome` is a promise
+that never rejects. It resolves `{ status: "created", agent }` when the owner
+creates the agent, or `{ status: "dismissed" }` when they close the review or
+the signed-in owner changes. The owner may change the name and type before
+creating, so read the agent from `outcome`, not from the request.
+
 `agent_update` submits an unsaved draft of changes to one of the owner's local
 agents in the same community, named by pubkey or exact name: a new name, a type
 key from `agent_types`, new instructions or a new picture. An agent may propose

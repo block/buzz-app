@@ -332,10 +332,11 @@ export function fakeCommunities(...joined: ReturnType<typeof fakeRelay>[]) {
   let relays = joined;
   const changes = new Set<() => void>();
   let selected: string | null = relays[0]?.origin ?? null;
+  let signedIn = viewer;
   return {
     communities: {
       snapshot: () => ({
-        viewer,
+        viewer: signedIn,
         selected,
         memberships: relays.map(({ origin }) => ({ id: origin, name: origin })),
       }),
@@ -349,6 +350,11 @@ export function fakeCommunities(...joined: ReturnType<typeof fakeRelay>[]) {
     } as unknown as AgentCommunities,
     select(next: string | null) {
       selected = next;
+      for (const listener of changes) listener();
+    },
+    /** Signs in another account, as a change of the signed-in owner. */
+    switchViewer(next: string) {
+      signedIn = next;
       for (const listener of changes) listener();
     },
     leave(origin: string) {

@@ -1219,6 +1219,11 @@ export type AgentCreationRequest = AgentCreation &
     owner: string;
     community: string;
   }>;
+/** How a plugin's creation request ended: the agent the owner created, or
+ * the owner closed the review without creating one. */
+export type AgentCreationOutcome =
+  | Readonly<{ status: "created"; agent: Agent }>
+  | Readonly<{ status: "dismissed" }>;
 /** Proposed changes; absent fields stay as they are. `picture` is an HTTPS
  * image URL. */
 export type AgentUpdate = Readonly<{
@@ -1515,6 +1520,15 @@ export type Agents = {
    * hosted type at its provider. A hosted one whose setup then fails is kept
    * as `unfinished`. */
   create(input: NewAgent): Promise<Agent>;
+  /** Asks the owner to create an agent, in the same review form as one an
+   * agent requests, shown as asked by the calling plugin. Nothing is created
+   * until the owner approves; `outcome` settles with the agent they create,
+   * or when they close the review, and never rejects. Throws for an invalid
+   * request or when too many requests are pending. */
+  requestCreation(input: AgentCreation): Readonly<{
+    requestId: string;
+    outcome: Promise<AgentCreationOutcome>;
+  }>;
   /** Local, unsaved requests; closing a review discards its request. */
   creationRequests(): readonly AgentCreationRequest[];
   dismissCreation(id: string): void;
@@ -2091,6 +2105,11 @@ export class AgentsService extends Service implements Agents {
   private readonly sourceTails = new Map<string, Promise<void>>();
   private readonly listeners = new Set<() => void>();
   private requests: readonly AgentCreationRequest[] = [];
+  /** Settles a plugin's request, by its id, once its review ends. */
+  private readonly creationOutcomes = new Map<
+    string,
+    (outcome: AgentCreationOutcome) => void
+  >();
   private updates: readonly AgentUpdateRequest[] = [];
   private teamUpdates: readonly TeamUpdateRequest[] = [];
   private readonly approving = new Set<string>();
@@ -2441,24 +2460,13 @@ export class AgentsService extends Service implements Agents {
           const binding = this.bindingOf(agent);
           if (!binding || !this.liveMember(agent.key))
             throw new Error("The requesting agent is no longer available");
-          if (!input.name.trim()) throw new Error("Name the agent");
-          const kind = this.types().find((entry) => entry.key === input.type);
-          if (!kind) throw new Error("That agent type is not available");
-          if (kind.remote)
-            throw new Error("A hosted agent's key stays with its provider");
-          if (input.instructions && !kind.adopt)
-            throw new Error(`${kind.title} agents have no instructions to set`);
-          if (this.pendingRequests() >= 16)
-            throw new Error("Review the pending agent requests first");
           return {
             id: crypto.randomUUID(),
             requester: agent.pubkey,
             requesterName: agent.name,
             owner: agent.owner,
             community: binding.origin,
-            type: input.type,
-            name: input.name.trim(),
-            ...(input.instructions && { instructions: input.instructions }),
+            ...this.checkedCreation(input),
             ...(picture && { picture }),
           };
         };
@@ -2916,6 +2924,9 @@ export class AgentsService extends Service implements Agents {
           const kept = this.requests.filter(
             (request) => request.owner === viewer,
           );
+          for (const request of this.requests)
+            if (!kept.includes(request) && !this.approving.has(request.id))
+              this.settleCreation(request.id, { status: "dismissed" });
           const updates = this.updates.filter(
             (request) => request.owner === viewer,
           );
@@ -3883,13 +3894,68 @@ export class AgentsService extends Service implements Agents {
       { config, picture },
     );
   }
+  // A method, not a field: `this.ctx` is then the calling plugin's scope.
+  requestCreation(input: AgentCreation) {
+    const owner = this.ctx.pluginOwner;
+    if (!owner) throw new Error("Only an installed plugin requests an agent");
+    const binding = this.selectedBinding();
+    const next: AgentCreationRequest = {
+      id: crypto.randomUUID(),
+      requester: `plugin:${owner.id}`,
+      requesterName: `${owner.id} plugin`,
+      owner: binding.viewer,
+      community: binding.origin,
+      ...this.checkedCreation(input),
+    };
+    const own = this.requests.filter(
+      (request) => request.requester === next.requester,
+    );
+    if (own.length >= 4)
+      throw new Error("Wait for the owner to review this plugin's requests");
+    const outcome = new Promise<AgentCreationOutcome>((resolve) =>
+      this.creationOutcomes.set(next.id, resolve),
+    );
+    this.requests = [...this.requests, next];
+    this.notify();
+    return { requestId: next.id, outcome };
+  }
+  /** `input` as a request holds it; throws when it cannot be requested. */
+  private checkedCreation({
+    type,
+    name,
+    instructions,
+  }: AgentCreation): AgentCreation {
+    if (!name.trim()) throw new Error("Name the agent");
+    const kind = this.types().find((entry) => entry.key === type);
+    if (!kind) throw new Error("That agent type is not available");
+    if (kind.remote)
+      throw new Error("A hosted agent's key stays with its provider");
+    if (instructions && !kind.adopt)
+      throw new Error(`${kind.title} agents have no instructions to set`);
+    if (this.pendingRequests() >= 16)
+      throw new Error("Review the pending agent requests first");
+    return { type, name: name.trim(), ...(instructions && { instructions }) };
+  }
+  private ownerReview() {
+    if (this.ctx.pluginOwner)
+      throw new Error("Only the owner reviews an agent request");
+  }
+  private settleCreation(id: string, outcome: AgentCreationOutcome) {
+    this.creationOutcomes.get(id)?.(outcome);
+    this.creationOutcomes.delete(id);
+  }
   creationRequests = () => this.requests;
-  dismissCreation = (id: string) => {
+  // Methods, not fields: `this.ctx` is then the caller's scope, so no plugin
+  // approves or discards a request in the owner's place.
+  dismissCreation(id: string) {
+    this.ownerReview();
     if (this.approving.has(id)) return;
     this.requests = this.requests.filter((request) => request.id !== id);
+    this.settleCreation(id, { status: "dismissed" });
     this.notify();
-  };
+  }
   async approveCreation(id: string, input: NewAgent) {
+    this.ownerReview();
     const request = this.requests.find((item) => item.id === id);
     if (!request || this.approving.has(id))
       throw new Error("No such pending agent request");
@@ -3916,10 +3982,13 @@ export class AgentsService extends Service implements Agents {
         binding,
       );
       this.requests = this.requests.filter((item) => item.id !== id);
+      this.settleCreation(id, { status: "created", agent });
       this.notify();
       return agent;
     } finally {
       this.approving.delete(id);
+      if (!this.requests.some((item) => item.id === id))
+        this.settleCreation(id, { status: "dismissed" });
     }
   }
   updateRequests = () => this.updates;

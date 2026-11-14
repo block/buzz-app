@@ -1073,6 +1073,20 @@ live; otherwise it returns `undefined`. A handle kept from earlier fails each
 call while that no longer holds, and for good once the agent's type or its
 plugin is replaced, so ask for it when acting rather than keeping it. Like any type whose agents run here, the type needs `run`.
 
+A plugin asks the owner to create an agent with
+`ctx.agents.requestCreation({ type, name, instructions? })`, instead of calling
+`ctx.agents.create`, which makes the agent with no review. The request opens
+the same Create agent form as one an agent submits with `agent_create`, filled
+in and shown as asked by the plugin, in the selected community. Nothing exists
+until the owner submits it. The call returns `{ requestId, outcome }`, where
+`outcome` resolves `{ status: "created", agent }` or `{ status: "dismissed" }`
+and never rejects. It throws for an unknown or hosted `type`, a blank `name`,
+`instructions` for a type that takes none, when this plugin already has 4
+requests pending, or when 16 are pending in all. Each request opens the form,
+so call it from a user action. Only the owner's review creates or dismisses a
+request; `approveCreation` and `dismissCreation` throw for a plugin.
+See [Creating and changing agents from a conversation](agents.md#creating-and-changing-agents-from-a-conversation).
+
 Plugins can discover active Attention source registrations through `ctx.agents.attentionProviders()`. Each entry includes its `provider` key and optional `description` and JSON-object `configExample` supplied to `addAttentionSource`. The catalog omits executable callbacks and inactive registrations; discovery tools belong in external plugins.
 
 A source may also `present` its watches on the Agent Attention page. Given a watch and its display name, it returns the watch's kind and, optionally, an icon, a target with a subtitle, an external link, and a details component that replaces the name in the expanded row. When a provider has no `present`, or it throws, Buzz shows the watch by its name. The GitHub plugin presents pull request watches this way, linking to its comment author settings.

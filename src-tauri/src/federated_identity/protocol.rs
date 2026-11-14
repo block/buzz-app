@@ -10,7 +10,40 @@ tokio::task_local! {
     pub(super) static HEADERS_RECEIVED: std::sync::Arc<tokio::sync::Notify>;
 }
 
+// Tests pin the wall clock a token is validated against, so a fixture's
+// relative `iat` cannot cross a second boundary before validation.
+#[cfg(test)]
+tokio::task_local! {
+    pub(super) static WALL_NOW: SystemTime;
+}
+/// The wall-clock reading an issued token is validated against.
+pub(super) fn wall_now() -> SystemTime {
+    #[cfg(test)]
+    if let Ok(pinned) = WALL_NOW.try_with(|pinned| *pinned) {
+        return pinned;
+    }
+    SystemTime::now()
+}
+
 pub(super) const DEADLINE: Duration = Duration::from_secs(30);
+/// How far ahead of this clock a signed timestamp may be, and how far a
+/// verifier accepts one behind or ahead of its own (NIP-FI, NIP-98).
+pub(crate) const CLOCK_SKEW_SECS: u64 = 120;
+/// A response `Date` further than this from the local clock suggests the
+/// local clock is off. It is a hint, never the cause of a refusal: the
+/// supported skew reaches 120 s, and `Date` has one-second precision.
+const CLOCK_HINT_SECS: i64 = 115;
+
+/// The server's `Date` minus the local clock, sampled when the headers arrive,
+/// when it is far enough off to suggest local skew. A missing or malformed
+/// `Date` gives nothing.
+pub(crate) fn clock_offset(date: Option<&str>) -> Option<i64> {
+    let server = chrono::DateTime::parse_from_rfc2822(date?)
+        .ok()?
+        .timestamp();
+    let offset = server - now().ok()?;
+    (offset.abs() > CLOCK_HINT_SECS).then_some(offset)
+}
 pub(crate) fn now() -> Result<i64, &'static str> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -37,6 +70,9 @@ pub(crate) fn client() -> Result<Client, &'static str> {
 pub(crate) struct Failure {
     pub(crate) code: &'static str,
     pub(crate) session_denied: bool,
+    /// `clock_offset` of a refusal's response: a diagnostic beside `code`,
+    /// which keeps its meaning and handling.
+    pub(crate) clock_offset: Option<i64>,
     /// The last answer before giving up, by retries or the deadline, was a 429.
     pub(crate) rate_limited: bool,
 }
@@ -45,6 +81,7 @@ impl From<&'static str> for Failure {
         Self {
             code,
             session_denied: false,
+            clock_offset: None,
             rate_limited: false,
         }
     }
@@ -81,13 +118,31 @@ async fn body(mut response: reqwest::Response) -> Result<Zeroizing<Vec<u8>>, Fai
 pub(crate) async fn json<T: DeserializeOwned>(
     request: impl Fn() -> RequestBuilder,
 ) -> Result<T, Failure> {
+    Ok(json_with(|| std::future::ready(Ok(request()))).await?.0)
+}
+
+/// `json`, building every transmitted attempt anew: a request carrying a
+/// single-use proof signs a fresh one per attempt, so a retry is never
+/// refused as a replay of the attempt before it. Also answers when the
+/// attempt whose response came back started, sampled before it was built,
+/// so a token's lifetime is counted from that attempt and not from an
+/// earlier one that failed (the shared client lifetime rule).
+pub(crate) async fn json_with<T: DeserializeOwned, F>(
+    request: impl Fn() -> F,
+) -> Result<(T, tokio::time::Instant), Failure>
+where
+    F: std::future::Future<Output = Result<RequestBuilder, Failure>>,
+{
     // One total deadline includes bounded retry and Retry-After. Refusals and
     // invalid success bodies do not retry; no browser is launched here.
-    let terminal_headers = std::sync::atomic::AtomicBool::new(false);
+    // Set when a refusal's headers arrive, with their clock offset, so a
+    // body that then outlasts the deadline still reports both.
+    let terminal_headers = std::sync::Mutex::new(None::<Option<i64>>);
     let rate_limited = std::sync::atomic::AtomicBool::new(false);
     tokio::time::timeout(DEADLINE, async {
         for attempt in 0..3u64 {
-            let response = request().send().await;
+            let started = tokio::time::Instant::now();
+            let response = request().await?.send().await;
             rate_limited.store(
                 response
                     .as_ref()
@@ -106,8 +161,17 @@ pub(crate) async fn json<T: DeserializeOwned>(
                             .and_then(retry_after);
                         Some(delay)
                     } else {
-                        terminal_headers
-                            .store(!status.is_success(), std::sync::atomic::Ordering::Relaxed);
+                        let clock_offset = (!status.is_success())
+                            .then(|| {
+                                clock_offset(
+                                    response.headers().get("date").and_then(|v| v.to_str().ok()),
+                                )
+                            })
+                            .flatten();
+                        *terminal_headers
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                            (!status.is_success()).then_some(clock_offset);
                         #[cfg(test)]
                         let _ = HEADERS_RECEIVED.try_with(|received| received.notify_one());
                         let bytes = match body(response).await {
@@ -123,11 +187,17 @@ pub(crate) async fn json<T: DeserializeOwned>(
                                 .await;
                                 continue;
                             }
-                            Err(_) if !status.is_success() => return Err("adapter-refused".into()),
+                            Err(_) if !status.is_success() => {
+                                return Err(Failure {
+                                    clock_offset,
+                                    .."adapter-refused".into()
+                                })
+                            }
                             Err(failure) => return Err(failure),
                         };
                         if status.is_success() {
                             return serde_json::from_slice(&bytes)
+                                .map(|value| (value, started))
                                 .map_err(|_| "invalid-response".into());
                         }
                         let value: serde_json::Value =
@@ -153,6 +223,7 @@ pub(crate) async fn json<T: DeserializeOwned>(
                         return Err(Failure {
                             code,
                             session_denied,
+                            clock_offset,
                             rate_limited: false,
                         });
                     }
@@ -172,13 +243,18 @@ pub(crate) async fn json<T: DeserializeOwned>(
     })
     .await
     .unwrap_or_else(|_| {
-        Err(Failure::from(
-            if terminal_headers.load(std::sync::atomic::Ordering::Relaxed) {
-                "adapter-refused"
-            } else {
-                "network-timeout"
+        Err(
+            match *terminal_headers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+            {
+                Some(clock_offset) => Failure {
+                    clock_offset,
+                    .."adapter-refused".into()
+                },
+                None => "network-timeout".into(),
             },
-        ))
+        )
     })
     .map_err(|failure| Failure {
         rate_limited: rate_limited.load(std::sync::atomic::Ordering::Relaxed),

@@ -478,6 +478,64 @@ it("checks the exact project capacity before saving and reclaims a removed filin
   }
 });
 
+it("drops filings of archived or deleted chats when the Solo record is full", async () => {
+  const f = fixture();
+  const value: Groups = {
+    type: "groups",
+    id: "me",
+    groups: [{ id: "work", name: "Work", defaultTemplateId: "" }],
+    assignments: {},
+  };
+  const record = () => ({
+    version: 1 as const,
+    community,
+    deleted: false,
+    value,
+  });
+  let id = "";
+  for (let i = 1; i < 1000; i++) {
+    id = `00000000-0000-4000-8000-${i.toString(16).padStart(12, "0")}`;
+    value.assignments[id] = "work";
+    if (!kitRecordFits(record())) {
+      delete value.assignments[id];
+      break;
+    }
+  }
+  f.install(value);
+  const [first, second, kept] = Object.keys(value.assignments);
+  if (!first || !second || !kept) throw new Error("Missing filing");
+  let known = false;
+  const controller = new AbortController();
+  // The chat being filed is reported gone too, as a brand-new chat can be.
+  const solo = createSoloPreferences(
+    f.session.channelKit,
+    controller.signal,
+    () => (known ? [first, second, id] : []),
+  );
+  try {
+    await solo.queries.ensure();
+    await expect(solo.queries.assign(id, "work")).rejects.toThrow(
+      "Solo workspace storage is full",
+    );
+    expect(f.publish).not.toHaveBeenCalled();
+    known = true;
+    await solo.queries.assign(id, "work");
+    const assignments = solo.queries.snapshot().data?.assignments;
+    expect(assignments?.[id]).toBe("work");
+    expect(assignments?.[first]).toBeUndefined();
+    expect(assignments?.[second]).toBeUndefined();
+    expect(assignments?.[kept]).toBe("work");
+    // With room again, a save leaves the remaining filings alone.
+    known = false;
+    await solo.queries.assign(first, "work");
+    expect(solo.queries.snapshot().data?.assignments?.[first]).toBe("work");
+  } finally {
+    controller.abort();
+    solo.dispose();
+    f.dispose();
+  }
+});
+
 const agent = "a".repeat(64);
 const settings = async (projectId: string): Promise<Template> => ({
   type: "template",

@@ -1300,10 +1300,19 @@ than retry; they never enter the durable outbox or trigger a reconnect.
 ### Addressed reaction activity
 
 `session.inboxFeed.reactions` reads kind 7 with `#p: [viewer]` and a limit of 50.
+A relay that indexes a reaction's target author for `#p` also returns untagged
+reactions to the viewer's messages. Live reactions are candidates when they carry no
+`p` tag or a `p` tag for the viewer; a reaction whose `p` tags name only others costs
+no read. Candidates whose target is not the viewer's message are not retained, and
+up to 1,000 such verified targets are remembered so their later reactions cost no
+read; messages received in channel batches are remembered the same way.
+Unreadable targets are never remembered, and candidates on the viewer's messages
+are retained while their channel is unavailable.
 It retains at most 100 candidates, resolves exact message IDs, and reads paginated
 edit/deletion closure using `(until, before_id)`. Closure reads cap at 2,000 events
 or 4 MiB; combined evidence caps at 8 MiB. Incomplete or inaccessible overlay
 settlement fails closed. This evidence stays outside the unread projection.
 Live/replay provenance is carried through target hydration; only deduplicated eligible
-live events emit an arrival to the shell. App and MCP reaction writers now include
-the target author's `p` tag. Legacy unaddressed reactions are not searched.
+live events emit an arrival to the shell. App and MCP reaction writers include
+the target author's `p` tag. Older untagged reactions appear in history only after
+the relay indexes them.

@@ -525,7 +525,7 @@ and are asked to sign in again in Buzz.
   unread until you open the whole DM, which its row then does.
   **Reactions** shows recent reactions to your messages, with shared emoji grouped together per message and each person’s remaining emoji in their own row; selecting it turns Unread off.
   Reactions have no unread state or badge count. Clicking one opens your exact message in its conversation or thread.
-  New reactions from updated clients appear; older unaddressed reactions are not backfilled.
+  Reactions appear even when the reacting app doesn't name you as the recipient; older ones like that appear only once your relay has indexed them.
   While Buzz is visible, a live reaction briefly replaces the Activity bell with its emoji for three seconds.
   Further reactions during that hold do not change the icon; history loading does not trigger it.
 - **New messages** marks the first known unread incoming channel message when

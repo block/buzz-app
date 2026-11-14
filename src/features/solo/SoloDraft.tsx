@@ -16,6 +16,7 @@ import {
   loadChatSetup,
   parseChatSetup,
   type ChatSetup,
+  WorkspaceUnavailable,
 } from "./workspace";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
@@ -243,6 +244,15 @@ export function SoloDraft({
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The lifetime Chat settings opened with.
   const [settingsLifetime, setSettingsLifetime] = useState<number>();
+  // The workspace, canvas and name it opened with. All can change under the
+  // open dialog, from another window or project entry; following the first
+  // two would reload the dialog over its unsaved edits, and following the
+  // name would mark a dialog nobody edited as dirty. Nothing in this window
+  // changes them while it is open: its Save closes it in the same render.
+  // Closing checks the current pick, as a deletion found here does.
+  const [settingsProject, setSettingsProject] = useState<string>();
+  const [settingsCanvas, setSettingsCanvas] = useState<string>();
+  const [settingsName, setSettingsName] = useState<string>();
   // New chats tag their agent in the draft: the one the route names, else the
   // default.
   const defaultAgent = useDefaultAgent(session, scope, agent);
@@ -342,6 +352,28 @@ export function SoloDraft({
     setup.catch(() => {});
     workspace.current = { id: selectedProject, setup };
   });
+  // A workspace deleted since it was picked, here or on another device, leaves
+  // the draft, so a start neither files into it nor uses its defaults. While
+  // Chat settings is open this waits: dropping would reload the dialog over its
+  // unsaved edits and hide its own "deleted" error. Closing it checks again.
+  useEffect(() => {
+    const store = session.soloPreferences;
+    if (!store || !selectedProject || settingsOpen) return;
+    const drop = () => {
+      const preferences = store.snapshot();
+      if (
+        preferences.status !== "ready" ||
+        preferences.data?.sections.some(({ id }) => id === selectedProject)
+      )
+        return;
+      setSelectedProject("");
+      writeView(scope, `${draftKey}:new-project`, "");
+    };
+    drop();
+    return typeof store.subscribe === "function"
+      ? store.subscribe(drop)
+      : undefined;
+  }, [session, scope, draftKey, selectedProject, settingsOpen]);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -404,7 +436,18 @@ export function SoloDraft({
         setup =
           kit.status === "ready" && loaded?.revision === defaultsRevision(kit)
             ? loaded
-            : await loadChatSetup(session, project);
+            : await loadChatSetup(session, project).catch((reason: unknown) => {
+                // The way out is this composer's workspace control. A deleted
+                // workspace has already left the draft by now.
+                if (!(reason instanceof WorkspaceUnavailable)) throw reason;
+                throw new Error(
+                  `${reason.message} ${
+                    reason.deleted
+                      ? "Send again to start without it, or choose another."
+                      : "To start without one, choose No workspace."
+                  }`,
+                );
+              });
       }
       if (!mounted.current) return;
       if (canvas !== undefined)
@@ -850,6 +893,9 @@ export function SoloDraft({
           disabled={busy}
           onClick={() => {
             setSettingsLifetime(draftLifetime(scope, draftSettings));
+            setSettingsProject(selectedProject);
+            setSettingsCanvas(draftCanvas);
+            setSettingsName(draftSettings.name);
             setSettingsOpen(true);
           }}
         />
@@ -860,12 +906,21 @@ export function SoloDraft({
         <DraftSettings
           finalFocus={settingsTrigger}
           session={session}
-          projectId={selectedProject || undefined}
-          canvas={draftCanvas}
-          name={draftSettings.name}
+          projectId={settingsProject || undefined}
+          canvas={settingsCanvas}
+          name={settingsName}
           ttlSeconds={settingsLifetime}
           close={() => setSettingsOpen(false)}
           save={(canvas, ttlSeconds, name) => {
+            // These settings were loaded from and edited for the workspace
+            // the dialog opened with. A pick moved under it since goes back
+            // with them, so Save never leaves one workspace's pick with
+            // another's instructions and folders. Closing then drops a
+            // workspace deleted since.
+            const project = settingsProject ?? "";
+            const projectKey = `${draftKey}:new-project`;
+            const saved = readView<unknown>(scope, projectKey, null);
+            const moved = (saved ?? projectId ?? "") !== project;
             // A lifetime changed here, or chosen before, stays chosen; an
             // unchanged one keeps following the default.
             const chosen =
@@ -878,10 +933,21 @@ export function SoloDraft({
               ...(chosen ? { lifetimeChosen: true as const } : {}),
               name: name ?? "",
             };
-            if (!writeView(scope, `${draftKey}:settings`, next))
+            // The pick and the settings are two writes, and either can fail.
+            // The pick goes first: these settings are never saved beside
+            // another workspace. If they then can't be saved, the pick found
+            // here goes back beside the settings saved for it, which were
+            // not touched.
+            let stored = !moved || writeView(scope, projectKey, project);
+            if (stored && !writeView(scope, `${draftKey}:settings`, next)) {
+              stored = false;
+              if (moved) writeView(scope, projectKey, saved);
+            }
+            if (!stored)
               throw new Error(
                 "Settings couldn’t be saved on this device. Try again.",
               );
+            setSelectedProject(project);
             setDraftSettings(next);
           }}
         />

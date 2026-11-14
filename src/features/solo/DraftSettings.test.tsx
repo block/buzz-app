@@ -167,3 +167,35 @@ it("closes at once while settings load and after their load fails", async () => 
   expect(close).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("alertdialog")).toBeNull();
 });
+
+it.each([
+  {
+    writable: false,
+    message: "Workspaces can’t be read right now. Try again.",
+  },
+  { writable: true, message: "This workspace was deleted." },
+])(
+  "shows why the workspace can't load, without the composer's way out behind the dialog (writable: $writable)",
+  async ({ writable, message }) => {
+    const soloPreferences = {
+      writable,
+      refresh: async () => {},
+      snapshot: () => ({
+        status: "ready",
+        data: { sections: [], assignments: {} },
+      }),
+    };
+    render(
+      <DraftSettings
+        session={{ soloPreferences } as unknown as RelaySession}
+        projectId="work"
+        close={vi.fn()}
+        save={vi.fn()}
+      />,
+    );
+    expect((await screen.findByRole("alert")).textContent).toBe(message);
+    expect(
+      screen.getByRole("button", { name: "Retry settings" }),
+    ).toBeVisible();
+  },
+);

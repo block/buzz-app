@@ -1,4 +1,5 @@
 import { useSoloRowActivation } from "./useSoloRowActivation";
+import { useIsPresent } from "motion/react";
 import type { ComposeWorkspaces } from "./WorkspaceComposition";
 import { useSoloNavigation } from "./solo-navigation-react";
 import { soloNavigationFor } from "./solo-navigation";
@@ -175,7 +176,7 @@ export function SoloInventory({
         channelId,
         agent,
         trigger: document.querySelector<HTMLElement>(
-          `[data-solo-channel-id="${CSS.escape(channelId)}"]`,
+          `[data-solo-channel-id="${CSS.escape(channelId)}"]:not([inert] *)`,
         ),
         // A Solo chat is one conversation, so its transcript is known.
         transcript: {},
@@ -254,7 +255,7 @@ export function SoloInventory({
     JSON.stringify(conversations.map((item) => item.id)),
   );
   const composing = !!regions.regions.find(
-    (region) => region.source && !region.hidden,
+    (region) => region.source && !region.hidden && region.reason !== "disabled",
   )?.source?.composeWorkspaces;
   const empty =
     list.status === "ready" &&
@@ -347,6 +348,7 @@ export function SoloInventory({
       )}
       <SoloWorkspaces
         sidebarRows={rowEntries}
+        dormantAssignments={regions.managed}
         compose={compose}
         renderChatMenu={renderChatMenu}
         navigator={navigator}
@@ -456,9 +458,10 @@ function SoloConversationRow({
   | "onOpenAgentActivity"
 >) {
   const selectRef = useRef<HTMLButtonElement>(null);
+  const present = useIsPresent();
   useLayoutEffect(() => {
     const button = selectRef.current;
-    if (!button) return;
+    if (!button || !present) return;
     const document = button.ownerDocument;
     const sidebar = button.closest("nav");
     const panel = button.closest<HTMLElement>("[data-solo-project]");
@@ -466,7 +469,7 @@ function SoloConversationRow({
       if (document.activeElement !== button) return;
       const rows = [
         ...(panel?.querySelectorAll<HTMLElement>(
-          "button[data-solo-channel-id]",
+          "button[data-solo-channel-id]:not([inert] *)",
         ) ?? []),
       ];
       const index = rows.indexOf(button);
@@ -486,7 +489,7 @@ function SoloConversationRow({
           return;
         const find = (id: string) =>
           sidebar.querySelector<HTMLElement>(
-            `button[data-solo-channel-id="${CSS.escape(id)}"]`,
+            `button[data-solo-channel-id="${CSS.escape(id)}"]:not([inert] *)`,
           );
         const candidates = [
           find(id),
@@ -503,7 +506,7 @@ function SoloConversationRow({
         }
       });
     };
-  }, [id]);
+  }, [id, present]);
   const activation = useSoloRowActivation(
     navigation,
     pendingClick,

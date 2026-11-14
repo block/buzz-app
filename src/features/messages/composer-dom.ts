@@ -148,6 +148,8 @@ export type ComposerInputElement = HTMLDivElement & {
   ): boolean;
   toggleFormat(format: ComposerFormat): void;
   insertLineBreak(): boolean;
+  /** Indents (or with `outdent`, lifts) the list item at the caret. */
+  indentListItem(outdent: boolean): boolean;
   editLink(): ComposerLinkEdit | null;
   /** Append this app's copied `text/html` as a quote and leave the caret on a
    * new line after it; false when the draft cannot take it. */

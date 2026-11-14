@@ -34,14 +34,19 @@ import {
   keypair,
   message,
   metadata,
+  profile,
   roster,
   signed,
 } from "../relay/testing";
-import { composerDOMFixture } from "../messages/composer-testing";
+import { composerDOMFixture, typedDraft } from "../messages/composer-testing";
 import { readView, writeView } from "../../shared/view-state";
+import { relayPartition } from "../relay/partition";
+import { SOLO_LABEL } from "../solo/labels";
+import type { LocalWork, LocalWorkState } from "../agents/local-activity";
 
 // jsdom has no measured viewport. Keep real rows/composer/services, replacing
 // only virtualization geometry; browser acceptance covers actual layout.
+const virtua = vi.hoisted(() => ({ scrollToIndex: vi.fn() }));
 vi.mock("virtua", async () => {
   const { forwardRef, useImperativeHandle } = await import("react");
   return {
@@ -54,13 +59,18 @@ vi.mock("virtua", async () => {
         scrollSize: 600,
         findItemIndex: () => 0,
         getItemOffset: () => 0,
-        scrollToIndex() {},
+        scrollToIndex: virtua.scrollToIndex,
         scrollTo() {},
       }));
-      return <div>{children}</div>;
+      return <div data-virtual-list="">{children}</div>;
     }),
   };
 });
+// A Solo chat's saved model choices live in IndexedDB, which jsdom lacks.
+vi.mock(
+  "../messages/solo-model-picks-storage",
+  () => import("../messages/solo-model-picks-storage-testing"),
+);
 composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
@@ -70,8 +80,16 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  Reflect.deleteProperty(navigator, "locks");
 });
-function fixture(upload?: () => Promise<UploadedAttachment>) {
+function fixture(
+  upload?: () => Promise<UploadedAttachment>,
+  {
+    privateRoom = false,
+    dm = [],
+    solo = false,
+  }: { privateRoom?: boolean; dm?: readonly string[]; solo?: boolean } = {},
+) {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
   vi.stubGlobal(
@@ -85,10 +103,71 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
   HTMLElement.prototype.scrollIntoView = vi.fn();
   const viewer = keypair(),
     other = keypair(),
-    relayKey = keypair();
+    relayKey = keypair(),
+    agent = keypair();
   const root = message(other, "room", "Discuss launch", 20);
+  // The viewer's own Solo chat with one agent, whose local runs the test
+  // reports; the follow-up queue's window lock needs `navigator.locks`.
+  let work: readonly LocalWork[] = [];
+  const workListeners = new Set<() => void>();
+  const inventory = {
+    status: "ready" as const,
+    agents: [
+      {
+        pubkey: agent.pubkey,
+        name: "Honey",
+        relayUrl: "https://relay.test",
+        owner: viewer.pubkey,
+      },
+    ],
+  };
+  if (solo)
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: {
+        request: async (
+          _name: string,
+          options: unknown,
+          callback?: (lock: unknown) => unknown,
+        ) => (callback ? callback({}) : (options as () => unknown)()),
+      },
+    });
+  // A DM with these people and a thread to reply in. Discovery orders
+  // participants by key, so names follow key order: the page lists them so.
+  const people = dm
+    .map(() => keypair())
+    .sort((a, b) => (a.pubkey < b.pubkey ? -1 : 1))
+    .map((key, index) => ({ key, name: dm[index] }));
+  const dmRoot = message(people[0]?.key ?? other, "dm", "Lunch plans?", 20);
   const events: RelayEvent[] = [
-    metadata(relayKey, "room", "Design", 10, [["t", "stream"]]),
+    ...(solo
+      ? [
+          metadata(relayKey, "solo", "Launch chat", 10, [
+            ["t", "stream"],
+            ["t", SOLO_LABEL],
+            ["P", viewer.pubkey],
+          ]),
+          roster(relayKey, "solo", [viewer.pubkey, agent.pubkey], 10),
+          profile(agent, { name: "Honey", is_agent: true }),
+        ]
+      : []),
+    ...(people.length
+      ? [
+          metadata(relayKey, "dm", "dm", 10, [["t", "dm"]]),
+          roster(
+            relayKey,
+            "dm",
+            [viewer.pubkey, ...people.map((person) => person.key.pubkey)],
+            10,
+          ),
+          ...people.map((person) => profile(person.key, { name: person.name })),
+          dmRoot,
+        ]
+      : []),
+    metadata(relayKey, "room", "Design", 10, [
+      ["t", "stream"],
+      ...(privateRoom ? [["private"]] : []),
+    ]),
     roster(relayKey, "room", [viewer.pubkey, other.pubkey], 10),
     metadata(relayKey, "other", "Planning", 10, [["t", "stream"]]),
     roster(relayKey, "other", [viewer.pubkey, other.pubkey], 10),
@@ -204,7 +283,25 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
         return { update() {}, retry() {}, dispose() {} };
       },
     },
-    { outboxStorage: { load: () => [], save: () => {} } },
+    {
+      outboxStorage: { load: () => [], save: () => {} },
+      ...(solo
+        ? {
+            agentChoices: {
+              snapshot: () => inventory,
+              subscribe: () => () => {},
+              refresh: async () => {},
+            },
+            localAgents: {
+              work: () => work,
+              subscribeWork(listener: () => void) {
+                workListeners.add(listener);
+                return () => workListeners.delete(listener);
+              },
+            },
+          }
+        : {}),
+    },
   );
   owners.push(owner);
   emit(events);
@@ -319,7 +416,25 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
     },
     panels,
     host: { panels, relay, navigation: { open } as unknown as Navigation },
+    agent,
+    /** Honey's run on an earlier Solo message, as the app's local agents report it. */
+    agentWork: (state: LocalWorkState) => {
+      work = [
+        {
+          scope: relayPartition("https://relay.test", viewer.pubkey),
+          agent: agent.pubkey,
+          channelId: "solo",
+          messageId: "previous",
+          threadRootId: "",
+          soloChat: true,
+          state,
+          startedAt: 1,
+        },
+      ];
+      for (const listener of workListeners) listener();
+    },
     root,
+    dmRoot,
     published,
     publish,
     open,
@@ -355,7 +470,7 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
 const draftButton = (text: string) =>
   screen.getByRole("button", { name: new RegExp(`Continue draft.*${text}`) });
 
-it("edits and sends from the real channel composer, then focuses a surviving row without opening it", async () => {
+it("sends from the real channel composer and stays on the conversation, then closes to a surviving row", async () => {
   const h = fixture();
   writeView(h.session.scope, "draft:room", "Ready for launch");
   writeView(h.session.scope, "draft:other", "Next draft");
@@ -374,22 +489,36 @@ it("edits and sends from the real channel composer, then focuses a surviving row
   fireEvent.click(
     within(preview).getByRole("button", { name: "Send message" }),
   );
+  await within(preview).findByText("Sent to #Design.");
+  const sent = h.published.find(
+    (event) => event.content === "Ready for launch",
+  );
   await waitFor(() =>
     expect(
-      screen.queryByRole("region", { name: "Draft for #Design" }),
-    ).toBeNull(),
+      preview.querySelector(`[data-message-id="${sent?.id}"]`),
+    ).toBeInTheDocument(),
   );
-  expect(
-    h.published.some((event) => event.content === "Ready for launch"),
-  ).toBe(true);
   expect(mentionDraft(readView(h.session.scope, "draft:room", "")).text).toBe(
     "",
   );
+  expect(editor).toHaveTextContent("");
+  expect(editor).toHaveFocus();
+  // The sent draft leaves the list; it does not linger as an empty one.
+  expect(
+    screen.queryByRole("button", { name: /Continue draft in #Design/ }),
+  ).toBeNull();
+  expect(
+    screen.getByRole("button", { name: /Continue draft.*Next draft/ }),
+  ).not.toHaveAttribute("aria-current");
+  expect(h.open).not.toHaveBeenCalled();
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(
+    screen.queryByRole("region", { name: "Draft for #Design" }),
+  ).toBeNull();
   expect(draftButton("Next draft")).toHaveFocus();
-  expect(screen.getByRole("status")).toHaveTextContent("Sent to #Design");
 });
 
-it("opens a verified thread draft with the real reply composer and origin action", async () => {
+it("opens a verified thread draft with the real reply composer, its channel link and origin action, and shows the sent reply", async () => {
   const h = fixture();
   const key = `draft:room:thread:${h.root.id}`;
   writeView(h.session.scope, key, "Thread draft");
@@ -410,19 +539,92 @@ it("opens a verified thread draft with the real reply composer and origin action
       messageId: h.root.id,
     }),
   );
+  expect(h.open.mock.lastCall?.[0]).not.toHaveProperty("context");
+  // Like other threads, it names its conversation; the name opens it there.
+  const thread = within(region).getByRole("complementary", { name: "Thread" });
+  const channel = within(thread).getByRole("button", { name: "#Design" });
+  expect(channel.closest("p")).toHaveTextContent("In #Design");
   fireEvent.click(within(region).getByRole("button", { name: "Send message" }));
+  await within(region).findByText("Sent to #Design.");
+  const reply = h.published.find((event) => event.content === "Thread draft");
+  expect(reply?.tags).toContainEqual(["e", h.root.id, "", "reply"]);
   await waitFor(() =>
-    expect(h.published.some((event) => event.content === "Thread draft")).toBe(
-      true,
-    ),
+    expect(
+      thread.querySelector(`[data-message-id="${reply?.id}"]`),
+    ).toBeInTheDocument(),
   );
+  expect(editor).toHaveTextContent("");
+  expect(editor).toHaveFocus();
+  h.open.mockClear();
+  fireEvent.click(within(thread).getByRole("button", { name: "#Design" }));
+  expect(h.open).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: "conversation",
+      channelId: "room",
+      threadRootId: h.root.id,
+      messageId: h.root.id,
+      context: "channel",
+    }),
+  );
+  expect(region).toBeInTheDocument();
+  // No row is left to return to.
+  fireEvent.keyDown(editor, { key: "Escape" });
   expect(
-    h.published.find((event) => event.content === "Thread draft")?.tags,
-  ).toContainEqual(["e", h.root.id, "", "reply"]);
+    screen.queryByRole("region", { name: "Draft for #Design" }),
+  ).toBeNull();
+  expect(screen.getByRole("searchbox")).toHaveFocus();
+});
+
+it("names a private channel's thread as thread tabs do", async () => {
+  const h = fixture(undefined, { privateRoom: true });
+  writeView(h.session.scope, `draft:room:thread:${h.root.id}`, "Quiet reply");
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue draft.*Quiet reply/ }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for Design" });
+  const thread = await within(region).findByRole("complementary", {
+    name: "Thread",
+  });
+  expect(
+    within(thread).getByRole("button", { name: "#Design" }).closest("p"),
+  ).toHaveTextContent("In #Design");
+});
+
+it("names a DM thread's people in its header and link as thread tabs do, while its row keeps the page's names", async () => {
+  const h = fixture(undefined, { dm: ["Zed", "Amy", "Mia", "Bob"] });
+  writeView(h.session.scope, `draft:dm:thread:${h.dmRoot.id}`, "Noon works");
+  h.render();
+  const row = await screen.findByRole("button", {
+    name: "Continue draft in Zed, Amy, Mia +1, thread: Noon works",
+  });
+  fireEvent.click(row);
+  const region = await screen.findByRole("region", {
+    name: "Draft for Amy, Bob, Mia +1",
+  });
+  expect(within(region).getByText("Amy, Bob, Mia +1 · Thread")).toBeVisible();
+  const thread = await within(region).findByRole("complementary", {
+    name: "Thread",
+  });
+  const link = await within(thread).findByRole("button", {
+    name: "DM · Amy, Bob, Mia +1",
+  });
+  expect(link.closest("p")).toHaveTextContent("In DM · Amy, Bob, Mia +1");
+  expect(row).toHaveAccessibleName(
+    "Continue draft in Zed, Amy, Mia +1, thread: Noon works",
+  );
+  fireEvent.click(link);
+  expect(h.open).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      channelId: "dm",
+      threadRootId: h.dmRoot.id,
+      context: "channel",
+    }),
+  );
 });
 
 it.each([false, true])(
-  "keeps a rejected send with Retry and closes after retry succeeds (thread=%s)",
+  "keeps a rejected send with Retry and stays open once retry succeeds (thread=%s)",
   async (thread) => {
     const h = fixture();
     h.reject();
@@ -454,6 +656,7 @@ it.each([false, true])(
     const retry = await within(region).findByRole("button", { name: "Retry" });
     expect(region).toBeInTheDocument();
     expect(region).toHaveTextContent("Keep this draft");
+    expect(within(region).queryByText("Sent to #Design.")).toBeNull();
     expect(
       within(region).getByRole("button", { name: "Close draft preview" }),
     ).toBeEnabled();
@@ -462,16 +665,365 @@ it.each([false, true])(
     ).toBeEnabled();
     h.accept();
     fireEvent.click(retry);
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("region", { name: "Draft for #Design" }),
-      ).toBeNull(),
-    );
+    await within(region).findByText("Sent to #Design.");
+    expect(region).toBeInTheDocument();
     expect(h.published).toHaveLength(1);
   },
 );
 
-it("does not let a late send close a newer selected draft", async () => {
+it.each([false, true])(
+  "retires a delivered draft once its failed cleanup is retried (thread=%s)",
+  async (thread) => {
+    const h = fixture();
+    const key = thread ? `draft:room:thread:${h.root.id}` : "draft:room";
+    writeView(h.session.scope, key, "Cleanup later");
+    writeView(h.session.scope, "draft:other", "Other draft");
+    h.render();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /Continue draft.*Cleanup later/,
+      }),
+    );
+    const region = screen.getByRole("region", { name: "Draft for #Design" });
+    const editor = await within(region).findByRole("textbox");
+    await waitFor(() => expect(editor).toHaveTextContent("Cleanup later"));
+    const stored = `buzz-view.v1:${JSON.stringify([h.session.scope, key])}`;
+    const setItem = Storage.prototype.setItem;
+    const fail = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, name, value) {
+        if (name === stored) throw Error("no space");
+        setItem.call(this, name, value);
+      });
+    try {
+      fireEvent.click(
+        within(region).getByRole("button", { name: "Send message" }),
+      );
+      await within(region).findByText("Sent to #Design.");
+      // Delivered, but still saved: the draft keeps its row until cleanup.
+      await within(region).findByRole("button", {
+        name: "Retry draft cleanup",
+      });
+      expect(draftButton("Cleanup later")).toHaveAttribute(
+        "aria-current",
+        "true",
+      );
+    } finally {
+      fail.mockRestore();
+    }
+    fireEvent.click(
+      within(region).getByRole("button", { name: "Retry draft cleanup" }),
+    );
+    expect(mentionDraft(readView(h.session.scope, key, "")).text).toBe("");
+    expect(
+      screen.queryByRole("button", { name: /Continue draft.*Cleanup later/ }),
+    ).toBeNull();
+    expect(screen.queryByText("Empty draft")).toBeNull();
+    expect(region).toBeInTheDocument();
+    fireEvent.keyDown(editor, { key: "Escape" });
+    expect(draftButton("Other draft")).toHaveFocus();
+  },
+);
+
+it("keeps the row of a draft written again whose background send is cleaned up before it lands", async () => {
+  let release!: (value: UploadedAttachment) => void;
+  const gate = new Promise<UploadedAttachment>((resolve) => {
+    release = resolve;
+  });
+  const upload = vi.fn(() => gate);
+  const h = fixture(upload);
+  writeView(h.session.scope, "draft:room", "First");
+  writeView(h.session.scope, "draft:other", "Other draft");
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue draft.*First/ }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for #Design" });
+  const editor = (await within(region).findByRole(
+    "textbox",
+  )) as ComposerInputElement;
+  fireEvent.click(within(region).getByRole("button", { name: "Send message" }));
+  await within(region).findByText("Sent to #Design.");
+  expect(mentionDraft(readView(h.session.scope, "draft:room", "")).text).toBe(
+    "",
+  );
+  expect(
+    screen.queryByRole("button", { name: /Continue draft in #Design/ }),
+  ).toBeNull();
+  await act(async () => h.session.channels.refreshList?.());
+  act(() => {
+    editor.value = "Again, with a file";
+    fireEvent.input(editor);
+  });
+  expect(draftButton("Again, with a file")).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  const store = attachmentDraft(
+    h.session,
+    `${h.session.scope}:draft:room`,
+    "room",
+  );
+  act(() => {
+    store.add([new File(["checklist"], "notes.txt", { type: "text/plain" })]);
+  });
+  await waitFor(() => expect(upload).toHaveBeenCalled());
+  try {
+    fireEvent.click(
+      within(region).getByRole("button", { name: "Send message" }),
+    );
+    await waitFor(() =>
+      expect(
+        mentionDraft(readView(h.session.scope, "draft:room", "")).text,
+      ).toBe(""),
+    );
+    // Cleaned up before its own receipt, the new draft still holds its place:
+    // the earlier receipt does not retire it.
+    expect(draftButton("Empty draft")).toHaveAttribute("aria-current", "true");
+  } finally {
+    await act(async () =>
+      release({
+        name: "notes.txt",
+        url: `https://relay.test/media/${"a".repeat(64)}.txt`,
+        type: "text/plain",
+        size: 9,
+        sha256: "a".repeat(64),
+      }),
+    );
+  }
+  await waitFor(() => expect(h.published).toHaveLength(2));
+  await waitFor(() => expect(screen.queryByText("Empty draft")).toBeNull());
+  expect(
+    screen.queryByRole("button", { name: /Continue draft in #Design/ }),
+  ).toBeNull();
+});
+
+it("keeps the row of a draft written before the last receipt whose background send is cleaned up before it lands", async () => {
+  let release!: (value: UploadedAttachment) => void;
+  const gate = new Promise<UploadedAttachment>((resolve) => {
+    release = resolve;
+  });
+  const upload = vi.fn(() => gate);
+  const h = fixture(upload);
+  const deliver = h.hold();
+  writeView(h.session.scope, "draft:room", "First");
+  writeView(h.session.scope, "draft:other", "Other draft");
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue draft.*First/ }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for #Design" });
+  const editor = (await within(region).findByRole(
+    "textbox",
+  )) as ComposerInputElement;
+  try {
+    fireEvent.click(
+      within(region).getByRole("button", { name: "Send message" }),
+    );
+    await waitFor(() => expect(h.publish).toHaveBeenCalled());
+    // Written while the first send is still out, the new draft owns the row
+    // when that send's receipt lands.
+    act(() => {
+      editor.value = "Again, with a file";
+      fireEvent.input(editor);
+    });
+  } finally {
+    await act(async () => deliver());
+  }
+  await within(region).findByText("Sent to #Design.");
+  expect(draftButton("Again, with a file")).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  await act(async () => h.session.channels.refreshList?.());
+  const store = attachmentDraft(
+    h.session,
+    `${h.session.scope}:draft:room`,
+    "room",
+  );
+  act(() => {
+    store.add([new File(["checklist"], "notes.txt", { type: "text/plain" })]);
+  });
+  await waitFor(() => expect(upload).toHaveBeenCalled());
+  try {
+    fireEvent.click(
+      within(region).getByRole("button", { name: "Send message" }),
+    );
+    await waitFor(() =>
+      expect(
+        mentionDraft(readView(h.session.scope, "draft:room", "")).text,
+      ).toBe(""),
+    );
+    // Its cleanup precedes its own publication. The earlier receipt, never
+    // recorded while this draft was listed, does not retire it now.
+    expect(draftButton("Empty draft")).toHaveAttribute("aria-current", "true");
+    expect(h.published).toHaveLength(1);
+  } finally {
+    await act(async () =>
+      release({
+        name: "notes.txt",
+        url: `https://relay.test/media/${"a".repeat(64)}.txt`,
+        type: "text/plain",
+        size: 9,
+        sha256: "a".repeat(64),
+      }),
+    );
+  }
+  await waitFor(() => expect(h.published).toHaveLength(2));
+  await waitFor(() => expect(screen.queryByText("Empty draft")).toBeNull());
+  expect(
+    screen.queryByRole("button", { name: /Continue draft in #Design/ }),
+  ).toBeNull();
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(draftButton("Other draft")).toHaveFocus();
+});
+
+it("retires a background attachment send whose failed cleanup is retried after it lands", async () => {
+  let release!: (value: UploadedAttachment) => void;
+  const gate = new Promise<UploadedAttachment>((resolve) => {
+    release = resolve;
+  });
+  const upload = vi.fn(() => gate);
+  const h = fixture(upload);
+  writeView(h.session.scope, "draft:room", "Attached later");
+  writeView(h.session.scope, "draft:other", "Other draft");
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: /Continue draft.*Attached later/,
+    }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for #Design" });
+  const editor = await within(region).findByRole("textbox");
+  await act(async () => h.session.channels.refreshList?.());
+  const store = attachmentDraft(
+    h.session,
+    `${h.session.scope}:draft:room`,
+    "room",
+  );
+  act(() => {
+    store.add([new File(["checklist"], "notes.txt", { type: "text/plain" })]);
+  });
+  await waitFor(() => expect(upload).toHaveBeenCalled());
+  const stored = `buzz-view.v1:${JSON.stringify([h.session.scope, "draft:room"])}`;
+  const setItem = Storage.prototype.setItem;
+  const fail = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, name, value) {
+      if (name === stored) throw Error("no space");
+      setItem.call(this, name, value);
+    });
+  try {
+    fireEvent.click(
+      within(region).getByRole("button", { name: "Send message" }),
+    );
+    // Cleaned up before publication, and that cleanup failed.
+    await within(region).findByRole("button", { name: "Retry draft cleanup" });
+    expect(h.published).toHaveLength(0);
+    await act(async () =>
+      release({
+        name: "notes.txt",
+        url: `https://relay.test/media/${"a".repeat(64)}.txt`,
+        type: "text/plain",
+        size: 9,
+        sha256: "a".repeat(64),
+      }),
+    );
+    await within(region).findByText("Sent to #Design.");
+    // Delivered, but still saved: the draft keeps its row until cleanup.
+    expect(draftButton("Attached later")).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+  } finally {
+    fail.mockRestore();
+  }
+  fireEvent.click(
+    within(region).getByRole("button", { name: "Retry draft cleanup" }),
+  );
+  expect(mentionDraft(readView(h.session.scope, "draft:room", "")).text).toBe(
+    "",
+  );
+  expect(
+    screen.queryByRole("button", { name: /Continue draft.*Attached later/ }),
+  ).toBeNull();
+  expect(screen.queryByText("Empty draft")).toBeNull();
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(draftButton("Other draft")).toHaveFocus();
+});
+
+it("retires a queued Solo send whose failed cleanup is retried after the queue publishes it", async () => {
+  localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+  const h = fixture(undefined, { solo: true });
+  h.agentWork("working");
+  writeView(
+    h.session.scope,
+    "draft:solo",
+    typedDraft(
+      mentionDraft({
+        text: "@Honey Follow up",
+        recipients: [
+          { pubkey: h.agent.pubkey, name: "Honey", start: 0, end: 6 },
+        ],
+      }),
+    ),
+  );
+  writeView(h.session.scope, "draft:other", "Other draft");
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue draft.*Follow up/ }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for Launch chat" });
+  const editor = await within(region).findByRole("textbox");
+  await waitFor(() => expect(editor).toHaveTextContent("Follow up"));
+  const stored = `buzz-view.v1:${JSON.stringify([h.session.scope, "draft:solo"])}`;
+  const setItem = Storage.prototype.setItem;
+  const fail = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, name, value) {
+      if (name === stored) throw Error("no space");
+      setItem.call(this, name, value);
+    });
+  try {
+    fireEvent.click(
+      within(region).getByRole("button", { name: "Send message" }),
+    );
+    // Queued behind Honey's current run, with its cleared draft unsaved.
+    await within(region).findByRole("region", { name: "Queued follow-ups" });
+    await within(region).findByRole("button", { name: "Retry draft cleanup" });
+    expect(h.published).toHaveLength(0);
+    // The queue reports the send it published once its delivery record is
+    // written; the relay answers after that, as a real one does.
+    const release = h.hold();
+    act(() => h.agentWork("done"));
+    await waitFor(() =>
+      expect(
+        within(region).queryByRole("region", { name: "Queued follow-ups" }),
+      ).toBeNull(),
+    );
+    await act(async () => release());
+    await within(region).findByText("Sent to Launch chat.");
+    expect(h.published).toHaveLength(1);
+    // Delivered, but still saved: the draft keeps its row until cleanup.
+    expect(draftButton("Follow up")).toHaveAttribute("aria-current", "true");
+  } finally {
+    fail.mockRestore();
+  }
+  fireEvent.click(
+    within(region).getByRole("button", { name: "Retry draft cleanup" }),
+  );
+  expect(mentionDraft(readView(h.session.scope, "draft:solo", "")).text).toBe(
+    "",
+  );
+  expect(
+    screen.queryByRole("button", { name: /Continue draft.*Follow up/ }),
+  ).toBeNull();
+  expect(screen.queryByText("Empty draft")).toBeNull();
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(draftButton("Other draft")).toHaveFocus();
+});
+
+it("does not let a late send report into a newer selected draft", async () => {
   const h = fixture();
   const release = h.hold();
   writeView(h.session.scope, "draft:room", "First draft");
@@ -491,10 +1043,13 @@ it("does not let a late send close a newer selected draft", async () => {
     await act(async () => release());
   }
   await waitFor(() => expect(h.published).toHaveLength(1));
-  expect(
-    screen.getByRole("region", { name: "Draft for #Planning" }),
-  ).toBeInTheDocument();
-  expect(await screen.findByRole("textbox")).toHaveTextContent("Second draft");
+  const region = screen.getByRole("region", { name: "Draft for #Planning" });
+  const editor = await within(region).findByRole("textbox");
+  expect(editor).toHaveTextContent("Second draft");
+  expect(screen.queryByText(/Sent to/)).toBeNull();
+  expect(draftButton("Second draft")).toHaveAttribute("aria-current", "true");
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(draftButton("Second draft")).toHaveFocus();
 });
 
 it("keeps an emptied editor and filtered selection open, then closes on Escape with focus restored", async () => {
@@ -612,10 +1167,11 @@ it("respects a consumed Escape and closes the preview when switching to Sent", a
   expect(draftButton("Keyboard draft")).toBeInTheDocument();
 });
 
-it("does not close on delivery if the person has started a new draft in the same composer", async () => {
+it("keeps the row of a new draft written before the last send is delivered", async () => {
   const h = fixture();
   const release = h.hold();
   writeView(h.session.scope, "draft:room", "First message");
+  writeView(h.session.scope, "draft:other", "Other draft");
   h.render();
   try {
     fireEvent.click(
@@ -637,13 +1193,19 @@ it("does not close on delivery if the person has started a new draft in the same
     await act(async () => release());
   }
   await waitFor(() => expect(h.published).toHaveLength(1));
-  expect(
-    screen.getByRole("region", { name: "Draft for #Design" }),
-  ).toBeInTheDocument();
-  expect(screen.getByRole("textbox")).toHaveTextContent("New unsent thought");
+  const region = screen.getByRole("region", { name: "Draft for #Design" });
+  await within(region).findByText("Sent to #Design.");
+  const editor = within(region).getByRole("textbox");
+  expect(editor).toHaveTextContent("New unsent thought");
+  expect(draftButton("New unsent thought")).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(draftButton("New unsent thought")).toHaveFocus();
 });
 
-it("waits for a background attachment send whose draft cleanup happens before delivery", async () => {
+it("confirms a background attachment send whose draft cleanup happens before delivery only once it lands", async () => {
   let release!: (value: UploadedAttachment) => void;
   const gate = new Promise<UploadedAttachment>((resolve) => {
     release = resolve;
@@ -678,6 +1240,7 @@ it("waits for a background attachment send whose draft cleanup happens before de
     expect(
       screen.getByRole("region", { name: "Draft for #Design" }),
     ).toBeInTheDocument();
+    expect(screen.queryByText("Sent to #Design.")).toBeNull();
   } finally {
     await act(async () =>
       release({
@@ -689,16 +1252,15 @@ it("waits for a background attachment send whose draft cleanup happens before de
       }),
     );
   }
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("region", { name: "Draft for #Design" }),
-    ).toBeNull(),
-  );
+  await screen.findByText("Sent to #Design.");
+  expect(
+    screen.getByRole("region", { name: "Draft for #Design" }),
+  ).toBeInTheDocument();
   expect(h.published).toHaveLength(1);
   expect(h.published[0]?.tags.some(([tag]) => tag === "imeta")).toBe(true);
 });
 
-it("does not steal search focus when delayed delivery closes the preview", async () => {
+it("does not steal search focus when a delayed delivery lands", async () => {
   const h = fixture();
   const release = h.hold();
   writeView(h.session.scope, "draft:room", "Delayed");
@@ -715,11 +1277,10 @@ it("does not steal search focus when delayed delivery closes the preview", async
   } finally {
     await act(async () => release());
   }
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("region", { name: "Draft for #Design" }),
-    ).toBeNull(),
-  );
+  await screen.findByText("Sent to #Design.");
+  expect(
+    screen.getByRole("region", { name: "Draft for #Design" }),
+  ).toBeInTheDocument();
   expect(search).toHaveFocus();
 });
 
@@ -799,12 +1360,14 @@ it.each([
     const props = {
       entry: { id: "draft:room", channelId: "room", text: "Keep this" },
       title: "#Design",
+      parentLabel: "#Design",
       session: h.session,
       host: h.host,
       autoFocus: false,
       onClose: vi.fn(),
       onOpen: vi.fn(),
-      onSaved: vi.fn(),
+      onOpenChannel: vi.fn(),
+      onSent: vi.fn(),
     };
     const view = render(
       <DraftPreview {...props} channel={channel} loading={!channel} />,
@@ -824,22 +1387,155 @@ it.each([
   },
 );
 
-it("clears the live announcement between two sends to the same conversation", async () => {
+it("clears the live announcement between two sends from the same open preview", async () => {
   const h = fixture();
+  writeView(h.session.scope, "draft:room", "First");
   h.render();
-  for (const text of ["First", "Second"]) {
-    act(() => writeView(h.session.scope, "draft:room", text));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue draft.*First/ }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for #Design" });
+  const editor = (await within(region).findByRole(
+    "textbox",
+  )) as ComposerInputElement;
+  expect(within(region).queryByText("Sent to #Design.")).toBeNull();
+  fireEvent.click(within(region).getByRole("button", { name: "Send message" }));
+  await within(region).findByText("Sent to #Design.");
+  // Writing again brings the conversation's row back, still selected.
+  act(() => {
+    editor.value = "Second";
+    fireEvent.input(editor);
+  });
+  expect(draftButton("Second")).toHaveAttribute("aria-current", "true");
+  const release = h.hold();
+  try {
     fireEvent.click(
-      await screen.findByRole("button", {
-        name: new RegExp(`Continue draft.*${text}`),
-      }),
+      within(region).getByRole("button", { name: "Send message" }),
     );
-    expect(screen.queryByText("Sent to #Design.")).toBeNull();
-    await screen.findByRole("textbox");
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await screen.findByText("Sent to #Design.");
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
+    expect(within(region).queryByText("Sent to #Design.")).toBeNull();
+  } finally {
+    await act(async () => release());
   }
-  expect(h.published).toHaveLength(2);
+  await within(region).findByText("Sent to #Design.");
+  expect(h.published.map((event) => event.content)).toEqual([
+    "First",
+    "Second",
+  ]);
+});
+
+it.each([
+  { control: "row", neighbor: true },
+  { control: "clear button", neighbor: false },
+])(
+  "moves focus off the sent draft's $control as its row leaves (neighbor=$neighbor)",
+  async ({ control, neighbor }) => {
+    const h = fixture();
+    const release = h.hold();
+    writeView(h.session.scope, "draft:room", "Slow send");
+    if (neighbor) writeView(h.session.scope, "draft:other", "Other draft");
+    h.render();
+    try {
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: /Continue draft.*Slow send/,
+        }),
+      );
+      const region = screen.getByRole("region", { name: "Draft for #Design" });
+      await within(region).findByRole("textbox");
+      fireEvent.click(
+        within(region).getByRole("button", { name: "Send message" }),
+      );
+      await waitFor(() => expect(h.publish).toHaveBeenCalled());
+      // Back in the list while the send is still on its way.
+      (control === "row"
+        ? draftButton("Empty draft")
+        : screen.getByRole("button", {
+            name: /Clear draft in #Design: Empty draft/,
+          })
+      ).focus();
+    } finally {
+      await act(async () => release());
+    }
+    await screen.findByText("Sent to #Design.");
+    expect(
+      screen.queryByRole("button", { name: /Continue draft in #Design/ }),
+    ).toBeNull();
+    expect(
+      neighbor ? draftButton("Other draft") : screen.getByRole("searchbox"),
+    ).toHaveFocus();
+  },
+);
+
+it("closes to a draft written again after a send", async () => {
+  const h = fixture();
+  writeView(h.session.scope, "draft:room", "First");
+  writeView(h.session.scope, "draft:other", "Other draft");
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue draft.*First/ }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for #Design" });
+  const editor = (await within(region).findByRole(
+    "textbox",
+  )) as ComposerInputElement;
+  fireEvent.click(within(region).getByRole("button", { name: "Send message" }));
+  await within(region).findByText("Sent to #Design.");
+  act(() => {
+    editor.value = "Again";
+    fireEvent.input(editor);
+  });
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(draftButton("Again")).toHaveFocus();
+});
+
+it("holds a draft written after a send in place when emptied or its send is rejected", async () => {
+  const h = fixture();
+  writeView(h.session.scope, "draft:room", "First");
+  writeView(h.session.scope, "draft:other", "Other draft");
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue draft.*First/ }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for #Design" });
+  const editor = (await within(region).findByRole(
+    "textbox",
+  )) as ComposerInputElement;
+  fireEvent.click(within(region).getByRole("button", { name: "Send message" }));
+  await within(region).findByText("Sent to #Design.");
+  expect(
+    screen.queryByRole("button", { name: /Continue draft in #Design/ }),
+  ).toBeNull();
+  act(() => {
+    editor.value = "Second";
+    fireEvent.input(editor);
+  });
+  expect(draftButton("Second")).toHaveAttribute("aria-current", "true");
+  act(() => {
+    editor.value = "";
+    fireEvent.input(editor);
+  });
+  // Emptied, it is any draft being edited: its row stays put.
+  expect(draftButton("Empty draft")).toHaveAttribute("aria-current", "true");
+  act(() => {
+    editor.value = "Third";
+    fireEvent.input(editor);
+  });
+  h.reject();
+  vi.useFakeTimers();
+  fireEvent.click(within(region).getByRole("button", { name: "Send message" }));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_001);
+  });
+  vi.useRealTimers();
+  await within(region).findByRole("button", { name: "Retry" });
+  expect(within(region).queryByText("Sent to #Design.")).toBeNull();
+  expect(draftButton("Empty draft")).toHaveAttribute("aria-current", "true");
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(
+    screen.queryByRole("region", { name: "Draft for #Design" }),
+  ).toBeNull();
+  expect(draftButton("Other draft")).toHaveFocus();
 });
 
 it.each([false, true])(
@@ -890,6 +1586,20 @@ it.each([false, true])(
     expect(h.open).toHaveBeenCalledWith(
       expect.objectContaining({ messageId: sent.id }),
     );
+    // A thread names its conversation; the name opens it there at the reply.
+    const link = within(region).queryByRole("button", { name: "#Design" });
+    expect(!!link).toBe(thread);
+    if (link) {
+      fireEvent.click(link);
+      expect(h.open).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          channelId: "room",
+          threadRootId: h.root.id,
+          messageId: sent.id,
+          context: "channel",
+        }),
+      );
+    }
     fireEvent.click(
       within(region).getByRole("button", { name: "Send message" }),
     );
@@ -900,6 +1610,8 @@ it.each([false, true])(
     );
     await waitFor(() => expect(screen.queryByLabelText("1 draft")).toBeNull());
     expect(region).toBeInTheDocument();
+    // A reply from Sent was never a listed draft: nothing to announce.
+    expect(within(region).queryByText(/Sent to/)).toBeNull();
     fireEvent.keyDown(editor, { key: "Escape" });
     expect(
       screen.queryByRole("region", { name: "Sent message in #Design" }),
@@ -929,6 +1641,58 @@ it("opens a cold sent channel preview with an empty composer and locates the mes
     ).toBeInTheDocument(),
   );
   expect(within(region).queryByText(/could not be found/)).toBeNull();
+});
+
+it("reveals a draft's send to a reader scrolled above the latest message", async () => {
+  const h = fixture();
+  h.seedHistory(false);
+  writeView(h.session.scope, "draft:room", "Sent from above");
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: /Continue draft.*Sent from above/,
+    }),
+  );
+  const region = screen.getByRole("region", { name: "Draft for #Design" });
+  const history = await within(region).findByRole("region", {
+    name: "Channel message history",
+  });
+  await waitFor(() =>
+    expect(history.querySelector("[data-message-id]")).not.toBeNull(),
+  );
+  // Read from the bottom, then scroll up, away from the latest message.
+  let offset = 4400;
+  Object.defineProperty(history, "scrollHeight", { get: () => 5000 });
+  Object.defineProperty(history, "scrollTop", {
+    get: () => offset,
+    set: (next: number) => {
+      offset = next;
+    },
+  });
+  fireEvent.scroll(history);
+  fireEvent.wheel(history, { deltaY: -600 });
+  offset = 1000;
+  fireEvent.scroll(history);
+  virtua.scrollToIndex.mockClear();
+  fireEvent.click(within(region).getByRole("button", { name: "Send message" }));
+  await within(region).findByText("Sent to #Design.");
+  const sent = h.published.find((event) => event.content === "Sent from above");
+  const row = await waitFor(() => {
+    const found = history.querySelector(`[data-message-id="${sent?.id}"]`);
+    expect(found).not.toBeNull();
+    return found as HTMLElement;
+  });
+  const items = [
+    ...(history.querySelector("[data-virtual-list]")?.children ?? []),
+  ];
+  const index = items.findIndex((item) => item.contains(row));
+  expect(index).toBeGreaterThan(0);
+  await waitFor(() =>
+    expect(virtua.scrollToIndex).toHaveBeenCalledWith(
+      index,
+      expect.objectContaining({ align: "end" }),
+    ),
+  );
 });
 
 it("reveals and highlights an off-screen Sent reply in its visible preview", async () => {
@@ -1128,13 +1892,15 @@ it.each([false, true])(
         }}
         mode="sent"
         title="#Design"
+        parentLabel="#Design"
         channel={h.session.channels.get?.("room")}
         session={h.session}
         host={h.host}
         autoFocus={false}
         onClose={() => {}}
         onOpen={() => {}}
-        onSaved={() => {}}
+        onOpenChannel={() => {}}
+        onSent={() => {}}
       />,
     );
     try {
@@ -1248,7 +2014,7 @@ it.each([
   },
 );
 
-it("keeps a new attachment-only draft open when the previous text send is delivered", async () => {
+it("keeps a new upload in the composer when the previous text send is delivered", async () => {
   let finishUpload!: (value: UploadedAttachment) => void;
   const upload = vi.fn(
     () =>
@@ -1280,9 +2046,9 @@ it("keeps a new attachment-only draft open when the previous text send is delive
     await waitFor(() => expect(upload).toHaveBeenCalled());
     await act(async () => deliver());
     await waitFor(() => expect(h.published).toHaveLength(1));
-    expect(
-      screen.getByRole("region", { name: "Draft for #Design" }),
-    ).toBeInTheDocument();
+    const region = screen.getByRole("region", { name: "Draft for #Design" });
+    await within(region).findByText("Sent to #Design.");
+    expect(within(region).getByText("next.txt")).toBeInTheDocument();
     expect(store.snapshot()[0]?.status).toBe("uploading");
     expect(screen.getByRole("textbox")).toHaveTextContent("");
   } finally {

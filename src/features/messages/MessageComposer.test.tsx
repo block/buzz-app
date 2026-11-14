@@ -12119,11 +12119,116 @@ it.each([undefined, "root"])(
     await h.user.click(
       screen.getByRole("button", { name: "Retry draft cleanup" }),
     );
-    expect(retired).toHaveBeenCalledExactlyOnceWith();
+    // The retried cleanup still names the send it followed.
+    expect(retired).toHaveBeenCalledExactlyOnceWith(
+      threadRootId ? "reply-id" : "channel-id",
+    );
     expect(h.onSend).toHaveBeenCalledOnce();
     expect(readView("scope", key, "")).toMatchObject({ text: "" });
   },
 );
+
+it("names a queued Solo send from the retried cleanup of the draft it cleared", async () => {
+  localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+  const retired = vi.fn();
+  const h = mount({ onDraftSaved: retired });
+  h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+  const listeners = new Set<() => void>();
+  let state = "working";
+  const snapshot = () => ({
+    status: "unavailable",
+    records: [],
+    turns: [],
+    typing: [],
+    local: [
+      {
+        agent: first.pubkey,
+        channelId: "channel",
+        messageId: "previous",
+        state,
+        scope: "scope",
+        threadRootId: "",
+        startedAt: 1,
+      },
+    ],
+  });
+  let activity = snapshot();
+  // A store snapshot keeps its identity until the store changes.
+  const channelList = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "solo",
+        creator: "viewer",
+        archived: false,
+        readOnly: false,
+      },
+    ],
+  };
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      viewer: "viewer",
+      channels: { ...h.session.channels, list: () => channelList },
+      channelWrites: {
+        refreshMembership: async () => ({
+          id: "channel",
+          members: [first.pubkey],
+        }),
+        addAgents: vi.fn(),
+      },
+      agentActivity: {
+        activate: () => () => {},
+        snapshot: () => activity,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+    } as unknown as RelaySession,
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertText("Follow up");
+  });
+  await choicesLoaded();
+  const stored = 'buzz-view.v1:["scope","draft:channel"]';
+  const setItem = Storage.prototype.setItem;
+  const fail = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, key, value) {
+      if (key === stored) throw Error("no space");
+      setItem.call(this, key, value);
+    });
+  try {
+    h.submit();
+    // Queued behind the working agent, with its cleared draft unsaved.
+    await screen.findByRole("region", { name: "Queued follow-ups" });
+    await screen.findByRole("button", { name: "Retry draft cleanup" });
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(retired).not.toHaveBeenCalled();
+    act(() => {
+      state = "done";
+      activity = snapshot();
+      for (const listener of listeners) listener();
+    });
+    await waitFor(() =>
+      expect(h.onSend).toHaveBeenCalledExactlyOnceWith("channel-id"),
+    );
+    expect(retired).not.toHaveBeenCalled();
+  } finally {
+    fail.mockRestore();
+  }
+  await h.user.click(
+    screen.getByRole("button", { name: "Retry draft cleanup" }),
+  );
+  // The cleanup names the send the queue published after the draft cleared.
+  expect(retired).toHaveBeenCalledExactlyOnceWith("channel-id");
+  expect(readView("scope", "draft:channel", "")).toMatchObject({ text: "" });
+});
 
 it.each([false, true])(
   "allows successive sends with no saved revision while writes fail (remembered agent: %s)",
@@ -12208,7 +12313,7 @@ it.each([false, true])(
         text: "",
       });
       expect(h.input()).toHaveValue(remembered ? "@Honey " : "");
-      expect(retired).toHaveBeenCalledExactlyOnceWith();
+      expect(retired).toHaveBeenCalledExactlyOnceWith("accepted");
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     } finally {
       fail.mockRestore();

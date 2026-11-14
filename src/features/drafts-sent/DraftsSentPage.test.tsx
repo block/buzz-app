@@ -67,7 +67,7 @@ type FakeView = {
   dispose: ReturnType<typeof vi.fn>;
 };
 
-function harness() {
+function harness({ dmParticipants = [friend] } = {}) {
   let list: {
     status: string;
     channels: import("../relay/contracts").ChannelSummary[];
@@ -81,7 +81,12 @@ function harness() {
         channelType: "solo",
         members: [viewer, scout],
       },
-      { id: "dm", name: "DM", channelType: "dm", participants: [friend] },
+      {
+        id: "dm",
+        name: "DM",
+        channelType: "dm",
+        participants: dmParticipants,
+      },
       { id: "room", name: "Huddle", channelType: "stream", huddle: true },
     ],
   };
@@ -162,7 +167,7 @@ function harness() {
     profiles: {
       snapshot: () => profiles,
       subscribe: () => () => {},
-      ensure: vi.fn(async () => {}),
+      ensure: vi.fn(async (_keys: readonly string[]) => {}),
     },
     names: {
       snapshot: () => 0,
@@ -314,6 +319,49 @@ it("lists drafts first and opens a thread draft from its preview at its root", a
   expect(screen.getByText("No drafts match “missing”.")).toBeInTheDocument();
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
   expect(screen.getByText("Finish launch reply")).toBeInTheDocument();
+});
+
+it("reads everyone in a selected DM thread, whose link sorts all their names", async () => {
+  const people = [friend, ..."123".split("").map((digit) => digit.repeat(64))];
+  saved(`draft:dm:thread:${root}`, { text: "Group reply" });
+  const h = harness({ dmParticipants: people });
+  const Page = h.page.component;
+  render(<Page />);
+  const requested = () =>
+    new Set(h.session.profiles.ensure.mock.calls.flatMap(([keys]) => keys));
+  const row = screen.getByRole("button", {
+    name: /Continue draft in .*thread/,
+  });
+  // A thread's row names the people in it, not everyone in the DM.
+  expect(people.filter((key) => requested().has(key))).toEqual([]);
+  fireEvent.click(row);
+  await waitFor(() =>
+    expect(people.filter((key) => requested().has(key))).toEqual(
+      people.slice(1),
+    ),
+  );
+});
+
+it("reads only its row's people for a selected DM draft outside a thread", async () => {
+  const people = [friend, ..."1234".split("").map((digit) => digit.repeat(64))];
+  saved("draft:dm", "Group note");
+  const h = harness({ dmParticipants: people });
+  const Page = h.page.component;
+  render(<Page />);
+  const requested = () => {
+    const keys = new Set(
+      h.session.profiles.ensure.mock.calls.flatMap(([keys]) => keys),
+    );
+    return people.filter((key) => keys.has(key));
+  };
+  // Its row's activity names four people; those without a profile are read.
+  await waitFor(() => expect(requested()).toEqual(people.slice(1, 4)));
+  fireEvent.click(
+    screen.getByRole("button", { name: /Continue draft.*Group note/ }),
+  );
+  await screen.findByRole("region", { name: /^Draft for / });
+  // Only a DM thread's link sorts everyone's names: the fifth stays unread.
+  expect(requested()).toEqual(people.slice(1, 4));
 });
 
 it("clears only the chosen draft from the keyboard, without opening it", async () => {

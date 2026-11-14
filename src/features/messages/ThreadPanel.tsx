@@ -103,7 +103,8 @@ export type ThreadPanelProps = {
   headerActions?: ReactNode | undefined;
   /** Saved drafts may compose only against a verified matching root. */
   requireReadyRoot?: boolean | undefined;
-  onDraftSaved?: (() => void) | undefined;
+  /** The composer cleaned up a sent draft; see MessageComposer's. */
+  onDraftSaved?: ((sent: string | undefined) => void) | undefined;
   /** The hosting preview may track delivery of this exact outgoing message. */
   onSend?: ((id: string) => void) | undefined;
   active?: boolean | undefined;

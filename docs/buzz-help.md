@@ -899,10 +899,14 @@ and are asked to sign in again in Buzz.
   were last ("You're last"); a channel post shows its reply count. Select a
   draft to edit and send in a conversation preview beside the list; **Open
   conversation** opens its original destination. Narrow windows show the preview
-  with **Back to drafts**. After confirmed delivery the preview closes; failed
-  sends stay in its message history with Retry. Select a sent message to preview
-  it in context and reply in place; Sent previews stay open after sending. Both
-  previews use the conversation’s saved draft, if one exists. Archived or read-only
+  with **Back to drafts**. After confirmed delivery the preview stays open on
+  its conversation, showing what you sent above an empty composer, and the sent
+  draft leaves the list; failed sends stay in its message history with Retry.
+  Select a sent message to preview it in context and reply in place; Sent
+  previews stay open after sending too. A thread preview names its conversation
+  above the thread, as thread tabs do ("In #channel"); that name opens the
+  thread there, beside its original message. Both previews use the
+  conversation’s saved draft, if one exists. Archived or read-only
   Sent destinations show the conversation without a composer, with an archived
   or read-only notice and Join when available. The popout icon
   opens the original conversation.

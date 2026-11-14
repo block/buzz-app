@@ -49,6 +49,11 @@ html:is([data-keyboard-input], [data-sidebar-resizing]) .frame {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+  /* WebKit can't overlay a classic scrollbar (mouse attached, or "Always
+     show"): it would take 13px once the rail overflows and shift every row.
+     Hide it; wheel, trackpad and focus still scroll, and the scroll fade
+     marks the overflow. */
+  scrollbar-width: none;
 }
 .primary {
   margin-block-end: var(--space-1);

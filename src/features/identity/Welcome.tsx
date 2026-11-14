@@ -40,6 +40,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { BackupError } from "./backup";
 import { BackupConsent } from "./BackupConsent";
+import { BrowserSignIn } from "./BrowserSignIn";
 import {
   atPublicBuilderlab,
   hostedByThisBuilderlab,
@@ -199,6 +200,12 @@ export function Welcome({
   // Create account and taken by the sign-in it starts. A restart or a later
   // sign-in usually follows the sign-up, so it signs in.
   const signup = useRef(false);
+  // What the sign-in under way opened, which `signup` no longer says once
+  // taken: the waiting page opens the browser again on the same form.
+  const opened = useRef(false);
+  // The sign-in under way was started on the connect choice, a pause of
+  // setup, which Cancel returns to; a typed address's own sign-in clears it.
+  const fromChoice = useRef(false);
   // Whether sign-ins ask the browser for credentials over its session, which
   // would finish them as the account just left: armed by Use a different
   // account, kept by every restart, cleared once one completes.
@@ -354,7 +361,10 @@ export function Welcome({
   const requestedSignIn = useRef<(() => void) | undefined>(undefined);
   // The linked key a restart for Replace promised to restore: a sign-in to an
   // account linked to any other key, or to none, stops before setup acts on
-  // it. Cleared on the landing and by Create account.
+  // it. Cleared by Create account, by a link first run takes, and by every
+  // return to the landing that drops what the sign-in was for
+  // (`backToLanding`). The waiting page's Cancel and Back keep it: the next
+  // Sign in is still that restart's.
   const expectedKey = useRef<string | undefined>(undefined);
   // biome-ignore lint/correctness/useExhaustiveDependencies: the landing appearing lets a queued request act.
   useEffect(() => {
@@ -423,10 +433,20 @@ export function Welcome({
     ],
   );
   const discovering = finding && auth.status === "signed-out";
-  // The invited page's community: shown from the lookup's answer until setup
-  // starts, through the sign-in the person starts there.
+  // A sign-in is in the browser and setup has not started: the waiting page
+  // replaces the page that started it, through the moment between the
+  // sign-in's answer and setup's first step. Signing a rejected account out
+  // is pending too (`checking`), with no browser to wait on.
+  const waiting =
+    progress.status === "idle" &&
+    auth.status !== "signed-out" &&
+    !auth.checking;
+  // The invited page's community: shown from the lookup's answer until the
+  // person starts a sign-in there, and again if they cancel it.
   const invitation =
-    progress.status === "idle" && !auth.error ? invited?.found : undefined;
+    progress.status === "idle" && !auth.error && !waiting
+      ? invited?.found
+      : undefined;
   /**
    * The page rendered below, keyed in the order the JSX decides it, so a
    * change of key is a page replacing another; `undefined` while nothing of
@@ -445,12 +465,14 @@ export function Welcome({
               ? "auth-timeout"
               : auth.error
                 ? "auth-error"
-                : invitation
-                  ? "invited"
-                  : discovering
-                    ? // Each link's lookup is a page of its own.
-                      `discover:${invited?.arrival ?? ""}`
-                    : "landing"
+                : waiting
+                  ? "auth-waiting"
+                  : invitation
+                    ? "invited"
+                    : discovering
+                      ? // Each link's lookup is a page of its own.
+                        `discover:${invited?.arrival ?? ""}`
+                      : "landing"
           : progress.status === "done"
             ? profileStep
               ? "done:profile"
@@ -566,6 +588,7 @@ export function Welcome({
    */
   const signIn = async (create = false) => {
     signup.current = create;
+    opened.current = create;
     // A new account can't be the one Replace restarted for.
     if (create) expectedKey.current = undefined;
     const attempt = cancels.current;
@@ -733,6 +756,23 @@ export function Welcome({
   const back = (to: SetupPause, trigger: "import" | "restore" | "lost") => {
     returnFocus.current = trigger;
     pause(to);
+  };
+  /**
+   * The waiting page's Cancel, and its Back once Buzz stopped waiting, which
+   * is no failure: ends the sign-in and returns to the page that started it,
+   * holding what it held, with nothing looked up again. Focus returns to the
+   * action that opens the same sign-in.
+   */
+  const cancelSignIn = () => {
+    cancels.current++;
+    login.cancel();
+    returnFocus.current = opened.current ? "sign-up" : "sign-in";
+    // The landing held no community; the invited page keeps its invite.
+    if (!finding || invited?.found) return;
+    // A typed address returns to its field under Other options, which a kept
+    // `finding` would look up again.
+    if (fromChoice.current) pause("connect-choice");
+    else setFinding(undefined);
   };
   /**
    * The lifted gate takes over: a pending handoff opens the join dialog for
@@ -1046,11 +1086,12 @@ export function Welcome({
     switch (at) {
       case "connect-choice":
         // Connect is the landing's own sign-in: resetting first lets the
-        // landing stay visible while the browser completes sign-in.
+        // waiting page show while the browser completes sign-in.
         return finding ? (
           <ConnectChoice
             host={new URL(finding).host}
             onConnect={() => {
+              fromChoice.current = true;
               setup.reset();
               void signIn();
             }}
@@ -1248,7 +1289,6 @@ export function Welcome({
             (discovering && !invitation && !auth.error)
           )
             return;
-          setOtherOptions(false);
           resumeSignIn();
         };
   if (state.status === "loading" || state.status === "error")
@@ -1331,6 +1371,25 @@ export function Welcome({
       >
         {null}
       </OnboardingScreen>
+    );
+  // The browser has the sign-in, or had it until Buzz stopped waiting: one
+  // page for both, left the same way.
+  const timedOut = page === "auth-timeout";
+  if (waiting || timedOut)
+    return (
+      <WireframeScreen>
+        <BrowserSignIn
+          timedOut={timedOut}
+          // The lookup's answer when a link kept it, else the host alone.
+          community={
+            finding
+              ? (invited?.found ?? { host: new URL(finding).host })
+              : undefined
+          }
+          onOpen={timedOut ? resumeSignIn : () => start(opened.current)}
+          onLeave={cancelSignIn}
+        />
+      </WireframeScreen>
     );
   // Discovery: the same unauthenticated lookup Join Community runs after
   // setup, so a bad address fails here, before sign-in and before a key
@@ -1422,6 +1481,7 @@ export function Welcome({
             variant="prominent"
             size="lg"
             disabled={restoring}
+            data-return-focus={returning ? "sign-in" : "sign-up"}
             onClick={() => start(!returning)}
           >
             {returning ? "Sign in" : "Create account"}
@@ -1448,6 +1508,7 @@ export function Welcome({
                 size="lg"
                 variant="glass-clear"
                 disabled={restoring}
+                data-return-focus={returning ? "sign-up" : "sign-in"}
                 onClick={() => start(returning)}
               >
                 {returning ? "Create account" : "Sign in"}
@@ -1606,8 +1667,6 @@ export function Welcome({
               : undefined
           }
         />
-      ) : auth.error === SIGN_IN_TIMED_OUT ? (
-        <FinishInBrowser onContinue={resumeSignIn} onBack={backToLanding} />
       ) : auth.error ? (
         <Failure
           title={auth.retrySignOut ? "Couldn’t sign out" : "Couldn’t sign in"}
@@ -1639,47 +1698,16 @@ export function Welcome({
                     ? { ...current, found }
                     : current,
                 );
-              else void signIn();
+              else {
+                fromChoice.current = false;
+                void signIn();
+              }
             });
           }}
           titleId="welcome-title"
         />
       ) : null}
     </WireframeScreen>
-  );
-}
-
-/**
- * The app stopped waiting on the browser, though the person may still be
- * signing up or verifying their email there: not a failure.
- */
-function FinishInBrowser({
-  onContinue,
-  onBack,
-}: {
-  onContinue: () => void;
-  onBack: () => void;
-}) {
-  return (
-    <>
-      <h1
-        id="welcome-title"
-        tabIndex={-1}
-        className="text-heading text-standard"
-      >
-        Finish in your browser
-      </h1>
-      <p className="text-body text-subtle">
-        Finish signing in there, then come back and choose Continue.
-      </p>
-      {/* Footer order: secondary first, primary last. */}
-      <div data-onboarding-actions="">
-        <OnboardingBack onClick={onBack} aria-label="Back" />
-        <Button variant="prominent" size="lg" onClick={onContinue}>
-          Continue
-        </Button>
-      </div>
-    </>
   );
 }
 

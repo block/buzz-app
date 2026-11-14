@@ -109,6 +109,19 @@ const credential: Credential = {
 const welcomeHeading = () => screen.getByRole("heading", { name: "Buzz" });
 const connectButton = () => screen.getByRole("button", { name: CONNECT });
 const landingSignIn = () => screen.getByRole("button", { name: SIGN_IN });
+/** The page first run shows while its sign-in is in the browser. */
+const WAITING = "Continue in your browser";
+const WAITING_COPY =
+  "Create your account or sign in there. Buzz is waiting, and carries on here when you’re done.";
+/** Its other state, once Buzz stopped waiting on the browser. */
+const TIMED_OUT_COPY =
+  "Buzz stopped waiting. Finish signing in there, then come back and choose Continue.";
+/** What it says above the community first run joins after the sign-in. */
+const JOIN_NEXT = "Next, you’ll join this community.";
+const waitingHeading = () => screen.findByRole("heading", { name: WAITING });
+/** Its one action beside the leave control: not prominent, as the primary one is in the browser. */
+const REOPEN = "Open browser";
+const cancelWaiting = () => screen.getByRole("button", { name: "Cancel" });
 function titleBar() {
   const header = document.querySelector("header");
   if (!header) throw new Error("Missing native title bar");
@@ -879,11 +892,17 @@ it("first launch prioritizes email and preserves community entry behind Other op
 
 const missingKey = () =>
   vi.mocked(invoke).mockResolvedValueOnce(null).mockResolvedValueOnce(false);
+/** The text buttons of the landing or the invited page, in order; icon buttons have no text and are left out (`buttonNames` lists those). */
 const landingButtons = () =>
   screen
     .getAllByRole("button")
     .map((button) => button.textContent)
     .filter((label) => label !== "");
+/** Every button showing, in order, by accessible name: an icon button's is its `aria-label`. */
+const buttonNames = () =>
+  screen
+    .getAllByRole("button")
+    .map((button) => button.getAttribute("aria-label") ?? button.textContent);
 
 it("a fresh landing offers Create account, Sign in, then Other options", async () => {
   missingKey();
@@ -936,6 +955,8 @@ it("Create account signs in with signup and Sign in without it", async () => {
   );
   expect(connect).toHaveBeenCalledTimes(1);
   expect(connect.mock.calls[0]?.[1]).toEqual(createAccount);
+  // The landing gave way to the waiting page; Sign in is back with it.
+  await user.click(cancelWaiting());
   await user.click(screen.getByRole("button", { name: SIGN_IN }));
   expect(connect).toHaveBeenCalledTimes(2);
   expect(connect.mock.calls[1]?.[1]).toEqual(plainSignIn);
@@ -967,10 +988,15 @@ it("Open Buzz restarts a waiting sign-in as Sign in, even after Create account",
   );
   expect(connect).toHaveBeenCalledTimes(1);
   expect(connect.mock.calls[0]?.[1]).toEqual(createAccount);
+  const heading = await waitingHeading();
   act(() => requestSignIn());
   await waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
   expect(signals[0]?.aborted).toBe(true);
   expect(connect.mock.calls[1]?.[1]).toEqual(plainSignIn);
+  // The waiting page stays, and from here it opens the browser on Sign in.
+  expect(heading).toBeVisible();
+  await user.click(screen.getByRole("button", { name: REOPEN }));
+  expect(connect.mock.calls[2]?.[1]).toEqual(plainSignIn);
   identity.dispose();
 });
 
@@ -994,6 +1020,7 @@ it("Open Buzz that launched the app signs in once the landing shows", async () =
     </Welcome>,
   );
   await waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
+  expect(await waitingHeading()).toBeVisible();
   identity.dispose();
 });
 
@@ -1025,19 +1052,23 @@ it("a timed-out browser wait asks to finish in the browser, and Continue restart
   await waitFor(() => expect(heading).toHaveFocus());
   // Not a failure: nothing alerts, and no "Couldn't sign in".
   expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByText(TIMED_OUT_COPY)).toBeVisible();
+  expect(screen.queryByText(JOIN_NEXT)).toBeNull();
   await user.click(screen.getByRole("button", { name: "Continue" }));
   expect(connect).toHaveBeenCalledTimes(2);
   expect(connect.mock.calls.map(([, options]) => options)).toEqual([
     createAccount,
     plainSignIn,
   ]);
+  // The same page, waiting again.
+  expect(await waitingHeading()).toBeVisible();
   expect(
     screen.queryByRole("heading", { name: "Finish in your browser" }),
   ).toBeNull();
   identity.dispose();
 });
 
-it("Back from Finish in your browser returns to the landing", async () => {
+it("Back from Finish in your browser returns to the landing it was started on, with focus on the action that started it", async () => {
   missingKey();
   const connect = vi.fn().mockRejectedValue(new Error(SIGN_IN_TIMED_OUT));
   const identity = createIdentity();
@@ -1059,6 +1090,14 @@ it("Back from Finish in your browser returns to the landing", async () => {
   await screen.findByRole("heading", { name: "Finish in your browser" });
   await user.click(screen.getByRole("button", { name: "Back" }));
   expect(welcomeHeading()).toBeVisible();
+  expect(landingButtons()).toEqual([
+    "Create account",
+    SIGN_IN,
+    "Other options",
+  ]);
+  expect(screen.getByRole("button", { name: "Create account" })).toHaveFocus();
+  expect(connect).toHaveBeenCalledTimes(1);
+  expect(identity.snapshot().status).toBe("missing");
   identity.dispose();
 });
 
@@ -1642,17 +1681,20 @@ it("a landing URL is looked up before sign-in, Sign in with Builderlab from the 
   expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
   await act(async () => relay.info.resolve());
   // Found: the connect choice. Sign in with Builderlab starts the build portal's
-  // sign-in, shown pending on the landing with the typed address held in the
-  // disabled field.
+  // sign-in, shown on the waiting page with the typed address held as the
+  // community to join next.
   expect(connect).not.toHaveBeenCalled();
   await user.click(connectButton());
   expect(connect).toHaveBeenCalledTimes(1);
   expect(
     screen.queryByRole("heading", { name: "Finding community" }),
   ).toBeNull();
-  expect(screen.getByRole("button", { name: "Other options" })).toBeEnabled();
-  expect(screen.getByRole("button", { name: SIGN_IN })).toBeEnabled();
-  expect(screen.queryByRole("textbox", { name: "Community URL" })).toBeNull();
+  expect(await waitingHeading()).toHaveFocus();
+  expect(screen.getByText(JOIN_NEXT)).toBeVisible();
+  expect(screen.getByText("design.relay.example.com")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Other options" })).toBeNull();
+  expect(screen.queryByRole("button", { name: SIGN_IN })).toBeNull();
+  expect(screen.queryByRole("textbox")).toBeNull();
   await act(async () => released.resolve(credential));
   // The account check found no key, so the backed-up-key lookup comes next.
   await waitFor(() =>
@@ -1790,12 +1832,13 @@ it("Sign in with Builderlab from the choice signs in at the build portal, runs t
   );
   await connectChoicePage(user, relay);
   await user.click(connectButton());
-  // The landing's own sign-in, at the build portal, shown pending on the
-  // landing with the address held.
+  // The landing's own sign-in, at the build portal, shown on the waiting
+  // page with the address held.
   expect(connect).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("heading", { name: /^Connect to / })).toBeNull();
-  expect(screen.getByRole("button", { name: "Other options" })).toBeEnabled();
-  expect(screen.getByRole("button", { name: SIGN_IN })).toBeEnabled();
+  expect(await waitingHeading()).toBeVisible();
+  expect(connectChoiceHost()).toBeVisible();
+  expect(buttonNames()).toEqual(["Cancel", REOPEN]);
   expect(relay.relayCalls).toEqual(relay.lookup);
   await act(async () => released.resolve(credential));
   // The reads go to the build portal too, and the lane is Connect's: account
@@ -1841,13 +1884,10 @@ it("Sign in with Builderlab from the choice signs in at the build portal, runs t
   identity.dispose();
 });
 
-it("Cancel sign-in after Connect from the choice returns to the landing with the address kept and no second lookup", async () => {
+it("Cancel on the waiting page after Connect from the choice returns to the choice with the address held and no second lookup, and a canceled sign-in that finishes later is ignored", async () => {
   const relay = landingRelay();
-  let signal: AbortSignal | undefined;
-  const connect = vi.fn((current: AbortSignal): Promise<Credential> => {
-    signal = current;
-    return new Promise(() => {});
-  });
+  const { signedIn, signals, connect } = heldSignIn();
+  const account = vi.fn(unlinked);
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
@@ -1855,32 +1895,43 @@ it("Cancel sign-in after Connect from the choice returns to the landing with the
       identity={identity}
       communities={noJoin}
       invites={invites}
-      account={unlinked}
+      account={account}
       connect={connect}
     >
       <p>Signed in</p>
     </Welcome>,
   );
-  await connectChoicePage(user, relay);
-  await user.click(connectButton());
-  await screen.findByRole("button", { name: "Other options" });
-  expect(connect).toHaveBeenCalledTimes(1);
-  await user.click(screen.getByRole("button", { name: "Other options" }));
-  expect(signal?.aborted).toBe(true);
-  // The landing, not the choice: the address is editable again and neither
-  // discovery nor the choice page came back on their own.
-  expect(
-    screen.getByRole("heading", { name: "Join a community" }),
-  ).toBeVisible();
-  expect(urlField()).toBeEnabled();
-  expect(urlField()).toHaveValue("relay.example.com:8443");
-  expect(
-    screen.queryByRole("heading", { name: "Finding community" }),
-  ).toBeNull();
-  expect(screen.queryByRole("heading", { name: /^Connect to / })).toBeNull();
-  expect(relay.relayCalls).toEqual(relay.lookup);
-  expect(identity.snapshot().status).toBe("missing");
-  identity.dispose();
+  try {
+    await connectChoicePage(user, relay);
+    await user.click(connectButton());
+    await waitingHeading();
+    expect(connect).toHaveBeenCalledTimes(1);
+    await user.click(cancelWaiting());
+    expect(signals[0]?.aborted).toBe(true);
+    // The choice the sign-in was started on, held as setup's pause: discovery
+    // did not run again, and focus is back on the action that signs in.
+    expect(connectChoiceHeading()).toBeVisible();
+    expect(connectChoiceHost()).toBeVisible();
+    expect(connectButton()).toHaveFocus();
+    expect(
+      screen.queryByRole("heading", { name: "Finding community" }),
+    ).toBeNull();
+    expect(relay.relayCalls).toEqual(relay.lookup);
+    // The browser finishing the canceled sign-in starts no setup.
+    await act(async () => signedIn.resolve(credential));
+    expect(connectChoiceHeading()).toBeVisible();
+    expect(account).not.toHaveBeenCalled();
+    expect(identity.snapshot().status).toBe("missing");
+    // Its Back is still the landing, with the address editable.
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(welcomeHeading()).toBeVisible();
+    expect(urlField()).toBeEnabled();
+    expect(urlField()).toHaveValue("relay.example.com:8443");
+    expect(relay.relayCalls).toEqual(relay.lookup);
+  } finally {
+    signedIn.resolve(credential);
+    identity.dispose();
+  }
 });
 
 it("Use an existing key from the choice imports the key with no sign-in, no link and no backup offer, and lands on Join Community for the address", async () => {
@@ -2124,12 +2175,15 @@ it.each([["bb-public compiled", publicServers]])(
     );
     await screen.findByRole("button", { name: SIGN_IN });
     await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
-    await screen.findByRole("button", { name: "Other options" });
+    // The waiting page, naming the typed address as far as first run kept it.
+    expect(await waitingHeading()).toHaveFocus();
     expect(connect).toHaveBeenCalledTimes(1);
     expect(
       screen.queryByRole("heading", { name: "Connect to your community" }),
     ).toBeNull();
-    expect(screen.getByRole("button", { name: SIGN_IN })).toBeEnabled();
+    expect(screen.getByText(JOIN_NEXT)).toBeVisible();
+    expect(screen.getByText("design.communities.buzz.xyz")).toBeVisible();
+    expect(buttonNames()).toEqual(["Cancel", REOPEN]);
     expect(relay.relayCalls).toEqual(relay.lookup);
     expect(identity.snapshot().status).toBe("missing");
     identity.dispose();
@@ -2242,7 +2296,7 @@ it("Open Buzz restarts a sign-in from a landing URL that timed out waiting on th
   identity.dispose();
 });
 
-it("canceling or failing sign-in after a landing URL returns to the landing with the address kept and no second lookup", async () => {
+it("canceling or failing sign-in after a landing URL keeps the address and never looks it up again by itself", async () => {
   const relay = landingRelay("https://relay.example.com");
   relay.info.resolve();
   let signal: AbortSignal | undefined;
@@ -2271,27 +2325,29 @@ it("canceling or failing sign-in after a landing URL returns to the landing with
   await user.type(urlField(), "relay.example.com{Enter}");
   await screen.findByRole("heading", { name: "Connect to your community" });
   await user.click(connectButton());
-  await screen.findByRole("button", { name: "Other options" });
+  await waitingHeading();
   expect(connect).toHaveBeenCalledTimes(1);
   expect(relay.relayCalls).toEqual(relay.lookup);
-  await user.click(screen.getByRole("button", { name: "Other options" }));
+  await user.click(cancelWaiting());
   expect(signal?.aborted).toBe(true);
-  // Back on the landing: the typed address is editable again and discovery
-  // did not restart on its own.
-  expect(
-    screen.getByRole("heading", { name: "Join a community" }),
-  ).toBeVisible();
+  // Back on the choice, whose Back is the landing: the typed address is
+  // editable again and discovery did not restart on its own.
+  await user.click(screen.getByRole("button", { name: /^Back$/ }));
   expect(urlField()).toBeEnabled();
   expect(urlField()).toHaveValue("relay.example.com");
   expect(
     screen.queryByRole("heading", { name: "Finding community" }),
   ).toBeNull();
   expect(relay.relayCalls).toEqual(relay.lookup);
-  // Return from the community entry page before choosing email.
+  // Return from the community entry page before choosing email: that
+  // sign-in holds no address, and canceling it is the plain landing.
   await user.click(screen.getByRole("button", { name: /^Back$/ }));
   await user.click(landingSignIn());
-  await screen.findByRole("button", { name: "Other options" });
+  await waitingHeading();
   expect(connect).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText(JOIN_NEXT)).toBeNull();
+  await user.click(cancelWaiting());
+  expect(welcomeHeading()).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Other options" }));
   expect(
     screen.getByRole("heading", { name: "Join a community" }),
@@ -2362,12 +2418,10 @@ it("a canceled sign-in that returns after a later sign-in is ignored: setup is n
     </Welcome>,
   );
   await user.click(await screen.findByRole("button", { name: SIGN_IN }));
-  await user.click(
-    await screen.findByRole("button", { name: "Other options" }),
-  );
+  await waitingHeading();
+  await user.click(cancelWaiting());
   // A second sign-in reaches Welcome back, and the user starts entering a
   // key.
-  await user.click(screen.getByRole("button", { name: "Back" }));
   await user.click(landingSignIn());
   await user.click(
     await screen.findByRole("button", {
@@ -2462,16 +2516,18 @@ it("Sign in with Builderlab runs sign-in, creates the key mid-setup, and lands o
   );
   await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   expect(connect).toHaveBeenCalledTimes(1);
-  expect(
-    screen.queryByText("Finish sign-in in your browser, then return to Buzz."),
-  ).toBeNull();
-  expect(screen.getByRole("button", { name: SIGN_IN })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Other options" })).toBeEnabled();
+  // The waiting page replaces the landing: it says where the sign-in is and
+  // that Buzz carries on, names no community, and makes neither action primary.
+  expect(await waitingHeading()).toHaveFocus();
+  expect(screen.getByText(WAITING_COPY)).toBeVisible();
+  expect(screen.queryByText(JOIN_NEXT)).toBeNull();
+  expect(buttonNames()).toEqual(["Cancel", REOPEN]);
+  expect(screen.queryByRole("alert")).toBeNull();
   await act(async () => released.resolve(credential));
   expect(
     await screen.findByRole("heading", { name: "Getting ready" }),
   ).toBeVisible();
-  // The landing's button is gone with the landing: the new heading has focus.
+  // The waiting page is gone: the new heading has focus.
   expect(screen.getByRole("heading", { name: "Getting ready" })).toHaveFocus();
   // The account check is real and runs first: it decides the lane.
   expect(account).toHaveBeenCalledWith(credential, identity);
@@ -4915,7 +4971,7 @@ const claimOf = (
 });
 
 it.each(["launches Buzz", "arrives on the landing"])(
-  "an invite link that %s with no identity is looked up and named on the invited page, opens the browser only when asked, stays through sign-in, and claims its code only on Join",
+  "an invite link that %s with no identity is looked up and named on the invited page, opens the browser only when asked, is named on the waiting page through sign-in, and claims its code only on Join",
   async (how) => {
     const member = keypair();
     const relay = nativeRelay(member);
@@ -4947,9 +5003,13 @@ it.each(["launches Buzz", "arrives on the landing"])(
       await user.click(screen.getByRole("button", { name: "Create account" }));
       expect(connect).toHaveBeenCalledTimes(1);
       expect(connect.mock.calls[0]?.[1]).toEqual(createAccount);
-      // The page stays while the browser completes the sign-in.
-      expect(heading).toBeVisible();
+      // The waiting page takes over while the browser completes the sign-in,
+      // naming the community as the step after it.
+      expect(await waitingHeading()).toHaveFocus();
+      expect(screen.getByText(JOIN_NEXT)).toBeVisible();
+      expect(screen.getByText("relay.example.com:8443")).toBeVisible();
       expect(screen.queryByRole("heading", { name: "Buzz" })).toBeNull();
+      expect(relay.calls).toEqual(lookupCalls(relay));
       await act(async () => signedIn.resolve(credential));
       await screen.findByRole("heading", { name: "Join Community" });
       // Neither the link nor the sign-in accepted the policy or claimed.
@@ -5109,12 +5169,14 @@ it("a code-less community link is headed Join this community, not as an invitati
   await user.click(screen.getByRole("button", { name: SIGN_IN }));
   expect(connect).toHaveBeenCalledTimes(1);
   expect(connect.mock.calls[0]?.[1]).toEqual(plainSignIn);
+  // The page gave way to the waiting page; Cancel brings its actions back.
+  await user.click(cancelWaiting());
   await user.click(screen.getByRole("button", { name: "Create account" }));
   expect(connect).toHaveBeenCalledTimes(2);
   expect(connect.mock.calls[1]?.[1]).toEqual(createAccount);
 });
 
-it("Not now drops the invite and its waiting sign-in for the landing, where a late sign-in does nothing and a typed address still signs in at once", async () => {
+it("Not now, after canceling the sign-in the invited page started, drops the invite for the landing, where a late sign-in does nothing and a typed address still signs in at once", async () => {
   const relay = landingRelay(design);
   relay.info.resolve();
   const { signedIn, signals, connect } = heldSignIn();
@@ -5127,6 +5189,9 @@ it("Not now drops the invite and its waiting sign-in for the landing, where a la
     await invitedHeading("design");
     await user.click(screen.getByRole("button", { name: "Create account" }));
     expect(connect).toHaveBeenCalledTimes(1);
+    // Not now is the invited page's: the waiting page's Cancel returns there.
+    await user.click(cancelWaiting());
+    expect(signals[0]?.aborted).toBe(true);
     await user.click(screen.getByRole("button", { name: "Not now" }));
     expect(welcomeHeading()).toBeVisible();
     expect(landingButtons()).toEqual([
@@ -5134,7 +5199,6 @@ it("Not now drops the invite and its waiting sign-in for the landing, where a la
       SIGN_IN,
       "Other options",
     ]);
-    expect(signals[0]?.aborted).toBe(true);
     // The retired sign-in finishing later starts no setup and makes no key.
     await act(async () => signedIn.resolve(credential));
     expect(welcomeHeading()).toBeVisible();
@@ -5290,14 +5354,16 @@ it("the same invite opened again during sign-in and after setup is consumed with
   });
   const user = userEvent.setup();
   try {
-    const heading = await invitedHeading("relay.example.com:8443");
+    await invitedHeading("relay.example.com:8443");
     await user.click(screen.getByRole("button", { name: SIGN_IN }));
+    const heading = await waitingHeading();
     const taken = () => links.offers.filter(([, taken]) => taken);
     expect(taken()).toHaveLength(1);
     // Again while the browser has the sign-in: taken, and nothing moves.
     links.arrive(link);
     await waitFor(() => expect(taken()).toHaveLength(2));
     expect(heading).toBeVisible();
+    expect(screen.getByText("relay.example.com:8443")).toBeVisible();
     expect(connect).toHaveBeenCalledTimes(1);
     expect(signals[0]?.aborted).toBe(false);
     expect(relay.calls).toEqual(lookupCalls(relay));
@@ -5336,11 +5402,13 @@ it("a different invite opened during sign-in stays with the deep-link owner: fir
   });
   const user = userEvent.setup();
   try {
-    const heading = await invitedHeading("relay.example.com:8443");
+    await invitedHeading("relay.example.com:8443");
     await user.click(screen.getByRole("button", { name: "Create account" }));
+    const heading = await waitingHeading();
     links.arrive(osInvite("https://other.example.com", "other"));
     await waitFor(() => expect(links.offers).toContainEqual(["other", false]));
     expect(heading).toBeVisible();
+    expect(screen.getByText("relay.example.com:8443")).toBeVisible();
     expect(connect).toHaveBeenCalledTimes(1);
     expect(signals[0]?.aborted).toBe(false);
     expect(relay.calls).toEqual(lookupCalls(relay));
@@ -5572,19 +5640,493 @@ it("an invite opened while old Buzz's identity is being saved is left for the jo
   }
 });
 
-it("Open Buzz from the account pages signs in from the invited page, which stays", async () => {
+it("Open Buzz from the account pages signs in from the invited page, whose community the waiting page names", async () => {
   const relay = landingRelay(design);
   relay.info.resolve();
   const connect = vi.fn(
     (_signal: AbortSignal, _options: SignInOptions) =>
       new Promise<Credential>(() => {}),
   );
-  const { links } = firstRunWithLinks({ launch: [osInvite(design)], connect });
-  const heading = await invitedHeading("design");
+  const { links, container } = firstRunWithLinks({
+    launch: [osInvite(design)],
+    connect,
+  });
+  await invitedHeading("design");
   links.arrive("buzz://sign-in");
   await waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
   expect(connect.mock.calls[0]?.[1]).toEqual(plainSignIn);
-  expect(heading).toBeVisible();
+  expect(await waitingHeading()).toBeVisible();
+  // The lookup's answer, as the invited page showed it: name, host and icon.
+  expect(screen.getByText(JOIN_NEXT)).toBeVisible();
+  expect(screen.getByText("design")).toBeVisible();
+  expect(screen.getByText("design.communities.buzz.xyz")).toBeVisible();
+  expect(
+    container.querySelector('img[src="https://cdn.example.com/icon.png"]'),
+  ).not.toBeNull();
+  // Again while that sign-in waits: it restarts, as Sign in.
+  links.arrive("buzz://sign-in");
+  await waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+  expect(connect.mock.calls[1]?.[1]).toEqual(plainSignIn);
+  expect(await waitingHeading()).toBeVisible();
+});
+
+it.each([
+  ["Create account", createAccount],
+  [SIGN_IN, plainSignIn],
+] as const)(
+  "%s on the landing waits on its own page: Open browser restarts the same sign-in, and Cancel returns to the landing with focus on the action and the canceled sign-in ignored",
+  async (action, options) => {
+    missingKey();
+    const { signedIn, signals, connect } = heldSignIn();
+    const account = vi.fn(unlinked);
+    const identity = createIdentity();
+    const user = userEvent.setup();
+    render(
+      <Welcome
+        identity={identity}
+        communities={noJoin}
+        invites={invites}
+        account={account}
+        connect={connect}
+      >
+        <p>Signed in</p>
+      </Welcome>,
+    );
+    try {
+      await user.click(await screen.findByRole("button", { name: action }));
+      expect(await waitingHeading()).toHaveFocus();
+      expect(screen.getByText(WAITING_COPY)).toBeVisible();
+      // No community is held, and nothing here opens a second kind of tab.
+      expect(screen.queryByText(JOIN_NEXT)).toBeNull();
+      expect(buttonNames()).toEqual(["Cancel", REOPEN]);
+      await user.click(screen.getByRole("button", { name: REOPEN }));
+      expect(connect.mock.calls.map(([, sent]) => sent)).toEqual([
+        options,
+        options,
+      ]);
+      expect(signals.map((signal) => signal.aborted)).toEqual([true, false]);
+      expect(await waitingHeading()).toBeVisible();
+      await user.click(cancelWaiting());
+      expect(signals[1]?.aborted).toBe(true);
+      expect(welcomeHeading()).toBeVisible();
+      expect(screen.getByRole("button", { name: action })).toHaveFocus();
+      // The browser finishing a canceled sign-in starts no setup.
+      await act(async () => signedIn.resolve(credential));
+      expect(welcomeHeading()).toBeVisible();
+      expect(account).not.toHaveBeenCalled();
+      expect(identity.snapshot().status).toBe("missing");
+    } finally {
+      signedIn.resolve(credential);
+      identity.dispose();
+    }
+  },
+);
+
+it("Cancel on the waiting page an invite opened returns to the invited page with the invite held and nothing looked up again, ignores the canceled sign-in, and the next sign-in still claims the code only on Join", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.admitted = false;
+  const canceled = deferred<Credential>();
+  const second = deferred<Credential>();
+  const signals: AbortSignal[] = [];
+  const connect = vi.fn((signal: AbortSignal, _options: SignInOptions) => {
+    signals.push(signal);
+    return signals.length === 1 ? canceled.promise : second.promise;
+  });
+  const { identity, links } = firstRunWithLinks({
+    launch: [osInvite(relay.origin)],
+    connect,
+    servers: hostingServers,
+  });
+  const user = userEvent.setup();
+  try {
+    await invitedHeading("relay.example.com:8443");
+    await user.click(screen.getByRole("button", { name: SIGN_IN }));
+    await waitingHeading();
+    await user.click(cancelWaiting());
+    expect(signals[0]?.aborted).toBe(true);
+    // The invited page as it was, with focus on the action that signs in.
+    expect(await invitedHeading("relay.example.com:8443")).toBeVisible();
+    expect(screen.getByText(INVITED_COPY)).toBeVisible();
+    expect(landingButtons()).toEqual(["Create account", SIGN_IN, "Not now"]);
+    expect(screen.getByRole("button", { name: SIGN_IN })).toHaveFocus();
+    expect(relay.calls).toEqual(lookupCalls(relay));
+    // The browser finishing the canceled sign-in starts no setup.
+    await act(async () => canceled.resolve(credential));
+    expect(await invitedHeading("relay.example.com:8443")).toBeVisible();
+    expect(identity.snapshot().status).toBe("missing");
+    expect(links.requests.snapshot()).toBeUndefined();
+    // The invite is still first run's: a new sign-in joins with its code.
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+    expect(connect.mock.calls.map(([, sent]) => sent)).toEqual([
+      plainSignIn,
+      createAccount,
+    ]);
+    expect(await waitingHeading()).toBeVisible();
+    expect(screen.getByText("relay.example.com:8443")).toBeVisible();
+    await act(async () => second.resolve(credential));
+    await screen.findByRole("heading", { name: "Join Community" });
+    expect(claims(relay)).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Join" }));
+    await completeRequiredProfile(user);
+    expect(await screen.findByText("Signed in")).toBeVisible();
+    expect(claims(relay)).toEqual([claimOf(relay)]);
+    expect(links.requests.snapshot()).toBeUndefined();
+  } finally {
+    canceled.resolve(credential);
+    second.resolve(credential);
+  }
+});
+
+it("Cancel on the waiting page a typed address opened returns to Other options with the address kept and editable, nothing looked up again and the canceled sign-in ignored", async () => {
+  const relay = landingRelay(design);
+  relay.info.resolve();
+  const { signedIn, signals, connect } = heldSignIn();
+  const account = vi.fn(unlinked);
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      account={account}
+      connect={connect}
+      servers={publicServers}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  try {
+    await screen.findByRole("button", { name: SIGN_IN });
+    await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
+    await waitingHeading();
+    expect(connect.mock.calls.map(([, sent]) => sent)).toEqual([plainSignIn]);
+    await user.click(cancelWaiting());
+    expect(signals[0]?.aborted).toBe(true);
+    const entry = screen.getByRole("heading", { name: "Join a community" });
+    expect(entry).toBeVisible();
+    expect(entry).toHaveFocus();
+    expect(urlField()).toBeEnabled();
+    expect(urlField()).toHaveValue("design.communities.buzz.xyz");
+    expect(
+      screen.queryByRole("heading", { name: "Finding community" }),
+    ).toBeNull();
+    expect(relay.relayCalls).toEqual(relay.lookup);
+    // The browser finishing the canceled sign-in starts no setup.
+    await act(async () => signedIn.resolve(credential));
+    expect(entry).toBeVisible();
+    expect(account).not.toHaveBeenCalled();
+    expect(identity.snapshot().status).toBe("missing");
+    expect(relay.relayCalls).toEqual(relay.lookup);
+  } finally {
+    signedIn.resolve(credential);
+    identity.dispose();
+  }
+});
+
+it("a sign-in that times out from the invited page still names the community to join next, Continue waits on it again, and Back returns to the invited page with the invite held and nothing looked up again", async () => {
+  const relay = landingRelay(design);
+  relay.info.resolve();
+  const again = deferred<Credential>();
+  const connect = vi
+    .fn<(signal: AbortSignal, options: SignInOptions) => Promise<Credential>>()
+    .mockRejectedValueOnce(new Error(SIGN_IN_TIMED_OUT))
+    .mockReturnValue(again.promise);
+  const { identity, links } = firstRunWithLinks({
+    launch: [osInvite(design)],
+    connect,
+  });
+  const user = userEvent.setup();
+  try {
+    await invitedHeading("design");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+    const timedOut = await screen.findByRole("heading", {
+      name: "Finish in your browser",
+    });
+    await waitFor(() => expect(timedOut).toHaveFocus());
+    expect(screen.getByText(TIMED_OUT_COPY)).toBeVisible();
+    expect(screen.getByText(JOIN_NEXT)).toBeVisible();
+    expect(screen.getByText("design.communities.buzz.xyz")).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+    // Buzz no longer continues by itself, so Continue is the primary action.
+    expect(buttonNames()).toEqual(["Back", "Continue"]);
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(connect.mock.calls.map(([, sent]) => sent)).toEqual([
+      createAccount,
+      plainSignIn,
+    ]);
+    expect(await waitingHeading()).toBeVisible();
+    expect(screen.getByText(JOIN_NEXT)).toBeVisible();
+    expect(screen.getByText("design.communities.buzz.xyz")).toBeVisible();
+    expect(relay.relayCalls).toEqual(relay.lookup);
+    await act(async () => again.reject(new Error(SIGN_IN_TIMED_OUT)));
+    await screen.findByRole("heading", { name: "Finish in your browser" });
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    // Not a failure: the invited page as it was, still naming the community,
+    // with focus on the action that opens the sign-in Continue had restarted.
+    expect(await invitedHeading("design")).toBeVisible();
+    expect(screen.getByText("design.communities.buzz.xyz")).toBeVisible();
+    expect(screen.getByText(INVITED_COPY)).toBeVisible();
+    expect(landingButtons()).toEqual(["Create account", SIGN_IN, "Not now"]);
+    expect(screen.getByRole("button", { name: SIGN_IN })).toHaveFocus();
+    expect(screen.queryByRole("heading", { name: "Buzz" })).toBeNull();
+    expect(relay.relayCalls).toEqual(relay.lookup);
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(links.requests.snapshot()).toBeUndefined();
+    expect(identity.snapshot().status).toBe("missing");
+    // The invite is still first run's: its sign-in starts again from here.
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+    expect(connect.mock.calls[2]?.[1]).toEqual(createAccount);
+  } finally {
+    again.reject(new Error(SIGN_IN_TIMED_OUT));
+  }
+});
+
+it("the waiting page becomes Finish in your browser in place and announces it: the same status line, heading and controls, with focus left where it was", async () => {
+  missingKey();
+  const waited = deferred<Credential>();
+  const connect = vi.fn(
+    (_signal: AbortSignal, _options: SignInOptions) => waited.promise,
+  );
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      account={unlinked}
+      connect={connect}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Create account" }),
+  );
+  const heading = await waitingHeading();
+  // A polite live region: its text changing is what assistive tech hears.
+  const status = screen.getByRole("status");
+  expect(status).toHaveTextContent(WAITING_COPY);
+  const leave = cancelWaiting();
+  const open = screen.getByRole("button", { name: REOPEN });
+  // One leave control, then the one action, in that order.
+  expect(buttonNames()).toEqual(["Cancel", REOPEN]);
+  await user.tab();
+  expect(leave).toHaveFocus();
+  await user.tab();
+  expect(open).toHaveFocus();
+  await act(async () => waited.reject(new Error(SIGN_IN_TIMED_OUT)));
+  expect(heading).toHaveTextContent("Finish in your browser");
+  expect(status).toHaveTextContent(TIMED_OUT_COPY);
+  expect(screen.getByRole("status")).toBe(status);
+  // Not a failure: nothing alerts.
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(leave).toHaveAccessibleName("Back");
+  expect(open).toHaveAccessibleName("Continue");
+  expect(buttonNames()).toEqual(["Back", "Continue"]);
+  expect(open).toHaveFocus();
+  expect(connect).toHaveBeenCalledTimes(1);
+  identity.dispose();
+});
+
+it("Open Buzz restarting a typed address's sign-in, or arriving on Other options, keeps the page it started on: Cancel returns to Other options with the address kept and nothing looked up again", async () => {
+  const relay = landingRelay(design);
+  relay.info.resolve();
+  const { signedIn, signals, connect } = heldSignIn();
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      account={unlinked}
+      connect={connect}
+      servers={publicServers}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  const entry = () => screen.getByRole("heading", { name: "Join a community" });
+  try {
+    await screen.findByRole("button", { name: SIGN_IN });
+    await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
+    await waitingHeading();
+    act(() => requestSignIn());
+    await waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+    expect(connect.mock.calls[1]?.[1]).toEqual(plainSignIn);
+    expect(await waitingHeading()).toBeVisible();
+    expect(screen.getByText(JOIN_NEXT)).toBeVisible();
+    await user.click(cancelWaiting());
+    expect(signals.map((signal) => signal.aborted)).toEqual([true, true]);
+    expect(entry()).toBeVisible();
+    expect(urlField()).toBeEnabled();
+    expect(urlField()).toHaveValue("design.communities.buzz.xyz");
+    expect(relay.relayCalls).toEqual(relay.lookup);
+    // A request that arrives on Other options itself: no address is held
+    // for that sign-in, and Cancel is this page again.
+    act(() => requestSignIn());
+    await waitFor(() => expect(connect).toHaveBeenCalledTimes(3));
+    expect(await waitingHeading()).toBeVisible();
+    expect(screen.queryByText(JOIN_NEXT)).toBeNull();
+    await user.click(cancelWaiting());
+    expect(entry()).toBeVisible();
+    expect(urlField()).toHaveValue("design.communities.buzz.xyz");
+    expect(relay.relayCalls).toEqual(relay.lookup);
+    expect(identity.snapshot().status).toBe("missing");
+  } finally {
+    signedIn.resolve(credential);
+    identity.dispose();
+  }
+});
+
+it("Cancel on the waiting page a key landing's Sign in opened returns to that landing, which still opens the app without signing in", async () => {
+  const member = keypair();
+  nativeRelay(member, {});
+  const signals: AbortSignal[] = [];
+  const connect = vi
+    .fn((signal: AbortSignal, _options: SignInOptions) => {
+      signals.push(signal);
+      return new Promise<Credential>(() => {});
+    })
+    .mockResolvedValueOnce(credential);
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={communitiesFor(identity)}
+      invites={invites}
+      account={afterRefusedLink(unlinked)}
+      connect={connect}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await leaveWithKey(user);
+  await user.click(screen.getByRole("button", { name: SIGN_IN }));
+  await waitingHeading();
+  await user.click(cancelWaiting());
+  expect(signals[0]?.aborted).toBe(true);
+  expect(continueWithoutSigningIn()).toBeVisible();
+  expect(screen.getByRole("button", { name: SIGN_IN })).toHaveFocus();
+  await user.click(continueWithoutSigningIn());
+  expect(await screen.findByText("Signed in")).toBeVisible();
+  identity.dispose();
+});
+
+it.each([
+  ["a typed address", publicServers, "design.communities.buzz.xyz"],
+  ["the connect choice", undefined, "relay.example.com"],
+] as const)(
+  "Back from a sign-in that timed out from %s returns where Cancel does, with the address kept and nothing looked up again",
+  async (origin, servers, host) => {
+    const relay = landingRelay(`https://${host}`);
+    relay.info.resolve();
+    const connect = vi
+      .fn<(signal: AbortSignal) => Promise<Credential>>()
+      .mockRejectedValue(new Error(SIGN_IN_TIMED_OUT));
+    const identity = createIdentity();
+    const user = userEvent.setup();
+    render(
+      <Welcome
+        identity={identity}
+        communities={noJoin}
+        invites={invites}
+        account={unlinked}
+        connect={connect}
+        {...(servers ? { servers } : {})}
+      >
+        <p>Signed in</p>
+      </Welcome>,
+    );
+    await screen.findByRole("button", { name: SIGN_IN });
+    await user.type(urlField(), `${host}{Enter}`);
+    if (origin === "the connect choice") {
+      await screen.findByRole("heading", { name: "Connect to your community" });
+      await user.click(connectButton());
+    }
+    await screen.findByRole("heading", { name: "Finish in your browser" });
+    expect(screen.getByText(JOIN_NEXT)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    if (origin === "the connect choice") {
+      expect(
+        screen.getByRole("heading", { name: "Connect to your community" }),
+      ).toBeVisible();
+      expect(connectButton()).toHaveFocus();
+      expect(screen.getByText(host)).toBeVisible();
+    } else {
+      expect(
+        screen.getByRole("heading", { name: "Join a community" }),
+      ).toBeVisible();
+      expect(urlField()).toBeEnabled();
+      expect(urlField()).toHaveValue(host);
+    }
+    expect(
+      screen.queryByRole("heading", { name: "Finding community" }),
+    ).toBeNull();
+    expect(relay.relayCalls).toEqual(relay.lookup);
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(identity.snapshot().status).toBe("missing");
+    identity.dispose();
+  },
+);
+
+it("Open Buzz that launches Buzz for the first time releases the landing's hidden-window hold on the waiting page, so the landing Cancel returns to starts no entrance", async () => {
+  missingKey();
+  const answer = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation((command, args) =>
+    command === "plugin:window|show"
+      ? Promise.resolve()
+      : (answer?.(command, args) as Promise<unknown>),
+  );
+  // A Mac's first launch: the parser holds the window for the landing's
+  // entrance, which waits while the launch mark still shows.
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    media: query,
+    matches: false,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
+  document.documentElement.dataset.welcomeIntro = "pending";
+  const mark = document.createElement("div");
+  mark.id = "buzz-launch";
+  document.body.append(mark);
+  const { signedIn, connect } = heldSignIn();
+  requestSignIn();
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  try {
+    render(
+      <Welcome
+        identity={identity}
+        communities={noJoin}
+        invites={invites}
+        account={unlinked}
+        connect={connect}
+      >
+        <p>Signed in</p>
+      </Welcome>,
+    );
+    expect(await waitingHeading()).toBeVisible();
+    expect(document.documentElement.dataset.welcomeIntro).toBeUndefined();
+    expect(invoke).toHaveBeenCalledWith("plugin:window|show", {
+      label: "main",
+    });
+    await user.click(cancelWaiting());
+    expect(welcomeHeading()).toBeVisible();
+    expect(screen.getByRole("main")).toHaveAttribute("data-intro", "done");
+    expect(invoke).not.toHaveBeenCalledWith("onboarding_preserve_window");
+    expect(getCurrentWindow).not.toHaveBeenCalled();
+  } finally {
+    delete document.documentElement.dataset.welcomeIntro;
+    mark.remove();
+    signedIn.resolve(credential);
+    identity.dispose();
+  }
 });
 
 it("a refused invite link lands on the invite page with the refusal under the code field and no read, and a new code there joins", async () => {
@@ -8108,19 +8650,15 @@ it("a failed or canceled sign-in returns to the first-launch screen", async () =
   expect(screen.queryByRole("alert")).toBeNull();
   await user.click(landingSignIn());
   try {
-    await user.click(screen.getByRole("button", { name: "Other options" }));
+    await user.click(cancelWaiting());
     expect(signal?.aborted).toBe(true);
-    expect(
-      screen.getByRole("heading", { name: "Join a community" }),
-    ).toBeVisible();
+    expect(welcomeHeading()).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
   } finally {
     await act(async () => released.resolve(credential));
   }
   // A canceled attempt's late credential never signs the user in.
-  expect(
-    screen.getByRole("heading", { name: "Join a community" }),
-  ).toBeVisible();
+  expect(welcomeHeading()).toBeVisible();
   expect(connect).toHaveBeenCalledTimes(2);
   identity.dispose();
 });
@@ -8550,7 +9088,7 @@ it("shows a native refusal's message and offers a retry", async () => {
   identity.dispose();
 });
 
-it("quiet email sign-in can restart or leave for Other options", async () => {
+it("a waiting email sign-in can open the browser again or be canceled for the landing", async () => {
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "nsec_backup_choice")
       return Promise.resolve({
@@ -8581,15 +9119,19 @@ it("quiet email sign-in can restart or leave for Other options", async () => {
     </Welcome>,
   );
   await user.click(await screen.findByRole("button", { name: SIGN_IN }));
-  await user.click(screen.getByRole("button", { name: SIGN_IN }));
+  await user.click(screen.getByRole("button", { name: REOPEN }));
   expect(connect).toHaveBeenCalledTimes(2);
   expect(signals[0]?.aborted).toBe(true);
   expect(signals[1]?.aborted).toBe(false);
-  await user.click(screen.getByRole("button", { name: "Other options" }));
+  await user.click(cancelWaiting());
   expect(signals[1]?.aborted).toBe(true);
+  expect(welcomeHeading()).toBeVisible();
+  // Other options is the landing's again.
+  await user.click(screen.getByRole("button", { name: "Other options" }));
   expect(
     screen.getByRole("heading", { name: "Join a community" }),
   ).toBeVisible();
+  expect(connect).toHaveBeenCalledTimes(2);
   view.unmount();
   identity.dispose();
 });
@@ -10068,6 +10610,8 @@ it("Create account in place of the sign-in after Replace's restart sets up the n
   keyOnDevice(viewer, false);
   const user = userEvent.setup();
   await waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
+  // The restart's sign-in waits on its page; Cancel is the landing.
+  await user.click(await screen.findByRole("button", { name: "Cancel" }));
   await user.click(
     await screen.findByRole("button", { name: "Create account" }),
   );
@@ -10080,6 +10624,40 @@ it("Create account in place of the sign-in after Replace's restart sets up the n
   expect(screen.queryByText("Couldn’t finish setup")).toBeNull();
   identity.dispose();
 });
+
+it.each([
+  ["Cancel on the waiting page", "Cancel"],
+  ["Back once the wait timed out", "Back"],
+] as const)(
+  "%s keeps the key Replace's restart expected: Sign in to another account from the landing still stops before making or linking a key",
+  async (leave, control) => {
+    const bind = vi.fn((_pubkey: string) => Promise.resolve());
+    const connect = vi
+      .fn<
+        (signal: AbortSignal, options: SignInOptions) => Promise<Credential>
+      >()
+      .mockResolvedValue(credential);
+    // The restart's own sign-in waits on the browser, or stops waiting.
+    if (leave === "Cancel on the waiting page")
+      connect.mockReturnValueOnce(new Promise<Credential>(() => {}));
+    else connect.mockRejectedValueOnce(new Error(SIGN_IN_TIMED_OUT));
+    const { identity } = launchAfterReplace(unlinkedWith(bind), connect);
+    const user = userEvent.setup();
+    await waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
+    await user.click(await screen.findByRole("button", { name: control }));
+    // The landing's Sign in is still that restart's: an account with no
+    // linked key is neither given a new key nor bound.
+    await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "You signed in to a different Builderlab account than the one whose key Buzz restarted to restore.",
+    );
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(bind).not.toHaveBeenCalled();
+    expect(commands()).not.toContain("identity_create");
+    expect(identity.snapshot()).toMatchObject({ status: "missing" });
+    identity.dispose();
+  },
+);
 
 it("the sign-in after Replace's restart to the account it replaced the key for rests on Welcome back", async () => {
   const { identity } = launchAfterReplace(linkedTo(owned.pubkey));

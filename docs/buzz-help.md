@@ -60,14 +60,22 @@ mention anyone. Explicit agent watches on that room can still receive them.
   when this computer already has a Builderlab sign-in saved, **Sign in** comes first.
   **Other options** reveals a **Community URL** field
   for an address or invite link; desktop does not offer QR scanning.
+  While you create the account or sign in, Buzz shows **Continue in your
+  browser** and carries on by itself when you finish there; if a community is
+  waiting, the page names it as the next step. **Open browser** opens the
+  same sign-up or sign-in in a new tab, and the back arrow cancels and returns
+  to the page you started from, with any invite or typed address kept. If Buzz
+  stops waiting, the page changes to **Finish in your browser**: finish there,
+  then choose **Continue**, or the back arrow to return to the page you
+  started from.
   Opening a community invite or **Open in Buzz** link before this computer has
   an identity brings the desktop app forward on that community instead of the
   plain welcome screen: Buzz looks the community up, then, for a community
   hosted by this build's Builderlab, shows **You’re invited** (**Join this
   community** for a link with no invite code), naming the community, with the
   same **Create account** and **Sign in** choices and **Not now**. The browser opens
-  only after you choose one, the page stays while you finish there, and you
-  then come back to Buzz to join; the link by itself never joins or uses its
+  only after you choose one, **Continue in your browser** names the community
+  while you finish there, and you then come back to Buzz to join; the link by itself never joins or uses its
   invite code. **Not now** returns to the welcome screen. Any other community
   shows **Connect to your community** instead. If you created your account
   first and Buzz is waiting on **Connect to a community**, the link opens that

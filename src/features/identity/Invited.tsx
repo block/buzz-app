@@ -7,7 +7,7 @@ import { FoundCommunityRow } from "../communities/FoundCommunityRow";
  * device with no identity, once the lookup found a community this build's
  * Builderlab hosts. It names the community and offers the landing's two
  * account actions, in the landing's order; the sign-in they start is the
- * person's choice here, and the page stays while the browser completes it.
+ * person's choice here, and the waiting page's Cancel returns here.
  * Nothing is claimed or joined: setup ends on Join Community for the address.
  */
 export function Invited({
@@ -51,6 +51,7 @@ export function Invited({
           variant="prominent"
           size="lg"
           disabled={restoring}
+          data-return-focus={returning ? "sign-in" : "sign-up"}
           onClick={() => onStart(!returning)}
         >
           {returning ? "Sign in" : "Create account"}
@@ -58,6 +59,7 @@ export function Invited({
         <Button
           size="lg"
           disabled={restoring}
+          data-return-focus={returning ? "sign-up" : "sign-in"}
           onClick={() => onStart(returning)}
         >
           {returning ? "Create account" : "Sign in"}

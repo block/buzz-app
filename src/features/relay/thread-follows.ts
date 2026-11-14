@@ -8,6 +8,9 @@ export type ThreadFollowStorage = Readonly<{
   write(choices: ThreadFollows): void;
   /** Synced stores: saves one choice, resolving only once it is durable. */
   set?(key: string, follow: boolean): Promise<void>;
+  /** Synced stores: publication health after the tap, for the sync notice. */
+  syncHealth?(): Readonly<{ status: string; error?: string }>;
+  retry?(): Promise<void>;
   /** Another window saved new choices. */
   subscribe(listener: () => void): () => void;
 }>;

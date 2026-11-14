@@ -199,6 +199,12 @@ export function createReadState({
   // Encoded size of each own kind-30078 coordinate in the last complete
   // snapshot, so a publication cannot make the next snapshot impossible.
   let snapshotSizes: Map<string, number> | undefined;
+  // The version each size was taken from, so a stale echo never shrinks it.
+  const sizeVersions = new Map<string, RelayEvent>();
+  /** Other own kind-30078 shapes (thread follows) recover from the same reads. */
+  const ownListeners = new Set<
+    (events: readonly RelayEvent[], complete: boolean) => void
+  >();
   const capability = !host
     ? "unsupported"
     : !host.sign || !host.publish || !lock
@@ -601,6 +607,7 @@ export function createReadState({
         slots.set(coordinate, item);
         // Every observation keeps the capacity basis current, not only refresh.
         snapshotSizes?.set(coordinate, encodedBytes(item.event));
+        sizeVersions.set(coordinate, item.event);
       }
     }
     if (slots.size > 4096) {
@@ -622,6 +629,8 @@ export function createReadState({
     snapshotSizes = new Map(
       events.map((event) => [dTag(event), encodedBytes(event)]),
     );
+    sizeVersions.clear();
+    for (const event of events) sizeVersions.set(dTag(event), event);
   }
   // A local projection, not a reservation: other devices can still grow the
   // snapshot concurrently. Checked before every send, replays included. A gap
@@ -676,6 +685,7 @@ export function createReadState({
         await ingest(events, signal, generation);
         if (closed || generation !== epoch) return;
         if (complete) basis(events);
+        for (const listener of ownListeners) listener(events, complete);
         observationOwed = false;
         health({
           status:
@@ -1185,7 +1195,21 @@ export function createReadState({
     admit,
     /** Keeps the capacity basis current for an accepted own event. */
     observeSize(event: RelayEvent) {
-      snapshotSizes?.set(dTag(event), encodedBytes(event));
+      const coordinate = dTag(event);
+      const prior = sizeVersions.get(coordinate);
+      if (!snapshotSizes || (prior && newer(prior, event) !== event)) return;
+      sizeVersions.set(coordinate, event);
+      snapshotSizes.set(coordinate, encodedBytes(event));
+    },
+    /** Every own-author read this owner completes: `complete` when it was
+     * the full authenticated snapshot. */
+    subscribeOwn(
+      listener: (events: readonly RelayEvent[], complete: boolean) => void,
+    ) {
+      ownListeners.add(listener);
+      return () => {
+        ownListeners.delete(listener);
+      };
     },
     ensure: () =>
       refreshing ?? (requested ? Promise.resolve() : refresh("foreground")),

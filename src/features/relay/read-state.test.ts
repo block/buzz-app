@@ -2043,6 +2043,24 @@ describe("publication fences", () => {
     expect(owner.snapshot().error).toContain("capacity reached");
   }, 30000);
 
+  it("a stale echo never shrinks a coordinate's counted size", async () => {
+    const f = fixture(T);
+    const half = 4 * 1024 * 1024;
+    const large = {
+      ...foreignAt(f.key.pubkey, 0, "x".repeat(half)),
+      created_at: T + 1,
+    };
+    const filler = foreignAt(f.key.pubkey, 1, "x".repeat(half - 3000));
+    const owner = snapshotted(f, [large, filler])();
+    await owner.ready;
+    await owner.refresh();
+    // An older, smaller version of the same coordinate arrives late.
+    owner.observeSize({ ...foreignAt(f.key.pubkey, 0), id: "f".repeat(64) });
+    expect(() =>
+      owner.admit([foreignAt(f.key.pubkey, 2, "x".repeat(4000))]),
+    ).toThrow("capacity reached");
+  }, 30000);
+
   it("takes a complete snapshot before the first send, and again after a gap", async () => {
     const f = fixture(T);
     const full = snapshotted(f, foreign(f.key.pubkey, READ_SNAPSHOT_EVENTS))();

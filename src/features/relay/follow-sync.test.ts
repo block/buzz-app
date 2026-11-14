@@ -217,3 +217,18 @@ it("a future-dated head that pushes the reservation past the host window fails v
   const [, later] = capture(w, SLOT, CLIENT, now + 60) ?? [];
   expect(later?.created_at).toBe(now + 102);
 });
+
+it("D5: a packet's late OK never consumes it behind a newer unreadable head", () => {
+  let w = recovered(head(100, {}));
+  w = tap(w, SLOT, K, true, 100);
+  const [sent, packet] = send(w, 100);
+  // The latest journal already holds a newer head this build can't read.
+  const held = observe(sent, SLOT, {
+    id: id(0, "9"),
+    created_at: 200,
+    payload: undefined,
+  });
+  const late = observe(held, SLOT, packet);
+  expect(Object.keys(late.packets)).toEqual([packet.id]);
+  expect(late.edits[K]).toBeDefined();
+});

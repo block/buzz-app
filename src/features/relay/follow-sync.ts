@@ -269,7 +269,10 @@ export function observe(
   const readable = incoming.payload !== undefined;
   // 1. An identical ID acknowledges that exact packet and only the
   //    generations it captured that are still current.
-  if (exact && exact.slot === slot && readable) {
+  // A newer unreadable head already in the journal holds everything (§5).
+  const held = state.heads[slot];
+  const blocked = !!held && !held.payload && !outranks(incoming, held);
+  if (exact && exact.slot === slot && readable && !blocked) {
     delete packets[incoming.id];
     for (const [key, r] of Object.entries(exact.captured))
       if (edits[key]?.r === r) delete edits[key];

@@ -4,7 +4,7 @@ import {
   getPublicKey,
   nip44,
 } from "nostr-tools";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   decodeThreadFollows,
   signThreadFollows,
@@ -30,8 +30,11 @@ const K = `room:${"1".repeat(64)}`;
 function relay() {
   const heads = new Map<string, RelayEvent>();
   const published: RelayEvent[] = [];
+  /** Other own kind-30078 events (read state) in the same snapshot. */
+  const others: RelayEvent[] = [];
   return {
     heads,
+    others,
     published,
     put(event: RelayEvent) {
       const coordinate = followCoordinate(event) ?? "";
@@ -46,6 +49,64 @@ function relay() {
   };
 }
 type Relay = ReturnType<typeof relay>;
+/** Exclusive and non-reentrant, like `navigator.locks`: a nested request
+ * for the same lock waits forever. */
+function mutex() {
+  let tail: Promise<unknown> = Promise.resolve();
+  return <T>(_signal: AbortSignal, work: () => Promise<T>) => {
+    const next = tail.then(work);
+    tail = next.catch(() => {});
+    return next;
+  };
+}
+/** A relay reader that honours filters, limits and freshness: a non-fresh
+ * read may join a stale cached result, as the real reader's dedupe does. */
+function relayReader(
+  r: Relay,
+  options: { beforeRead?: () => Promise<void>; snapshot?: boolean } = {},
+) {
+  let cache: RelayEvent[] | undefined;
+  const all = () => [...r.heads.values(), ...r.others];
+  const matches = (
+    event: RelayEvent,
+    filter: { "#t"?: string[]; "#d"?: string[] },
+  ) =>
+    (!filter["#t"] ||
+      event.tags.some(
+        (t) => t[0] === "t" && filter["#t"]?.includes(t[1] ?? ""),
+      )) &&
+    (!filter["#d"] ||
+      event.tags.some(
+        (t) => t[0] === "d" && filter["#d"]?.includes(t[1] ?? ""),
+      ));
+  const reader = {
+    async read(
+      filters: { "#t"?: string[]; "#d"?: string[]; limit?: number }[],
+      read: { fresh?: boolean } = {},
+    ) {
+      await options.beforeRead?.();
+      if (!read.fresh && cache) return cache;
+      const out = filters.flatMap((filter) =>
+        all()
+          .filter((event) => matches(event, filter))
+          .sort((a, b) => b.created_at - a.created_at)
+          .slice(0, filter.limit ?? Infinity),
+      );
+      cache = out;
+      return out;
+    },
+    ...(options.snapshot === false
+      ? {}
+      : {
+          async readStateSnapshot(read: { fresh?: boolean } = {}) {
+            await options.beforeRead?.();
+            if (!read.fresh && cache) return cache;
+            return all();
+          },
+        }),
+  };
+  return reader as unknown as RelayReader;
+}
 /** Persists through JSON and `readJournal`, as IndexedDB does. */
 function memoryStorage(initial?: ReadJournal) {
   let saved = initial && JSON.stringify(initial);
@@ -86,10 +147,14 @@ function setup(
     legacy?: ReturnType<typeof memoryThreadFollows>;
     beforeRead?: () => Promise<void>;
     capacity?: Parameters<typeof createThreadFollowSync>[0]["capacity"];
+    snapshot?: boolean;
+    reader?: RelayReader;
+    lock?: ReturnType<typeof mutex>;
   } = {},
 ) {
   const storage = options.storage ?? memoryStorage().storage;
   const host: ReadStateHost = {
+    ...(options.snapshot === false ? {} : { communityId: "community" }),
     decode: async () => [],
     async decodeFollows(events) {
       return decodeThreadFollows(events, secret);
@@ -105,18 +170,18 @@ function setup(
       r.published.push(event);
     },
   };
-  const reader = {
-    read: async () => {
-      await options.beforeRead?.();
-      return [...r.heads.values()];
-    },
-  } as unknown as RelayReader;
+  const reader =
+    options.reader ??
+    relayReader(r, {
+      ...(options.beforeRead ? { beforeRead: options.beforeRead } : {}),
+      ...(options.snapshot === false ? { snapshot: false } : {}),
+    });
   return createThreadFollowSync({
     viewer,
     reader,
     host,
     storage,
-    lock: async (_signal, work) => work(),
+    lock: options.lock ?? mutex(),
     legacy: options.legacy ?? memoryThreadFollows(),
     now: () => clock.now,
     debounceMs: 60_000,
@@ -398,7 +463,7 @@ it("counts follow events toward the shared snapshot limit before sending", async
     status: "failed",
     error: "Read-state snapshot capacity reached; saved intent retained",
   });
-  expect(admitted).toHaveLength(2);
+  expect(admitted).toHaveLength(1);
   expect(refreshed).toBe(1);
   expect(r.heads.size).toBe(0);
   // The choice and its exact packet are kept for retry.
@@ -452,4 +517,333 @@ it("a refused import reservation saves nothing, and the retry imports once", asy
   expect(disk.backup().follows?.state.edits[K]).toMatchObject({
     origin: "legacy-import",
   });
+});
+
+const slotOf = (n: number) => n.toString(16).padStart(32, "0");
+const keyOf = (n: number) => `room:${n.toString(16).padStart(64, "0")}`;
+/** Our own signed thread-follows event, from any installation. */
+function head(
+  slot: string,
+  createdAt: number,
+  threads: Record<string, { follow: boolean; at: number }>,
+  clientId = "peer-device",
+  extra: Record<string, unknown> = {},
+) {
+  return signThreadFollows(
+    {
+      slot,
+      createdAt,
+      payload: { v: 1, client_id: clientId, threads, ...extra },
+    },
+    secret,
+    createdAt,
+  ) as RelayEvent;
+}
+/** The installation's client ID, after its first load. */
+async function installed(clock = { now: 1000 }) {
+  const r = relay();
+  const disk = memoryStorage();
+  const first = setup(r, clock, { storage: disk.storage });
+  await first.refresh();
+  first.dispose();
+  return { r, disk, clock, clientId: disk.backup().clientId };
+}
+const within = <T>(promise: Promise<T>, ms = 500) =>
+  Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Timed out")), ms),
+    ),
+  ]);
+
+it("D1: recovery reads the fresh complete snapshot, not a cached tag read", async () => {
+  const r = relay();
+  const sync = setup(r, { now: 1000 });
+  await sync.refresh();
+  r.put(head(slotOf(1), 1000, { [K]: { follow: true, at: 5 } }));
+  await sync.refresh();
+  expect(sync.read().get(K)).toBe(true);
+  expect(sync.snapshot().complete).toBe(true);
+});
+
+it("D1: a host without the complete snapshot never counts as complete or imports", async () => {
+  const r = relay();
+  const legacy = memoryThreadFollows();
+  legacy.write(new Map([[K, true]]));
+  const disk = memoryStorage();
+  const sync = setup(
+    r,
+    { now: 1000 },
+    { storage: disk.storage, legacy, snapshot: false },
+  );
+  await sync.refresh();
+  expect(sync.snapshot().complete).toBe(false);
+  expect(disk.backup().follows?.imported).toBeUndefined();
+  expect(r.heads.size).toBe(0);
+});
+
+it("D1: gap repair reconciles follow heads from read state's complete snapshot", async () => {
+  const r = relay();
+  let repair!: (events: readonly RelayEvent[], complete: boolean) => void;
+  const sync = setup(
+    r,
+    { now: 1000 },
+    {
+      capacity: {
+        admit() {},
+        observeSize() {},
+        async refresh() {},
+        subscribeOwn(listener) {
+          repair = listener;
+          return () => {};
+        },
+      },
+    },
+  );
+  await sync.refresh();
+  const missed = head(slotOf(1), 1000, { [K]: { follow: true, at: 5 } });
+  repair([missed], true);
+  await vi.waitFor(() => expect(sync.read().get(K)).toBe(true));
+});
+
+it("D1: flush reads our heads before writing, so a newer unreadable head blocks it", async () => {
+  const { r, disk, clock } = await installed();
+  const sync = setup(r, clock, { storage: disk.storage });
+  await sync.refresh();
+  await sync.set(K, true);
+  const [slot] = disk.backup().follows?.slots ?? [];
+  const key = nip44.v2.utils.getConversationKey(secret, viewer);
+  r.put(
+    finalizeEvent(
+      {
+        kind: 30078,
+        created_at: 1100,
+        tags: [
+          ["d", `thread-follows:${slot}`],
+          ["t", "thread-follows"],
+        ],
+        content: nip44.v2.encrypt(JSON.stringify({ v: 2 }), key),
+      },
+      secret,
+    ) as RelayEvent,
+  );
+  await sync.flush();
+  expect(sync.snapshot().error).toContain("unreadable");
+  expect(r.published).toHaveLength(0);
+});
+
+it("D2: decodes 17 coordinates and more than 512 KiB in host-sized batches", async () => {
+  const r = relay();
+  for (let n = 0; n < 17; n++)
+    r.put(head(slotOf(n + 1), 1000, { [keyOf(n)]: { follow: true, at: 5 } }));
+  const sync = setup(r, { now: 1000 });
+  await sync.refresh();
+  expect(sync.snapshot().status).toBe("synchronized");
+  expect(sync.read().get(keyOf(16))).toBe(true);
+
+  const big = relay();
+  for (let n = 0; n < 14; n++)
+    big.put(
+      head(
+        slotOf(n + 1),
+        1000,
+        { [keyOf(n)]: { follow: true, at: 5 } },
+        "peer",
+        {
+          pad: "x".repeat(39 * 1024),
+        },
+      ),
+    );
+  const large = setup(big, { now: 1000 });
+  await large.refresh();
+  expect(large.snapshot().status).toBe("synchronized");
+  expect(large.read().get(keyOf(13))).toBe(true);
+});
+
+it("D3: a readable head from another client in our slot is never adopted", async () => {
+  const { r, disk, clock } = await installed();
+  const sync = setup(r, clock, { storage: disk.storage });
+  await sync.refresh();
+  await sync.set(K, true);
+  await sync.flush();
+  const [slot = ""] = disk.backup().follows?.slots ?? [];
+  r.put(head(slot, 1100, { [K]: { follow: false, at: 1100 } }, "intruder"));
+  await sync.refresh();
+  await expect(sync.set(keyOf(9), true)).rejects.toThrow("unreadable");
+  expect(disk.backup().follows?.state.heads[slot]?.payload).toBeUndefined();
+  expect(r.published).toHaveLength(1);
+});
+
+it("D4: owned slots merge by the protocol rule in either order", async () => {
+  for (const [a, b, want] of [
+    [{ follow: true, at: 5 }, { follow: false, at: 3 }, true],
+    [{ follow: false, at: 3 }, { follow: true, at: 5 }, true],
+    [{ follow: true, at: 5 }, { follow: false, at: 5 }, false],
+    [{ follow: false, at: 5 }, { follow: true, at: 5 }, false],
+  ] as const) {
+    const { r, disk, clock, clientId } = await installed();
+    r.put(head(slotOf(1), 1000, { [K]: a }, clientId));
+    r.put(head(slotOf(2), 1000, { [K]: b }, clientId));
+    const sync = setup(r, clock, { storage: disk.storage });
+    await sync.refresh();
+    expect(disk.backup().follows?.slots).toHaveLength(2);
+    expect(sync.read().get(K)).toBe(want);
+  }
+});
+
+it("D5: an unreadable head in one owned slot holds publication of every slot", async () => {
+  const { r, disk, clock, clientId } = await installed();
+  const key = nip44.v2.utils.getConversationKey(secret, viewer);
+  r.put(head(slotOf(1), 1000, { [K]: { follow: true, at: 5 } }, clientId));
+  // Our second slot, padded so the next new key cannot go there.
+  r.put(
+    head(slotOf(2), 1000, { [keyOf(2)]: { follow: true, at: 5 } }, clientId, {
+      pad: "x".repeat(40 * 1024 - 200),
+    }),
+  );
+  const sync = setup(r, clock, { storage: disk.storage });
+  await sync.refresh();
+  await sync.set(keyOf(3), true); // lands in slot 1
+  r.put(
+    finalizeEvent(
+      {
+        kind: 30078,
+        created_at: 1100,
+        tags: [
+          ["d", `thread-follows:${slotOf(2)}`],
+          ["t", "thread-follows"],
+        ],
+        content: nip44.v2.encrypt(JSON.stringify({ v: 2 }), key),
+      },
+      secret,
+    ) as RelayEvent,
+  );
+  await sync.flush();
+  expect(sync.snapshot().error).toContain("unreadable");
+  expect(r.published).toHaveLength(0);
+  expect(disk.backup().follows?.state.edits[keyOf(3)]).toBeDefined();
+});
+
+it("D6: peer choices display offline after a restart", async () => {
+  const r = relay();
+  const other = keyOf(7);
+  r.put(
+    head(slotOf(1), 1000, {
+      [K]: { follow: true, at: 5 },
+      [other]: { follow: false, at: 5 },
+    }),
+  );
+  const disk = memoryStorage();
+  const online = setup(r, { now: 1000 }, { storage: disk.storage });
+  await online.refresh();
+  online.dispose();
+  const offline = setup(
+    r,
+    { now: 1000 },
+    {
+      storage: disk.storage,
+      reader: {
+        read: async () => {
+          throw new Error("Relay is disconnected");
+        },
+        readStateSnapshot: async () => {
+          throw new Error("Relay is disconnected");
+        },
+      } as unknown as RelayReader,
+    },
+  );
+  await offline.refresh();
+  expect(offline.read().get(K)).toBe(true);
+  expect(offline.read().get(other)).toBe(false);
+});
+
+it("D7: a tap saves while signing is held", async () => {
+  const r = relay();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const disk = memoryStorage();
+  const sync = setup(
+    r,
+    { now: 1000 },
+    { storage: disk.storage, sign: () => held },
+  );
+  await sync.refresh();
+  await sync.set(K, true);
+  const flushing = sync.flush();
+  await vi.waitFor(() =>
+    expect(
+      Object.keys(disk.backup().follows?.state.packets ?? {}),
+    ).toHaveLength(0),
+  );
+  await within(sync.set(keyOf(5), true));
+  expect(disk.backup().follows?.state.edits[keyOf(5)]).toBeDefined();
+  release();
+  await flushing;
+});
+
+it("D7: a lost capacity basis is re-read before the shared lock, never inside it", async () => {
+  const r = relay();
+  const lock = mutex();
+  let basis = false;
+  const sync = setup(
+    r,
+    { now: 1000 },
+    {
+      lock,
+      capacity: {
+        admit() {
+          if (!basis)
+            throw new Error(
+              "Read-state capacity basis lost; saved intent retained",
+            );
+        },
+        observeSize() {},
+        // Read state's refresh queues behind its flush, which holds the lock.
+        refresh: () =>
+          lock(new AbortController().signal, async () => {
+            basis = true;
+          }),
+      },
+    },
+  );
+  await sync.refresh();
+  await sync.set(K, true);
+  await within(sync.flush());
+  expect(r.published).toHaveLength(1);
+});
+
+it("D9: an existing key's update is sized, so an unsendable edit is refused", async () => {
+  const clock = { now: 1_000_000_000 };
+  const { r, disk, clientId } = await installed(clock);
+  const threads = { [K]: { follow: true, at: 1_000_000_000 } };
+  const size = (pad: number) =>
+    new TextEncoder().encode(
+      JSON.stringify({
+        v: 1,
+        client_id: clientId,
+        threads,
+        pad: "x".repeat(pad),
+      }),
+    ).byteLength;
+  const pad = 40 * 1024 - size(0);
+  expect(size(pad)).toBe(40 * 1024);
+  r.put(
+    head(slotOf(1), clock.now, threads, clientId, { pad: "x".repeat(pad) }),
+  );
+  const sync = setup(r, clock, { storage: disk.storage });
+  await sync.refresh();
+  await expect(sync.set(K, false)).rejects.toThrow("do not fit");
+  expect(disk.backup().follows?.state.edits[K]).toBeUndefined();
+});
+
+it("D9: other devices' slots never count against our 16", async () => {
+  const r = relay();
+  for (let n = 0; n < 16; n++)
+    r.put(head(slotOf(n + 1), 1000, { [keyOf(n)]: { follow: true, at: 5 } }));
+  const sync = setup(r, { now: 1000 });
+  await sync.refresh();
+  await sync.set(K, true);
+  expect(sync.read().get(K)).toBe(true);
 });

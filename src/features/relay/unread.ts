@@ -757,6 +757,26 @@ export function createUnread({
   // Read on first use: constructing a session touches no storage.
   let saved: ThreadFollows | undefined;
   const choices = () => (saved ??= follows.read());
+  /** Read-state health, with a follow publication error that happened after
+   * its tap surfaced in the same notice. Stable while neither changes. */
+  let shown:
+    | { reads: ReadSyncSnapshot; error?: string; out: ReadSyncSnapshot }
+    | undefined;
+  function sync(): ReadSyncSnapshot {
+    const current = reads.snapshot();
+    const health = follows.syncHealth?.();
+    const error =
+      health?.status === "failed" && current.status !== "error"
+        ? health.error
+        : undefined;
+    if (shown?.reads !== current || shown.error !== error)
+      shown = {
+        reads: current,
+        ...(error ? { error } : {}),
+        out: error ? { ...current, status: "error", error } : current,
+      };
+    return shown.out;
+  }
   /** An explicit follow choice for the reply's whole thread, if any. */
   const chosen = ({ channelId, threadRootId }: Evidence) =>
     threadRootId === undefined
@@ -2624,12 +2644,16 @@ export function createUnread({
     },
     activity,
     subscribeActivity: addActivityListener,
-    sync: reads.snapshot,
+    sync,
     subscribeSync(listener) {
       const stop = reads.subscribe(listener);
+      const stopFollows = follows.syncHealth
+        ? follows.subscribe(listener)
+        : undefined;
       membershipListeners.add(listener);
       return () => {
         stop();
+        stopFollows?.();
         membershipListeners.delete(listener);
       };
     },
@@ -2648,6 +2672,7 @@ export function createUnread({
     retrySync: async () => {
       await reads.refresh();
       await reads.flush();
+      await follows.retry?.();
     },
     syncedManualUnread: false,
     following(channelId, rootId) {

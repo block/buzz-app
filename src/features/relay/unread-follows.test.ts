@@ -555,3 +555,34 @@ it("invalidates the evicted channel and Activity at the shared choice limit", as
   stopActivity();
   stop();
 });
+
+it("shows a follow publication error that happens after the tap, and retries it", async () => {
+  const saved = memoryThreadFollows();
+  let health: { status: string; error?: string } = { status: "synchronized" };
+  const listeners = new Set<() => void>();
+  const retry = vi.fn(async () => {});
+  const follows: ThreadFollowStorage = {
+    ...saved,
+    syncHealth: () => health,
+    retry,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  const { unread } = await setup(follows);
+  const woken = vi.fn();
+  const stop = unread.subscribeSync(woken);
+  expect(unread.sync().status).not.toBe("error");
+  health = { status: "failed", error: "Relay refused the follow choices" };
+  for (const listener of listeners) listener();
+  expect(woken).toHaveBeenCalled();
+  expect(unread.sync()).toMatchObject({
+    status: "error",
+    error: "Relay refused the follow choices",
+  });
+  expect(unread.sync()).toBe(unread.sync());
+  await unread.retrySync();
+  expect(retry).toHaveBeenCalledOnce();
+  stop();
+});

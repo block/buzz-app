@@ -1,4 +1,4 @@
-import { eventDto, type RelayEvent } from "./events";
+import { eventDto, newer, type RelayEvent } from "./events";
 import {
   capture,
   dirtySlots,
@@ -9,6 +9,7 @@ import {
   journal as journalPacket,
   mergeFollows,
   observe,
+  outranks,
   ownChoices,
   parseFollowPayload,
   plaintext,
@@ -34,7 +35,7 @@ import {
   type ReadStateStorage,
 } from "./read-state-storage";
 import { PublishRejected } from "./outbox";
-import type { RelayReader } from "./reader";
+import { LARGE_READ_DEADLINE_MS, type RelayReader } from "./reader";
 import type { ThreadFollows, ThreadFollowStorage } from "./thread-follows";
 
 /** Follow sync state kept in the read-state journal, saved in the same
@@ -45,7 +46,16 @@ export type StoredFollows = Readonly<{
   slots: readonly string[];
   /** The device-local choices were imported (at=0) after a complete merge. */
   imported?: true;
+  /** Newest head of every coordinate we don't own, so peer choices still
+   * display offline (by coordinate). */
+  peers?: Readonly<Record<string, FollowHead>>;
 }>;
+const DECODE_EVENTS = 16;
+const DECODE_BYTES = 512 * 1024;
+/** Worst-case `at`, so a sized slot still fits after any later reservation. */
+const MAX_AT = 4294967295;
+const encoder = new TextEncoder();
+const PEER = /^thread-follows:[0-9a-f]{32}$/;
 const EMPTY_STORED: StoredFollows = { state: EMPTY_FOLLOW_SYNC, slots: [] };
 
 const version = (raw: unknown) =>
@@ -148,10 +158,29 @@ export function parseStoredFollows(
     reserved: reserved as number,
     observed: observed as number,
   };
+  if (r.peers !== undefined && !record(r.peers)) fail();
+  const peers = Object.fromEntries(
+    Object.entries((r.peers ?? {}) as Record<string, unknown>).map(
+      ([coordinate, head]) => {
+        if (!PEER.test(coordinate) || !version(head)) fail();
+        const h = head as FollowHead;
+        return [
+          coordinate,
+          {
+            id: h.id,
+            created_at: h.created_at,
+            payload:
+              h.payload === undefined ? undefined : parsePayload(h.payload),
+          },
+        ];
+      },
+    ),
+  );
   return {
     state,
     slots: [...(slots as string[])],
     ...(r.imported === true ? { imported: true as const } : {}),
+    ...(Object.keys(peers).length ? { peers } : {}),
   };
 }
 function wireEntry(entry: unknown) {
@@ -201,6 +230,10 @@ export function createThreadFollowSync({
     admit(events: readonly RelayEvent[]): void;
     observeSize(event: RelayEvent): void;
     refresh(): Promise<void>;
+    /** The read-state owner's own-author reads: gap repair and snapshots. */
+    subscribeOwn?(
+      listener: (events: readonly RelayEvent[], complete: boolean) => void,
+    ): () => void;
   };
 }) {
   const synced =
@@ -210,8 +243,8 @@ export function createThreadFollowSync({
   let closed = false;
   let stored: StoredFollows = EMPTY_STORED;
   let clientId = "";
-  /** Newest readable or unreadable head of every coordinate we don't own. */
-  const peers = new Map<string, FollowHead>();
+  /** Newest head of every coordinate we don't own, cached in the journal. */
+  const peers = () => Object.values(stored.peers ?? {});
   let complete = false;
   let merged: ThreadFollows | undefined;
   let snapshot: FollowSyncSnapshot = { status: "loading", complete: false };
@@ -271,18 +304,6 @@ export function createThreadFollowSync({
       reserved: Math.max(current.state.reserved, journal.lastCreatedAt),
     }),
   });
-  const ownSlot = (
-    current: StoredFollows,
-    event: RelayEvent,
-    payload?: FollowPayload,
-  ) => {
-    const slot = followCoordinate(event)?.slice("thread-follows:".length);
-    if (!slot) return;
-    if (current.slots.includes(slot)) return slot;
-    // A restored or cloned profile: our own client's slot that the journal lost.
-    if (payload?.clientId === clientId && current.slots.length < FOLLOW_SLOTS)
-      return slot;
-  };
   const decodeHead = (event: RelayEvent, payload: unknown): FollowHead => {
     let parsed: FollowPayload | undefined;
     try {
@@ -292,60 +313,107 @@ export function createThreadFollowSync({
     }
     return { id: event.id, created_at: event.created_at, payload: parsed };
   };
-  /** Validated own events (fetch or live echo) into the journal, read before write. */
-  async function ingest(events: readonly RelayEvent[], signal: AbortSignal) {
-    const own = events.filter(
-      (event) => event.pubkey === viewer && followCoordinate(event),
-    );
-    if (!own.length || !host?.decodeFollows) return;
-    for (const event of own) capacity?.observeSize(event);
-    const decoded = await host.decodeFollows(own, signal);
-    signal.throwIfAborted();
-    if (decoded.length !== own.length)
-      throw new Error("Follow decode mismatch");
-    const heads = own.map((event, index) => {
-      if (decoded[index]?.eventId !== event.id)
+  /** Newest full-order event per coordinate, then decoded in batches within
+   * the host's 16-event and 512 KiB request limits. */
+  async function decodeNewest(
+    events: readonly RelayEvent[],
+    signal: AbortSignal,
+  ) {
+    const newest = new Map<string, RelayEvent>();
+    for (const event of events) {
+      const coordinate = followCoordinate(event);
+      if (event.pubkey !== viewer || !coordinate) continue;
+      newest.set(coordinate, newer(newest.get(coordinate), event));
+    }
+    const heads: [string, FollowHead][] = [];
+    let batch: RelayEvent[] = [];
+    let bytes = 2;
+    const drain = async () => {
+      if (!batch.length || !host?.decodeFollows) return;
+      const decoded = await host.decodeFollows(batch, signal);
+      signal.throwIfAborted();
+      if (decoded.length !== batch.length)
         throw new Error("Follow decode mismatch");
-      return [event, decodeHead(event, decoded[index]?.payload)] as const;
-    });
+      for (const [index, event] of batch.entries()) {
+        if (decoded[index]?.eventId !== event.id)
+          throw new Error("Follow decode mismatch");
+        heads.push([
+          followCoordinate(event) as string,
+          decodeHead(event, decoded[index]?.payload),
+        ]);
+      }
+      batch = [];
+      bytes = 2;
+    };
+    for (const event of newest.values()) {
+      const size = encoder.encode(JSON.stringify(event)).byteLength + 1;
+      if (batch.length >= DECODE_EVENTS || bytes + size > DECODE_BYTES)
+        await drain();
+      batch.push(event);
+      bytes += size;
+    }
+    await drain();
+    return heads;
+  }
+  /** Validated own events (snapshot, fetch or live echo) into the latest
+   * journal: owned heads are observed, everything else is a cached peer. */
+  async function ingest(events: readonly RelayEvent[], signal: AbortSignal) {
+    const heads = await decodeNewest(events, signal);
+    if (!heads.length) return;
+    for (const event of events)
+      if (followCoordinate(event)) capacity?.observeSize(event);
     await save((current, journal) => {
       let next = shared(current, journal);
-      for (const [event, head] of heads) {
-        const slot = ownSlot(next, event, head.payload);
-        if (!slot) continue;
-        next = {
-          ...next,
-          slots: next.slots.includes(slot) ? next.slots : [...next.slots, slot],
-          state: observe(next.state, slot, head),
-        };
+      const peerHeads: Record<string, FollowHead> = { ...next.peers };
+      for (const [coordinate, head] of heads) {
+        const slot = coordinate.slice("thread-follows:".length);
+        const owned = next.slots.includes(slot);
+        const ours = head.payload?.clientId === journal.clientId;
+        if (owned || (ours && next.slots.length < FOLLOW_SLOTS)) {
+          // A readable head from another client in a slot we own is a
+          // conflict: never adopt it or let it retire our work. Hold the
+          // slot like an unreadable one (§5).
+          const own =
+            head.payload && !ours ? { ...head, payload: undefined } : head;
+          next = {
+            ...next,
+            slots: owned ? next.slots : [...next.slots, slot],
+            state: observe(next.state, slot, own),
+          };
+          delete peerHeads[coordinate];
+        } else if (
+          !peerHeads[coordinate] ||
+          outranks(head, peerHeads[coordinate])
+        )
+          peerHeads[coordinate] = head;
       }
-      return next;
+      return { ...next, peers: peerHeads };
     });
-    for (const [event, head] of heads) {
-      const coordinate = followCoordinate(event) ?? "";
-      if (stored.slots.includes(coordinate.slice("thread-follows:".length)))
-        continue;
-      const prior = peers.get(coordinate);
-      if (
-        !prior ||
-        head.created_at > prior.created_at ||
-        (head.created_at === prior.created_at && head.id < prior.id)
-      )
-        peers.set(coordinate, head);
-    }
   }
+  const ownUnreadable = (current: StoredFollows = stored) =>
+    Object.values(current.state.heads).some((head) => !head.payload);
   const unreadable = () =>
-    [...peers.values()].some((head) => !head.payload) ||
-    Object.values(stored.state.heads).some((head) => !head.payload);
+    peers().some((head) => !head.payload) || ownUnreadable();
+  const UNREADABLE = "Follow choices are unreadable on this device";
   /** Merged choices of every coordinate (rules: greater `at`, unfollow ties). */
   function choices(): ThreadFollows {
     if (merged) return merged;
-    const sources: ReadonlyMap<string, FollowEntry>[] = [
-      ownChoices(stored.state, clientId),
-    ];
-    for (const head of peers.values())
+    // Each owned slot is its own source, so slots merge by the protocol
+    // rule, never by iteration order.
+    const sources: ReadonlyMap<string, FollowEntry>[] = stored.slots.map(
+      (slot) =>
+        new Map(
+          Object.entries(slotPayload(stored.state, slot, clientId).threads),
+        ) as ReadonlyMap<string, FollowEntry>,
+    );
+    for (const head of peers())
       if (head.payload)
-        sources.push(new Map(Object.entries(head.payload.threads)));
+        sources.push(
+          new Map(Object.entries(head.payload.threads)) as ReadonlyMap<
+            string,
+            FollowEntry
+          >,
+        );
     const out = mergeFollows(sources);
     // Before the first complete load, device-local choices still apply.
     if (!stored.imported)
@@ -355,28 +423,37 @@ export function createThreadFollowSync({
     return out;
   }
   /** Stable placement: a key stays in its slot; new keys fill the first
-   * slot with room, then a new slot, within the coordinate limit (§7). */
+   * slot with room, then a new owned slot, up to 16 owned slots (§7). The
+   * prospective full slot is sized, so nothing unsendable is accepted. */
   function place(current: StoredFollows, key: string, follow: boolean) {
+    const fits = (slot: string) => {
+      const payload = slotPayload(current.state, slot, clientId);
+      const prior = payload.threads[key];
+      const entry = { ...prior, follow, at: MAX_AT };
+      return (
+        encoder.encode(
+          plaintext({
+            ...payload,
+            threads: { ...payload.threads, [key]: entry },
+          }),
+        ).byteLength <= FOLLOW_PLAINTEXT_BYTES
+      );
+    };
     for (const slot of current.slots)
       if (
         current.state.edits[key]?.slot === slot ||
         current.state.heads[slot]?.payload?.threads[key]
-      )
+      ) {
+        if (!fits(slot)) throw new Error("Follow choices do not fit");
         return { current, slot };
-    const entry = { follow, at: uint32(now()) ? now() : 0 };
-    for (const slot of current.slots) {
-      const payload = slotPayload(current.state, slot, clientId);
-      if (current.state.heads[slot] && !current.state.heads[slot]?.payload)
-        continue;
-      const size = new TextEncoder().encode(
-        plaintext({
-          ...payload,
-          threads: { ...payload.threads, [key]: entry },
-        }),
-      ).byteLength;
-      if (size <= FOLLOW_PLAINTEXT_BYTES) return { current, slot };
-    }
-    if (current.slots.length + peers.size >= FOLLOW_SLOTS)
+      }
+    for (const slot of current.slots)
+      if (
+        current.state.heads[slot]?.payload !== undefined ||
+        !current.state.heads[slot]
+      )
+        if (fits(slot)) return { current, slot };
+    if (current.slots.length >= FOLLOW_SLOTS)
       throw new Error("Follow choices are full");
     const slot = newSlotId();
     return { current: { ...current, slots: [...current.slots, slot] }, slot };
@@ -386,49 +463,80 @@ export function createThreadFollowSync({
     clearTimeout(timer);
     timer = setTimeout(() => void flush(), delay);
   }
-  const budget = () =>
-    AbortSignal.any([lifetime.signal, AbortSignal.timeout(15000)]);
-  /** Publish every dirty slot and retry retained packets byte-for-byte.
-   * Slots are independent: one failing leaves the others' results. */
+  const snapshotted = () => !!host?.communityId && !!reader.readStateSnapshot;
+  const budget = (snapshot = false) =>
+    AbortSignal.any([
+      lifetime.signal,
+      AbortSignal.timeout(15000 + (snapshot ? LARGE_READ_DEADLINE_MS : 0)),
+    ]);
+  /** Fresh own heads, persisted before anything relies on them. Only the
+   * complete authenticated snapshot counts as complete; the bounded tag read
+   * is a fallback for hosts without one (NIP-RS). */
+  async function recover(
+    signal: AbortSignal,
+    priority: "foreground" | "background",
+  ) {
+    if (snapshotted() && reader.readStateSnapshot) {
+      await ingest(
+        await reader.readStateSnapshot({ signal, priority, fresh: true }),
+        signal,
+      );
+      return true;
+    }
+    await ingest(
+      await reader.read(
+        [
+          {
+            kinds: [30078],
+            authors: [viewer],
+            "#t": ["thread-follows"],
+            limit: 500,
+          },
+        ],
+        { signal, priority, fresh: true },
+      ),
+      signal,
+    );
+    return false;
+  }
+  /** Publish every dirty slot and retry retained packets byte-for-byte,
+   * after a fresh read of our own heads (read before write). */
   function flush(): Promise<void> {
     if (closed || !synced || !host?.signFollows || !host.publishFollows)
       return Promise.resolve();
     if (sending) return sending;
-    const signal = budget();
+    const signal = budget(snapshotted());
     const run = async () => {
-      // Unreadable own heads hold every edit and packet (§5).
+      // Read before write, from the same complete snapshot as recovery.
+      if (await recover(signal, "foreground")) complete = !unreadable();
+      // Any unreadable or conflicting own head holds all follow publication
+      // and keeps every edit and packet (§5, §7).
+      if (ownUnreadable()) throw new Error(UNREADABLE);
       const errors: unknown[] = [];
-      // Exact retry of every retained packet first.
       for (const packet of Object.values(stored.state.packets))
-        if (
-          stored.state.heads[packet.slot]?.payload === undefined &&
-          stored.state.heads[packet.slot]
-        )
-          errors.push(
-            new Error("Follow choices are unreadable on this device"),
-          );
-        else if (packet.event !== undefined)
+        if (packet.event !== undefined)
           await send(
             eventDto(packet.event),
             packet.payload,
             packet.slot,
             signal,
           ).catch((error: unknown) => errors.push(error));
-      for (const slot of dirtySlots(stored.state)) {
-        if (stored.state.heads[slot] && !stored.state.heads[slot]?.payload) {
-          errors.push(
-            new Error("Follow choices are unreadable on this device"),
-          );
-          continue;
-        }
+      for (const slot of dirtySlots(stored.state))
         await compose(slot, signal).catch((error: unknown) =>
           errors.push(error),
         );
-      }
       if (errors.length) throw errors[0];
     };
     const task = queue(async () => {
       try {
+        // Re-read a lost capacity basis before taking the shared publisher
+        // lock: read state's refresh may be queued behind a flush that is
+        // itself waiting for that lock.
+        try {
+          capacity?.admit([]);
+        } catch {
+          await capacity?.refresh();
+        }
         await (lock ? lock(signal, run) : run());
         settled();
         // A successor may now be owed behind a resolved packet.
@@ -506,13 +614,7 @@ export function createThreadFollowSync({
   ) {
     if (!host?.publishFollows) return;
     // Preflight: never publish what would make the next snapshot impossible.
-    try {
-      capacity?.admit([event]);
-    } catch {
-      // A lost basis is re-read once; a real overflow fails visibly.
-      await capacity?.refresh();
-      capacity?.admit([event]);
-    }
+    capacity?.admit([event]);
     try {
       await host.publishFollows(event, signal);
     } catch (error) {
@@ -555,26 +657,14 @@ export function createThreadFollowSync({
           health({ status: "local", complete: false });
           return;
         }
-        const signal = budget();
-        const events = await reader.read(
-          [
-            {
-              kinds: [30078],
-              authors: [viewer],
-              "#t": ["thread-follows"],
-              limit: 500,
-            },
-          ],
-          { signal, priority: "background" },
-        );
-        await ingest(events, signal);
-        complete = !unreadable();
+        const signal = budget(snapshotted());
+        complete = (await recover(signal, "background")) && !unreadable();
         // Legacy import once, after a complete merge, only for unsynced keys.
         if (complete && !stored.imported) {
           const local = legacy.read();
           const known = mergeFollows([
             ownChoices(stored.state, clientId),
-            ...[...peers.values()].map(
+            ...peers().map(
               (head) => new Map(Object.entries(head.payload?.threads ?? {})),
             ),
           ]);
@@ -617,6 +707,22 @@ export function createThreadFollowSync({
       }
     });
   }
+  // Gap repair and reconnects: read state re-reads the complete snapshot,
+  // and follow heads reconcile from that same read.
+  const stopOwn = capacity?.subscribeOwn?.((events, full) => {
+    if (!full || closed || !synced) return;
+    void queue(async () => {
+      try {
+        await ingest(events, budget());
+        complete = !unreadable();
+        settled();
+        if (dirtySlots(stored.state).length) schedule(0);
+      } catch (error) {
+        if (!closed)
+          health({ status: "failed", complete, error: errorText(error) });
+      }
+    });
+  });
   return {
     read: choices,
     /** Legacy whole-map write: unsupported once synced. */
@@ -635,10 +741,10 @@ export function createThreadFollowSync({
         emit();
         return Promise.resolve();
       }
-      return queue(async () => {
-        if (Object.values(stored.state.heads).some((head) => !head.payload))
-          throw new Error("Follow choices are unreadable on this device");
+      // Local only: never queued behind signing, sending or reads (§3).
+      return (async () => {
         await save((current, journal) => {
+          if (ownUnreadable(current)) throw new Error(UNREADABLE);
           const placed = place(shared(current, journal), key, follow);
           return {
             ...placed.current,
@@ -647,7 +753,7 @@ export function createThreadFollowSync({
         });
         settled();
         schedule();
-      });
+      })();
     },
     subscribe(listener: () => void) {
       listeners.add(listener);
@@ -658,6 +764,12 @@ export function createThreadFollowSync({
       };
     },
     snapshot: () => snapshot,
+    /** Health for the shared sync notice: later publication errors too. */
+    syncHealth: () => snapshot,
+    async retry() {
+      await refresh();
+      await flush();
+    },
     refresh,
     flush,
     /** Live own events: echoes and other devices' slots. */
@@ -684,6 +796,7 @@ export function createThreadFollowSync({
     },
     dispose() {
       closed = true;
+      stopOwn?.();
       clearTimeout(timer);
       lifetime.abort();
       listeners.clear();

@@ -30,6 +30,7 @@ import { dmLabel } from "../../features/conversation/dm-label";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { useSavedHiddenDmIds } from "../../bundled/channels/useHiddenDms";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import { soloNeighbors } from "../../features/channel-navigation/solo-successor";
 import { routedSection } from "./list-column";
 import type { OpenTarget } from "../../features/navigation/targets";
 import {
@@ -458,6 +459,18 @@ export function RailNavigation({
         .filter((channel) => channel.channelType === "solo"),
     [soloRecency, channelsById],
   );
+  // Leaving a Solo chat opens the row that takes its place.
+  const neighborsRef = channelNavigation?.soloNeighbors;
+  useEffect(() => {
+    if (!neighborsRef) return;
+    const shown = soloChats.map((channel) => channel.id);
+    const neighbors = (id: string) =>
+      soloNeighbors([{ rows: soloChats, shown }], id);
+    neighborsRef.current = neighbors;
+    return () => {
+      if (neighborsRef.current === neighbors) neighborsRef.current = undefined;
+    };
+  }, [neighborsRef, soloChats]);
   const visited = navigation.entry.target;
   const currentChannel =
     visited.kind === "conversation"

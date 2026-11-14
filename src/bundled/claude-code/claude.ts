@@ -24,6 +24,11 @@ export type ActivityReceipt = Readonly<{
   step?: (tool: string, target?: string) => void;
   acknowledged?: () => void;
   superseded?: () => void;
+  /** Told the message's id once Claude has taken it: the id its transcript
+   * gives the prompt. A message Claude never took has none. */
+  submitted?: (uuid: string) => void;
+  /** Told once Claude has taken the message into a turn, as it replays it. */
+  taken?: () => void;
 }>;
 
 export type Spawn = (
@@ -56,6 +61,11 @@ export type ClaudeLaunch = Readonly<{
   resume?: string;
   /** The id a new session takes, so it is known before its first turn. */
   sessionId?: string;
+  /** The gateway forwarding URL this process's inference goes to: one
+   * turn's generation, fixed for the process's life. `--settings` env wins
+   * over the person's own settings and merges the rest. `noProxy` is its
+   * NO_PROXY and no_proxy, the person's own with the URL's host added. */
+  forward?: Readonly<{ url: string; noProxy: string }>;
   /** The in-process MCP server's tools. */
   tools?: ToolServer;
   hook?: ClaudeHook;
@@ -106,6 +116,39 @@ const STDERR_LIMIT = 4_000;
 /** What `claude` is started with: as the SDK starts it, reporting when it is
  * idle, signed in as `claude auth login` left it, and never as part of a
  * Claude session that started the app. */
+/** What has Claude (2.1.323's strings) send its requests to a provider other
+ * than Anthropic's API: on only for "1", "true", "yes" or "on". */
+export const PROVIDERS = [
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_GATEWAY",
+  "CLAUDE_CODE_USE_MANTLE",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+  "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+] as const;
+/** What names the endpoint of Anthropic's API or a provider; an empty one
+ * falls back to the default. */
+export const ENDPOINTS = [
+  "ANTHROPIC_BASE_URL",
+  "CLAUDE_CODE_API_BASE_URL",
+  "ANTHROPIC_UNIX_SOCKET",
+  "ANTHROPIC_BEDROCK_BASE_URL",
+  "ANTHROPIC_BEDROCK_MANTLE_BASE_URL",
+  "ANTHROPIC_VERTEX_BASE_URL",
+  "ANTHROPIC_FOUNDRY_BASE_URL",
+  "ANTHROPIC_AWS_BASE_URL",
+  "ANTHROPIC_GOOGLE_CLOUD_BASE_URL",
+] as const;
+/** A forwarded process's `--settings` env: its generation's URL, and every
+ * provider and other endpoint blanked. Flag settings outrank the user's,
+ * the project's and the local ones, whose `env` would otherwise apply after
+ * launch; only managed settings outrank them. */
+export const forwardEnv = (url: string): Record<string, string> => ({
+  ...Object.fromEntries([...PROVIDERS, ...ENDPOINTS].map((name) => [name, ""])),
+  ANTHROPIC_BASE_URL: url,
+});
+
 export const ENV: Readonly<Record<string, string | null>> = {
   CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
   CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1",
@@ -161,6 +204,10 @@ export class ClaudeProcess {
   private buffer = "";
   private stderr = "";
   private lastError: string | undefined;
+  private missing = false;
+  /** Claude reported idle after everything that could start a turn: its
+   * last send, background task change or turn. True before the first. */
+  private quiesced = true;
   /** A `/compact` was sent: its failure fails the turn, unlike an automatic
    * compaction's mid-turn. */
   private compacting = false;
@@ -178,6 +225,11 @@ export class ClaudeProcess {
   /** Called when it was active and is no longer. */
   onActivity: (() => void) | undefined;
   onQuiet?: () => void;
+  /** Called when Claude reports its session idle and nothing of it is
+   * active: the only point a forwarded turn's admission may end. A result,
+   * or background tasks finishing, is not: a finished task starts a turn of
+   * its own. */
+  onIdle?: () => void;
   private requests = 0;
   /** Control requests awaiting Claude's answer, by request id. */
   private calls = new Map<string, (response: Message) => void>();
@@ -282,6 +334,12 @@ export class ClaudeProcess {
           ? ["--json-schema", JSON.stringify(launch.outputSchema)]
           : []),
         ...(launch.effort ? ["--effort", launch.effort] : []),
+        ...(launch.forward
+          ? [
+              "--settings",
+              JSON.stringify({ env: forwardEnv(launch.forward.url) }),
+            ]
+          : []),
         ...(launch.resume ? ["--resume", launch.resume] : []),
         ...(!launch.resume && launch.sessionId
           ? ["--session-id", launch.sessionId]
@@ -332,6 +390,23 @@ export class ClaudeProcess {
               DYLD_FRAMEWORK_PATH: null,
               LD_PRELOAD: null,
               LD_LIBRARY_PATH: null,
+            }
+          : {}),
+        // A forwarded process's endpoint is its generation's alone: what
+        // would pick another provider or endpoint is cleared here and blanked
+        // in its flag settings. Managed settings, which outrank those, are
+        // checked before its generation opens; a turn none of whose requests
+        // reach the generation still fails.
+        ...(launch.forward
+          ? {
+              ...Object.fromEntries(
+                [...PROVIDERS, ...ENDPOINTS].map((name) => [name, null]),
+              ),
+              CLAUDE_CODE_REMOTE_SESSION_ID: null,
+              // In the process env, not flag settings, where it would replace
+              // a list the person's settings give their other hosts.
+              NO_PROXY: launch.forward.noProxy,
+              no_proxy: launch.forward.noProxy,
             }
           : {}),
         ...(launch.review
@@ -501,6 +576,19 @@ export class ClaudeProcess {
   get started() {
     return this.began;
   }
+  /** At Claude's own idle, with nothing since that could start a turn: a
+   * finished background task may still start one until Claude says so. */
+  get idle() {
+    return this.quiesced;
+  }
+  /** Running a `/compact` it was sent. */
+  get compacts() {
+    return this.compacting;
+  }
+  /** Whether Claude said the session it was to resume doesn't exist. */
+  get missingSession() {
+    return this.missing;
+  }
   get model() {
     return this.reported;
   }
@@ -528,7 +616,9 @@ export class ClaudeProcess {
   /** Sends one user message. Resolves when it, and anything sent after it, has
    * been answered and the session is idle again. A new turn runs with the
    * picked model and effort, or the session's own without them; a message
-   * folded into a running turn changes only what it asks for. */
+   * folded into a running turn keeps the turn's model and effort, whatever
+   * it asks for, so a turn never switches model (and misses its prompt
+   * cache) partway. */
   send(
     text: string,
     { model, effort, ...activity }: TurnPick & ActivityReceipt = {},
@@ -539,11 +629,12 @@ export class ClaudeProcess {
         error: "Claude is not running",
       });
     // The model first: effort applies to whichever model runs.
-    this.setModel(model !== undefined || !this.busy ? model : this.pickedModel);
-    this.setEffort(effort !== undefined || !this.busy ? effort : this.effort);
+    if (!this.busy) this.setModel(model);
+    if (!this.busy) this.setEffort(effort);
     const uuid = crypto.randomUUID();
     this.receipts.set(uuid, activity);
     this.pending++;
+    this.quiesced = false;
     if (text === "/compact") this.compacting = true;
     const settled = new Promise<Settled>((resolve) =>
       this.waiters.push(resolve),
@@ -554,11 +645,13 @@ export class ClaudeProcess {
       message: { role: "user", content: text },
       parent_tool_use_id: null,
       session_id: "",
-    }).catch((error) =>
-      this.settle({
-        ok: false,
-        error: `Claude did not take the message: ${error}`,
-      }),
+    }).then(
+      () => activity.submitted?.(uuid),
+      (error) =>
+        this.settle({
+          ok: false,
+          error: `Claude did not take the message: ${error}`,
+        }),
     );
     return settled;
   }
@@ -731,9 +824,11 @@ export class ClaudeProcess {
       const active = this.active;
       this.working = message.state !== "idle";
       if (!this.working && this.pending) this.done();
+      this.quiesced = !this.active;
       if (!this.active) this.stopping = false;
       if (active !== this.active) this.onActivity?.();
       if (active && !this.active) this.onQuiet?.();
+      if (message.state === "idle" && !this.active) this.onIdle?.();
       return;
     }
     // The whole set each time; ambient tasks, such as watchers, are not activity.
@@ -743,9 +838,11 @@ export class ClaudeProcess {
       Array.isArray(message.tasks)
     ) {
       const active = this.active;
-      this.tasks = message.tasks.filter(
+      const tasks = message.tasks.filter(
         (task) => !(task as Message | null)?.ambient,
       ).length;
+      if (tasks !== this.tasks) this.quiesced = false;
+      this.tasks = tasks;
       if (!this.active) this.stopping = false;
       if (active !== this.active) this.onActivity?.();
       if (active && !this.active) this.onQuiet?.();
@@ -772,6 +869,7 @@ export class ClaudeProcess {
       const receipt = this.receipts.get(message.uuid);
       if (receipt) {
         this.receipts.delete(message.uuid);
+        receipt.taken?.();
         // Watches/timers have no message activity: they must not hide a mention.
         if (receipt.step) {
           const scope = receipt.activityScope ?? "conversation";
@@ -790,6 +888,16 @@ export class ClaudeProcess {
       return;
     }
     if (message.type !== "result") return;
+    // How Claude (2.1.286, 2.1.318) refuses a resume whose session it can't find,
+    // before it starts and exits.
+    const errors = Array.isArray(message.errors) ? message.errors : [];
+    if (
+      !this.began &&
+      errors.includes(
+        `No conversation found with session ID: ${this.sessionId}`,
+      )
+    )
+      this.missing = true;
     // A turn that finished before the interrupt took effect is not stopped,
     // and a stopped turn of its own has no message to settle.
     if (

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ClaudeProcess, stepLabel } from "./claude";
+import { ClaudeProcess, ENDPOINTS, PROVIDERS, stepLabel } from "./claude";
 import {
   backgroundTasks,
   fakeSpawn,
@@ -68,6 +68,40 @@ it("resolves a message once the session is idle, and keeps the process for the n
   await expect(claude.send("again")).resolves.toEqual({ ok: true });
   expect(processes).toHaveLength(1);
   expect(processes[0]?.prompts).toEqual(["hello", "again"]);
+});
+
+it("names a message's id to its submitter only once Claude has taken it", async () => {
+  const { spawn, processes } = fakeSpawn();
+  let refuse = false;
+  const claude = await ClaudeProcess.start(
+    async (id, options) => {
+      const process = await spawn(id, options);
+      return {
+        ...process,
+        write: (data: string) =>
+          refuse && data.includes('"type":"user"')
+            ? Promise.reject(new Error("stdin closed"))
+            : process.write(data),
+      };
+    },
+    { ...launch, sessionId: "s1" },
+  );
+  const submitted = vi.fn();
+  refuse = true;
+  await expect(claude.send("lost", { submitted })).resolves.toMatchObject({
+    ok: false,
+    error: expect.stringContaining("Claude did not take the message"),
+  });
+  expect(submitted).not.toHaveBeenCalled();
+  refuse = false;
+  await expect(claude.send("taken", { submitted })).resolves.toEqual({
+    ok: true,
+  });
+  const taken = processes[0]?.received.filter(
+    (message) => message.type === "user",
+  );
+  expect(taken).toHaveLength(1);
+  expect(submitted.mock.calls).toEqual([[taken?.[0]?.uuid]]);
 });
 
 it("is active in a turn of its own or with background work, but not for ambient tasks", async () => {
@@ -192,6 +226,82 @@ it("runs a turn on the model asked for, and the next without one on the session'
       .filter((request) => request?.subtype === "set_model")
       .map((request) => request.model),
   ).toEqual(["haiku", "opus"]);
+});
+
+it("keeps the running turn's model and effort for a steer that picks others", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    model: "opus",
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  fake.hold = true;
+  const first = claude.send("first", { model: "haiku", effort: "low" });
+  const steer = claude.send("also", { model: "opus", effort: "xhigh" });
+  await flush();
+  fake.finish();
+  await Promise.all([first, steer]);
+  fake.hold = false;
+  // The pick holds again for a turn of its own.
+  await claude.send("after", { model: "opus", effort: "xhigh" });
+  expect(fake.models).toEqual(["haiku", "haiku", "opus"]);
+  expect(fake.efforts).toEqual(["low", "low", "xhigh"]);
+  expect(
+    fake.received
+      .map((message) => message.request as { subtype?: string; model?: string })
+      .filter((request) => request?.subtype === "set_model")
+      .map((request) => request.model),
+  ).toEqual(["haiku", "opus"]);
+});
+
+it("clears what would pick another provider or endpoint for a forwarded process", async () => {
+  const { spawn, processes } = fakeSpawn();
+  await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+    forward: { url: "http://127.0.0.1:9/h", noProxy: "corp,127.0.0.1" },
+  });
+  const env = processes[0]?.options.env ?? {};
+  // Its generation is never sent to a proxy; the person's list stays.
+  expect(env).toHaveProperty("NO_PROXY", "corp,127.0.0.1");
+  expect(env).toHaveProperty("no_proxy", "corp,127.0.0.1");
+  for (const name of [
+    "ANTHROPIC_BASE_URL",
+    "CLAUDE_CODE_API_BASE_URL",
+    "ANTHROPIC_UNIX_SOCKET",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+  ])
+    expect(env).toHaveProperty(name, null);
+  // The person's own sign-in still reaches the gateway.
+  expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+  // Their settings' `env` applies after launch; flag settings outrank it,
+  // blanking every provider and endpoint but the generation's.
+  const args = processes[0]?.options.args ?? [];
+  const settings = JSON.parse(args[args.indexOf("--settings") + 1] ?? "{}");
+  expect(settings).toEqual({
+    env: {
+      ...Object.fromEntries(
+        [...PROVIDERS, ...ENDPOINTS].map((name) => [name, ""]),
+      ),
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:9/h",
+    },
+  });
+  for (const name of [
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "ANTHROPIC_BEDROCK_BASE_URL",
+    "ANTHROPIC_VERTEX_BASE_URL",
+    "CLAUDE_CODE_API_BASE_URL",
+  ])
+    expect(settings.env).toHaveProperty(name, "");
+  const { spawn: plain, processes: own } = fakeSpawn();
+  await ClaudeProcess.start(plain, { ...launch, sessionId: "s2" });
+  expect(own[0]?.options.env).not.toHaveProperty("CLAUDE_CODE_USE_BEDROCK");
+  expect(own[0]?.options.env).not.toHaveProperty("NO_PROXY");
 });
 
 it("moves activity only when the exact follow-up is acknowledged, without ending the turn", async () => {

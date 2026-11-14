@@ -17,6 +17,8 @@ import {
   type TurnPick,
 } from "./claude";
 import type { AgentStore } from "../../features/agents/store";
+import type { GatewayBinding } from "../../features/agents/gateway/contract";
+import { BYPASSED, type Generation, UNREACHED } from "./forwarding";
 
 /** A conversation's process stops after this long without a message or its
  * own activity, such as background work. */
@@ -32,6 +34,9 @@ export type SavedSession = Readonly<{
   seen: number;
   /** Thread-local history in a shared channel session. Older saves have none. */
   threads?: Readonly<Record<string, number>>;
+  /** Its gateway binding (the Buzz session beside this harness session),
+   * once a forwarded turn ran in it. Kept while the session resumes. */
+  gateway?: unknown;
   at: number;
 }>;
 export type SessionStore = {
@@ -73,8 +78,39 @@ type DeliveryOptions = Readonly<{
    * wait just before the prompt is sent. Not asked of a busy process, which
    * steers on the settings it already runs. */
   admit?: () => Promise<void>;
+  /** This turn's gateway generation for harness session `session`, given
+   * its saved binding; it throws, failing the delivery before anything
+   * spawns, when the turn can't be forwarded. A forwarded turn that starts
+   * from idle gets a process and generation of its own; one that arrives
+   * while a forwarded turn at its revision is running joins that turn. */
+  forward?: Forward;
+  /** False for a delivery that never joins a running forwarded turn, such
+   * as a compaction, which runs under its own context. */
+  steers?: false;
+  /** Ends the delivery while it still waits for another turn, so it is not
+   * delivered; once it is sent, stopping it is the process's. */
+  signal?: AbortSignal;
+  /** Told just before the message is sent into a process. */
+  sending?: () => void;
+  /** False when a saved session Claude no longer has is not to be started
+   * over: it is forgotten, and the delivery has nothing to do. */
+  startOver?: false;
 }> &
   ActivityReceipt;
+
+/** `revision` is the route revision the delivery was dispatched with; a
+ * delivery without one never joins a running forwarded turn. */
+export type Forward = ((
+  session: string,
+  saved: unknown,
+) => Promise<Forwarded>) &
+  Readonly<{ revision?: number }>;
+export type Forwarded = Readonly<{
+  generation: Generation;
+  binding: GatewayBinding;
+}>;
+const REVOKED =
+  "This agent's gateway access changed before the turn could start.";
 
 /** A process `shutdown` can stop and wait for. */
 type Stoppable = Readonly<{ kill(): unknown; exited: Promise<unknown> }>;
@@ -84,6 +120,13 @@ type Live = {
   fingerprint: string;
   used: number;
   timer?: ReturnType<typeof setTimeout>;
+  /** The forwarded turn this process serves, and its binding. */
+  forwarded?: Forwarded;
+  /** It serves one forwarded delivery alone: it
+   * stops at the qualifying idle and holds the conversation till it exits. */
+  exclusive?: boolean;
+  /** Told at Claude's qualifying idle. */
+  idled?: () => void;
 };
 
 export class AgentSessions {
@@ -93,6 +136,10 @@ export class AgentSessions {
   private onceCount = 0;
   private readonly handing = new Map<string, Promise<void>>();
   private readonly opening = new Map<string, Promise<Live | Settled>>();
+  /** Per conversation, from a forwarded turn's opening until its process has
+   * exited and native has closed its generation: no other turn starts in
+   * between, so no turn runs on another's generation or overlaps it. */
+  private readonly forwarding = new Map<string, Promise<void>>();
   private discovery:
     | {
         fingerprint: string;
@@ -236,8 +283,23 @@ export class AgentSessions {
       release();
       if (this.handing.get(key) === pending) this.handing.delete(key);
     };
-    const send = () => this.submit(key, text, seen, options, handed);
-    return (prior ? prior.then(send) : send()).finally(handed);
+    let started = false;
+    const send = () => {
+      started = true;
+      return this.submit(key, text, seen, options, handed);
+    };
+    // Order holds: a later delivery still waits for the one ahead of this.
+    const run = (prior ? prior.then(send) : send()).finally(handed);
+    const { signal } = options;
+    if (!signal) return run;
+    // Stopped while still queued behind another delivery's handover, it
+    // settles at once; once it is submitting, the submission settles it.
+    return Promise.race([
+      run,
+      aborted(signal).then(() =>
+        started ? run : { ok: true as const, undelivered: true as const },
+      ),
+    ]);
   }
 
   private async submit(
@@ -247,6 +309,7 @@ export class AgentSessions {
     {
       steer = text,
       current,
+      forward,
       refresh,
       fresh,
       pick = {},
@@ -255,17 +318,65 @@ export class AgentSessions {
       step,
       acknowledged,
       superseded,
+      submitted,
       activityScope,
+      startOver,
+      steers,
+      signal,
+      sending,
     }: DeliveryOptions,
     handed: () => void,
   ): Promise<Settled> {
+    const stopped = signal && aborted(signal);
+    // Waiting for another turn ends once the delivery is stopped.
+    const waited = async (work: Promise<unknown>) => {
+      await (stopped ? Promise.race([work, stopped]) : work);
+      return !signal?.aborted;
+    };
+    const joins = (live: Live) => steers !== false && joinable(live, forward);
     for (;;) {
       if (this.disposed)
         return { ok: false, error: "Claude was stopped", undelivered: true };
       const opening = this.opening.get(key);
-      if (opening) await opening;
+      if (opening && !(await waited(opening)))
+        return { ok: true, undelivered: true };
       if (current && !current()) return { ok: true, undelivered: true };
+      if (signal?.aborted) return { ok: true, undelivered: true };
       let live = this.live.get(key);
+      // A forwarded turn at the same revision steers into the one running,
+      // on its generation, as an ordinary turn steers into its process.
+      const joined = !!live && joins(live);
+      // Otherwise an eligible delivery's process serves it alone: anything
+      // else starts after it, in a new process.
+      const barrier = this.forwarding.get(key);
+      if (barrier && !joined) {
+        if (!(await waited(barrier))) return { ok: true, undelivered: true };
+        continue;
+      }
+      // An eligible delivery decides its own routing, in a process of its
+      // own: an ordinary process's work, background work and the turns its
+      // completion starts too, ends at Claude's idle, and the process exits
+      // first.
+      if (live && forward && !joined) {
+        const { process } = live;
+        // Rechecked once woken: Claude may report activity in the same
+        // output as its idle, before this resumes. Its exit ends the wait.
+        while (!process.idle && process.running)
+          if (
+            !(await waited(
+              Promise.race([
+                new Promise<void>((resolve) => {
+                  if (live) live.idled = resolve;
+                }),
+                process.exited,
+              ]),
+            ))
+          )
+            return { ok: true, undelivered: true };
+        this.drop(key, live);
+        await process.exited;
+        continue;
+      }
       if (
         live &&
         (!live.process.running ||
@@ -276,42 +387,105 @@ export class AgentSessions {
         live = undefined;
       }
       const saved = live ? undefined : this.options.store.get(key);
+      let own = false;
       if (!live) {
-        const opened = await this.open(key, saved?.id, 0);
-        if (!("process" in opened)) return opened;
+        // A forwarded turn names its session before spawning; others let
+        // the process mint one.
+        const session = forward ? (saved?.id ?? this.newId()) : "";
+        const opened = await this.open(
+          key,
+          saved?.id,
+          0,
+          undefined,
+          forward &&
+            (async () => ({
+              session,
+              forwarded: await forward(session, saved?.gateway),
+            })),
+        );
+        if (!("process" in opened)) {
+          // Stopped while its generation opened: not delivered, not failed.
+          if (signal?.aborted || (current && !current()))
+            return { ok: true, undelivered: true };
+          return opened;
+        }
         live = opened;
+        own = true;
       }
-      if (refresh) {
-        text = await refresh();
-        steer = steerPrompt(text);
-      }
+      // A forwarded process this turn opened and won't use stops, ending its
+      // barrier; one it would have joined is another turn's. A session it
+      // never started was never written: the next turn starts a new one
+      // rather than resume it.
+      const mine = live;
+      const leave = async (settled: Settled) => {
+        if (!own || !mine.exclusive) return settled;
+        this.drop(key, mine);
+        if (!saved && !mine.process.started)
+          await this.options.store.delete(key);
+        return settled;
+      };
+      if (refresh)
+        try {
+          text = await refresh();
+          steer = steerPrompt(text);
+        } catch (error) {
+          // Its failure is the caller's, as before, but the process it
+          // opened for this turn stops, ending its barrier.
+          await leave({ ok: false, error: message(error) });
+          throw error;
+        }
       // Last, after every wait: a new turn starts only on settings that still
       // hold. A busy process steers on the settings it already runs.
       if (admit && !live.process.busy)
         try {
           await admit();
         } catch (error) {
-          return { ok: false, error: message(error), undelivered: true };
+          return await leave({
+            ok: false,
+            error: message(error),
+            undelivered: true,
+          });
         }
-      if (current && !current()) return { ok: true, undelivered: true };
+      if ((current && !current()) || signal?.aborted)
+        return await leave({ ok: true, undelivered: true });
       if (this.disposed)
         return { ok: false, error: "Claude was stopped", undelivered: true };
-      // Refresh can outlive the process or the settings it was opened with.
+      // Refresh can outlive the process or the settings it was opened with,
+      // and the route its generation was opened on.
       if (
         this.live.get(key) !== live ||
         !live.process.running ||
+        live.forwarded?.generation.isRevoked() ||
+        // A turn it was to join may have ended during the refresh.
+        (joined && !!forward && !joins(live)) ||
         (live.fingerprint !== this.options.fingerprint(key) &&
           !live.process.busy)
-      )
+      ) {
+        await leave({ ok: true });
         continue;
+      }
       this.touch(key, live, seen, contextRoot);
+      // Claude replays each message it takes. A steer the running turn
+      // ended before taking was never Claude's: its process stops at that
+      // idle, so the message runs again, in a turn of its own.
+      let taken = false;
+      const rejoin = joined && !!forward;
       const activity = {
+        ...(rejoin
+          ? {
+              taken: () => {
+                taken = true;
+              },
+            }
+          : {}),
         ...pick,
         ...(activityScope ? { activityScope } : {}),
         ...(step ? { step } : {}),
         ...(acknowledged ? { acknowledged } : {}),
         ...(superseded ? { superseded } : {}),
+        ...(submitted ? { submitted } : {}),
       };
+      sending?.();
       const answering = this.answer(
         key,
         live,
@@ -320,10 +494,24 @@ export class AgentSessions {
       );
       // Later messages may steer this turn once its prompt has been submitted.
       handed();
-      const delivered = await answering;
+      const answered = await answering;
+      if (rejoin && answered.ok && !taken && !answered.stopped) continue;
+      const delivered = bypassed(live, answered);
       // A saved session that no longer loads starts over rather than failing
       // every message in the conversation, shown the conversation so far.
-      if (!delivered.ok && saved && !live.process.started) {
+      // An eligible one starts over only when Claude said the session is
+      // gone; a failed sign-in, network or startup keeps it and its binding.
+      const lost = !delivered.ok && !!saved && !live.process.started;
+      if (lost && startOver === false && live.process.missingSession) {
+        await this.options.store.delete(key);
+        this.drop(key, live);
+        return { ok: true };
+      }
+      if (
+        lost &&
+        startOver !== false &&
+        (!forward || live.process.missingSession)
+      ) {
         let retry: string;
         try {
           await this.options.store.delete(key);
@@ -343,6 +531,10 @@ export class AgentSessions {
           ...(admit ? { admit } : {}),
           ...(refresh ? { refresh: () => refresh(true) } : {}),
           ...(contextRoot ? { contextRoot } : {}),
+          ...(forward ? { forward } : {}),
+          ...(steers === false ? { steers } : {}),
+          ...(signal ? { signal } : {}),
+          ...(sending ? { sending } : {}),
           ...activity,
         });
       }
@@ -357,8 +549,27 @@ export class AgentSessions {
     await this.live.get(key)?.process.interrupt();
   }
   /** Compacts the conversation's session, resuming it when its process has
-   * stopped. Without a session there is nothing to compact. */
-  async compact(key: string): Promise<Settled> {
+   * stopped. Without a session there is nothing to compact. `forward` runs
+   * it as a forwarded turn does, in a process and generation of its own on
+   * the saved session, which is forgotten, never replaced, once Claude says
+   * it's gone. */
+  async compact(
+    key: string,
+    forward?: Forward,
+    current?: () => boolean,
+  ): Promise<Settled> {
+    if (forward) {
+      if (!this.live.has(key) && !this.options.store.get(key))
+        return { ok: true };
+      return this.deliver(key, "/compact", 0, {
+        forward,
+        steers: false,
+        startOver: false,
+        ...(current ? { current } : {}),
+      });
+    }
+    // Never into a forwarded turn's process, on its generation.
+    while (this.forwarding.has(key)) await this.forwarding.get(key);
     if (this.disposed) return { ok: false, error: "Claude was stopped" };
     let live = this.live.get(key);
     const saved = this.options.store.get(key);
@@ -371,7 +582,13 @@ export class AgentSessions {
     // Claude takes the command in stream-json input as it does in a terminal.
     const settled = await this.answer(key, live, "/compact", {});
     // A saved session that no longer loads is the message's to start over.
-    if (!settled.ok && !live.process.started) {
+    // A bound one is forgotten only once Claude says it's gone: an auth or
+    // network failure keeps it, and its Buzz session id, for the next turn.
+    if (
+      !settled.ok &&
+      !live.process.started &&
+      (!saved?.gateway || live.process.missingSession)
+    ) {
       await this.options.store.delete(key);
       this.drop(key, live);
       return { ok: true };
@@ -390,6 +607,7 @@ export class AgentSessions {
     label: string,
     prompt: () => string | undefined | Promise<string | undefined>,
     signal?: AbortSignal,
+    forward?: Forward,
   ): Promise<Settled> {
     if (this.disposed) return { ok: false, error: "Claude was stopped" };
     if (signal?.aborted) return { ok: false, error: message(signal.reason) };
@@ -400,14 +618,39 @@ export class AgentSessions {
     // stopped; one that spawns after the turn was given up is stopped at once.
     let spawned: ClaudeProcess | undefined;
     let over = false;
+    let forwarded: Forwarded | undefined;
     try {
+      const session = forward ? this.newId() : "";
+      // Nothing saved: the caller binds it standalone, like the session. Not
+      // abandoned on abort: the caller closes a generation opened late, and
+      // `finally` closes one that arrives.
+      if (forward)
+        try {
+          forwarded = await forward(session, undefined);
+        } catch (error) {
+          // A turn that can't be forwarded fails visibly, saying why.
+          if (signal?.aborted)
+            return { ok: false, error: message(signal.reason) };
+          return { ok: false, error: message(error) };
+        }
+      signal?.throwIfAborted();
       const live = await abortable(
-        this.start(undefined, undefined, (process) => {
-          spawned = process;
-          if (over) void process.kill();
-        }),
+        this.start(
+          undefined,
+          undefined,
+          (process) => {
+            spawned = process;
+            if (over) void process.kill();
+          },
+          forwarded && { session, forwarded },
+        ),
         signal,
       );
+      const generation = forwarded?.generation;
+      if (generation) {
+        live.process.onIdle = () => generation.seal();
+        void generation.revoked.then(() => live.process.kill());
+      }
       if (this.disposed) return { ok: false, error: "Claude was stopped" };
       // A key no conversation uses: its tools have no default destination.
       live.process.conversation = key;
@@ -415,7 +658,8 @@ export class AgentSessions {
       this.once.set(key, live);
       const text = await abortable(Promise.resolve(prompt()), signal);
       if (text === undefined || this.disposed) return { ok: true };
-      return await abortable(live.process.send(text), signal);
+      if (generation?.isRevoked()) return { ok: false, error: REVOKED };
+      return bypassed(live, await abortable(live.process.send(text), signal));
     } catch (error) {
       if (signal?.aborted) return { ok: false, error: message(signal.reason) };
       console.warn("Claude could not start a one-off session", error);
@@ -427,6 +671,7 @@ export class AgentSessions {
         void spawned.kill();
         await spawned.exited.catch(() => undefined);
       }
+      await forwarded?.generation.close();
       this.once.delete(key);
       this.options.onChange?.();
     }
@@ -469,16 +714,56 @@ export class AgentSessions {
 
   /** Starts the conversation's process, resuming session `resume` when given;
    * a message that arrives meanwhile waits for it, and is answered after the
-   * caller's. */
+   * caller's. `gateway` opens a forwarded turn's generation first, inside the
+   * same wait; its failure fails the delivery before anything is spawned. */
   private open(
     key: string,
     resume: string | undefined,
     seen: number,
     contextRoot?: string,
+    gateway?: () => Promise<
+      Readonly<{ session: string; forwarded: Forwarded }>
+    >,
   ): Promise<Live | Settled> {
-    const opened = this.start(resume, key).then(
+    let gate: Gateway | undefined;
+    let refused = false;
+    // The barrier, published before any await. It ends at once when nothing
+    // starts, else once the process has exited and any generation closed.
+    let end = () => {};
+    if (gateway) {
+      const barrier = new Promise<void>((resolve) => {
+        end = () => {
+          if (this.forwarding.get(key) === barrier) this.forwarding.delete(key);
+          resolve();
+        };
+      });
+      this.forwarding.set(key, barrier);
+    }
+    const finish = (exited: Promise<unknown> = Promise.resolve()) =>
+      void exited
+        .catch(() => undefined)
+        .then(() => gate?.forwarded.generation.close())
+        .then(end);
+    const started = gateway
+      ? gateway().then(
+          ({ session, forwarded }) => {
+            gate = { session, forwarded };
+            return this.start(resume, key, undefined, gate);
+          },
+          (error: unknown) => {
+            refused = true;
+            end();
+            throw error;
+          },
+        )
+      : this.start(resume, key, undefined);
+    const opened = started.then(
       (live): Live | Settled => {
         if (this.opening.get(key) === opened) this.opening.delete(key);
+        if (gateway) {
+          live.exclusive = true;
+          finish(live.process.exited);
+        }
         if (this.disposed) {
           void live.process.kill();
           return { ok: false, error: "Claude was stopped", undelivered: true };
@@ -488,6 +773,9 @@ export class AgentSessions {
       },
       (error): Settled => {
         if (this.opening.get(key) === opened) this.opening.delete(key);
+        if (refused)
+          return { ok: false, error: message(error), undelivered: true };
+        if (gateway) finish();
         console.warn("Claude could not start", error);
         return {
           ok: false,
@@ -505,29 +793,51 @@ export class AgentSessions {
     resume: string | undefined,
     key?: string,
     spawned?: (process: ClaudeProcess) => void,
+    gateway?: Gateway,
   ): Promise<Live> {
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint(key);
-    const launch = await this.options.launch(key);
+    const own = await this.options.launch(key);
+    // On the session the generation was opened for.
+    const launch = gateway
+      ? {
+          ...own,
+          forward: {
+            url: gateway.forwarded.generation.url,
+            noProxy: gateway.forwarded.generation.noProxy,
+          },
+          sessionId: gateway.session,
+        }
+      : own;
     const process = resume
       ? await ClaudeProcess.start(this.spawn, { ...launch, resume })
       : await this.fresh(launch, spawned);
     if (fingerprint === this.options.fingerprint(key) || this.disposed) {
       if (!resume && process.sessionId)
         this.options.started?.(process.sessionId, launch.systemPrompt);
-      return { process, fingerprint, used: this.now() };
+      return {
+        process,
+        fingerprint,
+        used: this.now(),
+        ...(gateway ? { forwarded: gateway.forwarded } : {}),
+      };
     }
-    // Settings saved while it started: it would work with the old ones.
+    // Settings saved while it started: it would work with the old ones. A
+    // generation's next process waits for this one, which had its URL.
     void process.kill();
-    return this.start(resume, key, spawned);
+    if (gateway) await process.exited.catch(() => undefined);
+    return this.start(resume, key, spawned, gateway);
   }
   /** A process for a new session: the spare when it fits, else a new one. */
   private async fresh(
-    launch: Omit<ClaudeLaunch, "resume" | "sessionId">,
+    launch: Omit<ClaudeLaunch, "resume">,
     spawned?: (process: ClaudeProcess) => void,
   ) {
+    // A spare's route was fixed when it spawned.
     const spare =
-      !launch.protection && (await this.options.spare?.take(launch));
+      !launch.protection &&
+      !launch.forward &&
+      (await this.options.spare?.take(launch));
     if (spare)
       try {
         if (this.disposed) throw new Error("Claude was stopped");
@@ -540,7 +850,7 @@ export class AgentSessions {
       }
     const process = await ClaudeProcess.spawn(this.spawn, {
       ...launch,
-      sessionId: this.newId(),
+      sessionId: launch.sessionId ?? this.newId(),
     });
     spawned?.(process);
     await process.initialize(launch);
@@ -553,6 +863,16 @@ export class AgentSessions {
     live.process.onQuiet = () => {
       if (this.live.get(key) === live) this.touch(key, live);
     };
+    const generation = live.forwarded?.generation;
+    // Only Claude's own idle report ends the turn's admission; then the
+    // process stops, and the next turn resumes in a new one.
+    live.process.onIdle = () => {
+      live.idled?.();
+      if (!live.exclusive) return;
+      generation?.seal();
+      this.drop(key, live);
+    };
+    if (generation) void generation.revoked.then(() => this.drop(key, live));
     this.live.set(key, live);
     this.touch(key, live, seen, contextRoot);
     this.options.onChange?.();
@@ -600,10 +920,12 @@ export class AgentSessions {
         }).slice(-SAVED_LIMIT),
       );
     }
+    const gateway = live.forwarded?.binding ?? prior?.gateway;
     this.options.store.set(key, {
       id,
       seen: Math.max(seen ?? 0, prior?.seen ?? 0),
       ...(threads ? { threads } : {}),
+      ...(gateway ? { gateway } : {}),
       at: live.used,
     });
   }
@@ -624,6 +946,49 @@ export class AgentSessions {
     }
     void live.process.kill();
   }
+}
+
+type Gateway = Readonly<{ session: string; forwarded: Forwarded }>;
+
+/** Whether a delivery steers into `live`'s running turn: both forwarded, at
+ * the same revision, on a generation still admitting; or both not. */
+function joinable(live: Live, forward: Forward | undefined) {
+  const { process, forwarded } = live;
+  if (!process.running || !process.busy) return false;
+  if (!forward) return !forwarded;
+  // A compaction runs under its own context, not a message's.
+  if (process.compacts) return false;
+  const generation = forwarded?.generation;
+  return (
+    !!generation &&
+    forward.revision !== undefined &&
+    generation.revision === forward.revision &&
+    !generation.isSealed() &&
+    !generation.isRevoked()
+  );
+}
+
+/** A forwarded turn that ran though native never admitted one of its
+ * requests went to an endpoint Claude's own settings chose: it fails. One
+ * that failed so says no request reached the gateway, which may be why. */
+function bypassed(live: Live, settled: Settled): Settled {
+  const generation = live.forwarded?.generation;
+  if (!generation || settled.stopped || settled.undelivered) return settled;
+  if (generation.admitted()) return settled;
+  return settled.ok
+    ? { ok: false, error: BYPASSED }
+    : {
+        ...settled,
+        error: settled.error ? `${UNREACHED} ${settled.error}` : UNREACHED,
+      };
+}
+
+/** Settles once `signal` aborts. */
+function aborted(signal: AbortSignal) {
+  return new Promise<void>((resolve) => {
+    if (signal.aborted) resolve();
+    else signal.addEventListener("abort", () => resolve(), { once: true });
+  });
 }
 
 /** `work`, or a rejection with `signal`'s reason once it aborts. */

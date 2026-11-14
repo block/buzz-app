@@ -537,3 +537,77 @@ it.skipIf(process.platform !== "darwin")(
     });
   },
 );
+
+it("prints each managed settings file Claude reads, then its drop-ins in name order", async () => {
+  const { home } = await disk([]);
+  // As macOS's own, a folder whose path has a space.
+  const folder = join(home, "Claude Code");
+  // A locale that orders "B" after "a", unlike Claude.
+  const read = () =>
+    run("bash", ["-c", script, "claude.sh", "managed", folder], {
+      env: { PATH: process.env.PATH ?? "", HOME: home, LC_ALL: "en_US.UTF-8" },
+    });
+  const lines = async () =>
+    (await read()).stdout
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => Buffer.from(line, "base64").toString("utf8"));
+  // No folder, or one without settings: nothing, so nothing is refused.
+  expect(await lines()).toEqual([]);
+  await mkdir(join(folder, "managed-settings.d"), { recursive: true });
+  expect(await lines()).toEqual([]);
+  const main = JSON.stringify(
+    { env: { CLAUDE_CODE_USE_BEDROCK: "1" } },
+    null,
+    2,
+  );
+  await writeFile(join(folder, "managed-settings.d", "20-b.json"), '{"b":"é"}');
+  await writeFile(join(folder, "managed-settings.d", "10-a.json"), "{}");
+  await writeFile(join(folder, "managed-settings.d", "notes.txt"), "skip");
+  await writeFile(join(folder, "managed-settings.d", ".hidden.json"), "skip");
+  await writeFile(join(folder, "managed-settings.d", "B.json"), "[]");
+  await writeFile(join(folder, "managed-settings.d", "a.json"), "0");
+  const dropIns = ["{}", '{"b":"é"}', "[]", "0"];
+  expect(await lines()).toEqual(dropIns);
+  await writeFile(join(folder, "managed-settings.json"), main);
+  expect(await lines()).toEqual([main, ...dropIns]);
+  // One it can't read fails the step rather than passing it over.
+  await chmod(join(folder, "managed-settings.json"), 0o000);
+  if (process.getuid?.() !== 0) await expect(read()).rejects.toThrow();
+});
+
+it("prints the inherited no-proxy lists and whether a proxy is set, never the proxy", async () => {
+  const { home } = await disk([]);
+  const read = async (env: Record<string, string>) =>
+    (
+      await run("bash", ["-c", script, "claude.sh", "no-proxy"], {
+        env: { PATH: process.env.PATH ?? "", HOME: home, ...env },
+      })
+    ).stdout;
+  const decoded = (stdout: string) =>
+    stdout
+      .split("\n")
+      .slice(0, 2)
+      .map((line) => Buffer.from(line, "base64").toString("utf8"));
+  // Unset: both empty, and no proxy.
+  expect(await read({})).toBe("\n\ndirect\n");
+  const secret = "http://user:p%40ss@proxy.example:8080";
+  for (const name of [
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+  ]) {
+    const stdout = await read({
+      [name]: secret,
+      NO_PROXY: "corp.example, .é",
+      no_proxy: "localhost",
+    });
+    expect(decoded(stdout)).toEqual(["corp.example, .é", "localhost"]);
+    expect(stdout.split("\n")[2]).toBe("proxied");
+    expect(stdout).not.toContain("proxy.example");
+    expect(stdout).not.toContain(Buffer.from(secret).toString("base64"));
+  }
+});

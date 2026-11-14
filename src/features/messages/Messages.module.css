@@ -456,20 +456,11 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 }
 .reactionPreviewContent {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  min-height: 0;
   justify-items: center;
   gap: var(--space-1);
-  max-width: 28rem;
+  max-width: 14rem;
   text-align: center;
   overflow-wrap: anywhere;
-}
-.reactionPreview.reactionPreview {
-  /* Spend available height on the names scrollport, keeping emoji and label visible. */
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  max-width: min(30rem, 85vw, var(--available-width, 100vw));
 }
 .reactionPreviewEmoji {
   --reaction-preview-size: calc(var(--space-6) * 2);
@@ -494,11 +485,13 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 }
 .reactionPreviewNames {
   @apply text-caption text-standard;
-  min-height: 0;
+  display: grid;
   max-width: 100%;
-  max-height: min(20rem, 40vh);
-  overflow-y: auto;
-  overscroll-behavior: contain;
+}
+.reactionPreviewPerson {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 @media (prefers-reduced-motion: reduce) {
   .reactionPreview.reactionPreview {

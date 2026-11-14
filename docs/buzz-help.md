@@ -364,11 +364,12 @@ and are asked to sign in again in Buzz.
   Confirmations with a required field or checkbox start at the relevant control;
   the action stays gated until its requirements are met.
 
-- Each reaction emoji has its own capsule. Hover or focus it to see everyone
-  who reacted. Large lists scroll within the preview. With a keyboard, Tab into
-  the list to scroll it; Escape dismisses the preview. Clicking the emoji adds
-  or removes your reaction. Capsules you reacted with take your solid accent
-  color; on your own messages they take a neutral gray instead. A reaction
+- Each reaction emoji has its own capsule. Hover or focus it to see who reacted.
+  When more than three people reacted, choose **and N others** to list everyone,
+  and choose a person to open their profile. With a keyboard, Tab from the emoji
+  to **and N others**; Escape closes the list, then the preview. Clicking the
+  emoji adds or removes your reaction. Capsules you reacted with take your solid
+  accent color; on your own messages they take a neutral gray instead. A reaction
   never shows a `:shortcode:` as text: it draws the community's custom emoji
   with that name, or a neutral smiley when there is none or its image can't load.
 - In the fullscreen video viewer, comments and emoji reactions at the current

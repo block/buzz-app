@@ -25,6 +25,7 @@ import {
   READ_STATE_TIMESTAMP_REFUSAL,
   type ReadStateHost,
   type ReadStateSigning,
+  type ThreadFollowsSigning,
 } from "./read-state-host";
 import {
   parseReadSnapshot,
@@ -954,6 +955,56 @@ export async function connectBrokerTransport(
                 body: JSON.stringify(event),
                 signal,
               });
+              await acceptReadStatePublish(response, event.id);
+            },
+            async decodeFollows(
+              events: readonly RelayEvent[],
+              signal: AbortSignal,
+            ) {
+              const response = await fetch(
+                `${endpoint}/thread-follows-decode`,
+                {
+                  method: "POST",
+                  credentials: "same-origin",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(events),
+                  signal,
+                },
+              );
+              if (!response.ok)
+                throw new Error(
+                  `Thread-follows decode failed (${response.status})`,
+                );
+              return response.json();
+            },
+            async signFollows(
+              intent: ThreadFollowsSigning,
+              signal: AbortSignal,
+            ) {
+              const response = await fetch(`${endpoint}/thread-follows-sign`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(intent),
+                signal,
+              });
+              if (!response.ok)
+                throw new Error(
+                  `Thread-follows signing failed (${response.status})`,
+                );
+              return eventDto(await response.json());
+            },
+            async publishFollows(event: RelayEvent, signal: AbortSignal) {
+              const response = await fetch(
+                `${endpoint}/thread-follows-publish`,
+                {
+                  method: "POST",
+                  credentials: "same-origin",
+                  headers: publicationHeaders(),
+                  body: JSON.stringify(event),
+                  signal,
+                },
+              );
               await acceptReadStatePublish(response, event.id);
             },
           },

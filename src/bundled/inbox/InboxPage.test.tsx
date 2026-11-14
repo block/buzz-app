@@ -3486,19 +3486,19 @@ it("a Solo chat row includes ordinary agent responses under All, not DMs, keepin
   await waitFor(() => expect(rows()[0]).toHaveTextContent("Agent progress"));
   expect(rows()[1]).toHaveTextContent("A thread update");
   expect(screen.queryByText("Please review this")).not.toBeInTheDocument();
-  // Opening the timeline row reads it with one channel catch-up mark, leaving
-  // its separate thread row unread.
+  // Opening the timeline row reads it with one channel frontier write, which
+  // also covers the older reply in its separate thread row.
   const before = h.journal()?.revision ?? 0;
   fireEvent.click(
     within(rows()[0] as HTMLElement).getByRole("button", { name: /^Open / }),
   );
-  await waitFor(() =>
-    expect(h.journal()?.state.frontiers["activity:room"]).toBe(30),
-  );
+  await waitFor(() => expect(h.journal()?.state.frontiers.room).toBe(30));
   expect(h.journal()?.revision).toBe(before + 1);
-  expect(
-    within(rows()[1] as HTMLElement).getByRole("img", { name: "Unread" }),
-  ).toBeInTheDocument();
+  await waitFor(() =>
+    expect(
+      within(rows()[1] as HTMLElement).queryByRole("img", { name: "Unread" }),
+    ).not.toBeInTheDocument(),
+  );
   // The sidebar keeps Solo chats apart from direct messages; so does Inbox.
   await chooseFilter("DMs");
   expect(screen.queryByText("Agent progress")).not.toBeInTheDocument();

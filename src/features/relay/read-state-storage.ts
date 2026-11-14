@@ -1,4 +1,5 @@
 import { eventDto, type RelayEvent } from "./events";
+import { parseStoredFollows, type StoredFollows } from "./follow-manager";
 import {
   EMPTY_READ_STATE,
   contextId,
@@ -39,14 +40,6 @@ export type ReadJournal = Readonly<{
   /** The frontiers this installation advanced: all it publishes, never a
    * peer's value. Message marks stay local (frontier-only sync). */
   own?: Readonly<Record<string, number>>;
-  /** Local recovery points for decoded peer generations awaiting committed ingest. */
-  peerOverlaps?: readonly Readonly<{
-    coordinate: string;
-    key: string;
-    set: number;
-    baseline: number;
-    version: Readonly<{ id: string; created_at: number }>;
-  }>[];
   /** Further slots this installation owns after `slot`, in placement order. */
   spill?: readonly string[];
   /** Conditional captured-read inverse; any later durable save retires it. */
@@ -58,6 +51,8 @@ export type ReadJournal = Readonly<{
   acceptedRevision: number;
   lastCreatedAt: number;
   pending?: Readonly<{ event: RelayEvent; revision: number }>;
+  /** Synced thread follow choices, saved in these same transactions. */
+  follows?: StoredFollows;
 }>;
 /** Mutations run against the latest record in one strict transaction (including other tabs). */
 export interface ReadStateStorage {
@@ -186,44 +181,6 @@ export function readJournal(raw: unknown, viewer: string): ReadJournal {
     throw new Error("Invalid saved own read state");
   if (raw.floor !== undefined && !uint32(raw.floor))
     throw new Error("Invalid saved read floor");
-  const peerOverlaps: NonNullable<ReadJournal["peerOverlaps"]>[number][] = [];
-  if (raw.peerOverlaps !== undefined) {
-    if (!Array.isArray(raw.peerOverlaps))
-      throw new Error("Invalid saved read overlaps");
-    const seen = new Set<string>();
-    for (const item of raw.peerOverlaps) {
-      if (
-        !record(item) ||
-        typeof item.coordinate !== "string" ||
-        !/^read-state:[0-9a-f]{32}$/.test(item.coordinate) ||
-        !contextId(item.key) ||
-        !item.key.startsWith("msg:") ||
-        !markMessage(item.key) ||
-        !uint32(item.set) ||
-        !uint32(item.baseline) ||
-        !record(item.version) ||
-        typeof item.version.id !== "string" ||
-        !/^[0-9a-f]{64}$/.test(item.version.id) ||
-        !uint32(item.version.created_at)
-      )
-        throw new Error("Invalid saved read overlap");
-      const id = JSON.stringify([item.coordinate, item.key, item.set]);
-      if (seen.has(id)) throw new Error("Duplicate saved read overlap");
-      seen.add(id);
-      peerOverlaps.push(
-        Object.freeze({
-          coordinate: item.coordinate,
-          key: item.key,
-          set: item.set,
-          baseline: item.baseline,
-          version: Object.freeze({
-            id: item.version.id,
-            created_at: item.version.created_at,
-          }),
-        }),
-      );
-    }
-  }
   const spill = raw.spill ?? [];
   if (
     !Array.isArray(spill) ||
@@ -297,10 +254,10 @@ export function readJournal(raw: unknown, viewer: string): ReadJournal {
     ...(raw.quiet !== undefined && { quiet: raw.quiet as number }),
     acceptedRevision: raw.acceptedRevision as number,
     lastCreatedAt: raw.lastCreatedAt,
-    ...(peerOverlaps.length
-      ? { peerOverlaps: Object.freeze(peerOverlaps) }
-      : {}),
     ...(pending ? { pending } : {}),
+    ...(raw.follows !== undefined && {
+      follows: parseStoredFollows(raw.follows, viewer),
+    }),
   };
 }
 function openDatabase() {

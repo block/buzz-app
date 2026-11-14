@@ -1374,6 +1374,13 @@ export function subscribeRelayTraffic(
               {
                 kinds: [30078],
                 authors: [viewer],
+                "#t": ["thread-follows"],
+                since: route.since,
+                limit: LIVE_REPLAY_LIMIT,
+              },
+              {
+                kinds: [30078],
+                authors: [viewer],
                 "#d": [...SIDEBAR_COORDINATES],
                 since: route.since,
                 limit: LIVE_REPLAY_LIMIT,

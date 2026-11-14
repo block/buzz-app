@@ -836,6 +836,47 @@ fn validate_read_blob(blob: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+// Buzz Thread Follow Choices: a second exact own-slot shape, checked on its own
+// so the read-state checks above stay as strict as they were.
+fn valid_follow_coordinate(value: &str) -> bool {
+    value.strip_prefix("thread-follows:").is_some_and(|slot| {
+        slot.len() == 32
+            && slot
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
+
+fn valid_follow_key(key: &str) -> bool {
+    key.split_once(':').is_some_and(|(channel, root)| {
+        (1..=128).contains(&channel.len())
+            && channel
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            && root.len() == 64
+            && root
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
+
+fn validate_follow_payload(payload: &serde_json::Value) -> Result<()> {
+    let threads = payload["threads"]
+        .as_object()
+        .ok_or("Unsupported thread-follows payload")?;
+    let valid = payload["v"] == 1
+        && payload["client_id"].is_string()
+        && threads.iter().all(|(key, entry)| {
+            valid_follow_key(key)
+                && entry["follow"].is_boolean()
+                && entry["at"].as_u64().is_some_and(|at| at <= u32::MAX as u64)
+        });
+    if !valid {
+        return Err("Unsupported thread-follows payload".into());
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct IdentityHost(Arc<Mutex<Identity>>);
 impl IdentityHost {
@@ -1134,6 +1175,125 @@ impl IdentityHost {
                 tags: vec![
                     vec!["d".into(), format!("read-state:{slot}")],
                     vec!["t".into(), "read-state".into()],
+                ],
+            })
+        })
+        .await
+    }
+
+    /// Decrypt only verified, self-authored thread-follows slots. An own event
+    /// whose payload can't be read decodes to `payload: null`: unknown, not absent.
+    pub(crate) async fn decode_thread_follows(
+        &self,
+        events: Vec<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        with_identity(self.clone(), move |identity| {
+            identity.restore()?;
+            let State::Ready(key) = &identity.state else {
+                return Err("Set up your identity first".into());
+            };
+            if events.len() > 16
+                || serde_json::to_vec(&events)
+                    .map_err(|_| "Thread-follows decode capacity exceeded")?
+                    .len()
+                    > 512 * 1024
+            {
+                return Err("Thread-follows decode capacity exceeded".into());
+            }
+            let secret = NostrSecretKey::from_slice(key.0.as_ref())
+                .map_err(|_| "Invalid thread-follows event")?;
+            let public = Keys::new(secret.clone()).public_key();
+            let conversation = nip44::v2::ConversationKey::derive(&secret, &public)
+                .map_err(|_| "Invalid thread-follows event")?;
+            let mut result = Vec::new();
+            for raw in events {
+                if serde_json::to_vec(&raw)
+                    .map_err(|_| "Invalid thread-follows event")?
+                    .len()
+                    > 96 * 1024
+                {
+                    return Err("Invalid thread-follows event".into());
+                }
+                let tags = raw["tags"]
+                    .as_array()
+                    .ok_or("Invalid thread-follows event")?;
+                let ds: Vec<_> = tags.iter().filter(|tag| tag[0] == "d").collect();
+                let ts: Vec<_> = tags
+                    .iter()
+                    .filter(|tag| tag[0] == "t" && tag[1] == "thread-follows")
+                    .collect();
+                if ds.len() != 1
+                    || ts.len() != 1
+                    || !ds[0][1].as_str().is_some_and(valid_follow_coordinate)
+                {
+                    return Err("Invalid thread-follows event".into());
+                }
+                let event: Event =
+                    serde_json::from_value(raw).map_err(|_| "Invalid thread-follows event")?;
+                event.verify().map_err(|_| "Invalid thread-follows event")?;
+                if event.kind.as_u16() != 30078 || event.pubkey != public {
+                    return Err("Invalid thread-follows event".into());
+                }
+                let payload = decrypt_with_conversation(&conversation, &event.content)
+                    .ok()
+                    .filter(|plaintext| plaintext.len() <= 40 * 1024)
+                    .and_then(|plaintext| {
+                        serde_json::from_str::<serde_json::Value>(&plaintext).ok()
+                    })
+                    .filter(|payload| validate_follow_payload(payload).is_ok())
+                    .unwrap_or(serde_json::Value::Null);
+                result.push(serde_json::json!({"eventId": event.id.to_hex(), "payload": payload}));
+            }
+            Ok(serde_json::Value::Array(result))
+        })
+        .await
+    }
+
+    /// Sign only bounded thread-follows intent, never caller-supplied ciphertext.
+    pub(crate) async fn sign_thread_follows(
+        &self,
+        slot: String,
+        created_at: u64,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        with_identity(self.clone(), move |identity| {
+            identity.restore()?;
+            let State::Ready(key) = &identity.state else {
+                return Err("Set up your identity first".into());
+            };
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| "System clock is unavailable")?
+                .as_secs();
+            if !valid_follow_coordinate(&format!("thread-follows:{slot}"))
+                || created_at > u32::MAX as u64
+                || now.abs_diff(created_at) > 60
+            {
+                return Err("Invalid thread-follows signing intent".into());
+            }
+            validate_follow_payload(&payload)?;
+            let plaintext = serde_json::to_string(&payload)
+                .map_err(|_| "Invalid thread-follows signing intent")?;
+            if plaintext.len() > 40 * 1024 {
+                return Err("Thread-follows publication capacity exceeded".into());
+            }
+            let secret = NostrSecretKey::from_slice(key.0.as_ref())
+                .map_err(|_| "Invalid thread-follows signing intent")?;
+            let public = Keys::new(secret.clone()).public_key();
+            let content = nostr::nips::nip44::encrypt(
+                &secret,
+                &public,
+                plaintext,
+                nostr::nips::nip44::Version::V2,
+            )
+            .map_err(|_| "Thread-follows signing failed")?;
+            key.sign(EventTemplate {
+                created_at,
+                kind: 30078,
+                content,
+                tags: vec![
+                    vec!["d".into(), format!("thread-follows:{slot}")],
+                    vec!["t".into(), "thread-follows".into()],
                 ],
             })
         })

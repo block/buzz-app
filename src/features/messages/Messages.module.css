@@ -1032,6 +1032,11 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   --message-hover-start-inset: var(--space-3);
   padding-inline-start: var(--space-3);
 }
+/* Compact actions rise from the row's top edge, not the text, so the original
+   leaves room for them above it rather than under the header. */
+:where(html[data-message-density="compact"]) .threadHistory {
+  padding-top: calc(var(--size-control-sm) + var(--space-1));
+}
 /* Measure loaded rows without painting a scroll position we will replace,
    then fade them in once positioned. */
 .threadHistory > [data-thread-rows] {

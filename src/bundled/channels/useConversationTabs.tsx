@@ -144,7 +144,12 @@ export function useConversationTabs({
   ): void;
   onRetryNavigation?(): void;
   onVisitPanel?(entry: PanelOpening): void;
-  onClosePanel?(entry: PanelOpening, remaining: PanelOpening[]): void;
+  /** Return true to own the empty pane's focus handoff after closing. */
+  onClosePanel?(
+    entry: PanelOpening,
+    remaining: PanelOpening[],
+    returnFocus?: HTMLElement,
+  ): boolean | undefined;
   /** One history transaction after the batch's local selection is committed. */
   onCloseTabs?(
     tabs: readonly Tab[],
@@ -376,8 +381,9 @@ export function useConversationTabs({
     entryList.current = remaining;
     setEntries(remaining);
     if (!main) {
-      afterClose(tabId(entry), panelTrigger.current);
-      panelHistory.current.onClosePanel?.(entry, remaining);
+      afterClose(tabId(entry), panelTrigger.current, (target) =>
+        panelHistory.current.onClosePanel?.(entry, remaining, target),
+      );
       return;
     }
     // The conversation remains; the neighbouring main tab takes over.
@@ -523,21 +529,29 @@ export function useConversationTabs({
       panelHistory.current.onVisitPanel?.(opening.current);
     tabState.select(id);
   };
-  const afterClose = (id: string, trigger?: HTMLElement | null) => {
-    if (id !== selectedTab) return;
-    const index = rootTabIds.indexOf(id);
-    const remaining = rootTabIds.filter((tab) => tab !== id);
-    selectPanelTab(
-      remaining[Math.min(index, remaining.length - 1)] ?? "",
-      false,
-    );
-    if (!remaining.length) {
-      const resolve = () =>
-        trigger?.isConnected ? trigger : fallbackFocus?.current;
-      const target = resolve();
+  const afterClose = (
+    id: string,
+    trigger?: HTMLElement | null,
+    close?: (target?: HTMLElement) => boolean | undefined,
+  ) => {
+    const resolve = () =>
+      trigger?.isConnected ? trigger : fallbackFocus?.current;
+    let target: HTMLElement | undefined;
+    if (id === selectedTab) {
+      const index = rootTabIds.indexOf(id);
+      const remaining = rootTabIds.filter((tab) => tab !== id);
+      selectPanelTab(
+        remaining[Math.min(index, remaining.length - 1)] ?? "",
+        false,
+      );
+      if (!remaining.length) {
+        target = resolve() ?? undefined;
+        if (!target) focusSplit.current = true;
+      }
+    }
+    if (!close?.(target)) {
       if (target?.closest("[inert]")) focusUncovered.current = resolve;
-      else if (target) target.focus({ preventScroll: true });
-      else focusSplit.current = true;
+      else target?.focus({ preventScroll: true });
     }
   };
   const closeConversationTab = (id: string) => {

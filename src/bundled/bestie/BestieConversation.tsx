@@ -299,8 +299,10 @@ export function BestieConversation({
         ? { channelId: channel.id, messageId: routed.messageId, navigation }
         : undefined,
     onVisitPanel: visitPanel,
-    onClosePanel: (entry) =>
-      dismissContent([], [entry], entryPane(state.mainEntries, entry)),
+    onClosePanel: (entry) => {
+      dismissContent([], [entry], entryPane(state.mainEntries, entry));
+      return false;
+    },
     onCloseThread: (tab, active, last) => {
       dismissContent([tab], [], tabPane(tab));
       if (!active || !last) return;

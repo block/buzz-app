@@ -715,6 +715,47 @@ test.extend({ companionFixture: true })(
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await expect(conversation).not.toHaveAttribute("inert");
+    const channelURL = page.url();
+    await page
+      .getByRole("button", { name: "Manage members of Alpha", exact: true })
+      .click();
+    await page
+      .getByRole("dialog", { name: "Manage members", exact: true })
+      .getByRole("button", { name: /^Open profile for Fixture Reader/ })
+      .click();
+    const profileTab = page
+      .locator("[data-panel-workspace]")
+      .getByRole("tab", { name: "Fixture Reader", exact: true });
+    await expect(profileTab).toBeFocused();
+    await page.setViewportSize({ width: 600, height: 900 });
+    await expect(conversation).toHaveAttribute("inert", "");
+    // The companion still covers the opener after the last Profile closes.
+    // Hold native traversal to exercise the page's deferred focus handoff.
+    await page.evaluate(() => {
+      const go = history.go.bind(history);
+      const pending = [];
+      history.go = (delta) => pending.push(delta);
+      window.profileReturnPending = () => pending.length;
+      window.releaseProfileReturn = () => {
+        history.go = go;
+        for (const delta of pending) go(delta);
+      };
+    });
+    try {
+      await profileTab.press("Escape");
+      await expect(profileTab).toHaveCount(0);
+      await expect
+        .poll(() => page.evaluate(() => window.profileReturnPending()))
+        .toBe(1);
+    } finally {
+      await page.evaluate(() => window.releaseProfileReturn());
+    }
+    await expect(page).toHaveURL(channelURL);
+    await expect(companion).toBeFocused();
+    await expect(closeCompanion).not.toBeFocused();
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(conversation).not.toHaveAttribute("inert");
     await openChannelDetails(page);
     const close = page.getByRole("button", {
       name: "Close Channel settings tab",

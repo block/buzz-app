@@ -3023,43 +3023,47 @@ function Composer({
               input.current?.reset(handed.next);
               setError(undefined);
               finishDraft(handed);
-              // A chat the relay never made is withdrawn with the question
-              // (see askInSolo). The question returns to this draft, unless
+              // The confirmation waits for the relay to have the chat. A chat
+              // the relay never made is withdrawn with the question (see
+              // askInSolo), and the question returns to this draft, unless
               // something new was written there since.
-              void asked.ready.catch((reason: unknown) => {
-                if (!(reason instanceof ChatNotStarted)) return;
-                const failed = `Couldn’t start your Solo chat with ${agent.name}, so the question wasn’t sent.`;
-                const current = viewRevision(scope, draftKey);
-                const restored =
-                  current !== undefined &&
-                  (current === null || blankDraft(current)) &&
-                  (!live.current ||
-                    blankDraft(JSON.stringify(valueRef.current))) &&
-                  replaceView(scope, draftKey, current, captured) === "saved";
-                if (restored)
-                  notifyRecovered(session, recoveryKey, {
-                    draft: captured,
-                    picks: capturedPicks,
-                    preparationError: new Error(
-                      `${failed} Your draft is back.`,
-                    ),
-                  });
-                notify(
-                  restored
-                    ? `${failed} It’s back in your draft in #${here.name}.`
-                    : failed,
-                  "error",
-                );
-              });
               const link = `buzz://channel/${encodeURIComponent(asked.channelId)}`;
-              notify(
-                `Asked ${agent.name} in your Solo chat from #${here.name}.`,
-                "success",
-                // The page opens its own buzz: links; canOpenLink covers
-                // only panel targets.
-                onOpenLink
-                  ? { label: "Open", onClick: () => void onOpenLink(link) }
-                  : undefined,
+              void asked.ready.then(
+                () =>
+                  notify(
+                    `Asked ${agent.name} in your Solo chat from #${here.name}.`,
+                    "success",
+                    // The page opens its own buzz: links; canOpenLink covers
+                    // only panel targets.
+                    onOpenLink
+                      ? { label: "Open", onClick: () => void onOpenLink(link) }
+                      : undefined,
+                  ),
+                (reason: unknown) => {
+                  if (!(reason instanceof ChatNotStarted)) return;
+                  const failed = `Couldn’t start your Solo chat with ${agent.name}, so the question wasn’t sent.`;
+                  const current = viewRevision(scope, draftKey);
+                  const restored =
+                    current !== undefined &&
+                    (current === null || blankDraft(current)) &&
+                    (!live.current ||
+                      blankDraft(JSON.stringify(valueRef.current))) &&
+                    replaceView(scope, draftKey, current, captured) === "saved";
+                  if (restored)
+                    notifyRecovered(session, recoveryKey, {
+                      draft: captured,
+                      picks: capturedPicks,
+                      preparationError: new Error(
+                        `${failed} Your draft is back.`,
+                      ),
+                    });
+                  notify(
+                    restored
+                      ? `${failed} It’s back in your draft in #${here.name}.`
+                      : failed,
+                    "error",
+                  );
+                },
               );
               return;
             }

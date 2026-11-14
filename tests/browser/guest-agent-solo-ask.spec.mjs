@@ -380,6 +380,20 @@ test("a Solo chat the relay refuses gives the question back", async ({
   await mention(page, composer, "are we still on for Thursday?");
   await page.keyboard.press("Enter");
   const dialog = page.getByRole("dialog", { name: "Pollen can’t reply here" });
+  // Watch for the confirmation from the moment of the ask: a toast that shows
+  // briefly and is replaced still counts.
+  await page.evaluate(() => {
+    const text = "Asked Pollen in your Solo chat from #launch.";
+    const seen = () => document.body.innerText.includes(text);
+    window.sawAskConfirmation = seen();
+    new MutationObserver(() => {
+      if (seen()) window.sawAskConfirmation = true;
+    }).observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  });
   await dialog.getByRole("button", { name: "Ask in a Solo chat" }).click();
   await expect(
     page.getByRole("dialog", {
@@ -387,6 +401,8 @@ test("a Solo chat the relay refuses gives the question back", async ({
     }),
   ).toBeVisible();
   await expect(composer).toContainText("are we still on for Thursday?");
+  // Only the refusal is shown: no confirmation for a chat that never started.
+  expect(await page.evaluate(() => window.sawAskConfirmation)).toBe(false);
   // The chat that never started is gone from Solo.
   await expect(
     page

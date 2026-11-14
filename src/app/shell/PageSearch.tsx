@@ -34,6 +34,7 @@ import {
   type SearchPlace,
 } from "./SearchChoices";
 import { SearchResults } from "./SearchResults";
+import { ChannelDirectoryResults } from "./ChannelDirectoryResults";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
 import { readView, writeView } from "../../shared/view-state";
 import {
@@ -85,6 +86,9 @@ export function PageSearch({
   const [contentPresent, setContentPresent] = useState(false);
   const [query, setQuery] = useState("");
   const [scopedChannelId, setScopedChannelId] = useState<string>();
+  // The sidebar's Browse channels: a list of open channels to join, not
+  // the whole of search.
+  const [browsing, setBrowsing] = useState(false);
   // Search reopens where it was left, so someone checking channels one by
   // one returns to the same list. Escape, or a while away, starts fresh, as
   // does an empty All view while it leads with unread: it shows what is
@@ -98,8 +102,8 @@ export function PageSearch({
   }>(undefined);
   // Kept text opens selected, so typing something new replaces it.
   const selectKept = useRef(false);
-  const latest = useRef({ query, scopedChannelId });
-  latest.current = { query, scopedChannelId };
+  const latest = useRef({ query, scopedChannelId, browsing });
+  latest.current = { query, scopedChannelId, browsing };
   const currentTarget = useSyncExternalStore(
     services?.navigation?.subscribe ?? noSubscribe,
     () => services?.navigation?.snapshot().entry.target ?? null,
@@ -123,9 +127,10 @@ export function PageSearch({
   const openRef = useRef(false);
   const setSearchOpen = useCallback((next: boolean) => {
     if (!next && openRef.current) {
-      const { query, scopedChannelId } = latest.current;
+      const { query, scopedChannelId, browsing } = latest.current;
+      // Only search's own text and place come back on its next opening.
       remembered.current =
-        escaped.current || scopedChannelId
+        escaped.current || scopedChannelId || browsing
           ? undefined
           : { query, place: { ...place.current }, at: Date.now() };
       escaped.current = false;
@@ -149,7 +154,25 @@ export function PageSearch({
     selectKept.current = !!kept && !!memory.query;
     place.current = kept ? { ...memory.place } : { top: 0, key: "" };
     setScopedChannelId(undefined);
+    setBrowsing(false);
     setSearchOpen(true);
+  }, [setSearchOpen]);
+  useEffect(() => {
+    const browse = () => {
+      if (openRef.current) return;
+      composerChannel.current = undefined;
+      returnFocus.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : trigger.current;
+      setQuery("");
+      place.current = { top: 0, key: "" };
+      setScopedChannelId(undefined);
+      setBrowsing(true);
+      setSearchOpen(true);
+    };
+    window.addEventListener("buzz:browse-channels", browse);
+    return () => window.removeEventListener("buzz:browse-channels", browse);
   }, [setSearchOpen]);
   useEffect(() => {
     if (!open || !selectKept.current) return;
@@ -177,6 +200,7 @@ export function PageSearch({
     setQuery("");
     place.current = { top: 0, key: "" };
     setScopedChannelId(currentChannelId);
+    setBrowsing(false);
     setSearchOpen(true);
   }, [currentChannelId, setSearchOpen]);
   useEffect(
@@ -288,7 +312,13 @@ export function PageSearch({
           escaped.current = true;
           return false;
         }}
-        title={scopedChannelId ? "Search this conversation" : "Search Buzz"}
+        title={
+          browsing
+            ? "Browse channels"
+            : scopedChannelId
+              ? "Search this conversation"
+              : "Search Buzz"
+        }
         footerGap="none"
         motion="default"
         dismissOnOutsideClick
@@ -339,6 +369,7 @@ export function PageSearch({
                 (page) => page.key === "buzz.channels/channels",
               )}
               scopedChannelId={scopedChannelId}
+              browsing={browsing}
               currentChannelId={currentChannelId}
               onScopeChange={(channelId) => {
                 setScopedChannelId(channelId);
@@ -383,6 +414,7 @@ function CommunitySearch({
   open,
   enabled,
   scopedChannelId,
+  browsing,
   currentChannelId,
   onScopeChange,
   isOpen,
@@ -395,6 +427,7 @@ function CommunitySearch({
   pages: readonly SearchDestination[];
   enabled: boolean;
   scopedChannelId?: string | undefined;
+  browsing?: boolean;
   currentChannelId?: string | undefined;
   onScopeChange: (channelId?: string) => void;
   /** Whether the palette is still open. A choice that resolves after it
@@ -404,7 +437,7 @@ function CommunitySearch({
   openSection: (section: string) => void;
 } & SearchInputProps) {
   const inlineSettings = useSearchSettings({
-    query: scopedChannelId ? "" : query,
+    query: scopedChannelId || browsing ? "" : query,
     appearance: services.appearance,
     notifications: services.notifications,
     plugins: services.plugins,
@@ -428,13 +461,17 @@ function CommunitySearch({
   const notice =
     !enabled || !client.selected || connection.status === "ready"
       ? undefined
-      : saved
-        ? `Only saved conversations are searched ${connecting ? "until this community connects" : "while this community is disconnected"}.`
-        : !connecting
-          ? "Message search is unavailable while this community is disconnected."
-          : query.trim() && !scopedChannelId
-            ? "Connecting to this community…"
-            : undefined;
+      : browsing
+        ? connecting
+          ? undefined
+          : "Channels can’t load while this community is disconnected."
+        : saved
+          ? `Only saved conversations are searched ${connecting ? "until this community connects" : "while this community is disconnected"}.`
+          : !connecting
+            ? "Message search is unavailable while this community is disconnected."
+            : query.trim() && !scopedChannelId
+              ? "Connecting to this community…"
+              : undefined;
   const offline = notice && (
     <div className="px-3 text-body-sm text-subtle" aria-live="polite">
       <p>{notice}</p>
@@ -458,8 +495,28 @@ function CommunitySearch({
     !enabled ||
     !client.selected ||
     !client.viewer ||
-    (connection.status !== "ready" && !saved)
+    (connection.status !== "ready" && (!saved || browsing)) ||
+    (browsing && !connection.session.channels.readDirectory)
   ) {
+    if (browsing)
+      return (
+        <SearchChoices
+          query={query}
+          onQueryChange={onQueryChange}
+          input={input}
+          label="Search channels"
+          placeholder="Search channels"
+          groups={[
+            {
+              label: "Channels",
+              hideLabel: true,
+              destinations: [],
+              empty: connecting ? "Connecting to this community…" : undefined,
+            },
+          ]}
+          footer={offline}
+        />
+      );
     return (
       <SearchChoices
         inlineSettings={inlineSettings}
@@ -541,6 +598,30 @@ function CommunitySearch({
           place,
         }
       : undefined;
+  if (browsing)
+    return (
+      <ChannelDirectoryResults
+        key={`${client.selected}:${connection.scope}:${connection.generation}`}
+        session={connection.session}
+        query={query}
+        onQueryChange={onQueryChange}
+        input={input}
+        open={open}
+        views={{ resultsLabel: "Channels", place }}
+        openConversation={openConversation}
+        openPreview={(channelId) => {
+          // Not a joined channel yet: its preview resolves it.
+          if (!current()) return;
+          close();
+          void services.navigation.open({
+            version: 1,
+            kind: "conversation",
+            scope,
+            channelId,
+          });
+        }}
+      />
+    );
   return (
     <>
       {views && <PreloadDirectory channels={connection.session.channels} />}

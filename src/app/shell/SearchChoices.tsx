@@ -146,6 +146,8 @@ export type SearchInputProps = {
   onQueryChange: (query: string) => void;
   input: RefObject<HTMLElement | null>;
   label?: string;
+  /** What the empty field suggests searching for. */
+  placeholder?: string;
   scope?: { label: string; onRemove: () => void } | undefined;
   /** A control that refines the scoped results, beside the scope chip. */
   scopeAction?: ReactNode;
@@ -195,6 +197,7 @@ export function SearchChoices({
   onDisplayQueryChange,
   input,
   label = "Search Buzz",
+  placeholder = "Search people, channels, plugins and messages",
   scope,
   scopeAction,
   children,
@@ -555,6 +558,7 @@ export function SearchChoices({
         aria-selected={selected === key}
         tabIndex={-1}
         className="search-control-row"
+        data-search-key={watching ? key : undefined}
         data-highlighted={selected === key || undefined}
         onClick={(event) => {
           if (!event.currentTarget.contains(event.target as Node)) return;
@@ -748,7 +752,7 @@ export function SearchChoices({
         aria-haspopup={hasControls ? "grid" : "listbox"}
         {...highlight.fieldProps}
         label={label}
-        placeholder="Search people, channels, plugins and messages"
+        placeholder={placeholder}
         value={displayQuery ?? query}
         onValueChange={onDisplayQueryChange ?? onQueryChange}
         spellCheck={false}

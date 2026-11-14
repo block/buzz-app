@@ -5,6 +5,15 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { useToastClearance } from "../../shared/design-system/ui/Toast";
 import styles from "./Messages.module.css";
 
+/** What a failed Join says: whether it may have landed, or why it didn't. */
+export function joinFailure(reason: unknown, place: "chat" | "channel") {
+  return reason instanceof ChannelLifecycleUnconfirmed
+    ? "Join may have taken effect, but it is not confirmed yet. Try again to check."
+    : reason instanceof Error
+      ? reason.message
+      : `Couldn’t join this ${place}.`;
+}
+
 /** Archived and read-only channels share the public preview's lower notice.
  * Public previews offer Join; the admission role determines whether joining enables composition.
  * Confirmed membership can unmount this notice before its run settles, so the
@@ -68,15 +77,7 @@ export function ChannelJoinNotice({
       },
       (reason: unknown) => {
         if (current.signal.aborted) return;
-        setState({
-          channelId,
-          error:
-            reason instanceof ChannelLifecycleUnconfirmed
-              ? "Join may have taken effect, but it is not confirmed yet. Try again to check."
-              : reason instanceof Error
-                ? reason.message
-                : `Couldn’t join this ${place}.`,
-        });
+        setState({ channelId, error: joinFailure(reason, place) });
       },
     );
   };

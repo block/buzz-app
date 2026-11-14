@@ -208,15 +208,14 @@
 }
 
 @layer components {
-  /* A row's count: an icon and a number, quiet at the row's end. Its width
-     is held before the count arrives, enough for "1,234". */
-  .search-palette-count {
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: var(--space-1);
-    min-inline-size: 8ch;
-    font-variant-numeric: tabular-nums;
+  /* A control row's revealed action, such as Browse channels' Join: shown on
+     hover, highlight or focus, and always on touch. Hidden, it takes no
+     width, and Tab reaches only the highlighted row's. */
+  @media (hover: hover) {
+    .search-control-row:not([data-highlighted], :hover, :focus-within)
+      [data-search-reveal] {
+      display: none;
+    }
   }
 }
 

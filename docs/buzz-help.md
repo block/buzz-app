@@ -682,6 +682,12 @@ and are asked to sign in again in Buzz.
   reorder as slower results arrive until you move the highlight; after that
   they stay put and later groups join at the end. The panel and key hints hide
   in narrow windows.
+- **Browse channels**: the magnifying glass beside **Channels** in the sidebar
+  lists the open channels you haven't joined, A–Z, with member counts. Point
+  at a channel (or highlight it with the arrow keys and press Tab) for its
+  **Join** button; the list stays open so you can join several. Type to filter;
+  channels you've already joined match too, marked **Joined**. Choose a channel
+  itself to preview it first. Search also finds open channels by name.
 - **Ask an agent**: start with `ask:` to write a question for your default
   agent, or choose **Ask** under a long query. Enter opens New chat with the
   question addressed to that agent; press Enter again to send it. If New chat

@@ -404,6 +404,10 @@ test("resizing, collapsed groups and new unread evidence update only the display
     list(page).getByRole("button", { name: "More actions for Channels" }),
   ).toBeFocused();
   await page.keyboard.press("Tab");
+  await expect(
+    list(page).getByRole("button", { name: "Browse channels" }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
   // Disabled header actions are skipped; traversal still reaches rows only
   // after the available header controls.
   await expect(row(page, "Alpha")).toBeFocused();

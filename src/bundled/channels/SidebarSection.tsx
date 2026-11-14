@@ -35,6 +35,7 @@ import {
   DotsThreeIcon,
   Filter2Icon,
   PencilSimpleIcon,
+  MagnifyingGlassIcon,
   PlusIcon,
   TextAaIcon,
   TimerIcon,
@@ -65,6 +66,7 @@ export function SidebarSection({
   hideMoreActions = false,
   persistentChevron = false,
   createChannel,
+  browseChannels,
   createSection,
   newMessage,
   sort,
@@ -101,6 +103,8 @@ export function SidebarSection({
     | { available: boolean; open: (trigger: HTMLButtonElement) => void }
     | undefined;
   newMessage?: (() => void) | undefined;
+  /** Opens search on the open channels left to join. */
+  browseChannels?: (() => void) | undefined;
   createSection?:
     | { available: boolean; open: (trigger: HTMLButtonElement) => void }
     | undefined;
@@ -506,6 +510,15 @@ export function SidebarSection({
                   </p>
                 )}
               </Dialog>
+            )}
+            {browseChannels && (
+              <IconButton
+                size="compact"
+                aria-label="Browse channels"
+                title="Browse channels"
+                onClick={browseChannels}
+                icon={<MagnifyingGlassIcon strokeWidth={2.5} size={15} />}
+              />
             )}
             {createChannel && (
               <IconButton

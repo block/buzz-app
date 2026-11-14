@@ -689,6 +689,7 @@ export function RailNavigation({
       label: string;
       icon: ReactElement;
     }[] = [
+      { filter: "channels", label: "Channels", icon: <HashIcon size={18} /> },
       {
         filter: "threads",
         label: "Threads",
@@ -696,7 +697,6 @@ export function RailNavigation({
       },
       { filter: "dms", label: "DMs", icon: <UsersIcon size={18} /> },
       { filter: "mentions", label: "Mentions", icon: <AtIcon size={18} /> },
-      { filter: "channels", label: "Channels", icon: <HashIcon size={18} /> },
     ];
     const teamOpen = routedSection(navigation.entry.target) === "messages";
     const openTeamView = (filter: ActivityView["filter"]) => {
@@ -716,7 +716,7 @@ export function RailNavigation({
           <IconButton
             aria-label={label}
             icon={icon}
-            size="md"
+            size="sm"
             shape="round"
             variant={current ? "solid" : "inset"}
             aria-current={current ? "page" : undefined}

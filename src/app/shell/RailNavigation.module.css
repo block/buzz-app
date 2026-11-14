@@ -77,13 +77,18 @@
 /* Team collapsed: one row of round view buttons, counts on their corners. */
 .teamIcons {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1h);
+  gap: var(--space-2);
   padding-block-start: var(--space-1);
 }
+/* Each button is a capsule that shares the card's width, not a fixed circle. */
 .teamIcon {
   position: relative;
   display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.teamIcon > button {
+  width: 100%;
 }
 .teamIconCount {
   position: absolute;

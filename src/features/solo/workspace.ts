@@ -376,9 +376,9 @@ export async function loadWorkspaceDefaults(
   const store = session.sidebarPreferences;
   await store.refresh();
   const preferences = store.snapshot();
-  const sections = store.writable ? preferences.data?.sections : undefined;
-  if (!sections) throw new WorkspaceUnavailable(false);
-  if (!sections.some((project) => project.id === projectId))
+  if (!store.writable || !preferences.data)
+    throw new WorkspaceUnavailable(false);
+  if (!preferences.data.sections.some((project) => project.id === projectId))
     throw new WorkspaceUnavailable(true);
   await session.channelKit.refresh();
   const kit = session.channelKit.snapshot();

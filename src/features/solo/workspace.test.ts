@@ -207,11 +207,11 @@ it("tells a deleted workspace apart from an unreadable workspace list", async ()
     deleted: false,
     message: "Workspaces can’t be read right now. Try again.",
   };
-  Object.assign(f.session.soloPreferences, { writable: false });
+  Object.assign(f.session.sidebarPreferences, { writable: false });
   await expect(loadChatSetup(f.session, "work")).rejects.toMatchObject(
     unreadable,
   );
-  Object.assign(f.session.soloPreferences, {
+  Object.assign(f.session.sidebarPreferences, {
     writable: true,
     snapshot: () => ({ status: "error", error: "Offline" }),
   });

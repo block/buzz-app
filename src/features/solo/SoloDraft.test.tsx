@@ -1751,7 +1751,7 @@ it("invalid stored draft lifetime fails visibly without a new create", async () 
 async function projectSetup(agents: string[] = []) {
   vi.stubGlobal("crypto", webcrypto);
   const f = setup();
-  if (agents.length) {
+  {
     const choices = f.session.agentChoices.snapshot();
     const withTemplates = {
       ...choices,
@@ -2012,7 +2012,7 @@ it("a new chat whose saved workspace was deleted starts without one", async () =
     ttlSeconds: 600,
     canvas: "My own notes",
   });
-  Object.assign(f.session.soloPreferences, {
+  Object.assign(f.session.sidebarPreferences, {
     snapshot: () => ({
       status: "ready",
       data: { sections: [{ id: "other", name: "Other" }], assignments: {} },
@@ -2053,7 +2053,7 @@ it("deleting the chosen workspace while New chat is open drops it from the draft
     { id: "work", name: "Work" },
     { id: "other", name: "Other" },
   ];
-  Object.assign(f.session.soloPreferences, {
+  Object.assign(f.session.sidebarPreferences, {
     snapshot: () => ({ status: "ready", data: { sections, assignments: {} } }),
     subscribe: (listener: () => void) => {
       listeners.add(listener);
@@ -2090,7 +2090,7 @@ function deletableWorkspaces(f: Awaited<ReturnType<typeof projectSetup>>) {
     sections = sections.filter((section) => section.id !== id);
     for (const listener of listeners) listener();
   };
-  Object.assign(f.session.soloPreferences, {
+  Object.assign(f.session.sidebarPreferences, {
     snapshot: () => ({ status: "ready", data: { sections, assignments: {} } }),
     subscribe: (listener: () => void) => {
       listeners.add(listener);
@@ -2443,7 +2443,9 @@ it("Chat settings says its workspace was deleted when its own load finds out", a
   writeView(scope, "solo:new-project", "work");
   render(<SoloDraft session={f.session} scope={scope} onStarted={vi.fn()} />);
   await act(async () => {});
-  Object.assign(f.session.soloPreferences, { refresh: async () => remove() });
+  Object.assign(f.session.sidebarPreferences, {
+    refresh: async () => remove(),
+  });
   await user.click(screen.getByRole("button", { name: "Chat settings" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "This workspace was deleted.",
@@ -2460,7 +2462,7 @@ it("keeps a saved workspace while workspaces can't be read, and Send says how to
   const started = vi.fn();
   const scope = "unreadable-workspaces";
   writeView(scope, "solo:new-project", "work");
-  Object.assign(f.session.soloPreferences, {
+  Object.assign(f.session.sidebarPreferences, {
     snapshot: () => ({ status: "error", error: "Offline" }),
   });
   render(<SoloDraft session={f.session} scope={scope} onStarted={started} />);
@@ -2485,7 +2487,7 @@ it("a deletion this device first learns of at Send drops the workspace, and the 
     { id: "other", name: "Other" },
   ];
   let deleted = false;
-  Object.assign(f.session.soloPreferences, {
+  Object.assign(f.session.sidebarPreferences, {
     snapshot: () => ({ status: "ready", data: { sections, assignments: {} } }),
     subscribe: (listener: () => void) => {
       listeners.add(listener);
@@ -2529,7 +2531,7 @@ it("creating a workspace from New chat picks it without starting the chat or tak
   Object.assign(f.session, {
     attachments: { upload: vi.fn(), uploadForNewChat },
   });
-  Object.assign(f.session.soloPreferences, {
+  Object.assign(f.session.sidebarPreferences, {
     snapshot: () => ({ status: "ready", data: { sections, assignments: {} } }),
     subscribe: (listener: () => void) => {
       listeners.add(listener);

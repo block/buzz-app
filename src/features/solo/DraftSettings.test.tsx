@@ -258,7 +258,7 @@ it.each([
 ])(
   "shows why the workspace can't load, without the composer's way out behind the dialog (writable: $writable)",
   async ({ writable, message }) => {
-    const soloPreferences = {
+    const sidebarPreferences = {
       writable,
       refresh: async () => {},
       snapshot: () => ({
@@ -268,7 +268,7 @@ it.each([
     };
     render(
       <DraftSettings
-        session={{ soloPreferences } as unknown as RelaySession}
+        session={{ sidebarPreferences } as unknown as RelaySession}
         projectId="work"
         close={vi.fn()}
         save={vi.fn()}

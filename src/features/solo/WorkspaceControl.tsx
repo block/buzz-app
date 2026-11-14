@@ -144,7 +144,7 @@ export function WorkspaceControl({
           )}
           <MenuSeparator />
           <MenuItem
-            disabled={!session.soloPreferences.sectionCreationWritable}
+            disabled={!session.sidebarPreferences.sectionCreationWritable}
             onClick={() => setCreating(true)}
           >
             New workspace
@@ -155,9 +155,19 @@ export function WorkspaceControl({
       {creating && (
         <NewWorkspace
           session={session}
-          create={(section) => {
-            const store = session.soloPreferences;
+          create={async (section) => {
+            const store = session.sidebarPreferences;
             if (onChange || !channelId) return store.createSection(section);
+            if (filed) {
+              // A region files its own chat, so the workspace is created on
+              // its own. When only the filing failed, Retry files again and
+              // leaves the workspace it finds alone.
+              const exists = store
+                .snapshot()
+                .data?.sections.some((item) => item.id === section.id);
+              if (!exists) await store.createSection(section);
+              return filed.file(section.id);
+            }
             const blocked = prepareSoloMove(session, channelId);
             if (blocked) return Promise.reject(new Error(blocked));
             // The groups record can't be saved twice within a second, so a

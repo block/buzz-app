@@ -380,7 +380,7 @@ export function SoloDraft({
   // Chat settings is open this waits: dropping would reload the dialog over its
   // unsaved edits and hide its own "deleted" error. Closing it checks again.
   useEffect(() => {
-    const store = session.soloPreferences;
+    const store = session.sidebarPreferences;
     if (!store || !selectedProject || settingsOpen) return;
     const drop = () => {
       const preferences = store.snapshot();

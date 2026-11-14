@@ -13,7 +13,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import type { FormEvent } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { RelaySession } from "../relay/session";
+import { createRelaySession, type RelaySession } from "../relay/session";
 import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
 import type {
   SidebarAssignmentIntent,
@@ -249,13 +249,16 @@ async function storeFixture() {
       return saved;
     },
     available: true,
-    groupsOnly: true,
+    writeStar: async () => saved.starred,
     write,
   });
   await store.queries.ensure();
   const assign = vi.fn(store.queries.assign);
   const save = vi.fn(async () => {});
   const session = {
+    ...(({ agentChoices, channels }) => ({ agentChoices, channels }))(
+      createRelaySession(null).session,
+    ),
     scope: "https://relay.example.test:viewer",
     // Workspace defaults, which New workspace saves for folders.
     channelKit: {
@@ -263,7 +266,7 @@ async function storeFixture() {
       snapshot: () => ({ status: "ready", entries: [] }),
       save,
     },
-    soloPreferences: Object.create(store.queries, {
+    sidebarPreferences: Object.create(store.queries, {
       assign: { value: assign },
     }),
   } as unknown as RelaySession;
@@ -375,7 +378,7 @@ it("leaves a saved chat's failed Create to New workspace's Retry", async () => {
   expect(within(dialog).getByText("~/repo")).toBeInTheDocument();
   // The store keeps no failed move, so the sidebar offers no Retry move that
   // would replay the move without the folders.
-  expect(session.soloPreferences.snapshot().moves).toBeUndefined();
+  expect(session.sidebarPreferences.snapshot().moves).toBeUndefined();
   expect(screen.getAllByRole("alert", { hidden: true })).toHaveLength(1);
   expect(save).not.toHaveBeenCalled();
   await user.click(within(dialog).getByRole("button", { name: "Retry" }));
@@ -387,6 +390,104 @@ it("leaves a saved chat's failed Create to New workspace's Retry", async () => {
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
+it.each([
+  { failed: "the workspace write", error: "Offline", writes: 2, filings: 1 },
+  {
+    failed: "the region's filing",
+    error: "Region offline",
+    writes: 1,
+    filings: 2,
+  },
+])(
+  "creates a region chat's workspace once and files it through its region, retrying after $failed fails",
+  async ({ failed, error, writes, filings }) => {
+    vi.stubGlobal("crypto", webcrypto);
+    const h = createSoloRegionFixture();
+    try {
+      const { session, write, assign, save } = await storeFixture();
+      Object.assign(h.session, {
+        scope: session.scope,
+        channelKit: session.channelKit,
+        sidebarPreferences: session.sidebarPreferences,
+      });
+      let id: string | undefined = "buzz";
+      let revision = 1;
+      const file = vi.fn(async (next: string | undefined) => {
+        id = next;
+        region.update({
+          status: "ready",
+          binding: region.binding(),
+          revision: ++revision,
+        });
+      });
+      (failed === "the workspace write" ? write : file).mockRejectedValueOnce(
+        new Error(error),
+      );
+      const region = await h.register({
+        workspace: (_binding, channelId) =>
+          channelId === "owned" ? { ...(id ? { id } : {}), file } : undefined,
+      });
+      const user = userEvent.setup();
+      const relay = h.session as unknown as RelaySession;
+      render(<WorkspaceControl session={relay} channelId="owned" />);
+      const control = await screen.findByRole("button", {
+        name: "Workspace: Buzz App",
+      });
+      await user.click(control);
+      await user.click(
+        await screen.findByRole("menuitem", { name: "New workspace" }),
+      );
+      const dialog = await screen.findByRole("dialog", {
+        name: "New workspace",
+      });
+      await user.type(
+        within(dialog).getByRole("textbox", { name: "Name" }),
+        "Planning",
+      );
+      await user.type(
+        within(dialog).getByRole("textbox", { name: /^Folders/ }),
+        "~/repo",
+      );
+      await user.click(within(dialog).getByRole("button", { name: "Add" }));
+      await user.click(within(dialog).getByRole("button", { name: "Create" }));
+      // The region's own reason, not "This chat is managed by Work."
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent(error);
+      expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveValue(
+        "Planning",
+      );
+      expect(within(dialog).getByText("~/repo")).toBeInTheDocument();
+      // The workspace is created on its own: the region files the chat.
+      const created = { id: expect.any(String), name: "Planning" };
+      expect(write).toHaveBeenCalledExactlyOnceWith(
+        { createSection: created },
+        expect.anything(),
+      );
+      expect(file).toHaveBeenCalledTimes(filings - 1);
+      expect(id).toBe("buzz");
+      expect(save).not.toHaveBeenCalled();
+      await user.click(within(dialog).getByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(dialog).not.toBeInTheDocument());
+      // Retry writes the workspace again only when that write failed, and
+      // then with the same ID; a failed filing leaves the workspace alone.
+      expect(write).toHaveBeenCalledTimes(writes);
+      const workspace = write.mock.calls[0]?.[0].createSection?.id;
+      expect(write.mock.calls.at(-1)?.[0]).toEqual(write.mock.calls[0]?.[0]);
+      expect(file).toHaveBeenCalledTimes(filings);
+      expect(file.mock.calls).toEqual(Array(filings).fill([workspace]));
+      expect(id).toBe(workspace);
+      expect(assign).not.toHaveBeenCalled();
+      expect(session.sidebarPreferences.snapshot().data?.assignments).toEqual({
+        chat: "buzz",
+      });
+      expect(save).toHaveBeenCalledOnce();
+      expect(control).toHaveAccessibleName("Workspace: Planning");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
 it("keeps focus on the control while workspaces reload after Create", async () => {
   vi.stubGlobal("crypto", webcrypto);
   const { session, reads } = await storeFixture();
@@ -394,7 +495,7 @@ it("keeps focus on the control while workspaces reload after Create", async () =
   // New chat reloads workspaces for the new pick, as SoloDraft's preload does.
   const change = vi.fn(() => {
     reads.hold = new Promise<void>((resolve) => (release = resolve));
-    void session.soloPreferences.refresh();
+    void session.sidebarPreferences.refresh();
   });
   const user = userEvent.setup();
   render(<WorkspaceControl session={session} value="" onChange={change} />);
@@ -410,23 +511,22 @@ it("keeps focus on the control while workspaces reload after Create", async () =
   );
   await user.click(within(dialog).getByRole("button", { name: "Create" }));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
-  expect(session.soloPreferences.snapshot().status).toBe("loading");
+  expect(session.sidebarPreferences.snapshot().status).toBe("loading");
   await waitFor(() => expect(control).toHaveFocus());
   // jsdom focuses a natively disabled button; a browser can't.
   expect(control).not.toHaveAttribute("disabled");
-  expect(control).toHaveAttribute("aria-disabled", "true");
-  // It still can't open while workspaces load.
-  await user.keyboard("{Enter}");
-  await user.keyboard("{ArrowDown}");
-  await user.click(control);
-  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-  await act(async () => release());
+  // Main keeps retained workspaces usable during refresh.
   expect(control).not.toHaveAttribute("aria-disabled");
+  try {
+    await user.keyboard("{Enter}");
+    expect(
+      await screen.findByRole("menu", { name: "Choose workspace" }),
+    ).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+  } finally {
+    await act(async () => release());
+  }
   expect(control).toHaveFocus();
-  await user.keyboard("{Enter}");
-  expect(
-    await screen.findByRole("menu", { name: "Choose workspace" }),
-  ).toBeInTheDocument();
 });
 
 it("offers New workspace disabled while workspaces can't be created", async () => {

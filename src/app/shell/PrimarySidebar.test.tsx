@@ -1412,7 +1412,8 @@ it.each(["neighbor", "heading", "moved"])(
     try {
       const heading = screen.getByLabelText("Work", { selector: "summary" });
       const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
-      screen.getByRole("button", { name: "Chat" }).focus();
+      const chat = screen.getByRole("button", { name: "Chat" });
+      chat.focus();
       await act(async () => {
         h.roster(
           destination === "heading"
@@ -1423,7 +1424,7 @@ it.each(["neighbor", "heading", "moved"])(
         );
         if (destination === "moved") elsewhere.focus();
       });
-      expect(screen.queryByRole("button", { name: "Chat" })).toBeNull();
+      await waitFor(() => expect(chat).not.toBeInTheDocument());
       expect(
         destination === "neighbor"
           ? screen.getByRole("button", { name: "Other" })

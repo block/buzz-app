@@ -1424,8 +1424,8 @@ test("plugin additions retain Search focus unless it was deliberately moved", as
       await expect(search).toHaveValue("");
       await expect(action === "moved" ? moved : search).toBeFocused();
       await expect(
-        dialog.getByRole("status").filter({ hasText: / added\.$/ }),
-      ).toHaveCount(1);
+        dialog.getByText("Morgan added.", { exact: true }),
+      ).toHaveAttribute("role", "status");
     });
   }
 });

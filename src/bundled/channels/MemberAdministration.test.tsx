@@ -2437,6 +2437,36 @@ function pluginPicker(
   );
 }
 
+it.each(["Directory Morgan", "Directory <b>Morgan</b>"])(
+  "announces the literal cold-directory label %s after plugin addition",
+  async (name) => {
+    const t = await setup("owner", "absent");
+    const person = keypair();
+    const result = profile(person, { name });
+    const change = vi.fn(async () => {
+      // The directory label must survive dispatch before background enrichment.
+      expect(t.session.profiles.snapshot().has(person.pubkey)).toBe(false);
+    });
+    pluginPicker(t, {
+      session: { ...t.session, searchProfiles: async () => [result] },
+      memberActions: { canAdd: true, pending: false, change },
+    });
+    expect(t.session.profiles.snapshot().has(person.pubkey)).toBe(false);
+    await t.user.type(screen.getByRole("searchbox"), "Directory");
+    const results = await screen.findByRole("region", {
+      name: "Not yet added",
+    });
+    await t.user.click(
+      await within(results).findByRole("button", { name: /^Add .*\)$/ }),
+    );
+    const notice = await screen.findByText(`${name} added.`, { exact: true });
+    expect(notice).toHaveAttribute("role", "status");
+    expect(notice.children).toHaveLength(0);
+    expect(change).toHaveBeenCalledOnce();
+    expect(t.publish).not.toHaveBeenCalled();
+  },
+);
+
 it.each([
   ["default", {}, "Not yet added"],
   ["custom", { nonMemberLabel: "Not in this record" }, "Not in this record"],

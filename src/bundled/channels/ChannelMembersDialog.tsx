@@ -253,7 +253,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   openProfile(destination: string | undefined): boolean;
   onSendMessage: ((key: string) => Promise<void>) | undefined;
   messagePending: boolean;
-  add(key: string): Promise<void>;
+  add(key: string, name: string): Promise<void>;
   busy: boolean;
   addDisabled: boolean;
   canAddWithRole: boolean;
@@ -281,7 +281,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
       if (busy) return;
       if (document.activeElement === event.currentTarget)
         focusedAdd.current = { key: pubkey, button: event.currentTarget };
-      void add(pubkey);
+      void add(pubkey, name);
     },
     children: busy ? "Adding…" : "Add",
   } satisfies ButtonProps;
@@ -1712,7 +1712,7 @@ export function ChannelMembersDialog({
     [memberActions, session, channelId],
   );
   const add = useCallback(
-    async (key: string) => {
+    async (key: string, name: string) => {
       const signal = lifetime.current?.signal;
       if (!signal || memberPending || (memberActions && !memberActions.canAdd))
         return;
@@ -1727,9 +1727,7 @@ export function ChannelMembersDialog({
           setQuery("");
           setSelectedIdentity("All");
           setSelectedAccess("All");
-          setNotice(
-            `${session.names.resolve(key, session.profiles.snapshot().get(key)?.name ?? session.agentChoices.snapshot().identities.find((agent) => agent.pubkey === key)?.name ?? formatPublicKey(key) ?? "Unknown member")} added.`,
-          );
+          setNotice(`${name} added.`);
         }
         return;
       }
@@ -1766,9 +1764,7 @@ export function ChannelMembersDialog({
             setSelectedIdentity("All");
             setSelectedAccess("All");
           }
-          setNotice(
-            `${session.names.resolve(key, session.profiles.snapshot().get(key)?.name ?? session.agentChoices.snapshot().identities.find((agent) => agent.pubkey === key)?.name ?? formatPublicKey(key) ?? "Unknown member")}${direct ? " added." : ` is in the ${place}.`}`,
-          );
+          setNotice(`${name}${direct ? " added." : ` is in the ${place}.`}`);
         }
       } catch (error: unknown) {
         if (direct && !signal.aborted)
@@ -1820,7 +1816,8 @@ export function ChannelMembersDialog({
     query,
     keys: offering ? visibleCandidates.map((person) => person.pubkey) : [],
     onChoose: (key) => {
-      if (!busy.has(key) && !rosterBusy && !rosterError) void add(key);
+      if (!busy.has(key) && !rosterBusy && !rosterError)
+        void add(key, label(key));
     },
   });
   const latestHighlight = useRef(highlight);
@@ -2363,7 +2360,7 @@ export function ChannelMembersDialog({
                         input.current?.focus();
                         const [only] = keys;
                         void (only && keys.length === 1
-                          ? add(only)
+                          ? add(only, label(only))
                           : addAll(keys, `${names} are in the ${place}.`));
                       }}
                     >

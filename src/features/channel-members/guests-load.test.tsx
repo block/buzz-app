@@ -4,7 +4,7 @@ import { finalizeEvent, getPublicKey } from "nostr-tools";
 import { afterEach, expect, it } from "vitest";
 import type { ChannelList, ChannelSummary } from "../relay/contracts";
 import { createMemberAdministration } from "./administration";
-import { useChannelGuests } from "./guests";
+import { useChannelGuests, useChannelRoles } from "./guests";
 
 // Roles come from the real role reader over relay-signed rosters, and access
 // follows the channel list the way the session's does: downloaded membership
@@ -36,6 +36,7 @@ function relay(
     name: "launch",
     channelType: "stream",
     members,
+    ...(agentRole === "guest" ? { guests: [agent] } : {}),
     cached: true,
   } as ChannelSummary;
   let roles: [string, string][] = [[viewer, "owner"]];
@@ -86,6 +87,8 @@ function relay(
     } as never,
     status: () => owner.capability.snapshot(id).status,
     reads: () => reads,
+    /** Another consumer, such as the members panel, reads roles. */
+    readElsewhere: () => owner.capability.refresh(id),
     /** Answers the oldest held read. */
     release: () => held.shift()?.(),
     holding: () => held.length,
@@ -104,7 +107,10 @@ function relay(
     /** The agent joins as a guest while the channel is open. */
     addGuest: () => {
       roles = [...roles, [agent, "guest"]];
-      publish({ members: [...(channel.members ?? []), agent] });
+      publish({
+        members: [...(channel.members ?? []), agent],
+        guests: [agent],
+      });
     },
   };
 }
@@ -112,28 +118,27 @@ function relay(
 it("shows a guest once the relay confirms a cold channel's membership", async () => {
   const h = relay([viewer, agent], "guest");
   const { result } = renderHook(() => useChannelGuests(h.session, id));
-  // The cached roster can't be read yet: no guests, and no stuck read.
-  await waitFor(() => expect(h.status()).not.toBe("loading"));
+  // A downloaded roster isn't confirmed yet: no guests.
   expect(result.current.size).toBe(0);
   h.confirm();
   await waitFor(() => expect([...result.current]).toEqual([agent]));
+  // Guests come from the signed roster in the list, not a role read.
+  expect(h.reads()).toBe(0);
 });
 
-it("rereads roles when an agent joins as a guest after they were read", async () => {
+it("shows an agent that joins as a guest while the chooser is open", async () => {
   const h = relay([viewer]);
   h.confirm();
   const { result } = renderHook(() => useChannelGuests(h.session, id));
-  await waitFor(() => expect(h.status()).toBe("ready"));
   expect(result.current.size).toBe(0);
   h.addGuest();
   await waitFor(() => expect([...result.current]).toEqual([agent]));
 });
 
-it("rereads roles when another device changes only the agent's role", async () => {
+it("follows another device changing only the agent's role", async () => {
   const h = relay([viewer, agent], "bot");
   h.confirm();
   const { result } = renderHook(() => useChannelGuests(h.session, id));
-  await waitFor(() => expect(h.status()).toBe("ready"));
   expect(result.current.size).toBe(0);
   h.setRole("guest");
   await waitFor(() => expect([...result.current]).toEqual([agent]));
@@ -141,21 +146,52 @@ it("rereads roles when another device changes only the agent's role", async () =
   await waitFor(() => expect(result.current.size).toBe(0));
 });
 
-it("rereads roles when only the agent's role changes during a read", async () => {
+it("shows a Guest while the composer's own role read still holds the older roles", async () => {
   const h = relay([viewer, agent], "bot", { hold: true });
   h.confirm();
-  const { result, unmount } = renderHook(() => useChannelGuests(h.session, id));
-  // The first read has seen the agent as bot and is still under way.
+  const { result } = renderHook(() => {
+    useChannelRoles(h.session, id);
+    return useChannelGuests(h.session, id);
+  });
+  // The composer's read has seen the agent as bot and is still under way.
   await waitFor(() => expect(h.holding()).toBe(1));
   h.setRole("guest");
-  h.unhold();
-  h.release();
   await waitFor(() => expect([...result.current]).toEqual([agent]));
-  expect(h.reads()).toBe(2);
-  // A remount keeps the newer roles and reads nothing more.
+  h.release();
+  await waitFor(() => expect(h.status()).toBe("ready"));
+  expect([...result.current]).toEqual([agent]);
+});
+
+it("shows a Guest when another consumer's read began before the role changed", async () => {
+  const h = relay([viewer, agent], "bot", { hold: true });
+  h.confirm();
+  // Another consumer's read, such as the members panel's, sees the agent as
+  // bot and is still under way when the role changes and the chooser mounts.
+  const elsewhere = h.readElsewhere();
+  await waitFor(() => expect(h.holding()).toBe(1));
+  h.setRole("guest");
+  const { result, unmount } = renderHook(() => useChannelGuests(h.session, id));
+  await waitFor(() => expect([...result.current]).toEqual([agent]));
+  h.release();
+  await elsewhere;
+  expect([...result.current]).toEqual([agent]);
   unmount();
   const again = renderHook(() => useChannelGuests(h.session, id));
   expect([...again.result.current]).toEqual([agent]);
+});
+
+it("reads roles once the relay confirms the roster, and again only when its members change", async () => {
+  const h = relay([viewer]);
+  const first = renderHook(() => useChannelRoles(h.session, id));
+  // Role reads fail until the relay confirms downloaded membership.
+  expect(h.reads()).toBe(0);
+  h.confirm();
   await waitFor(() => expect(h.status()).toBe("ready"));
-  expect(h.reads()).toBe(2);
+  expect(h.reads()).toBe(1);
+  // The composer remounts often; the same roster isn't read again.
+  first.unmount();
+  renderHook(() => useChannelRoles(h.session, id));
+  expect(h.reads()).toBe(1);
+  h.addGuest();
+  await waitFor(() => expect(h.reads()).toBe(2));
 });

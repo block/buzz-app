@@ -2,18 +2,12 @@ import { expect, it } from "vitest";
 import { guestKeys } from "./guests";
 import { guestMentionDetail } from "../../bundled/mentions/mention-candidates";
 
-const roles = (map: Record<string, string>) =>
-  ({
-    snapshot: () => ({ authority: { roles: map } }),
-    subscribe: () => () => {},
-    refresh: async () => {},
-  }) as never;
-
-it("finds only the roster's guests, and none when roles are unknown", () => {
-  expect([...guestKeys(roles({ a: "guest", b: "member" }), "c")]).toEqual([
-    "a",
-  ]);
-  expect(guestKeys(undefined, "c").size).toBe(0);
+it("finds only the confirmed roster's guests", () => {
+  const channel = { id: "c", name: "c", members: ["a", "b"], guests: ["a"] };
+  expect([...guestKeys(channel as never)]).toEqual(["a"]);
+  expect(guestKeys({ ...channel, cached: true } as never).size).toBe(0);
+  expect(guestKeys({ ...channel, guests: undefined } as never).size).toBe(0);
+  expect(guestKeys(undefined).size).toBe(0);
 });
 
 it("says where a viewing-only agent answers", () => {

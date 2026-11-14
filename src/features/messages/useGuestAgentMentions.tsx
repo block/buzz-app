@@ -3,7 +3,6 @@ import type { MentionRecipient } from "./mention-draft";
 import type { ComposerSession } from "./composer-session";
 import type { ChannelSummary } from "../relay/contracts";
 import { canAddMembers } from "../channel-members/members";
-import { canManageMember } from "../channel-members/administration-protocol";
 import { administerMember } from "../channel-members/administration";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -193,11 +192,14 @@ export function joinOffer(
   const roles = session.memberAdministration;
   const viewer = session.viewer;
   const run = roles?.run;
+  // The signed roster says the agent is a Guest; a role read under way may
+  // not show it yet, so only the viewer's own authority comes from the roles.
   if (
     !roles ||
     !run ||
     !viewer ||
-    !canManageMember(roles.snapshot(channel.id).authority, viewer, agent.pubkey)
+    agent.pubkey === viewer ||
+    !roles.snapshot(channel.id).authority.canManage
   )
     return undefined;
   return async (signal) => {

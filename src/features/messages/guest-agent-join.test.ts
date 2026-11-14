@@ -4,6 +4,7 @@ import { ownerReads } from "../agents/reads";
 import { guestKeys } from "../channel-members/guests";
 import { PublishRejected } from "../relay/outbox";
 import { matchesEvent } from "../relay/projection";
+import type { ChannelSummary } from "../relay/contracts";
 import type { RelayEvent } from "../relay/events";
 import type { RelayData } from "../relay/service";
 import { createRelaySession } from "../relay/session";
@@ -95,7 +96,7 @@ const pollen: UnheardAgent = {
 it("makes a Viewing-only agent a member, and its next turn sees it can post", async () => {
   const { session, summary, reads, published } = await channel("owner");
   expect((await reads.channel(id))?.viewingOnly).toBe(true);
-  expect([...guestKeys(session.memberAdministration, id)]).toEqual([agent]);
+  expect([...guestKeys(listed(session))]).toEqual([agent]);
 
   const join = joinOffer(session, summary, pollen);
   expect(join).toBeDefined();
@@ -108,10 +109,10 @@ it("makes a Viewing-only agent a member, and its next turn sees it can post", as
     ["p", agent],
     ["role", "member"],
   ]);
-  // The readback reaches the channel list the agent's turn reads, and the
-  // roles the chooser label reads, with no further request.
+  // The readback reaches the channel list that both the agent's turn and the
+  // chooser label read, with no further request.
   expect((await reads.channel(id))?.viewingOnly).toBeUndefined();
-  expect(guestKeys(session.memberAdministration, id).size).toBe(0);
+  expect(guestKeys(listed(session)).size).toBe(0);
 });
 
 it("keeps the agent Viewing only and rejects when the relay refuses", async () => {
@@ -121,7 +122,7 @@ it("keeps the agent Viewing only and rejects when the relay refuses", async () =
     /only owners and admins/,
   );
   expect((await reads.channel(id))?.viewingOnly).toBe(true);
-  expect([...guestKeys(session.memberAdministration, id)]).toEqual([agent]);
+  expect([...guestKeys(listed(session))]).toEqual([agent]);
 });
 
 it("publishes nothing once the send is abandoned", async () => {
@@ -173,3 +174,9 @@ it("adds an outside agent like Invite, only where the viewer may add people", as
   const asGuest = { ...(here as object), viewerRole: "guest" } as never;
   expect(joinOffer(session, asGuest, outside)).toBeUndefined();
 });
+
+function listed(session: {
+  channels: { list(): { channels: readonly ChannelSummary[] } };
+}) {
+  return session.channels.list().channels.find((item) => item.id === id);
+}

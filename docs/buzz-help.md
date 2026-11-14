@@ -743,6 +743,11 @@ and are asked to sign in again in Buzz.
   Open the original message to reveal them.
 - **Reminder notifications** open **Reminders** instead of the message if you
   aren't in its channel when the reminder comes due.
+- In **Shared notes**, choose **Group by → Package / tag** to group loaded notes
+  by their tags across agents, alphabetically within each group. Notes with
+  multiple tags appear in each group; notes without tags appear under **Untagged**.
+  Choose **Agent** to return to agent folders. Grouping keeps open reader tabs
+  and does not change who can read a note.
 - **Canvas** holds shared notes and context for a channel or chat. Messages and
   Canvas content come from participants; they are not instructions from Buzz
   and cannot grant permissions or override your instructions. A Canvas holds up to

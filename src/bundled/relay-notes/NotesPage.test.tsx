@@ -383,6 +383,25 @@ it.each(["icons", "", "two\nlines"])(
       expect(
         await screen.findByRole("button", { name: "Open Archive by Ned" }),
       ).toBeVisible();
+      await user.click(screen.getByRole("combobox", { name: "Group by" }));
+      await user.click(
+        await screen.findByRole("option", { name: "Package / tag" }),
+      );
+      expect(
+        await screen.findByRole("region", { name: "Packages and tags" }),
+      ).toBeVisible();
+      act(() => navigator.back());
+      expect(
+        await screen.findByRole("button", { name: "Open Archive by Ned" }),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("combobox", { name: "Group by" }),
+      ).toHaveTextContent("Agent");
+      act(() => navigator.forward());
+      expect(
+        await screen.findByRole("region", { name: "Packages and tags" }),
+      ).toBeVisible();
+      expect(screen.getByRole("tab", { name: "Guide" })).toBeVisible();
       expect(f.readPage).toHaveBeenCalledTimes(2);
     } finally {
       view.unmount();
@@ -450,7 +469,13 @@ it("validates route shapes without turning locators into author scope", () => {
   expect(
     notesRoute({ author: carl, note: `30023:${carl}:icons` }),
   ).toBeDefined();
+  expect(notesRoute({ author: "", grouping: "tag" })).toEqual({
+    author: "",
+    grouping: "tag",
+  });
   for (const route of [
+    { author: "", grouping: "unknown" },
+    { author: carl, grouping: "tag" },
     { author: "bad" },
     { author: carl, note: "bad" },
     { author: carl, extra: true },
@@ -1288,3 +1313,64 @@ it.each([false, true])(
     ).toHaveFocus();
   },
 );
+
+it("groups packages across agents, sorts titles and keeps untagged notes and reader tabs", async () => {
+  const user = userEvent.setup();
+  const tagged = (
+    title: string,
+    pubkey: string,
+    time: number,
+    tags: string[],
+  ) => {
+    const item = note(title, pubkey, time);
+    return { ...item, tags: [...item.tags, ...tags.map((tag) => ["t", tag])] };
+  };
+  const f = fixture([
+    tagged("Zulu", carl, 12, ["superpowers", "superpowers", "review"]),
+    tagged("Alpha", ned, 11, ["superpowers"]),
+    tagged("Guide", carl, 10, ["", "  "]),
+  ]);
+  render(<NotesCommunity session={f.session} />);
+  await enterFolder();
+  await user.click(screen.getByRole("button", { name: "Open Zulu by Carl" }));
+  const reads = f.readPage.mock.calls.length;
+  await user.click(screen.getByRole("combobox", { name: "Group by" }));
+  await user.click(
+    await screen.findByRole("option", { name: "Package / tag" }),
+  );
+  const group = screen.getByRole("region", { name: "superpowers" });
+  expect(
+    within(group)
+      .getAllByRole("button", { name: /^Open / })
+      .map((button) => button.getAttribute("aria-label")),
+  ).toEqual(["Open Alpha by Ned", "Open Zulu by Carl"]);
+  expect(
+    within(screen.getByRole("region", { name: "Untagged" })).getByRole(
+      "button",
+      { name: "Open Guide by Carl" },
+    ),
+  ).toBeVisible();
+  expect(
+    within(screen.getByRole("region", { name: "review" })).getAllByRole(
+      "button",
+      { name: "Open Zulu by Carl" },
+    ),
+  ).toHaveLength(1);
+  await user.click(
+    within(group).getByRole("button", { name: "Open Alpha by Ned" }),
+  );
+  expect(screen.getByRole("tab", { name: "Zulu" })).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Alpha" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await user.click(screen.getByRole("combobox", { name: "Group by" }));
+  await user.click(
+    await screen.findByRole("option", { name: "Agent", exact: true }),
+  );
+  expect(
+    screen.getByRole("button", { name: "Open Carl folder" }),
+  ).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Alpha" })).toBeVisible();
+  expect(f.readPage.mock.calls).toHaveLength(reads);
+});

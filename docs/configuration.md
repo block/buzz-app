@@ -150,7 +150,10 @@ configuration and none of the Buzz request context, and the turn is noted
 mention, and in the harness's own turn activity for other turns, which receive
 it as `delivery.gatewayFallback`. That choice is made before dispatch; a turn
 whose gateway access is revoked after dispatch fails visibly and is never
-replayed. Memberships in other communities and hosted agents are unchanged.
+replayed. Once goose runs through the gateway, a goose agent's wake anchored
+in a conversation shows that note beside its prompt in Activity only while the
+app that ran it keeps running; a reload, or goose compacting the prompt out of
+its history, drops it. A standalone run (`runOnce`) shows none. Memberships in other communities and hosted agents are unchanged.
 See `src/features/agents/gateway/` for the shared route, session and request
 context contract that harnesses consume.
 

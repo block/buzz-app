@@ -20,8 +20,8 @@ import {
   projectName,
   readTranscript,
   TURN_LIMIT,
-  withNotices,
 } from "./transcript";
+import { withNotices } from "../../features/agents/activity-transcript";
 
 const root = "c".repeat(64);
 const homes: string[] = [];

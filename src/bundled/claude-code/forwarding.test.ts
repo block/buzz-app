@@ -9,6 +9,10 @@ import type {
   EligibleRoute,
   GatewayRoute,
 } from "../../features/agents/gateway/route";
+import {
+  type ForwardingHarness,
+  GatewayForwarding,
+} from "../../features/agents/gateway/forwarding";
 import { VECTOR_PROFILE } from "../../features/agents/gateway/vectors";
 import {
   type FakeClaude,
@@ -87,6 +91,8 @@ function harness(
     lists: ["", ""],
     proxied: false,
   }),
+  /** Another harness than Claude, through the shared opener. */
+  other?: ForwardingHarness,
 ) {
   let route: GatewayRoute = eligible(2);
   const listeners = new Set<() => void>();
@@ -107,6 +113,14 @@ function harness(
           url: `http://127.0.0.1:9/h${events.length}`,
         }
       );
+    }),
+    associate: vi.fn(
+      async (_owner, id, session) =>
+        void calls.push(`associate ${id} ${session}`),
+    ),
+    register: vi.fn(async (_owner, id, call, child) => {
+      calls.push(`register ${id} ${call} ${child}`);
+      return { type: "registered" } as const;
     }),
     seal: vi.fn(async (_owner, id) => void calls.push(`seal ${id}`)),
     close: vi.fn(async (_owner, id) => {
@@ -131,14 +145,9 @@ function harness(
         setRoute({ ...route, revision: route.revision + 1 } as GatewayRoute);
     }),
   };
-  const forwarding = new ClaudeForwarding(
-    OWNER,
-    managed,
-    inherited,
-    native,
-    routes,
-    retry,
-  );
+  const forwarding: GatewayForwarding = other
+    ? new GatewayForwarding(OWNER, other, inherited, native, routes, retry)
+    : new ClaudeForwarding(OWNER, managed, inherited, native, routes, retry);
   return {
     forwarding,
     native,
@@ -499,6 +508,20 @@ describe("ClaudeForwarding.open", () => {
     ]);
   });
 
+  it("still fails with the cancellation when native could not close what opened after it", async () => {
+    const h = harness();
+    const controller = new AbortController();
+    vi.mocked(h.native.open).mockImplementationOnce(async () => {
+      controller.abort(new Error("cancelled"));
+      return { type: "opened", id: 1, url: "http://127.0.0.1:9/h1" };
+    });
+    vi.mocked(h.native.close).mockRejectedValueOnce(new Error("gone"));
+    await expect(
+      h.forwarding.open(AGENT, eligible(2), turn, controller.signal),
+    ).rejects.toThrow("cancelled");
+    expect(h.native.close).toHaveBeenCalledOnce();
+  });
+
   it("fails before dispatch when native forwarding can't be reached", async () => {
     for (const method of ["push", "open"] as const) {
       const h = harness();
@@ -521,7 +544,7 @@ describe("ClaudeForwarding.open", () => {
         signal,
       );
       const emit = nth(h.events);
-      emit({ type: "admitted", request: 1, class: "inference" });
+      emit({ type: "admitted", request: 1, class: "inference", child: false });
       expect(generation.admitted()).toBe(true);
       // Others are Claude's to retry, or its own failures.
       for (const other of [429, 500, 502, 404, null])
@@ -652,13 +675,13 @@ describe("ClaudeForwarding.open", () => {
       signal,
     );
     const emit = nth(h.events);
-    emit({ type: "admitted", request: 1, class: "discovery" });
+    emit({ type: "admitted", request: 1, class: "discovery", child: false });
     expect(generation.admitted()).toBe(false);
-    emit({ type: "admitted", request: 2, class: "inference" });
+    emit({ type: "admitted", request: 2, class: "inference", child: false });
     expect(generation.admitted()).toBe(true);
   });
 
-  it("seals once and never after closing; a close native already did resolves", async () => {
+  it("seals once and never after closing; a close native refused rejects, every time", async () => {
     const h = harness();
     const generation = await h.forwarding.open(
       AGENT,
@@ -669,11 +692,51 @@ describe("ClaudeForwarding.open", () => {
     generation.seal();
     generation.seal();
     vi.mocked(h.native.close).mockRejectedValueOnce(new Error("gone"));
-    await generation.close();
+    await expect(generation.close()).rejects.toThrow("gone");
+    await expect(generation.close()).rejects.toThrow("gone");
+    expect(h.native.close).toHaveBeenCalledOnce();
     generation.seal();
     expect(h.calls.filter((call) => call.startsWith("seal"))).toEqual([
       "seal 1",
     ]);
+  });
+});
+
+describe("GatewayForwarding for goose", () => {
+  const GOOSE = { upstream: "goose", native: "goose" } as const;
+
+  it("enables the harness it declares, and opens with no session", async () => {
+    const h = harness([], undefined, undefined, undefined, GOOSE);
+    expect(h.forwarding.control(AGENT)).toBeUndefined();
+    h.setRoute({ ...eligible(2), harnesses: ["goose"] });
+    expect(h.forwarding.control(AGENT)).toEqual({
+      ...eligible(2),
+      harnesses: ["goose"],
+    });
+    await h.forwarding.open(AGENT, eligible(2), { binding, context }, signal);
+    const [, options] = nth(vi.mocked(h.native.open).mock.calls);
+    expect(options.harness).toBe("goose");
+    expect(options).not.toHaveProperty("session");
+  });
+
+  it("names its session and registers children on its own generation", async () => {
+    const h = harness([], undefined, undefined, undefined, GOOSE);
+    await h.forwarding.open(AGENT, eligible(2), { binding, context }, signal);
+    const generation = await h.forwarding.open(
+      AGENT,
+      eligible(2),
+      { binding, context },
+      signal,
+    );
+    await generation.associate("goose-session");
+    await expect(
+      generation.registerChild("call-1", "child-1"),
+    ).resolves.toEqual({ type: "registered" });
+    expect(h.calls.slice(-2)).toEqual([
+      "associate 2 goose-session",
+      "register 2 call-1 child-1",
+    ]);
+    expect(vi.mocked(h.native.associate).mock.calls[0]?.[0]).toBe(OWNER);
   });
 });
 
@@ -717,6 +780,8 @@ function generation(
         .then(() => void log.push(`closed ${name}`));
       return closing;
     },
+    associate: async () => {},
+    registerChild: async () => ({ type: "registered" }),
   };
   return Object.assign(value, { revoke });
 }
@@ -1183,6 +1248,35 @@ describe("forwarded turns in a conversation", () => {
     ]);
     nth(claudes(), 1).finish();
     await second;
+  });
+
+  it("lets the next turn in when native could not close the last generation", async () => {
+    const { sessions, log, forward, claudes } = pool();
+    let refuse!: (error: Error) => void;
+    const refused = new Promise<void>((_, reject) => {
+      refuse = reject;
+    });
+    const first = sessions.deliver("c", "one", 1, {
+      forward: async () => {
+        log.push("open refused");
+        return { generation: generation("refused", log, refused), binding };
+      },
+    });
+    await flush();
+    nth(claudes()).finish();
+    await first;
+    const second = sessions.deliver("c", "two", 2, { forward });
+    await flush();
+    refuse(new Error("gone"));
+    await flush();
+    expect(log).toEqual([
+      "open refused",
+      "seal refused",
+      "close refused",
+      "open g1",
+    ]);
+    nth(claudes(), 1).finish();
+    expect(await second).toEqual({ ok: true });
   });
 
   it("restarts on settings saved during startup only once the first process has exited", async () => {
@@ -1812,6 +1906,25 @@ describe("forwarded turns in a conversation", () => {
     expect(opened).toEqual([["new-1", undefined]]);
     expect(log).toEqual(["open g1", "seal g1", "close g1", "closed g1"]);
     expect(all.size).toBe(0);
+  });
+
+  it("ends a one-off turn as it did when native could not close its generation", async () => {
+    const { sessions, log, claudes } = pool();
+    const refused = Promise.reject(new Error("gone"));
+    refused.catch(() => undefined);
+    const done = sessions.runOnce(
+      "watch",
+      () => "wake",
+      undefined,
+      async () => ({
+        generation: generation("refused", log, refused),
+        binding,
+      }),
+    );
+    await flush();
+    nth(claudes()).finish();
+    expect(await done).toEqual({ ok: true });
+    expect(log).toEqual(["seal refused", "close refused"]);
   });
 
   it("ends a one-off turn's process when the route revokes its generation", async () => {

@@ -39,6 +39,12 @@ export class AcpSession {
   /** Takes the first name the harness generates for it; a titled session gets
    * none. */
   named: ((title: string) => void) | undefined;
+  /** Sees each update first, and whether a `session/prompt` is in flight.
+   * A `session/load` replay never reaches it. One that throws is logged,
+   * and the update is handled anyway. */
+  observe:
+    | ((update: Record<string, unknown>, prompting: boolean) => void)
+    | undefined;
   /** The harness's id for the running turn, which a steer must name. */
   private runId: string | undefined;
   /** Steers waiting for the running turn's id, which the harness sends just
@@ -211,6 +217,14 @@ export class AcpSession {
 
   /** Called by the process with each `session/update` for this session. */
   update(update: Record<string, unknown>) {
+    try {
+      this.observe?.(update, this.prompting);
+    } catch (error) {
+      console.error(
+        `${this.acp.hooks.label} could not observe an update`,
+        error,
+      );
+    }
     const kind = update.sessionUpdate;
     if (kind === "agent_message_chunk" && !this.acted) {
       const content = update.content as { text?: unknown } | undefined;

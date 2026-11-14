@@ -3,6 +3,7 @@ import type { RelaySession } from "../relay/session";
 import type { Profile } from "../relay/contracts";
 import { peopleOrder } from "../profiles/people-order";
 import { matchPerson } from "../search/person-match";
+import { verifiedName } from "../profiles/useVerifiedNames";
 import { typedPublicKey } from "../../shared/identity/public-key";
 import {
   searchDebounce,
@@ -37,12 +38,29 @@ function empty(session: RelaySession, query: string): PeopleState {
     error: "",
   };
 }
-function matching(people: Recipient[], query: string) {
+/** The people that match `query`, by profile name, verified name or key. A
+ * person the relay found for this query with no profile name (`found`) matched
+ * by a verified name not yet looked up, so they stay for the picker to name. */
+function matching(
+  session: RelaySession,
+  people: Recipient[],
+  query: string,
+  found = false,
+) {
   const key = typedPublicKey(query);
-  return people.filter(
-    (person) =>
-      matchPerson(person.name, query) !== undefined || person.pubkey === key,
-  );
+  return people.filter((person) => {
+    if (found && person.nameIsFallback) return true;
+    const verified = verifiedName(session.profiles, person.pubkey);
+    return (
+      [
+        person.name,
+        verified?.displayName,
+        verified?.username,
+        verified?.fullName,
+      ].some((name) => !!name && matchPerson(name, query) !== undefined) ||
+      person.pubkey === key
+    );
+  });
 }
 export function usePeople(session: RelaySession, query: string) {
   const cache = useMemo(() => {
@@ -60,8 +78,10 @@ export function usePeople(session: RelaySession, query: string) {
     // a reopened picker searches again for people added since.
     const exhausted = (entry?: PeopleState) =>
       entry?.hasMore === false && entry.visit === visit;
-    // Text too short to search shows only people already read.
-    const complete = exhausted(cache.get("")) || !searchable(query);
+    // Text too short to search shows only people already read. A complete
+    // browse lists profiles only, so it cannot rule out a person the relay
+    // finds by a verified name alone; searchable text always searches.
+    const complete = !searchable(query);
     const resumed = cached?.hasMore || exhausted(cached) ? cached : undefined;
     const known = new Map(
       [...cache.values()]
@@ -70,7 +90,9 @@ export function usePeople(session: RelaySession, query: string) {
     );
     return {
       ...(resumed ?? empty(session, query)),
-      people: matching([...known.values()], query).sort(peopleOrder(query)),
+      people: matching(session, [...known.values()], query).sort(
+        peopleOrder(query),
+      ),
       loading: !complete && (resumed?.loading ?? true),
       hasMore: !complete && (resumed?.hasMore ?? true),
     };
@@ -111,7 +133,9 @@ export function usePeople(session: RelaySession, query: string) {
             ...new Map(
               [
                 ...owned.people,
-                ...matching(result.people, query).sort(peopleOrder(query)),
+                ...matching(session, result.people, query, true).sort(
+                  peopleOrder(query),
+                ),
               ].map((person) => [person.pubkey, person]),
             ).values(),
           ],
@@ -188,17 +212,13 @@ export function usePeople(session: RelaySession, query: string) {
   }, [state, session, query, load]);
   const visible =
     state.session === session && state.query === query ? state : initial;
-  const browsed = cache.get("");
   return {
     people: visible.people,
     loading: visible.loading || (visible.hasMore && !visible.error),
     error: visible.error,
     hasMore: visible.hasMore,
     /** Text too short to search, so people not yet read may still match. */
-    tooShort:
-      !!query.trim() &&
-      !searchable(query) &&
-      !(browsed?.hasMore === false && browsed.visit === visit),
+    tooShort: !!query.trim() && !searchable(query),
     loadMore() {
       if (
         state.session === session &&

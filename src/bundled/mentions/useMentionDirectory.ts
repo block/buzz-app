@@ -4,7 +4,11 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import { allowsOutsideMentions } from "../../features/messages/mention-admission";
 import { matchPerson } from "../../features/search/person-match";
 import { verifiedName } from "../../features/profiles/useVerifiedNames";
-import { searchDebounce, searchable } from "../../shared/search-debounce";
+import {
+  searchDebounce,
+  searchable,
+  verifiedNamesSearchable,
+} from "../../shared/search-debounce";
 import { typedPublicKey } from "../../shared/identity/public-key";
 
 type Person = Awaited<
@@ -46,7 +50,8 @@ function remember(session: ComposerSession, query: string, page: Page) {
  * it is a plain profile read, not a name search, and once complete (a
  * community with fewer than 15 profiles) it is a prefix of every query, so it
  * would answer each name search for the session and hide a member who joins
- * or renames after it.
+ * or renames after it. Nor does a page for text too short for the relay to
+ * match verified names: it left out people found by those alone.
  */
 function prefixPage(session: ComposerSession, query: string) {
   const queries = pages.get(session);
@@ -54,7 +59,7 @@ function prefixPage(session: ComposerSession, query: string) {
   let best: [string, Page] | undefined;
   for (const [key, page] of queries)
     if (
-      key.trim().length > 0 &&
+      verifiedNamesSearchable(key) &&
       !page.more &&
       key.length < query.length &&
       query.startsWith(key) &&
@@ -65,13 +70,18 @@ function prefixPage(session: ComposerSession, query: string) {
 }
 /** The page for `query` read out of a complete page for its prefix. A person
  * the community verified also matches by their verified names, so refining
- * `fake` to `fake n` keeps Fake Name. */
+ * `fake` to `fake n` keeps Fake Name. A person found by a verified name alone
+ * stays until that name is looked up: nothing here can refute them. */
 const derive = (session: ComposerSession, page: Page, query: string): Page => ({
   people: page.people.filter((person) => {
     const verified = verifiedName(session.profiles, person.pubkey);
-    return [person.name, verified?.displayName, verified?.fullName].some(
-      (name) => name !== undefined && matchPerson(name, query),
-    );
+    if (person.nameIsFallback && !verified) return true;
+    return [
+      person.name,
+      verified?.displayName,
+      verified?.username,
+      verified?.fullName,
+    ].some((name) => name !== undefined && matchPerson(name, query));
   }),
   more: false,
 });
@@ -122,8 +132,8 @@ export async function fetchMentionDirectoryPage(
   const page = { people, more: hasMore };
   if (signal.aborted) return page;
   if (people.length) remember(session, query, page);
-  // The relay ignores non-word text, so it only refutes word prefixes.
-  else if (!hasMore && !exactKey(query) && /[\p{L}\p{N}]/u.test(query))
+  // Only text long enough to match verified names refutes longer queries.
+  else if (!hasMore && !exactKey(query) && verifiedNamesSearchable(query))
     exhausted.set(session, query);
   return page;
 }

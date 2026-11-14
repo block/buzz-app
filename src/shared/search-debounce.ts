@@ -21,6 +21,19 @@ export function messageSearchable(text: string) {
   return [...last].length >= MESSAGE_SEARCH_MIN_CHARS;
 }
 
+/** Whether a people search for `text` also matched verified names, so its
+ * result can prove someone absent. The relay matches those only when every
+ * part of the last word reaches `MESSAGE_SEARCH_MIN_CHARS`, and it splits a
+ * punctuated word (`jean-l`) into parts, so only a plain word of letters and
+ * digits is known to qualify. */
+export function verifiedNamesSearchable(text: string) {
+  const last = text.trim().split(/\s+/).at(-1) ?? "";
+  return (
+    /^[\p{L}\p{M}\p{N}]+$/u.test(last) &&
+    [...last].length >= MESSAGE_SEARCH_MIN_CHARS
+  );
+}
+
 /** Runs `search` once typing pauses. Call the returned cleanup from the
  * effect that owns the search, alongside aborting its request. */
 export function searchDebounce(search: () => void, ms = SEARCH_DEBOUNCE_MS) {

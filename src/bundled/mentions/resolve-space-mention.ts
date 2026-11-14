@@ -20,6 +20,42 @@ import {
   fetchMentionDirectoryPage,
   type MentionDirectoryPage,
 } from "./useMentionDirectory";
+import {
+  hasUnnamed,
+  lookUpVerifiedNames,
+  verifiedName,
+  withVerifiedNames,
+} from "../../features/profiles/useVerifiedNames";
+
+/**
+ * `people` named as the chooser names them: their verified names are looked
+ * up through the same lookups and rules, then read back. Undefined while a
+ * person found by a verified name alone is still unnamed (the read failed or
+ * did not answer): without their name, the page is incomplete evidence.
+ */
+async function namedPeople(
+  session: ComposerSession,
+  people: MentionDirectoryPage["people"],
+  query: string,
+  signal: AbortSignal,
+) {
+  const authority = session.profiles.verifiedAuthority?.();
+  if (authority)
+    await lookUpVerifiedNames(
+      session,
+      authority,
+      people.flatMap(({ pubkey, isAgent }) => (isAgent ? [] : [pubkey])),
+      signal,
+    );
+  const page = new Map(
+    people.flatMap(({ pubkey }) => {
+      const verified = verifiedName(session.profiles, pubkey);
+      return verified ? [[pubkey, verified] as const] : [];
+    }),
+  );
+  const named = withVerifiedNames(people, page, session.profiles.snapshot());
+  return hasUnnamed(named, query) ? undefined : named;
+}
 
 /** What the chooser knew about its destination when Space was typed. */
 export type SpaceMentionScope = {
@@ -223,7 +259,9 @@ async function resolve(
   const page = await fetchMentionDirectoryPage(session, name, signal);
   // A truncated page may hide a namesake, as it does for Space in the chooser.
   if (signal.aborted || page.more) return null;
-  return decide(page.people, true, name);
+  const people = await namedPeople(session, page.people, name, signal);
+  if (signal.aborted || !people) return null;
+  return decide(people, true, name);
 }
 
 /** Resolves once `done` holds for the store's snapshot; rejects on abort. */

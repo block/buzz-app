@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { PROFILE_CACHE_BASE } from "../relay/budget";
+import { typedPublicKey } from "../../shared/identity/public-key";
 import type { ProfileQueries } from "../relay/profile-directory";
 import {
   type NamePreference,
@@ -71,6 +72,64 @@ function superseded(
 }
 
 /**
+ * Looks up the verified names of `pubkeys` that `authority` has not answered
+ * for recently, a page at a time, into the lookups `verifiedName` and
+ * `useVerifiedNames` read. A shared head held now, or one that arrives during
+ * a read, outranks its answer. Resolves when the pass ends; `landed` is told
+ * after each page. A failed read, a changed authority or `signal` ends it.
+ */
+export async function lookUpVerifiedNames(
+  session: VerifiedNamesSession,
+  authority: VerifiedProfileAuthority,
+  pubkeys: readonly string[],
+  signal: AbortSignal,
+  landed: () => void = () => {},
+) {
+  const { profiles } = session;
+  const read = session.directMessages?.verified;
+  const searched = session.directMessages?.searched;
+  if (!read) return;
+  const found = foundFor(profiles, authority);
+  const known = profiles.snapshot();
+  const now = Date.now();
+  // One pass asks each unasked person once, in pages, at most as many as the
+  // cache holds; eviction during the pass cannot ask anyone again. A search
+  // that answered for someone since their lookup outdates it.
+  const queue = [...new Set(pubkeys)]
+    .filter(
+      (pubkey) =>
+        (now - (found.get(pubkey)?.at ?? -Infinity) >= FRESH_MS ||
+          !!searched?.(pubkey, authority)) &&
+        !known.get(pubkey)?.verified &&
+        !profiles.verifiedHeld?.(pubkey),
+    )
+    .slice(0, PROFILE_CACHE_BASE);
+  for (let start = 0; start < queue.length; start += BATCH) {
+    const wanted = queue.slice(start, start + BATCH);
+    const asked = profiles.verifiedRevision?.() ?? 0;
+    const result = await read(wanted, signal).catch(
+      // A failed read checked nothing, like a changed authority: the pass
+      // ends, and the rows keep their profile names until asked again.
+      () => undefined,
+    );
+    // Nothing was checked, or not by this authority: ask again later.
+    if (signal.aborted || result?.authority !== authority) return;
+    const at = Date.now();
+    for (const pubkey of wanted) {
+      found.delete(pubkey);
+      // A shared head that arrived during the read answers instead.
+      if (!superseded(profiles, pubkey, asked))
+        found.set(pubkey, { profile: result.profiles.get(pubkey), at });
+    }
+    for (const pubkey of found.keys()) {
+      if (found.size <= PROFILE_CACHE_BASE) break;
+      found.delete(pubkey);
+    }
+    landed();
+  }
+}
+
+/**
  * Community-verified names for people a search found that the shared profiles
  * have not verified. While `settled`, the unasked ones are read in the
  * background, a page at a time. One pass asks at most as many as the cache
@@ -104,50 +163,14 @@ export function useVerifiedNames(
   // biome-ignore lint/correctness/useExhaustiveDependencies: a changed key cancels the read.
   useEffect(() => {
     if (!settled || !authority || !read || !subjects) return;
-    const found = foundFor(profiles, authority);
-    const known = profiles.snapshot();
-    const now = Date.now();
-    // One pass asks each unasked person once, in pages, at most as many as the
-    // cache holds; eviction during the pass cannot ask anyone again. A search
-    // that answered for someone since their lookup outdates it.
-    const queue = subjects
-      .split(",")
-      .filter(
-        (pubkey) =>
-          (now - (found.get(pubkey)?.at ?? -Infinity) >= FRESH_MS ||
-            !!searched?.(pubkey, authority)) &&
-          !known.get(pubkey)?.verified &&
-          !profiles.verifiedHeld?.(pubkey),
-      )
-      .slice(0, PROFILE_CACHE_BASE);
-    if (!queue.length) return;
     const controller = new AbortController();
-    void (async () => {
-      for (let start = 0; start < queue.length; start += BATCH) {
-        const wanted = queue.slice(start, start + BATCH);
-        const asked = profiles.verifiedRevision?.() ?? 0;
-        const result = await read(wanted, controller.signal).catch(
-          // A failed read checked nothing, like a changed authority: the pass
-          // ends, and the rows keep their profile names until asked again.
-          () => undefined,
-        );
-        // Nothing was checked, or not by this authority: ask again later.
-        if (controller.signal.aborted || result?.authority !== authority)
-          return;
-        const at = Date.now();
-        for (const pubkey of wanted) {
-          found.delete(pubkey);
-          // A shared head that arrived during the read answers instead.
-          if (!superseded(profiles, pubkey, asked))
-            found.set(pubkey, { profile: result.profiles.get(pubkey), at });
-        }
-        for (const pubkey of found.keys()) {
-          if (found.size <= PROFILE_CACHE_BASE) break;
-          found.delete(pubkey);
-        }
-        setRevision((value) => value + 1);
-      }
-    })();
+    void lookUpVerifiedNames(
+      session,
+      authority,
+      subjects.split(","),
+      controller.signal,
+      () => setRevision((value) => value + 1),
+    );
     return () => controller.abort();
   }, [profiles, read, searched, authority, subjects, settled, key]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a landed read moves the revision.
@@ -214,4 +237,21 @@ export function withVerifiedNames<
     };
   });
   return changed ? named : people;
+}
+
+/** Whether a named page for `query` still holds someone found by a verified
+ * name alone whose name is unknown: they may be anyone's namesake, so the page
+ * cannot decide a name. A pasted key names one person and has no namesakes,
+ * so its page always decides. */
+export function hasUnnamed(
+  people: readonly {
+    nameIsFallback?: true | undefined;
+    profileNames?: readonly string[] | undefined;
+  }[],
+  query: string,
+) {
+  return (
+    !typedPublicKey(query) &&
+    people.some((person) => person.nameIsFallback && !person.profileNames)
+  );
 }

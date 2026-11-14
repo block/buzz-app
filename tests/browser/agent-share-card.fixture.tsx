@@ -81,6 +81,7 @@ const session = {
   },
   channels: { list: () => channels, subscribeList: () => () => {} },
   media: (url: string) => url,
+  profiles: { snapshot: () => new Map(), subscribe: () => () => {} },
 } as unknown as RelaySession;
 
 const root = document.getElementById("root");

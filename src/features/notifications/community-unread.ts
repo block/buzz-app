@@ -110,11 +110,19 @@ export function observeCommunityUnread(
   };
 }
 
-/** Starts `session`'s unread repair once its roster has loaded or failed. */
-function repairOnRoster(session: RelaySession) {
+/** Starts `session`'s unread repair once its roster has loaded or failed, or
+ * already lists a fresh channel `viewer` belongs to: repair reads only those,
+ * and the roster's later channels start another itself. */
+function repairOnRoster(session: RelaySession, viewer: string) {
   const settled = () => {
-    const { status } = session.channels.list();
-    return status === "ready" || status === "error";
+    const { status, channels } = session.channels.list();
+    return (
+      status === "ready" ||
+      status === "error" ||
+      channels.some(
+        (channel) => !channel.cached && channel.members?.includes(viewer),
+      )
+    );
   };
   let stop = () => {};
   const check = () => {
@@ -184,10 +192,10 @@ export function createCommunityUnreads(
     entry.session = session;
     set(id, undefined);
     // Without it, unread holds only messages that arrived since connecting.
-    // Repair reads the roster's channels, so it waits for the roster, as the
-    // sidebar does: one started earlier would settle with no channels read.
-    if (session) entry.stopRoster = repairOnRoster(session);
-    if (session && viewer)
+    // Repair reads the roster's channels, so it waits for them: one started
+    // earlier would settle with no channels read.
+    if (session && viewer) {
+      entry.stopRoster = repairOnRoster(session, viewer);
       entry.stop = observeCommunityUnread(
         session,
         viewer,
@@ -196,6 +204,7 @@ export function createCommunityUnreads(
         gates,
         true,
       );
+    }
   };
   const drop = (id: string, entry: Entry) => {
     entry.stopRelay();

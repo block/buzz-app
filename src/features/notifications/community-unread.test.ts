@@ -88,6 +88,11 @@ function fakeSession() {
       liveStatus = status;
       live.emit();
     },
+    /** Lists fresh joined channels while the roster is still loading. */
+    load(...ids: string[]) {
+      channels = ids.map((id) => ({ id, members: [viewer] }));
+      list.emit();
+    },
     join(...ids: string[]) {
       channels = ids.map((id) => ({ id, members: [viewer] }));
       listStatus = "ready";
@@ -222,8 +227,10 @@ it("keys every joined community's unread, opening its session and repair once", 
   } as unknown as Communities;
   const unreads = createCommunityUnreads(communities);
   cleanups.push(unreads.dispose);
-  // Repair reads the roster's channels, so it waits for the roster.
+  // Repair reads the roster's channels, so it waits for one it can read.
   expect(first.ensure).not.toHaveBeenCalled();
+  first.load("a");
+  expect(first.ensure).toHaveBeenCalledTimes(1);
   first.join("a");
   first.set("a", { observedCount: 1, attentionCount: 1 });
   expect([...unreads.snapshot()]).toEqual([

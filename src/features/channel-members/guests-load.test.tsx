@@ -20,8 +20,15 @@ afterEach(() => {
   for (const stop of stops.splice(0)) stop();
 });
 
-function relay(members: readonly string[], agentRole?: "guest" | "bot") {
+function relay(
+  members: readonly string[],
+  agentRole?: "guest" | "bot",
+  { hold = false } = {},
+) {
   let clock = 100;
+  let reads = 0;
+  // A held read answers with the roles it saw when it began.
+  const held: (() => void)[] = [];
   const record = (kind: number, tags: string[][]) =>
     finalizeEvent({ kind, tags, content: "", created_at: clock++ }, relayKey);
   let channel: ChannelSummary = {
@@ -37,17 +44,22 @@ function relay(members: readonly string[], agentRole?: "guest" | "bot") {
   const listeners = new Set<() => void>();
   const owner = createMemberAdministration({
     reader: {
-      read: async () => [
-        record(39000, [["d", id], ["t", "stream"], ["private"]]),
-        record(39001, [
-          ["d", id],
-          ["p", viewer, "owner"],
-        ]),
-        record(39002, [
-          ["d", id],
-          ...roles.map(([key, role]) => ["p", key, "", role]),
-        ]),
-      ],
+      read: async () => {
+        reads++;
+        const seen = roles;
+        if (hold) await new Promise<void>((resolve) => held.push(resolve));
+        return [
+          record(39000, [["d", id], ["t", "stream"], ["private"]]),
+          record(39001, [
+            ["d", id],
+            ["p", viewer, "owner"],
+          ]),
+          record(39002, [
+            ["d", id],
+            ...seen.map(([key, role]) => ["p", key, "", role]),
+          ]),
+        ];
+      },
     },
     viewer,
     relayAuthor: author,
@@ -73,6 +85,14 @@ function relay(members: readonly string[], agentRole?: "guest" | "bot") {
       },
     } as never,
     status: () => owner.capability.snapshot(id).status,
+    reads: () => reads,
+    /** Answers the oldest held read. */
+    release: () => held.shift()?.(),
+    holding: () => held.length,
+    /** Stops holding: later reads answer at once. */
+    unhold: () => {
+      hold = false;
+    },
     /** The relay confirms the downloaded membership. */
     confirm: () => publish({}),
     /** Another device changes the agent's role; the members stay the same,
@@ -119,4 +139,23 @@ it("rereads roles when another device changes only the agent's role", async () =
   await waitFor(() => expect([...result.current]).toEqual([agent]));
   h.setRole("bot");
   await waitFor(() => expect(result.current.size).toBe(0));
+});
+
+it("rereads roles when only the agent's role changes during a read", async () => {
+  const h = relay([viewer, agent], "bot", { hold: true });
+  h.confirm();
+  const { result, unmount } = renderHook(() => useChannelGuests(h.session, id));
+  // The first read has seen the agent as bot and is still under way.
+  await waitFor(() => expect(h.holding()).toBe(1));
+  h.setRole("guest");
+  h.unhold();
+  h.release();
+  await waitFor(() => expect([...result.current]).toEqual([agent]));
+  expect(h.reads()).toBe(2);
+  // A remount keeps the newer roles and reads nothing more.
+  unmount();
+  const again = renderHook(() => useChannelGuests(h.session, id));
+  expect([...again.result.current]).toEqual([agent]);
+  await waitFor(() => expect(h.status()).toBe("ready"));
+  expect(h.reads()).toBe(2);
 });

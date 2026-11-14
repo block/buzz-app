@@ -1,7 +1,7 @@
 import type { ComposerSession } from "../messages/composer-session";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
-import type { UploadedAttachment } from "../relay/attachments";
+import type { UploadCode, UploadedAttachment } from "../relay/attachments";
 
 export type ComposerSnapshot = {
   modelRevision: number;
@@ -83,6 +83,13 @@ export type ComposerCommand =
   | ComposerRequest
   | { kind: "hello" | "bye"; client: string }
   | { kind: "cancel"; client: string; id: number };
+/** What a failed upload was, when the owner recognises it. The message alone
+ * cannot say whether it was written for people. */
+export type ComposerFailure =
+  | { upload: UploadCode }
+  | "preparation"
+  | "connection"
+  | "timeout";
 export type ComposerResponse =
   | { kind: "snapshot"; client: string; value: ComposerSnapshot }
   | {
@@ -91,6 +98,7 @@ export type ComposerResponse =
       id: number;
       value?: unknown;
       error?: string;
+      failure?: ComposerFailure;
     }
   | { kind: "closed"; client: string };
 export type ComposerReader = Pick<

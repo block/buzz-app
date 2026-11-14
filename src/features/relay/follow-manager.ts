@@ -184,6 +184,7 @@ export function createThreadFollowSync({
   now = () => Math.floor(Date.now() / 1000),
   debounceMs = 2000,
   notify = (listener) => listener(),
+  capacity,
 }: {
   viewer: string;
   reader: RelayReader;
@@ -195,6 +196,12 @@ export function createThreadFollowSync({
   now?: () => number;
   debounceMs?: number;
   notify?: (listener: () => void) => void;
+  /** The shared own kind-30078 snapshot budget (4096 events, 8 MiB), §3. */
+  capacity?: {
+    admit(events: readonly RelayEvent[]): void;
+    observeSize(event: RelayEvent): void;
+    refresh(): Promise<void>;
+  };
 }) {
   const synced =
     !!host?.decodeFollows && !!host.signFollows && !!host.publishFollows;
@@ -291,6 +298,7 @@ export function createThreadFollowSync({
       (event) => event.pubkey === viewer && followCoordinate(event),
     );
     if (!own.length || !host?.decodeFollows) return;
+    for (const event of own) capacity?.observeSize(event);
     const decoded = await host.decodeFollows(own, signal);
     signal.throwIfAborted();
     if (decoded.length !== own.length)
@@ -497,6 +505,14 @@ export function createThreadFollowSync({
     signal: AbortSignal,
   ) {
     if (!host?.publishFollows) return;
+    // Preflight: never publish what would make the next snapshot impossible.
+    try {
+      capacity?.admit([event]);
+    } catch {
+      // A lost basis is re-read once; a real overflow fails visibly.
+      await capacity?.refresh();
+      capacity?.admit([event]);
+    }
     try {
       await host.publishFollows(event, signal);
     } catch (error) {
@@ -514,6 +530,7 @@ export function createThreadFollowSync({
       throw error;
     }
     // A positive OK for this exact ID acknowledges with the packet's payload.
+    capacity?.observeSize(event);
     await save((current) => ({
       ...current,
       state: observe(current.state, slot, {

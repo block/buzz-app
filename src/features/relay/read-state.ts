@@ -1180,6 +1180,13 @@ export function createReadState({
       };
     },
     refresh,
+    /** Snapshot preflight for another own kind-30078 shape (thread follows):
+     * throws unless the complete snapshot still fits with `events`. */
+    admit,
+    /** Keeps the capacity basis current for an accepted own event. */
+    observeSize(event: RelayEvent) {
+      snapshotSizes?.set(dTag(event), encodedBytes(event));
+    },
     ensure: () =>
       refreshing ?? (requested ? Promise.resolve() : refresh("foreground")),
     flush,

@@ -1313,6 +1313,7 @@ export function createRelaySession(
     lock: readLock,
     legacy: options.threadFollows ?? browserThreadFollows(readScope),
     notify,
+    capacity: reads,
   });
   void reads.ready.then(() => threadFollows.refresh());
   const unread = createUnread({

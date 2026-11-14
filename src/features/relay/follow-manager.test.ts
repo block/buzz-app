@@ -84,6 +84,7 @@ function setup(
     publish?: (event: RelayEvent) => Promise<void>;
     sign?: (event: RelayEvent) => Promise<void>;
     legacy?: ReturnType<typeof memoryThreadFollows>;
+    capacity?: Parameters<typeof createThreadFollowSync>[0]["capacity"];
   } = {},
 ) {
   const storage = options.storage ?? memoryStorage().storage;
@@ -115,6 +116,7 @@ function setup(
     legacy: options.legacy ?? memoryThreadFollows(),
     now: () => clock.now,
     debounceMs: 60_000,
+    ...(options.capacity ? { capacity: options.capacity } : {}),
   });
 }
 /** A fresh device reads the relay. */
@@ -359,4 +361,45 @@ it("spills new keys to another slot when one is full, without omission", async (
   await reader.refresh();
   expect(reader.read().get(keys[0] as string)).toBe(false);
   for (const key of keys.slice(1)) expect(reader.read().get(key)).toBe(true);
+});
+
+it("counts follow events toward the shared snapshot limit before sending", async () => {
+  const r = relay();
+  const disk = memoryStorage();
+  const admitted: string[] = [];
+  let refreshed = 0;
+  const sync = setup(
+    r,
+    { now: 1000 },
+    {
+      storage: disk.storage,
+      capacity: {
+        admit(events) {
+          admitted.push(...events.map((event) => event.id));
+          throw new Error(
+            "Read-state snapshot capacity reached; saved intent retained",
+          );
+        },
+        observeSize() {},
+        async refresh() {
+          refreshed++;
+        },
+      },
+    },
+  );
+  await sync.refresh();
+  await sync.set(K, true);
+  await sync.flush();
+  expect(sync.snapshot()).toMatchObject({
+    status: "failed",
+    error: "Read-state snapshot capacity reached; saved intent retained",
+  });
+  expect(admitted).toHaveLength(2);
+  expect(refreshed).toBe(1);
+  expect(r.heads.size).toBe(0);
+  // The choice and its exact packet are kept for retry.
+  expect(Object.keys(disk.backup().follows?.state.packets ?? {})).toHaveLength(
+    1,
+  );
+  expect(sync.read().get(K)).toBe(true);
 });

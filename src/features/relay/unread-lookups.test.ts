@@ -340,6 +340,52 @@ it("Activity recovers the root of a joined thread the window dropped", async () 
   }
 });
 
+it("a read thread's reply does not count while its dropped root is unloaded", async () => {
+  const root = event(viewer, 9, 10, []);
+  const thread = (pubkey: string, time: number) =>
+    event(pubkey, 9, time, [
+      ["e", root.id, "", "root"],
+      ["e", root.id, "", "reply"],
+    ]);
+  const mine = thread(viewer, 20);
+  const read = thread(peer, 30);
+  const later = thread(peer, 40);
+  const prior = newReadJournal();
+  const { owner, store, lookups } = await setup({
+    ...prior,
+    state: { ...prior.state, frontiers: { [`thread:${root.id}`]: 30 } },
+  });
+  store.push(root);
+  // The sampled window kept the thread's replies but not its root.
+  owner.accept([mine, read]);
+  const stop = owner.capability.subscribeInbox(() => {});
+  try {
+    expect(owner.capability.attention("c0", read.id)).toMatchObject({
+      category: "thread",
+      unread: false,
+    });
+    expect(
+      owner.capability.inbox().items.filter((item) => item.unreadCount),
+    ).toEqual([]);
+    // Nothing unread, so nothing asks the relay for the root.
+    await Promise.resolve();
+    expect(lookups()).toBe(0);
+
+    // A reply after the mark is unread, before and after its root arrives.
+    owner.accept([later]);
+    expect(owner.capability.attention("c0", later.id)).toMatchObject({
+      unread: true,
+    });
+    await vi.waitFor(() =>
+      expect(owner.capability.inbox().items).toEqual([
+        expect.objectContaining({ rootId: root.id, unreadCount: 1 }),
+      ]),
+    );
+  } finally {
+    stop();
+  }
+});
+
 it("Activity recovers the dropped root of a read reply marked unread", async () => {
   const root = event(viewer, 9, 10, []);
   const thread = (pubkey: string, time: number) =>

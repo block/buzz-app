@@ -837,7 +837,15 @@ export function createUnread({
     dm: boolean,
     seen = -1,
   ) {
-    const { event, channelId, rootId } = entry;
+    const { event, channelId } = entry;
+    // A reply names its thread. Until that root is loaded and the graph can
+    // decide, the name finds the thread's marks, so a read reply the sampled
+    // window cut from its root does not count while the root is fetched.
+    const rootId =
+      entry.rootId ??
+      (entry.threadRootId && !structural(entry.threadRootId)
+        ? entry.threadRootId
+        : undefined);
     const frontier = effectiveFrontier(
       state,
       `msg:${event.id}`,

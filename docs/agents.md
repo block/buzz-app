@@ -1202,8 +1202,8 @@ reply and packaged desktop acceptance are not established by these tests.
 
 ## Relay-scoped archive display
 
-`session.archives` is a lazy NIP-IA snapshot capability, independent of
-page/plugin lifetime. The dev broker passes `archiveAuthority` only when the
+`session.archives` is a NIP-IA snapshot capability, independent of
+page/plugin lifetime: lazily read, and kept current by live snapshots. The dev broker passes `archiveAuthority` only when the
 community's NIP-11 advertises a valid explicit `self`; the legacy contact `pubkey`
 fallback continues to serve existing reads but cannot authenticate archive state.
 The native transport passes the NIP-11 `self` it validated on connect; a transport
@@ -1217,16 +1217,48 @@ active list. Invalid `p` keys are ignored and extra `p` elements have no semanti
 A successful snapshot replaces the entire list; newer timestamps / lower-id ties
 win. A session-local ordering fence survives cache clear, without retaining old
 archive contents; it is not persistent rollback protection across sessions/devices.
-Access purge, disconnect, cache clear and disposal clear evidence and cancel work.
+Access purge, cache clear and disposal clear evidence and cancel work.
 No startup request, periodic poll, event-union seeding or history filtering is added.
 
-This is finite evidence, not a live archive directory.
+When the transport has that authority, the existing `profiles` live route also
+carries `{kinds:[13535], authors:[self]}`; no extra wire or read is added. A live
+snapshot is applied under the same validation and ordering fence as a read
+(foreign authors and older or losing-tie snapshots are ignored; a malformed
+relay snapshot makes state unknown while keeping known archives), and a read it
+overtakes cannot report a stale or failed read as an error. A disconnect keeps known archives for
+display but makes `state()` unknown. When the profiles route re-establishes, a
+continuous replay (which delivered any snapshot published meanwhile) restores
+complete evidence without a read; a cut, failed or unreported replay rereads
+once, and only if this session ever demanded archives. That reread is required
+even when a read finished while the stream was down, and a read still outstanding
+from before re-establishment is abandoned, since neither can cover a change the
+dropped stream missed. Fleet cost per reconnect
+is zero reads for sessions that never used archives and at most one limit-1 read
+otherwise. Only explicit 8002/8003 deltas remain unprocessed.
+
 As in base Buzz, mention autocomplete, the
 mention picker and member-add omit archived identities: fail-open while the
 snapshot is unknown, never hiding the viewer from themself, and never touching
 history or channel membership. `not-archived` means absent from the read snapshot, not online,
-owned, authorized or guaranteed current at a later write. Delta processing and
-packaged/live acceptance remain separate.
+owned, authorized or guaranteed current at a later write.
+
+The identity-name directory receives the same archives: known-archived keys
+(never the viewer) keep a distinct label for historical attribution but rank
+below every live identity, so an archived namesake no longer suffixes a live
+name, and two live namesakes are still disambiguated. Because live replay starts
+near the connection time, the directory demands the lazy archive read the first
+time two keys share a display name; distinct names never read. Buzz MCP automatic `@Name`
+resolution reads the relay's latest 13535 (from the connection's trusted relay
+key) and skips known-archived members other than the agent itself. It matches
+the longest member name before skipping, so a name held only by archived members
+is refused rather than read as a shorter live name (`@Alex Smith` never notifies a
+live `Alex`); explicit
+`mentions` keys and `nostr:npub` links still reach archived members under the
+same membership check. An unreadable snapshot hides no one.
+
+Archive visibility is never execution authority: no agent host stops, pauses or
+releases automation from a 13535 snapshot. Host retirement needs a separate
+durable lifecycle contract.
 
 `session.archives.request("archive" | "unarchive", pubkey)` sends exact 9035/9036
 requests (`["-"]`, one `p`, optional `auth`) through the session's signer and

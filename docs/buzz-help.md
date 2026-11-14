@@ -297,6 +297,12 @@ mention anyone. Explicit agent watches on that room can still receive them.
 - Profile names omit surrounding whitespace. Names with layout or directional
   controls fall back to a safe handle or public-key fragment. Names that match
   a loaded verified name after ignoring hidden characters gain a public-key suffix.
+- When a community archives an identity, its old messages keep their author,
+  labeled with a public-key suffix if a current member shares its name; the
+  current member keeps the plain name. Open apps pick up archives and revivals
+  without a restart. An agent's `@Name` skips archived members, and a name only
+  archived members hold is refused rather than matched to a shorter live name;
+  mention by public key to reach one.
 
 ## Connect an external app
 

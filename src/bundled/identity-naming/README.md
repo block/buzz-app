@@ -53,8 +53,9 @@ It does not solve visual impersonation (for example, Unicode confusables).
 
 The resolver takes:
 
-- An ordered list of identity facts: `pubkey`, `name`, optional `isAgent`, and
-  optional `ownerPubkey`. Keys MUST be valid 32-byte keys encoded as 64 hex
+- An ordered list of identity facts: `pubkey`, `name`, optional `isAgent`,
+  optional `ownerPubkey`, and optional `archived` (the caller knows the key is
+  archived, for example by NIP-IA; missing means false). Keys MUST be valid 32-byte keys encoded as 64 hex
   characters. `name` is a string. Missing `isAgent` means false. An owner fact
   does not by itself set `isAgent`.
 - An optional viewer key. Missing viewer means no identity is "mine".
@@ -139,8 +140,11 @@ Assign a fixed priority (lower wins):
 | 1 | Any other non-agent |
 | 2 | Agent that is mine |
 | 3 | Any other agent |
+| 4 | Any archived row, human or agent |
 
-Human priority always wins over agent priority. "Mine" for a human means the
+Human priority always wins over agent priority. An archived row loses to every
+live row, so an archived namesake never qualifies a live label, while it still
+receives a distinct label of its own for historical attribution. "Mine" for a human means the
 viewer itself, not another human with an owner field. An agent without an owner
 is not mine merely because the viewer is also absent.
 
@@ -162,7 +166,7 @@ suffix (`length == 0`):
 
 1. If it is not mine and its owner has a non-empty preferred trimmed name in
    the full fact list, propose `<owner>’s <original trimmed name>`.
-2. Otherwise, if **any row in this collision group** is a non-agent, propose
+2. Otherwise, if **any non-archived row in this collision group** is a non-agent, propose
    `<original trimmed name> (agent)`.
 3. Otherwise leave its current base unchanged.
 
@@ -242,7 +246,7 @@ and `candidates`, and an `expected` map. Absent qualifier is encoded as JSON
 array order: it selects preferred aliases. Expected results are stored literals;
 ports MUST NOT generate their expected results with their own resolver.
 
-Cases cover priority, unknown owners/viewer, owner lookup outside the scope,
+Cases cover priority, archived rows, unknown owners/viewer, owner lookup outside the scope,
 empty scope, key normalization, exact Unicode comparison, alias selection,
 literal/generated collisions, suffix extension, and occupied full-key counters.
 The fixtures test the pure resolver. Adapter selection, fact validation, and
@@ -265,7 +269,9 @@ library record per key uses its trimmed name, then the profile name, then
 `Agent`. Library/local naming records are classified as agents but do not by
 themselves invent an owner key. Explicit display facts replace that key's normal
 fact and can carry multiple aliases. The requested key is added to an explicit
-candidate set.
+candidate set. The session's last known NIP-IA archive snapshot marks each key
+it lists (never the viewer) `archived`, under the same fail-open rule as other
+archive-aware choices; snapshot changes invalidate cached labels.
 
 [profiles.ts](../../features/relay/profiles.ts) selects the latest kind-0 profile,
 uses non-blank `display_name` before `name`, and otherwise uses a short hex-key

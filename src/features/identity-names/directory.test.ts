@@ -748,3 +748,79 @@ it("labels a scope from its own keys and their owners, not the whole profile cac
     "Honey",
   );
 });
+
+it("labels known-archived namesakes without displacing live names, and follows archive changes", () => {
+  const viewer = "1".repeat(64);
+  const live = "d".repeat(64);
+  const retired = "c".repeat(64);
+  const profiles = foldProfiles(
+    [viewer, live, retired].map((pubkey, index) => ({
+      id: String(index).repeat(64),
+      pubkey,
+      created_at: 1,
+      kind: 0,
+      content: JSON.stringify({ name: "Alex" }),
+      tags: [],
+    })),
+  );
+  const listeners = new Set<() => void>();
+  const ensure = vi.fn(async () => {});
+  let archives = {
+    status: "ready" as const,
+    archived: Object.freeze([retired, viewer]),
+  };
+  const source: NameSource = {
+    viewer,
+    profiles: {
+      snapshot: () => profiles,
+      subscribe: () => () => {},
+      ensure: async () => {},
+    },
+    archives: {
+      ensure,
+      snapshot: () => archives,
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    agentLibrary: {
+      snapshot: () => ({ status: "ready", definitions: [], identities: [] }),
+      subscribe: () => () => {},
+      refresh: async () => {},
+      retain: () => () => {},
+    },
+  };
+  const names = bindNames(source, {
+    snapshot: () => [createNameProvider(defaultNamingPolicy)],
+    subscribe: () => () => {},
+  });
+  // Distinct names never demand the lazy archive read; a namesake does.
+  names.lookup(live, Object.freeze([live]));
+  expect(ensure).not.toHaveBeenCalled();
+  const members = Object.freeze([live, retired]);
+  // Historical attribution stays distinct; the live namesake stays plain.
+  expect(names.lookup(live, members)).toMatchObject({ name: "Alex" });
+  expect(ensure).toHaveBeenCalled();
+  expect(names.lookup(retired, members)).toMatchObject({
+    name: `Alex · ${npubEncode(retired).slice(-4)}`,
+  });
+  expect(names.lookup(retired)?.name).not.toBe(names.lookup(live)?.name);
+  // The viewer is never treated as archived, even if the snapshot lists them.
+  const withViewer = Object.freeze([viewer, live]);
+  expect(names.lookup(viewer, withViewer)).toMatchObject({ name: "Alex" });
+  expect(names.lookup(live, withViewer)?.qualifier).toBe(
+    npubEncode(live).slice(-4),
+  );
+  // Reviving the namesake restores ordinary disambiguation on notification.
+  const changed = vi.fn();
+  names.subscribe(changed);
+  archives = { status: "ready", archived: Object.freeze([]) };
+  for (const listener of listeners) listener();
+  expect(changed).toHaveBeenCalledOnce();
+  expect(names.lookup(live, members)?.qualifier).toBe(
+    npubEncode(live).slice(-4),
+  );
+  names.dispose();
+  expect(listeners.size).toBe(0);
+});

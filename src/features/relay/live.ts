@@ -428,7 +428,15 @@ export function subscribeRelayTraffic(
   channelBatchSize = LIVE_BATCH_SIZE,
   random: () => number = Math.random,
   signatures?: SignatureVerifier,
+  /** Explicit NIP-11 self: the profiles route also carries its 13535 archive
+   * snapshots, so a continuous replay covers archive changes too. */
+  archiveAuthority?: string,
 ): LiveSubscription {
+  if (
+    archiveAuthority !== undefined &&
+    !/^[0-9a-f]{64}$/.test(archiveAuthority)
+  )
+    throw new Error("Invalid archive authority");
   if (
     !Number.isInteger(channelBatchSize) ||
     channelBatchSize < 1 ||
@@ -1324,7 +1332,12 @@ export function subscribeRelayTraffic(
         : route.id === "presence"
           ? [{ kinds: [20001], authors: presenceAuthors }]
           : route.id === "profiles"
-            ? [{ kinds: [0, 10100, 30177] }]
+            ? [
+                { kinds: [0, 10100, 30177] },
+                ...(archiveAuthority
+                  ? [{ kinds: [13535], authors: [archiveAuthority] }]
+                  : []),
+              ]
             : route.id === "observer"
               ? [{ kinds: [OBSERVER_KIND], "#p": [viewer] }]
               : [

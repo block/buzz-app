@@ -30,6 +30,7 @@ import {
   referencedEmoji,
 } from "../features/relay/emoji";
 import { newer } from "../features/relay/events";
+import { snapshotArchives } from "../features/relay/identity-archive-protocol";
 import {
   VERIFIED_PROFILE_BATCH,
   type VerifiedProfile,
@@ -2207,8 +2208,26 @@ class Tools {
     return contentEmojiTags(content, communityEmoji(sets.values()));
   }
 
+  /** Keys the relay's latest NIP-IA snapshot (kind 13535) archives. Empty
+   * when it cannot be read or verified: as in the app, unknown archive state
+   * hides no one. */
+  async archived(): Promise<ReadonlySet<string>> {
+    const relay = this.client.relayAuthor;
+    if (!relay || !HEX_KEY.test(relay)) return new Set();
+    const events = await this.client
+      .query([{ kinds: [13535], authors: [relay], limit: 1 }])
+      .catch(() => []);
+    const latest = (events as unknown as RelayEvent[]).reduce<
+      RelayEvent | undefined
+    >(newer, undefined);
+    return new Set(latest ? (snapshotArchives(latest, relay) ?? []) : []);
+  }
+
   /** Who `content` notifies: `mentions`, `nostr:npub…` links, and `@Name`
-   * for a channel member, as the CLI resolves them. Each must be a member. */
+   * for a channel member, as the CLI resolves them. Each must be a member.
+   * `@Name` skips known-archived members (never this agent itself), so an
+   * archived namesake cannot make a live name ambiguous; an explicit key or
+   * `nostr:npub…` still reaches an archived member. */
   async mentions(
     channel: string,
     content: string,
@@ -2223,7 +2242,18 @@ class Tools {
     if (!prose.includes("@") && !keys.size) return [];
     const members = await this.members(channel);
     if (prose.includes("@")) {
-      const byName = await this.aliases(members.map((member) => member.pubkey));
+      const [archived, byName] = await Promise.all([
+        this.archived(),
+        this.aliases(members.map((member) => member.pubkey)),
+      ]);
+      // Match the longest name among all holders first, so an archived
+      // "Alex Smith" is never read as a live "Alex" followed by " Smith".
+      const live = (holders: ReadonlyMap<string, number> | undefined) =>
+        new Map(
+          [...(holders ?? [])].filter(
+            ([key]) => key === this.client.pubkey || !archived.has(key),
+          ),
+        );
       const longest = [...byName.keys()].sort((a, b) => b.length - a.length);
       const unknown: string[] = [];
       for (const match of prose.matchAll(/(^|\s)@/g)) {
@@ -2235,12 +2265,14 @@ class Tools {
             rest.startsWith(candidate) &&
             /^($|[\s,;.!?:)\]}])/.test(rest.slice(candidate.length)),
         );
-        const found = name ? bestNamed(byName.get(name)) : [];
+        const holders = name ? live(byName.get(name)) : undefined;
+        const found = bestNamed(holders);
         if (found.length === 1) keys.add(found[0] as string);
         else {
           const token = name ?? rest.match(/^[a-z0-9._-]+/)?.[0];
-          if (token)
-            unknown.push(`@${token}${found.length ? " (ambiguous)" : ""}`);
+          // A matched name with no live holder belongs only to archived members.
+          const why = found.length ? " (ambiguous)" : name ? " (archived)" : "";
+          if (token) unknown.push(`@${token}${why}`);
         }
       }
       if (unknown.length && !explicit.length)

@@ -1961,6 +1961,12 @@ export function relayBrokerPlugin({
                 error: "Invalid live channel interests",
               });
             }
+            // Only an explicit NIP-11 self authenticates archive snapshots.
+            const archiveAuthority = await getAuthority(relay).then(
+              (authority) => authority.archiveAuthority,
+              () => undefined,
+            );
+            if (res.destroyed) return;
             if (streams.size >= 8)
               return json(res, 429, { error: "Live stream capacity reached" });
             const principal = admissions(relay, viewer);
@@ -2235,6 +2241,10 @@ export function relayBrokerPlugin({
               principal.live,
               undefined,
               liveSetupTimeoutMs,
+              undefined,
+              undefined,
+              undefined,
+              archiveAuthority,
             );
             principal.streams++;
             traffic.observe(observer);

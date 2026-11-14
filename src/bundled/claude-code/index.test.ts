@@ -312,6 +312,29 @@ it("recommends a candidate only when Claude is signed in and lists its model and
   ready = false;
   const signedOut = new ClaudeSetup(vi.fn() as never);
   await expect(signedOut.offers(candidate("model-a"))).resolves.toBe(false);
+  // A check that failed, or a model list that came back empty, says nothing
+  // either way: the answer is unsure, so it rejects.
+  vi.mocked(ClaudeSetup.prototype.check).mockImplementation(
+    async function (this: { state: object }) {
+      this.state = {
+        ...this.state,
+        status: { state: "error", message: "timed out" },
+      };
+    },
+  );
+  await expect(
+    new ClaudeSetup(vi.fn() as never).offers(candidate("model-a")),
+  ).rejects.toThrow("Claude couldn't say whether it is ready");
+  ready = true;
+  vi.mocked(ClaudeSetup.prototype.check).mockImplementation(
+    async function (this: { state: object }) {
+      this.state = { ...this.state, status: { state: "ready" } };
+    },
+  );
+  vi.mocked(ClaudeSetup.prototype.catalog).mockResolvedValue([]);
+  await expect(
+    new ClaudeSetup(vi.fn() as never).offers(candidate("model-a")),
+  ).rejects.toThrow("Claude didn't list its models");
 });
 
 it("runs an agent on Recommended on the candidate, else on the device default", async () => {

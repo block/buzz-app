@@ -2957,6 +2957,23 @@ describe("Recommended", () => {
     }
   });
 
+  it("is unsure, rejecting, when its check failed some other way", async () => {
+    const { provider } = fixture();
+    // As after a check whose catalog read failed.
+    vi.spyOn(provider, "check").mockResolvedValue(undefined);
+    Object.assign(provider, {
+      state: {
+        ...provider.snapshot(),
+        readiness: "attention",
+        data: undefined,
+        error: "app-server exited",
+      },
+    });
+    await expect(provider.recommends(candidate)).rejects.toThrow(
+      "Codex couldn't say whether it is ready",
+    );
+  });
+
   it("runs an agent on Recommended on the first candidate its catalog offers", async () => {
     vi.stubEnv(
       "VITE_BUZZ_RECOMMENDED_AGENT",

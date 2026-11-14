@@ -66,6 +66,8 @@ import {
   forgetDefaultAgent,
 } from "../solo/default-agent";
 import { AgentConfigStore, type Subject } from "./agent-config";
+import { artifactTemplate } from "./agent-config-artifacts";
+import { type ConfigAgent, fields } from "./community-config";
 import type { Mode } from "./agent-start";
 import { channelTemplates } from "../channel-templates/local";
 import { eventDto, type ReadFilter, type RelayEvent } from "../relay/events";
@@ -146,6 +148,8 @@ import {
 } from "../messages/mention-admission";
 import type { ComposerSession } from "../messages/composer-session";
 import {
+  CHECK_MS,
+  onRecommended,
   recommendationReady,
   recommendedSetup,
   setRuntimeRecommendation,
@@ -3668,6 +3672,443 @@ it("asks the first plugin that recommends, and waits for plugins to start before
   }
 });
 
+describe("an agent on Automatic and the recommended harness", () => {
+  // A synthetic recommendation: codex first, then goose.
+  const recommendation = {
+    candidates: [
+      { harness: "codex", model: "model-a", effort: "high", label: "Model A" },
+      {
+        harness: "goose",
+        provider: "example",
+        model: "model-b",
+        effort: "high",
+        label: "Model B",
+      },
+    ],
+  };
+  type Harness = Record<string, string>;
+  /** goose and codex stand-ins; `ready` holds the harnesses set up here. */
+  async function harnesses(
+    options: Parameters<typeof setup>[0] & {
+      ready?: Set<string>;
+      codexReady?: () => Promise<boolean>;
+      sessionScopes?: true;
+      remoteCodex?: true;
+      /** Codex describes its apps setting for a migration, as the real one. */
+      codexApps?: true;
+    } = {},
+  ) {
+    setRuntimeRecommendation(recommendation);
+    const ready = options.ready ?? new Set(["codex", "goose"]);
+    const f = await setup(options);
+    const make = (id: string) => {
+      const recommends = vi.fn(async () =>
+        id === "codex" && options.codexReady
+          ? options.codexReady()
+          : ready.has(id),
+      );
+      const run = vi.fn<(delivery: Delivery<Harness>) => Promise<void>>(
+        async () => {},
+      );
+      const type: AgentType<Harness> = {
+        id,
+        title: id,
+        defaults: () => ({
+          config: { reply: "", workspace: "~/.buzz", scope: "thread" },
+        }),
+        adopt: (carry, saved) => ({
+          ...saved,
+          reply: carry.instructions ?? saved.reply ?? "",
+          workspace: carry.workspace ?? saved.workspace ?? "~/.buzz",
+        }),
+        carry: ({ reply, workspace }) => ({
+          ...(reply && { instructions: reply }),
+          ...(workspace && workspace !== "~/.buzz" && { workspace }),
+        }),
+        recommends,
+        run,
+        ...(id === "codex" &&
+          options.codexApps && {
+            describeMigration: (saved: Harness) => [
+              {
+                id: "apps",
+                label: "Codex apps and plugins",
+                isOverride: saved.apps === "true",
+              },
+            ],
+          }),
+        ...(options.sessionScopes && {
+          sessionControls: {
+            scope: (agent) =>
+              (agent.config as Harness).scope === "channel"
+                ? "channel"
+                : "thread",
+            state: () => "idle",
+            run: async () => {},
+            subscribe: () => () => {},
+          },
+        }),
+      };
+      f.plugin.agents.register(type);
+      return { recommends, run };
+    };
+    const goose = make("goose");
+    const codex = make("codex");
+    return { ...f, goose, codex };
+  }
+  afterEach(() => {
+    setRuntimeRecommendation(undefined);
+    vi.restoreAllMocks();
+  });
+  const automatic = { preset: "recommended", reply: "Be kind." };
+
+  it("moves to the first ready candidate's harness, carrying its instructions and staying on Automatic", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = await harnesses();
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: { ...automatic, workspace: "~/work" },
+    });
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.type).toBe("example/codex"),
+    );
+    expect(f.native.setType).toHaveBeenCalledExactlyOnceWith(
+      bot,
+      "example/codex",
+    );
+    const { config } = f.service.find(bot) ?? {};
+    expect(config).toMatchObject({
+      preset: "recommended",
+      reply: "Be kind.",
+      workspace: "~/work",
+    });
+    expect(onRecommended(config)).toBe(true);
+    // One short line, naming harnesses only.
+    expect(info).toHaveBeenCalledExactlyOnceWith(
+      "An agent on Automatic moved from example/goose to example/codex, the recommended harness ready here",
+    );
+    // A new session on the new harness, which runs it from now on.
+    f.emit({
+      events: [
+        event("after", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(f.codex.run).toHaveBeenCalledOnce());
+    expect(f.goose.run).not.toHaveBeenCalled();
+  });
+
+  it("moves once per launch, even when the recommendation changes after", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = await harnesses();
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.type).toBe("example/codex"),
+    );
+    setRuntimeRecommendation({
+      candidates: [...recommendation.candidates].reverse(),
+    });
+    await f.service.save(bot, { name: "Agent A2" });
+    f.emit({
+      events: [
+        event("later", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(f.codex.run).toHaveBeenCalledOnce());
+    await settle();
+    expect(f.native.setType).toHaveBeenCalledOnce();
+    expect(f.service.find(bot)?.type).toBe("example/codex");
+  });
+
+  it("keeps its harness when the recommended one isn't ready here", async () => {
+    const f = await harnesses({ ready: new Set(["goose"]) });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() => expect(f.codex.recommends).toHaveBeenCalled());
+    await settle();
+    expect(f.native.setType).not.toHaveBeenCalled();
+    expect(f.service.find(bot)?.type).toBe("example/goose");
+  });
+
+  it("leaves a Custom agent's harness alone", async () => {
+    const f = await harnesses();
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: { reply: "Be kind." },
+    });
+    await settle();
+    expect(f.codex.recommends).not.toHaveBeenCalled();
+    expect(f.native.setType).not.toHaveBeenCalled();
+  });
+
+  it("leaves it to the copy of Buzz that runs it", async () => {
+    const f = await harnesses();
+    f.native.claim.mockResolvedValue(false);
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await settle();
+    expect(f.codex.recommends).not.toHaveBeenCalled();
+    expect(f.native.setType).not.toHaveBeenCalled();
+  });
+
+  it("keeps its harness when its session setting wouldn't carry over", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = await harnesses({ sessionScopes: true });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: { ...automatic, scope: "channel" },
+    });
+    await vi.waitFor(() =>
+      expect(info).toHaveBeenCalledWith(
+        "An agent on Automatic kept its harness: moving would reset a setting of its own",
+      ),
+    );
+    expect(f.native.setType).not.toHaveBeenCalled();
+    expect(f.service.find(bot)?.type).toBe("example/goose");
+  });
+
+  it("moves an agent on a harness with no candidate to the top ready one", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = await harnesses();
+    // Codex only: goose has no candidate, so it ranks last.
+    setRuntimeRecommendation({
+      candidates: recommendation.candidates.slice(0, 1),
+    });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.type).toBe("example/codex"),
+    );
+    expect(onRecommended(f.service.find(bot)?.config)).toBe(true);
+  });
+
+  it("moves down the list when the harness above is definitely not ready", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    // On codex, the top harness, which says plainly it isn't ready here.
+    const f = await harnesses({ ready: new Set(["goose"]) });
+    await f.service.create({
+      type: "example/codex",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.type).toBe("example/goose"),
+    );
+    expect(onRecommended(f.service.find(bot)?.config)).toBe(true);
+  });
+
+  it("keeps its harness this launch when a check ahead fails, and moves the next", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    // Codex first: on goose, while codex's check fails rather than answering.
+    const f = await harnesses({
+      codexReady: () => Promise.reject(new Error("offline")),
+    });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() =>
+      expect(info).toHaveBeenCalledWith(
+        "Agents on Automatic keep their harness this launch: a recommended harness's check didn't answer",
+      ),
+    );
+    await settle();
+    expect(f.native.setType).not.toHaveBeenCalled();
+    // The next launch, with the same agent, where codex answers.
+    const next = await harnesses({
+      storage: f.storage,
+      identities: await f.native.list(),
+    });
+    await vi.waitFor(() =>
+      expect(next.service.find(bot)?.type).toBe("example/codex"),
+    );
+    expect(next.native.setType).toHaveBeenCalledExactlyOnceWith(
+      bot,
+      "example/codex",
+    );
+  });
+
+  it("keeps its harness this launch when a check ahead times out", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const info = vi.spyOn(console, "info").mockImplementation(() => {});
+      const f = await harnesses({
+        codexReady: () => new Promise<boolean>(() => {}),
+      });
+      await f.service.create({
+        type: "example/goose",
+        name: "Agent A",
+        config: automatic,
+      });
+      await vi.waitFor(() => expect(f.codex.recommends).toHaveBeenCalled());
+      await vi.advanceTimersByTimeAsync(CHECK_MS);
+      await vi.waitFor(() =>
+        expect(info).toHaveBeenCalledWith(
+          "Agents on Automatic keep their harness this launch: a recommended harness's check didn't answer",
+        ),
+      );
+      expect(f.native.setType).not.toHaveBeenCalled();
+      expect(f.service.find(bot)?.type).toBe("example/goose");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps its harness when it is switched to Custom while the check runs", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const check = runnerGate<boolean>();
+    const f = await harnesses({ codexReady: () => check.promise });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() => expect(f.codex.recommends).toHaveBeenCalled());
+    await f.service.save(bot, { config: { reply: "Be kind." } });
+    check.resolve(true);
+    await settle();
+    await settle();
+    expect(f.native.setType).not.toHaveBeenCalled();
+    expect(f.service.find(bot)?.type).toBe("example/goose");
+    expect(onRecommended(f.service.find(bot)?.config)).toBe(false);
+  });
+
+  it("waits for every harness plugin to start before it picks", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = await harnesses({ starting: true });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await settle();
+    expect(f.codex.recommends).not.toHaveBeenCalled();
+    f.settleStartup();
+    await f.service.save(bot, { name: "Agent A2" });
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.type).toBe("example/codex"),
+    );
+  });
+
+  it("keeps a Codex agent with its apps setting on when goose is recommended first", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = await harnesses({ codexApps: true });
+    setRuntimeRecommendation({
+      candidates: [...recommendation.candidates].reverse(),
+    });
+    await f.service.create({
+      type: "example/codex",
+      name: "Agent A",
+      config: { ...automatic, apps: "true" },
+    });
+    await vi.waitFor(() =>
+      expect(info).toHaveBeenCalledWith(
+        "An agent on Automatic kept its harness: moving would reset a setting of its own",
+      ),
+    );
+    expect(f.native.setType).not.toHaveBeenCalled();
+  });
+
+  it("checks an agent created later afresh, not with an earlier pick", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const ready = new Set(["goose"]);
+    const f = await harnesses({ ready });
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() => expect(f.codex.recommends).toHaveBeenCalled());
+    await settle();
+    // Codex is signed in since: an agent made on it now stays there.
+    ready.add("codex");
+    await f.service.create({
+      type: "example/codex",
+      name: "Agent B",
+      config: automatic,
+    });
+    await vi.waitFor(() => expect(f.codex.recommends).toHaveBeenCalledTimes(2));
+    await settle();
+    expect(f.native.setType).not.toHaveBeenCalled();
+    expect(f.service.find(sibling)?.type).toBe("example/codex");
+  });
+
+  it("leaves a hosted agent alone", async () => {
+    const f = await harnesses();
+    f.plugin.agents.register(cloud().type);
+    const agent = await f.service.create({
+      type: "example/cloud",
+      name: "Agent A",
+      config: automatic,
+    });
+    expect(agent).toMatchObject({ place: "hosted" });
+    await settle();
+    expect(f.codex.recommends).not.toHaveBeenCalled();
+    expect(f.native.setType).not.toHaveBeenCalled();
+  });
+
+  it("waits while it is answering, then moves once it is idle", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const check = runnerGate<boolean>();
+    const f = await harnesses({ codexReady: () => check.promise });
+    const answer = runnerGate();
+    f.goose.run.mockImplementationOnce(() => answer.promise);
+    await f.service.create({
+      type: "example/goose",
+      name: "Agent A",
+      config: automatic,
+    });
+    await vi.waitFor(() => expect(f.codex.recommends).toHaveBeenCalled());
+    f.emit({
+      events: [
+        event("busy", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(f.goose.run).toHaveBeenCalledOnce());
+    check.resolve(true);
+    await settle();
+    expect(f.native.setType).not.toHaveBeenCalled();
+    expect(f.service.find(bot)?.type).toBe("example/goose");
+    answer.resolve();
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.type).toBe("example/codex"),
+    );
+    expect(f.native.setType).toHaveBeenCalledOnce();
+  });
+});
+
 it("ignores session tags even for a type with immediate session controls", async () => {
   const { service, run, emit } = await setup({
     sessionControls: { state: () => "idle", run: async () => {} },
@@ -5435,6 +5876,125 @@ describe("an agent in several communities", () => {
       );
       expect(f.service.find(bot)?.type).toBe("other/relay");
       expect(store.state(instructionsSide).head?.id).toBe(savedInstructions.id);
+    });
+
+    it("keeps the Automatic mark and tag in the synced settings when it follows the recommended harness", async () => {
+      vi.spyOn(console, "info").mockImplementation(() => {});
+      setRuntimeRecommendation({
+        candidates: [
+          { harness: "codex", model: "model-a", effort: "high", label: "A" },
+          {
+            harness: "goose",
+            provider: "example",
+            model: "model-b",
+            effort: "high",
+            label: "B",
+          },
+        ],
+      });
+      try {
+        // Its settings' head is on Automatic, as the goose stand-in's.
+        const head = (agentType: string) =>
+          finalizeEvent(
+            {
+              kind: 45010,
+              created_at: 1,
+              content: JSON.stringify({
+                version: 1,
+                agentType,
+                settings: {},
+                preset: "recommended",
+              }),
+              tags: [["op", "create"]],
+            },
+            generateSecretKey(),
+          ) as RelayEvent;
+        const save = vi.fn(
+          async (agent: ConfigAgent, _config: object, _base: unknown) => {
+            const side = settings(home);
+            const event = head(agent.type);
+            live?.applyRead(side, live.capture(side), { kind: "head", event });
+            return { settings: { status: "saved", head: event } };
+          },
+        );
+        let live: AgentConfigStore | undefined;
+        coordinators.make = (community, store) => {
+          if (community === home) live = store;
+          const bound = new Map<string, unknown>();
+          return {
+            attach: vi.fn(async (agents: readonly { pubkey: string }[]) => {
+              if (community !== home) return;
+              for (const { pubkey } of agents) {
+                const side = settings(community);
+                store.markBound(side);
+                if (!store.state(side).head)
+                  store.applyRead(side, store.capture(side), {
+                    kind: "head",
+                    event: head("example/goose"),
+                  });
+                bound.set(pubkey, {
+                  settings: { mode: "synced", subject: side },
+                });
+              }
+            }),
+            binding: (pubkey: string) => bound.get(pubkey),
+            remove: vi.fn(async () => {}),
+            exclusive: vi.fn((_: string, work: () => Promise<unknown>) =>
+              work(),
+            ),
+            save,
+            history: () => [],
+            dispose: vi.fn(),
+          };
+        };
+        const f = await setup();
+        for (const id of ["goose", "codex"])
+          f.plugin.agents.register({
+            id,
+            title: id,
+            defaults: () => ({ config: { reply: "" } }),
+            adopt: (carry, saved) => ({
+              ...saved,
+              reply: carry.instructions ?? "",
+            }),
+            carry: ({ reply }) => (reply ? { instructions: reply } : {}),
+            recommends: async () => true,
+            syncedSettings: { schema: {}, withSynced: (config) => config },
+            run: vi.fn(),
+          } satisfies AgentType<Config>);
+        // Its own config holds no mark: the synced head's is the agent's.
+        await f.service.create({
+          type: "example/goose",
+          name: "Agent A",
+          config: { reply: "Be kind." },
+        });
+        await vi.waitFor(() =>
+          expect(f.service.find(bot)?.type).toBe("example/codex"),
+        );
+        expect(save).toHaveBeenCalledOnce();
+        const [agent, config] = save.mock.calls[0] ?? [];
+        expect(agent?.type).toBe("example/codex");
+        expect(config).toEqual({ reply: "Be kind.", preset: "recommended" });
+        // As the config channel publishes it: the mark and its tag.
+        const body = fields("settings", agent as ConfigAgent, config as object);
+        expect(body).toMatchObject({
+          agentType: "example/codex",
+          preset: "recommended",
+        });
+        expect(
+          artifactTemplate({
+            ...settings(home),
+            d: "d",
+            op: "update",
+            prev: "p",
+            title: "Agent settings",
+            content: JSON.stringify(body),
+          }).tags,
+        ).toContainEqual(["preset", "recommended"]);
+        expect(onRecommended(f.service.find(bot)?.config)).toBe(true);
+      } finally {
+        setRuntimeRecommendation(undefined);
+      }
     });
 
     it("refuses a History revert of its settings while their head names another type", async () => {

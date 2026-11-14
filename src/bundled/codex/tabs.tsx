@@ -313,14 +313,14 @@ export class CodexProvider {
     this.set({ defaults });
   }
   /** Whether Codex is installed, signed in and offers the candidate's model
-   * on its thinking level. */
+   * on its thinking level. Rejects when its check failed some other way, so
+   * that answer is unsure rather than no. */
   async recommends(candidate: RecommendedCandidate) {
     if (this.state.readiness !== "ready") await this.check();
-    return (
-      this.state.readiness === "ready" &&
-      !!this.state.data &&
-      offers(this.state.data, candidate)
-    );
+    const { readiness, data, error } = this.state;
+    if (readiness === "ready" && data) return offers(data, candidate);
+    if (error === NOT_INSTALLED || error === SIGN_IN_ERROR) return false;
+    throw new Error("Codex couldn't say whether it is ready");
   }
   /** What its agents on Recommended run on: the first Codex candidate its
    * catalog offers. Undefined until the catalog is read; `null`, for Codex's

@@ -79,9 +79,12 @@ import {
   candidatesFor,
   offRecommended,
   onRecommended,
+  pickRecommendedSurely,
   recommendationFinal,
   recommendationReady,
+  recommendedCandidates,
   type RecommendedCandidate,
+  type RecommendedPick,
   withRecommended,
 } from "./recommended";
 import {
@@ -2136,6 +2139,12 @@ type Bound = {
 /** A saved identity, which is the agent's membership in one community, with
  * that membership's key. */
 type Member = AgentIdentity & Readonly<{ key: AgentKey }>;
+/** A change of type, as planned from the agent's settings now. */
+type RetypePlan = Readonly<{
+  record: AgentRecord;
+  adopted: unknown;
+  preview: RetypePreview;
+}>;
 /** The origin a relay URL or community ID names, if it is a valid one. */
 const originOf = (value: string) => {
   try {
@@ -2389,6 +2398,17 @@ export class AgentsService extends Service implements Agents {
    * meanwhile, even one whose config comes up mid-change, so none moves
    * their settings in under the old type. */
   private retyping = new Set<string>();
+  /** Agents on Automatic already checked this launch for the recommended
+   * harness, so each moves at most once per launch. */
+  private harnessChecked = new Set<string>();
+  /** The first recommended candidate ready on this computer, as a new
+   * agent's pick finds it, while it is being found: agents checked meanwhile
+   * share it, and one checked later, as one just created, finds it afresh. */
+  private harnessPick:
+    | Promise<RecommendedPick | "unsure" | undefined>
+    | undefined;
+  /** Whether this launch has said that a check didn't answer. */
+  private harnessUnsureLogged = false;
   /** Each Remove from a community running, by key, as `deleting`. */
   private leaving = new Map<AgentKey, Promise<void>>();
   private unfinished: readonly Unfinished[];
@@ -2580,6 +2600,9 @@ export class AgentsService extends Service implements Agents {
       ownershipChanged: () => {
         this.attend(this.state.running);
         this.notify();
+        // An agent this copy has just claimed may follow its recommendation.
+        for (const identity of this.identities)
+          if (!identity.deleted) this.followRecommendedHarness(identity);
       },
       watchReadFailuresChanged: () => queueMicrotask(() => this.notify()),
       ready: (key) => this.ready(key),
@@ -3194,6 +3217,11 @@ export class AgentsService extends Service implements Agents {
         this.attentionControls.subscribe(() => {
           this.update();
           this.notify();
+        }),
+        // Startup's end lets agents on Automatic follow their harness.
+        this.ctx.pluginStatus.subscribe(() => {
+          for (const identity of this.identities)
+            if (!identity.deleted) this.followRecommendedHarness(identity);
         }),
         // A new state object, so views reading `addedTabs()` render again.
         this.tabContributions.subscribe(() => {
@@ -5927,6 +5955,30 @@ export class AgentsService extends Service implements Agents {
     base?: ConfigBase,
     onRevision?: (side: Side, revision: string) => void,
   ) {
+    return this.changeType(
+      key,
+      type,
+      ({ adopted }) => (change ? change.config : adopted),
+      { reviewed: !!change, base, onRevision },
+    );
+  }
+  /** `retype`, with the new type's config from the plan made inside the
+   * change; `configure` may throw to leave the type as it is. A reviewed
+   * change saves against the `base` its editor opened. */
+  private async changeType(
+    key: AgentKey,
+    type: string,
+    configure: (plan: RetypePlan) => unknown,
+    {
+      reviewed = false,
+      base,
+      onRevision,
+    }: Readonly<{
+      reviewed?: boolean;
+      base?: ConfigBase | undefined;
+      onRevision?: ((side: Side, revision: string) => void) | undefined;
+    }> = {},
+  ) {
     const identity = this.liveMember(key);
     if (!this.native || !identity)
       throw new Error("No such agent on this device");
@@ -5941,13 +5993,9 @@ export class AgentsService extends Service implements Agents {
     const retyped = async () => {
       // Its home can move its settings in while custody is claimed.
       this.refuseWhileMoving(identity);
-      const { adopted, preview } = this.retypePlan(
-        identity,
-        kinds.get(identity.type),
-        kind,
-      );
-      const config = change ? change.config : adopted;
-      if (base && change && "instructions" in base)
+      const plan = this.retypePlan(identity, kinds.get(identity.type), kind);
+      const config = configure(plan);
+      if (base && reviewed && "instructions" in base)
         await this.saveSynced(
           identity,
           config as object,
@@ -5964,7 +6012,7 @@ export class AgentsService extends Service implements Agents {
         onRevision,
       );
       await this.applyType(identity, type, config);
-      return preview.dropped;
+      return plan.preview.dropped;
     };
     return this.runners.retype(key, identity.name, () =>
       this.typeChange(identity, retyped),
@@ -6118,6 +6166,152 @@ export class AgentsService extends Service implements Agents {
     const identity = this.liveMember(pubkeyOf(key));
     if (identity && this.followedType.delete(identity.pubkey))
       this.followType(identity);
+    if (identity) this.followRecommendedHarness(identity);
+  }
+
+  /** An agent on Automatic that this copy runs moves, once per launch, to the
+   * harness of the first recommended candidate ready on this computer, up or
+   * down the list, by the same change as a harness picked in Identity, and
+   * stays on Automatic; not while a check ahead of that one didn't answer. It
+   * waits while it is answering or its settings or type are changing, and
+   * stays put when the change would drop or reset a setting of its own. */
+  private followRecommendedHarness(identity: Member) {
+    const { key, pubkey } = identity;
+    if (
+      key !== pubkey ||
+      identity.deleting ||
+      this.harnessChecked.has(pubkey) ||
+      // Only the copy that holds the agent changes it, so two never do.
+      !this.runners.runs(key) ||
+      this.runners.transitioning(key) ||
+      this.runners.answering(key) ||
+      this.retyping.has(pubkey) ||
+      // Every harness plugin is registered before the pick.
+      !(this.ctx.pluginStatus.settled?.() ?? true)
+    )
+      return;
+    const source = this.types().find((type) => type.key === identity.type);
+    // Nothing to follow: a build that recommends nothing.
+    if (!source?.recommends || source.remote || !recommendedCandidates().length)
+      return;
+    const saved = this.settingsOf(identity);
+    const editor = this.editorConfig(identity, saved.config as object);
+    // Wait for its synced settings, and for a type they name to be taken.
+    if (editor?.problem) return;
+    const binding = this.configBinding(identity).settings;
+    const head =
+      binding?.mode === "synced"
+        ? this.configStore.state(binding.subject).head
+        : undefined;
+    const named = head && settingsType(head);
+    if (named && named !== identity.type) return;
+    // Nor while its settings move to the community or wait for it to connect,
+    // which would fail the change after it stopped the agent's sessions.
+    try {
+      this.refuseWhileMoving(identity);
+    } catch {
+      return;
+    }
+    if (
+      binding &&
+      isSynced(this.configStore, binding) &&
+      !this.communityConfigs.get(this.configHome(identity))
+    )
+      return;
+    const members = this.identities.filter(
+      (member) => member.pubkey === pubkey && !member.deleted,
+    );
+    // Turns the app left working at its last quit resume on its harness.
+    if (
+      members.some(
+        (member) =>
+          Object.keys(this.runners.interruptedTurns(member.key)).length > 0,
+      )
+    )
+      return;
+    this.harnessChecked.add(pubkey);
+    if (
+      !onRecommended(editor?.config ?? saved.config) ||
+      // A plugin execution target runs it elsewhere, not on this computer.
+      members.some((member) => this.executions.read(member.key))
+    )
+      return;
+    if (!this.harnessPick) {
+      const pick = pickRecommendedSurely(this.types());
+      this.harnessPick = pick;
+      void pick.then(
+        (found) => {
+          if (this.harnessPick === pick) this.harnessPick = undefined;
+          if (found !== "unsure" || this.harnessUnsureLogged) return;
+          this.harnessUnsureLogged = true;
+          console.info(
+            "Agents on Automatic keep their harness this launch: a recommended harness's check didn't answer",
+          );
+        },
+        () => {
+          if (this.harnessPick === pick) this.harnessPick = undefined;
+        },
+      );
+    }
+    const from = identity.type;
+    /** Why `kind` can't take the agent over as planned, if it can't. */
+    const refusal = (
+      kind: RegisteredAgentType,
+      { record, adopted, preview }: RetypePlan,
+    ) => {
+      // Taken off Automatic, by an edit here or another device's, meanwhile.
+      if (!onRecommended(record.config)) return "it left Automatic";
+      const agent = this.agent(key);
+      if (!agent) return "it isn't loaded here";
+      if (
+        preview.dropped.length ||
+        preview.settings.length ||
+        source.sessionControls?.scope({ ...agent, config: record.config }) !==
+          kind.sessionControls?.scope({
+            ...agent,
+            type: kind.key,
+            config: adopted,
+          })
+      )
+        return "moving would reset a setting of its own";
+      return undefined;
+    };
+    void this.harnessPick
+      .then(async (pick) => {
+        const now = this.liveMember(key);
+        // Unsure which candidate is first: next launch asks again.
+        const kind = pick === "unsure" ? undefined : pick?.type;
+        if (
+          !now ||
+          now.deleting ||
+          !kind ||
+          kind.key === now.type ||
+          now.type !== from ||
+          (now.protection && !kind.protection)
+        )
+          return;
+        // Checked before the change, which retires its sessions first, and
+        // again inside it.
+        const reason = refusal(kind, this.retypePlan(now, source, kind));
+        if (reason)
+          return console.info(
+            `An agent on Automatic kept its harness: ${reason}`,
+          );
+        await this.changeType(key, kind.key, (plan) => {
+          const late = refusal(kind, plan);
+          if (late) throw new Error(late);
+          return withRecommended(plan.adopted as object);
+        });
+        console.info(
+          `An agent on Automatic moved from ${from} to ${kind.key}, the recommended harness ready here`,
+        );
+      })
+      .catch(() => {
+        // One that started answering meanwhile is tried again when it's done.
+        if (this.runners.answering(key)) this.harnessChecked.delete(pubkey);
+        // Its errors can name the agent; this line names nothing.
+        console.warn("An agent on Automatic kept its harness this launch");
+      });
   }
 
   previewRetype(key: AgentKey, type: string): RetypePreview {
@@ -8130,7 +8324,10 @@ export class AgentsService extends Service implements Agents {
           (agent) => agent.key === identity.key && agent.deleting,
         );
       const editor = this.editorConfig(identity, record.config as object);
-      if (identity.key === identity.pubkey) this.followType(identity);
+      if (identity.key === identity.pubkey) {
+        this.followType(identity);
+        this.followRecommendedHarness(identity);
+      }
       alive.push(
         prior &&
           prior.name === identity.name &&

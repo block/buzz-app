@@ -133,6 +133,7 @@ it("adopts an agent's instructions and compatible workspace without its model", 
     { id: "model", label: "Model", isOverride: false },
     { id: "thinking", label: "Thinking", isOverride: false },
     { id: "voice", label: "Voice", isOverride: false },
+    { id: "apps", label: "Codex apps and plugins", isOverride: false },
   ]);
   expect(
     type?.describeMigration?.({
@@ -141,11 +142,13 @@ it("adopts an agent's instructions and compatible workspace without its model", 
       effort: "high",
       scope: "channel",
       voice: "maple",
+      apps: true,
     }),
   ).toEqual([
     { id: "model", label: "Model", isOverride: true },
     { id: "thinking", label: "Thinking", isOverride: true },
     { id: "voice", label: "Voice", isOverride: true },
+    { id: "apps", label: "Codex apps and plugins", isOverride: true },
   ]);
   expect(type?.migrationWarning).toBe(
     "Any commands Codex left running will stop.",

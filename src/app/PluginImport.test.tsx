@@ -20,6 +20,7 @@ import {
 } from "../plugins/installer";
 import { createPluginUpdates } from "../plugins/updates";
 import { PluginImport } from "./PluginImport";
+import styles from "./PluginImport.module.css";
 import userEvent from "@testing-library/user-event";
 import { cloneElement, StrictMode } from "react";
 
@@ -72,6 +73,7 @@ it("opens both sources inside Add without a duplicate safety warning, and restor
   expect(
     within(dialog).getByRole("button", { name: "Browse plugin folder" }),
   ).toBeVisible();
+  expect(dialog).toHaveAttribute("data-size", "wide");
   fireEvent.keyDown(dialog, { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   await waitFor(() => expect(add).toHaveFocus());
@@ -3548,11 +3550,17 @@ it("shows where the install was opened from, and hides the folder source while a
     within(dialog).queryByRole("button", { name: "Browse plugin folder" }),
   ).toBeNull();
   expect(within(dialog).queryByText("Drop a plugin folder here")).toBeNull();
+  // The Git form alone: no empty second column in a wide dialog.
+  expect(dialog).toHaveAttribute("data-size", "compact");
+  expect(
+    within(dialog).getByRole("form", { name: "Add from Git" }).parentElement,
+  ).not.toHaveClass(styles.columns as string);
   fireEvent.click(within(dialog).getByRole("button", { name: "Find plugins" }));
   await screen.findByRole("dialog", { name: /^Review .+ access$/ });
   expect(screen.getByRole("dialog")).toHaveTextContent(
     "Opened from Market (example.market).",
   );
+  expect(screen.getByRole("dialog")).toHaveAttribute("data-size", "wide");
 });
 
 it("cancels a bound request when a plugin link opens the dialog", async () => {

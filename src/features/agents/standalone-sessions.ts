@@ -79,9 +79,16 @@ export function standaloneSessions(
     list: () =>
       kept().map(([id, at, wake]) => (wake ? { id, at, wake } : { id, at })),
     /** Records a one-off turn's new session, and the turn's key when given,
-     * then removes the days past keeping. A failed save is logged, never
-     * thrown, so the agent keeps working. */
-    async add(id: string, wake?: string) {
+     * then removes the days past keeping. With `drop`, a day is removed only
+     * once `drop` has removed what its sessions left behind, such as their
+     * transcripts; a day `drop` fails for stays, unlisted, for the next add
+     * to try again. A failed save or drop is logged, never thrown, so the
+     * agent keeps working. */
+    async add(
+      id: string,
+      wake?: string,
+      drop?: (ids: string[]) => Promise<void>,
+    ) {
       try {
         // Read, changed and written with no wait between, so adds never
         // drop each other's sessions.
@@ -96,7 +103,18 @@ export function standaloneSessions(
           key,
           JSON.stringify({ version: 1, sessions } satisfies Stored),
         );
-        for (const { key } of past) await storage.set(key, null);
+        for (const { key } of past) {
+          if (drop) {
+            const ids = read(storage.get(key)).map(([found]) => found);
+            try {
+              if (ids.length) await drop(ids);
+            } catch (error) {
+              console.error("A past day's one-off sessions were kept", error);
+              continue;
+            }
+          }
+          await storage.set(key, null);
+        }
       } catch (error) {
         console.error("A one-off turn's session was not recorded", error);
       }

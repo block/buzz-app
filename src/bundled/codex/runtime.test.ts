@@ -115,6 +115,8 @@ function fixture(
   /** Methods the server answers with a JSON-RPC error instead of a result. */
   const failing = new Set<string>();
   const failures = new Map<string, string>();
+  /** The threads whose rollout Codex keeps, by id. */
+  const rollouts = new Set<string>();
   /** Methods the server answers only once their promise settles. */
   const held = new Map<string, Promise<void>>();
   const toolCalls = new Map<
@@ -213,8 +215,22 @@ function fixture(
             },
           },
         };
-      if (request.method === "thread/start")
+      if (request.method === "thread/start") {
         result = { thread: { id: `thread-${++thread}`, cwd: params.cwd } };
+        if (params.ephemeral === false) rollouts.add(`thread-${thread}`);
+      }
+      if (
+        request.method === "thread/delete" &&
+        !rollouts.delete(String(params.threadId))
+      ) {
+        emit({
+          id: request.id,
+          error: {
+            message: `no rollout found for thread id ${String(params.threadId)}`,
+          },
+        });
+        return;
+      }
       if (request.method === "thread/resume")
         result = { thread: { id: params.threadId, cwd: params.cwd } };
       // Ids follow `complete`'s index, so a refused start still takes one.
@@ -692,6 +708,7 @@ function fixture(
     modelIds,
     failing,
     failures,
+    rollouts,
     held,
     emit,
     publish,
@@ -5078,6 +5095,96 @@ it("runs a watch or timer as a one-off turn with the attention tools, joining an
     ["thread-1", "watch/deploys"],
     ["thread-2", "timer/daily"],
   ]);
+});
+
+it("deletes the one-off threads whose recorded day is past keeping, and no other thread", async () => {
+  const f = fixture();
+  f.attention.on = true;
+  const DAY = 86_400_000;
+  // Recorded yesterday, and on days long past keeping, one with a rollout
+  // already gone. A conversation's thread is never recorded.
+  await standaloneSessions(
+    f.store,
+    "codex",
+    pubkey,
+    () => Date.now() - DAY,
+  ).add("recent", "timer/daily");
+  await standaloneSessions(f.store, "codex", pubkey, () => 0).add(
+    "old",
+    "timer/daily",
+  );
+  await standaloneSessions(f.store, "codex", pubkey, () => 1).add("gone");
+  await standaloneSessions(f.store, "codex", pubkey, () => DAY).add("older");
+  expect(
+    [...f.storage.keys()].filter((key) => key.startsWith(STANDALONE_PREFIX)),
+  ).toHaveLength(3);
+  for (const id of ["old", "older", "recent", "conversation"])
+    f.rollouts.add(id);
+  const timer = {
+    type: "timer",
+    enabled: true,
+    interest_id: "ops",
+    prompt: "Check the deploys",
+  };
+  f.objects.set("interest/ops", { type: "interest", instructions: "Ops" });
+  f.objects.set("watch/daily", timer);
+  const base = f.delivery("tick");
+  const wake = () =>
+    f.wake({
+      ...base,
+      trigger: {
+        type: "timer",
+        slug: "watch/daily",
+        timer,
+        spent: false,
+      } as unknown as Delivery["trigger"],
+    });
+  // A delete Codex fails keeps its day, unlisted, for the next turn.
+  f.failures.set("thread/delete", "disk busy");
+  wake();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "");
+  await vi.waitFor(() =>
+    expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({ ok: true }),
+  );
+  expect([...f.rollouts].sort()).toEqual(
+    ["conversation", "old", "older", "recent", "thread-1"].sort(),
+  );
+  expect(
+    standaloneSessions(f.store, "codex", pubkey)
+      .list()
+      .map(({ id }) => id),
+  ).toEqual(["recent", "thread-1"]);
+  expect(f.sent.some((wire) => wire.method === "thread/delete")).toBe(true);
+  f.failures.delete("thread/delete");
+  const before = f.sent.length;
+  wake();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  await f.complete(1, "");
+  await vi.waitFor(() =>
+    expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toEqual({ ok: true }),
+  );
+  // Only the recorded threads past keeping are deleted, each once; their
+  // rollouts are gone and every other thread's stays.
+  expect(
+    f.sent
+      .slice(before)
+      .filter((wire) => wire.method === "thread/delete")
+      .map((wire) => (wire.params as { threadId: string }).threadId)
+      .sort(),
+  ).toEqual(["gone", "old", "older"]);
+  expect([...f.rollouts].sort()).toEqual(
+    ["conversation", "recent", "thread-1", "thread-2"].sort(),
+  );
+  expect(
+    [...f.storage.keys()].filter((key) => key.startsWith(STANDALONE_PREFIX)),
+  ).toHaveLength(2);
+  // Usage still lists everything from the last 30 days.
+  expect(
+    standaloneSessions(f.store, "codex", pubkey)
+      .list()
+      .map(({ id }) => id),
+  ).toEqual(["recent", "thread-1", "thread-2"]);
 });
 
 it("drops a wake that is no longer current", async () => {

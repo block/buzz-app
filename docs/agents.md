@@ -1914,7 +1914,14 @@ runs on a thread of its own in Buzz's Codex home, named `Buzz <key> · <agent
 name>`, which Codex keeps a rollout for and Buzz never resumes. Its prompt names
 no conversation, so Codex counts it only when the agent's standalone sessions
 list its thread, recorded as the turn starts; the snapshot has no `channelId`.
-On an execution target the thread stays ephemeral, and Usage reads none there.
+Usage reads each listed thread by its id (`thread/read`) when the name search
+misses it, as after the agent is renamed, and still keeps it only when its
+rollout names the agent's pubkey. When a later standalone turn removes a day
+of that record past keeping, it first deletes that day's threads with
+`thread/delete`, which removes their rollouts; a day whose delete fails stays,
+unlisted, for the next turn to try again. Only threads the record lists are
+deleted, never a conversation's. On an execution target the thread stays
+ephemeral, and Usage reads none there.
 These threads stay out of the user's own Codex history, since Buzz's Codex home
 is its own, and out of conversation lookups, whose names open with `Buzz #`.
 

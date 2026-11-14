@@ -2083,9 +2083,12 @@ export class CodexRuntime {
       bridge?.bind(once.threadId);
       server.threads.set(once.threadId, agent.key);
       if (kept) {
+        // Recorded threads past keeping go with their day: Codex deletes
+        // their rollouts, which Usage no longer reads.
         await standaloneSessions(this.storage, "codex", agent.key).add(
           once.threadId,
           key,
+          (ids) => forget(rpc, ids),
         );
         await rpc.request("thread/name/set", {
           threadId: once.threadId,
@@ -3119,6 +3122,24 @@ export class CodexRuntime {
       release();
     }
   }
+}
+/** Deletes the recorded one-off threads `ids` and their rollouts, a few at a
+ * time. A thread Codex no longer has is already gone. Rejects when any other
+ * delete fails, so their record stays for a later try. */
+async function forget(rpc: AppServer, ids: readonly string[]) {
+  const queue = [...ids];
+  const failed: unknown[] = [];
+  const worker = async () => {
+    for (let id = queue.shift(); id; id = queue.shift())
+      await rpc.request("thread/delete", { threadId: id }).catch((error) => {
+        if (
+          !(error instanceof Refused && /no rollout found/i.test(error.message))
+        )
+          failed.push(error);
+      });
+  };
+  await Promise.all(Array.from({ length: 4 }, worker));
+  if (failed.length) throw failed[0];
 }
 /** A started or completed item, as the app-server reports it. */
 type Item = {

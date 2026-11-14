@@ -84,6 +84,35 @@ it("keeps a session for as long as Usage reads back, then drops its day", async 
   expect(sessions.list().map(({ id }) => id)).toEqual(["late", "new"]);
 });
 
+it("removes a past day only once its drop has removed what its sessions left", async () => {
+  const storage = memory();
+  let now = 0;
+  const sessions = standaloneSessions(storage, "pi", AGENT, () => now);
+  await sessions.add("old", "timer/daily");
+  await sessions.add("older");
+  now = (STANDALONE_DAYS + 1) * DAY;
+  const dropped: string[][] = [];
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  // A failed drop keeps the day, unlisted, for the next add.
+  await sessions.add("new", undefined, async (ids) => {
+    dropped.push(ids);
+    throw new Error("busy");
+  });
+  expect(error).toHaveBeenCalledTimes(1);
+  error.mockRestore();
+  expect(storage.get(`${STANDALONE_PREFIX}pi:${AGENT}:0`)).not.toBeNull();
+  expect(sessions.list().map(({ id }) => id)).toEqual(["new"]);
+  await sessions.add("newer", undefined, async (ids) => {
+    dropped.push(ids);
+  });
+  expect(dropped).toEqual([
+    ["old", "older"],
+    ["old", "older"],
+  ]);
+  expect(storage.get(`${STANDALONE_PREFIX}pi:${AGENT}:0`)).toBeNull();
+  expect(sessions.list().map(({ id }) => id)).toEqual(["new", "newer"]);
+});
+
 it("keeps every session in the window, however often turns run", async () => {
   // One timer at its shortest interval, a minute, for 30 days: far past any
   // fixed count, and its oldest start must still be counted.

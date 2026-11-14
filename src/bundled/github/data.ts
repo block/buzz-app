@@ -3,6 +3,22 @@ import type { GitHubReference } from "./references";
 
 export type Branch = { label: string; url?: string | undefined };
 
+export type GitHubLabel = Readonly<{
+  /** GitHub's node id, shared by its GraphQL and REST responses. */
+  id: string;
+  name: string;
+  /** Six hexadecimal digits, without `#`; absent when GitHub gave no usable color. */
+  color?: string | undefined;
+}>;
+
+export type GitHubLabelSet = Readonly<{
+  items: readonly GitHubLabel[];
+  /** Whether every attached label was read and represented in `items`. */
+  complete: boolean;
+  /** GitHub's total for the connection, or the REST array's length. */
+  totalCount?: number | undefined;
+}>;
+
 export type GitHubDetails = {
   title: string;
   body: string;
@@ -15,6 +31,9 @@ export type GitHubDetails = {
   pullRequest?: true | undefined;
   author: string;
   headSha?: string | undefined;
+  /** Attached PR labels. Undefined means the response supplied no label data;
+   * a complete empty set means the pull request has none. */
+  labels?: GitHubLabelSet | undefined;
   authorUrl?: string | undefined;
   authorAvatar?: string | undefined;
   createdAt?: string | undefined;
@@ -43,6 +62,14 @@ type ResponseData = {
   description?: string | null;
   body?: string | null;
   body_html?: string | null;
+  labels?:
+    | ({
+        id?: number;
+        node_id?: string;
+        name?: string;
+        color?: string;
+      } | null)[]
+    | null;
   state?: string;
   state_reason?: string | null;
   pull_request?: object | null;
@@ -66,6 +93,42 @@ type ResponseData = {
   language?: string | null;
   default_branch?: string;
 };
+
+type LabelSource = Readonly<{
+  id?: string | undefined;
+  name?: string | undefined;
+  color?: string | null | undefined;
+}>;
+
+/** Normalizes either GitHub API's labels, never calling a partial or malformed
+ * response a complete set. Duplicate node ids are one label, in first-read order. */
+export function normalizeGitHubLabels(
+  source: readonly (LabelSource | null)[] | null | undefined,
+  complete: boolean,
+  totalCount = source?.length,
+): GitHubLabelSet | undefined {
+  if (!source) return undefined;
+  const items: GitHubLabel[] = [];
+  const seen = new Set<string>();
+  for (const label of source) {
+    if (!label?.id || typeof label.name !== "string" || seen.has(label.id))
+      continue;
+    seen.add(label.id);
+    const color =
+      label.color && /^[a-f0-9]{6}$/i.test(label.color)
+        ? label.color
+        : undefined;
+    items.push({ id: label.id, name: label.name, color });
+  }
+  return {
+    items,
+    complete:
+      complete &&
+      items.length === source.length &&
+      (totalCount === undefined || totalCount === items.length),
+    totalCount,
+  };
+}
 
 /** GitHub refused a public read for this hour's limit; `resetAt` is when it
  * lifts, by its `x-ratelimit-reset` header, or an hour on without one. */
@@ -162,6 +225,19 @@ export async function loadGitHubDetails(
     body: data.body ?? data.description ?? commitBody.join("\n").trim(),
     bodyHtml: data.body_html ?? undefined,
     headSha: reference.kind === "pull" ? data.head?.sha : undefined,
+    labels:
+      reference.kind === "pull" && Array.isArray(data.labels)
+        ? normalizeGitHubLabels(
+            data.labels.map((label) => ({
+              id:
+                label?.node_id ??
+                (label?.id === undefined ? undefined : String(label.id)),
+              name: label?.name,
+              color: label?.color,
+            })),
+            true,
+          )
+        : undefined,
     state: data.merged
       ? "Merged"
       : data.state === "closed"

@@ -15,6 +15,7 @@ import {
   PANEL_PULL_FIELDS,
   PANEL_REPOSITORY_FIELDS,
   parsePull,
+  readCompleteLabels,
   type PullChecklist,
   type PullData,
 } from "./pull";
@@ -468,35 +469,49 @@ async function readStates(
     data = error.data as Record<string, RepositoryData>;
   }
   const viewer = str((data as { viewer?: Node }).viewer?.login);
-  const states = urls.map((url, i): PullState | Error => {
-    const repository = data[`r${i}`];
-    const issue = repository?.issue;
-    if (issue)
-      return issueOf(issue.state === "CLOSED", issue.stateReason, issue.title);
-    const pull = repository?.pullRequest;
-    if (!repository || !pull)
-      return failure?.type === "NOT_FOUND" || !failure
-        ? new Error(
-            "GitHub couldn’t find this, or your GitHub account can’t see it.",
-          )
-        : new Error(failure.message);
-    const state = stateOf(pull);
-    const reference = parseGitHubReference(url);
-    const { feedback, details, held } = asks(url);
-    return {
-      ...state,
-      ...(feedback && {
-        feedback: { viewer, ids: idsOf(pull), items: held },
-      }),
-      ...(details &&
-        reference && {
+  const states = await Promise.all(
+    urls.map(async (url, i): Promise<PullState | Error> => {
+      const repository = data[`r${i}`];
+      const issue = repository?.issue;
+      if (issue)
+        return issueOf(
+          issue.state === "CLOSED",
+          issue.stateReason,
+          issue.title,
+        );
+      const pull = repository?.pullRequest;
+      if (!repository || !pull)
+        return failure?.type === "NOT_FOUND" || !failure
+          ? new Error(
+              "GitHub couldn’t find this, or your GitHub account can’t see it.",
+            )
+          : new Error(failure.message);
+      const state = stateOf(pull);
+      const reference = parseGitHubReference(url);
+      const { feedback, details, held } = asks(url);
+      let view =
+        details && reference
+          ? parsePull({ repository } as PullData, reference)
+          : undefined;
+      const labels = view?.details.labels;
+      if (view && labels?.complete === false && pull.labels && pull.id) {
+        view = {
+          ...view,
           details: {
-            ...parsePull({ repository } as PullData, reference),
-            signedIn: true,
+            ...view.details,
+            labels: await readCompleteLabels(gh, pull.id, pull.labels, signal),
           },
+        };
+      }
+      return {
+        ...state,
+        ...(feedback && {
+          feedback: { viewer, ids: idsOf(pull), items: held },
         }),
-    };
-  });
+        ...(view && { details: { ...view, signedIn: true } }),
+      };
+    }),
+  );
   await readText(gh, urls, states, asks, signal);
   return states;
 }

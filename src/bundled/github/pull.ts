@@ -6,7 +6,12 @@ import {
   type CheckSummary,
   type RollupContext,
 } from "./checks";
-import { branchLink, type GitHubDetails } from "./data";
+import {
+  branchLink,
+  normalizeGitHubLabels,
+  type GitHubDetails,
+  type GitHubLabelSet,
+} from "./data";
 import type { GitHubCli } from "./gh";
 import type { GitHubReference } from "./references";
 
@@ -63,12 +68,16 @@ export type PullView = Readonly<{
  * request, in the store's query. */
 export const PANEL_REPOSITORY_FIELDS =
   "viewerDefaultMergeMethod mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed";
+const LABEL_PAGE_FIELDS =
+  "nodes{id name color} pageInfo{hasNextPage endCursor} totalCount";
+
 /** What the panel reads of the pull request itself. */
 export const PANEL_PULL_FIELDS = `id title body bodyHTML createdAt updatedAt mergedAt
       author{login avatarUrl} mergedBy{login}
       baseRefName headRefName
       headRepository{nameWithOwner} headRepositoryOwner{login} baseRepository{nameWithOwner}
       additions deletions changedFiles
+      labels(first:100){${LABEL_PAGE_FIELDS}}
       reviewDecision viewerDidAuthor viewerCanUpdate viewerCanUpdateBranch viewerCanMergeAsAdmin
       isMergeQueueEnabled isInMergeQueue
       viewerCanEnableAutoMerge viewerCanDisableAutoMerge
@@ -79,6 +88,21 @@ export const PANEL_PULL_FIELDS = `id title body bodyHTML createdAt updatedAt mer
       commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){totalCount nodes{__typename
         ... on CheckRun{name status conclusion detailsUrl title}
         ... on StatusContext{context state description targetUrl}}}}}}}`;
+
+type PullLabelPage = {
+  nodes?:
+    | ({
+        id?: string;
+        name?: string;
+        color?: string;
+      } | null)[]
+    | null;
+  pageInfo?: {
+    hasNextPage?: boolean;
+    endCursor?: string | null;
+  };
+  totalCount?: number;
+};
 
 type Login = { login?: string } | null | undefined;
 export type PullData = {
@@ -108,6 +132,7 @@ export type PullData = {
       additions?: number;
       deletions?: number;
       changedFiles?: number;
+      labels?: PullLabelPage | null;
       mergeStateStatus?: string;
       reviewDecision?: PullChecklist["review"]["decision"];
       isMergeQueueEnabled?: boolean;
@@ -226,6 +251,11 @@ export function parsePull(
         ? pull.author.avatarUrl
         : undefined,
     headSha: pull.headRefOid,
+    labels: normalizeGitHubLabels(
+      pull.labels?.nodes,
+      pull.labels?.pageInfo?.hasNextPage === false,
+      pull.labels?.totalCount,
+    ),
     createdAt: time(pull.createdAt),
     updatedAt: time(pull.updatedAt),
     mergedAt: state === "merged" ? time(pull.mergedAt) : undefined,
@@ -304,6 +334,71 @@ export function parsePull(
         : undefined,
     },
   };
+}
+
+/** Follows a details selection's remaining label pages with that read's own
+ * cancellation and deadline. A failed or incoherent continuation retains only
+ * the pages from this response, marked incomplete rather than empty or complete. */
+export async function readCompleteLabels(
+  gh: GitHubCli,
+  pullId: string,
+  first: PullLabelPage,
+  signal?: AbortSignal,
+): Promise<GitHubLabelSet | undefined> {
+  let page: PullLabelPage | null | undefined = first;
+  const initial = normalizeGitHubLabels(
+    page?.nodes,
+    page?.pageInfo?.hasNextPage === false,
+    page?.totalCount,
+  );
+  if (!initial || initial.complete) return initial;
+  const items = [...initial.items];
+  const seenLabels = new Set(items.map((label) => label.id));
+  const seenCursors = new Set<string>();
+  let valid = Array.isArray(first.nodes) && items.length === first.nodes.length;
+  let totalCount = initial.totalCount;
+  let complete = false;
+
+  while (page?.pageInfo?.hasNextPage) {
+    const after: string | null | undefined = page.pageInfo.endCursor;
+    if (!after || seenCursors.has(after)) break;
+    seenCursors.add(after);
+    try {
+      const data: { node?: { labels?: PullLabelPage | null } | null } =
+        await gh(
+          `query($id:ID!,$after:String!){node(id:$id){... on PullRequest{labels(first:100,after:$after){${LABEL_PAGE_FIELDS}}}}}`,
+          { id: pullId, after },
+          signal,
+        );
+      page = data.node?.labels;
+    } catch {
+      break;
+    }
+    if (!page) break;
+    const found = normalizeGitHubLabels(
+      page.nodes,
+      page.pageInfo?.hasNextPage === false,
+      page.totalCount,
+    );
+    if (!found) break;
+    valid =
+      valid &&
+      Array.isArray(page.nodes) &&
+      found.items.length === page.nodes.length;
+    for (const label of found.items) {
+      if (!seenLabels.has(label.id)) {
+        seenLabels.add(label.id);
+        items.push(label);
+      }
+    }
+    totalCount = page.totalCount;
+    complete =
+      valid &&
+      page.pageInfo?.hasNextPage === false &&
+      (totalCount === undefined || items.length === totalCount);
+  }
+
+  return { items, complete, totalCount };
 }
 
 export type ReviewEvent = "COMMENT" | "APPROVE" | "REQUEST_CHANGES";

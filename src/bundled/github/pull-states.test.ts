@@ -1062,6 +1062,21 @@ const full = ({
     comments: { nodes: comments.map((id) => ({ id })) },
   },
 });
+const labelsPage = (
+  nodes: ({ id: string; name: string; color?: string } | null)[],
+  hasNextPage = false,
+  endCursor: string | null = null,
+  totalCount = nodes.length,
+) => ({
+  nodes,
+  pageInfo: { hasNextPage, endCursor },
+  totalCount,
+});
+const withLabels = (labels: ReturnType<typeof labelsPage>) => {
+  const answer = full();
+  return { ...answer, pullRequest: { ...answer.pullRequest, labels } };
+};
+
 /** What GitHub says of each feedback node asked for. */
 const text = (ids: string[]) => ({
   nodes: ids.map((id) =>
@@ -1125,8 +1140,10 @@ it("reads a pull request once at every level its readers ask for", async () => {
   const [first, other] = query.split("r1:");
   expect(first).toContain("reviews(");
   expect(first).toContain("viewerDefaultMergeMethod");
+  expect(first).toContain("labels(first:100){nodes{id name color}");
   expect(other).not.toContain("reviews(");
   expect(other).not.toContain("viewerDefaultMergeMethod");
+  expect(other).not.toContain("labels(");
   expect(states.get(pull)).toMatchObject({
     state: "open",
     checks: "failure",
@@ -1139,12 +1156,208 @@ it("reads a pull request once at every level its readers ask for", async () => {
     },
     details: {
       signedIn: true,
-      details: { title: "A change" },
+      details: { title: "A change", labels: undefined },
       checklist: { id: "PR_1", head: "abc123", base: "main" },
     },
   });
   expect(states.get(second)).not.toHaveProperty("feedback");
   expect(states.get(second)).not.toHaveProperty("details");
+});
+
+it("reads all label pages in order, without duplicate stable ids", async () => {
+  const firstPage = Array.from({ length: 100 }, (_, i) => ({
+    id: `LA_${i}`,
+    name: `Label ${i}`,
+    color: "0e8a16",
+  }));
+  const gh = mockGh(async (_query: string, variables: Variables) =>
+    "after" in variables
+      ? {
+          node: {
+            labels: labelsPage(
+              [
+                { id: "LA_99", name: "Label 99", color: "0e8a16" },
+                { id: "LA_100", name: "Label 100", color: "1f883d" },
+              ],
+              false,
+              null,
+              101,
+            ),
+          },
+        }
+      : { r0: withLabels(labelsPage(firstPage, true, "labels-1", 101)) },
+  );
+  const states = createPullStates(gh);
+  const { state } = await states.read(pull, { maxAge: 0, level: "details" });
+  if (state === "failed") throw new Error("Expected pull request details");
+
+  expect(gh).toHaveBeenCalledTimes(2);
+  const [listing, continuation] = gh.mock.calls;
+  expect(String(listing?.[0])).toContain(
+    "labels(first:100){nodes{id name color}",
+  );
+  expect(String(continuation?.[0])).toContain(
+    "labels(first:100,after:$after){nodes{id name color}",
+  );
+  expect(continuation?.[1]).toEqual({ id: "PR_1", after: "labels-1" });
+  expect(continuation?.[2]).toBeInstanceOf(AbortSignal);
+  const labels = state.details?.details.labels;
+  expect(labels).toMatchObject({ complete: true, totalCount: 101 });
+  expect(labels?.items).toHaveLength(101);
+  expect(labels?.items[0]).toEqual({
+    id: "LA_0",
+    name: "Label 0",
+    color: "0e8a16",
+  });
+  expect(labels?.items[100]).toEqual({
+    id: "LA_100",
+    name: "Label 100",
+    color: "1f883d",
+  });
+  expect(new Set(labels?.items.map((label) => label.id))).toHaveProperty(
+    "size",
+    101,
+  );
+});
+
+it("retains explicitly incomplete labels when a continuation fails, then recovers", async () => {
+  const firstPage = Array.from({ length: 100 }, (_, i) => ({
+    id: `LA_${i}`,
+    name: `Label ${i}`,
+    color: "0e8a16",
+  }));
+  let fail = true;
+  const gh = mockGh(async (_query: string, variables: Variables) => {
+    if (!("after" in variables))
+      return { r0: withLabels(labelsPage(firstPage, true, "labels-1", 101)) };
+    if (fail) throw new GitHubError("Labels unavailable", "INTERNAL");
+    return {
+      node: {
+        labels: labelsPage(
+          [{ id: "LA_100", name: "Label 100", color: "1f883d" }],
+          false,
+          null,
+          101,
+        ),
+      },
+    };
+  });
+  const states = createPullStates(gh);
+  const partial = await states.read(pull, { maxAge: 0, level: "details" });
+  if (partial.state === "failed")
+    throw new Error("A label continuation must not fail the whole PR read");
+  expect(partial.error).toBeUndefined();
+  expect(partial.state).toMatchObject({
+    head: "abc123",
+    details: {
+      checklist: { head: "abc123" },
+      details: { title: "A change", labels: { complete: false } },
+    },
+  });
+  expect(partial.state.details?.details.labels?.items).toHaveLength(100);
+  expect(partial.state.details?.details.labels?.totalCount).toBe(101);
+  expect(gh).toHaveBeenCalledTimes(2);
+
+  fail = false;
+  const recovered = await states.read(pull, { maxAge: 0, level: "details" });
+  if (recovered.state === "failed") throw new Error("Expected recovered read");
+  expect(recovered.state.details?.details.labels).toMatchObject({
+    complete: true,
+    totalCount: 101,
+  });
+  expect(recovered.state.details?.details.labels?.items).toHaveLength(101);
+  expect(gh).toHaveBeenCalledTimes(4);
+});
+
+it("does not chase a repeated label cursor indefinitely", async () => {
+  const firstPage = Array.from({ length: 100 }, (_, i) => ({
+    id: `LA_${i}`,
+    name: `Label ${i}`,
+    color: "0e8a16",
+  }));
+  const gh = mockGh(async (_query: string, variables: Variables) =>
+    "after" in variables
+      ? {
+          node: {
+            labels: labelsPage(
+              [{ id: "LA_100", name: "Label 100", color: "1f883d" }],
+              true,
+              "labels-1",
+              101,
+            ),
+          },
+        }
+      : { r0: withLabels(labelsPage(firstPage, true, "labels-1", 101)) },
+  );
+  const states = createPullStates(gh);
+  const { state } = await states.read(pull, { maxAge: 0, level: "details" });
+  if (state === "failed") throw new Error("Expected pull request details");
+  expect(gh).toHaveBeenCalledTimes(2);
+  expect(state.details?.details.labels).toMatchObject({ complete: false });
+  expect(state.details?.details.labels?.items).toHaveLength(101);
+});
+
+it("updates and clears labels on panel refresh without a head change", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let labels = labelsPage([
+    { id: "LA_1", name: "Needs review", color: "9e6a03" },
+    { id: "LA_2", name: "Documentation", color: "blue" },
+  ]);
+  const gh = ghFor(() => ({ r0: withLabels(labels) }));
+  const states = createPullStates(gh);
+  const changed = vi.fn();
+  const close = states.watch(pull, changed, "details");
+  await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce());
+  expect(states.get(pull)).toMatchObject({
+    head: "abc123",
+    details: {
+      details: {
+        labels: {
+          items: [
+            { id: "LA_1", name: "Needs review", color: "9e6a03" },
+            { id: "LA_2", name: "Documentation", color: undefined },
+          ],
+          complete: true,
+          totalCount: 2,
+        },
+      },
+    },
+  });
+
+  labels = labelsPage([
+    { id: "LA_1", name: "Ready to merge", color: "1f883d" },
+    { id: "LA_3", name: "Tests passed", color: "0e8a16" },
+  ]);
+  await vi.advanceTimersByTimeAsync(PANEL_REFRESH_MS);
+  await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
+  expect(states.get(pull)).toMatchObject({
+    head: "abc123",
+    details: {
+      details: {
+        labels: {
+          items: [
+            { id: "LA_1", name: "Ready to merge", color: "1f883d" },
+            { id: "LA_3", name: "Tests passed", color: "0e8a16" },
+          ],
+          complete: true,
+        },
+      },
+    },
+  });
+
+  labels = labelsPage([]);
+  await vi.advanceTimersByTimeAsync(PANEL_REFRESH_MS);
+  await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(3));
+  expect(states.get(pull)).toMatchObject({
+    head: "abc123",
+    details: {
+      details: {
+        labels: { items: [], complete: true, totalCount: 0 },
+      },
+    },
+  });
+  expect(listings(gh)).toHaveLength(3);
+  close();
 });
 
 it("is not settled while a check runs, more are unread, or the rollup waits", async () => {
@@ -1223,6 +1436,8 @@ it("holds what a level adds only while someone asks for it", async () => {
   states.watch(pull, () => {});
   const unfollow = states.watch(pull, () => {}, "feedback");
   await vi.waitFor(() => expect(states.get(pull)).toHaveProperty("feedback"));
+  expect(String(listings(gh).at(-1)?.[0])).toContain("reviews(");
+  expect(String(listings(gh).at(-1)?.[0])).not.toContain("labels(");
   unfollow();
   await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
   expect(states.get(pull)).not.toHaveProperty("feedback");

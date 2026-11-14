@@ -452,15 +452,6 @@ Never resolve
 `latest` at build time.
 The obsolete `target/goose-acp-src` and `target/goose-acp-build` caches are unused
 and can be removed locally when no old source build is running.
-Version 1.59.1 is v1.59.0 plus a release chore and two cherry-picks:
-aaif-goose/goose#13478 (adaptive thinking for Claude Fable 5.2, which rejects
-every request otherwise) and #13483 (unique ids for Gemini tool calls on the
-Databricks AI Gateway, where repeated calls to one tool otherwise never run).
-Its Release run failed on the macOS desktop build, before the step that
-attests the files, so the v1.59.1 archives have no attestations. Until they do,
-check each archive's SHA-256 against the `goose-acp-<target>`
-artifact of the tag's Release run (`gh run download 43553362910 --repo
-aaif-goose/goose -n goose-acp-<target>`); all five match the pinned values.
 Version 1.59.0 advances Goose 18 commits from v1.58.1; the four commits only on
 v1.58.1's release branch are release chores and cherry-picks of #13328 and
 #13340, both included in v1.59.0; distribution parity alone does not

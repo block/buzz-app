@@ -7,11 +7,12 @@ const at = (month: number, day: number, hour: number, minute = 0) =>
   new Date(2026, month, day, hour, minute).getTime() / 1_000;
 const NOW = at(10, 13, 12); // Fri Nov 13 2026, 12:00 PM local
 const DAY = 86_400;
+type Timer = Extract<Watch, { type: "timer" }>;
 const timer = (
   armed_at: number,
   interval_secs: number,
-  more: Partial<Extract<Watch, { type: "timer" }>> = {},
-): Watch => ({
+  more: Partial<Timer> = {},
+): Timer => ({
   type: "timer",
   interest_id: "attention-manager",
   enabled: true,
@@ -32,19 +33,75 @@ it("tells timers on one interval apart by when each runs next", () => {
   expect(describe(evening, NOW).title).toBe("Every 24h · next 10:00 PM");
 });
 
-it("counts the next run from the runner's used occurrences", () => {
+it("counts the next run from the runner's state", () => {
   // Weekly, first run Sun Nov 1 at 5:00 PM. Until the runner uses the Nov 8
   // run, that run is still the next one, overdue.
   const weekly = timer(at(10, 1, 17) - 7 * DAY, 7 * DAY);
   expect(describe(weekly, NOW).title).toBe(
     "Every 168h · next Sun, Nov 15 at 5:00 PM",
   );
-  expect(describe(weekly, NOW, 1).title).toBe(
+  const saved = { armedAt: weekly.armed_at, nextDue: at(10, 8, 17), used: 1 };
+  expect(describe(weekly, NOW, saved).title).toBe(
     "Every 168h · next Sunday at 5:00 PM",
   );
   expect(
     describe(timer(at(10, 13, 9), 3_600, { max_occurrences: 5 }), NOW).title,
   ).toBe("Every 1h · 5 runs · next 1:00 PM");
+});
+
+it("shows the runner's next run after a late run, an edit or a rearm", () => {
+  const hourly = timer(at(10, 13, 8), 3_600);
+  // The 9:00 run started late, at noon; the runner set the next for 1:00.
+  const late = { armedAt: hourly.armed_at, nextDue: at(10, 13, 13), used: 1 };
+  expect(describe(hourly, at(10, 13, 12, 5), late).title).toBe(
+    "Every 1h · next 1:00 PM",
+  );
+  // An interval edit keeps the saved next run.
+  expect(
+    describe({ ...hourly, interval_secs: 7_200 }, at(10, 13, 12, 5), late)
+      .title,
+  ).toBe("Every 2h · next 1:00 PM");
+  // Rearmed at noon with one used run kept: next is 1:00, not 2:00.
+  expect(
+    describe(timer(NOW, 3_600), at(10, 13, 12, 5), {
+      armedAt: NOW,
+      nextDue: at(10, 13, 13),
+      used: 1,
+    }).title,
+  ).toBe("Every 1h · next 1:00 PM");
+  // Rearmed at noon with its five used runs kept.
+  const rearmed = timer(NOW, 3_600, { max_occurrences: 10 });
+  expect(
+    describe(rearmed, at(10, 13, 12, 5), {
+      armedAt: NOW,
+      nextDue: at(10, 13, 13),
+      used: 5,
+    }).title,
+  ).toBe("Every 1h · 10 runs · next 1:00 PM");
+  // A one-shot that ran late reads when it ran.
+  const once = timer(at(10, 13, 3) - 60, 60, { max_occurrences: 1 });
+  expect(
+    describe(once, NOW, {
+      armedAt: once.armed_at,
+      nextDue: at(10, 13, 9) + 60,
+      used: 1,
+    }),
+  ).toEqual({ title: "Once · 9:00 AM", spent: true });
+});
+
+it("promises no run at or after the timer expires", () => {
+  const hourly = (expires_at: number) => timer(NOW, 3_600, { expires_at });
+  const now = at(10, 13, 12, 5);
+  expect(describe(hourly(at(10, 13, 12, 30)), now)).toEqual({
+    title: "Every 1h",
+    spent: false,
+  });
+  // A next run exactly at the deadline never starts.
+  expect(describe(hourly(at(10, 13, 13)), now).title).toBe("Every 1h");
+  // A next run one minute before the deadline still shows.
+  expect(describe(hourly(at(10, 13, 13, 1)), now).title).toBe(
+    "Every 1h · next 1:00 PM",
+  );
 });
 
 it("reads in the viewer's time zone", async () => {

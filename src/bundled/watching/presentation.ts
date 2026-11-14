@@ -1,3 +1,8 @@
+import {
+  timerSpent,
+  timerState,
+  type TimerState,
+} from "../../features/agents/attention";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import {
@@ -33,12 +38,13 @@ export function heading(value: string) {
 export function describe(
   watch: Watch,
   now = Date.now() / 1000,
-  usedOccurrences?: number,
+  saved?: TimerState,
 ) {
   if (watch.type === "timer") {
-    const used =
-      usedOccurrences ??
-      Math.max(0, Math.floor((now - watch.armed_at) / watch.interval_secs));
+    // The runner's saved state while it describes this schedule: after a late
+    // run, an edit or a rearm, only it knows when the timer runs next.
+    const state = timerState(watch, saved, now);
+    const spent = timerSpent(watch, state, now);
     const interval =
       watch.interval_secs % 3600 === 0
         ? `${watch.interval_secs / 3600}h`
@@ -47,20 +53,27 @@ export function describe(
           : `${watch.interval_secs}s`;
     const runs =
       watch.max_occurrences === null ? "" : ` · ${watch.max_occurrences} runs`;
-    const spent =
-      (watch.max_occurrences !== null && used >= watch.max_occurrences) ||
-      (watch.expires_at !== null && now >= watch.expires_at);
-    // When it runs, so timers on one interval tell apart. Occurrence k is due
-    // at armed_at + k × interval_secs, as the runner's `timerState` counts.
     const when = (at: number) =>
       formatItemTimestamp(at, { withTime: true, nowSeconds: now });
+    // A run due at or after the deadline never starts.
     const next =
-      watch.enabled && !spent
-        ? ` · next ${when(watch.armed_at + (used + 1) * watch.interval_secs)}`
+      watch.enabled &&
+      !spent &&
+      (watch.expires_at === null || state.nextDue < watch.expires_at)
+        ? ` · next ${when(state.nextDue)}`
         : "";
+    // A run sets the next one an interval after it started, so a one-shot
+    // the runner used ran an interval before its nextDue. Without saved
+    // state, its one run is the first occurrence.
+    const once =
+      state !== saved
+        ? watch.armed_at + watch.interval_secs
+        : state.used
+          ? state.nextDue - watch.interval_secs
+          : state.nextDue;
     const schedule =
       watch.max_occurrences === 1
-        ? `Once · ${when(watch.armed_at + watch.interval_secs)}`
+        ? `Once · ${when(once)}`
         : `Every ${interval}${runs}${next}`;
     return { title: schedule, spent };
   }

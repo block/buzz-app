@@ -94,7 +94,10 @@ function AppShellContent({
   navigationAttempt: string;
   onSelect: (
     key: string,
-    options?: Pick<NavigationOpenOptions, "focus"> & { section?: string },
+    options?: Pick<NavigationOpenOptions, "focus"> & {
+      section?: string;
+      resume?: boolean;
+    },
   ) => void;
   tone: string;
   workspace?: boolean;

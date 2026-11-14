@@ -864,6 +864,9 @@ and are asked to sign in again in Buzz.
   sidebar, such as the Drafts & sent plugin, keep Messages selected in the dock. The
   Messages sidebar stays open unless the page provides its own sidebar, which
   replaces it.
+  Switching to another app in the dock returns to where you last were in it,
+  such as Activity or an open channel and thread, in the same community.
+  Choosing the app you are already in opens its main view.
   The sidebar and message pane share one surface with a persistent divider;
   panel headers also have bottom hairlines. Dock icons stay still, highlight
   on hover, and show instant labels to their right. Bestie uses your

@@ -2136,6 +2136,29 @@ it("ends a turn's input with plugins' instructions, once", async () => {
   );
 });
 
+it("ends a turn's input with its conversation's instructions, keyed as its notes are", async () => {
+  const f = fixture();
+  const delivery = f.delivery("@Codex go on");
+  const conversationInstructions = vi.fn(() => ({
+    plugin: "acme.tasks",
+    text: "Review only.",
+  }));
+  const notes = vi.fn(() => []);
+  await f.runtime.run({
+    ...delivery,
+    agent: { ...delivery.agent, notes, conversationInstructions },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  expect(params.input[0]?.text).toMatch(
+    /<owner-instructions source="acme\.tasks">\n[\s\S]*\n\nReview only\.\n<\/owner-instructions>/,
+  );
+  expect(notes).toHaveBeenCalledOnce();
+  expect(conversationInstructions).toHaveBeenCalledWith(
+    ...(notes.mock.calls[0] as unknown[]),
+  );
+});
+
 it("hands a turn the notes plugins left while it was being prepared", async () => {
   const f = fixture();
   const delivery = f.delivery("@Codex go on");
@@ -5265,6 +5288,8 @@ it("continues an owner's Solo chat as one channel conversation posted at the top
     expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(1),
   );
   await vi.waitFor(() => expect(activity.superseded).toHaveBeenCalledOnce());
+  expect(activity.acknowledged).toHaveBeenCalledWith(undefined);
+  expect(next.acknowledged).toHaveBeenCalledWith({ steering: true });
   await f.tool("send", { audience: "everyone", text: "Progress" });
   if (first.trigger.type !== "mention") throw new Error("Expected mention");
   // A stale reply into the chat is returned for correction, not posted.

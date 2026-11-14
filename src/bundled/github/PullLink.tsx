@@ -9,6 +9,7 @@ import {
   LinkInteractiveContext,
   LinkLabelContext,
 } from "../../features/conversation/LinkLabelContext";
+import { CheckIcon } from "../../shared/design-system/icons/index";
 import { LinkLabel } from "../links/InlineLink";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import {
@@ -47,6 +48,11 @@ export function PullLink({ url, states }: { url: string; states: PullStates }) {
   const Icon = issue
     ? issueIcons[state ? issueState(state) : "open"]
     : stateIcons[state?.state ?? "open"];
+  // Only an approval is marked; the words say the rest.
+  const approved =
+    !issue &&
+    (state?.state === "open" || state?.state === "draft") &&
+    state.review === "approved";
   const words = (issue ? describeIssue : describePull)({
     state,
     failed: read === "failed",
@@ -77,6 +83,12 @@ export function PullLink({ url, states }: { url: string; states: PullStates }) {
           title={words}
         >
           <Icon aria-hidden="true" className={inlineStyles.icon} />
+          {approved && (
+            <CheckIcon
+              aria-hidden="true"
+              className={`${inlineStyles.icon} ${styles.pullApproved}`}
+            />
+          )}
         </span>
       }
     />

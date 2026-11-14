@@ -37,6 +37,7 @@ export function describePull({ state, failed }: Read) {
   if (!state) return "Pull request";
   const notes = [state.state === "draft" ? "draft" : state.state];
   if (state.state === "open" || state.state === "draft") {
+    if (state.review) notes.push(state.review);
     if (state.checks === "failure") notes.push("checks failing");
     if (state.checks === "pending") notes.push("checks running");
     if (state.conflicts) notes.push("conflicts");

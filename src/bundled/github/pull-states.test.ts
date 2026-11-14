@@ -95,7 +95,8 @@ it("reads every watched pull request together, once, then again each minute whil
 it("keeps the state object, and tells no one, when a poll reads the same state", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   let checks = "PENDING";
-  const gh = mockGh(async () => ({ r0: rollup("OPEN", {}, checks) }));
+  let approval = {};
+  const gh = mockGh(async () => ({ r0: rollup("OPEN", approval, checks) }));
   const states = createPullStates(gh);
   const changed = vi.fn();
   states.watch(pull, changed);
@@ -112,6 +113,11 @@ it("keeps the state object, and tells no one, when a poll reads the same state",
   expect(states.get(pull)).not.toBe(before);
   expect(states.get(pull)).toMatchObject({ checks: "success" });
   expect(changed).toHaveBeenCalledTimes(2);
+  // An approval alone, with nothing else changed, is news too.
+  approval = { reviewDecision: "APPROVED" };
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  expect(states.get(pull)).toMatchObject({ review: "approved" });
+  expect(changed).toHaveBeenCalledTimes(3);
 });
 
 it("keeps one reader that throws from failing the read, or keeping it from the rest", async () => {
@@ -1157,6 +1163,44 @@ it("is not settled while a check runs, more are unread, or the rollup waits", as
     const states = createPullStates(ghFor(() => ({ r0: answer })));
     const { state } = await states.read(pull, { maxAge: 0 });
     expect(state).toMatchObject({ settled: false });
+  }
+});
+
+it("reads what a pull request's reviews come to with its state, and asks the panel's reviews the panel's way", async () => {
+  const approved = { state: "APPROVED" };
+  const changes = { state: "CHANGES_REQUESTED" };
+  for (const [decision, reviews, review] of [
+    ["APPROVED", [approved], "approved"],
+    ["CHANGES_REQUESTED", [approved, changes], "changes requested"],
+    // Stamped, but a required review, such as a code owner's, is missing:
+    // no different from not stamped at all.
+    ["REVIEW_REQUIRED", [approved, null], undefined],
+    ["REVIEW_REQUIRED", [], undefined],
+    // A repository that requires no review leaves the decision to GitHub's
+    // page, where each reviewer's latest verdict counts.
+    [null, [approved], "approved"],
+    [null, [approved, changes], "changes requested"],
+    [null, [], undefined],
+  ] as const) {
+    const answer = full();
+    const gh = ghFor(() => ({
+      r0: {
+        ...answer,
+        pullRequest: {
+          ...answer.pullRequest,
+          reviewDecision: decision,
+          latestOpinionatedReviews: { nodes: reviews },
+        },
+      },
+    }));
+    const states = createPullStates(gh);
+    const { state } = await states.read(pull, { maxAge: 0, level: "details" });
+    expect(typeof state === "object" && state.review).toBe(review);
+    // GraphQL refuses one field asked twice with different arguments.
+    const query = String(gh.mock.calls[0]?.[0]);
+    expect(new Set(query.match(/latestOpinionatedReviews\([^)]*\)/g))).toEqual(
+      new Set(["latestOpinionatedReviews(first:50)"]),
+    );
   }
 });
 

@@ -25,7 +25,9 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import { apply as applyLinks } from "../links/index";
 import { apply } from "./index";
+import styles from "./GitHub.module.css";
 import { PullLink } from "./PullLink";
+import { CheckIcon } from "../../shared/design-system/icons/index";
 import { issueIcons, stateIcons } from "./pull-state-view";
 import type { PullState, PullStates } from "./pull-states";
 
@@ -69,6 +71,12 @@ const glyph = (
   renderToStaticMarkup(
     <Icon aria-hidden="true" className={inlineStyles.icon} />,
   );
+const approvedGlyph = renderToStaticMarkup(
+  <CheckIcon
+    aria-hidden="true"
+    className={`${inlineStyles.icon} ${styles.pullApproved}`}
+  />,
+);
 const icon = (container: HTMLElement) =>
   container.querySelector("[data-pr-state]");
 
@@ -112,6 +120,49 @@ it("shows the authored label with the plain pull request glyph until read, then 
   // A removed link leaves the anchor undescribed.
   unmount();
   expect(describe).toHaveBeenLastCalledWith(undefined);
+});
+
+it("marks an open or draft pull request only when approved, and says when changes are requested", () => {
+  const states = fakeStates();
+  const describe = vi.fn();
+  const { container } = render(
+    <LinkDescriptionContext value={describe}>
+      <PullLink url={pull} states={states} />
+    </LinkDescriptionContext>,
+  );
+  for (const [state, marked, words] of [
+    [
+      { state: "open", review: "approved" },
+      true,
+      "Pull request, open, approved",
+    ],
+    [
+      { state: "draft", review: "approved" },
+      true,
+      "Pull request, draft, approved",
+    ],
+    [
+      { state: "draft", review: "changes requested", checks: "failure" },
+      false,
+      "Pull request, draft, changes requested, checks failing",
+    ],
+    // Not yet approved, or read without gh: nothing about reviews.
+    [{ state: "open" }, false, "Pull request, open"],
+    // Once merged or closed, its reviews no longer matter.
+    [{ state: "merged", review: "approved" }, false, "Pull request, merged"],
+    [
+      { state: "closed", review: "changes requested" },
+      false,
+      "Pull request, closed",
+    ],
+  ] as const) {
+    act(() => states.set(state));
+    expect(icon(container)).toHaveAttribute("title", words);
+    expect(describe).toHaveBeenLastCalledWith(words);
+    expect(icon(container)?.innerHTML).toBe(
+      glyph(stateIcons[state.state]) + (marked ? approvedGlyph : ""),
+    );
+  }
 });
 
 it("shows an issue link's authored label with the plain issue glyph until read, then each state's own", () => {

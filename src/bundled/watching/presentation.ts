@@ -39,6 +39,8 @@ export function describe(
   watch: Watch,
   now = Date.now() / 1000,
   saved?: TimerState,
+  /** Its Interest is paused, so the runner skips it. */
+  paused = false,
 ) {
   if (watch.type === "timer") {
     // The runner's saved state while it describes this schedule: after a late
@@ -55,9 +57,10 @@ export function describe(
       watch.max_occurrences === null ? "" : ` · ${watch.max_occurrences} runs`;
     const when = (at: number) =>
       formatItemTimestamp(at, { withTime: true, nowSeconds: now });
-    // A run due at or after the deadline never starts.
+    // A paused timer, or a run due at or after the deadline, never starts.
     const next =
       watch.enabled &&
+      !paused &&
       !spent &&
       (watch.expires_at === null || state.nextDue < watch.expires_at)
         ? ` · next ${when(state.nextDue)}`

@@ -137,7 +137,7 @@ it("shows a one-shot timer's run time, before and after it runs", () => {
   });
 });
 
-it("leaves out the next run of a spent or disabled timer", () => {
+it("leaves out the next run of a spent, disabled or paused timer", () => {
   const armed = at(10, 1, 8);
   expect(describe(timer(armed, DAY, { max_occurrences: 3 }), NOW)).toEqual({
     title: "Every 24h · 3 runs",
@@ -148,6 +148,11 @@ it("leaves out the next run of a spent or disabled timer", () => {
     spent: true,
   });
   expect(describe(timer(armed, DAY, { enabled: false }), NOW)).toEqual({
+    title: "Every 24h",
+    spent: false,
+  });
+  // Its Interest is paused, so the runner skips it.
+  expect(describe(timer(armed, DAY), NOW, undefined, true)).toEqual({
     title: "Every 24h",
     spent: false,
   });

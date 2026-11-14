@@ -39,10 +39,12 @@ export function PresenceIndicator({
   presence,
   pubkey,
   profile = false,
+  compact = false,
 }: {
   presence: Presence;
   pubkey: string;
   profile?: boolean;
+  compact?: boolean;
 }) {
   const state = usePresenceState(presence, pubkey, profile);
   const status = state.split(":")[0] as ReturnType<Presence["status"]>;
@@ -57,7 +59,7 @@ export function PresenceIndicator({
   return (
     <span
       role="img"
-      className="text-body-sm text-secondary"
+      className={`text-body-sm ${compact ? { online: "text-success", away: "text-warning", offline: "text-subtle" }[status] : "text-secondary"}`}
       aria-label={`Presence: ${label}`}
       title={
         presence.limited(pubkey)
@@ -65,7 +67,8 @@ export function PresenceIndicator({
           : "Recent Buzz session status in this community; periodically refreshed"
       }
     >
-      {symbol} {label}
+      {symbol}
+      {!compact && ` ${label}`}
     </span>
   );
 }

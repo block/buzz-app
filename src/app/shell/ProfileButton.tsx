@@ -1,12 +1,23 @@
 import { PluginUpdatesMenu } from "../PluginUpdates";
 import { formatPublicKey } from "../../shared/identity/public-key";
-import { usePresenceStatus } from "../../features/presence/react";
+import {
+  PresenceIndicator,
+  usePresenceStatus,
+} from "../../features/presence/react";
 import { useRelayConnection } from "../../features/relay/react";
 import { avatarMedia, avatarSource } from "../../shared/avatar-source";
 import { useUserStatus } from "../../features/user-status/useUserStatus";
 import { useStatusEditor } from "../../features/user-status/useStatusEditor";
 import { statusShortcut } from "../../features/user-status/status-shortcut";
 import { StatusEmoji } from "../../features/user-status/StatusEmoji";
+import type { UserStatus } from "../../features/relay/user-status";
+import type { RelaySession } from "../../features/relay/session";
+import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
+import {
+  formatFullTimestamp,
+  formatItemTimestamp,
+} from "../../shared/datetime";
+import { useClockFormat } from "../../shared/clock-preference";
 import { Button } from "../../shared/design-system/ui/Button";
 import { StatusEditor } from "../../features/user-status/StatusEditor";
 import {
@@ -63,6 +74,61 @@ import {
 } from "../../features/profiles/share-time-zone";
 
 const noSubscription = () => () => {};
+
+function ProfileStatusDetails({
+  name,
+  session,
+  viewer,
+  status,
+}: {
+  name: string;
+  session: RelaySession | undefined;
+  viewer: string | undefined;
+  status: UserStatus | undefined;
+}) {
+  useClockFormat();
+  const expiration = status?.expiresAt;
+  const expiresAt =
+    expiration !== undefined &&
+    Number.isFinite(new Date(expiration * 1000).getTime())
+      ? expiration
+      : undefined;
+  return (
+    <>
+      <div className={styles.previewName}>
+        <span className="text-label-sm">{name}</span>
+        {session?.presence && viewer && (
+          <PresenceIndicator
+            presence={session.presence}
+            pubkey={viewer}
+            compact
+          />
+        )}
+      </div>
+      {session && status && (
+        <>
+          <div className={styles.previewStatus}>
+            <StatusEmoji
+              session={session}
+              value={status.emoji}
+              url={status.emojiUrl}
+            />
+            <span className="text-body-sm">{status.text}</span>
+          </div>
+          {expiresAt !== undefined && (
+            <time
+              className="text-caption text-subtle"
+              dateTime={new Date(expiresAt * 1000).toISOString()}
+              title={formatFullTimestamp(expiresAt)}
+            >
+              Until {formatItemTimestamp(expiresAt, { withTime: true })}
+            </time>
+          )}
+        </>
+      )}
+    </>
+  );
+}
 // The parent row retains the icon for the saved appearance preference.
 const colorModes = {
   light: { label: "Light", Icon: SunIcon },
@@ -241,6 +307,18 @@ export function ProfileButton({
   const appearanceTrigger = useRef<HTMLDivElement>(null);
   const openingStatus = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const previewFocusBlocked = useRef(false);
+  useEffect(() => {
+    const deliberateFocus = (event: KeyboardEvent) => {
+      if (event.key === "Tab") previewFocusBlocked.current = false;
+    };
+    window.addEventListener("keydown", deliberateFocus, true);
+    return () => window.removeEventListener("keydown", deliberateFocus, true);
+  }, []);
+  const previewSession =
+    selected && connection.viewer === viewer ? session : undefined;
+  const previewStatus = previewSession ? status : undefined;
   // Settings takes focus once the menu has closed.
   const handoff = useRef(false);
   const actions = useSyncExternalStore(
@@ -259,6 +337,7 @@ export function ProfileButton({
     </MenuItem>
   );
   const accountLabel = useId();
+  const previewId = useId();
   const statusUnavailable = useId();
   const avatar = (
     <Avatar
@@ -276,8 +355,10 @@ export function ProfileButton({
         modal={false}
         open={menuOpen}
         onOpenChange={(open) => {
+          previewFocusBlocked.current = true;
           setMenuOpen(open);
           if (open) {
+            setPreviewOpen(false);
             handoff.current = false;
             openingStatus.current = false;
           } else {
@@ -299,33 +380,83 @@ export function ProfileButton({
           }
         }}
       >
-        <MenuTrigger
-          render={
-            <IconButton
-              type="button"
-              aria-label="Your profile"
-              ref={profileTrigger}
-              title={name}
-              variant="avatar"
-              shape="round"
-              icon={
+        <PreviewCard
+          side="right"
+          align="end"
+          open={previewOpen && !menuOpen}
+          onOpenChange={(open, details) => {
+            if (
+              open &&
+              (menuOpen ||
+                (details.reason === "trigger-focus" &&
+                  previewFocusBlocked.current))
+            ) {
+              details.cancel();
+              return;
+            }
+            if (open) previewFocusBlocked.current = false;
+            setPreviewOpen(open);
+          }}
+          id={previewId}
+          aria-label={name}
+          trigger={
+            <div className={styles.trigger}>
+              {previewSession && previewStatus && (
                 <span
-                  className={styles.triggerAvatar}
+                  className={styles.triggerStatus}
                   role="img"
-                  aria-label={
-                    viewer
-                      ? observed === "unknown"
-                        ? "Your status is unavailable"
-                        : `Your status: ${label}`
-                      : "Your avatar"
-                  }
+                  aria-label={[previewStatus.emoji, previewStatus.text]
+                    .filter(Boolean)
+                    .join(" ")}
                 >
-                  {avatar}
+                  <StatusEmoji
+                    session={previewSession}
+                    value={previewStatus.emoji}
+                    url={previewStatus.emojiUrl}
+                    decorative
+                    fallback="💬"
+                  />
                 </span>
-              }
-            />
+              )}
+              <MenuTrigger
+                render={
+                  <IconButton
+                    type="button"
+                    aria-label="Your profile"
+                    aria-describedby={
+                      previewOpen && !menuOpen ? previewId : undefined
+                    }
+                    ref={profileTrigger}
+                    variant="avatar"
+                    shape="round"
+                    icon={
+                      <span
+                        className={styles.triggerAvatar}
+                        role="img"
+                        aria-label={
+                          viewer
+                            ? observed === "unknown"
+                              ? "Your status is unavailable"
+                              : `Your status: ${label}`
+                            : "Your avatar"
+                        }
+                      >
+                        {avatar}
+                      </span>
+                    }
+                  />
+                }
+              />
+            </div>
           }
-        />
+        >
+          <ProfileStatusDetails
+            name={name}
+            session={previewSession}
+            viewer={viewer}
+            status={previewStatus}
+          />
+        </PreviewCard>
         <MenuPopup
           data-profile-menu=""
           side="right"
@@ -584,7 +715,10 @@ export function ProfileButton({
           scope={connection.scope}
           current={statusEditor.editor.current}
           viewer={statusEditor.editor.viewer}
-          close={statusEditor.close}
+          close={() => {
+            previewFocusBlocked.current = true;
+            statusEditor.close();
+          }}
           finalFocus={profileTrigger}
         />
       )}

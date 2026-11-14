@@ -69,10 +69,13 @@ import { lifecycleNoun } from "../../bundled/channels/ChannelLifecycleDialog";
 import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
 import styles from "./RailNavigation.module.css";
 import {
-  ConversationList,
+  useConversationCount,
+  type ConversationQuery,
+} from "../../features/conversation/conversation-index";
+import type { ChannelSummary } from "../../features/relay/contracts";
+import {
   CollectionCreationAction,
   CollectionFilters,
-  includeMessagesChannel,
   useActivityView,
   withoutAgentViews,
   type ActivityView,
@@ -633,13 +636,7 @@ export function RailNavigation({
       );
     }
     const teamCount = (filter: ActivityView["filter"]) => (
-      <TeamCount
-        session={session}
-        navigator={navigator}
-        scope={scope}
-        view={messageView}
-        filter={filter}
-      />
+      <TeamCount session={session} filter={filter} />
     );
     const activityPage = teamPages.find(
       (page) => page.key === "buzz.inbox/inbox",
@@ -1087,56 +1084,36 @@ export function RailNavigation({
   );
 }
 
-/** Unread conversations in one Team view; nothing when all are read. It
- * follows the conversations themselves, not the visit the rail is showing. */
+/** Unread rows in one Team view; nothing when all are read. It follows the
+ * conversations themselves, not the visit the rail is showing. */
 const TeamCount = memo(function TeamCount({
   session,
-  navigator,
-  scope,
-  view,
   filter,
 }: {
   session: RelaySession;
-  navigator: Navigation;
-  scope: NavigationScope;
-  view: ActivityView;
   filter: ActivityView["filter"];
 }) {
-  const counted = useMemo(
-    () => ({ ...view, filter, unread: true }),
-    [view, filter],
-  );
-  const target = useMemo(
-    () => sidebarSectionTarget(scope, "messages"),
-    [scope],
-  );
-  const includeChannel = useCallback(
-    (channel: Parameters<typeof includeMessagesChannel>[0]) =>
-      includeMessagesChannel(channel, counted),
-    [counted],
-  );
-  return (
-    <ConversationList
-      session={session}
-      navigator={navigator}
-      scope={scope}
-      target={target}
-      view={counted}
-      // A list keeps its open row under Unread only; a count does not.
-      isOpen={neverOpen}
-      includeChannel={includeChannel}
-      renderEntries={renderCount}
-    />
-  );
-});
-const neverOpen = () => false;
-const renderCount = (items: readonly unknown[]) =>
-  items.length ? (
+  const count = useConversationCount(session, unreadIn[filter]);
+  return count ? (
     <CountBadge
-      count={items.length}
-      label={`${items.length} unread conversation${items.length === 1 ? "" : "s"}`}
+      count={count}
+      label={`${count} unread conversation${count === 1 ? "" : "s"}`}
     />
   ) : null;
+});
+const unreadIn = Object.fromEntries(
+  (["all", "threads", "dms", "mentions", "channels"] as const).map((filter) => [
+    filter,
+    {
+      filter,
+      unread: true,
+      // All keeps Solo in its own collection.
+      ...(filter === "all" && {
+        include: (channel: ChannelSummary) => channel.channelType !== "solo",
+      }),
+    },
+  ]),
+) as Record<ActivityView["filter"], ConversationQuery>;
 const noSubscription = () => () => {};
 const pluginCatalog: RailEntry = {
   id: "settings:plugins",

@@ -1,4 +1,4 @@
-import { steerPrompt } from "../../../bundled/claude-code/prompt";
+import { runningReply, steerPrompt } from "../../../bundled/claude-code/prompt";
 import { unsupportedSynced } from "../../agents/agent-config";
 import type { HostMcpServer } from "../../host/service";
 import type { AcpProcess } from "./process";
@@ -47,6 +47,8 @@ export class AcpSession {
   /** Steers waiting for the running turn's id, which the harness sends just
    * after the turn starts. */
   private runWaiters: ((runId: string | undefined) => void)[] = [];
+  /** The activity scope of the turn prompted last. */
+  private root: string | undefined;
   /** A `session/prompt` is in flight. */
   private prompting = false;
   private readonly steering = new Set<Waiter>();
@@ -61,6 +63,7 @@ export class AcpSession {
     refresh?: ActivityReceipt["refresh"];
     waiter?: Waiter;
     delivered?: () => void;
+    scope?: string;
   }[] = [];
   /** The model the running turn runs on; empty is its provider's default. */
   private model = "";
@@ -182,6 +185,7 @@ export class AcpSession {
         ...(activity.delivered ? { delivered: activity.delivered } : {}),
         ...(activity.current ? { current: activity.current } : {}),
         ...(activity.refresh ? { refresh: activity.refresh } : {}),
+        ...(activity.activityScope ? { scope: activity.activityScope } : {}),
         waiter,
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
@@ -330,8 +334,16 @@ export class AcpSession {
       }
       const { steering } = this.acp.hooks;
       if (runId && steering) {
+        const { root } = this;
+        const scope = activity.activityScope;
+        // Only into the running turn: queued below as a turn of its own, the
+        // steer has no other work running.
+        const steered =
+          root && scope && scope !== root
+            ? `${text}\n\n${runningReply(root)}`
+            : text;
         try {
-          await steering.steer(this.acp, this.id, runId, text);
+          await steering.steer(this.acp, this.id, runId, steered);
           if (live()) {
             activity.delivered?.();
             this.acknowledge(activity, waiter);
@@ -352,6 +364,7 @@ export class AcpSession {
           ...(activity.delivered ? { delivered: activity.delivered } : {}),
           ...(activity.current ? { current: activity.current } : {}),
           ...(activity.refresh ? { refresh: activity.refresh } : {}),
+          ...(activity.activityScope ? { scope: activity.activityScope } : {}),
           waiter,
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
@@ -413,6 +426,7 @@ export class AcpSession {
           refresh,
           waiter,
           delivered,
+          scope,
         } = this.queue.shift() ?? {
           text: "",
         };
@@ -444,6 +458,7 @@ export class AcpSession {
           }
           delivered?.();
           sent = true;
+          this.root = scope;
           if (waiter) this.sent(waiter);
           const lead = this.preamble;
           const { stopReason } = (await this.acp.request("session/prompt", {

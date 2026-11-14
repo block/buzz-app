@@ -26,6 +26,7 @@ import {
   useStableRowActivity,
 } from "./activity-presentation";
 import { MessageRow } from "./MessageRow";
+import { profileTarget } from "../profiles/target";
 
 stubAvatarBrowserApis();
 afterEach(() => {
@@ -599,6 +600,69 @@ it("shimmers a standalone working step and stops when that request finishes", ()
   }
 });
 
+it("opens a standalone working step's agent profile from its avatar and name", () => {
+  const f = fixture();
+  const agent = "a".repeat(64);
+  const row = { ...step, authorId: agent };
+  const owner = createRelaySession({
+    viewer: keypair().pubkey,
+    relayAuthor: keypair().pubkey,
+    media: () => undefined,
+    query: async () => [],
+  });
+  const open = vi.fn(() => true);
+  try {
+    f.local
+      .begin({
+        scope: "test",
+        agent,
+        channelId: "channel",
+        messageId: "request",
+        threadRootId: "request",
+      })
+      .started();
+    function Preview() {
+      const presentation = useActivityPresentation(
+        [row],
+        f.activity,
+        new Set([agent]),
+        row.threadRootId,
+      );
+      return (
+        <MessageRow
+          row={row}
+          recordedActivity={presentation.byRow.get(row.id)}
+          session={{ ...owner.session, agentActivity: f.activity }}
+          profile={{ name: "Studio assistant" }}
+          media={() => undefined}
+          onOpenLink={open}
+          canOpenLink={() => true}
+          day={false}
+          retry={undefined}
+        />
+      );
+    }
+    render(<Preview />);
+    expect(screen.getByText(row.content)).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    const target = profileTarget(agent, { agent: true });
+    fireEvent.click(
+      screen.getByRole("button", { name: "View Studio assistant profile" }),
+    );
+    expect(open).toHaveBeenCalledExactlyOnceWith(target, {
+      rootId: "request",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Studio assistant" }));
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(open).toHaveBeenLastCalledWith(target, { rootId: "request" });
+  } finally {
+    owner.dispose();
+    f.dispose();
+  }
+});
+
 it("opens contained history and keeps focus on the collapse control", () => {
   const history = [
     step,
@@ -704,6 +768,77 @@ it("keeps the primary avatar on the activity bubble without repeating an anchore
     ]),
   );
   expect(screen.getByText("Studio assistant", { exact: true })).toBeVisible();
+});
+
+it("opens an activity run's agent profile beside its thread, leaving a group's name plain", () => {
+  const agent = "a".repeat(64),
+    helper = "f".repeat(64);
+  const run = { ...step, authorId: agent };
+  const history = [{ ...run, id: "one" }, run];
+  const { audience: _, ...reply } = run;
+  const open = vi.fn(() => true);
+  const renderGroup = (rows: ChannelMessage[]) => {
+    const group = activityPresentation(
+      rows,
+      undefined,
+      new Set([agent, helper]),
+    ).groups[0];
+    if (!group) throw new Error("Missing group");
+    return (
+      <>
+        <button type="button">Elsewhere</button>
+        <ActivityGroupPreview
+          group={group}
+          profiles={
+            new Map([
+              [agent, { name: "Studio assistant" }],
+              [helper, { name: "Helper" }],
+            ])
+          }
+          media={() => undefined}
+          expanded={false}
+          onToggle={() => {}}
+          openActivity={open}
+          canOpenActivity={() => true}
+        />
+      </>
+    );
+  };
+  const target = profileTarget(agent, { agent: true });
+  const origin = { rootId: "request" };
+  const view = render(renderGroup(history));
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Studio assistant profile" }),
+  );
+  expect(open).toHaveBeenCalledExactlyOnceWith(target, origin);
+  fireEvent.click(screen.getByRole("button", { name: "Studio assistant" }));
+  expect(open).toHaveBeenCalledTimes(2);
+  expect(open).toHaveBeenLastCalledWith(target, origin);
+  // Anchored under a reply, the run has no byline; its avatar still opens.
+  act(() => screen.getByRole("button", { name: "Elsewhere" }).focus());
+  view.rerender(renderGroup([{ ...reply, id: "reply" }, ...history]));
+  expect(screen.queryByText("Studio assistant", { exact: true })).toBeNull();
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Studio assistant profile" }),
+  );
+  expect(open).toHaveBeenCalledTimes(3);
+  expect(open).toHaveBeenLastCalledWith(target, origin);
+  // Opening focused the avatar; a group forms once focus moves on.
+  act(() => screen.getByRole("button", { name: "Elsewhere" }).focus());
+  view.rerender(
+    renderGroup([
+      { ...run, id: "one" },
+      { ...run, authorId: helper },
+    ]),
+  );
+  expect(
+    screen.getByRole("img", { name: "Studio assistant, Helper" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: /profile$/ })).toBeNull();
+  // The byline names one agent of several, so it opens no one's profile.
+  expect(screen.getByText("Studio assistant", { exact: true })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Studio assistant" })).toBeNull();
+  expect(open).toHaveBeenCalledTimes(3);
 });
 
 it("uses channel-qualified names for the excerpt and participant avatars", () => {

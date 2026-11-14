@@ -34,6 +34,7 @@ import {
 import { TypingIndicator } from "../../features/messages/TypingIndicator";
 import {
   claimProfileTranscript,
+  profileTarget,
   profileTranscriptRequest,
 } from "../../features/profiles/target";
 import { createAgentActivity } from "../../features/agents/activity";
@@ -106,6 +107,8 @@ function fixture(local?: ReturnType<typeof createLocalAgentActivity>) {
     },
     live: { retry: () => activity.state(live) },
     media: () => undefined,
+    // A focused avatar previews its profile.
+    directMessages: { available: false },
   } as unknown as RelaySession;
   const send = (
     agent: string,
@@ -207,6 +210,89 @@ it("shows one bubble with one avatar per agent across multiple turns, removing o
     f.dispose();
   }
 });
+it("opens the working agent's profile from its avatar and name through the message's opener", () => {
+  const f = fixture();
+  const view = render(<ActivityAccessory {...f.props} />);
+  try {
+    f.send(B, "b1", 1, "turn_started", { triggeringEventIds: [root] });
+    const region = screen.getByRole("region", {
+      name: "Agent activity on this message",
+    });
+    const target = profileTarget(B, { agent: true });
+    fireEvent.click(
+      within(region).getByRole("button", { name: "View Bubbles profile" }),
+    );
+    expect(f.props.open).toHaveBeenCalledExactlyOnceWith(target);
+    fireEvent.click(within(region).getByRole("button", { name: "Bubbles" }));
+    expect(f.props.open).toHaveBeenCalledTimes(2);
+    expect(f.props.open).toHaveBeenLastCalledWith(target);
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+it("keeps the working row's identity plain where its profile cannot open, and a group's name", () => {
+  const f = fixture();
+  // Activity stays visible while the profile itself cannot open.
+  const view = render(
+    <ActivityAccessory
+      {...f.props}
+      canOpen={(target) => target !== profileTarget(B, { agent: true })}
+    />,
+  );
+  try {
+    f.send(B, "b1", 1, "turn_started", { triggeringEventIds: [root] });
+    const region = screen.getByRole("region", {
+      name: "Agent activity on this message",
+    });
+    expect(within(region).getByRole("img", { name: "Bubbles" })).toBeVisible();
+    expect(
+      within(region).queryByRole("button", { name: /^(View )?Bubbles/ }),
+    ).toBeNull();
+    view.rerender(<ActivityAccessory {...f.props} />);
+    f.send(A, "a1", 1, "turn_started", { triggeringEventIds: [root] });
+    expect(
+      within(region).getByRole("img", { name: "Blossom, Bubbles" }),
+    ).toBeVisible();
+    expect(
+      within(region).queryByRole("button", { name: /profile$/ }),
+    ).toBeNull();
+    // The byline names one agent of several, so it opens no one's profile.
+    expect(
+      within(region).queryByRole("button", { name: /^(Blossom|Bubbles)$/ }),
+    ).toBeNull();
+    expect(f.props.open).not.toHaveBeenCalled();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+it.each(["avatar", "name"] as const)(
+  "hands a focused %s back to the host when the working agent's row retires",
+  async (part) => {
+    const f = fixture();
+    const onFocusedRemoval = vi.fn();
+    const view = render(
+      <ActivityAccessory {...f.props} onFocusedRemoval={onFocusedRemoval} />,
+    );
+    try {
+      f.send(B, "b1", 1, "turn_started", { triggeringEventIds: [root] });
+      const identity = screen.getByRole("button", {
+        name: part === "avatar" ? "View Bubbles profile" : "Bubbles",
+      });
+      act(() => identity.focus());
+      f.send(B, "b1", 2, "turn_completed");
+      await act(async () => vi.runAllTicks());
+      expect(onFocusedRemoval).toHaveBeenCalledOnce();
+      expect(
+        screen.queryByLabelText("Agent activity on this message"),
+      ).toBeNull();
+    } finally {
+      view.unmount();
+      f.dispose();
+    }
+  },
+);
 it("keeps uncertain work internally without showing a passive error, then resumes on fresh evidence", () => {
   const f = fixture();
   const view = render(<ActivityAccessory {...f.props} />);
@@ -805,7 +891,9 @@ it.each([false, true])(
           .focus(),
       );
       f.send(B, "other", 2, "turn_completed");
-      expect(screen.getByTitle("Blossom")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "View Blossom profile" }),
+      ).toBeInTheDocument();
       f.send(A, "here", 2, "turn_completed");
       await act(async () => vi.runAllTicks());
       expect(onFocusedRemoval).toHaveBeenCalledOnce();

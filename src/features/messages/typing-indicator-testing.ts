@@ -41,6 +41,13 @@ export function fixture() {
   const ensure = vi.fn();
   const session = {
     viewer: "viewer",
+    // A focused avatar previews its profile.
+    presence: {
+      subscribe: () => () => {},
+      status: () => "online",
+      limited: () => false,
+    },
+    directMessages: { available: false },
     typing: { snapshot: () => typing, subscribe },
     agentActivity: { snapshot: () => activity, subscribe },
     profiles: { snapshot: () => profiles, subscribe, ensure },

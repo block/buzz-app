@@ -8,7 +8,9 @@
 // Nothing inside that window is dropped, however often the agent's turns run.
 //
 // Each day's starts are a value of their own, so a turn rewrites only its
-// day's value, and whole days past keeping are removed. Agent storage takes
+// day's value, and whole days past keeping are removed, every agent's of the
+// turn's type. A removed agent's days stay until then, so a harness can still
+// remove what its sessions left. Agent storage takes
 // 4 MiB a value: about 70,000 starts in one day, far more than one timer's
 // 1,440 at its shortest interval. A save past that fails and is logged.
 import { validTime } from "../agent-harness/acp/agent-sessions";
@@ -56,12 +58,19 @@ export function standaloneSessions(
   now: () => number = Date.now,
 ) {
   const prefix = dayKey(type, agent, 0).slice(0, -1);
-  /** The stored days, each with its key. */
-  const days = () =>
+  const typePrefix = `${STANDALONE_PREFIX}${type}:`;
+  /** The stored days, each with its key: the agent's, or with `every`, those
+   * of every agent of the type, removed ones too. */
+  const days = (every = false) =>
     storage.keys().flatMap((key) => {
-      if (!key.startsWith(prefix)) return [];
-      const day = key.slice(prefix.length);
-      return /^\d{1,9}$/.test(day) ? [{ key, day: Number(day) }] : [];
+      const day = every
+        ? /^[^:]+:(\d{1,9})$/.exec(key.slice(typePrefix.length))?.[1]
+        : key.slice(prefix.length);
+      return key.startsWith(every ? typePrefix : prefix) &&
+        day &&
+        /^\d{1,9}$/.test(day)
+        ? [{ key, day: Number(day) }]
+        : [];
     });
   const cutoff = () => now() - STANDALONE_DAYS * DAY;
   const kept = () => {
@@ -79,7 +88,8 @@ export function standaloneSessions(
     list: () =>
       kept().map(([id, at, wake]) => (wake ? { id, at, wake } : { id, at })),
     /** Records a one-off turn's new session, and the turn's key when given,
-     * then removes the days past keeping. With `drop`, a day is removed only
+     * then removes the days past keeping, of every agent of the type. With
+     * `drop`, a day is removed only
      * once `drop` has removed what its sessions left behind, such as their
      * transcripts; a day `drop` fails for stays, unlisted, for the next add
      * to try again. A failed save or drop is logged, never thrown, so the
@@ -98,7 +108,9 @@ export function standaloneSessions(
         const sessions = read(storage.get(key));
         sessions.push(short(wake) ? [id, at, wake] : [id, at]);
         const after = cutoff();
-        const past = days().filter(({ day }) => (day + 1) * DAY <= after);
+        // Every agent's of the type: a removed agent's record stays until
+        // its days pass, so what they left can still be dropped.
+        const past = days(true).filter(({ day }) => (day + 1) * DAY <= after);
         await storage.set(
           key,
           JSON.stringify({ version: 1, sessions } satisfies Stored),
@@ -120,17 +132,4 @@ export function standaloneSessions(
       }
     },
   };
-}
-
-/** Removes a membership's one-off turn sessions, of every agent type. */
-export async function removeStandaloneSessions(
-  storage: AgentStore,
-  agent: AgentKey,
-) {
-  for (const key of storage.keys())
-    if (
-      key.startsWith(STANDALONE_PREFIX) &&
-      key.slice(STANDALONE_PREFIX.length).split(":")[1] === agent
-    )
-      await storage.set(key, null);
 }

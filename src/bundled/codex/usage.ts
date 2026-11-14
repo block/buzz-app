@@ -251,8 +251,14 @@ export async function readUsage(
               .request<{ thread: Thread }>("thread/read", { threadId })
               .then(({ thread }) => [thread])
               .catch((error: unknown) => {
-                // Codex no longer has it, or not yet.
-                if (error instanceof Refused) return [];
+                // Codex's answer for a thread it has no rollout of, as
+                // one deleted or never kept; a thread it keeps reads even
+                // when not loaded. Any other refusal fails the read.
+                if (
+                  error instanceof Refused &&
+                  error.message === `thread not loaded: ${threadId}`
+                )
+                  return [];
                 throw error;
               }),
           ),

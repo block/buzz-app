@@ -1903,7 +1903,8 @@ app's record of the session it started says it is the agent's. That record is
 kept apart from saved prompts, for 32 days from the session's start, longer than
 Usage reads back, with no limit on how many sessions it holds. Each day's starts
 are saved as one value, and a day's value is removed once all of it is past
-keeping. The snapshot has no `channelId`, and a session from before that
+keeping, by the next standalone turn of any agent of that type. Removing an
+agent keeps its record until then. The snapshot has no `channelId`, and a session from before that
 record was kept is not counted.
 
 Codex finds the agent's threads through app-server by the agent's name in their
@@ -1919,8 +1920,10 @@ misses it, as after the agent is renamed, and still keeps it only when its
 rollout names the agent's pubkey. When a later standalone turn removes a day
 of that record past keeping, it first deletes that day's threads with
 `thread/delete`, which removes their rollouts; a day whose delete fails stays,
-unlisted, for the next turn to try again. Only threads the record lists are
-deleted, never a conversation's. On an execution target the thread stays
+unlisted, for the next turn to try again. Every Codex agent here shares Buzz's
+one Codex home, so any agent's turn deletes the expired threads of another,
+removed ones included. Only threads the record lists are deleted, never a
+conversation's. On an execution target the thread stays
 ephemeral, and Usage reads none there.
 These threads stay out of the user's own Codex history, since Buzz's Codex home
 is its own, and out of conversation lookups, whose names open with `Buzz #`.

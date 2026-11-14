@@ -316,6 +316,31 @@ it("still counts a timer thread recorded as Sol once the agent is renamed Luna, 
   expect(looked.sort()).toEqual(["before", "gone", "theirs"]);
 });
 
+it("fails the read when Codex refuses a recorded thread for any reason but having no rollout of it", async () => {
+  // Codex 0.169's answers: a thread it keeps reads even when not loaded; one
+  // deleted, or never kept, is "thread not loaded: <id>".
+  const answers: Record<string, string> = {
+    locked: "database is locked",
+    other: "thread not loaded: another-id",
+    invalid: "invalid thread id: invalid character",
+  };
+  for (const [id, refusal] of Object.entries(answers)) {
+    const spawn = processes(
+      () => ({ data: [], nextCursor: null }),
+      ({ threadId }) => (threadId === id ? refusal : undefined),
+    );
+    await expect(
+      readUsage(
+        { spawn, readFile: async () => new Uint8Array() },
+        { ...sol, name: "Luna" },
+        hour - HOUR,
+        new AbortController().signal,
+        new Set([id, "gone"]),
+      ),
+    ).rejects.toThrow(refusal);
+  }
+});
+
 it("finds the agent's threads by name, reads their rollouts, and later only those Codex updated", async () => {
   home = mkdtempSync(join(tmpdir(), "codex-usage-"));
   const rollout = (
@@ -531,7 +556,8 @@ it("reads at most four rollouts at once, across agents and their subagents", asy
 /** `thread/list` as `list` answers it, from a fake app-server, and the
  * manifest's `read` for real. */
 /** A Codex app-server answering `thread/list` with `list` and `thread/read`
- * with `read`, which refuses a thread `read` gives none for. */
+ * with `read`. A thread `read` gives none for is refused as Codex 0.169
+ * refuses one it has no rollout of; a string is refused with that message. */
 function processes(
   list: (params: Record<string, unknown>) => unknown,
   read: (params: Record<string, unknown>) => unknown = () => undefined,
@@ -562,17 +588,15 @@ function processes(
         const params = wire.params as Record<string, unknown>;
         if (wire.method === "thread/read") {
           const thread = read(params);
+          const refused =
+            typeof thread === "string"
+              ? thread
+              : `thread not loaded: ${String(params.threadId)}`;
           options.onStdout?.(
             `${JSON.stringify(
-              thread
+              thread && typeof thread !== "string"
                 ? { id: wire.id, result: { thread } }
-                : {
-                    id: wire.id,
-                    error: {
-                      code: -32600,
-                      message: `thread not loaded: ${String(params.threadId)}`,
-                    },
-                  },
+                : { id: wire.id, error: { code: -32600, message: refused } },
             )}\n`,
           );
           return;

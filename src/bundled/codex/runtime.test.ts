@@ -5187,6 +5187,60 @@ it("deletes the one-off threads whose recorded day is past keeping, and no other
   ).toEqual(["recent", "thread-1", "thread-2"]);
 });
 
+it("deletes a removed agent's expired one-off threads on another agent's turn, and no other agent's", async () => {
+  const f = fixture();
+  f.attention.on = true;
+  const DAY = 86_400_000;
+  // Agent B was removed; its record stays. Agent C is another agent here.
+  const removed = "e".repeat(64);
+  const other = "9".repeat(64);
+  const record = (agent: string, id: string, at: number) =>
+    standaloneSessions(f.store, "codex", agent, () => at).add(id);
+  await record(removed, "b-recent", Date.now() - DAY);
+  await record(other, "c-recent", Date.now() - DAY);
+  await record(removed, "b-old", 0);
+  await record(other, "c-old", 0);
+  for (const id of ["b-recent", "c-recent", "b-old", "c-old"])
+    f.rollouts.add(id);
+  const timer = {
+    type: "timer",
+    enabled: true,
+    interest_id: "ops",
+    prompt: "Check the deploys",
+  };
+  f.objects.set("interest/ops", { type: "interest", instructions: "Ops" });
+  f.objects.set("watch/daily", timer);
+  f.wake({
+    ...f.delivery("tick"),
+    trigger: {
+      type: "timer",
+      slug: "watch/daily",
+      timer,
+      spent: false,
+    } as unknown as Delivery["trigger"],
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "");
+  await vi.waitFor(() =>
+    expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({ ok: true }),
+  );
+  // Every agent shares Buzz's Codex home, so this agent's server deletes
+  // them: only the expired threads, of every agent.
+  expect([...f.rollouts].sort()).toEqual(
+    ["b-recent", "c-recent", "thread-1"].sort(),
+  );
+  expect(
+    standaloneSessions(f.store, "codex", removed)
+      .list()
+      .map(({ id }) => id),
+  ).toEqual(["b-recent"]);
+  expect(
+    standaloneSessions(f.store, "codex", other)
+      .list()
+      .map(({ id }) => id),
+  ).toEqual(["c-recent"]);
+});
+
 it("drops a wake that is no longer current", async () => {
   const f = fixture();
   f.attention.on = true;

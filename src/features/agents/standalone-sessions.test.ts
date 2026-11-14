@@ -2,7 +2,6 @@
 import { expect, it, vi } from "vitest";
 import { PROMPTS_BUDGET, sessionPrompts } from "./session-prompts";
 import {
-  removeStandaloneSessions,
   STANDALONE_DAYS,
   STANDALONE_PREFIX,
   standaloneSessions,
@@ -217,19 +216,28 @@ it("logs a failed save rather than throwing", async () => {
   }
 });
 
-it("removes a membership's sessions of every agent type, and only its", async () => {
+it("keeps a removed agent's days until another agent of the type removes them past keeping", async () => {
   const storage = memory();
-  await standaloneSessions(storage, "pi", AGENT).add("p");
-  await standaloneSessions(storage, "claude-code", AGENT).add("c");
-  await standaloneSessions(storage, "pi", OTHER).add("o");
-  await removeStandaloneSessions(storage, AGENT);
-  expect(standaloneSessions(storage, "pi", AGENT).list()).toEqual([]);
-  expect(standaloneSessions(storage, "claude-code", AGENT).list()).toEqual([]);
+  let now = 0;
+  const removed = standaloneSessions(storage, "codex", AGENT, () => now);
+  await removed.add("theirs");
+  await standaloneSessions(storage, "pi", AGENT, () => now).add("pi");
+  now = (STANDALONE_DAYS + 1) * DAY;
+  const dropped: string[][] = [];
+  await standaloneSessions(storage, "codex", OTHER, () => now).add(
+    "mine",
+    undefined,
+    async (ids) => void dropped.push(ids),
+  );
+  // Only the type's days past keeping go, every agent's.
+  expect(dropped).toEqual([["theirs"]]);
+  expect(storage.get(`${STANDALONE_PREFIX}codex:${AGENT}:0`)).toBeNull();
+  expect(storage.get(`${STANDALONE_PREFIX}pi:${AGENT}:0`)).not.toBeNull();
   expect(
-    standaloneSessions(storage, "pi", OTHER)
+    standaloneSessions(storage, "codex", OTHER, () => now)
       .list()
       .map(({ id }) => id),
-  ).toEqual(["o"]);
+  ).toEqual(["mine"]);
 });
 
 it("keeps the key of the turn that started a session, alongside ones without", async () => {

@@ -1,4 +1,4 @@
-import { holdsCopy, ownSection, railSections } from "./rail-sections";
+import { accepts, holdsCopy, ownSection, railSections } from "./rail-sections";
 import { motion, useReducedMotion } from "motion/react";
 import {
   DndContext,
@@ -310,7 +310,7 @@ function Arrangement({
       const from = data.movable ? data.source : undefined;
       if (over.id === "rail:new-section")
         setCreating({ entry: data.entry, from });
-      else if (over.id !== data.source)
+      else if (over.id !== data.source && accepts(data.entry, String(over.id)))
         value.move(data.entry, String(over.id), from);
     }
   };
@@ -530,7 +530,10 @@ export function RailGroup({
   const movableGroups = arrangement?.groups ?? [];
   const index = movableGroups.findIndex((group) => group.id === id);
   const sectionDrag = !!active?.data.current?.section;
-  const target = drop.isOver && active?.data.current?.section !== id;
+  const target =
+    drop.isOver &&
+    active?.data.current?.section !== id &&
+    (!active?.data.current?.entry || accepts(active.data.current.entry, id));
   const sourceIndex = movableGroups.findIndex(
     (group) => group.id === active?.data.current?.section,
   );
@@ -911,7 +914,10 @@ function RowMenu({
         </MenuSubmenuTrigger>
         <MenuSubmenuPopup aria-label={`${label}: ${entry.label}`}>
           {arrangement?.groups
-            .filter((group) => page || ownSection(group.id))
+            .filter(
+              (group) =>
+                (page || ownSection(group.id)) && accepts(entry, group.id),
+            )
             .map((group) => (
               <MenuItem
                 key={group.id}

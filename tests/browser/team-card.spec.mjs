@@ -1,6 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 test.use({
   productionBroker: true,
+  enabledPlugins: ["buzz.drafts-and-sent"],
   readState: true,
   inboxDm: true,
   historyCounts: { alpha: 3, beta: 2 },
@@ -28,6 +29,12 @@ test("Team card opens its views and list rows drag onto sidebar cards", async ({
   // create action, clear of the icons, and shows the rows.
   const icons = card.locator("[data-rail-team-icons]");
   await expect(icons).toBeVisible();
+  // Team's own page sits last, after its views.
+  await expect(icons.getByRole("button")).toHaveCount(6);
+  await expect(icons.getByRole("button").last()).toHaveAttribute(
+    "data-rail-team-view",
+    "buzz.drafts-and-sent/drafts-sent",
+  );
   await page.screenshot({ path: testInfo.outputPath("team-icons.png") });
   await card.hover();
   const expand = card.locator("[data-rail-team-expand]");

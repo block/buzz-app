@@ -1,4 +1,4 @@
-import { railSections } from "./rail-sections";
+import { accepts, railSections } from "./rail-sections";
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -166,4 +166,28 @@ test("a conversation keeps its own list while sections a person made hold copies
   const misplaced = saved([{ section: "solo", entry }]);
   expect(misplaced.entries("solo", [])).toEqual([]);
   expect(misplaced.entries("messages", [entry])).toEqual([entry]);
+});
+
+test("Team keeps to its own pages: another app's row saved there stays out", () => {
+  const page = (id: string) => ({
+    ...entry,
+    id,
+    kind: "page" as const,
+  });
+  const agents = page("buzz.agents/agents");
+  const drafts = page("buzz.drafts-and-sent/drafts-sent");
+  expect(accepts(agents, "messages")).toBe(false);
+  expect(accepts(drafts, "messages")).toBe(true);
+  expect(accepts(agents, "pins")).toBe(true);
+  const model = railSections({
+    order: [],
+    sections: [],
+    placements: [
+      { section: "messages", entry: agents },
+      { section: "messages", entry: drafts },
+    ],
+  });
+  expect(model.entries("messages", [])).toEqual([drafts]);
+  // The app's row is back in its own section.
+  expect(model.entries("navigation", [agents])).toEqual([agents]);
 });

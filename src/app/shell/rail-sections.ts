@@ -23,6 +23,15 @@ export const holdsCopy = (entry: RailEntry, section: string) =>
 export const ownSection = (section: string) =>
   !homes.has(section) && section !== "pins";
 
+/** Team's own pages. */
+const teamPages = new Set([
+  "buzz.inbox/inbox",
+  "buzz.drafts-and-sent/drafts-sent",
+]);
+/** Whether a row can be put there: Team keeps to its views and own pages. */
+export const accepts = (entry: RailEntry, section: string) =>
+  section !== "messages" || teamPages.has(entry.id);
+
 /** Cards, expanded lists and conversation routing share the same membership. */
 export function railSections(
   layout: RailLayout,
@@ -38,6 +47,7 @@ export function railSections(
   const placements = layout.placements.filter(
     (item) =>
       sections.has(item.section) &&
+      accepts(item.entry, item.section) &&
       (item.entry.kind === "page" || holdsCopy(item.entry, item.section)),
   );
   /** Where each moved app row is; copies leave their own list alone. */

@@ -8,6 +8,7 @@ import { keypair, profile, roster, signed } from "./testing";
 import { PublishRejected } from "./outbox";
 import { eventDto, type ReadFilter, type RelayEvent } from "./events";
 import type { RelayWriter } from "./transport";
+import { DM_VISIBILITY_KIND } from "./channel-lifecycle-protocol";
 
 const id = "11111111-1111-4111-8111-111111111111";
 function setup(
@@ -16,6 +17,7 @@ function setup(
     untrusted?: boolean;
     lagging?: boolean;
     human?: boolean;
+    hidden?: boolean;
   } = {},
 ) {
   const viewer = keypair(),
@@ -37,6 +39,19 @@ function setup(
       viewer.pubkey,
       options.badRoster ? stranger.pubkey : other.pubkey,
     ]),
+    ...(options.hidden
+      ? [
+          signed(authority, {
+            kind: DM_VISIBILITY_KIND,
+            content: "",
+            tags: [
+              ["d", viewer.pubkey],
+              ["p", viewer.pubkey],
+              ["h", id],
+            ],
+          }),
+        ]
+      : []),
   ];
   const query = vi.fn(async (filters: readonly ReadFilter[]) => {
     if (filters.some((f) => f.kinds?.includes(0)))
@@ -147,6 +162,36 @@ it.each([
     }
   },
 );
+it("reopens a listed DM without asking the relay, and still announces it", async () => {
+  const t = setup();
+  const signal = new AbortController().signal;
+  try {
+    await t.dm.open([t.other.pubkey], signal);
+    // The first reopening reads which DMs the relay holds hidden.
+    await t.dm.open([t.other.pubkey], signal);
+    const reads = t.query.mock.calls.length;
+    const opened = vi.fn();
+    t.dm.subscribeOpened(opened);
+    await expect(t.dm.open([t.other.pubkey], signal)).resolves.toBe(id);
+    expect(t.openDirectMessage).toHaveBeenCalledOnce();
+    expect(t.query).toHaveBeenCalledTimes(reads);
+    // A locally hidden DM returns to the sidebar on this signal.
+    expect(opened).toHaveBeenCalledExactlyOnceWith(id);
+  } finally {
+    t.owner.dispose();
+  }
+});
+it("asks the relay to open a listed DM it holds hidden", async () => {
+  const t = setup({ hidden: true });
+  const signal = new AbortController().signal;
+  try {
+    await t.dm.open([t.other.pubkey], signal);
+    await expect(t.dm.open([t.other.pubkey], signal)).resolves.toBe(id);
+    expect(t.openDirectMessage).toHaveBeenCalledTimes(2);
+  } finally {
+    t.owner.dispose();
+  }
+});
 it("opens a DM before its signed discovery reaches the replica", async () => {
   const t = setup({ lagging: true });
   try {

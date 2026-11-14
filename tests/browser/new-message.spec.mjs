@@ -1069,3 +1069,64 @@ test.describe("large recipient directory", () => {
     ).toBeVisible();
   });
 });
+
+// Browser-only contract: Enter drops into the conversation in one step. Each
+// painted frame keeps an enabled message editor focused, and the page never
+// shows a sending state or the recipient list again on the way.
+test("sending into an existing DM drops into it without losing the editor", async ({
+  page,
+  app,
+}) => {
+  const id = "22222222-2222-4222-8222-222222222222";
+  app.seedChannel(id, "Existing DM history", "dm");
+  await page.goto(app.origin);
+  await page
+    .getByRole("button", { name: /^New message/ })
+    .first()
+    .click();
+  await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
+  const draft = page.getByRole("textbox", {
+    name: "Message Avery Chen",
+    exact: true,
+  });
+  await expect(
+    page.locator("[data-new-message-body]").getByText("Existing DM history"),
+  ).toBeVisible();
+  await draft.fill("Dropping in");
+  await draft.focus();
+  await page.evaluate(() => {
+    const frames = [];
+    window.__frames = frames;
+    const sample = () => {
+      const active = document.activeElement;
+      frames.push({
+        editing:
+          active?.getAttribute("role") === "textbox" &&
+          active.getAttribute("contenteditable") === "true",
+        sending: document.body.innerText.includes("Sending message"),
+        choosing: !!document.querySelector('[role="listbox"]'),
+      });
+      requestAnimationFrame(sample);
+    };
+    sample();
+  });
+  await draft.press("Enter");
+  const sent = page
+    .locator("[data-channel-history] [data-message-id]")
+    .filter({ hasText: "Dropping in" });
+  await expect(sent).toBeVisible();
+  await expect(
+    page.locator("[data-channel-history]").getByText("Existing DM history"),
+  ).toBeVisible();
+  await expect(page.locator("[data-new-message-body]")).toHaveCount(0);
+  await expect(
+    page.locator("[data-channel-workspace]").getByRole("textbox").first(),
+  ).toBeFocused();
+  const frames = await page.evaluate(() => window.__frames);
+  expect(frames.length).toBeGreaterThan(1);
+  expect(
+    frames.filter((frame) => !frame.editing || frame.sending || frame.choosing),
+  ).toEqual([]);
+  expect(app.commands).toHaveLength(0);
+  expect(app.errors.unexplained()).toEqual([]);
+});

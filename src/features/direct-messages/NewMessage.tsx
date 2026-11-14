@@ -1,7 +1,6 @@
 import { agentUnavailable } from "../agents/choices";
 import {
   creationDestinationKey,
-  creationPeople as validRecipients,
   readCreationDestination,
   saveCreationDestination,
   type CreationDestination,
@@ -25,8 +24,6 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { attachmentMessage } from "../relay/attachments";
-import type { OutgoingEvent } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { DraftMentionRoster } from "../messages/draft-mention-roster";
@@ -35,11 +32,8 @@ import {
   type AttachmentDraft,
 } from "../messages/attachment-draft";
 import { MessageComposer } from "../messages/MessageComposer";
-import {
-  mentionDraft,
-  type MentionDraft,
-  type MentionRecipient,
-} from "../messages/mention-draft";
+import type { MentionDraft, MentionRecipient } from "../messages/mention-draft";
+import { directMessageWith } from "../relay/direct-message-policy";
 import { clearView, readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
@@ -61,87 +55,16 @@ const draftKey = "direct-message:new-draft";
 const channelViewKey = "direct-message:channel";
 const teamViewKey = "direct-message:team-for";
 type Kind = "solo" | "team";
-const recoveryKey = "direct-message:new";
-
-type Pending = {
-  id: string;
-  channelId: string;
-  recipients: string;
-  draft: MentionDraft;
-  attachments: readonly (readonly string[])[];
-  channelTarget?: string | undefined;
-};
 const keyFor = (people: readonly Recipient[]) =>
   people
     .map((person) => person.pubkey)
     .sort()
     .join(":");
-// Persist identity and a bounded label, never the directory's full metadata.
-const recipientView = ({ pubkey, name, isAgent }: Recipient): Recipient => ({
-  pubkey,
-  name: name.slice(0, 500),
-  ...(isAgent === true ? { isAgent: true } : {}),
-});
-// Earlier development builds wrote a separate pointer. Keep it confirmation-only;
-// its absence from the journal must never authorize a replacement message.
-function savedLegacy(
-  scope: string,
-  viewer?: string,
-): (Pending & { people: Recipient[] }) | undefined {
-  const value = readView<Partial<Pending> | null>(
-    scope,
-    "direct-message:pending",
-    null,
-  );
-  if (
-    value &&
-    typeof value.id === "string" &&
-    /^[0-9a-f]{64}$/.test(value.id) &&
-    typeof value.channelId === "string" &&
-    /^[0-9a-f-]{36}$/.test(value.channelId) &&
-    typeof value.recipients === "string" &&
-    value.recipients.length <= 519 &&
-    value.draft
-  )
-    return {
-      id: value.id,
-      channelId: value.channelId,
-      recipients: value.recipients,
-      draft: mentionDraft(value.draft),
-      attachments: [],
-      people: validRecipients(
-        readView(scope, "direct-message:recipients", []),
-        viewer,
-      ),
-    };
-}
+// Earlier versions held a first message here until the relay confirmed it.
+const heldMessageKey = "direct-message:new";
 
-function recovered(operations: readonly OutgoingEvent[], viewer?: string) {
-  const item = operations.find((item) => item.recovery?.key === recoveryKey);
-  if (!item?.recovery) return undefined;
-  const value = JSON.parse(item.recovery.value);
-  const people = validRecipients(value.people, viewer);
-  const channelId = item.event.tags.find(([name]) => name === "h")?.[1];
-  const channelTarget = value.channelTarget;
-  if (
-    item.event.kind !== 9 ||
-    !channelId ||
-    (channelTarget !== undefined && channelTarget !== channelId) ||
-    (!people.length && !channelTarget)
-  )
-    throw new Error("The saved new message could not be restored.");
-  return {
-    id: item.event.id,
-    channelId,
-    recipients: channelTarget ? `channel:${channelTarget}` : keyFor(people),
-    channelTarget,
-    draft: mentionDraft(value.draft),
-    attachments: item.event.tags.filter(([name]) => name === "imeta"),
-    people,
-  };
-}
-
-/** Recipient-first conversation that can open directly or send through the durable outbox. */
+/** Recipient-first start of a conversation: it chooses where the first message
+ * goes and queues it there. Delivery and Retry belong to that conversation. */
 export function NewMessage({
   session,
   scope,
@@ -190,16 +113,11 @@ export function NewMessage({
   ): void;
   onStarted(channelId: string, messageId: string): void;
 }) {
-  // A message held for delivery or retry stays a Back stop even when its
-  // draft view is gone or it carries only attachments.
-  const held = useRef(false);
-  const holds = useCallback(() => held.current, []);
   const draftEdited = usePassThroughUntilDrafted(
     visit,
     session,
     scope,
     draftKey,
-    { held: holds },
   );
   const [destination, setDestination] = useState(() =>
     readCreationDestination(scope, session.viewer, allowChannels),
@@ -295,12 +213,6 @@ export function NewMessage({
   // Text still in the To field may be a recipient not chosen yet, so Send
   // waits for it to become one or be cleared.
   const [typed, setTyped] = useState(false);
-  const [legacy, setLegacy] = useState(() =>
-    savedLegacy(scope, session.viewer),
-  );
-  const initialLegacy = useRef(legacy);
-  const [ready, setReady] = useState(false);
-  const [restoredDraft, setRestoredDraft] = useState<MentionDraft>();
   const [draftRevision, setDraftRevision] = useState(0);
   const [composerFocus, setComposerFocus] = useState(0);
   const focusComposer = useCallback(() => {
@@ -312,100 +224,23 @@ export function NewMessage({
     previousContainer.current = contentContainer;
     focusComposer();
   }, [contentContainer, focusComposer]);
-  const retiring = useRef<string | undefined>(undefined);
-  const [busy, setBusy] = useState<"uploading" | "sending" | undefined>();
+  const [busy, setBusy] = useState<"uploading" | "opening" | undefined>();
   const [error, setError] = useState("");
   const [uploadFailed, setUploadFailed] = useState(false);
   const [draftChannel] = useState(() => crypto.randomUUID());
   const attempt = useRef<AbortController | null>(null);
-  const prepared = useRef<{ key: string; id: string } | undefined>(undefined);
-  const outbox = session.outbox;
-  const operations = useSyncExternalStore(
-    outbox?.subscribe ?? noSubscribe,
-    outbox?.snapshot ?? emptySnapshot,
-    emptySnapshot,
-  );
-  let pending: (Pending & { people: Recipient[] }) | undefined;
-  try {
-    pending = recovered(operations, session.viewer) ?? legacy;
-  } catch {
-    /* Readiness presents invalid recovery. */
-  }
-  held.current = !!pending;
-  const failed =
-    pending && session.directMessages.delivery(pending.id) === "failed";
   const [soloBusy, setSoloBusy] = useState(false);
-  const locked = soloBusy || !ready || !!busy || (!!pending && !failed);
-  const retire = useCallback(() => {
-    clearAttachmentDraft(session, `${scope}:${draftKey}`);
-    retiring.current = undefined;
-    prepared.current = undefined;
-    draftEdited(undefined);
-    setDestination({ kind: "people", people: [] });
-    setTeamFor(undefined);
-    setRestoredDraft(mentionDraft(""));
-    setDraftRevision((revision) => revision + 1);
-  }, [session, scope, draftEdited]);
-  useLayoutEffect(() => {
-    const confirmed = pending && session.directMessages.delivery(pending.id);
-    if (pending) {
-      retiring.current =
-        confirmed === "accepted" || confirmed === "seen"
-          ? pending.id
-          : undefined;
-    } else if (retiring.current) {
-      // A different mount may have completed acknowledgement while this page
-      // restored its recovery payload. Never leave that payload as a fresh draft.
-      retire();
-    }
-  }, [pending, session.directMessages, retire]);
-
+  const locked = soloBusy || !!busy;
+  useEffect(() => () => attempt.current?.abort(), []);
   useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        await outbox?.ready();
-        if (!active) return;
-        const saved =
-          recovered(outbox?.snapshot() ?? [], session.viewer) ??
-          initialLegacy.current;
-        if (saved) {
-          const editable =
-            session.directMessages.delivery(saved.id) === "failed";
-          const original: CreationDestination = saved.channelTarget
-            ? { kind: "channel", channelId: saved.channelTarget }
-            : { kind: "people", people: saved.people };
-          setDestination(
-            editable
-              ? readCreationDestination(
-                  scope,
-                  session.viewer,
-                  allowChannels,
-                  original,
-                )
-              : original,
-          );
-          setRestoredDraft(
-            editable
-              ? mentionDraft(readView(scope, draftKey, saved.draft))
-              : saved.draft,
-          );
-        }
-        setReady(true);
-      } catch (reason) {
-        if (active)
-          setError(
-            reason instanceof Error
-              ? reason.message
-              : "Could not restore the message.",
-          );
-      }
-    })();
-    return () => {
-      active = false;
-      attempt.current?.abort();
-    };
-  }, [outbox, session.viewer, session.directMessages, scope, allowChannels]);
+    // Release a message an earlier version still holds to its conversation.
+    const outbox = session.outbox;
+    void outbox?.ready().then(() => {
+      for (const item of outbox.snapshot())
+        if (item.recovery?.key === heldMessageKey)
+          void outbox.acknowledge(item.event.id).catch(() => {});
+    });
+  }, [session.outbox]);
   function validateAgents() {
     const controlled = new Set(
       session.agentChoices
@@ -430,7 +265,6 @@ export function NewMessage({
   }
   function change(people: Recipient[]) {
     if (locked || attempt.current) return;
-    prepared.current = undefined;
     const next: CreationDestination = { kind: "people", people };
     setDestination(next);
     saveCreationDestination(scope, next);
@@ -450,7 +284,6 @@ export function NewMessage({
   }
   function chooseChannel(channel: ChannelSummary | undefined) {
     if (locked || attempt.current) return;
-    prepared.current = undefined;
     const next: CreationDestination = channel
       ? { kind: "channel", channelId: channel.id }
       : { kind: "people", people: [] };
@@ -465,126 +298,52 @@ export function NewMessage({
     addressed?: readonly MentionRecipient[],
     references: readonly string[] = [],
   ) {
-    const posting =
-      target?.id ?? (!recipients.length ? pending?.channelTarget : undefined);
     const content = composerMarkdown(draft);
     if (
       attempt.current ||
-      !ready ||
-      (!posting && !recipients.length) ||
-      (!content.trim() && !files?.snapshot().length && !pending) ||
-      (!posting && !session.directMessages.available)
+      (!target && !recipients.length) ||
+      (!content.trim() && !files?.snapshot().length) ||
+      (!target && !session.directMessages.available)
     )
       return;
     const controller = new AbortController();
     attempt.current = controller;
-    setBusy(
-      files?.snapshot().some((file) => !file.uploaded)
-        ? "uploading"
-        : "sending",
-    );
     setError("");
     setUploadFailed(false);
-    const key = posting ? `channel:${posting}` : keyFor(recipients);
-    let current: Pending | undefined = pending;
-    let preparingFiles = !!files;
+    let uploading = !!files?.snapshot().some((file) => !file.uploaded);
+    if (uploading) setBusy("uploading");
     try {
-      // Confirmation-only retries must retain the exact durable event.
       const uploaded = files
         ? await files.prepareForSend(controller.signal)
         : [];
       controller.signal.throwIfAborted();
-      preparingFiles = false;
-      setBusy("sending");
-      // Compare the complete published metadata; messages.send still validates
-      // every upload against the actual community origin.
-      const attachments = attachmentMessage(
-        "",
-        uploaded,
-        uploaded[0]?.url,
-      ).tags;
-      if (
-        !posting &&
-        current &&
-        session.directMessages.delivery(current.id) === "failed"
-      )
+      uploading = false;
+      let channelId = target?.id;
+      if (!channelId) {
         validateAgents();
-      if (
-        current &&
-        (current.recipients !== key ||
-          JSON.stringify(current.draft) !==
-            JSON.stringify(mentionDraft(draft)) ||
-          (files &&
-            JSON.stringify(current.attachments) !==
-              JSON.stringify(attachments)))
-      ) {
-        if (session.directMessages.delivery(current.id) !== "failed")
-          throw new Error(
-            "Retry the earlier message to confirm its delivery before editing.",
-          );
-        if (posting && !target)
-          throw new Error(
-            "This channel is no longer available for a new message.",
-          );
-        if (!posting) validateAgents();
-        await outbox?.dismiss(current.id);
-        controller.signal.throwIfAborted();
-        current = undefined;
-        setLegacy(undefined);
-        writeView(scope, "direct-message:pending", null);
-      }
-      if (!current) {
-        if (posting && !target)
-          throw new Error(
-            "This channel is no longer available for a new message.",
-          );
-        if (!posting) {
-          validateAgents();
-          onPreparing?.(recipients.map((person) => person.pubkey));
+        const pubkeys = recipients.map((person) => person.pubkey);
+        // Only a DM that must be created waits on the relay.
+        if (!existing) {
+          onPreparing?.(pubkeys);
+          setBusy("opening");
         }
-        const id =
-          posting ??
-          (prepared.current?.key === key
-            ? prepared.current.id
-            : await session.directMessages.open(
-                recipients.map((person) => person.pubkey),
-                controller.signal,
-              ));
-        controller.signal.throwIfAborted();
-        prepared.current = { key, id };
-        if (!posting) validateAgents();
-        const messageId = session.messages.send(
-          id,
-          content,
-          (addressed ?? draft.recipients).map((person) => person.pubkey),
-          uploaded,
-          {
-            key: recoveryKey,
-            value: JSON.stringify({
-              people: recipients.map(recipientView),
-              draft,
-              channelTarget: posting,
-            }),
-          },
-          references,
+        channelId = await session.directMessages.open(
+          pubkeys,
+          controller.signal,
         );
-        current = {
-          id: messageId,
-          channelId: id,
-          channelTarget: posting,
-          recipients: key,
-          draft,
-          attachments,
-        };
+        controller.signal.throwIfAborted();
+        validateAgents();
       }
-      await session.directMessages.delivered(
-        current.id,
-        current.channelId,
-        controller.signal,
+      const messageId = session.messages.send(
+        channelId,
+        content,
+        (addressed ?? draft.recipients).map((person) => person.pubkey),
+        uploaded,
+        undefined,
+        references,
       );
-      controller.signal.throwIfAborted();
-      // Clear disposable views before releasing durable recovery. A failed clear
-      // retains the operation for confirmation-only retry, even across unmount.
+      // The message is its conversation's now. The page can stay mounted
+      // (Settings open), so it must not remain a draft to send again.
       clearView(
         scope,
         draftKey,
@@ -594,16 +353,16 @@ export function NewMessage({
         creationDestinationKey,
         teamViewKey,
       );
-      await outbox?.acknowledge(current.id);
-      if (controller.signal.aborted) return;
-      setLegacy(undefined);
-      // The page can stay mounted (Settings open), so never leave the sent
-      // message as an editable draft that could be published again.
-      retire();
-      onStarted(current.channelId, current.id);
+      clearAttachmentDraft(session, `${scope}:${draftKey}`);
+      draftEdited(undefined);
+      setDestination({ kind: "people", people: [] });
+      setTeamFor(undefined);
+      setDraftRevision((revision) => revision + 1);
+      onStarted(channelId, messageId);
     } catch (reason) {
-      if (!controller.signal.aborted && preparingFiles) setUploadFailed(true);
-      else if (!controller.signal.aborted)
+      if (controller.signal.aborted) return;
+      if (uploading) setUploadFailed(true);
+      else
         setError(
           reason instanceof Error
             ? reason.message
@@ -614,36 +373,15 @@ export function NewMessage({
       if (attempt.current === controller) attempt.current = null;
     }
   }
-  const existing = useMemo(() => {
-    if (!recipients.length) return undefined;
-    const members = new Set([
-      session.viewer,
-      ...recipients.map((person) => person.pubkey),
-    ]);
-    let match: ChannelSummary | undefined;
-    for (const channel of channels) {
-      if (
-        channel.channelType !== "dm" ||
-        channel.archived ||
-        channel.cached ||
-        channel.readOnly ||
-        channel.pending ||
-        channel.huddle ||
-        channel.members?.length !== members.size ||
-        !channel.members.every((member) => members.has(member))
-      )
-        continue;
-      const activity = channel.lastActivityAt ?? 0;
-      const latest = match?.lastActivityAt ?? 0;
-      if (
-        !match ||
-        activity > latest ||
-        (activity === latest && channel.id.localeCompare(match.id) < 0)
-      )
-        match = channel;
-    }
-    return match;
-  }, [channels, recipients, session.viewer]);
+  const existing = useMemo(
+    () =>
+      directMessageWith(
+        channels,
+        session.viewer,
+        recipients.map((person) => person.pubkey),
+      ),
+    [channels, recipients, session.viewer],
+  );
   const channelChoices = useMemo(
     () => (allowChannels ? addressableChannels(channels) : []),
     [allowChannels, channels],
@@ -660,9 +398,9 @@ export function NewMessage({
       ? lone.pubkey
       : undefined;
   const kind: Kind | null =
-    solo && ready && !pending && loneAgent && teamFor !== loneAgent
+    solo && loneAgent && teamFor !== loneAgent
       ? "solo"
-      : target || recipients.length || pending || !solo
+      : target || recipients.length || !solo
         ? "team"
         : null;
   const soloAgent = kind === "solo" ? loneAgent : undefined;
@@ -856,32 +594,15 @@ export function NewMessage({
                 Starting direct messages is unavailable on this connection.
               </p>
             )}
-            {pending && !failed && !busy && !error && (
-              <Button
-                type="button"
-                onClick={() => pending && void send(pending.draft)}
-              >
-                Retry send
-              </Button>
-            )}
             {error && (
               <div role="alert">
                 <p>{error}</p>
-                {pending && !failed && (
-                  <Button
-                    type="button"
-                    disabled={!!busy}
-                    onClick={() => pending && void send(pending.draft)}
-                  >
-                    Retry send
-                  </Button>
-                )}
               </div>
             )}
           </div>
           <DraftMentionRoster.Provider value={target ? undefined : roster}>
             <MessageComposer
-              key={`${ready ? "ready" : "hydrating"}:${draftRevision}`}
+              key={draftRevision}
               session={session}
               scope={scope}
               extensions={extensions}
@@ -902,14 +623,12 @@ export function NewMessage({
                 draftKey,
                 attachments: true,
                 allowAttachmentOnly: true,
-                recoveredDraft: restoredDraft,
                 onDraftChange: (draft) => {
                   draftEdited(draft);
                   syncInlineRecipients(draft);
                 },
                 locked,
                 disabled:
-                  !ready ||
                   !!busy ||
                   (target
                     ? false
@@ -934,8 +653,5 @@ export function NewMessage({
   );
   return contentContainer ? createPortal(content, contentContainer) : content;
 }
-const empty: readonly never[] = [];
-const emptySnapshot = () => empty;
-const noSubscribe = () => () => {};
 
 const emptyRecipients: Recipient[] = [];

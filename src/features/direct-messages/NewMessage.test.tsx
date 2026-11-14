@@ -327,80 +327,6 @@ const recipient = () =>
   screen.getByRole("combobox", { name: "Message recipients" });
 const send = () => screen.getByRole("button", { name: "Send message" });
 
-it("retains channel delivery recovery when saved-draft cleanup fails", async () => {
-  const t = setup();
-  t.channels.channels = [
-    { id: channel, name: "Design", channelType: "stream" },
-  ];
-  localStorage.setItem(
-    `buzz-view.v1:${JSON.stringify([scope, "direct-message:channel"])}`,
-    JSON.stringify(channel),
-  );
-  t.directMessages.delivery.mockReturnValue("accepted");
-  const removeItem = Storage.prototype.removeItem;
-  const draftStorageKey = `buzz-view.v1:${JSON.stringify([scope, "direct-message:new-draft"])}`;
-  const remove = vi
-    .spyOn(Storage.prototype, "removeItem")
-    .mockImplementation(function (this: Storage, key) {
-      if (key === draftStorageKey) throw new Error("Cannot clear draft");
-      removeItem.call(this, key);
-    });
-  const view = t.mount(undefined, "composer", { allowChannels: true });
-  try {
-    await act(() => t.outbox.ready());
-    await t.user.type(screen.getByRole("textbox"), "A channel message");
-    await waitFor(() => expect(send()).toBeEnabled());
-    await t.user.click(send());
-    await screen.findByRole("alert");
-    view.unmount();
-    t.mount(undefined, "composer", { allowChannels: true });
-    await screen.findByRole("button", { name: "Retry send" });
-  } finally {
-    remove.mockRestore();
-  }
-  await t.user.click(screen.getByRole("button", { name: "Retry send" }));
-  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-  expect(t.messages.send).toHaveBeenCalledOnce();
-  expect(t.directMessages.open).not.toHaveBeenCalled();
-});
-
-it("restores the edited channel after a refused send instead of the journal destination", async () => {
-  const t = setup();
-  const other = "22222222-2222-4222-8222-222222222222";
-  t.channels.channels = [
-    { id: channel, name: "Design", channelType: "stream" },
-    { id: other, name: "Other", channelType: "stream" },
-  ];
-  localStorage.setItem(
-    `buzz-view.v1:${JSON.stringify([scope, "direct-message:channel"])}`,
-    JSON.stringify(channel),
-  );
-  t.directMessages.delivered.mockRejectedValueOnce(new Error("Refused"));
-  const view = t.mount(undefined, "page", { allowChannels: true });
-  await act(() => t.outbox.ready());
-  await t.user.keyboard("{Escape}");
-  await t.user.type(
-    await screen.findByRole("textbox"),
-    "Keep this edited post",
-  );
-  await t.user.click(send());
-  await screen.findByRole("alert");
-  await t.user.click(recipient());
-  await t.user.type(recipient(), "Other");
-  await t.user.click(await screen.findByRole("option", { name: /Other/ }));
-  view.unmount();
-  t.mount(undefined, "page", { allowChannels: true });
-  await waitFor(() =>
-    expect(screen.getByRole("textbox")).toHaveAttribute(
-      "aria-label",
-      "Message #Other",
-    ),
-  );
-  await t.user.click(send());
-  await waitFor(() => expect(t.messages.send).toHaveBeenCalledTimes(2));
-  expect(t.messages.send.mock.calls[1]?.[0]).toBe(other);
-});
-
 it("channel-addressed composition offers its existing members as mentions", async () => {
   const t = setup();
   const person = people[0];
@@ -447,33 +373,6 @@ it("channel-addressed composition offers its existing members as mentions", asyn
   await t.user.click(send());
   await waitFor(() => expect(t.messages.send).toHaveBeenCalledOnce());
   expect(t.messages.send.mock.calls[0]?.[2]).toEqual([person.pubkey]);
-});
-
-it("keeps a selected agent Team draft and pending DM in Team across remounts", async () => {
-  const t = setup();
-  const options = { solo: { onStarted: vi.fn() } };
-  let view = t.mount(undefined, "page", options);
-  await t.user.click(
-    await screen.findByRole("option", { name: "Person 2, Agent" }),
-  );
-  await t.user.click(screen.getByRole("tab", { name: /^Team$/ }));
-  await t.user.type(screen.getByRole("textbox"), "Keep this DM draft");
-  view.unmount();
-  view = t.mount(undefined, "page", options);
-  await waitFor(() =>
-    expect(screen.getByRole("textbox")).toHaveTextContent("Keep this DM draft"),
-  );
-  t.directMessages.delivery.mockReturnValue(undefined);
-  t.directMessages.delivered.mockRejectedValueOnce(
-    new Error("Delivery uncertain"),
-  );
-  await t.user.click(send());
-  await screen.findByRole("alert");
-  view.unmount();
-  t.mount(undefined, "page", options);
-  await t.user.click(await screen.findByRole("button", { name: "Retry send" }));
-  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-  expect(t.messages.send).toHaveBeenCalledOnce();
 });
 
 it("restores recipient hero artwork from current profiles and agent choices", async () => {
@@ -1439,31 +1338,6 @@ it("removes once for pointerdown plus click, then Backspace; effects outlive chi
   expect(screen.getByRole("listbox")).toBeVisible();
 });
 
-it("keeps a failed draft editable and resolves changed recipients again", async () => {
-  const t = setup();
-  t.mount();
-  t.directMessages.delivered.mockRejectedValueOnce(
-    new Error("Delivery failed"),
-  );
-  await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  await t.user.type(screen.getByRole("textbox"), "Hello");
-  await t.user.click(send());
-  expect(await screen.findByRole("alert")).toHaveTextContent("Delivery failed");
-  expect(screen.getByRole("textbox")).toHaveTextContent("Hello");
-  expect(t.onStarted).not.toHaveBeenCalled();
-  await t.user.click(recipient());
-  await t.user.click(screen.getByRole("option", { name: "Person 2, Agent" }));
-  await t.user.click(send());
-  await waitFor(() =>
-    expect(t.onStarted).toHaveBeenCalledWith(channel, "d".repeat(64)),
-  );
-  expect(t.directMessages.open.mock.calls).toEqual([
-    [[people[0]?.pubkey], expect.any(AbortSignal)],
-    [[people[0]?.pubkey, people[1]?.pubkey], expect.any(AbortSignal)],
-  ]);
-  expect(t.outbox.dismiss).toHaveBeenCalledOnce();
-});
-
 it("holds Send while the To field has text that is not a recipient", async () => {
   const t = setup();
   t.mount();
@@ -1569,7 +1443,7 @@ it("cuts the text named by the To error to 24 characters", async () => {
   ).toBeInTheDocument();
 });
 
-it("locks during opening and delivery, waits for confirmation, and retries the same uncertain send", async () => {
+it("locks only while a new DM opens, then queues the message and opens the conversation", async () => {
   const t = setup();
   t.mount();
   let release: (id: string) => void = () => {};
@@ -1579,25 +1453,102 @@ it("locks during opening and delivery, waits for confirmation, and retries the s
         release = resolve;
       }),
   );
-  t.directMessages.delivery.mockReturnValue("unknown");
-  t.directMessages.delivered.mockRejectedValueOnce(
-    new Error("Delivery uncertain"),
-  );
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  await t.user.type(screen.getByRole("textbox"), "Keep this draft");
+  await t.user.type(screen.getByRole("textbox"), "Hello");
   await t.user.dblClick(send());
   expect(t.directMessages.open).toHaveBeenCalledOnce();
   expect(recipient()).toBeDisabled();
   expect(send()).toBeDisabled();
+  expect(screen.getByRole("status")).toHaveTextContent("Sending message…");
   expect(t.onStarted).not.toHaveBeenCalled();
   release(channel);
-  await screen.findByRole("alert");
-  expect(screen.getByRole("textbox")).toHaveTextContent("Keep this draft");
-  await t.user.click(screen.getByRole("button", { name: "Retry send" }));
+  // Delivery belongs to the conversation: nothing here waits for the relay.
+  await waitFor(() =>
+    expect(t.onStarted).toHaveBeenCalledWith(channel, "d".repeat(64)),
+  );
+  expect(t.messages.send).toHaveBeenCalledOnce();
+  expect(t.messages.send.mock.calls[0]?.[4]).toBeUndefined();
+  expect(t.directMessages.delivered).not.toHaveBeenCalled();
+  // The page may stay mounted: the sent message is no longer its draft.
+  expect(screen.getByRole("textbox")).toHaveTextContent("");
+  expect(
+    screen.queryByRole("button", { name: "Remove Person 1" }),
+  ).not.toBeInTheDocument();
+});
+
+it("sends into the DM it already shows without a waiting state", async () => {
+  const t = setup();
+  t.channels.channels = [
+    {
+      id: channel,
+      name: "Person 1",
+      channelType: "dm",
+      members: ["f".repeat(64), people[0]?.pubkey as string],
+    },
+  ];
+  let release: (id: string) => void = () => {};
+  t.directMessages.open.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  t.mount();
+  await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
+  await t.user.type(screen.getByRole("textbox"), "Hello again");
+  await t.user.click(send());
+  expect(t.directMessages.open).toHaveBeenCalledOnce();
+  expect(screen.queryByText("Sending message…")).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox")).toHaveAttribute(
+    "contenteditable",
+    "true",
+  );
+  release(channel);
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+});
+
+it("checks local agents again after opening", async () => {
+  const t = setup();
+  let opened: (id: string) => void = () => {};
+  t.directMessages.open.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        opened = resolve;
+      }),
+  );
+  t.mount();
+  await t.user.click(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  );
+  await t.user.type(screen.getByRole("textbox"), "Private draft");
+  await t.user.click(send());
+  const previous = t.control.snapshot();
+  t.updateControl({ ...previous, status: "loading" });
+  opened(channel);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "no longer available",
+  );
+  expect(t.messages.send).not.toHaveBeenCalled();
+  expect(screen.getByRole("textbox")).toHaveTextContent("Private draft");
+  t.updateControl(previous);
+  await t.user.click(send());
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
   expect(t.messages.send).toHaveBeenCalledOnce();
-  expect(t.directMessages.open).toHaveBeenCalledOnce();
-  expect(t.directMessages.delivered).toHaveBeenCalledTimes(2);
+});
+
+it("releases a message an earlier version held to its conversation", async () => {
+  const t = setup();
+  t.messages.send(channel, "Held", [], [], {
+    key: "direct-message:new",
+    value: "{}",
+  });
+  t.mount();
+  await waitFor(() =>
+    expect(t.outbox.acknowledge).toHaveBeenCalledWith("d".repeat(64)),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Retry send" }),
+  ).not.toBeInTheDocument();
 });
 
 it("preserves recipients and draft after opening fails and across remount", async () => {
@@ -1979,37 +1930,6 @@ it.each(["removed", "loading", "error"] as const)(
   },
 );
 
-it("checks local agents again after opening and leaves queued retries alone", async () => {
-  const t = setup();
-  let opened: (id: string) => void = () => {};
-  t.directMessages.open.mockImplementationOnce(
-    () =>
-      new Promise((resolve) => {
-        opened = resolve;
-      }),
-  );
-  t.mount();
-  await t.user.click(
-    await screen.findByRole("option", { name: "Person 2, Agent" }),
-  );
-  await t.user.type(screen.getByRole("textbox"), "Private draft");
-  await t.user.click(send());
-  const previous = t.control.snapshot();
-  t.updateControl({ ...previous, status: "loading" });
-  opened(channel);
-  await screen.findByRole("alert");
-  expect(t.messages.send).not.toHaveBeenCalled();
-  t.updateControl(previous);
-  t.directMessages.delivery.mockReturnValue("unknown");
-  t.directMessages.delivered.mockRejectedValueOnce(new Error("Uncertain"));
-  await t.user.click(send());
-  await screen.findByRole("button", { name: "Retry send" });
-  t.updateControl({ ...previous, status: "error" });
-  await t.user.click(screen.getByRole("button", { name: "Retry send" }));
-  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-  expect(t.messages.send).toHaveBeenCalledOnce();
-});
-
 it("distinguishes namesake options and chips without pictures", async () => {
   const t = setup();
   const same = people
@@ -2062,167 +1982,6 @@ it("surfaces exhausted directory cancellation without a UI retry loop", async ()
     vi.useRealTimers();
   }
 });
-
-it("revalidates an unchanged definitively failed agent send before retry", async () => {
-  const t = setup();
-  t.mount();
-  await t.user.click(
-    await screen.findByRole("option", { name: "Person 2, Agent" }),
-  );
-  await t.user.type(screen.getByRole("textbox"), "Private draft");
-  t.directMessages.delivered.mockRejectedValueOnce(new Error("Not sent"));
-  await t.user.click(send());
-  await screen.findByRole("alert");
-  t.updateControl({ ...t.control.snapshot(), status: "error" });
-  await t.user.click(send());
-  expect(t.directMessages.delivered).toHaveBeenCalledOnce();
-  expect(screen.getByRole("alert")).toHaveTextContent("no longer available");
-});
-
-it("retains an older build's pending pointer as confirmation-only recovery", async () => {
-  const t = setup();
-  const person = people[0];
-  assert.exists(person);
-  localStorage.setItem(
-    `buzz-view.v1:${JSON.stringify([scope, "direct-message:recipients"])}`,
-    JSON.stringify([people[0]]),
-  );
-  localStorage.setItem(
-    `buzz-view.v1:${JSON.stringify([scope, "direct-message:pending"])}`,
-    JSON.stringify({
-      id: "d".repeat(64),
-      channelId: channel,
-      recipients: person.pubkey,
-      draft: { text: "Old uncertain message", recipients: [] },
-    }),
-  );
-  t.directMessages.delivery.mockReturnValue(undefined);
-  t.directMessages.delivered.mockRejectedValue(
-    new Error("Could not confirm earlier delivery"),
-  );
-  t.mount();
-  await waitFor(() => expect(send()).toBeEnabled());
-  await t.user.click(screen.getByRole("button", { name: "Retry send" }));
-  await screen.findByRole("alert");
-  expect(t.messages.send).not.toHaveBeenCalled();
-  expect(
-    screen.getByRole("button", { name: "Remove Person 1" }),
-  ).toBeDisabled();
-});
-
-it("retires a confirmed legacy message when the page stays mounted", async () => {
-  const t = setup();
-  const person = people[0];
-  assert.exists(person);
-  const storageKey = (key: string) =>
-    `buzz-view.v1:${JSON.stringify([scope, key])}`;
-  localStorage.setItem(
-    storageKey("direct-message:recipients"),
-    JSON.stringify([person]),
-  );
-  localStorage.setItem(
-    storageKey("direct-message:pending"),
-    JSON.stringify({
-      id: "d".repeat(64),
-      channelId: channel,
-      recipients: person.pubkey,
-      draft: { text: "Already sent legacy message", recipients: [] },
-    }),
-  );
-  // No journal entry backs the legacy record, so delivery is never recorded.
-  t.directMessages.delivery.mockReturnValue(undefined);
-  t.mount();
-  await t.user.click(await screen.findByRole("button", { name: "Retry send" }));
-  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-  expect(
-    screen.queryByRole("button", { name: "Remove Person 1" }),
-  ).not.toBeInTheDocument();
-  expect(screen.getByRole("textbox")).not.toHaveTextContent(
-    "Already sent legacy message",
-  );
-  expect(send()).toBeDisabled();
-  expect(t.messages.send).not.toHaveBeenCalled();
-});
-
-it("can retry legacy confirmation after partial saved-view cleanup fails", async () => {
-  const t = setup();
-  const person = people[0];
-  assert.exists(person);
-  const storageKey = (key: string) =>
-    `buzz-view.v1:${JSON.stringify([scope, key])}`;
-  localStorage.setItem(
-    storageKey("direct-message:recipients"),
-    JSON.stringify([person]),
-  );
-  const pointerKey = storageKey("direct-message:pending");
-  localStorage.setItem(
-    pointerKey,
-    JSON.stringify({
-      id: "d".repeat(64),
-      channelId: channel,
-      recipients: person.pubkey,
-      draft: { text: "Confirmed legacy draft", recipients: [] },
-    }),
-  );
-  t.directMessages.delivery.mockReturnValue("accepted");
-  const removeItem = Storage.prototype.removeItem;
-  const remove = vi
-    .spyOn(Storage.prototype, "removeItem")
-    .mockImplementation(function (this: Storage, key) {
-      if (key === pointerKey) throw new Error("Cannot clear pointer");
-      removeItem.call(this, key);
-    });
-  const page = t.mount();
-  try {
-    await t.user.click(
-      await screen.findByRole("button", { name: "Retry send" }),
-    );
-    await screen.findByRole("alert");
-    page.unmount();
-    t.mount();
-    await screen.findByRole("button", { name: "Retry send" });
-  } finally {
-    remove.mockRestore();
-  }
-  await t.user.click(screen.getByRole("button", { name: "Retry send" }));
-  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-  expect(t.messages.send).not.toHaveBeenCalled();
-  expect(localStorage.getItem(pointerKey)).toBeNull();
-});
-
-it.each([
-  { archived: true },
-  { cached: true },
-  { readOnly: true },
-  { pending: true },
-  { members: ["f".repeat(64)] },
-  { channelType: "stream" },
-] as Partial<ChannelSummary>[])(
-  "does not preview a nonmatching or unavailable DM: %j",
-  async (override) => {
-    const t = setup();
-    t.channels.channels = [
-      {
-        id: channel,
-        name: "Unavailable",
-        channelType: "dm",
-        members: ["f".repeat(64), people[0]?.pubkey ?? ""],
-        ...override,
-      },
-    ];
-    const view = t.mount();
-    await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-    expect(
-      view.container.querySelector(
-        '[data-new-message-body] [title="Person 1"]',
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("region", { name: "Channel message history" }),
-    ).not.toBeInTheDocument();
-    expect(t.directMessages.open).not.toHaveBeenCalled();
-  },
-);
 
 const verifiedAs = (
   displayName: string,

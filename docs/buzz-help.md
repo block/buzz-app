@@ -515,6 +515,8 @@ and are asked to sign in again in Buzz.
   The **New message** plus in the Team or Solo list heading opens a draft in
   the right pane. Type **@name** and
   choose recipients to see their avatars or existing DM history before sending.
+  Sending opens the conversation at once with the message in it; if it fails
+  to send, **Retry** is on the message there.
   Collection headings use text alone; conversation avatars stay centered above their names.
   All includes recent channel posts alongside personal activity. Conversation
   details place member avatars before the title, matching Team; select the header

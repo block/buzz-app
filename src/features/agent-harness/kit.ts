@@ -20,6 +20,7 @@ import {
 } from "../../bundled/claude-code/prompt";
 import type { McpHandler } from "../host/service";
 import type { AgentKey } from "../agents/membership";
+import type { HarnessMcpKit } from "../agents/harness-mcp";
 import { fromOwner } from "../agents/owner-attestation";
 import { ownerReads } from "../agents/reads";
 import type {
@@ -113,6 +114,9 @@ export type HarnessKit = Readonly<{
     text: string,
     options?: Readonly<{ notifyOwner?: boolean }>,
   ): Promise<void>;
+  /** Which of the harness's own MCP servers a session loads, as the agent's
+   * controlling plugin chose, and the proof that the choice took effect. */
+  mcp: HarnessMcpKit;
 }>;
 
 type Sources = Readonly<{
@@ -185,7 +189,9 @@ This session has no Buzz tools: the tools named above, such as send and read, do
 </buzz-tools-unavailable>`;
 const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 
-export function harnessKit(sources: Sources): HarnessKit {
+/** The kit without its MCP part, which `agents.harness` binds to the plugin
+ * that asks. */
+export function harnessKit(sources: Sources): Omit<HarnessKit, "mcp"> {
   const admitted = new WeakMap<HarnessConversation, Admitted>();
   const memoryReads = new MemoryReads();
   const session = (key: AgentKey) => {

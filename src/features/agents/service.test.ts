@@ -2143,6 +2143,21 @@ describe("a plugin's wake", () => {
     },
   );
 
+  it("takes what an agent's sessions loaded only from the plugin that registered its type", async () => {
+    const { service, plugin, ctx, native } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await held(native);
+    const other = ctx.extend({
+      pluginOwner: Object.freeze({ id: "other", revision: "1" }),
+    });
+    expect(() =>
+      other.agents.harness.mcp.started({ key: bot }, "s", [], "none"),
+    ).toThrow("Only the plugin that runs this agent's harness");
+    expect(() =>
+      plugin.agents.harness.mcp.started({ key: bot }, "s", [], "none"),
+    ).not.toThrow();
+  });
+
   it("runs like a mention in its thread, typing at the thread's root", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { service, run, plugin, native } = await setup();
@@ -17483,6 +17498,40 @@ it("reports unsupported hooks when their harness registers later", async () => {
     await fiber.dispose();
     await ctx.fiber.dispose();
   }
+});
+
+it("lets only a plugin with agent MCP access choose harness MCP servers, one at a time", async () => {
+  const { plugin, ctx } = await setup();
+  const control = { choose: () => undefined };
+  expect(() => plugin.agents.controlHarnessMcp(control)).toThrow(
+    /Declare host.agentMcp/,
+  );
+  await expect(plugin.agents.harnessMcp("agent" as never)).rejects.toThrow(
+    /Declare host.agentMcp/,
+  );
+  await expect(
+    plugin.agents.inspectHarnessMcp("agent" as never, "server"),
+  ).rejects.toThrow(/Declare host.agentMcp/);
+  const scope = ctx.extend({
+    pluginOwner: { id: "mcp", revision: "one", agentMcp: true },
+  });
+  const fiber = scope.plugin((chooser) => {
+    chooser.agents.controlHarnessMcp(control);
+    expect(() => chooser.agents.controlHarnessMcp(control)).toThrow(
+      /already registered/,
+    );
+  });
+  await fiber.await();
+  await expect(
+    scope.agents.harnessMcp("agent" as never),
+  ).resolves.toBeUndefined();
+  await fiber.dispose();
+  const again = scope.plugin((chooser) => {
+    chooser.agents.controlHarnessMcp(control);
+  });
+  await again.await();
+  await again.dispose();
+  await ctx.fiber.dispose();
 });
 
 describe("synced teams", () => {

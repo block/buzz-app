@@ -42,12 +42,23 @@ export class PluginRuntime {
     timeoutMs = 10_000,
     /** Whether the manager is still reading which plugins to run. */
     configuring = () => false,
+    /** Whether an enabled plugin that may choose harness MCP servers can't
+     * start, so it never reaches this adapter. */
+    blocked = () => false,
   ) {
     this.root = root;
     this.load = load;
     root.provide("pluginStatus", {
       isActive: this.isActive,
       subscribe: this.subscribe,
+      agentMcpUnavailable: () =>
+        blocked() ||
+        [...this.entries.values()].some(
+          ({ plugin, cancelled }) =>
+            !cancelled &&
+            plugin.manifest.host?.agentMcp &&
+            !this.isActive(plugin.manifest.id, plugin.revision),
+        ),
       settled: () =>
         !configuring() &&
         Object.values(this.states).every(({ status }) => status !== "starting"),
@@ -161,6 +172,9 @@ export class PluginRuntime {
         agentExecution: Object.freeze([
           ...(entry.plugin.manifest.host?.agentExecution ?? []),
         ]),
+        ...(entry.plugin.manifest.host?.agentMcp
+          ? { agentMcp: true as const }
+          : {}),
       });
       // The loader runs only the host's own module for a bundled source.
       const scope = this.root.extend({

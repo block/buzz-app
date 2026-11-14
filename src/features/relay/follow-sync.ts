@@ -1,4 +1,4 @@
-import { READ_STATE_MAX, record, uint32 } from "./read-state-model";
+import { READ_STATE_MAX, record, uint32 } from "./read-state-model.ts";
 
 /** NIP-RS "Buzz Thread Follow Choices": one installation's own-slot recovery
  * state, kept as three separate authorities (rules: PLANS

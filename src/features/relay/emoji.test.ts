@@ -1,5 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createEmojiDirectory } from "./emoji-directory";
+import {
+  createEmojiDirectory,
+  EMOJI_SET_MAX_EVENT_BYTES,
+} from "./emoji-directory";
 import {
   EMOJI_SET,
   emojiTags,
@@ -23,6 +26,7 @@ import {
 } from "./testing";
 import type { LiveCallbacks } from "./live";
 import type { RelayEvent } from "./events";
+import { byteSize } from "./budget";
 
 const viewer = keypair(),
   relay = keypair(),
@@ -721,7 +725,7 @@ it("adding republishes the viewer's own set, replaces one shortcode and reaches 
     { shortcode: "party", url: "https://a.test/media/new.png" },
   ]);
 });
-it("rejects invalid names before any read and maps publish failure to reference copy", async () => {
+it("rejects invalid names before any read and surfaces publish and read failures' own text", async () => {
   const h = authoring();
   await expect(h.emoji.add?.("bad name", url)).rejects.toThrow(
     "Invalid emoji name. Use letters, numbers, hyphen, or underscore.",
@@ -734,12 +738,12 @@ it("rejects invalid names before any read and maps publish failure to reference 
   const adding = h.emoji.add?.("party", url);
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   h.ownRead().respond([]);
-  await expect(adding).rejects.toThrow("Failed to add emoji.");
+  await expect(adding).rejects.toThrow("blocked: no");
   expect(h.emoji.snapshot().mine).toEqual([]);
   const failedRead = h.emoji.add?.("party", url);
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   h.ownRead().fail(new Error("offline"));
-  await expect(failedRead).rejects.toThrow("Failed to add emoji.");
+  await expect(failedRead).rejects.toThrow("offline");
   expect(h.publish).toHaveBeenCalledTimes(1);
 });
 it("removes only from the fresh own set and preserves another member's colliding emoji", async () => {
@@ -830,7 +834,7 @@ it("keeps the own set after rejected removal and recovers on retry", async () =>
   const removing = h.emoji.remove?.("party");
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   h.ownRead().respond([own]);
-  await expect(removing).rejects.toThrow("Failed to remove emoji.");
+  await expect(removing).rejects.toThrow("blocked: no");
   expect(h.emoji.snapshot().mine).toEqual([{ shortcode: "party", url }]);
   const retry = h.emoji.remove?.("party");
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
@@ -843,7 +847,7 @@ it("fails removal on read failure, timeout, signer mismatch and disposal", async
   const readFailure = h.emoji.remove?.("party");
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   h.ownRead().fail(new Error("offline"));
-  await expect(readFailure).rejects.toThrow("Failed to remove emoji.");
+  await expect(readFailure).rejects.toThrow("offline");
   const deadline = new AbortController();
   const timeout = vi
     .spyOn(AbortSignal, "timeout")
@@ -890,6 +894,94 @@ it("maps an add that outlives its deadline to the reference timeout copy", async
   } finally {
     timeout.mockRestore();
   }
+});
+it("admits a set up to the whole-event limit and refuses one byte more before signing", async () => {
+  const h = authoring();
+  // Each read must be strictly newer than the set the previous add published
+  // (read + 1); an equal created_at would tie-break on the random event id.
+  let time = 3_000_000_000;
+  const padded = (length: number) => {
+    time += 2;
+    return set(viewer, time, [
+      ["emoji", "pad", `https://a.test/${"p".repeat(length)}`],
+    ]);
+  };
+  // Measure the real signed event once; its size grows byte for byte with the pad.
+  const probe = h.emoji.add?.("party", url);
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().respond([padded(0)]);
+  await probe;
+  const base = byteSize(h.publish.mock.calls[0]?.[0]);
+  const room = EMOJI_SET_MAX_EVENT_BYTES - base;
+  // Exactly at the limit (over 1,000 Slack emoji's worth): signed and published.
+  const largest = h.emoji.add?.("party", url);
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().respond([padded(room)]);
+  await expect(largest).resolves.toBe("party");
+  expect(byteSize(h.publish.mock.calls[1]?.[0])).toBe(
+    EMOJI_SET_MAX_EVENT_BYTES,
+  );
+  // One byte over: the too-large message, with no signing and no publication.
+  h.sign.mockClear();
+  h.publish.mockClear();
+  const over = h.emoji.add?.("party", url);
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().respond([padded(room + 1)]);
+  await expect(over).rejects.toThrow(
+    "Your emoji set is too large to save (≈1024 KB, limit 1023 KB). Remove some emoji first.",
+  );
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+it("maps signer and 413 size refusals to the size message and passes other host and relay text through", async () => {
+  const h = authoring();
+  const own = set(viewer, 2, [["emoji", "party", url]]);
+  const remove = async (expected: string | RegExp) => {
+    const removing = h.emoji.remove?.("party");
+    await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+    h.ownRead().respond([own]);
+    await expect(removing).rejects.toThrow(expected);
+  };
+  // The set is tiny, so the message must not quote its size against the limit.
+  const tooLarge =
+    "Your emoji set is too large to save (limit 1023 KB). Remove some emoji first.";
+  // Tauri rejects `invoke` with the command's plain string error.
+  h.sign.mockRejectedValueOnce("Relay event is too large");
+  await remove(tooLarge);
+  h.publish.mockRejectedValueOnce(
+    new PublishRejected("Relay rejected the message (413)"),
+  );
+  await remove(tooLarge);
+  h.sign.mockRejectedValueOnce("Set up your identity first");
+  await remove("Set up your identity first");
+  h.publish.mockRejectedValueOnce(
+    new PublishRejected(
+      "Relay rejected the message (400)",
+      "invalid: emoji tag must include a shortcode",
+    ),
+  );
+  await remove("invalid: emoji tag must include a shortcode");
+  // Only a reason-less, message-less failure falls back to the reference copy.
+  h.sign.mockRejectedValueOnce(new Error(""));
+  await remove("Failed to remove emoji.");
+  expect(h.emoji.snapshot().mine).toEqual([{ shortcode: "party", url }]);
+});
+it("loads a set over the relay's 512 KiB inbound socket frame into the palette and the viewer's own entries", async () => {
+  const h = authoring();
+  const entries = Array.from({ length: 6000 }, (_, i) => [
+    "emoji",
+    `slack_${i}`,
+    `https://emoji.slack-edge.com/T01BAFDEXUP/slack_${i}/e152c7c94190f465.gif`,
+  ]);
+  const large = set(viewer, 2, entries);
+  expect(byteSize(large)).toBeGreaterThan(512 * 1024);
+  expect(byteSize(large)).toBeLessThanOrEqual(EMOJI_SET_MAX_EVENT_BYTES);
+  const ready = h.emoji.ensure();
+  h.wire.next().respond([large, set(member, 1)]);
+  await ready;
+  expect(h.emoji.snapshot()).toMatchObject({ status: "ready" });
+  expect(h.emoji.snapshot().mine).toHaveLength(6000);
+  expect(h.emoji.snapshot().entries).toHaveLength(6001);
 });
 it("dispose fails running and queued adds without publishing", async () => {
   const h = authoring();

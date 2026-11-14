@@ -150,8 +150,15 @@ normalizes the shortcode, freshly reads the viewer's own set, replaces that
 shortcode, and republishes the whole set with a strictly newer `created_at`.
 Adds within a session run one at a time, so a stale read cannot drop an earlier
 add. The signed echo must match the template before publishing, the accepted set
-joins the palette immediately, and failures surface as the reference
-`Failed to add emoji.` / `Timed out while adding emoji.` copy. The development
+joins the palette immediately. Failures surface the relay's refusal reason or the
+host's error text, falling back to the reference `Failed to add emoji.` copy only
+when there is none; timeouts keep `Timed out while adding emoji.`. A whole signed
+set is limited to 1 MiB − 512 B (`EMOJI_SET_MAX_EVENT_BYTES`, mirrored by the host
+signer): it is published as one `POST /events` body and must fit back through each
+member's 1 MiB live socket inside `["EVENT",<subscription id>,…]`. A larger set
+fails before signing with `Your emoji set is too large to save (≈X KB, limit Y
+KB). Remove some emoji first.`; the signer's size refusal and HTTP 413 show the
+same message. The development
 broker admits kind 30030 only for the canonical own-set template
 (`validEmojiSetTemplate`).
 

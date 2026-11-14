@@ -31,6 +31,7 @@ function relayStore() {
     (!filter.kinds || filter.kinds.includes(event.kind)) &&
     (!filter.authors || filter.authors.includes(event.pubkey));
   const failures: Error[] = [];
+  const signFailures: unknown[] = [];
   const readFailures: Error[] = [];
   let publicationGate: Promise<void> | undefined;
   return {
@@ -38,6 +39,10 @@ function relayStore() {
     /** Queue a relay rejection for the next publish. */
     rejectNext(error: Error) {
       failures.push(error);
+    },
+    /** Queue a host signer rejection, which Tauri delivers as its plain string. */
+    rejectNextSign(reason: unknown) {
+      signFailures.push(reason);
     },
     /** Queue a relay failure for the next kind-30030 read. */
     failNextRead(error: Error) {
@@ -70,7 +75,10 @@ function relayStore() {
           ...(upload ? { uploadAttachment: upload } : {}),
           writer: {
             ...(kinds ? { kinds } : {}),
-            sign: async (template) => signed(viewer, template),
+            async sign(template) {
+              if (signFailures.length) throw signFailures.shift();
+              return signed(viewer, template);
+            },
             async publish(event) {
               const gate = publicationGate;
               publicationGate = undefined;
@@ -232,6 +240,17 @@ it("preserves drafts across tabs and name edits during replacement, then returns
   expect(screen.getByRole("button", { name: "Upload image" })).toHaveFocus();
 });
 
+it("shows a host command's plain-string rejection instead of the fallback", async () => {
+  const user = userEvent.setup();
+  // Tauri invoke rejections arrive as strings, not Errors.
+  const upload = vi.fn(() => Promise.reject("Upload rejected: file too large"));
+  relayStore().connect(upload);
+  await user.upload(screen.getByLabelText("Upload image"), png("wave.png"));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Upload rejected: file too large",
+  );
+});
+
 it("keeps upload focus when the setup card becomes the selected-image editor", async () => {
   const user = userEvent.setup();
   const pending = deferred<ReturnType<typeof uploaded>>();
@@ -328,9 +347,7 @@ it("shows the failed save, keeps the draft and saves on retry", async () => {
   store.rejectNext(new PublishRejected("blocked: no"));
   const save = screen.getByRole("button", { name: "Save emoji" });
   await user.click(save);
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Failed to add emoji.",
-  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("blocked: no");
   expect(save).toBeEnabled();
   expect(screen.getByRole("textbox")).toHaveValue("wave");
   expect(store.stored).toEqual([]);
@@ -436,15 +453,60 @@ it("disables removal while pending, keeps rejected emoji and permits retry", asy
   } finally {
     gate.resolve();
   }
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Failed to remove emoji.",
-  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("blocked: no");
   expect(screen.getByRole("img", { name: ":mine:" })).toBeVisible();
   expect(remove).toBeEnabled();
   await user.click(remove);
   expect(await screen.findByText("Removed :mine:")).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.getByRole("img", { name: ":keep:" })).toBeVisible();
+});
+it("lists and removes from a set over 512 KiB, and shows a host signer's string rejection", async () => {
+  const user = userEvent.setup();
+  const store = relayStore();
+  // Few entries with long URLs keep the DOM small while the event exceeds the
+  // relay's 512 KiB inbound socket frame, as a large Slack import can.
+  const names = Array.from({ length: 60 }, (_, i) => `slack_${i}`);
+  const large = signed(viewer, {
+    kind: 30030,
+    created_at: 1,
+    content: "",
+    tags: [
+      ["d", "buzz:custom-emoji"],
+      ...names.map((name) => [
+        "emoji",
+        name,
+        `${origin}/media/${name}/${"e".repeat(9_500)}.gif`,
+      ]),
+    ],
+  });
+  expect(JSON.stringify(large).length).toBeGreaterThan(512 * 1024);
+  store.stored.push(large);
+  store.connect(null);
+  const remove = await screen.findByRole("button", {
+    name: "Remove :slack_0:",
+  });
+  expect(
+    screen.getByRole("button", { name: "Remove :slack_59:" }),
+  ).toBeVisible();
+  store.rejectNextSign("Relay event is too large");
+  await user.click(remove);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Your emoji set is too large to save (limit 1023 KB). Remove some emoji first.",
+  );
+  store.rejectNextSign("Set up your identity first");
+  await user.click(remove);
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Set up your identity first",
+    ),
+  );
+  await user.click(remove);
+  expect(await screen.findByText("Removed :slack_0:")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Remove :slack_0:" })).toBeNull();
+  expect(
+    store.stored.find((event) => event.pubkey === viewer.pubkey)?.tags,
+  ).toHaveLength(60);
 });
 it("keeps a loaded collection listed beside a failed refresh until Retry recovers it", async () => {
   const user = userEvent.setup();

@@ -262,6 +262,16 @@ pub(crate) const LIVE_CANVAS_BYTES: usize = 256 * 1024;
 /// escape past it. Mirrors `CANVAS_MAX_EVENT_BYTES` in `canvas-limits.ts`.
 pub(crate) const CANVAS_MAX_EVENT_BYTES: usize = 512 * 1024 - 16;
 
+/// The largest complete signed custom-emoji set (kind 30030). It is published
+/// only as one `POST /events` body, which this host (`MAX_BODY`) and the relay
+/// (block/buzz `crates/buzz-relay/src/router.rs`, `RequestBodyLimitLayer`) cap
+/// at 1 MiB, but every member receives it back over their live socket as
+/// `["EVENT",<subscription id>,…]`, and that socket caps inbound messages at
+/// 1 MiB too (`federated_identity/socket.rs`). 512 bytes leaves room for the
+/// wrapper with the relay's longest (256-byte) subscription id. Mirrors
+/// `EMOJI_SET_MAX_EVENT_BYTES` in `emoji-directory.ts`.
+const EMOJI_SET_MAX_EVENT_BYTES: usize = MAX_BODY - 512;
+
 /// Kinds whose events may exceed the default 64 KiB signing bound.
 fn signing_limit(kind: u16) -> Option<usize> {
     if catalog::is_catalog(kind) {
@@ -270,6 +280,8 @@ fn signing_limit(kind: u16) -> Option<usize> {
         Some(ARTIFACT_MAX_EVENT_BYTES)
     } else if kind == 40100 {
         Some(CANVAS_MAX_EVENT_BYTES)
+    } else if kind == 30030 {
+        Some(EMOJI_SET_MAX_EVENT_BYTES)
     } else {
         None
     }
@@ -300,6 +312,7 @@ pub(crate) async fn relay_sign(
     let complete_limit = match event.kind {
         45010 => Some(ARTIFACT_MAX_EVENT_BYTES),
         40100 => Some(CANVAS_MAX_EVENT_BYTES),
+        30030 => Some(EMOJI_SET_MAX_EVENT_BYTES),
         _ => None,
     };
     let signed = match signing_limit(event.kind) {

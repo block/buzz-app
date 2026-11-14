@@ -4235,6 +4235,71 @@ async fn artifact_signing_through_ipc_admits_a_maximum_config_event_and_bounds_t
     );
 }
 
+#[tokio::test]
+async fn emoji_set_signing_through_ipc_admits_large_sets_up_to_the_whole_event_limit() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    let sign = |kind: u16, tags: &Vec<Vec<String>>| {
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: "relay_sign".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "community": "https://relay.test",
+                    "event": { "kind": kind, "created_at": 1_800_000_000u64, "tags": tags, "content": "" }
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+        .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+    };
+    // 1,000 Slack-imported emoji (about 110 KB): over the default 64 KiB bound
+    // that made every add and remove fail, so ordinary kinds still refuse it.
+    let mut tags: Vec<Vec<String>> = vec![vec!["d".into(), "buzz:custom-emoji".into()]];
+    tags.extend((0..1000).map(|i| {
+        let name = format!("travis_party_blob_{i}");
+        let url = format!("https://emoji.slack-edge.com/T01BAFDEXUP/{name}/e152c7c94190f465.gif");
+        vec!["emoji".into(), name, url]
+    }));
+    let signed = sign(30030, &tags).unwrap();
+    verify(&signed);
+    let size = serde_json::to_vec(&signed).unwrap().len();
+    assert!(size > 64 * 1024, "1,000-emoji set is {size}");
+    assert!(sign(9, &tags).is_err());
+
+    // Pad one entry until the complete signed event is exactly the limit, then
+    // one byte over: the commitment admits both, the whole-event check decides.
+    let pad = |extra: usize| {
+        let mut padded = tags.clone();
+        let entry = r#",["emoji","pad",""]"#.len();
+        let room = EMOJI_SET_MAX_EVENT_BYTES - size - entry + extra;
+        padded.push(vec!["emoji".into(), "pad".into(), "u".repeat(room)]);
+        padded
+    };
+    let largest = sign(30030, &pad(0)).unwrap();
+    verify(&largest);
+    assert_eq!(
+        serde_json::to_vec(&largest).unwrap().len(),
+        EMOJI_SET_MAX_EVENT_BYTES
+    );
+    const { assert!(EMOJI_SET_MAX_EVENT_BYTES > 512 * 1024) };
+    assert_eq!(
+        sign(30030, &pad(1)).unwrap_err(),
+        serde_json::json!("Relay event is too large")
+    );
+}
+
 #[test]
 fn media_cors_allows_only_the_window_origin() {
     for (page, origin) in [

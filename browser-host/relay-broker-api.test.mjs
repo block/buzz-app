@@ -3089,6 +3089,49 @@ test("member change receipts must match the signed command", async () => {
   }
 });
 
+test("icon changes sign one bounded kind 9033 command and keep relay refusals", async () => {
+  let refuse = false;
+  const { h, post } = await communityAdmin((call) =>
+    refuse
+      ? Response.json(
+          { error: "invalid: actor not authorized: must be admin or owner" },
+          { status: 403 },
+        )
+      : Response.json({ accepted: true, event_id: call.body.id, message: "" }),
+  );
+  try {
+    for (const icon of ["data:image/png;base64,AAAA", ""]) {
+      const response = await post("icon", { icon });
+      expect(response.status).toBe(200);
+      const sent = h.calls.at(-1);
+      expect(sent.url).toBe(`${fixtureRelayUrl}/events`);
+      expect(verifyEvent(sent.body)).toBe(true);
+      expect(sent.body).toMatchObject({
+        kind: 9033,
+        tags: [["icon", icon]],
+        content: "",
+        pubkey: h.event.pubkey,
+      });
+    }
+    for (const body of [
+      { icon: "https://cdn.test/icon.png" },
+      { icon: "data:image/svg+xml;base64,AAAA" },
+      { icon: `data:image/png;base64,${"A".repeat(49_152)}` },
+      { name: "Renamed" },
+    ])
+      expect((await post("icon", body)).status).toBe(400);
+    expect(h.calls).toHaveLength(2);
+    refuse = true;
+    const refused = await post("icon", { icon: "" });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({
+      error: "invalid: actor not authorized: must be admin or owner",
+    });
+  } finally {
+    await h.close();
+  }
+});
+
 test("leave requests sign the exact NIP-43 shape for the selected community only", async () => {
   const { h, post } = await communityAdmin((call) =>
     Response.json({ accepted: true, event_id: call.body.id, message: "" }),

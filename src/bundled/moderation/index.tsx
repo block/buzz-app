@@ -1,11 +1,36 @@
 import type { PluginModule } from "../../plugins/api";
+import { ImageIcon } from "../../shared/design-system/icons";
 import { CommunityAdmin } from "./CommunityAdmin";
+import { CommunityIcon } from "./CommunityIcon";
 import { canManageMembership } from "./membership";
 
 export const inject = ["relay", "settingsCards", "adminAccess", "navigation"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
   const membership = ctx.adminAccess.membership;
+  // Owners and admins see both cards; the relay still decides every change.
+  const visibility = {
+    snapshot: () => {
+      const connection = relay.snapshot();
+      const state = membership.snapshot();
+      if (canManageMembership(state)) return true;
+      if (
+        connection.status === "error" ||
+        connection.status === "disconnected" ||
+        state.error
+      )
+        return "error";
+      if (
+        state.status === "idle" ||
+        state.status === "loading" ||
+        state.refreshing
+      )
+        return "pending";
+      return false;
+    },
+    subscribe: membership.subscribe,
+    ensure: membership.ensure,
+  };
   // Registered in every build. The card hides unsupported member changes
   // itself, so a Settings section, history entry or in-app locator naming it
   // still opens the roster and invite controls in native builds.
@@ -13,28 +38,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "membership",
     title: "Membership",
     section: "administration",
-    visibility: {
-      snapshot: () => {
-        const connection = relay.snapshot();
-        const state = membership.snapshot();
-        if (canManageMembership(state)) return true;
-        if (
-          connection.status === "error" ||
-          connection.status === "disconnected" ||
-          state.error
-        )
-          return "error";
-        if (
-          state.status === "idle" ||
-          state.status === "loading" ||
-          state.refreshing
-        )
-          return "pending";
-        return false;
-      },
-      subscribe: membership.subscribe,
-      ensure: membership.ensure,
-    },
+    visibility,
     component: ({ active, community, navigation }) => (
       <CommunityAdmin
         relay={relay}
@@ -57,6 +61,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
             { focus: "preserve" },
           );
         }}
+      />
+    ),
+  });
+  ctx.settingsCards.register({
+    id: "community-icon",
+    title: "Community icon",
+    icon: ImageIcon,
+    section: "administration",
+    visibility,
+    component: ({ active, community }) => (
+      <CommunityIcon
+        relay={relay}
+        communityName={community?.name}
+        active={active}
       />
     ),
   });

@@ -261,6 +261,11 @@ mention anyone. Explicit agent watches on that room can still receive them.
   **Copy link**, and shared expiry and use limits. On macOS, hover over the QR
   or focus its action with the keyboard to reveal **Share**, which opens the
   system share menu with a QR image and the invite link.
+- Community owners and admins set the picture everyone sees for the community
+  in Settings → **Community icon**, under Community admin. **Choose image…**
+  crops it to a square and resizes it to fit; **Remove icon** clears it. The
+  card shows the icon the community publishes once the change is accepted.
+  The community list picks up the new icon the next time Buzz starts.
 - To use Buzz on your phone, open Settings → **Mobile app** (**Pair mobile**
   in builds without Builderlab). When you're signed in with Builderlab and your
   account holds this identity's backup, it says to install the app (with store

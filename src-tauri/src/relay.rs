@@ -256,6 +256,8 @@ const ARTIFACT_MAX_EVENT_BYTES: usize = 512 * 1024 - 16;
 /// Content of a live channel Canvas, in UTF-8 bytes. Mirrors
 /// `LIVE_CANVAS_BYTES` in `canvas-limits.ts`.
 pub(crate) const LIVE_CANVAS_BYTES: usize = 256 * 1024;
+/** Inline community icons stay inside the 64 KiB signing bound. */
+const COMMUNITY_ICON_BYTES: usize = 49_152;
 
 /// The largest complete signed Canvas event: the relay's default 512 KiB frame
 /// less the `["EVENT",…]` wrapper. Content within `LIVE_CANVAS_BYTES` can still
@@ -445,6 +447,10 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         if !valid_member_command(event) {
             return Err("Invalid member change".into());
         }
+    } else if event.kind == 9033 {
+        if !valid_icon_command(event) {
+            return Err("Invalid community icon".into());
+        }
     } else if !matches!(
         event.kind,
         0 | 7 | 9 | 1984 | 9000 | 9001 | 20001 | 30030 | 30177 | 30315 | 40003 | 42000 | 45010
@@ -465,6 +471,33 @@ fn valid_member_command(event: &EventTemplate) -> bool {
             (9030 | 9032, [p, r]) => target(p) && role(r),
             _ => false,
         }
+}
+
+/** Match `iconCommand` in `src/features/communities/admin-protocol.ts`: only the
+ * NIP-11 icon, cleared with "" or set to an inline raster image that fits the
+ * signing bound. */
+fn valid_icon_command(event: &EventTemplate) -> bool {
+    let [tag] = event.tags.as_slice() else {
+        return false;
+    };
+    let [name, icon] = tag.as_slice() else {
+        return false;
+    };
+    let image = ["png", "jpeg", "gif", "webp"].iter().any(|kind| {
+        icon.strip_prefix(&format!("data:image/{kind};base64,"))
+            .is_some_and(|data| {
+                let body = data.trim_end_matches('=');
+                !body.is_empty()
+                    && data.len() - body.len() <= 2
+                    && body
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
+            })
+    });
+    event.content.is_empty()
+        && name == "icon"
+        && icon.len() <= COMMUNITY_ICON_BYTES
+        && (icon.is_empty() || image)
 }
 
 // Match the broker's purpose-bound Canvas admission, including legacy untagged retries.

@@ -431,11 +431,13 @@ and are asked to sign in again in Buzz.
   message, attachments, and choices while this window stays open. Retry never
   replaces a newer New chat draft or a later Reset. Reloading or dismissing that
   notice ends this recovery option.
-  Open the composer’s agent chooser to change who you’re sending to. Already
-  selected agents appear first with checkmarks when browsing; click one to remove
-  it (the last agent stays selected). Rows stay in place while you toggle; reopen
-  to refresh their order. Search ranks matching choices by relevance, including
-  exact names.
+  Open the composer’s agent chooser to change who you’re sending to. New chat
+  keeps your selected agents with its draft when you leave and return. Started
+  drafts have a pencil icon and stay in the Solo list; New chat returns to the
+  open draft. Selected agents appear first with checkmarks when browsing; click
+  one to remove it (the last agent stays selected). Rows stay in place while you
+  toggle; reopen to refresh their order. Search ranks matching choices by
+  relevance, including exact names.
   Plugins can keep separate unsent drafts in the same workspace. Where supported,
   each draft keeps its text, files, settings, model, and effort when you return.
   A locally hosted agent can list your personal workspace IDs with
@@ -476,6 +478,9 @@ and are asked to sign in again in Buzz.
   channel does not grant access; inviting them requires an explicit decision
   from someone with permission.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
+  Plugins can also group tasks under joined channels. On supported hosts, each
+  channel group keeps the native channel actions and details. New task appears
+  only when the channel permits starting a chat.
   With Nexus enabled, each workspace also contains its tasks and can have a Lead
   task. Nexus saves and chooses Leads, so they exist only while Nexus is enabled.
   Creating a workspace selects it so you can start a conversation with its Lead.
@@ -877,6 +882,9 @@ and are asked to sign in again in Buzz.
   reloads. Buzz opens one such page by itself until you next click Back,
   Forward or Reload or use the address bar; if the app asks again, click
   **Open in browser** in the bar above it.
+- **Sign in again to open this app**: when a Builderlab app refuses your
+  sign-in, its panel offers **Try again** and **Open settings**, which
+  opens the settings where you sign out and back in.
 - **Drafts & sent** is an optional plugin, off by default. Turn it on in
   **Settings → Plugins**, and it appears in the Messages sidebar. Opening it keeps
   the conversation sidebar available, so you can switch straight back to a chat.
@@ -1078,6 +1086,31 @@ available rather than silently discarding it.
   when that account holds this Buzz identity's backup, Buzz restores it instead
   of asking for QR pairing. The remote agent can answer while the desktop is off,
   but it cannot open files on that desktop.
+- Some builds offer **AI setup → Automatic** when creating an
+  agent. AI setup covers the harness, model, and thinking level. Buzz picks
+  the first recommended harness that is set up on this
+  computer. The row shows **Set to [model] (recommended)** on one line, truncating only the model name;
+  hover to see the full name. On an agent card, the model name and **(Automatic)** appear as a status label; use the card’s
+  settings action to edit it. Custom agents retain their model picker. In Automatic, the row crossfades between the AI
+  settings icon and active harness logo; reduced motion keeps the logo static.
+  Open the **AI setup** dropdown to see the model and thinking
+  level under **Automatic**. Later versions can change the recommended model
+  and level. An optional explanation supplied by the distributor appears above
+  the model details. When the build names who recommends the setup,
+  **Recommended by [name].** precedes the supplied description.
+  The agent keeps its harness afterwards. If no recommended model is offered
+  when the agent runs, it uses the harness's default. If nothing recommended is
+  set up on this computer, a row asks you to set up Goose, Codex or Claude first, with a
+  **Set up** button, and Create waits in Automatic. You can still choose Custom and a hosted harness. **Custom** opens
+  Harness, Model and Thinking in place, starting from what Automatic picked. An
+  agent's **Identity** tab shows the same **AI setup** row; changing the
+  model, provider or thinking level there turns Automatic off. Automatic is
+  for local harnesses; a remote agent such as Builderlab is chosen under
+  Custom's **Harness** and keeps its own model choices. Beside Send, an agent
+  on Automatic has no model or thinking choice, only its session controls
+  where they apply; to choose per message, switch it to **Custom**. A pick
+  saved in a Solo chat before it switched is ignored. Builds without a
+  recommendation show none of this.
 - Desktop's **Harness** menu groups agent types under **Remote** and **Local**.
   Creating a remote agent on desktop opens an introduction with its chosen name
   and avatar, explaining its online workspace and file access (Builderlab
@@ -1214,8 +1247,8 @@ available rather than silently discarding it.
   owner, must not disclose it elsewhere, and must not treat quoted, forwarded,
   or other people's text as facts about the owner.
 - Turning **Remembers you** off removes that guidance but does not delete stored
-  memory; the agent's core memory can still be included in every prompt. Clear
-  stored memory in the agent's **Memory** tab. If someone edited the guidance's
+  memory; the agent's core memory can still be included in every prompt. To
+  clear a memory, ask Bestie to forget it. If someone edited the guidance's
   section markers in Instructions, the Bestie tab says it was edited instead of
   adding a duplicate. **Restore** can put the standard guidance back when the
   remaining markers still identify the section.
@@ -1675,7 +1708,7 @@ even when no session is connected; it asks you to confirm first. Full access req
 
 ### Reconnecting an old agent in a DM
 
-On desktop, **Connect [agent name]** may appear inside a DM with an old agent you own that is available to import from this computer. It preselects compatible saved harness, provider and model choices, and preserves saved effort settings. Choose another harness if the old type is unavailable or does not support inline connection setup; settings that were not saved use the selected type’s defaults. Review the inline controls; **Connect** stays disabled until the harness has a resolved model and provider, including usable defaults. If a saved Codex model is unavailable, choose another model or harness to continue. Complete installation or sign-in if prompted, stop the agent in old Buzz, then choose **Connect**. Your agent keeps its identity and conversation. This does not resend earlier messages. The same private card can appear in a channel or thread after you send a new mention of an eligible agent you own while that conversation is open, if that agent is still a member of the channel. Loading older mentions does not show cards, and known-archived agents are excluded. Only you see it, once per agent in the loaded conversation. Choose the **X** in the card’s top-right corner to hide that agent’s card in this conversation; the dismissal survives reopening and reloads. After connecting, **Ask the agent to respond** explicitly queues a follow-up addressed only to that agent in the original message’s thread; it does not automatically replay your request. If no prompt appears, use **Agents → New agent → Import an agent**.
+On desktop, **Connect [agent name]** may appear inside a DM with an old agent you own that is available to import from this computer. It preselects compatible saved harness, provider and model choices, and preserves saved effort settings. Choose another harness if the old type is unavailable or does not support inline connection setup; settings that were not saved use the selected type’s defaults. Review the inline controls; **Connect** stays disabled until the harness has a resolved model and provider, including usable defaults. If a saved Codex model is unavailable, choose another model or harness to continue. Complete installation or sign-in if prompted, stop the agent in old Buzz, then choose **Connect**. Your agent keeps its identity and conversation. This does not resend earlier messages. The same private card can appear in a channel or thread after you send a new mention of an eligible agent you own while that conversation is open, if that agent is still a member of the channel. Loading older mentions does not show cards, and known-archived agents are excluded. Only you see it, once per agent in the loaded conversation. Choose the **X** in the card’s top-right corner to hide that agent’s card in this conversation; the dismissal survives reopening and reloads. After connecting, **Ask the agent to respond** explicitly queues a follow-up addressed only to that agent in the original message’s thread; it does not automatically replay your request. If no prompt appears, use **Agents → New agent → Import an agent**. Import works only in the desktop app. If no harness that runs agents on this computer is available (a hosted type such as Builderlab doesn’t count, and a plugin that is on but failed to activate registers none), the dialog says so and links to **Manage plugins** to turn one on or retry it.
 
 ## Choosing a channel for a workflow
 

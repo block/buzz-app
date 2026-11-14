@@ -9,8 +9,9 @@
 //
 // Each day's starts are a value of their own, so a turn rewrites only its
 // day's value, and whole days past keeping are removed, every agent's of the
-// turn's type. A removed agent's days stay until then, so a harness can still
-// remove what its sessions left. Agent storage takes
+// turn's type. Removing an agent removes its days, except of a type whose
+// harness deletes what its sessions left: those stay until past keeping, so
+// it still can. Agent storage takes
 // 4 MiB a value: about 70,000 starts in one day, far more than one timer's
 // 1,440 at its shortest interval. A save past that fails and is logged.
 import { validTime } from "../agent-harness/acp/agent-sessions";
@@ -132,4 +133,20 @@ export function standaloneSessions(
       }
     },
   };
+}
+
+/** Removes a membership's one-off turn sessions, of every agent type but
+ * those in `keep`: a type whose harness deletes what its sessions left, as
+ * Codex deletes their threads, keeps a removed agent's days, which the next
+ * one-off turn of any agent of the type removes once past keeping. */
+export async function removeStandaloneSessions(
+  storage: AgentStore,
+  agent: AgentKey,
+  keep: readonly string[] = ["codex"],
+) {
+  for (const key of storage.keys()) {
+    if (!key.startsWith(STANDALONE_PREFIX)) continue;
+    const [type = "", owner] = key.slice(STANDALONE_PREFIX.length).split(":");
+    if (owner === agent && !keep.includes(type)) await storage.set(key, null);
+  }
 }

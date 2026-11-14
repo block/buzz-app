@@ -2,6 +2,7 @@
 import { expect, it, vi } from "vitest";
 import { PROMPTS_BUDGET, sessionPrompts } from "./session-prompts";
 import {
+  removeStandaloneSessions,
   STANDALONE_DAYS,
   STANDALONE_PREFIX,
   standaloneSessions,
@@ -216,12 +217,33 @@ it("logs a failed save rather than throwing", async () => {
   }
 });
 
-it("keeps a removed agent's days until another agent of the type removes them past keeping", async () => {
+it("removes a membership's sessions of every agent type, and only its", async () => {
+  const storage = memory();
+  await standaloneSessions(storage, "pi", AGENT).add("p");
+  await standaloneSessions(storage, "claude-code", AGENT).add("c");
+  await standaloneSessions(storage, "pi", OTHER).add("o");
+  await removeStandaloneSessions(storage, AGENT);
+  expect(standaloneSessions(storage, "pi", AGENT).list()).toEqual([]);
+  expect(standaloneSessions(storage, "claude-code", AGENT).list()).toEqual([]);
+  expect(
+    standaloneSessions(storage, "pi", OTHER)
+      .list()
+      .map(({ id }) => id),
+  ).toEqual(["o"]);
+});
+
+it("keeps a removed agent's Codex days until another Codex agent removes them past keeping", async () => {
   const storage = memory();
   let now = 0;
   const removed = standaloneSessions(storage, "codex", AGENT, () => now);
   await removed.add("theirs");
   await standaloneSessions(storage, "pi", AGENT, () => now).add("pi");
+  await standaloneSessions(storage, "pi", OTHER, () => now).add("other pi");
+  await removeStandaloneSessions(storage, AGENT);
+  // Codex deletes what the sessions left, so their record stays for it; the
+  // same agent's Pi day goes at once.
+  expect(removed.list().map(({ id }) => id)).toEqual(["theirs"]);
+  expect(storage.get(`${STANDALONE_PREFIX}pi:${AGENT}:0`)).toBeNull();
   now = (STANDALONE_DAYS + 1) * DAY;
   const dropped: string[][] = [];
   await standaloneSessions(storage, "codex", OTHER, () => now).add(
@@ -232,7 +254,7 @@ it("keeps a removed agent's days until another agent of the type removes them pa
   // Only the type's days past keeping go, every agent's.
   expect(dropped).toEqual([["theirs"]]);
   expect(storage.get(`${STANDALONE_PREFIX}codex:${AGENT}:0`)).toBeNull();
-  expect(storage.get(`${STANDALONE_PREFIX}pi:${AGENT}:0`)).not.toBeNull();
+  expect(storage.get(`${STANDALONE_PREFIX}pi:${OTHER}:0`)).not.toBeNull();
   expect(
     standaloneSessions(storage, "codex", OTHER, () => now)
       .list()

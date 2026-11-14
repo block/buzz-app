@@ -1904,7 +1904,8 @@ kept apart from saved prompts, for 32 days from the session's start, longer than
 Usage reads back, with no limit on how many sessions it holds. Each day's starts
 are saved as one value, and a day's value is removed once all of it is past
 keeping, by the next standalone turn of any agent of that type. Removing an
-agent keeps its record until then. The snapshot has no `channelId`, and a session from before that
+agent removes its record, except a Codex agent's, which stays until then so
+its threads can still be deleted. The snapshot has no `channelId`, and a session from before that
 record was kept is not counted.
 
 Codex finds the agent's threads through app-server by the agent's name in their

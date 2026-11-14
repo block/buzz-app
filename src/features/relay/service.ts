@@ -1,4 +1,6 @@
+import { abortNetwork } from "../developer/network-context";
 import type { LocalAgentSource } from "../agents/local-activity";
+import { networkRecorder } from "../developer/network-diagnostics";
 import { readView } from "../../shared/view-state";
 import type { LocalAgents } from "../agents/local";
 import type { IdentityNames } from "../identity-names/service";
@@ -127,7 +129,7 @@ export function provideRelay(
   const reset = () => {
     generation++;
     connecting = false;
-    controller?.abort();
+    if (controller) abortNetwork(controller, "superseded", "relay-session");
     clearTimeout(deadline);
     store.dispose();
     store = createRelaySession(null, { identityNames });
@@ -310,7 +312,7 @@ export function provideRelay(
       const timer = setTimeout(() => {
         if (disposed || current !== generation || signal !== controller?.signal)
           return;
-        controller.abort();
+        abortNetwork(controller, "deadline", "relay-connect");
         connecting = false;
         transientFailure = true;
         publish({
@@ -490,25 +492,37 @@ export function provideRelay(
     // Network, focus and wake are hints that the relay may answer again, and
     // that a socket which still looks open may have died while asleep.
     // Failed background reads retry now; a live socket is asked to answer.
-    const hint = (network: boolean) => {
+    const hint = (
+      network: boolean,
+      source: "online" | "focus" | "visible" | "wake",
+    ) => {
+      networkRecorder.record({
+        level: "info",
+        event: "signal",
+        relay: snapshot.origin,
+        detail: source,
+      });
       if (snapshot.cached) service.retry();
       else {
-        store.session.recovery?.retryNow();
+        store.session.recovery?.retryNow(
+          undefined,
+          source === "wake" ? "wake-gap" : source,
+        );
         store.session.checkLive(network);
       }
     };
-    const resume = () => hint(false);
+    const resume = () => hint(false, "focus");
     // A socket that answered just before a network change proves nothing after it.
-    const network = () => hint(true);
+    const network = () => hint(true, "online");
     const visible = () => {
-      if (document.visibilityState === "visible") resume();
+      if (document.visibilityState === "visible") hint(false, "visible");
     };
     // Timers stop while the machine sleeps. A large gap between ticks means
     // it woke up, which a desktop window does not always report as focus.
     let tick = Date.now();
     const wake = setInterval(() => {
       const now = Date.now();
-      if (now - tick > WAKE_GAP_MS) resume();
+      if (now - tick > WAKE_GAP_MS) hint(false, "wake");
       tick = now;
     }, WAKE_TICK_MS);
     if (typeof window !== "undefined") {

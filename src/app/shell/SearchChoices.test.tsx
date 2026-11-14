@@ -66,13 +66,7 @@ const choices = (place: SearchViews["place"], rows = destinations) => (
     onQueryChange={() => {}}
     input={createRef<HTMLElement>()}
     highlightEmpty
-    views={{
-      tabs: null,
-      resultsLabel: "Channels",
-      panelId: "search-view-channels",
-      onSwitch: () => {},
-      place,
-    }}
+    views={{ resultsLabel: "Channels", place }}
     groups={[{ label: "Channels", destinations: rows }]}
   />
 );
@@ -191,9 +185,8 @@ it("keeps a footer below the results, outside their scrollport, so it stays in v
 });
 
 it("keeps Peek's group order once the highlight moves, adding late groups at the end", () => {
-  const onFreeze = vi.fn();
   const row = (key: string) => ({ key, label: key, icon: ChatCircleIcon, run });
-  const peek = { ranked: true, preview: () => null, onFreeze };
+  const peek = { ranked: true, preview: () => null };
   const palette = (groups: { label: string; rows: string[] }[]) => (
     <SearchChoices
       query="lau"
@@ -224,9 +217,7 @@ it("keeps Peek's group order once the highlight moves, adding late groups at the
     ]),
   );
   expect(order()).toEqual(["People", "Chats"]);
-  expect(onFreeze).not.toHaveBeenCalled();
   fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
-  expect(onFreeze).toHaveBeenCalledOnce();
   // Moved, groups shown keep their places and a late one goes last.
   rerender(
     palette([
@@ -236,7 +227,6 @@ it("keeps Peek's group order once the highlight moves, adding late groups at the
     ]),
   );
   expect(order()).toEqual(["People", "Chats", "Messages"]);
-  expect(onFreeze).toHaveBeenCalledOnce();
 });
 
 it("keeps Tab in the field before Peek has any group to show", () => {

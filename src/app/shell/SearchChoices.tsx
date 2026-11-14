@@ -118,9 +118,6 @@ export type SearchPeek = {
   hints?: ReactNode;
   /** Results that may still arrive, so the list is busy. */
   busy?: boolean;
-  /** Heard once per text, when the person first moves the highlight: the
-   * groups keep their order from then on, so nothing reorders under them. */
-  onFreeze?: () => void;
 };
 
 /** Top results shows this many rows of its first group, and of the rest. */
@@ -162,15 +159,10 @@ export type SearchInputProps = {
   open?: boolean | undefined;
 };
 
-/** Views of one search, switched from the field with Ctrl+Tab and
- * Ctrl+Shift+Tab, drawn between the field and the results. */
+/** How the results list is named and where it was left. */
 export type SearchViews = {
-  tabs?: ReactNode;
-  /** Names the results list for the view shown. */
+  /** Names the results list. */
   resultsLabel: string;
-  /** The shown view's tab panel, which its tab controls. */
-  panelId?: string;
-  onSwitch?: (delta: 1 | -1) => void;
   /** Where the results were: their scroll position and highlighted row,
    * restored as the view mounts and kept as they change. */
   place: SearchPlace;
@@ -374,12 +366,10 @@ export function SearchChoices({
   });
   const selected = highlight.active;
   const moved = !!peek?.ranked && highlight.moved;
-  const freeze = peek?.onFreeze;
   // biome-ignore lint/correctness/useExhaustiveDependencies: Freezes the order just shown, once per text.
   useLayoutEffect(() => {
     if (!moved || frozen.current) return;
     frozen.current = { query, labels: merged.map(({ label }) => label) };
-    freeze?.();
   }, [moved, query]);
   // A highlight is kept only while its row is in view: one scrolled away
   // would reopen with Enter choosing a row nobody can see.
@@ -419,24 +409,6 @@ export function SearchChoices({
   useEffect(() => {
     input.current?.focus();
   }, [input]);
-  // macOS sends Ctrl+Tab from its menu as a request to the focused control.
-  const switchView = views?.onSwitch;
-  useEffect(() => {
-    const root = palette.current;
-    if (!root || !switchView) return;
-    const request = (delta: 1 | -1) => (event: Event) => {
-      event.preventDefault();
-      switchView(delta);
-    };
-    const next = request(1);
-    const previous = request(-1);
-    root.addEventListener("buzz:next-tab", next);
-    root.addEventListener("buzz:previous-tab", previous);
-    return () => {
-      root.removeEventListener("buzz:next-tab", next);
-      root.removeEventListener("buzz:previous-tab", previous);
-    };
-  }, [switchView]);
   const resultsLabel = views?.resultsLabel ?? "Search results";
   // A group drawn in part says where each row sits in the whole of it.
   const positions = new Map<
@@ -723,8 +695,6 @@ export function SearchChoices({
       ref={palette}
       className="search-palette"
       data-search-palette=""
-      data-modal-tab-switch={views?.onSwitch ? "" : undefined}
-      data-search-views={views?.tabs ? "" : undefined}
       data-search-footer={footer ? "" : undefined}
       data-search-peek={peek ? "" : undefined}
       {...highlight.listProps}
@@ -838,34 +808,12 @@ export function SearchChoices({
             showScope(undefined);
             return;
           }
-          if (
-            switchView &&
-            event.key === "Tab" &&
-            event.ctrlKey &&
-            !event.metaKey &&
-            !event.altKey
-          ) {
-            event.preventDefault();
-            switchView(event.shiftKey ? -1 : 1);
-            return;
-          }
           highlight.keyDown(event);
         }}
       />
       {peek?.hints}
-      {views?.tabs && <div className="search-palette-views">{views.tabs}</div>}
       <div className={peek?.ranked ? "search-peek-body" : "contents"}>
-        <div
-          ref={resultsViewport}
-          className="search-palette-height"
-          {...(views?.panelId
-            ? {
-                role: "tabpanel",
-                id: views.panelId,
-                "aria-labelledby": `${views.panelId}-tab`,
-              }
-            : {})}
-        >
+        <div ref={resultsViewport} className="search-palette-height">
           <div
             ref={resultsContent}
             className="search-palette-scroll"

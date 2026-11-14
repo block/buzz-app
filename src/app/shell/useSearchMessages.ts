@@ -6,7 +6,6 @@ import {
   searchDebounce,
 } from "../../shared/search-debounce";
 import { objectBody } from "../../features/relay/body";
-import { threadReference } from "../../features/relay/thread-reference";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
 import { foldProfiles } from "../../features/relay/profiles";
@@ -35,13 +34,11 @@ export type SearchMessage = Readonly<{
   preview: string;
   /** The searchable text, whitespace kept, for snippets and previews. */
   text: string;
-  /** A forum comment's post, which opens with it. */
-  threadRootId?: string | undefined;
 }>;
 
-/** Message kinds search returns: chat, agent and diff messages, forum posts
- * and their comments. */
-export const SEARCH_KINDS = [9, 40002, 40008, 45001, 45003];
+/** Message kinds search returns: chat, agent and diff messages. Ranked
+ * search resolves hit channels only for these (see the relay session). */
+export const SEARCH_KINDS = [9, 40002, 40008];
 
 /** An indexed event's readable text. */
 export function eventText(event: { kind: number; content: string }) {
@@ -51,7 +48,7 @@ export function eventText(event: { kind: number; content: string }) {
 }
 
 /** An indexed event's text as it reads, without Markdown syntax and with
- * spoilers hidden, for snippets, previews and reranking. */
+ * spoilers hidden, for snippets and previews. */
 export function searchText(event: { kind: number; content: string }) {
   return plainText(eventText(event), { limit: 4000 });
 }
@@ -104,8 +101,6 @@ async function readPage(
     // Search returns original indexed events, not an auxiliary edit fold.
     // Exact navigation owns current content/deletion checks when opened.
     const text = searchText(event);
-    const root =
-      event.kind === 45003 ? threadReference(event)?.rootId : undefined;
     return [
       {
         id: event.id,
@@ -115,7 +110,6 @@ async function readPage(
         createdAt: event.created_at,
         preview: text.replace(/\s+/g, " ").trim().slice(0, 240) || "Attachment",
         text,
-        ...(root ? { threadRootId: root } : {}),
       },
     ];
   });

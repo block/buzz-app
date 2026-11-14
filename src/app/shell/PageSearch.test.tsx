@@ -1102,7 +1102,7 @@ it("finds and opens saved conversations while the community is unreachable or st
         .getAllByRole("option")
         .map((option) => option.textContent)
         .sort(),
-    ).toEqual(["AlphaConversation", "BetaConversation"]);
+    ).toEqual(["AlphaConversation · 1 member", "BetaConversation · 1 member"]);
     // A saved session has no message scope or open-channel view to offer.
     expect(within(dialog).queryByText(/^Search in Alpha/)).toBeNull();
     expect(within(dialog).queryByRole("tab", { name: "Channels" })).toBeNull();

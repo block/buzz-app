@@ -150,12 +150,6 @@
     color: var(--text-secondary);
   }
 
-  .search-palette-views {
-    margin-top: var(--space-2);
-    /* The tab list adds its own inset; this lines labels up with headings. */
-    padding-inline: var(--space-2);
-  }
-
   .search-palette-height {
     position: relative;
     overflow: clip;
@@ -184,18 +178,6 @@
   }
   .search-palette-height > .search-palette-scroll {
     margin-block: 0;
-  }
-  /* With views to switch between, the results keep one height, so a short,
-     loading or empty view doesn't shrink the palette under the tabs. */
-  .search-palette[data-search-views] .search-palette-scroll {
-    display: flex;
-    flex-direction: column;
-    min-height: var(--search-palette-results-max);
-  }
-  .search-palette[data-search-views] .search-palette-status {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
   }
   @media (prefers-reduced-motion: reduce) {
     .search-palette-height[data-measured] {

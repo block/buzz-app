@@ -276,18 +276,20 @@ it("leads an empty search with other unmuted unread channels and DMs, selecting 
         .getAllByRole("group")
         .map((group) => group.getAttribute("aria-label")),
     ).toEqual(["Unread", "This conversation", "Recent activity"]);
+    // Past the lead group, recent activity shows its first three rows.
     expect(rowsOf("Recent activity").map((row) => row.textContent)).toEqual([
       expect.stringMatching(/^alpha/),
       expect.stringMatching(/^muted/),
       expect.stringMatching(/^quiet/),
-      expect.stringMatching(/^read/),
     ]);
     expect(input).toHaveAttribute("aria-activedescendant", rows[0]?.id);
-    // An unread arriving above while open does not redirect Enter.
+    // Once the highlight is moved, an unread arriving above does not
+    // redirect Enter.
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(input).toHaveAttribute("aria-activedescendant", rows[1]?.id);
     await markUnread("alpha");
     expect(rowsOf("Unread")[0]).toHaveTextContent(/^alpha/);
-    expect(input).toHaveAttribute("aria-activedescendant", rows[0]?.id);
-    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(input).toHaveAttribute("aria-activedescendant", rows[1]?.id);
     fireEvent.keyDown(input, { key: "Enter" });
     expect(open).toHaveBeenCalledExactlyOnceWith("other");
     // Typed text searches as before, without an Unread group.
@@ -366,11 +368,11 @@ it("shows the first six unread conversations ahead of the rest", async () => {
         openConversation={() => {}}
       />,
     );
-    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(6));
+    // The lead group draws five of its six rows, and says it holds six.
+    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(5));
     const rows = rowsOf("Unread");
     expect(rows[0]).toHaveTextContent(/^unread-0/);
-    // Only six rows exist, so the group does not announce a larger set.
-    expect(rows[0]).not.toHaveAttribute("aria-setsize");
+    expect(rows[0]).toHaveAttribute("aria-setsize", "6");
     expect(
       screen.getByRole("combobox", { name: "Search Buzz" }),
     ).toHaveAttribute("aria-activedescendant", rows[0]?.id);
@@ -378,6 +380,14 @@ it("shows the first six unread conversations ahead of the rest", async () => {
     expect(rowsOf("Recent activity").map((row) => row.textContent)).toEqual([
       expect.stringMatching(/^read/),
     ]);
+    // Tab shows the whole group: the five rows, then the sixth, and no more.
+    const field = screen.getByRole("combobox", { name: "Search Buzz" });
+    fireEvent.keyDown(field, { key: "Tab" });
+    expect(rowsOf("Unread").map((row) => row.textContent)).toEqual([
+      ...rows.map((row) => row.textContent),
+      expect.stringMatching(/^unread-\d/),
+    ]);
+    fireEvent.keyDown(field, { key: "Escape" });
     // With every conversation unread, Recent activity does not claim none.
     await owner.session.unread.markUnreadLocal({
       kind: "channel",
@@ -529,7 +539,12 @@ it("previews and opens the newest unread reply of a channel unread only through 
         channelId: "marked",
       });
     });
-    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(6));
+    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(5));
+    // Tab shows the whole group, all six unread conversations.
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Tab",
+    });
+    expect(rowsOf("Unread")).toHaveLength(6);
     // The newest unread reply of the newest thread, by its author, not a root.
     await waitFor(() =>
       expect(row("team")).toHaveTextContent(
@@ -586,7 +601,8 @@ it("ranks typed channel names and selects the best one for Enter", async () => {
   const relay = keypair();
   const viewer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
-  // Weak matches come first in list order and exceed the eight-row limit.
+  // Weak matches come first in list order and exceed the lead group's
+  // five-row limit.
   const names = [
     ...Array.from({ length: 8 }, (_, index) => `xlar-${index}`),
     "the-lar",
@@ -623,7 +639,7 @@ it("ranks typed channel names and selects the best one for Enter", async () => {
     );
     const channels = await screen.findByRole("group", { name: "Channels" });
     await waitFor(() =>
-      expect(within(channels).getAllByRole("option")).toHaveLength(8),
+      expect(within(channels).getAllByRole("option")).toHaveLength(5),
     );
     expect(
       within(channels)
@@ -1183,7 +1199,7 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     const { "#h": __, ...unscopedText } = text;
     expect(global.filters).toEqual([unscopedText]);
     await act(async () => global.respond(hits(1, 1700000001)));
-    expect(screen.getByRole("group", { name: "Most relevant" })).toBeVisible();
+    expect(screen.getByRole("group", { name: "Messages" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Sort messages" })).toBeNull();
 
     mounted.rerender(<SearchResults {...scoped} query="sortword" />);
@@ -1516,8 +1532,9 @@ it.each(
           name: /Past project/,
         }),
       );
+      // The preview beside the row names it too, so look in the row.
       expect(
-        screen.getByText(
+        within(screen.getByRole("option", { name: /Past project/ })).getByText(
           channelType === "solo"
             ? "Archived chat"
             : "Archived channel · 1 member",
@@ -1807,7 +1824,7 @@ it.each([false, true])(
       const group = screen.getByRole("group", { name: "People" });
       expect(
         within(group).getByRole("heading", { name: "People" }),
-      ).toHaveTextContent("People · Searching…");
+      ).toHaveTextContent(/^People\b.*· Searching…$/);
       expect(within(group).queryAllByRole("option")).toHaveLength(
         populated ? 1 : 0,
       );
@@ -1830,6 +1847,8 @@ it.each([false, true])(
   "delays message heading feedback in scoped=%s search",
   async (scoped) => {
     vi.useFakeTimers();
+    // A conversation's results are named by their order, Top results' by kind.
+    const messages = scoped ? "Most relevant" : "Messages";
     const relay = keypair(),
       viewer = keypair();
     const owner = createRelaySession({
@@ -1883,26 +1902,32 @@ it.each([false, true])(
       );
       await act(async () => vi.advanceTimersByTimeAsync(999));
       expect(readPage).toHaveBeenCalledOnce();
-      expect(screen.queryByRole("group", { name: "Most relevant" })).toBeNull();
+      expect(screen.queryByRole("group", { name: messages })).toBeNull();
+      expect(screen.queryByText("Still searching messages…")).toBeNull();
       expect(
         screen.queryByText("No matching messages in accessible conversations."),
       ).toBeNull();
       await act(async () => vi.advanceTimersByTimeAsync(1));
-      const group = screen.getByRole("group", { name: "Most relevant" });
-      expect(within(group).getByText("· Searching…")).toBeVisible();
-      expect(group.querySelector(".search-palette-group-empty")).toBeNull();
-      if (!scoped)
+      if (scoped) {
+        const group = screen.getByRole("group", { name: messages });
+        expect(within(group).getByText("· Searching…")).toBeVisible();
+        expect(group.querySelector(".search-palette-group-empty")).toBeNull();
+      } else {
+        // Top results ends with a line saying messages are still coming.
+        expect(screen.getByText("Still searching messages…")).toBeVisible();
+        expect(screen.queryByRole("heading", { name: messages })).toBeNull();
         expect(screen.getByRole("group", { name: "Pages" })).toBeVisible();
+      }
+      expect(screen.getByRole("listbox")).toHaveAttribute("aria-busy", "true");
       await act(async () => release());
       expect(screen.queryByRole("status")).toBeNull();
+      expect(screen.getByRole("listbox")).not.toHaveAttribute("aria-busy");
+      expect(screen.queryByText("Still searching messages…")).toBeNull();
       if (scoped)
         expect(
           screen.getByText("No matching messages in accessible conversations."),
         ).toBeVisible();
-      else
-        expect(
-          screen.queryByRole("group", { name: "Most relevant" }),
-        ).toBeNull();
+      else expect(screen.queryByRole("group", { name: messages })).toBeNull();
     } finally {
       release();
       cleanup();
@@ -2080,7 +2105,7 @@ it("shows a delayed Channels group only while an empty directory read is pending
     expect(group).not.toHaveTextContent("No matching results.");
     expect(
       within(group).getByRole("heading", { name: "Channels" }),
-    ).toHaveTextContent("Channels · Searching…");
+    ).toHaveTextContent(/^Channels\b.*· Searching…$/);
     expect(group.querySelector(".search-palette-group-empty")).toBeNull();
     expect(screen.getAllByRole("status")).toHaveLength(1);
     expect(screen.getByRole("listbox")).not.toContainElement(
@@ -2168,12 +2193,14 @@ it("keeps a selected person and the delayed notice when channel results stream i
     ).toBeVisible();
     expect(within(channels).getByText("· Searching…")).toBeVisible();
     expect(screen.getByRole("status")).toBe(status);
+    // Once the highlight has moved, groups keep their places: the channel
+    // that streamed in goes after the person's group, not above it.
     expect(
       screen
         .getAllByRole("group")
         .slice(0, 2)
         .map((group) => group.getAttribute("aria-label")),
-    ).toEqual(["Channels", "People"]);
+    ).toEqual(["People", "Channels"]);
     expect(personRow).toHaveAttribute("aria-selected", "true");
     fireEvent.keyDown(field, { key: "Enter" });
     await act(async () => {});
@@ -2248,7 +2275,9 @@ it.each(["finish", "fail"])(
       );
       const channels = screen.getByRole("group", { name: "Channels" });
       const notice = within(channels).getByText("· Searching…");
-      expect(notice.closest("h2")).toHaveTextContent("Channels · Searching…");
+      expect(notice.closest("h2")).toHaveTextContent(
+        /^Channels\b.*· Searching…$/,
+      );
       expect(notice).toHaveAttribute("aria-hidden", "true");
       expect(channels.querySelector(".search-palette-group-empty")).toBeNull();
       expect(within(channels).getAllByRole("option")).toHaveLength(1);
@@ -2933,7 +2962,7 @@ it("puts a remembered public channel first, even past eight joined matches", asy
     );
     // The group leads because of the remembered row, so that row leads it.
     await waitFor(() => expect(optionNames("Channels")[0]).toBe("team-work"));
-    expect(optionNames("Channels")).toHaveLength(8);
+    expect(optionNames("Channels")).toHaveLength(5);
     expect(
       screen
         .getAllByRole("group")
@@ -3003,18 +3032,21 @@ it("keeps the remembered choice selected when a better match arrives late", asyn
     );
     const page = screen.getByRole("option", { name: "Workflows" });
     expect(page).toHaveAttribute("aria-selected", "true");
-    // The relay's exact public match leads its group above Pages, later.
+    // Until the highlight is moved it follows the first row, so the person
+    // confirms the remembered choice, here by moving onto it.
+    const field = screen.getByRole("combobox", { name: "Search Buzz" });
+    fireEvent.keyDown(field, { key: "ArrowDown" });
+    expect(page).toHaveAttribute("aria-selected", "true");
+    // The relay's exact public match arrives later, after the groups shown.
     await screen.findByRole("option", { name: /^wor/ });
     expect(
       screen
         .getAllByRole("group")
         .map((group) => group.getAttribute("aria-label"))
         .slice(0, 2),
-    ).toEqual(["Channels", "Pages"]);
+    ).toEqual(["Pages", "Channels"]);
     expect(page).toHaveAttribute("aria-selected", "true");
-    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
-      key: "Enter",
-    });
+    fireEvent.keyDown(field, { key: "Enter" });
     expect(workflows).toHaveBeenCalledOnce();
   } finally {
     cleanup();
@@ -4639,12 +4671,19 @@ it("offers during: periods and an on: calendar that insert local dates", async (
     expect(
       dates.getAllByRole("option").map((option) => option.textContent),
     ).toEqual([
+      "Past 7 days7d",
+      "Past 30 days30d",
+      "Past 3 months3m",
+      "Past 12 months12m",
       "Today2026-10-07",
       "Yesterday2026-10-06",
       "This week2026-10-05",
       "This month2026-10",
       "This year2026",
     ]);
+    // A rolling period inserts its length, not a date.
+    fireEvent.click(dates.getByRole("option", { name: /Past 3 months/ }));
+    expect(change).toHaveBeenLastCalledWith("during:3m deploy ");
     fireEvent.click(dates.getByRole("option", { name: /This week/ }));
     // There is no week period, so the week starts after its Monday.
     expect(change).toHaveBeenLastCalledWith("after:2026-10-05 deploy ");
@@ -5290,7 +5329,7 @@ it("keeps a pending in: lookup pending, then retries its failure and resumes sco
   }
 });
 
-it("shows a pending in: channel lookup beside Most relevant", async () => {
+it("shows a pending in: channel lookup beside Messages", async () => {
   vi.useFakeTimers();
   const relay = keypair(),
     viewer = keypair();
@@ -5331,10 +5370,10 @@ it("shows a pending in: channel lookup beside Most relevant", async () => {
       await act(async () => vi.advanceTimersByTimeAsync(10));
     expect(lookupStarted).toBe(true);
     await act(async () => vi.advanceTimersByTimeAsync(1000));
-    const group = screen.getByRole("group", { name: "Most relevant" });
+    const group = screen.getByRole("group", { name: "Messages" });
     expect(
-      within(group).getByRole("heading", { name: "Most relevant" }),
-    ).toHaveTextContent("Most relevant · Searching…");
+      within(group).getByRole("heading", { name: "Messages" }),
+    ).toHaveTextContent(/^Messages\b.*· Searching…$/);
     expect(group.querySelector(".search-palette-group-empty")).toBeNull();
     expect(screen.getByRole("status")).toHaveTextContent("Searching messages…");
     expect(readPage).not.toHaveBeenCalled();
@@ -5710,12 +5749,19 @@ it("leads a message hit's conversation name with its type icon and words", async
   );
   try {
     const { rerender } = render(palette());
-    // An option is named from its content: the preview, then the detail led
+    await screen.findByRole("group", { name: "Messages" });
+    // A detail without a type icon has none beside it.
+    const page = screen.getByRole("option", { name: /^Inbox\s*Page$/ });
+    expect(page.querySelector(`.${referenceStyles.icon}`)).toBeNull();
+    // Top results shows five hits; Tab shows the whole Messages group.
+    const field = screen.getByRole("combobox", { name: "Search Buzz" });
+    fireEvent.keyDown(field, { key: "Tab" });
+    // An option is named from its content: the message, then the detail led
     // by its icon's hidden words (jsdom joins the two block lines unspaced).
     await waitFor(() => {
       for (const [id, icon, kind, name] of rows) {
         const option = screen.getByRole("option", {
-          name: new RegExp(`^match in ${id}\\s*${kind}, ${name} · `),
+          name: new RegExp(`match in ${id}\\s*${kind}, ${name} · `),
         });
         // The icon styled as a channel mention's in a message: a hash
         // flush against the name, a lock or bubble a little apart.
@@ -5727,8 +5773,7 @@ it("leads a message hit's conversation name with its type icon and words", async
         expect(within(option).getByText(`${kind},`)).toHaveClass("sr-only");
       }
     });
-    const page = screen.getByRole("option", { name: /^Inbox\s*Page$/ });
-    expect(page.querySelector(`.${referenceStyles.icon}`)).toBeNull();
+    fireEvent.keyDown(field, { key: "Escape" });
     // A grid row's own label reads the same words before the detail.
     rerender(
       palette([
@@ -5747,9 +5792,9 @@ it("leads a message hit's conversation name with its type icon and words", async
         },
       ]),
     );
-    for (const [id, , kind, name] of rows)
+    for (const [id, , kind, name] of rows.slice(0, 5))
       screen.getByRole("row", {
-        name: new RegExp(`^match in ${id} — ${kind}, ${name} · `),
+        name: new RegExp(`match in ${id} — ${kind}, ${name} · `),
       });
   } finally {
     cleanup();
@@ -6061,6 +6106,10 @@ it("lets the newest choice win over a DM that is still opening", async () => {
     expect(
       await screen.findByText("Opening your conversation with Ally Bob…"),
     ).toBeVisible();
+    // Top results omits that action; the whole Messages group holds it.
+    fireEvent.click(
+      await screen.findByRole("button", { name: /See all.*Messages/ }),
+    );
     fireEvent.click(
       await screen.findByRole("option", { name: "Show more messages" }),
     );
@@ -6921,7 +6970,8 @@ it.each([
     if (named === "channel")
       await screen.findByRole("group", { name: "Channels" });
     const chats = within(await screen.findByRole("group", { name: "Chats" }));
-    await waitFor(() => expect(chats.getAllByRole("option")).toHaveLength(8));
+    // Past the first group, Top results shows three rows of a group.
+    await waitFor(() => expect(chats.getAllByRole("option")).toHaveLength(3));
     if (named === "chat")
       expect(chats.getAllByRole("option")[0]).toHaveTextContent(/^scout/);
     const labels = screen
@@ -7096,17 +7146,23 @@ it.each([
         screen.getByRole("group", { name: group }),
       ).getAllByRole("option");
       expect(lead).toHaveTextContent(name);
-      // The group label still finds its sections, after the name match.
-      expect(
-        within(screen.getByRole("group", { name: "Settings" }))
-          .getAllByRole("option")
-          .map((option) => option.textContent),
-      ).toEqual(expect.arrayContaining(sections));
       const groups = screen
         .getAllByRole("group")
         .map((element) => element.getAttribute("aria-label"));
       expect(groups.indexOf(group)).toBeLessThan(groups.indexOf("Settings"));
       const input = screen.getByRole("combobox", { name: "Search Buzz" });
+      // The group label still finds its sections, after the name match. Top
+      // results shows three of them; See all shows the rest.
+      const seeAll = screen.queryByRole("button", {
+        name: /See all.*Settings/,
+      });
+      if (seeAll) fireEvent.click(seeAll);
+      expect(
+        within(screen.getByRole("group", { name: "Settings" }))
+          .getAllByRole("option")
+          .map((option) => option.textContent),
+      ).toEqual(expect.arrayContaining(sections));
+      fireEvent.keyDown(input, { key: "Escape" });
       expect(input).toHaveAttribute("aria-activedescendant", lead?.id);
       fireEvent.keyDown(input, { key: "Enter" });
       await waitFor(() =>

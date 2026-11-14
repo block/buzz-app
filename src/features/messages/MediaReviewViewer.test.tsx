@@ -395,6 +395,50 @@ it("excludes generic files from the image review grid", async () => {
   ).not.toBeInTheDocument();
 });
 
+it("covers a loading photo with its relay thumbnail", async () => {
+  const viewer = keypair();
+  const image = {
+    url: "https://fixture.test/image.png",
+    kind: "image" as const,
+  };
+  const root = message(viewer, "one", "Image", 1, [
+    ["imeta", `url ${image.url}`, "m image/png"],
+  ]);
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: keypair().pubkey,
+    media: (url, size) =>
+      `/api/relay/media?url=${encodeURIComponent(size ? url.replace(/\.png$/, ".thumb.jpg") : url)}`,
+    async query(filters) {
+      if (filters.some((filter) => filter.ids?.includes(root.id)))
+        return [root];
+      return [];
+    },
+  });
+  owners.push(owner);
+  render(
+    <MediaReviewViewer
+      attachment={image}
+      session={owner.session}
+      scope="thumbnail-test"
+      channelId="one"
+      channelName="One"
+      messageId={root.id}
+      initialTime={0}
+      onOpenLink={() => false}
+      close={() => {}}
+    />,
+  );
+  const original = await screen.findByAltText("Attachment preview");
+  expect(original).toHaveAttribute("data-gallery-loading");
+  expect(
+    original.parentElement?.querySelector("[data-gallery-preview]"),
+  ).toHaveAttribute(
+    "src",
+    `/api/relay/media?url=${encodeURIComponent("https://fixture.test/image.thumb.jpg")}`,
+  );
+});
+
 it("Escape closes media opened from a tab without closing the tab", async () => {
   const user = userEvent.setup();
   const viewer = keypair();

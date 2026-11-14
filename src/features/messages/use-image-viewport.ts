@@ -28,9 +28,11 @@ export function useImageViewport(
   const [maxZoom, setMaxZoom] = useState(BASE_MAX_ZOOM);
   // Gestures can deliver several events before React renders the next frame.
   const current = useRef(initial);
+  const currentMax = useRef(BASE_MAX_ZOOM);
   useLayoutEffect(() => {
     void source;
     current.current = initial;
+    currentMax.current = BASE_MAX_ZOOM;
     setViewport(initial);
     setMaxZoom(BASE_MAX_ZOOM);
   }, [source]);
@@ -101,7 +103,11 @@ export function useImageViewport(
     (value: number, anchor?: Point) => {
       if (!Number.isFinite(value)) return;
       const max = maxZoomFor(fitScale());
-      setMaxZoom(max);
+      // Resizes repeat the same limit; setting it again can still re-render.
+      if (max !== currentMax.current) {
+        currentMax.current = max;
+        setMaxZoom(max);
+      }
       const zoom = Math.max(MIN_ZOOM, Math.min(max, value));
       const previous = current.current;
       const ratio = zoom / previous.zoom;

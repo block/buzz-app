@@ -23,6 +23,16 @@ it("uses the canonical decoder with a fixed tiny raster, with no source dimensio
   expect(context.putImageData).toHaveBeenCalledOnce();
   expect(data.some((value) => value > 0)).toBe(true);
 });
+it("keeps an aspect-ratio raster within the tiny bound", () => {
+  const { element, context } = canvas();
+  paintBlurhash(element, hash, 32, 21.3);
+  paintBlurhash(element, hash, 4000, 0.2);
+  expect(vi.mocked(decode).mock.calls).toEqual([
+    [hash, 32, 21],
+    [hash, 32, 1],
+  ]);
+  expect(context.createImageData).toHaveBeenLastCalledWith(32, 1);
+});
 it("rejects invalid/oversized input before any canvas or decoder work", () => {
   const { element } = canvas();
   for (const value of [

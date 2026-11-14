@@ -12,9 +12,12 @@ type DepartingImage = {
   source: string;
   transform: string;
   direction: number;
+  /** Its original was showing; otherwise its preview leaves in its place. */
+  decoded: boolean;
 };
 
-/** Keep the outgoing DOM image alive until its replacement can slide into view. */
+/** Keep the outgoing DOM image alive while its replacement slides into view.
+ * The slide starts at once; previews move with their images. */
 export function useImageGalleryMotion(
   stage: RefObject<HTMLDivElement | null>,
   image: RefObject<HTMLImageElement | null>,
@@ -23,7 +26,7 @@ export function useImageGalleryMotion(
 ) {
   const [departing, setDeparting] = useState<DepartingImage>();
   const prepare = useCallback(
-    (direction: number) => {
+    (direction: number, decoded: boolean) => {
       if (
         !url ||
         !source ||
@@ -32,27 +35,25 @@ export function useImageGalleryMotion(
         setDeparting(undefined);
         return;
       }
-      // Rapid navigation while loading should keep the last decoded picture.
-      const previous =
-        stage.current?.hasAttribute("data-gallery-loading") && departing
-          ? departing
-          : {
-              url,
-              source,
-              transform: image.current
-                ? getComputedStyle(image.current).transform
-                : "none",
-            };
-      setDeparting({ ...previous, direction });
+      setDeparting({
+        url,
+        source,
+        decoded,
+        direction,
+        transform: image.current
+          ? getComputedStyle(image.current).transform
+          : "none",
+      });
     },
-    [url, source, stage, image, departing],
+    [url, source, image],
   );
   useLayoutEffect(() => {
     if (!departing) return;
     const container = stage.current;
     const incoming = image.current;
-    const outgoing = container?.querySelector<HTMLElement>(
-      "[data-gallery-departing]",
+    const outgoing = Array.from(
+      container?.querySelectorAll<HTMLElement>("[data-gallery-departing]") ??
+        [],
     );
     const reducedMotion = window.matchMedia?.(
       "(prefers-reduced-motion: reduce)",
@@ -61,37 +62,45 @@ export function useImageGalleryMotion(
       departing.url === url ||
       !container ||
       !incoming?.animate ||
-      !outgoing ||
+      !outgoing.length ||
       reducedMotion?.matches
     ) {
       setDeparting(undefined);
       return;
     }
+    const arriving = container.querySelectorAll<HTMLElement>(
+      "[data-gallery-preview]:not([data-gallery-departing])",
+    );
     const animations: Animation[] = [];
-    let cancelled = false;
     const clear = () => {
-      cancelled = true;
-      delete container.dataset.galleryLoading;
       for (const animation of animations) {
         animation.onfinish = null;
         animation.cancel();
       }
     };
     const finish = () => {
-      outgoing.style.visibility = "hidden";
+      for (const element of outgoing) element.style.visibility = "hidden";
       clear();
+      // The slide held the opacity of a preview whose original decoded
+      // meanwhile, so its own fade never started.
+      for (const element of arriving) {
+        if (!element.hasAttribute("data-gallery-ready")) continue;
+        const style = getComputedStyle(element);
+        element.animate([{ opacity: 1 }, { opacity: 0 }], {
+          duration: Number.parseFloat(style.transitionDuration) * 1000 || 0,
+          easing: style.transitionTimingFunction,
+        });
+      }
       setDeparting((current) => (current === departing ? undefined : current));
     };
-    const start = () => {
-      if (cancelled) return;
-      delete container.dataset.galleryLoading;
-      const distance = departing.direction * galleryMotion.distance;
-      const timing = {
-        duration: galleryMotion.duration * 1000,
-        easing: `cubic-bezier(${galleryMotion.ease.join(",")})`,
-      };
+    const distance = departing.direction * galleryMotion.distance;
+    const timing = {
+      duration: galleryMotion.duration * 1000,
+      easing: `cubic-bezier(${galleryMotion.ease.join(",")})`,
+    };
+    for (const element of outgoing)
       animations.push(
-        outgoing.animate(
+        element.animate(
           [
             { translate: "0px 0px", opacity: 1 },
             { translate: `${-distance}px 0px`, opacity: 0 },
@@ -99,28 +108,23 @@ export function useImageGalleryMotion(
           { ...timing, fill: "forwards" },
         ),
       );
-      const arrival = incoming.animate(
+    const [arrival, ...previews] = [incoming, ...arriving].map((element) =>
+      element.animate(
         [
           { translate: `${distance}px 0px`, opacity: 0 },
           { translate: "0px 0px", opacity: 1 },
         ],
         timing,
-      );
-      animations.push(arrival);
+      ),
+    );
+    if (arrival) {
+      animations.push(arrival, ...previews);
       arrival.onfinish = finish;
-    };
-    if (incoming.complete) start();
-    else {
-      container.dataset.galleryLoading = "";
-      incoming.addEventListener("load", start, { once: true });
-      incoming.addEventListener("error", finish, { once: true });
     }
     window.addEventListener("resize", finish, { once: true });
     reducedMotion?.addEventListener("change", finish);
     return () => {
       clear();
-      incoming.removeEventListener("load", start);
-      incoming.removeEventListener("error", finish);
       window.removeEventListener("resize", finish);
       reducedMotion?.removeEventListener("change", finish);
     };

@@ -30,6 +30,7 @@ function setup(
   reduced = false,
   hasComments = false,
   imageReady = true,
+  media: (url: string, size?: "small") => string | undefined = (url) => url,
 ) {
   vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
     imageReady,
@@ -76,7 +77,7 @@ function setup(
   const owner = createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: keypair().pubkey,
-    media: (url) => url,
+    media,
     async query(filters) {
       if (filters.some((filter) => filter.ids?.includes(root.id))) {
         await gate;
@@ -407,9 +408,12 @@ it.each([false, true])(
     const dialog = screen.getByRole("dialog");
     const image = dialog.querySelector("img") as HTMLImageElement;
     expect(dialog).toHaveAttribute("data-review-pending");
+    expect(image).toHaveAttribute("data-gallery-loading");
     expect(opener).not.toHaveStyle({ opacity: "0" });
     expect(animate).not.toHaveBeenCalled();
     fireEvent.load(image);
+    // The picture that grows from the chat photo is no longer hidden.
+    expect(image).not.toHaveAttribute("data-gallery-loading");
     expect(dialog).not.toHaveAttribute("data-review-pending");
     expect(dialog).toHaveAttribute("data-review-opening");
     expect(opener).toHaveStyle({ opacity: "0" });
@@ -433,6 +437,47 @@ it.each([false, true])(
     release();
   },
 );
+
+it("grows a loading original from the chat photo without fading its relay thumbnail in as chrome", async () => {
+  const relay = (url: string, size?: "small") =>
+    `/api/relay/media?url=${encodeURIComponent(size ? `${url}.thumb.jpg` : url)}`;
+  const { animate, release } = setup("image", false, false, false, relay);
+  fireEvent.click(screen.getByRole("link", { name: "Open image attachment" }), {
+    detail: 1,
+  });
+  const dialog = screen.getByRole("dialog");
+  const image = dialog.querySelector(
+    "img[data-review-media]",
+  ) as HTMLImageElement;
+  const preview = dialog.querySelector("[data-gallery-preview]");
+  expect(preview).toHaveAttribute(
+    "src",
+    relay("https://fixture.test/image", "small"),
+  );
+  let decoded = () => {};
+  Object.defineProperty(image, "decode", {
+    value: () =>
+      new Promise<void>((resolve) => {
+        decoded = resolve;
+      }),
+  });
+  await act(async () => {
+    fireEvent.load(image);
+  });
+  expect(dialog).toHaveAttribute("data-review-opening");
+  expect(animate.mock.contexts[0]).toBe(image);
+  // The controls fade in as chrome; the preview, standing in for the
+  // picture, does not.
+  expect(animate.mock.contexts).toContain(
+    dialog.querySelector("[data-image-controls]"),
+  );
+  expect(animate.mock.contexts).not.toContain(preview);
+  expect(preview).not.toHaveAttribute("data-gallery-ready");
+  await act(async () => decoded());
+  expect(preview).toHaveAttribute("data-gallery-ready");
+  expect(animate.mock.contexts).not.toContain(preview);
+  release();
+});
 
 it("does not start a late image entrance after the viewer has been dismissed", () => {
   const { animate, release } = setup("image", false, false, false);

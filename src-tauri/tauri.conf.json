@@ -33,6 +33,7 @@
   },
   "bundle": {
     "active": true,
+    "category": "SocialNetworking",
     "macOS": {
       "entitlements": "entitlements.plist",
       "minimumSystemVersion": "12.0"

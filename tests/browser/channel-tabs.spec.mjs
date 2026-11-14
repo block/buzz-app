@@ -521,19 +521,57 @@ test("Canvas opens once beside Thread and retains its channel draft", async ({
   await expect(view).toBeVisible();
   await edit.click();
   await expect(text).toBeEnabled();
-  // The editor fills the pane down to the footer's inset.
-  const footer = workspace
-    .getByRole("region", { name: "Channel Canvas" })
-    .locator("footer");
+  const canvasRegion = workspace.getByRole("region", {
+    name: "Channel Canvas",
+  });
+  const status = canvasRegion.getByRole("status");
+  const footer = canvasRegion.locator("footer");
+  // The editor and reserved status line fill the pane down to its footer.
   await expect
     .poll(async () => {
       const [box, end] = await Promise.all([
-        text.boundingBox(),
+        status.boundingBox(),
         footer.boundingBox(),
       ]);
       return Math.round(end.y - box.y - box.height);
     })
     .toBe(20);
+  await settlePanelMotion(page);
+  const cleanBox = await text.boundingBox();
+  const save = canvasRegion.getByRole("button", { name: "Save Canvas" });
+  await expect(save).toBeDisabled();
+  await save.hover();
+  await expect(page.getByRole("tooltip")).toHaveText("No changes to save");
+  await text.focus();
+  await page.keyboard.insertText("Channel-scoped draft");
+  await text.evaluate((element) => element.setSelectionRange(2, 7));
+  await expect(status).toHaveText("Unsaved changes");
+  await expect(save).toBeEnabled();
+  await expect.poll(() => text.boundingBox()).toEqual(cleanBox);
+  // Preview keeps the native editor's selection and undo history.
+  await canvasRegion
+    .getByRole("button", { name: "Preview draft", exact: true })
+    .focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    canvasRegion.getByRole("region", { name: "Canvas draft preview" }),
+  ).toHaveText("Channel-scoped draft");
+  await expect(
+    canvasRegion.getByRole("button", { name: "Edit Markdown", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(text).toBeVisible();
+  expect(
+    await text.evaluate((element) => [
+      element.selectionStart,
+      element.selectionEnd,
+    ]),
+  ).toEqual([2, 7]);
+  await text.focus();
+  await text.press("ControlOrMeta+z");
+  await expect(text).toHaveValue("");
+  await expect(status).toBeEmpty();
+  await expect.poll(() => text.boundingBox()).toEqual(cleanBox);
   await text.fill("Channel-scoped draft");
   await thread.click();
   await expect(text).toBeHidden();

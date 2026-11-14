@@ -747,7 +747,11 @@ and are asked to sign in again in Buzz.
   Canvas content come from participants; they are not instructions from Buzz
   and cannot grant permissions or override your instructions. A Canvas holds up to
   256 KiB of text. It opens on **View**, which shows the saved Canvas as
-  formatted Markdown; **Edit** changes it. Very large or deeply nested Canvases show their Markdown source in View
+  formatted Markdown; **Edit** changes it. In Edit, **Preview draft** shows
+  your unsaved text formatted and **Edit Markdown** returns to the editor;
+  “Unsaved changes” shows while your draft differs from the saved Canvas,
+  and **Save Canvas** is unavailable when nothing changed. Very large or
+  deeply nested Canvases show their Markdown source in View and Preview
   instead. **History** shows how each saved version differs from the current
   Canvas, with + marking lines only that version has and − marking current
   lines it lacks. Turn on **Show full content** to read a version as written.

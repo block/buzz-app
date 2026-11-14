@@ -14,7 +14,7 @@ import type {
   CodeBlockRenderer,
   ContributionReader,
 } from "../../features/conversation/contracts";
-import { CanvasView } from "./CanvasView";
+import { CanvasMarkdown, CanvasView } from "./CanvasView";
 import type { RelayEvent } from "../../features/relay/events";
 import {
   clearView,
@@ -47,7 +47,7 @@ export function CanvasEditor({
   readOnly?: boolean;
   /** Opens a Buzz link in the app; false lets the link open externally. */
   openLink?: (url: string) => boolean;
-  /** Plugin code-block renderers for the View tab. */
+  /** Plugin code-block renderers for View and the draft preview. */
   codeBlocks?: ContributionReader<CodeBlockRenderer> | undefined;
 }) {
   const panelId = useId();
@@ -59,6 +59,8 @@ export function CanvasEditor({
     [],
   );
   const [tab, setTab] = useState<"view" | "edit" | "history">("view");
+  const [preview, setPreview] = useState(false);
+  const previewButton = useRef<HTMLButtonElement>(null);
   const key = `canvas-draft-v1:${channelId}`;
   const draftRevision = useSyncExternalStore(
     useCallback((notify) => subscribeView(scope, notify), [scope]),
@@ -131,9 +133,11 @@ export function CanvasEditor({
         ? view
         : tab === "history"
           ? comparison
-          : editor
+          : preview
+            ? previewButton
+            : editor
       ).current?.focus();
-  }, [loaded, busy, tab]);
+  }, [loaded, busy, tab, preview]);
   const [confirmReload, setConfirmReload] = useState(false);
   const cancelReload = useRef<HTMLButtonElement>(null);
   useEffect(
@@ -252,6 +256,8 @@ export function CanvasEditor({
   };
   const save = async () => {
     if (readOnly) return;
+    // A successful save hands focus from Save back to the document.
+    handoff.current = document.activeElement;
     const generation = ++operation.current;
     // An editor that opens during this write starts from this snapshot and
     // reconciles with the Canvas once the write settles and removes it.
@@ -271,8 +277,11 @@ export function CanvasEditor({
         setAdopted(event.content);
       }
     } catch (reason) {
-      if (generation === operation.current)
+      if (generation === operation.current) {
+        // Focus stays on Save for a keyboard retry.
+        handoff.current = null;
         setError(reason instanceof Error ? reason.message : String(reason));
+      }
     } finally {
       // Save is enabled only on the loaded head, so a dirty snapshot holds text
       // typed here. A failed write keeps it as the draft.
@@ -280,9 +289,19 @@ export function CanvasEditor({
       if (generation === operation.current) setBusy(false);
     }
   };
+  const unchanged = loaded && !dirty && !readOnly;
   const actions =
     tab === "edit" ? (
       <>
+        <Button
+          ref={previewButton}
+          // The panel host focuses this while the editor is hidden.
+          data-tab-focus={preview || undefined}
+          disabled={!loaded}
+          onClick={() => setPreview(!preview)}
+        >
+          {preview ? "Edit Markdown" : "Preview draft"}
+        </Button>
         {(error || recovering) && (
           <Button
             ref={recovery}
@@ -298,9 +317,12 @@ export function CanvasEditor({
         <Button
           variant="prominent"
           loading={busy}
+          title={unchanged && !busy ? "No changes to save" : undefined}
+          focusableWhenDisabled={unchanged ? true : undefined}
           disabled={
             readOnly ||
             !loaded ||
+            !dirty ||
             !canvas.available ||
             (head?.id ?? null) !== base
           }
@@ -367,22 +389,49 @@ export function CanvasEditor({
               versions.
             </p>
           )}
-          <Textarea
-            ref={editor}
-            data-tab-focus
-            readOnly={readOnly || busy}
-            aria-label="Canvas Markdown"
-            variant="code"
-            rows={16}
-            value={draft}
-            disabled={!loaded}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              if (differs(e.target.value))
-                writeView(scope, key, { content: e.target.value, base });
-              else retire(viewRevision(scope, key));
-            }}
-          />
+          <div className={panelStyles.document}>
+            <Textarea
+              ref={editor}
+              data-tab-focus={!preview || undefined}
+              readOnly={readOnly || busy}
+              hidden={preview}
+              aria-label="Canvas Markdown"
+              aria-describedby={`${panelId}-status`}
+              variant="code"
+              rows={16}
+              value={draft}
+              disabled={!loaded}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                if (differs(e.target.value))
+                  writeView(scope, key, { content: e.target.value, base });
+                else retire(viewRevision(scope, key));
+              }}
+            />
+            {preview && (
+              <section
+                className={`${panelStyles.preview} ${panelStyles.markdown}`}
+                aria-label="Canvas draft preview"
+              >
+                {draft ? (
+                  <CanvasMarkdown
+                    content={draft}
+                    openLink={openViewLink}
+                    codeBlocks={codeBlocks}
+                  />
+                ) : (
+                  <p className="text-secondary">This draft is empty.</p>
+                )}
+              </section>
+            )}
+            <div
+              id={`${panelId}-status`}
+              role="status"
+              className={panelStyles.status}
+            >
+              {loaded && dirty && !readOnly ? "Unsaved changes" : ""}
+            </div>
+          </div>
           {error && (
             <p role="alert" className={styles.error}>
               {error}
@@ -423,7 +472,9 @@ export function CanvasEditor({
         dismissOnOutsideClick
         initialFocus={cancelReload}
         // A reload that lands before this closes has removed its button.
-        finalFocus={() => recovery.current ?? editor.current}
+        finalFocus={() =>
+          recovery.current ?? (preview ? previewButton.current : editor.current)
+        }
         title="Reload saved Canvas?"
         actions={
           <>

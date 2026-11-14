@@ -22,6 +22,12 @@ import type { ExternalScope } from "./external-connection";
 import { externalMcpEnabled } from "./external-connection";
 import { connectMcp } from "../../buzz-mcp/connection";
 import { type HarnessKit, harnessKit } from "../agent-harness/kit";
+import {
+  createHarnessMcp,
+  type HarnessMcpControl,
+  type HarnessMcpReport,
+  type HarnessMcpTool,
+} from "./harness-mcp";
 import { repositoriesContext } from "../communities/repositories";
 import type {
   HostMcpServer,
@@ -926,6 +932,21 @@ export type AgentType<Config = unknown> = {
   voice?(seat: AgentVoiceSeat<Config>): Promise<AgentVoiceConnection>;
   /** Native callback events this harness exposes to plugins. */
   hooks?: Readonly<{ events: readonly string[] }>;
+  /** The MCP servers this harness loads by itself, for the plugin that chooses
+   * them (`docs/harness-mcp.md`). `report` lists names from the harness's own
+   * configuration without starting a server; `undefined` when it cannot tell.
+   * `inspect` lists one server's tools in a session with no model turn and no
+   * other server, and never calls a tool. Adapters read the choice through
+   * `agents.harness.mcp`. */
+  harnessMcp?: Readonly<{
+    report(
+      agent: Agent<Config>,
+    ): Promise<Omit<HarnessMcpReport, "inspect"> | undefined>;
+    inspect?(
+      agent: Agent<Config>,
+      server: string,
+    ): Promise<readonly HarnessMcpTool[]>;
+  }>;
   id: string;
   title: string;
   description?: string;
@@ -1400,6 +1421,20 @@ export type Agents = {
     session: AgentExecutionSession,
   ): Promise<AgentExecution | undefined>;
   registerHook(hook: AgentHook): void;
+  /** Chooses which of the harnesses' own MCP servers agents load. One control
+   * at a time; a second throws. Needs `host.agentMcp`. */
+  controlHarnessMcp(control: HarnessMcpControl): void;
+  /** What the agent's type reports of its MCP servers, undefined when it does
+   * not report. Needs `host.agentMcp`. */
+  harnessMcp(agent: AgentKey): Promise<HarnessMcpReport | undefined>;
+  /** Lists one reported server's tools without a model turn or any other
+   * server, and keeps them as the agent's last-seen tools in `harnessMcp`.
+   * Rejects for protected agents and for names the report lacks. Needs
+   * `host.agentMcp`. */
+  inspectHarnessMcp(
+    agent: AgentKey,
+    server: string,
+  ): Promise<readonly HarnessMcpTool[]>;
   /** Dispatches hooks for this plugin's agent types in contribution order. */
   dispatchHook(
     harness: string,
@@ -2058,6 +2093,15 @@ export class AgentsService extends Service implements Agents {
       );
     this.hookContributions.register(this.ctx, hook);
   }
+  controlHarnessMcp(control: HarnessMcpControl) {
+    this.mcp.control(this.ctx, control);
+  }
+  harnessMcp(key: AgentKey) {
+    return this.mcp.report(this.ctx, key);
+  }
+  inspectHarnessMcp(key: AgentKey, server: string) {
+    return this.mcp.inspect(this.ctx, key, server);
+  }
   dispatchHook(
     harness: string,
     event: string,
@@ -2431,7 +2475,8 @@ export class AgentsService extends Service implements Agents {
           ? teamPrompt(this.allTeams(), this.teammates(origin), member.pubkey)
           : "";
       },
-      protection: (agent) => this.protection.bind(agent),
+      protection: (agent) =>
+        this.mcp.require(this.protection.bind(agent), agent),
       agentTypes: () =>
         this.types()
           .filter((type) => !type.remote)
@@ -3486,12 +3531,26 @@ export class AgentsService extends Service implements Agents {
     };
   }
   tools = () => this.addedTools.snapshot();
-  readonly harness = harnessKit({
+  private readonly mcp = createHarnessMcp(
+    () => this.ctx.pluginStatus,
+    (key) => this.state.running.find((agent) => agent.key === key),
+    () => this.types(),
+    (agent) => this.protection.bind(agent),
+    (key, trigger) => this.runners.delivered(key, trigger),
+  );
+  private readonly harnessShared = harnessKit({
     relay: (key) => this.relay(key),
     core: (key) => this.core(key),
     added: () => this.tools(),
     repositories: repositoriesContext,
   });
+  /** The harness kit, with its MCP part bound to the plugin that asks. */
+  get harness(): HarnessKit {
+    return Object.freeze({
+      ...this.harnessShared,
+      mcp: this.mcp.kitFor(this.ctx),
+    });
+  }
   wake(key: AgentKey, wake: AgentWake) {
     const plugin = this.ctx.pluginOwner?.id;
     if (!plugin) throw new Error("Only a plugin wakes an agent");

@@ -43,7 +43,7 @@ import type {
   HostProcessOptions,
 } from "../../features/host/service";
 import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
-import { CodexRuntime, codexStep, programs } from "./runtime";
+import { CodexRuntime, codexStep, mcpCallOf, programs } from "./runtime";
 import { codexRun } from "./run";
 import { config } from "./config";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
@@ -102,7 +102,13 @@ function fixture(
     handle: ConstructorParameters<typeof CodexRuntime>[13];
   },
   resolveDirectory?: ConstructorParameters<typeof CodexRuntime>[14],
+  mcp?: ConstructorParameters<typeof CodexRuntime>[15],
 ) {
+  /** The servers `config/read` lists, and the rows a thread's status answers. */
+  const servers: Record<string, unknown> = {
+    "company.tools": { command: "secret-tool", enabled: true, url: null },
+  };
+  const statusRows: { rows: unknown[] } = { rows: [] };
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
   let thread = 0;
@@ -200,14 +206,17 @@ function fixture(
         result = {
           config: {
             ...configured,
-            mcp_servers: {
-              "company.tools": {
-                command: "secret-tool",
-                enabled: true,
-                url: null,
-              },
-            },
+            mcp_servers: servers,
           },
+        };
+      if (request.method === "mcpServerStatus/list")
+        result = {
+          data: statusRows.rows.filter(
+            (row) =>
+              params.serverName === undefined ||
+              (row as { name: string }).name === params.serverName,
+          ),
+          nextCursor: null,
         };
       if (request.method === "thread/start")
         result = { thread: { id: `thread-${++thread}`, cwd: params.cwd } };
@@ -419,6 +428,7 @@ function fixture(
     security?.host,
     security?.handle,
     resolveDirectory,
+    mcp,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -541,6 +551,7 @@ function fixture(
       agentProtection: { registerModels: vi.fn() },
       host: { spawn },
       agents: {
+        harness: { mcp: undefined },
         executionBinding: () => undefined,
         inspectExecution: async () => undefined,
         execution: async () => undefined,
@@ -689,6 +700,8 @@ function fixture(
     failing,
     failures,
     held,
+    servers,
+    statusRows,
     emit,
     publish,
     read,
@@ -1204,6 +1217,7 @@ it("shares model discovery with active turns and another agent", async () => {
 
 function protectedPreview(
   resolveDirectory?: ConstructorParameters<typeof CodexRuntime>[14],
+  mcp?: ConstructorParameters<typeof CodexRuntime>[15],
 ) {
   const engine = () => {
     const next = fixture();
@@ -1252,6 +1266,7 @@ function protectedPreview(
       handle: (key) => (key === pubkey ? handle : undefined),
     },
     resolveDirectory,
+    mcp,
   );
   const original = {
     ...f.delivery("unused").agent,
@@ -7668,5 +7683,1218 @@ describe("a conversation given its own folder", () => {
     );
     f.complete(0, "DONE");
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  });
+});
+
+/** What the owner's choice and the harness's status look like to an adapter. */
+type McpKit = NonNullable<ConstructorParameters<typeof CodexRuntime>[15]>;
+const mcpKit = (
+  answer: Awaited<ReturnType<McpKit["choice"]>>,
+  started: McpKit["started"] = vi.fn(),
+) =>
+  ({
+    choice: vi.fn(async () => answer),
+    started,
+    call: vi.fn<McpKit["call"]>(async () => undefined),
+    ran: vi.fn<McpKit["ran"]>(() => false),
+  }) satisfies McpKit;
+const server = (name: string, extra: object = {}) => [
+  name,
+  { command: `run-${name}`, enabled: true, url: null, ...extra },
+];
+const withServers = (f: ReturnType<typeof fixture>, ...named: string[]) => {
+  for (const key of Object.keys(f.servers)) delete f.servers[key];
+  Object.assign(f.servers, Object.fromEntries(named.map((n) => server(n))));
+};
+const threadConfig = (f: ReturnType<typeof fixture>, index = 0) =>
+  (
+    f.sent.filter((wire) => wire.method === "thread/start")[index]?.params as
+      | { config: Record<string, unknown> }
+      | undefined
+  )?.config ?? {};
+const off = (name: string) => ({ command: `run-${name}`, enabled: false });
+const statusCalls = (f: ReturnType<typeof fixture>) =>
+  f.sent.filter((wire) => wire.method === "mcpServerStatus/list");
+
+describe("harness MCP choice", () => {
+  it("starts exactly as before when nothing chooses", async () => {
+    const plain = fixture();
+    await plain.runtime.run(plain.delivery("@Codex hello"));
+    await vi.waitFor(() => expect(plain.starts()).toHaveLength(1));
+    const kit = mcpKit(undefined);
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      kit,
+    );
+    await f.runtime.run(f.delivery("@Codex hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(kit.choice).toHaveBeenCalledOnce();
+    expect(threadConfig(f)).toEqual(threadConfig(plain));
+    expect(threadConfig(f).mcp_servers).toEqual({
+      "company.tools": { command: "secret-tool", enabled: false },
+    });
+    expect(f.sent.map((wire) => wire.method)).toEqual(
+      plain.sent.map((wire) => wire.method),
+    );
+    expect(kit.started).not.toHaveBeenCalled();
+  });
+
+  it("leaves a server chosen on to its own configuration, and trims chosen tools", async () => {
+    const kit = mcpKit({ alpha: true, beta: ["write"], gamma: false });
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      kit,
+    );
+    withServers(f, "alpha", "beta", "gamma", "delta");
+    f.servers.beta = server("beta", { disabled_tools: ["delete"] })[1];
+    await f.runtime.run(f.delivery("@Codex hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    // Alpha has no entry, so `config.toml` applies; beta keeps its own list
+    // too; the rest stay off as before. Nothing is forced on.
+    expect(threadConfig(f).mcp_servers).toEqual({
+      beta: { disabled_tools: ["delete", "write"] },
+      gamma: off("gamma"),
+      delta: off("delta"),
+    });
+  });
+
+  it("never sends a name the harness does not list", async () => {
+    const kit = mcpKit({ ghost: true, phantom: ["x"], alpha: true });
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      kit,
+    );
+    withServers(f, "alpha", "beta");
+    await f.runtime.run(f.delivery("@Codex hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(threadConfig(f).mcp_servers).toEqual({ beta: off("beta") });
+  });
+
+  it("turns every server off when the answer is none", async () => {
+    const kit = mcpKit("none");
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      kit,
+    );
+    withServers(f, "alpha", "beta");
+    await f.runtime.run(f.delivery("@Codex hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(threadConfig(f).mcp_servers).toEqual({
+      alpha: off("alpha"),
+      beta: off("beta"),
+    });
+  });
+
+  it("reads the thread's status after it starts and before its first turn", async () => {
+    const started = vi.fn();
+    const kit = mcpKit({ alpha: true }, started);
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      kit,
+    );
+    withServers(f, "alpha", "beta");
+    f.statusRows.rows = [
+      {
+        name: "alpha",
+        runtimeStatus: "connected",
+        tools: { read: {}, write: {} },
+      },
+      { name: "beta", runtimeStatus: "disabled", tools: {} },
+    ];
+    await f.runtime.run(f.delivery("@Codex hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    // One call per server name: without a name Codex starts servers again.
+    expect(statusCalls(f).map((wire) => wire.params)).toEqual([
+      { threadId: "thread-1", serverName: "alpha", detail: "toolsAndAuthOnly" },
+      { threadId: "thread-1", serverName: "beta", detail: "toolsAndAuthOnly" },
+    ]);
+    const order = f.sent.map((wire) => wire.method);
+    expect(order.indexOf("mcpServerStatus/list")).toBeGreaterThan(
+      order.indexOf("thread/start"),
+    );
+    expect(order.indexOf("mcpServerStatus/list")).toBeLessThan(
+      order.indexOf("turn/start"),
+    );
+    // A server that is off is not loaded, so only alpha is listed.
+    expect(started).toHaveBeenCalledWith(
+      expect.objectContaining({ key: pubkey }),
+      "thread-1",
+      [{ name: "alpha", tools: ["read", "write"] }],
+      { alpha: true, beta: false },
+    );
+  });
+
+  it.each([
+    ["the kit refuses what loaded", () => undefined],
+    [
+      "the status cannot be read",
+      (f: ReturnType<typeof fixture>) => f.failing.add("mcpServerStatus/list"),
+    ],
+  ])("starts no turn when %s", async (_name, arrange) => {
+    const started = vi.fn(() => {
+      throw new Error("MCP servers loaded that were turned off");
+    });
+    const kit = mcpKit({ alpha: false }, started);
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      kit,
+    );
+    withServers(f, "alpha");
+    f.statusRows.rows = [
+      { name: "alpha", runtimeStatus: "connected", tools: {} },
+    ];
+    arrange(f);
+    await f.runtime.run(f.delivery("@Codex hello"));
+    await vi.waitFor(() =>
+      expect(f.sent.some((wire) => wire.method === "thread/unsubscribe")).toBe(
+        true,
+      ),
+    );
+    expect(f.starts()).toEqual([]);
+    expect(f.publish).toHaveBeenCalled();
+  });
+
+  it("does not count Buzz's own hook server as a loaded server", async () => {
+    const started = vi.fn();
+    const kit = mcpKit("none", started);
+    const hooks = {
+      serve: vi.fn(async () => ({
+        url: "http://127.0.0.1:1/mcp",
+        headers: [],
+        closed: new Promise<void>(() => {}),
+        close: async () => {},
+      })),
+      run: vi.fn(async () => ({})),
+    };
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      hooks,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      kit,
+    );
+    withServers(f, "alpha");
+    f.statusRows.rows = [
+      { name: "buzz_native_hooks", runtimeStatus: "connected", tools: {} },
+      { name: "alpha", runtimeStatus: "disabled", tools: {} },
+    ];
+    await f.runtime.run(f.delivery("@Codex hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(started.mock.calls[0]?.[2]).toEqual([]);
+  });
+
+  it("starts the title thread with every listed server off, by name", async () => {
+    const kit = mcpKit({ alpha: true, beta: ["write"] });
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      kit,
+    );
+    withServers(f, "alpha", "beta", "gamma");
+    asSoloChat(f);
+    await f.runtime.run({ ...f.delivery("@Codex fix it"), named: vi.fn() });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(threadConfig(f, 0).mcp_servers).toEqual({
+      beta: { disabled_tools: ["write"] },
+      gamma: off("gamma"),
+    });
+    expect(threadConfig(f, 1).mcp_servers).toEqual({
+      alpha: off("alpha"),
+      beta: off("beta"),
+      gamma: off("gamma"),
+    });
+  });
+
+  it("gives a protected worker the empty proof before its first turn", async () => {
+    const started = vi.fn();
+    const kit = mcpKit("none", started);
+    const f = protectedPreview(undefined, kit);
+    withServers(f.worker, "alpha");
+    f.worker.statusRows.rows = [
+      { name: "alpha", runtimeStatus: "disabled", tools: {} },
+    ];
+    if (!f.handle) throw new Error("Missing protected handle");
+    await f.runtime.run({
+      ...f.delivery("Summarize"),
+      agent: f.handle,
+      config: f.agent.config,
+    });
+    await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(1));
+    expect(threadConfig(f.worker).mcp_servers).toEqual({ alpha: off("alpha") });
+    expect(started).toHaveBeenCalledWith(f.handle, "thread-1", [], {
+      alpha: false,
+    });
+    const order = f.worker.sent.map((wire) => wire.method);
+    expect(order.indexOf("mcpServerStatus/list")).toBeLessThan(
+      order.indexOf("turn/start"),
+    );
+  });
+
+  it("compacts with every server off, and reads that back before compacting", async () => {
+    const started = vi.fn();
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mcpKit({ alpha: true }, started),
+    );
+    withServers(f, "alpha");
+    f.statusRows.rows = [
+      { name: "alpha", runtimeStatus: "connected", tools: {} },
+    ];
+    const delivery = f.delivery("first");
+    const agent = {
+      ...delivery.agent,
+      config: delivery.config,
+    } as unknown as Agent;
+    const place = { channelId: "channel", root };
+    await f.runtime.run(delivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    started.mockClear();
+    f.statusRows.rows = [
+      { name: "alpha", runtimeStatus: "disabled", tools: {} },
+    ];
+    const compacted = f.runtime
+      .session(agent, place, "compact")
+      .catch((error) => error);
+    await vi.waitFor(() =>
+      expect(f.sent.map((wire) => wire.method)).toContain(
+        "thread/compact/start",
+      ),
+    );
+    const resumes = f.sent.filter((wire) => wire.method === "thread/resume");
+    expect(
+      (
+        resumes.at(-1)?.params as
+          | { config: Record<string, unknown> }
+          | undefined
+      )?.config.mcp_servers,
+    ).toEqual({ alpha: off("alpha") });
+    expect(started).toHaveBeenCalledWith(
+      expect.objectContaining({ key: pubkey }),
+      "thread-1",
+      [],
+      { alpha: false },
+    );
+    const order = f.sent.map((wire) => wire.method);
+    expect(order.lastIndexOf("mcpServerStatus/list")).toBeLessThan(
+      order.indexOf("thread/compact/start"),
+    );
+    await f.runtime.session(agent, place, "interrupt");
+    f.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: "compact" } },
+    });
+    await compacted;
+  });
+
+  it("reads the same choice for a watch's one-off thread, before its turn", async () => {
+    const started = vi.fn();
+    const kit = mcpKit({ alpha: true }, started);
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      kit,
+    );
+    withServers(f, "alpha", "beta");
+    f.statusRows.rows = [
+      { name: "alpha", runtimeStatus: "connected", tools: {} },
+    ];
+    const delivery = f.delivery("unused");
+    void f.runtime.runOnce({
+      delivery,
+      key: "watch",
+      signal: delivery.signal,
+      prompt: async () => "check",
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(threadConfig(f).mcp_servers).toEqual({ beta: off("beta") });
+    expect(started).toHaveBeenCalledWith(
+      expect.objectContaining({ key: pubkey }),
+      "thread-1",
+      [{ name: "alpha", tools: [] }],
+      // A name the choice leaves out is checked as off, Codex's default.
+      { alpha: true, beta: false },
+    );
+  });
+});
+
+describe("harness MCP report and inspect", () => {
+  const agentOf = (f: ReturnType<typeof fixture>, extra: object = {}) =>
+    ({
+      ...f.delivery("unused").agent,
+      config: f.delivery("unused").config,
+      ...extra,
+    }) as unknown as Agent;
+
+  it("names the servers from config/read, without any status call or turn", async () => {
+    const f = fixture();
+    withServers(f, "alpha", "beta");
+    f.servers.beta = server("beta", { enabled: false })[1];
+    const report = await f.runtime.harnessMcp(agentOf(f));
+    expect(report).toEqual({
+      tools: true,
+      servers: [
+        { name: "alpha", default: false },
+        { name: "beta", default: false, state: "disabled" },
+      ],
+    });
+    expect(statusCalls(f)).toEqual([]);
+    expect(f.starts()).toEqual([]);
+  });
+
+  it("says calls can be held only while Codex hooks run through Buzz's bridge", async () => {
+    const hooks = {
+      serve: (async () => ({
+        url: "http://127.0.0.1:1/mcp",
+        headers: [],
+        close: async () => {},
+        closed: new Promise(() => {}),
+      })) as never,
+      run: vi.fn(async () => ({})),
+    };
+    const on = fixture([], undefined, false, {}, undefined, hooks);
+    expect(await on.runtime.harnessMcp(agentOf(on))).toMatchObject({
+      calls: true,
+    });
+    const off = fixture(
+      [],
+      undefined,
+      false,
+      { features: { hooks: false } },
+      undefined,
+      hooks,
+    );
+    expect(await off.runtime.harnessMcp(agentOf(off))).not.toHaveProperty(
+      "calls",
+    );
+    const bare = fixture();
+    expect(await bare.runtime.harnessMcp(agentOf(bare))).not.toHaveProperty(
+      "calls",
+    );
+  });
+
+  it("adds the state and tools its last session's status showed", async () => {
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mcpKit({ alpha: true }),
+    );
+    withServers(f, "alpha", "beta");
+    f.statusRows.rows = [
+      {
+        name: "alpha",
+        runtimeStatus: "connected",
+        tools: { read: { description: "Reads" }, write: {} },
+      },
+      { name: "beta", runtimeStatus: "disabled", tools: {} },
+    ];
+    await f.runtime.run(f.delivery("@Codex hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const report = await f.runtime.harnessMcp(agentOf(f));
+    expect(report?.servers).toEqual([
+      {
+        name: "alpha",
+        default: false,
+        state: "connected",
+        tools: [{ name: "read", description: "Reads" }, { name: "write" }],
+      },
+      // Off in Buzz's thread is not off in the user's configuration.
+      { name: "beta", default: false },
+    ]);
+  });
+
+  it("forgets what a stopped agent's last session showed", async () => {
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mcpKit({ alpha: true }),
+    );
+    withServers(f, "alpha");
+    f.statusRows.rows = [
+      { name: "alpha", runtimeStatus: "connected", tools: { read: {} } },
+    ];
+    await f.runtime.run(f.delivery("@Codex hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.retire(pubkey);
+    const report = await f.runtime.harnessMcp(agentOf(f));
+    expect(report?.servers).toEqual([{ name: "alpha", default: false }]);
+  });
+
+  it("starts no thread to close when the harness refuses to start one", async () => {
+    const f = fixture();
+    withServers(f, "alpha");
+    f.failing.add("thread/start");
+    await expect(f.runtime.inspectMcp(agentOf(f), "alpha")).rejects.toThrow(
+      "thread/start failed",
+    );
+    expect(f.sent.map((wire) => wire.method)).not.toContain(
+      "thread/unsubscribe",
+    );
+    expect(statusCalls(f)).toEqual([]);
+  });
+
+  it("reports and applies nothing on an execution target, and lists no server for a protected agent", async () => {
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async () => ({ provider: "test/guest" }),
+    );
+    await expect(f.runtime.harnessMcp(agentOf(f))).resolves.toBeUndefined();
+    await expect(f.runtime.inspectMcp(agentOf(f), "alpha")).rejects.toThrow(
+      "execution target",
+    );
+    const plain = fixture();
+    const protectedReport = await plain.runtime.harnessMcp(
+      agentOf(plain, { protection: { provider: "p", policy: {} } }),
+    );
+    expect(protectedReport?.servers).toEqual([]);
+    await expect(
+      plain.runtime.inspectMcp(
+        agentOf(plain, { protection: { provider: "p", policy: {} } }),
+        "alpha",
+      ),
+    ).rejects.toThrow("protected");
+    expect(plain.sent.map((wire) => wire.method)).not.toContain("config/read");
+  });
+
+  it("makes retiring the agent stop an inspection and wait until its thread is gone", async () => {
+    const f = fixture();
+    withServers(f, "alpha");
+    f.statusRows.rows = [
+      { name: "alpha", runtimeStatus: "connected", tools: {} },
+    ];
+    const listing = deferred<void>();
+    f.held.set("mcpServerStatus/list", listing.promise);
+    const agent = agentOf(f);
+    const inspected = f.runtime.inspectMcp(agent, "alpha");
+    void inspected.catch(() => undefined);
+    await vi.waitFor(() => expect(statusCalls(f)).toHaveLength(1));
+    let retired = false;
+    const retiring = f.runtime.retire(agent.key).then(() => {
+      retired = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(retired).toBe(false);
+    listing.resolve();
+    await retiring;
+    await expect(inspected).rejects.toThrow();
+    expect(f.sent.map((wire) => wire.method)).toContain("thread/unsubscribe");
+  });
+
+  it("lists one server's tools on an ephemeral thread where every other server is off", async () => {
+    const f = fixture();
+    withServers(f, "alpha", "beta", "gamma");
+    f.statusRows.rows = [
+      {
+        name: "alpha",
+        runtimeStatus: "connected",
+        tools: { read: { description: "Reads" } },
+      },
+    ];
+    const before = [...f.storage.keys()];
+    await expect(f.runtime.inspectMcp(agentOf(f), "alpha")).resolves.toEqual([
+      { name: "read", description: "Reads" },
+    ]);
+    const start = f.sent.find((wire) => wire.method === "thread/start");
+    expect(start?.params).toMatchObject({
+      ephemeral: true,
+      sandbox: "read-only",
+      approvalPolicy: "never",
+      // Unloaded once unsubscribed, so the server it started stops.
+      config: { thread_unload_delay_secs: 0 },
+    });
+    expect(threadConfig(f).mcp_servers).toEqual({
+      beta: off("beta"),
+      gamma: off("gamma"),
+    });
+    expect(statusCalls(f).map((wire) => wire.params)).toEqual([
+      { threadId: "thread-1", serverName: "alpha", detail: "toolsAndAuthOnly" },
+    ]);
+    expect(
+      f.sent.find((wire) => wire.method === "thread/unsubscribe")?.params,
+    ).toEqual({ threadId: "thread-1" });
+    expect(f.sent.map((wire) => wire.method)).not.toContain("turn/start");
+    expect([...f.storage.keys()]).toEqual(before);
+  });
+
+  it.each([
+    [
+      "does not connect",
+      (f: ReturnType<typeof fixture>) => {
+        f.statusRows.rows = [
+          {
+            name: "alpha",
+            runtimeStatus: "failed",
+            tools: {},
+            toolsError: "boom",
+          },
+        ];
+      },
+      "boom",
+    ],
+    [
+      "is not listed",
+      (f: ReturnType<typeof fixture>) => {
+        f.statusRows.rows = [];
+      },
+      "not listed",
+    ],
+    [
+      "cannot be asked",
+      (f: ReturnType<typeof fixture>) => {
+        f.failing.add("mcpServerStatus/list");
+      },
+      "failed",
+    ],
+  ])("closes the thread when the server %s", async (_name, arrange, text) => {
+    const f = fixture();
+    withServers(f, "alpha", "beta");
+    arrange(f);
+    await expect(f.runtime.inspectMcp(agentOf(f), "alpha")).rejects.toThrow(
+      text,
+    );
+    expect(
+      f.sent.find((wire) => wire.method === "thread/unsubscribe")?.params,
+    ).toEqual({ threadId: "thread-1" });
+    expect(f.sent.map((wire) => wire.method)).not.toContain("turn/start");
+  });
+});
+
+describe("harness MCP call gate", () => {
+  /** A thread with servers `names` whose hook bridge the test can call, and
+   * the plugin hooks that run behind it. */
+  const gated = (
+    answer: Parameters<typeof mcpKit>[0],
+    names = ["my.server"],
+    rows: unknown[] = [
+      {
+        name: "my.server",
+        runtimeStatus: "connected",
+        tools: { "get-thing": {}, write: {} },
+      },
+    ],
+  ) => {
+    let handler!: McpHandler;
+    const plugin = vi.fn(async () => ({ plugin: "ran" }));
+    const kit = mcpKit(answer);
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      {
+        serve: async (run) => {
+          handler = run;
+          return {
+            url: "http://127.0.0.1:1/mcp",
+            headers: [],
+            close: async () => {},
+            closed: new Promise(() => {}),
+          };
+        },
+        run: plugin,
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      kit,
+    );
+    withServers(f, ...names);
+    f.statusRows.rows = rows;
+    const hook = async (event: string, input: Record<string, unknown> = {}) => {
+      const wire = (await handler({
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: event,
+          arguments: { session_id: "thread-1", ...input },
+        },
+      })) as { result: { content: { text: string }[] } };
+      return JSON.parse(wire.result.content[0]?.text ?? "null");
+    };
+    const pre = (tool_name: string, extra: Record<string, unknown> = {}) =>
+      hook("PreToolUse", {
+        tool_name,
+        tool_use_id: "call-1",
+        tool_input: { path: "/tmp/x" },
+        ...extra,
+      });
+    const begin = async () => {
+      await f.runtime.run(f.delivery("@Codex hello"));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    };
+    return { f, kit, plugin, hook, pre, begin };
+  };
+  const deny = (reason: string) => ({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: reason,
+    },
+  });
+  const item = (extra: object = {}) => ({
+    type: "mcpToolCall",
+    id: "call-1",
+    server: "my.server",
+    tool: "write",
+    status: "inProgress",
+    arguments: {},
+    ...extra,
+  });
+  const started = (f: ReturnType<typeof fixture>, value: object) =>
+    f.emit({
+      method: "item/started",
+      params: { threadId: "thread-1", turnId: "turn-1", item: value },
+    });
+  const interrupts = (f: ReturnType<typeof fixture>) =>
+    f.sent.filter((wire) => wire.method === "turn/interrupt");
+
+  it("counts a steer that is not the owner's own against direct as soon as it is sent", async () => {
+    const { f, kit, pre } = gated({ "my.server": true });
+    const secret = schnorr.utils.randomSecretKey();
+    const owner = bytesToHex(schnorr.getPublicKey(secret));
+    const sibling = bytesToHex(
+      schnorr.getPublicKey(schnorr.utils.randomSecretKey()),
+    );
+    const as = (delivery: Delivery, pubkey: string) => {
+      if ("event" in delivery.trigger) delivery.trigger.event.pubkey = pubkey;
+      return { ...delivery, agent: { ...delivery.agent, owner } };
+    };
+    await f.runtime.run(as(f.delivery("@Codex hello"), owner));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const answer = deferred<void>();
+    f.held.set("turn/steer", answer.promise);
+    const steer = as(f.delivery("@Codex more"), sibling);
+    if ("event" in steer.trigger)
+      steer.trigger.event.tags.push([
+        "auth",
+        owner,
+        "",
+        bytesToHex(
+          schnorr.sign(
+            createHash("sha256")
+              .update(`nostr:agent-auth:${sibling}:`)
+              .digest(),
+            secret,
+          ),
+        ),
+      ]);
+    void f.runtime.run(steer);
+    await vi.waitFor(() =>
+      expect(f.sent.some((wire) => wire.method === "turn/steer")).toBe(true),
+    );
+    // Codex may take the steer in before Buzz sees its answer.
+    await pre("mcp__my_server__write");
+    expect(kit.call.mock.calls.at(-1)?.[2]?.turn?.trigger).toMatchObject({
+      event: { pubkey: sibling },
+    });
+    answer.resolve();
+    await f.complete();
+  });
+
+  it("puts a native MCP call to the kit with its raw names, and lets an allow carry on to plugin hooks", async () => {
+    const { f, kit, plugin, pre, begin } = gated({ "my.server": true });
+    await begin();
+    expect(await pre("mcp__my_server__write")).toEqual({ plugin: "ran" });
+    expect(kit.call).toHaveBeenCalledOnce();
+    const [who, call, options] = kit.call.mock.calls[0] ?? [];
+    expect(who).toEqual({ key: pubkey, protection: undefined });
+    expect(call).toEqual({
+      session: "thread-1",
+      id: "call-1",
+      server: "my.server",
+      tool: "write",
+      arguments: { path: "/tmp/x" },
+    });
+    expect(options?.hold).toBe(10_000);
+    expect(options?.signal.aborted).toBe(false);
+    expect(options?.turn?.trigger).toMatchObject({
+      type: "mention",
+      event: { pubkey: owner },
+    });
+    expect(plugin).toHaveBeenCalledOnce();
+    // The tool's own name is found from Codex's sanitized one.
+    await pre("mcp__my_server__get_thing");
+    expect(kit.call.mock.calls[1]?.[1]).toMatchObject({ tool: "get-thing" });
+    // A name the status did not list leaves the tool out, not the server.
+    await pre("mcp__my_server__other");
+    expect(kit.call.mock.calls[2]?.[1]).toEqual({
+      session: "thread-1",
+      id: "call-1",
+      server: "my.server",
+      arguments: { path: "/tmp/x" },
+    });
+    await f.complete();
+  });
+
+  it("blocks the call with the kit's reason and runs no plugin hook", async () => {
+    const { f, kit, plugin, pre, begin } = gated({ "my.server": true });
+    kit.call.mockResolvedValue("Ask the owner first");
+    await begin();
+    expect(await pre("mcp__my_server__write")).toEqual(
+      deny("Ask the owner first"),
+    );
+    expect(plugin).not.toHaveBeenCalled();
+    await f.complete();
+  });
+
+  it("denies a call whose server matches none of the thread's, or more than one, without asking", async () => {
+    const { f, kit, pre, begin } = gated(
+      { a: true, "a-": true, "a b": true, c: true },
+      ["a", "a-", "a b", "c"],
+      [],
+    );
+    await begin();
+    for (const name of [
+      "mcp__nobody__write",
+      // "a" and "a-" read alike once sanitized, so they cannot be told apart.
+      "mcp__a__write",
+      "mcp__",
+    ])
+      expect(await pre(name)).toEqual(
+        deny("Buzz could not tell which MCP server this call is for"),
+      );
+    expect(await pre("mcp__c__write", { tool_use_id: 7 })).toEqual(
+      deny("Buzz could not tell which MCP server this call is for"),
+    );
+    expect(kit.call).not.toHaveBeenCalled();
+    await f.complete();
+  });
+
+  it("denies when the kit itself throws", async () => {
+    const { f, kit, pre, begin } = gated({ "my.server": true });
+    kit.call.mockRejectedValue(new Error("boom"));
+    await begin();
+    expect(await pre("mcp__my_server__write")).toEqual(
+      deny("The MCP call could not be checked"),
+    );
+    await f.complete();
+  });
+
+  it("never routes other tools, other events, or Buzz's own bridge server through the kit", async () => {
+    const { f, kit, plugin, hook, pre, begin } = gated({ "my.server": true });
+    await begin();
+    await pre("Bash");
+    await pre("mcp__buzz_native_hooks__PreToolUse");
+    await hook("PostToolUse", {
+      tool_name: "mcp__my_server__write",
+      tool_use_id: "call-1",
+    });
+    await hook("UserPromptSubmit", { prompt: "mcp__my_server__write" });
+    expect(kit.call).not.toHaveBeenCalled();
+    expect(plugin).toHaveBeenCalledTimes(4);
+    await f.complete();
+  });
+
+  it("changes nothing when no choice is in play: the same thread config and hooks, no kit call", async () => {
+    const config = (f: ReturnType<typeof fixture>) =>
+      f.sent.find((wire) => wire.method === "thread/start")?.params;
+    const plain = gated(undefined);
+    // The same fixture with no kit at all.
+    let handler!: McpHandler;
+    const bare = fixture([], undefined, false, {}, undefined, {
+      serve: async (run) => {
+        handler = run;
+        return {
+          url: "http://127.0.0.1:1/mcp",
+          headers: [],
+          close: async () => {},
+          closed: new Promise(() => {}),
+        };
+      },
+      run: async () => ({ plugin: "ran" }),
+    });
+    withServers(bare, "my.server");
+    await bare.runtime.run(bare.delivery("@Codex hello"));
+    await vi.waitFor(() => expect(bare.starts()).toHaveLength(1));
+    await plain.begin();
+    expect(config(plain.f)).toEqual(config(bare));
+    expect(plain.f.sent.map((wire) => wire.method)).toEqual(
+      bare.sent.map((wire) => wire.method),
+    );
+    expect(await plain.pre("mcp__my_server__write")).toEqual({ plugin: "ran" });
+    expect(
+      await handler({
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "PreToolUse",
+          arguments: {
+            session_id: "thread-1",
+            tool_name: "mcp__my_server__write",
+            tool_use_id: "call-1",
+          },
+        },
+      }),
+    ).toMatchObject({ result: { content: [{ text: '{"plugin":"ran"}' }] } });
+    expect(plain.kit.call).not.toHaveBeenCalled();
+    started(plain.f, item());
+    expect(plain.kit.ran).not.toHaveBeenCalled();
+    expect(interrupts(plain.f)).toHaveLength(0);
+    await plain.f.complete();
+    await bare.complete();
+  });
+
+  it("stops the turn when a native MCP call starts that nothing allowed", async () => {
+    const { f, kit, begin } = gated({ "my.server": true });
+    kit.ran.mockReturnValue(true);
+    await begin();
+    started(f, item());
+    expect(kit.ran).toHaveBeenCalledWith(
+      { key: pubkey, protection: undefined },
+      { session: "thread-1", id: "call-1", server: "my.server", tool: "write" },
+    );
+    await vi.waitFor(() => expect(interrupts(f)).toHaveLength(1));
+    expect(interrupts(f)[0]?.params).toEqual({
+      threadId: "thread-1",
+      turnId: "turn-1",
+    });
+  });
+
+  it("gives plugin hooks only what the gate left of the hook's budget", async () => {
+    const { kit, plugin, pre, begin } = gated({ "my.server": true });
+    await begin();
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      kit.call.mockImplementationOnce(async () => {
+        now += 7_000;
+        return undefined;
+      });
+      await pre("mcp__my_server__write");
+      expect(plugin).toHaveBeenLastCalledWith(
+        pubkey,
+        "thread-1",
+        "PreToolUse",
+        expect.anything(),
+        18_000,
+      );
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("gates a subagent's native MCP calls under the thread that spawned it", async () => {
+    const { f, kit, plugin, hook, pre, begin } = gated({ "my.server": true });
+    await begin();
+    // Before its spawn completes, a thread is not this turn's: core has no
+    // record of it, so it denies.
+    kit.call.mockResolvedValueOnce("no record");
+    await expect(
+      pre("mcp__my_server__write", { session_id: "child-1" }),
+    ).resolves.toEqual(deny("no record"));
+    expect(kit.call.mock.calls[0]?.[1]).toMatchObject({ session: "child-1" });
+    f.emit({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-1",
+          receiverThreadIds: ["child-1"],
+        },
+      },
+    });
+    await expect(
+      pre("mcp__my_server__write", { session_id: "child-1" }),
+    ).resolves.toEqual({});
+    expect(kit.call.mock.calls[1]?.[1]).toMatchObject({
+      session: "thread-1",
+      server: "my.server",
+    });
+    expect(plugin).not.toHaveBeenCalled();
+    // Any other hook from the subagent is still refused, as before.
+    await expect(hook("Stop", { session_id: "child-1" })).rejects.toThrow(
+      "session mismatch",
+    );
+    kit.ran.mockReturnValue(true);
+    f.emit({
+      method: "item/started",
+      params: { threadId: "child-1", turnId: "child-turn", item: item() },
+    });
+    expect(kit.ran).toHaveBeenLastCalledWith(
+      { key: pubkey, protection: undefined },
+      { session: "thread-1", id: "call-1", server: "my.server", tool: "write" },
+    );
+    await vi.waitFor(() => expect(interrupts(f)).toHaveLength(1));
+    expect(interrupts(f)[0]?.params).toEqual({
+      threadId: "thread-1",
+      turnId: "turn-1",
+    });
+  });
+
+  it("lets a call that ran after an allow go on, and checks each call once, at its start", async () => {
+    const { f, kit, begin } = gated({ "my.server": true });
+    await begin();
+    started(f, item());
+    f.emit({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: item({ status: "completed" }),
+      },
+    });
+    expect(kit.ran).toHaveBeenCalledOnce();
+    expect(interrupts(f)).toHaveLength(0);
+    await f.complete();
+  });
+
+  it("does not ask `ran` about Buzz's own tools or items that are not native MCP calls", async () => {
+    const { f, kit, begin } = gated({ "my.server": true });
+    kit.ran.mockReturnValue(true);
+    await begin();
+    started(f, item({ server: "buzz_native_hooks" }));
+    started(f, {
+      type: "dynamicToolCall",
+      namespace: "buzz",
+      tool: "send",
+      id: "d",
+    });
+    started(f, { type: "commandExecution", command: "ls", id: "e" });
+    started(f, item({ id: undefined }));
+    expect(kit.ran).not.toHaveBeenCalled();
+    expect(interrupts(f)).toHaveLength(0);
+    await f.complete();
+  });
+
+  it("tells the kit a protected agent's session, which is denied every call", async () => {
+    const kit = mcpKit("none");
+    kit.ran.mockReturnValue(true);
+    const f = protectedPreview(undefined, kit);
+    withServers(f.worker, "my.server");
+    f.worker.statusRows.rows = [
+      { name: "my.server", runtimeStatus: "disabled", tools: {} },
+    ];
+    if (!f.handle) throw new Error("Missing protected handle");
+    await f.runtime.run({
+      ...f.delivery("Summarize"),
+      agent: f.handle,
+      config: f.agent.config,
+    });
+    await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(1));
+    started(f.worker, item());
+    expect(kit.ran).toHaveBeenCalledWith(
+      { key: f.handle.key, protection: f.handle.protection },
+      expect.objectContaining({ server: "my.server" }),
+    );
+    await vi.waitFor(() =>
+      expect(interrupts(f.worker as ReturnType<typeof fixture>)).toHaveLength(
+        1,
+      ),
+    );
+  });
+
+  it("gates a watch's standalone turn too, naming its trigger and stopping a call nothing allowed", async () => {
+    const { f, kit, pre } = gated({ "my.server": true });
+    kit.ran.mockReturnValue(true);
+    const watch = {
+      type: "event",
+      enabled: true,
+      interest_id: "ops",
+      since: 0,
+      channels: "all",
+      kinds: [9],
+    } as const;
+    f.objects.set("watch/deploys", watch);
+    const base = f.delivery("someone else's message");
+    if (base.trigger.type !== "mention") throw new Error("Expected mention");
+    const trigger = {
+      type: "watch" as const,
+      event: base.trigger.event,
+      slug: "watch/deploys",
+      watch,
+    };
+    f.wake({ ...base, trigger });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(await pre("mcp__my_server__write")).toEqual({ plugin: "ran" });
+    expect(kit.call.mock.calls[0]?.[2].turn).toEqual({ trigger });
+    started(f, item());
+    await vi.waitFor(() => expect(interrupts(f)).toHaveLength(1));
+    await f.complete(0, "");
+  });
+
+  it("tells the kit a steered turn's first request that is not the owner's own message", async () => {
+    const { f, kit, pre, begin } = gated({ "my.server": true });
+    await begin();
+    await pre("mcp__my_server__write");
+    expect(kit.call.mock.calls[0]?.[2].turn?.trigger).toMatchObject({
+      type: "mention",
+      event: { pubkey: owner },
+    });
+    // A plugin's wake steered into the owner's turn: the turn is no longer
+    // only the owner's message.
+    await f.runtime.run(pluginWake(f, root));
+    await vi.waitFor(() =>
+      expect(
+        f.sent.filter((wire) => wire.method === "turn/steer"),
+      ).toHaveLength(1),
+    );
+    await pre("mcp__my_server__write");
+    expect(kit.call.mock.calls[1]?.[2].turn?.trigger).toMatchObject({
+      type: "plugin",
+    });
+    await f.complete();
+  });
+});
+
+describe("mcpCallOf", () => {
+  const tools =
+    (...names: string[]) =>
+    () => ({ tools: Object.fromEntries(names.map((name) => [name, {}])) });
+  it.each([
+    ["mcp__alpha__write", ["alpha"], { server: "alpha" }],
+    ["mcp__my_server__write", ["my.server"], { server: "my.server" }],
+    // Codex joins a namespace and a name after trimming their edge underscores.
+    ["mcp__a__tool", ["a_"], { server: "a_" }],
+    ["mcp__a__tool", ["a", "b"], { server: "a" }],
+    ["mcp__alpha__x__y", ["alpha", "alpha__x"], undefined],
+    ["mcp__beta__write", ["alpha"], undefined],
+    ["mcp__alpha", ["alpha"], undefined],
+  ])("%s among %j", (name, servers, expected) => {
+    expect(mcpCallOf(name, servers, () => undefined)).toEqual(expected);
+  });
+  it("finds the tool by its sanitized name, with edge underscores trimmed", () => {
+    expect(
+      mcpCallOf("mcp__alpha__get_thing", ["alpha"], tools("get-thing")),
+    ).toEqual({ server: "alpha", tool: "get-thing" });
+    expect(mcpCallOf("mcp__alpha__x", ["alpha"], tools("_x"))).toEqual({
+      server: "alpha",
+      tool: "_x",
+    });
+    expect(mcpCallOf("mcp__alpha__x", ["alpha"], tools("y"))).toEqual({
+      server: "alpha",
+    });
+  });
+  it("names no tool when two of the server's tools read alike", () => {
+    expect(
+      mcpCallOf("mcp__alpha__a_b", ["alpha"], tools("a_b", "a-b")),
+    ).toEqual({ server: "alpha" });
   });
 });

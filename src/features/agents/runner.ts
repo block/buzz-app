@@ -616,6 +616,9 @@ export class AgentRunners {
   /** Whether each event catch-up read may address its agent, as `unattended`
    * said when it was read: one waiting for room keeps what it arrived as. */
   private readonly readAddressable = new WeakMap<RelayEvent, boolean>();
+  /** The agent each trigger was delivered to, so a harness's later report of
+   * the turn it runs can be checked against what core sent. */
+  private readonly deliveredTriggers = new WeakMap<object, AgentKey>();
   private readonly sourceJobs = new Map<Job, string>();
   private readonly failedSources = new WeakSet<AttentionObject>();
   /** Wakes whose failure to start was reported, until one of their turns
@@ -919,6 +922,11 @@ export class AgentRunners {
    * working while it no longer holds, and for good once the agent's type
    * or its plugin is replaced. `run` adds what only the agent itself gets,
    * such as device settings, for a connection that acts as the agent. */
+  /** Whether core delivered `trigger` to agent `key`. */
+  delivered(key: AgentKey, trigger: object) {
+    return this.deliveredTriggers.get(trigger) === key;
+  }
+
   handle(key: AgentKey, pluginId?: string, run = false) {
     const held = () => {
       const runner = this.runners.get(key);
@@ -2750,6 +2758,7 @@ export class AgentRunners {
         );
     };
     const invoke: typeof run = (delivery) => {
+      this.deliveredTriggers.set(delivery.trigger, agent.key);
       woke();
       return run(delivery);
     };
@@ -2863,6 +2872,7 @@ export class AgentRunners {
           delivery.current,
           (key, prompt) =>
             standalone(lifetime, (signal) => {
+              this.deliveredTriggers.set(delivery.trigger, agent.key);
               woke();
               return runOnce({ delivery, key, signal, prompt });
             }),

@@ -379,3 +379,81 @@ it("opens at most the background limit, plus communities selected this launch", 
     new Set([...ids.slice(0, BACKGROUND_UNREAD_LIMIT), late]),
   );
 });
+
+it("badges wait for a restored selection's first repair, not the loading snapshot", async () => {
+  const [first, second] = [fakeSession(), fakeSession()];
+  let release = () => {};
+  first.ensure.mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const relays = new Map<string, RelayData>(
+    (
+      [
+        [one, first],
+        [two, second],
+      ] as const
+    ).map(([id, fake]) => [
+      id,
+      {
+        snapshot: () => ({ status: "ready", viewer, session: fake.session }),
+        subscribe: () => () => {},
+      } as unknown as RelayData,
+    ]),
+  );
+  const client = signal();
+  // Before hydration nothing is selected yet; that is not Personal space.
+  let snapshot: {
+    status: string;
+    viewer?: string;
+    selected: string | null;
+    memberships: { id: string }[];
+  } = { status: "loading", selected: null, memberships: [] };
+  const opened = vi.fn((id: string) => relays.get(id));
+  const communities = {
+    snapshot: () => snapshot,
+    subscribe: client.subscribe,
+    open: opened,
+    relay: { snapshot: () => ({ status: "ready" }), subscribe: () => () => {} },
+  } as unknown as Communities;
+  const unreads = createCommunityUnreads(communities);
+  cleanups.push(unreads.dispose);
+  snapshot = {
+    status: "ready",
+    viewer,
+    selected: one,
+    memberships: [{ id: one }, { id: two }],
+  };
+  client.emit();
+  first.load("a");
+  expect(first.ensure).toHaveBeenCalledTimes(1);
+  await Promise.resolve();
+  expect(opened).not.toHaveBeenCalledWith(two, true);
+  release();
+  await vi.waitFor(() => expect(opened).toHaveBeenCalledWith(two, true));
+});
+
+it("badges open at once when nothing is selected after loading", () => {
+  const fake = fakeSession();
+  const relay = {
+    snapshot: () => ({ status: "ready", viewer, session: fake.session }),
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  const opened = vi.fn((_id: string) => relay);
+  const communities = {
+    snapshot: () => ({
+      status: "ready",
+      viewer,
+      selected: null,
+      memberships: [{ id: two }],
+    }),
+    subscribe: () => () => {},
+    open: opened,
+    relay: { snapshot: () => ({ status: "ready" }), subscribe: () => () => {} },
+  } as unknown as Communities;
+  const unreads = createCommunityUnreads(communities);
+  cleanups.push(unreads.dispose);
+  expect(opened).toHaveBeenCalledWith(two, true);
+});

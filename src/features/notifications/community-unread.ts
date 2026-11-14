@@ -234,15 +234,17 @@ export function createCommunityUnreads(
   };
   const update = () => {
     if (closed) return;
-    const { viewer, memberships, selected } = communities.snapshot();
+    const { viewer, memberships, selected, status } = communities.snapshot();
     if (selected) visited.add(selected);
-    // Nothing to yield to when the selected community has no session coming.
-    const status = selected && communities.relay.snapshot().status;
+    // Nothing to yield to when the selected community has no session coming;
+    // while restoring, the saved selection is not known yet.
+    const relay = selected && communities.relay.snapshot().status;
     if (
-      !status ||
-      status === "error" ||
-      status === "disconnected" ||
-      !memberships.some((m) => m.id === selected)
+      status !== "loading" &&
+      (!relay ||
+        relay === "error" ||
+        relay === "disconnected" ||
+        !memberships.some((m) => m.id === selected))
     )
       foreground = true;
     const ids = viewer ? memberships.map((m) => m.id) : [];

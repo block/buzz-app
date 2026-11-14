@@ -35,11 +35,17 @@ const assets = {
     `Buzz_${version}_x64.app.tar.gz.sig`,
   ],
   windows: [`Buzz_${version}_x64_unsigned.exe`],
-  linux: [`Buzz_${version}_amd64.deb`, `Buzz_${version}_x86_64.AppImage`],
+  "linux-x64": [`Buzz_${version}_amd64.deb`, `Buzz_${version}_x86_64.AppImage`],
+  "linux-arm64": [
+    `Buzz_${version}_arm64.deb`,
+    `Buzz_${version}_aarch64.AppImage`,
+  ],
   signatures: [
     `Buzz_${version}_x64_unsigned.exe.sig`,
     `Buzz_${version}_amd64.deb.sig`,
     `Buzz_${version}_x86_64.AppImage.sig`,
+    `Buzz_${version}_arm64.deb.sig`,
+    `Buzz_${version}_aarch64.AppImage.sig`,
   ],
 };
 const assembly = jobs.publish.steps.find((step) =>
@@ -183,7 +189,7 @@ function fixture(t) {
   };
 }
 
-test("actual assembly command collects all twelve assets and emits one complete checksum file", (t) => {
+test("actual assembly command collects all sixteen assets and emits one complete checksum file", (t) => {
   const { dir, run } = fixture(t);
   const result = run();
   assert.equal(result.status, 0, result.stderr);

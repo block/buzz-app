@@ -29,7 +29,7 @@ archive="Buzz_${VERSION}_aarch64.app.tar.gz"
 mkdir -p "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/current" "$RUNNER_TEMP/served"
 # A failed publication can leave a draft whose asset URLs 404 for the public.
 gh release view "v$VERSION" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"' | grep -qx "false $prerelease"
-for asset in "$archive" "Buzz_${VERSION}_x64.app.tar.gz" "Buzz_${VERSION}_x64_unsigned.exe" "Buzz_${VERSION}_amd64.deb" "Buzz_${VERSION}_x86_64.AppImage"; do
+for asset in "$archive" "Buzz_${VERSION}_x64.app.tar.gz" "Buzz_${VERSION}_x64_unsigned.exe" "Buzz_${VERSION}_amd64.deb" "Buzz_${VERSION}_x86_64.AppImage" "Buzz_${VERSION}_arm64.deb" "Buzz_${VERSION}_aarch64.AppImage"; do
   gh release download "v$VERSION" --pattern "$asset" --pattern "$asset.sig" --dir "$RUNNER_TEMP/candidate"
   [[ -s "$RUNNER_TEMP/candidate/$asset" && -s "$RUNNER_TEMP/candidate/$asset.sig" ]]
 done

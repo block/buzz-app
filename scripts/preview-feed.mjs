@@ -41,6 +41,8 @@ const assets = {
   "windows-x86_64": `Buzz_${version}_x64_unsigned.exe`,
   "linux-x86_64-deb": `Buzz_${version}_amd64.deb`,
   "linux-x86_64-appimage": `Buzz_${version}_x86_64.AppImage`,
+  "linux-aarch64-deb": `Buzz_${version}_arm64.deb`,
+  "linux-aarch64-appimage": `Buzz_${version}_aarch64.AppImage`,
 };
 const usage =
   "Usage: preview-feed.mjs generate|verify <version> <asset-dir> <manifest-file> <macos-app-binary-file> [current-manifest-file]";

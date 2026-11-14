@@ -165,7 +165,8 @@ mismatch fails before the rolling manifest is replaced.
 
 The job builds the Tauri manifest with each artifact's signature from that
 release and an immutable versioned asset URL: `darwin-aarch64`, `darwin-x86_64`, `windows-x86_64`,
-`linux-x86_64-deb` and `linux-x86_64-appimage`. Linux has no generic entry, so
+`linux-x86_64-deb`, `linux-x86_64-appimage`, `linux-aarch64-deb` and `linux-aarch64-appimage`.
+Linux has no generic entry, so
 a deb install never receives an AppImage. The job refuses full-SemVer rollback and
 changed same-version metadata, and replaces the rolling manifest last. The preview
 feed may hold a stable `X.Y.Z` (for example, one preview installs were moved to);
@@ -527,7 +528,7 @@ preview version, source commit and repository toolchain pins; they never
 use legacy Buzz's sidecars, updater feed, application identifier, or signing
 secrets. The workflow records
 `SOURCE_COMMIT` and checksums over final installer bytes. Download the
-`windows-x64-candidate` and `linux-x64-candidates` artifacts from that Actions run
+`windows-x64-candidate`, `linux-x64-candidates` and `linux-arm64-candidates` artifacts from that Actions run
 within seven days. These are **ready to try only after their build and payload
 checks pass**, not accepted releases.
 

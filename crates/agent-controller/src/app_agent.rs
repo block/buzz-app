@@ -15,13 +15,12 @@ use std::path::{Path, PathBuf};
 /// (9), a channel member change (9000, 9001), edit (9002), creation (9007),
 /// deletion (9008), join (9021) or leave (9022), typing (20002), an edit of its
 /// own message (40003), a shared note (30023), a channel canvas (40100), a
-/// request to open a DM (41010), a repository announcement (30617) or an
-/// artifact revision (45010). The relay decides which channel changes and
-/// artifact edits it may make. Its profile (0) is the app's, and
-/// its memory (30174) is written by `memory`.
-const KINDS: [u16; 17] = [
-    5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 30617, 40003, 40100, 41010,
-    45010,
+/// repository announcement (30617) or an artifact revision (45010). The relay
+/// decides which channel changes and artifact edits it may make. Its profile
+/// (0) is the app's, and its memory (30174) is written by `memory`. It never
+/// opens a DM (41010): an agent reaches people in a Solo chat with its owner.
+const KINDS: [u16; 16] = [
+    5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 30617, 40003, 40100, 45010,
 ];
 
 /// Content of a live channel Canvas (40100), in UTF-8 bytes. Mirrors

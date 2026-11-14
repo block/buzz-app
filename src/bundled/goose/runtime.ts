@@ -29,7 +29,7 @@ import {
   type StandaloneTurn,
   type TurnResult,
 } from "../../features/agents/service";
-import { ownerReads } from "../../features/agents/reads";
+import { ownerDm, ownerReads } from "../../features/agents/reads";
 import {
   followRecommended,
   onRecommended,
@@ -831,6 +831,13 @@ export class GooseRuntime {
         id: channelId,
         ...(summary?.name ? { name: summary.name } : {}),
         dm,
+        ...(ownerDm(
+          { dm, members: summary?.members ?? [] },
+          agent.pubkey,
+          owner,
+        )
+          ? { ownerDm: true }
+          : {}),
       },
       ...(thread ? { thread } : {}),
       context: unseen,

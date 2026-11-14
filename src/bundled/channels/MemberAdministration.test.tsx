@@ -2464,6 +2464,10 @@ it.each([
       { pubkey: t.target.pubkey, expectedRole: "absent", role: "member" },
       expect.any(AbortSignal),
     );
+    expect(await screen.findByText("Morgan added.")).toHaveAttribute(
+      "role",
+      "status",
+    );
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
@@ -2505,15 +2509,23 @@ it("routes plugin additions, retains failed input, locks pending work, and copie
     await t.user.keyboard("{Escape}");
     expect(close).not.toHaveBeenCalled();
     expect(change).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Morgan added.")).not.toBeInTheDocument();
   } finally {
     await act(async () => reject(new Error("Record access unavailable")));
   }
   expect(await screen.findByText("Record access unavailable")).toBeVisible();
   expect(screen.getByRole("searchbox")).toHaveValue("Morgan");
   expect(screen.getByRole("button", { name: "Done" })).toBeEnabled();
+  expect(screen.queryByText("Morgan added.")).not.toBeInTheDocument();
   change.mockResolvedValue(undefined);
-  await t.user.click(add);
+  screen.getByRole("searchbox").focus();
+  await t.user.keyboard("{Enter}");
   await vi.waitFor(() => expect(screen.getByRole("searchbox")).toHaveValue(""));
+  expect(await screen.findByText("Morgan added.")).toHaveAttribute(
+    "role",
+    "status",
+  );
+  expect(screen.getByRole("searchbox")).toHaveFocus();
   expect(change).toHaveBeenCalledTimes(2);
   expect(t.publish).not.toHaveBeenCalled();
   expect(t.write).not.toHaveBeenCalled();

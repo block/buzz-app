@@ -1692,6 +1692,7 @@ export function ChannelMembersDialog({
       const signal = lifetime.current?.signal;
       if (!signal || memberPending || (memberActions && !memberActions.canAdd))
         return;
+      setNotice("");
       if (memberActions) {
         if (
           await changeMember(
@@ -1702,6 +1703,9 @@ export function ChannelMembersDialog({
           setQuery("");
           setSelectedIdentity("All");
           setSelectedAccess("All");
+          setNotice(
+            `${session.names.resolve(key, session.profiles.snapshot().get(key)?.name ?? session.agentChoices.snapshot().identities.find((agent) => agent.pubkey === key)?.name ?? formatPublicKey(key) ?? "Unknown member")} added.`,
+          );
         }
         return;
       }
@@ -1710,7 +1714,6 @@ export function ChannelMembersDialog({
         "channel-members",
         input.current?.value.trim().toLowerCase() ?? "",
       );
-      setNotice("");
       // A Solo owner's agents join directly; people use ordinary additions.
       const direct =
         canAddSoloAgents &&

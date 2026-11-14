@@ -1,4 +1,5 @@
 export const statusDurations = [
+  ["1800", "30 minutes"],
   ["3600", "1 hour"],
   ["28800", "8 hours"],
   ["today", "Today"],

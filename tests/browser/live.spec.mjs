@@ -354,8 +354,13 @@ test("automatic recovery restores an empty paused roster without restarting heal
     )
     .toBe(true);
   const sockets = app.relay.sockets.length;
+  // A badge session opens after primary's first repair, here during its
+  // recovery, and reads its own roster.
   const rosters = () =>
-    app.report.queries.filter(({ filter }) => filter.kinds?.includes(39002));
+    app.report.queries.filter(
+      ({ community, filter }) =>
+        community === "primary" && filter.kinds?.includes(39002),
+    );
   const calls = rosters().length;
   await crossCooldown(page, app);
   // No click: the next scheduled retry after the cooldown reads the roster.

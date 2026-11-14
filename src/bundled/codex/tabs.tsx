@@ -963,10 +963,6 @@ export function createTabs(
               form={defaultsForm}
               variant="prominent"
               loading={savingDefaults}
-              disabled={
-                JSON.stringify(draft) === JSON.stringify(state.defaults)
-              }
-              focusableWhenDisabled
             >
               Save defaults
             </Button>

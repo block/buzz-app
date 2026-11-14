@@ -1,3 +1,4 @@
+import { formatItemTimestamp } from "../../shared/datetime";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import {
   ChatCircleIcon,
@@ -38,17 +39,6 @@ export function describe(
     const used =
       usedOccurrences ??
       Math.max(0, Math.floor((now - watch.armed_at) / watch.interval_secs));
-    const nextAt = watch.armed_at + watch.interval_secs;
-    const next = new Date(nextAt * 1000);
-    const date = next.toLocaleDateString();
-    const day =
-      date === new Date(now * 1000).toLocaleDateString() ? "today" : date;
-    const time = next.toLocaleTimeString([], {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-    const minutes = Math.ceil(Math.abs(nextAt - now) / 60);
-    const relative = nextAt > now ? `in ${minutes}m` : `${minutes}m ago`;
     const interval =
       watch.interval_secs % 3600 === 0
         ? `${watch.interval_secs / 3600}h`
@@ -57,16 +47,22 @@ export function describe(
           : `${watch.interval_secs}s`;
     const runs =
       watch.max_occurrences === null ? "" : ` · ${watch.max_occurrences} runs`;
+    const spent =
+      (watch.max_occurrences !== null && used >= watch.max_occurrences) ||
+      (watch.expires_at !== null && now >= watch.expires_at);
+    // When it runs, so timers on one interval tell apart. Occurrence k is due
+    // at armed_at + k × interval_secs, as the runner's `timerState` counts.
+    const when = (at: number) =>
+      formatItemTimestamp(at, { withTime: true, nowSeconds: now });
+    const next =
+      watch.enabled && !spent
+        ? ` · next ${when(watch.armed_at + (used + 1) * watch.interval_secs)}`
+        : "";
     const schedule =
       watch.max_occurrences === 1
-        ? `Once · ${day} ${time} (${relative})`
-        : `Every ${interval}${runs}`;
-    return {
-      title: schedule,
-      spent:
-        (watch.max_occurrences !== null && used >= watch.max_occurrences) ||
-        (watch.expires_at !== null && now >= watch.expires_at),
-    };
+        ? `Once · ${when(watch.armed_at + watch.interval_secs)}`
+        : `Every ${interval}${runs}${next}`;
+    return { title: schedule, spent };
   }
   if (watch.type === "source")
     return {

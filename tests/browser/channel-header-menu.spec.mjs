@@ -388,6 +388,11 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   await expect(trigger).toBeFocused();
+  // The split moves the trigger until the closing dock leaves; a mouseup
+  // outside the moved trigger cancels the menu it opened on mousedown.
+  await expect(
+    page.locator("[data-channel-workspace] > [data-panel-dock]:not([hidden])"),
+  ).toHaveCount(0);
   await trigger.click();
   await menu
     .getByRole("menuitem", { name: "View canvas", exact: true })
@@ -413,6 +418,11 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     .click();
   await expect(canvas).toHaveCount(0);
   await expect(trigger).toBeFocused();
+  // The split moves the trigger until the closing dock leaves; a mouseup
+  // outside the moved trigger cancels the menu it opened on mousedown.
+  await expect(
+    page.locator("[data-channel-workspace] > [data-panel-dock]:not([hidden])"),
+  ).toHaveCount(0);
   for (const label of ["Archive channel", "Delete channel"]) {
     await trigger.click();
     await menu.getByRole("menuitem", { name: label, exact: true }).click();

@@ -2290,6 +2290,47 @@ it("leaving a channel the viewer was removed from opens its displayed neighbor",
   );
 });
 
+it("keeps a removed channel's neighbor through another channel's cancelled confirmation", async () => {
+  const h = fixture();
+  const alpha = h.list.channels[0];
+  function Controls() {
+    const navigation = useChannelNavigation();
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => {
+            assert(alpha?.id === "alpha");
+            navigation?.openLifecycle(alpha, "archive");
+          }}
+        >
+          Archive alpha
+        </button>
+        <button
+          type="button"
+          onClick={() => navigation?.openSuccessor.current?.("beta")}
+        >
+          Back to channels
+        </button>
+      </>
+    );
+  }
+  render(h.view("beta", <Controls />));
+  await screen.findByRole("button", { name: /^gamma/ });
+  h.drop("beta");
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Archive alpha" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Archive channel: alpha",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await user.click(screen.getByRole("button", { name: "Back to channels" }));
+  expect(h.navigator.open).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ kind: "conversation", channelId: "gamma" }),
+  );
+});
+
 it("session teardown still aborts submitted lifecycle work", async () => {
   const h = pendingLifecycle("delete");
   await h.start();

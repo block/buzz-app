@@ -36,7 +36,10 @@ function fixture(
   let ids = ["existing"];
   const session = () =>
     ({
-      channels: { list: () => ({ channels: ids.map((id) => ({ id })) }) },
+      channels: {
+        list: () => ({ channels: ids.map((id) => ({ id })) }),
+        subscribeList: () => () => {},
+      },
       sidebarPreferences: { setMute: async () => [] },
       channelLifecycle: { run },
     }) as unknown as RelaySession;

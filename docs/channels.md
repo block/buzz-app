@@ -561,7 +561,9 @@ allows. Once shown, the notice stays while a later visit to the same channel,
 such as a thread or message link, rechecks access. If focus was in what the loss
 removes (the composer, the header's controls or the message history), it moves
 to **Back to channels** for a private channel, or to the preview's history for a
-public one; focus that moved elsewhere meanwhile stays there.
+public one; focus that moved elsewhere meanwhile stays there. A public preview
+that has to be read again first keeps focus in the history pane until it
+returns, rather than settling on **Back to channels** while it is away.
 
 Only relay-confirmed membership counts, in or out of the sidebar: an archived
 channel opened from search is explained too, while membership downloaded from
@@ -569,7 +571,10 @@ disk that the live roster no longer lists at launch shows nothing. The viewer's
 own Leave or Delete for that channel, once confirmed in its dialog, suppresses
 the notice, because its access loss can arrive before its navigation. A
 confirmation still open suppresses nothing: a loss that arrives behind it is
-shown once it is cancelled. When the relay cannot confirm a confirmed action
+shown once it is cancelled. A Leave or Delete that fails before publishing,
+such as one its permission check refuses, took nothing away either: a loss
+that arrives while it runs is shown once it fails. When the relay cannot
+confirm a confirmed action
 (“Leave channel failed”, as it may have taken effect), the suppression lasts
 until the relay answers for the channel: a ready roster drops it, or a complete
 roster read after the failure still lists it. Live events and exact reads that

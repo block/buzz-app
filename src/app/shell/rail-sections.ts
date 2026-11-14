@@ -10,6 +10,19 @@ const builtins: readonly RailSection[] = [
   { id: "agents", title: "Agents" },
 ];
 
+/** A conversation's own list, and where apps live: nothing is copied here. */
+const homes = new Set(["navigation", "messages", "solo", "agents"]);
+/**
+ * Whether a section holds its own copy of this entry. A conversation always
+ * stays in Team or Solo, so a section a person made, like Pins, lists it as
+ * well. An app's row has no such home: it moves.
+ */
+export const holdsCopy = (entry: RailEntry, section: string) =>
+  entry.kind !== "page" && !homes.has(section);
+/** Whether a row there can be taken out again, or moved on to another. */
+export const ownSection = (section: string) =>
+  !homes.has(section) && section !== "pins";
+
 /** Cards, expanded lists and conversation routing share the same membership. */
 export function railSections(
   layout: RailLayout,
@@ -21,14 +34,20 @@ export function railSections(
       section.title,
     ]),
   );
+  // A conversation saved into Team, Solo or Plugins stays where it lives.
+  const placements = layout.placements.filter(
+    (item) =>
+      sections.has(item.section) &&
+      (item.entry.kind === "page" || holdsCopy(item.entry, item.section)),
+  );
+  /** Where each moved app row is; copies leave their own list alone. */
   const assigned = new Map(
-    layout.placements
-      .filter((item) => sections.has(item.section))
+    placements
+      .filter((item) => item.entry.kind === "page")
       .map((item) => [item.entry.id, item.section]),
   );
   const placed = new Map<string, RailEntry[]>();
-  for (const { entry, section } of layout.placements) {
-    if (!sections.has(section)) continue;
+  for (const { entry, section } of placements) {
     const entries = placed.get(section) ?? [];
     entries.push(entry);
     placed.set(section, entries);
@@ -56,9 +75,7 @@ export function railSections(
       return [...entries.values()];
     },
     owner(matches: (entry: RailEntry) => boolean) {
-      return layout.placements.find(
-        (item) => sections.has(item.section) && matches(item.entry),
-      )?.section;
+      return placements.find((item) => matches(item.entry))?.section;
     },
   };
 }

@@ -328,7 +328,7 @@ test("All interleaves chats, DMs, and channels by their newest activity", () => 
   expect(screen.getByText("a reply in the old channel")).toBeInTheDocument();
 });
 
-test("a thread row opens the thread beside its channel", async () => {
+test("a thread row opens the thread on its own", async () => {
   const { open } = setup();
   await userEvent.click(screen.getByRole("tab", { name: "Threads" }));
   await userEvent.click(screen.getByText("a reply in the old channel"));
@@ -338,7 +338,7 @@ test("a thread row opens the thread beside its channel", async () => {
       channelId: "old",
       messageId: reply,
       threadRootId: root,
-      context: "channel",
+      context: "thread",
     }),
   );
 });
@@ -391,7 +391,7 @@ test("Team's Mentions view lists mentions and opens them in their thread", async
     expect.objectContaining({
       channelId: "new",
       threadRootId: root,
-      context: "channel",
+      context: "thread",
     }),
   );
 });
@@ -485,9 +485,7 @@ test.each([
     await userEvent.click(screen.getByRole("tab", { name: "Waiting" }));
     expect(rowNames()).toEqual(waitingRows);
     if (!waitingRows.length)
-      expect(
-        screen.getByText("Nothing is waiting on you"),
-      ).toBeInTheDocument();
+      expect(screen.getByText("Nothing is waiting on you")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: "All" }));
     expect(rowNames()).toEqual(["dm", "old", "solo", "new"]);
   },

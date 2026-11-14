@@ -1180,3 +1180,23 @@ details:not([open]) > summary .sectionChevron {
   min-height: 0;
   min-width: 0;
 }
+/* A thread opened on its own takes the conversation's place. useCoveredByDock
+   treats position: absolute on the dock as covering. */
+.board[data-thread-alone]:has(> [data-panel-dock]) {
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+}
+.board[data-thread-alone] > .panelStack {
+  --panel-motion-duration: 0s;
+  --panel-motion-distance: 0px;
+  position: absolute;
+  grid-column: 1;
+  inset: 0;
+  width: 100%;
+  z-index: 2;
+  border-inline-start: 0;
+  box-shadow: none;
+}
+.board[data-thread-alone] > .panelStack > [data-panel-resize] {
+  display: none;
+}

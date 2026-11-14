@@ -938,9 +938,18 @@ and are asked to sign in again in Buzz.
   Choose **New section** below the sidebar cards to name and create an empty section.
   While dragging a row, **New section** appears at the bottom; drop there, name
   the section, and choose **Create and move**. Cancel leaves the row in place.
-  Right-click a row (or press Shift+F10) for **Pin**/**Unpin**, **Move to** and **New section**;
-  focus a card's grabber and use Up/Down arrow keys to move it. Right-click a custom
-  section (or press Shift+F10 on its grabber) for **Remove section**.
+  Right-click a row in a card or in a section's list (or press Shift+F10) for
+  **Pin**/**Unpin** and a submenu that lists your sections and **New section**.
+  A channel, DM or chat always stays in Team or Solo: **Add to section** puts a copy
+  in a section you made, from Team, Solo or any list. On its row inside one of your
+  sections in the sidebar, **Move to section** moves that copy to another of your
+  sections and **Remove from section** takes it out. Dragging follows the same rule.
+  An app's row, such as Activity, moves between cards instead (**Move page**).
+  A channel, DM or chat row also offers **Mute**, **Mark as read**/**Mark as unread**,
+  **Copy link** and, where you are allowed, leave, archive and delete.
+  Focus a card's grabber and use Up/Down arrow keys to move it. Double-click a custom
+  section's name to rename it; right-click the section (or press Shift+F10 on its
+  grabber) for **Rename section** and **Remove section**.
   Removing a custom section restores its rows to their original lists when available.
   This arrangement stays on this device for the current account and community.
 - **Pins**: use **+** beside Pins to search loaded chats, people, channels, agents,

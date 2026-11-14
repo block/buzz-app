@@ -35,23 +35,25 @@ function readLayout(scope: string): RailLayout {
   if (Array.isArray(raw?.placements))
     for (const item of raw.placements) {
       const entry = parseRailEntries([item?.entry])[0];
+      if (!entry || typeof item.section !== "string") continue;
+      const section =
+        !saved &&
+        (item.section === "plugins" || item.section === "navigation") &&
+        (entry.id === "buzz.inbox/inbox" ||
+          entry.id === "buzz.drafts-and-sent/drafts-sent")
+          ? "messages"
+          : item.section === "plugins"
+            ? "navigation"
+            : item.section;
+      // An app row has one place; a conversation has one copy per section.
       if (
-        entry &&
-        typeof item.section === "string" &&
-        !placements.some((placed) => placed.entry.id === entry.id)
+        !placements.some(
+          (placed) =>
+            placed.entry.id === entry.id &&
+            (entry.kind === "page" || placed.section === section),
+        )
       )
-        placements.push({
-          section:
-            !saved &&
-            (item.section === "plugins" || item.section === "navigation") &&
-            (entry.id === "buzz.inbox/inbox" ||
-              entry.id === "buzz.drafts-and-sent/drafts-sent")
-              ? "messages"
-              : item.section === "plugins"
-                ? "navigation"
-                : item.section,
-          entry,
-        });
+        placements.push({ section, entry });
     }
   const order = Array.isArray(raw?.order)
     ? [...new Set(raw.order.filter((id) => typeof id === "string"))]
@@ -87,11 +89,26 @@ export function useRailLayout(scope: string) {
   );
   const save = (update: (current: RailLayout) => RailLayout) =>
     writeView(scope, KEY, update(readLayout(scope)));
-  const move = (entry: RailEntry, section: string) =>
+  /** Other placements of an entry that survive placing it in a section. */
+  const others = (
+    current: RailLayout,
+    entry: RailEntry,
+    section: string,
+    from?: string,
+  ) =>
+    current.placements.filter(
+      (item) =>
+        item.entry.id !== entry.id ||
+        (entry.kind !== "page" &&
+          item.section !== section &&
+          item.section !== from),
+    );
+  /** Places an entry in a section, leaving `from` when it moves from there. */
+  const move = (entry: RailEntry, section: string, from?: string) =>
     save((current) => ({
       ...current,
       placements: [
-        ...current.placements.filter((item) => item.entry.id !== entry.id),
+        ...others(current, entry, section, from),
         { section, entry },
       ],
     }));
@@ -113,6 +130,7 @@ export function useRailLayout(scope: string) {
     title: string,
     entry: RailEntry | undefined,
     available: string[],
+    from?: string,
   ) =>
     save((current) => ({
       ...current,
@@ -124,16 +142,26 @@ export function useRailLayout(scope: string) {
       ],
       placements: entry
         ? [
-            ...current.placements.filter((item) => item.entry.id !== entry.id),
+            ...others(current, entry, `custom:${id}`, from),
             { section: `custom:${id}`, entry },
           ]
         : current.placements,
     }));
-  const reset = (entryId: string) =>
+  const rename = (id: string, title: string) =>
+    save((current) => ({
+      ...current,
+      sections: current.sections.map((section) =>
+        section.id === id ? { ...section, title } : section,
+      ),
+    }));
+  /** Takes an entry out of one section, or out of every one. */
+  const reset = (entryId: string, section?: string) =>
     save((current) => ({
       ...current,
       placements: current.placements.filter(
-        (item) => item.entry.id !== entryId,
+        (item) =>
+          item.entry.id !== entryId ||
+          (section !== undefined && item.section !== section),
       ),
     }));
   const remove = (id: string) =>
@@ -148,6 +176,7 @@ export function useRailLayout(scope: string) {
     move,
     reorder,
     create,
+    rename,
     remove,
     reset,
   };

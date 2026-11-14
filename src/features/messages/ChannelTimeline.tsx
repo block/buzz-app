@@ -197,7 +197,13 @@ export type ChannelTimelineProps = {
   /** One inline exact visit: focus the verified mounted row, without a page
    * navigation. `focus: false` marks it beside a reader that owns focus. */
   inlineTarget?:
-    | Readonly<{ messageId: string; signal: AbortSignal; focus?: false }>
+    | Readonly<{
+        messageId: string;
+        signal: AbortSignal;
+        focus?: false;
+        /** Arrive with a short upward glide, wherever the row was. */
+        glide?: true;
+      }>
     | undefined;
   /** Draft context starts at the returned tail, never reads/writes canonical scroll. */
   transient?: boolean | undefined;
@@ -926,7 +932,8 @@ function Timeline({
       if (restoredAnchor.current) position.bottom = false;
       if (pendingRestore.current !== intent.current)
         savedPosition.current = position;
-      follow.current = position.bottom;
+      // A stretch of older history ends short of the newest message.
+      follow.current = position.bottom && !window.hasNewer;
       measuredPosition.current = {
         offset: element.scrollTop,
         height: element.scrollHeight,
@@ -934,7 +941,7 @@ function Timeline({
         viewport: element.clientHeight,
       };
     },
-    [rows],
+    [rows, window.hasNewer],
   );
   const updateJumpToLatest = useCallback((element: HTMLElement) => {
     const bottom =
@@ -942,8 +949,10 @@ function Timeline({
     setShowJumpToLatest(!bottom);
     if (bottom) setNewMessageCount(0);
   }, []);
+  const detached = !!window.hasNewer;
   const jumpToLatest = useCallback(() => {
     if (!handle.current || !rows.length) return;
+    if (detached) queries.channels.attach?.(channelId);
     intent.current++;
     follow.current = true;
     restoredAnchor.current = undefined;
@@ -959,7 +968,7 @@ function Timeline({
       align: "end",
       ...(tailHeight ? { offset: tailHeight } : {}),
     });
-  }, [rows.length]);
+  }, [rows.length, detached, queries, channelId]);
   const inlineSignal = inlineTarget?.signal;
   const targetIndex = rows.findIndex(
     (row) => row.id === (containedOwners.get(targetId ?? "") ?? targetId),
@@ -1025,8 +1034,23 @@ function Timeline({
     presentedVisit.current = { entryId: visit.entryId, signal: visit.signal };
     setPresented(visit.signal);
   }, []);
+  const glides = !!inlineTarget?.glide;
   const completeTarget = useCallback(() => {
     const element = scroller.current;
+    // The row is already in place; the motion only says the reader moved up
+    // through history, however far the channel had to go to show it.
+    if (
+      glides &&
+      element?.animate &&
+      !matchMedia("(prefers-reduced-motion: reduce)").matches
+    )
+      element.animate(
+        [
+          { translate: "0 -96px", clipPath: "inset(96px 0 0 0)", opacity: 0.4 },
+          { translate: "0 0", clipPath: "inset(0 0 0 0)", opacity: 1 },
+        ],
+        { duration: 320, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+      );
     // Only a reveal clamped at the scroll limit follows. A near-bottom reveal
     // keeps its row where it placed it instead of re-aligning to the end.
     if (
@@ -1046,7 +1070,7 @@ function Timeline({
     if (navigation && targetSignal === navigation.signal) present(navigation);
     navigation?.complete({ status: "opened" });
     setRevealedSignal(targetSignal);
-  }, [navigation, targetId, targetSignal, present]);
+  }, [navigation, targetId, targetSignal, present, glides]);
   // A covering Members dialog owns focus, and hides the target's mark.
   const focusesTarget = !(
     navigation?.target.kind === "conversation" &&
@@ -2025,6 +2049,15 @@ function Timeline({
           updateJumpToLatest(element);
         }
         loadNearTop(element);
+        // Reading down a stretch of older history continues toward the newest.
+        if (
+          detached &&
+          !window.loadingNewer &&
+          !window.error &&
+          element.scrollHeight - element.clientHeight - element.scrollTop <
+            Math.max(1200, element.clientHeight)
+        )
+          queries.channels.loadNewer?.(channelId);
       }}
     >
       <div
@@ -2061,7 +2094,7 @@ function Timeline({
         ) : null}
       </div>
       <JumpToLatestButton
-        visible={showJumpToLatest}
+        visible={showJumpToLatest || detached}
         newMessageCount={newMessageCount}
         onClick={jumpToLatest}
       />

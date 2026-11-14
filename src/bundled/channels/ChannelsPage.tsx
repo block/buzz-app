@@ -29,6 +29,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
 import { useMessageOpening } from "../../features/messages/use-message-opening";
+import { useThreadJump, useThreadRootTime } from "./use-thread-jump";
 import { ChannelBody } from "./ChannelBody";
 import {
   entryPane,
@@ -89,6 +90,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  HashIcon,
   SidebarRightIcon,
   PlugIcon,
   CloudOffIcon,
@@ -146,6 +148,9 @@ export type ArchiveShortcut = {
 export type ReadShortcut = {
   current?: { available(): boolean; run(): Promise<void> } | undefined;
 };
+
+/** Older pages read to reach a thread's first message before jumping to it. */
+const NEAR_PAGES = 3;
 
 export function ChannelsPage({
   extensions,
@@ -1096,12 +1101,24 @@ function ChannelWorkspace({
       navigation,
       request: contextVisit.current.request + 1,
     };
-  const contextInTimeline = useMessageOpening(
+  // Read beside the pages, so a jump does not wait for it afterwards.
+  const contextAt = useThreadRootTime(queries, currentId ?? "", contextRoot);
+  const contextNear = useMessageOpening(
     queries.channels,
     currentId ?? "",
     contextRoot,
     contextVisit.current.request,
+    NEAR_PAGES,
   );
+  // Further up than a few pages, the channel moves to that part of its
+  // history instead of reading everything between.
+  const contextJump = useThreadJump(
+    queries.channels,
+    currentId ?? "",
+    contextNear === false ? contextRoot : undefined,
+    contextAt,
+  );
+  const contextInTimeline = contextNear || contextJump === true;
   const contextRouted = !!routedThread;
   const contextSignal = navigation?.signal;
   const contextTarget = useMemo(
@@ -1111,22 +1128,23 @@ function ChannelWorkspace({
             messageId: contextRoot,
             signal: contextSignal,
             focus: false as const,
+            glide: true as const,
           }
         : undefined,
     [contextRouted, contextRoot, contextInTimeline, contextSignal],
   );
-  // The channel whose list has shown since it opened. Hold only until then,
-  // so the list mounts once, at the root; a later attempt, as when Members
-  // closes, seeks with the list in place and reveals the root there.
-  const [listed, setListed] = useState<string>();
-  const contextHolding =
-    !!contextRoot && contextInTimeline === undefined && listed !== current?.id;
-  const listing =
-    listed === current?.id ||
-    (!contextHolding && contentReadyChannel === current?.id)
-      ? current?.id
-      : undefined;
-  if (listing !== listed) setListed(listing);
+  // The channel a jump moved returns to its newest messages on leaving it,
+  // not when its thread closes: the reader may still be reading there.
+  const jumped = useRef<string>(undefined);
+  if (contextJump === true) jumped.current = currentId;
+  useEffect(
+    () => () => {
+      if (!currentId || jumped.current !== currentId) return;
+      jumped.current = undefined;
+      queries.channels.attach?.(currentId);
+    },
+    [queries, currentId],
+  );
   const conversationIcon = (item: (typeof channels)[number]) => {
     const person = item.participants?.[0];
     return (
@@ -1972,6 +1990,17 @@ function ChannelWorkspace({
     companion ? COMPANION_SPLIT.min : undefined,
   );
   const docked = !!showingPanel && !showingMediaReview;
+  // A list opens a thread on its own: its pane takes the conversation's place
+  // and offers the channel beside it.
+  const threadAlone =
+    docked &&
+    showingChannelPanel &&
+    !companion &&
+    !membersOpen &&
+    navigation?.target.kind === "conversation" &&
+    navigation.target.context === "thread"
+      ? navigation.target
+      : undefined;
   // A floating dock covers the conversation, even the strip beside a card:
   // keep focus, typing, reading and assistive technology out of it.
   const conversation = useRef<HTMLElement>(null);
@@ -2142,7 +2171,6 @@ function ChannelWorkspace({
                 ? navigation
                 : undefined
             }
-            holding={contextHolding}
             inlineTarget={contextTarget}
             onOpenThread={openThread}
             onReply={
@@ -2275,6 +2303,7 @@ function ChannelWorkspace({
     <div
       data-channel-workspace={currentId ?? ""}
       data-reading-thread={readingThread ? "" : undefined}
+      data-thread-alone={threadAlone ? "" : undefined}
       data-companion={companion ? "" : undefined}
       ref={split.ref}
       data-expando-scope=""
@@ -2709,19 +2738,55 @@ function ChannelWorkspace({
               >
                 <PanelWorkspace
                   key={currentId}
+                  leadingActions={
+                    threadAlone ? (
+                      <span className="flex min-w-0 items-center gap-1">
+                        {listToggle}
+                        {current && (
+                          <IconButton
+                            size="sm"
+                            variant="glass"
+                            data-thread-show-channel=""
+                            aria-label={
+                              current.channelType === "dm"
+                                ? "Show conversation"
+                                : `Show #${current.name}`
+                            }
+                            title="Show the channel beside this thread"
+                            onClick={() =>
+                              // The thread is already being read: only
+                              // the channel marks the message it lands on.
+                              void navigator?.open({
+                                ...threadAlone,
+                                ...(threadAlone.threadRootId
+                                  ? { messageId: threadAlone.threadRootId }
+                                  : {}),
+                                context: "channel",
+                              })
+                            }
+                            icon={<HashIcon size={18} aria-hidden="true" />}
+                          />
+                        )}
+                      </span>
+                    ) : undefined
+                  }
                   actions={
-                    <IconButton
-                      hint="familiar"
-                      data-tab-pane-toggle=""
-                      data-highlight-expanded="false"
-                      variant="glass"
-                      size="toolbar"
-                      aria-label="Toggle tab pane"
-                      title="Close tab pane"
-                      aria-expanded={true}
-                      onClick={secondary.closePane}
-                      icon={<SidebarRightIcon size="1rem" aria-hidden="true" />}
-                    />
+                    threadAlone ? undefined : (
+                      <IconButton
+                        hint="familiar"
+                        data-tab-pane-toggle=""
+                        data-highlight-expanded="false"
+                        variant="glass"
+                        size="toolbar"
+                        aria-label="Toggle tab pane"
+                        title="Close tab pane"
+                        aria-expanded={true}
+                        onClick={secondary.closePane}
+                        icon={
+                          <SidebarRightIcon size="1rem" aria-hidden="true" />
+                        }
+                      />
+                    )
                   }
                   tabMenu={tabMenu}
                   drag={secondary.drag.side}

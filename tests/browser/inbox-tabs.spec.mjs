@@ -195,15 +195,11 @@ test.describe("with the thread's root beyond the channel's newest page", () => {
       .locator(`[data-message-id="${target.messageId}"]`);
     await expect(reply).toContainText("Unread reply 1");
     await expect(reply).toBeFocused();
-    // Beside it, the channel waits to show its list at the thread's root,
-    // reading the older page the fixture holds.
+    // Beside it, the channel shows its newest messages while it reads the
+    // older page the fixture holds, then moves to the thread's root.
     await expect.poll(() => app.pending.length).toBe(1);
     expect(app.pending[0].channel).toBe("alpha");
-    await expect(
-      page
-        .getByRole("region", { name: "Channel history", exact: true })
-        .getByRole("status"),
-    ).toHaveText("Loading messages…");
+    await expect(page.locator('[data-channel-timeline="alpha"]')).toBeVisible();
     await expect(reply).toBeFocused();
     app.pending.shift().release();
     const head = app.report.queries.find(

@@ -130,9 +130,10 @@ test("cards, expanded lists, and routing share contributed section membership", 
   expect(model.owner((candidate) => candidate.id === entry.id)).toBe(
     "example.plugin/section",
   );
-  expect(model.entries("messages", [entry])).toEqual([]);
+  // The section holds a copy: the conversation stays in its own list.
+  expect(model.entries("messages", [entry])).toEqual([entry]);
   expect(model.entries("example.plugin/section", [])).toEqual([entry]);
-  // Disabling the contribution returns its conversations to their default list.
+  // Disabling the contribution leaves only the conversation's own list.
   const disabled = railSections({
     order: [],
     sections: [],
@@ -142,4 +143,27 @@ test("cards, expanded lists, and routing share contributed section membership", 
     disabled.owner((candidate) => candidate.id === entry.id),
   ).toBeUndefined();
   expect(disabled.entries("messages", [entry])).toEqual([entry]);
+});
+
+test("a conversation keeps its own list while sections a person made hold copies", () => {
+  const saved = (placements: { section: string; entry: typeof entry }[]) =>
+    railSections({
+      order: [],
+      sections: [
+        { id: "custom:work", title: "Work" },
+        { id: "custom:later", title: "Later" },
+      ],
+      placements,
+    });
+  const copied = saved([
+    { section: "custom:work", entry },
+    { section: "custom:later", entry },
+  ]);
+  expect(copied.entries("messages", [entry])).toEqual([entry]);
+  expect(copied.entries("custom:work", [])).toEqual([entry]);
+  expect(copied.entries("custom:later", [])).toEqual([entry]);
+  // An arrangement saved earlier could put a conversation in Solo or Plugins.
+  const misplaced = saved([{ section: "solo", entry }]);
+  expect(misplaced.entries("solo", [])).toEqual([]);
+  expect(misplaced.entries("messages", [entry])).toEqual([entry]);
 });

@@ -1,4 +1,4 @@
-import { railSections } from "./rail-sections";
+import { holdsCopy, ownSection, railSections } from "./rail-sections";
 import { motion, useReducedMotion } from "motion/react";
 import {
   DndContext,
@@ -16,6 +16,7 @@ import {
 import {
   createContext,
   useContext,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -32,17 +33,26 @@ import {
   ContextMenuTrigger,
   MenuPopup,
   MenuItem,
-  MenuGroup,
-  MenuGroupLabel,
+  MenuIcon,
+  MenuSeparator,
+  MenuSubmenu,
+  MenuSubmenuPopup,
+  MenuSubmenuTrigger,
 } from "../../shared/design-system/ui/Menu";
 import {
   PlusIcon,
   ChatCircleIcon,
   ArrowRightIcon,
+  FolderSimpleIcon,
   GripHorizontalIcon,
+  MinusIcon,
+  PencilSimpleIcon,
+  PinIcon,
+  TrashIcon,
   SquaresFourIcon,
 } from "../../shared/design-system/icons";
 import { CreateSidebarSection } from "../../bundled/channels/CreateSidebarSection";
+import { Input } from "../../shared/design-system/ui/Input";
 import type { RailEntry } from "./rail-pins";
 import { useRailLayout } from "./rail-layout";
 import styles from "./RailArrangement.module.css";
@@ -63,9 +73,13 @@ type Arrangement = {
   groups: { id: string; title: string }[];
   placements: ReturnType<typeof useRailLayout>["layout"]["placements"];
   membership: ReturnType<typeof railSections>;
-  move(entry: RailEntry, section: string): void;
+  /** Places an entry in a section; it leaves `from` when it moves from there. */
+  move(entry: RailEntry, section: string, from?: string): void;
+  /** Takes an entry out of a section a person put it in. */
+  unplace(entry: RailEntry, section: string): void;
   reorder(id: string, over: string): void;
-  create(entry: RailEntry): void;
+  create(entry: RailEntry, from?: string): void;
+  rename(id: string, title: string): void;
   remove(id: string): void;
   renderEntry(entry: RailEntry, section?: string): ReactNode;
   renderSectionList?:
@@ -137,11 +151,15 @@ export function RailArrangement({
   list?: ReactNode;
 }) {
   const hosted = useContext(HostedContext);
-  const { layout, move, reorder, create, remove } = useRailLayout(partition);
+  const { layout, move, reorder, create, rename, remove, reset } =
+    useRailLayout(partition);
   const reducedMotion = useReducedMotion();
   const animateDrop = useRef(false);
   const [error, setError] = useState("");
-  const [creating, setCreating] = useState<RailEntry | null>();
+  const [creating, setCreating] = useState<{
+    entry?: RailEntry;
+    from?: string | undefined;
+  }>();
   const newSectionButton = useRef<HTMLButtonElement>(null);
   const [dragging, setDragging] = useState<{ label: string }>();
   const sensors = useSensors(
@@ -175,8 +193,13 @@ export function RailArrangement({
       layout,
       groups.map(({ id, title }) => ({ id, title })),
     ),
-    move: (entry, section) => {
-      saved(move(entry, section));
+    move: (entry, section, from) => {
+      // A conversation lives in Team or Solo: nothing moves or copies it there.
+      if (entry.kind === "page" || holdsCopy(entry, section))
+        saved(move(entry, section, from));
+    },
+    unplace: (entry, section) => {
+      saved(reset(entry.id, section));
     },
     reorder: (id, over) => {
       saved(
@@ -187,7 +210,10 @@ export function RailArrangement({
         ),
       );
     },
-    create: setCreating,
+    create: (entry, from) => setCreating({ entry, from }),
+    rename: (id, title) => {
+      saved(rename(id, title));
+    },
     remove: (id) => {
       saved(remove(id));
     },
@@ -196,6 +222,37 @@ export function RailArrangement({
     isPinned,
     onTogglePin,
   };
+  // The cards and a hosted list each ask through their own arrangement.
+  const dialogs = (
+    <>
+      {creating && (
+        <CreateSidebarSection
+          channelName={creating.entry?.label}
+          finalFocus={creating.entry ? false : newSectionButton}
+          writable
+          refreshing={false}
+          retry={async () => {}}
+          close={() => setCreating(undefined)}
+          create={({ id, name }) => {
+            if (
+              !saved(
+                create(
+                  id,
+                  name,
+                  creating.entry,
+                  groups.map((group) => group.id),
+                  creating.from,
+                ),
+              )
+            )
+              throw new Error("Couldn’t save this section. Try again.");
+            setCreating(undefined);
+            return true;
+          }}
+        />
+      )}
+    </>
+  );
   // A hosted list is one section's page inside the cards' drag context.
   if (hosted)
     return (
@@ -213,6 +270,7 @@ export function RailArrangement({
               {error}
             </p>
           )}
+          {dialogs}
         </ListedContext>
       </ArrangementContext>
     );
@@ -252,9 +310,12 @@ export function RailArrangement({
                   : String(over.id),
               );
             else if (data?.entry) {
-              if (over.id === "rail:new-section") setCreating(data.entry);
+              // Only a row in a section a person made moves; the rest copy.
+              const from = data.movable ? data.source : undefined;
+              if (over.id === "rail:new-section")
+                setCreating({ entry: data.entry, from });
               else if (over.id !== data.source)
-                value.move(data.entry, String(over.id));
+                value.move(data.entry, String(over.id), from);
             }
           }}
         >
@@ -329,7 +390,7 @@ export function RailArrangement({
                     ref={newSectionButton}
                     size="sm"
                     variant="subtle"
-                    onClick={() => setCreating(null)}
+                    onClick={() => setCreating({})}
                   >
                     New section
                   </Button>
@@ -359,31 +420,7 @@ export function RailArrangement({
             {error}
           </p>
         )}
-        {creating !== undefined && (
-          <CreateSidebarSection
-            channelName={creating?.label}
-            finalFocus={creating === null ? newSectionButton : false}
-            writable
-            refreshing={false}
-            retry={async () => {}}
-            close={() => setCreating(undefined)}
-            create={({ id, name }) => {
-              if (
-                !saved(
-                  create(
-                    id,
-                    name,
-                    creating ?? undefined,
-                    groups.map((group) => group.id),
-                  ),
-                )
-              )
-                throw new Error("Couldn’t save this section. Try again.");
-              setCreating(undefined);
-              return true;
-            }}
-          />
-        )}
+        {dialogs}
       </ListedContext>
     </ArrangementContext>
   );
@@ -440,6 +477,25 @@ export function RailGroup({
     data: { section: id, label: title },
   });
   const grabber = useRef<HTMLSpanElement>(null);
+  const titleButton = useRef<HTMLButtonElement>(null);
+  const nameField = useRef<HTMLInputElement>(null);
+  const custom = id.startsWith("custom:");
+  // Only a section a person made has a name of their own to change, in place.
+  const [naming, setNaming] = useState(false);
+  const refocus = useRef(false);
+  useLayoutEffect(() => {
+    if (naming || !refocus.current) return;
+    refocus.current = false;
+    titleButton.current?.focus();
+  }, [naming]);
+  const named = (name?: string) => {
+    if (!naming) return;
+    // Enter and Escape return to the title; leaving keeps focus where it went.
+    refocus.current = nameField.current === document.activeElement;
+    setNaming(false);
+    const next = name?.trim();
+    if (next && next !== title) arrangement?.rename(id, next);
+  };
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement>();
   const movableGroups = arrangement?.groups ?? [];
@@ -577,13 +633,42 @@ export function RailGroup({
       </span>
       <NavigationSection
         label={
-          <Button
-            variant="plain"
-            size="text"
-            onClick={() => arrangement?.openSection(id)}
-          >
-            {title}
-          </Button>
+          naming ? (
+            <Input
+              ref={nameField}
+              controlSize="sm"
+              aria-label="Section name"
+              defaultValue={title}
+              maxLength={256}
+              autoFocus
+              // The field keeps its own text menu rather than the section's.
+              onContextMenu={(event) => event.stopPropagation()}
+              onFocus={(event) => event.currentTarget.select()}
+              onBlur={(event) => named(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                // WebKit's IME commit Enter arrives after composition ends.
+                if (event.nativeEvent.isComposing || event.keyCode === 229)
+                  return;
+                if (event.key === "Enter") named(event.currentTarget.value);
+                else if (event.key === "Escape") {
+                  // Cancel the name, not the rail.
+                  event.stopPropagation();
+                  named();
+                } else return;
+                event.preventDefault();
+              }}
+            />
+          ) : (
+            <Button
+              ref={titleButton}
+              variant="plain"
+              size="text"
+              onClick={() => arrangement?.openSection(id)}
+              onDoubleClick={custom ? () => setNaming(true) : undefined}
+            >
+              {title}
+            </Button>
+          )
         }
         action={action && <span data-rail-card-actions="">{action}</span>}
       >
@@ -625,7 +710,7 @@ export function RailGroup({
       </NavigationSection>
     </div>
   );
-  return id.startsWith("custom:") ? (
+  return custom ? (
     <ContextMenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
       <ContextMenuTrigger
         onContextMenu={() => setMenuAnchor(undefined)}
@@ -642,8 +727,21 @@ export function RailGroup({
       >
         {card}
       </ContextMenuTrigger>
-      <MenuPopup anchor={menuAnchor}>
+      <MenuPopup
+        anchor={menuAnchor}
+        // Rename hands focus to the name field, not back to the card.
+        finalFocus={() => nameField.current ?? true}
+      >
+        <MenuItem onClick={() => setNaming(true)}>
+          <MenuIcon>
+            <PencilSimpleIcon size={14} />
+          </MenuIcon>
+          Rename section
+        </MenuItem>
         <MenuItem onClick={() => arrangement?.remove(id)}>
+          <MenuIcon>
+            <TrashIcon size={14} />
+          </MenuIcon>
           Remove section
         </MenuItem>
       </MenuPopup>
@@ -693,7 +791,12 @@ export function RailDestinationRow({
   const drag = useDraggable({
     // A conversation can sit in a card and in the open list at once.
     id: `row:${listed ? "list:" : ""}${section}:${entry.id}`,
-    data: { entry, source: section, label: entry.label },
+    data: {
+      entry,
+      source: section,
+      label: entry.label,
+      movable: !listed && ownSection(section),
+    },
   });
   return (
     <ContextMenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
@@ -726,6 +829,7 @@ export function RailDestinationRow({
         <RowMenu
           entry={entry}
           section={section}
+          listed={listed}
           close={() => setMenuOpen(false)}
           focus={() =>
             drag.node.current?.querySelector<HTMLElement>("button")?.focus()
@@ -739,37 +843,73 @@ export function RailDestinationRow({
 function RowMenu({
   entry,
   section,
+  listed,
   close,
   focus,
 }: {
   entry: RailEntry;
   section: string;
+  listed: boolean;
   close(): void;
   focus(): void;
 }) {
   const arrangement = useContext(ArrangementContext);
   const pinned = section === "pins" || arrangement?.isPinned(entry);
+  const page = entry.kind === "page";
+  // A conversation stays in Team or Solo: sections a person made hold copies.
+  // Only its row in such a section, in the sidebar, moves on to another.
+  const own = !page && ownSection(section);
+  const from = own && !listed ? section : undefined;
+  const label = page
+    ? "Move page"
+    : from
+      ? "Move to section"
+      : "Add to section";
   return (
     <>
-      {arrangement?.renderRowActions?.(entry, close, focus)}
+      <MenuSubmenu>
+        <MenuSubmenuTrigger>
+          <MenuIcon>
+            <FolderSimpleIcon size={14} />
+          </MenuIcon>
+          {label}
+        </MenuSubmenuTrigger>
+        <MenuSubmenuPopup aria-label={`${label}: ${entry.label}`}>
+          {arrangement?.groups
+            .filter((group) => page || ownSection(group.id))
+            .map((group) => (
+              <MenuItem
+                key={group.id}
+                disabled={group.id === section}
+                onClick={() => arrangement.move(entry, group.id, from)}
+              >
+                {group.title}
+              </MenuItem>
+            ))}
+          {(page ||
+            arrangement?.groups.some((group) => ownSection(group.id))) && (
+            <MenuSeparator />
+          )}
+          <MenuItem onClick={() => arrangement?.create(entry, from)}>
+            New section…
+          </MenuItem>
+        </MenuSubmenuPopup>
+      </MenuSubmenu>
+      {own && (
+        <MenuItem onClick={() => arrangement?.unplace(entry, section)}>
+          <MenuIcon>
+            <MinusIcon size={14} />
+          </MenuIcon>
+          Remove from section
+        </MenuItem>
+      )}
       <MenuItem onClick={() => arrangement?.onTogglePin(entry, !pinned)}>
+        <MenuIcon>
+          <PinIcon size={14} />
+        </MenuIcon>
         {pinned ? "Unpin" : "Pin"}
       </MenuItem>
-      <MenuGroup>
-        <MenuGroupLabel>Move to</MenuGroupLabel>
-        {arrangement?.groups.map((group) => (
-          <MenuItem
-            key={group.id}
-            disabled={group.id === section}
-            onClick={() => arrangement.move(entry, group.id)}
-          >
-            {group.title}
-          </MenuItem>
-        ))}
-      </MenuGroup>
-      <MenuItem onClick={() => arrangement?.create(entry)}>
-        New section…
-      </MenuItem>
+      {arrangement?.renderRowActions?.(entry, close, focus)}
     </>
   );
 }

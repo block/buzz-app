@@ -216,6 +216,8 @@ test("saved Plugins shortcuts move to Team and can still be moved afterward", as
     within(plugins).queryByRole("button", { name: "Activity" }),
   ).toBeNull();
   fireEvent.contextMenu(activity);
+  // Section moves sit under one submenu, beside the row's own actions.
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Move page" }));
   fireEvent.click(await screen.findByRole("menuitem", { name: "Plugins" }));
   expect(
     within(plugins).getByRole("button", { name: "Activity" }),
@@ -277,3 +279,44 @@ test.each(["pins", "custom:work", "agents"])(
     );
   },
 );
+
+test("a section a person made is renamed by double-clicking its title", async () => {
+  writeView("rename", "navigation-layout:v2", {
+    order: [],
+    sections: [{ id: "custom:work", title: "Work" }],
+    placements: [],
+  });
+  render(
+    <RailArrangement
+      partition="rename"
+      renderEntry={() => null}
+      isPinned={() => false}
+      onTogglePin={() => {}}
+      openSection={() => {}}
+      sections={[
+        {
+          id: "messages",
+          title: "Team",
+          content: <RailGroup id="messages" title="Team" />,
+        },
+      ]}
+    />,
+  );
+  // Team's name is the app's own.
+  fireEvent.doubleClick(screen.getByRole("button", { name: "Team" }));
+  expect(screen.queryByRole("textbox")).toBeNull();
+  // Escape keeps the name.
+  fireEvent.doubleClick(screen.getByRole("button", { name: "Work" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Section name" }), {
+    target: { value: "Dropped" },
+  });
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+  fireEvent.doubleClick(screen.getByRole("button", { name: "Work" }));
+  const field = screen.getByRole("textbox", { name: "Section name" });
+  fireEvent.change(field, { target: { value: "Projects" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  expect(
+    await screen.findByRole("button", { name: "Projects" }),
+  ).not.toBeNull();
+  expect(screen.queryByRole("button", { name: "Work" })).toBeNull();
+});

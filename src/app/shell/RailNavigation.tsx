@@ -43,6 +43,8 @@ import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   ArrowRightIcon,
   AtIcon,
+  BellIcon,
+  BellSlashIcon,
   ChatCircleIcon,
   HashIcon,
   MessageReplyIcon,
@@ -60,7 +62,11 @@ import { PageNavigation } from "./PageNavigation";
 import { RailConversationList } from "./RailConversationList";
 import { useRailPins, type RailEntry } from "./rail-pins";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
-import { MenuItem } from "../../shared/design-system/ui/Menu";
+import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
+import { ChannelCopyLinkMenuItem } from "../../bundled/channels/ChannelCopyLinkMenuItem";
+import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
+import { lifecycleNoun } from "../../bundled/channels/ChannelLifecycleDialog";
+import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
 import styles from "./RailNavigation.module.css";
 import {
   ConversationList,
@@ -309,7 +315,10 @@ export function RailNavigation({
   );
   const pinned = new Set(pins.map((pin) => pin.id));
   const togglePin = (entry: RailEntry, nextPinned = !pinned.has(entry.id)) => {
-    const saved = resetPlacement(entry.id) && setPinned(entry, nextPinned);
+    // A conversation's copies in other sections outlive its pin.
+    const saved =
+      resetPlacement(entry.id, entry.kind === "page" ? undefined : "pins") &&
+      setPinned(entry, nextPinned);
     setError(
       saved ? undefined : "Couldn’t save pins on this device. Try again.",
     );
@@ -788,34 +797,82 @@ export function RailNavigation({
           );
         }}
         renderRowActions={(entry, close, focus) => {
-          if (
-            channelNavigation?.session !== session ||
-            !session.sidebarPreferences.muteWritable ||
-            !preferences.data
-          )
-            return null;
+          if (channelNavigation?.session !== session) return null;
           const destination = entry.target;
           const channel =
             destination.kind === "conversation"
               ? channelsById.get(destination.channelId)
               : undefined;
           if (!channel) return null;
+          // A thread or message row mutes its channel; the rest act on a
+          // whole conversation.
+          const whole =
+            destination.kind === "conversation" &&
+            !destination.threadRootId &&
+            !destination.messageId;
           const intent = channelNavigation.mute.intents.get(channel.id);
           const muted = intent?.pending
             ? intent.muted
-            : preferences.data.muted.includes(channel.id);
+            : !!preferences.data?.muted.includes(channel.id);
           return (
-            <MenuItem
-              disabled={intent?.pending}
-              onClick={() => {
-                closeMuteMenu.current = close;
-                channelNavigation.mute.change(channel.id, channel.name, !muted);
-                close();
-                focus();
-              }}
-            >
-              {muted ? "Unmute" : "Mute"}
-            </MenuItem>
+            <>
+              {session.sidebarPreferences.muteWritable && preferences.data && (
+                <MenuItem
+                  disabled={intent?.pending}
+                  onClick={() => {
+                    closeMuteMenu.current = close;
+                    channelNavigation.mute.change(
+                      channel.id,
+                      channel.name,
+                      !muted,
+                    );
+                    close();
+                    focus();
+                  }}
+                >
+                  <MenuIcon>
+                    {muted ? (
+                      <BellIcon size={14} />
+                    ) : (
+                      <BellSlashIcon size={14} />
+                    )}
+                  </MenuIcon>
+                  {muted ? "Unmute" : "Mute"}
+                </MenuItem>
+              )}
+              {whole &&
+                session.unread.sync().capability === "frontier-sync" && (
+                  <ChannelReadMenuItem
+                    unread={session.unread}
+                    channelId={channel.id}
+                    pending={false}
+                    closeOnClick
+                    run={(action) =>
+                      action().then(
+                        () => {},
+                        () =>
+                          setError("Read state couldn’t be saved. Try again."),
+                      )
+                    }
+                  />
+                )}
+              {whole && <ChannelCopyLinkMenuItem channelId={channel.id} />}
+              {whole &&
+                (!channel.readOnly || channel.viewerRole === "guest") &&
+                !channel.cached &&
+                !channel.archived && (
+                  <ChannelLifecycleMenu
+                    channel={channel}
+                    session={session}
+                    disabled={!!channelNavigation.lifecycleDialog}
+                    separator
+                    noun={lifecycleNoun(channel)}
+                    choose={(action) =>
+                      channelNavigation.openLifecycle(channel, action)
+                    }
+                  />
+                )}
+            </>
           );
         }}
         sections={[

@@ -863,9 +863,11 @@ test("rail sections and rows can be arranged and a drop creates a named section"
   );
   await fullBeta.focus();
   await page.keyboard.press("Shift+F10");
+  await page.getByRole("menuitem", { name: /to section$/ }).hover();
   await expect(
     page.getByRole("menuitem", { name: "New section…", exact: true }),
   ).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
   await fullBeta.click();
   await expect(
@@ -996,9 +998,7 @@ test.describe("Solo rail", () => {
     await expect(
       messages.getByRole("button", { name: "Alpha", exact: true }),
     ).toHaveCount(0);
-    await messages
-      .getByRole("button", { name: "Team", exact: true })
-      .click();
+    await messages.getByRole("button", { name: "Team", exact: true }).click();
     const messagePage = page.getByRole("region", {
       name: "Team",
       exact: true,
@@ -1196,6 +1196,7 @@ test.describe("Sidebar row limits", () => {
     await page.emulateMedia({ colorScheme: "light" });
     await page.setViewportSize({ width: 1440, height: 950 });
     await pinRows.first().click({ button: "right" });
+    await page.getByRole("menuitem", { name: /to section$/ }).hover();
     await page
       .getByRole("menuitem", { name: "New section…", exact: true })
       .click();

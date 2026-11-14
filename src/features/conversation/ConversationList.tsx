@@ -559,9 +559,9 @@ export function ConversationList({
       scope,
       channelId,
       ...(options.messageId ? { messageId: options.messageId } : {}),
-      // A thread opens beside its channel, its root revealed there.
+      // A thread opens on its own; its header offers the channel beside it.
       ...(options.threadRootId
-        ? { threadRootId: options.threadRootId, context: "channel" as const }
+        ? { threadRootId: options.threadRootId, context: "thread" as const }
         : {}),
     });
   };
@@ -828,7 +828,7 @@ export function ConversationList({
       messageId: event.messageId,
       ...(event.rootId && {
         threadRootId: event.rootId,
-        context: "channel" as const,
+        context: "thread" as const,
       }),
     },
   });

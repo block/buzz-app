@@ -291,6 +291,18 @@ export function WorkspaceSettings({
           await session.soloPreferences.renameSection(target.id, nextName);
           confirmedName.current = nextName;
           nameConfirmed = true;
+          if (
+            !writeView(scope, key, {
+              canvas,
+              base: base ?? null,
+              lineup,
+              name: nextName,
+              nameBase: nextName,
+            })
+          )
+            throw new CanvasSettingsError(
+              "The confirmed workspace name couldn’t be retained on this device. Keep this dialog open to retry.",
+            );
         }
         if (!active()) return;
         if (

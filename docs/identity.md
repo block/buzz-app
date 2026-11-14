@@ -1269,9 +1269,8 @@ to the owner as a limit rather than an unreachable service; it stays transient.
 
 The `/v1/nip-fi/agent-grant` and `/v1/nip-fi/agent-assertion` routes follow
 NIP-FA's agent-route contract, including its neutral token types and
-`Nostr-Authorization` proof header. The native client depends on the compatible
-kgoose changes in [cash-server#146003](https://github.com/squareup/cash-server/pull/146003)
-being deployed before this client change is merged. NIP-FI defines the
+`Nostr-Authorization` proof header. The issuer must accept these NIP-FA token
+types and the `Nostr-Authorization` header before clients send them. NIP-FI defines the
 `nip-fi-agent+jwt` assertion class and owner checks.
 
 ### Local credential service

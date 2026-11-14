@@ -2835,7 +2835,8 @@ source. The host's Copy action copies the fenced JSON.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
 methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` / `.Conversation` /
-`.ReplyBranch` / `.ReplySummary` components, plus `.Tabs` while a plugin provides it. Generated
+`.ReplyBranch` / `.ReplySummary` / `.MembersDialog` / `.GeneralAccess` components,
+plus `.Tabs` while a plugin provides it. Generated
 type-only `@buzz/author` declarations are exercised by a source-only external consumer
 fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
 the browser test's temporary profile.
@@ -2850,6 +2851,14 @@ the host's day dividers re-render at local midnight; a plugin that shows these
 labels in its own long-lived view must call them again when the day changes.
 This remains a host-matched preview, not a stable cross-version SDK. Shared session
 ownership and trusted-plugin authority do not change.
+
+`conversation.ui.MembersDialog` and `.GeneralAccess` reuse the host's sharing
+controls. The type-only author package exports `ChannelMembersDialogProps`,
+`ChannelGeneralAccessProps`, `GeneralAccessPolicy` and `MemberChange`. Plugins
+provide their record's member-change callbacks and access policy; the host's
+member-management authority checks still apply. See
+[Reusing the member picker](plugin-authoring-guide.md#reusing-the-member-picker)
+for the full props and an example.
 
 For a page-owned retained reader, `conversation.ui.ReplyBranch` groups the
 page's own root message and child rows with the native expand/collapse controls

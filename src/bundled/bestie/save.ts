@@ -1,5 +1,6 @@
 import {
   type AttentionValue,
+  interestPaused,
   interestSlug,
   watchSlug,
 } from "../../features/agents/attention";
@@ -94,7 +95,8 @@ function lastHour(hour: number, now: Date) {
  * instructions then fail to save, On undoes its timer, and the half Off
  * leaves reads as off, which turning it either way finishes. On refuses a
  * section edited by hand: Restore puts it back first. Once `signal` aborts,
- * the instructions aren't saved. */
+ * the instructions aren't saved. With `paused`, On saves its Interest paused
+ * and its timer disabled, as Attention pauses them. */
 export async function saveFeature(
   agents: FeatureAgents,
   agent: Agent,
@@ -104,7 +106,13 @@ export async function saveFeature(
     channel,
     timerOnly = false,
     signal,
-  }: { channel?: string; timerOnly?: boolean; signal?: AbortSignal } = {},
+    paused = false,
+  }: {
+    channel?: string;
+    timerOnly?: boolean;
+    signal?: AbortSignal;
+    paused?: boolean;
+  } = {},
 ) {
   if (on && featureState(instructionsOf(agent), feature) === "edited")
     throw new Error(
@@ -125,12 +133,13 @@ export async function saveFeature(
     attention[interestSlug(timer.id)] = {
       type: "interest",
       instructions: timer.interest,
+      ...(paused && { paused: true }),
     };
     attention[watchSlug(timer.id)] = {
       type: "timer",
       interest_id: timer.id,
       prompt: timer.prompt,
-      enabled: true,
+      enabled: !paused,
       interval_secs: timer.everySecs,
       // A timer is next due one interval after it is armed.
       armed_at:
@@ -181,8 +190,10 @@ export async function saveFeature(
  * with memory, they are turned on in the DM its timer was delivered to,
  * before the old section, Interest and timer are taken away, so a failure
  * leaves it to be tried again. If it was not on, as when half of it was
- * deleted, it is only removed. With `timerOnly`, the instructions, which each
- * of the agent's communities shares, are left as they are. */
+ * deleted, it is only removed. If its timer or its Interest was paused in
+ * Attention, they are turned on paused, so upgrading starts no wakes. With
+ * `timerOnly`, the instructions, which each of the agent's communities
+ * shares, are left as they are. */
 export async function replaceCheckIn(
   agents: FeatureAgents,
   agent: Agent,
@@ -194,6 +205,13 @@ export async function replaceCheckIn(
     const wake = timer && agent.attention[watchSlug(timer.id)]?.value;
     return wake?.type === "timer" && wake.channel ? [wake.channel] : [];
   });
+  const paused = old.some(({ timer }) => {
+    const wake = timer && agent.attention[watchSlug(timer.id)]?.value;
+    return (
+      (wake?.type === "timer" && wake.enabled === false) ||
+      (!!timer && interestPaused(agent.attention, timer.id))
+    );
+  });
   // On is its section, whole, and its timer, which says where it ran.
   if (
     channel &&
@@ -204,6 +222,7 @@ export async function replaceCheckIn(
       options.signal?.throwIfAborted();
       await saveFeature(agents, agent, feature, true, {
         channel,
+        paused,
         ...(options.signal && { signal: options.signal }),
       });
     }

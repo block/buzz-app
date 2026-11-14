@@ -166,7 +166,8 @@ and a timer, `watch/bestie-hourly-check-in`. Its steps added Bestie to each
 private channel it had been added to, which Hourly notes no longer does. For
 your Bestie, whenever the account's choice is known, the plugin turns on Hourly
 notes and Nightly review in the DM the old timer ran in, when the old check-in
-was on with memory; then it removes the old section, Interest and timer. A
+was on with memory, paused if its timer or Interest was paused in Attention;
+then it removes the old section, Interest and timer. A
 failure leaves the old check-in to try again. An old check-in that read as off,
 such as one with only its timer left, is only removed. Another agent's is
 stopped, as any former Bestie's. For an agent also in another community, only

@@ -242,6 +242,49 @@ it("replaces nothing for an agent without the old hourly check-in", async () => 
   expect(save).not.toHaveBeenCalled();
 });
 
+it("keeps an old hourly check-in paused in Attention paused in Hourly notes and Nightly review", async () => {
+  const checkingIn = withFeature(remembering, v1CheckIn, true);
+  const wake = { type: "timer", channel: DM, enabled: true };
+  for (const [paused, interest, timer] of [
+    // Its timer paused, its Interest paused, or neither.
+    [true, { type: "interest" }, { ...wake, enabled: false }],
+    [true, { type: "interest", paused: true }, wake],
+    [false, { type: "interest" }, wake],
+  ] as const) {
+    const save = vi.fn<Agents["save"]>(async () => {});
+    await replaceCheckIn(
+      { save, types: () => [] },
+      ada(
+        held({
+          "interest/bestie-hourly-check-in": interest,
+          "watch/bestie-hourly-check-in": timer,
+        }),
+        checkingIn,
+      ),
+    );
+    const changes = save.mock.calls.map(([, change]) => change.attention ?? {});
+    for (const id of ["bestie-notes", "bestie-dream"]) {
+      const made = changes.find((change) => change[`watch/${id}`]);
+      expect(made?.[`watch/${id}`]).toMatchObject({ enabled: !paused });
+      expect(made?.[`interest/${id}`]).toEqual({
+        type: "interest",
+        instructions: expect.any(String),
+        ...(paused && { paused: true }),
+      });
+      for (const [slug, value] of Object.entries(made ?? {}))
+        expect(validateObject(slug, value)).toBeUndefined();
+    }
+    // The rest of the upgrade is the same: the old check-in is taken away.
+    expect(changes).toContainEqual({
+      "interest/bestie-hourly-check-in": null,
+      "watch/bestie-hourly-check-in": null,
+    });
+    expect(save).toHaveBeenLastCalledWith(expect.any(String), {
+      config: { instructions: remembering },
+    });
+  }
+});
+
 it("undoes the timer of a feature with a section when its instructions can't be saved", async () => {
   const save = vi
     .fn<Agents["save"]>()

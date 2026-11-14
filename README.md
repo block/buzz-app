@@ -43,7 +43,7 @@ community's address, such as `https://feedback.communities.buzz.xyz`. Add more
 communities later from the community button in the top-right corner →
 **Join a community**.
 
-**No invite?** Paste the Buzz feedback community's invite,
+**No invite? No problem!** Paste the Buzz feedback community's invite,
 `https://feedback.communities.buzz.xyz/invite/v2.yC8ZZIz5vwWCZYo2RRheuY1a0IKZRTXvxTmK7vIFIIY`,
 create one with **Create a community** (or at [buzz.xyz](https://buzz.xyz)), or
 [run your own relay](https://github.com/block/buzz#i-want-my-own-hosted-relay)
@@ -73,6 +73,8 @@ while Buzz is open. They work in `~/.buzz` by default and can run commands and
 edit files there.
 
 ### 5. Talk to it
+
+Now for the fun part: say hello! 👋
 
 - **New chat:** click **+** at the top of the Messages sidebar, beside
   **All / Solo / Team**, and choose **New chat**. Your default agent is tagged
@@ -150,3 +152,5 @@ to build plugins.
 - [Governance](GOVERNANCE.md)
 - [Apache-2.0 license](LICENSE)
 - [Source attribution](NOTICE.md)
+
+Happy buzzing! 🐝

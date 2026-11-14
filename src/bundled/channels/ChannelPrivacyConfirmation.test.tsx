@@ -98,12 +98,12 @@ it.each(["private", "public"] as const)(
       String(choice === "private"),
     );
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
-      target: { value: "new-channel" },
+      target: { value: "new-team" },
     });
     expect(onCreate).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Create channel" }));
     expect(onCreate).toHaveBeenCalledExactlyOnceWith({
-      name: "new-channel",
+      name: "new-team",
       visibility: choice === "private" ? "private" : "open",
     });
     reopened.unmount();

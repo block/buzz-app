@@ -1,4 +1,4 @@
-import { useId, type Ref } from "react";
+import { useId, type ReactNode, type Ref } from "react";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
@@ -8,6 +8,8 @@ type Props = {
   value: string;
   onChange(value: string): void;
   error?: string | undefined;
+  /** Optional guidance shown below the field while there is no error. */
+  hint?: ReactNode;
   disabled?: boolean | undefined;
 } & (
   | { field: "name"; inputRef?: Ref<HTMLInputElement>; creation?: boolean }
@@ -47,6 +49,7 @@ export function ChannelTextField(props: Props) {
         </span>
       }
       error={props.error}
+      description={props.hint}
     >
       {props.field === "name" ? (
         <Input

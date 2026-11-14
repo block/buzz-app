@@ -1759,7 +1759,7 @@ it("lists system channels only when asked, as the relay serves them", async () =
 it("creates a system channel", async () => {
   const { client, published } = relay();
   const answer = await callTool(client, {}, "channel_create", {
-    name: "config",
+    name: "config-team",
     visibility: "private",
     type: "system",
   });
@@ -1770,7 +1770,7 @@ it("creates a system channel", async () => {
       content: "",
       tags: [
         ["h", id],
-        ["name", "config"],
+        ["name", "config-team"],
         ["visibility", "private"],
         ["channel_type", "system"],
       ],
@@ -1779,16 +1779,16 @@ it("creates a system channel", async () => {
   expect(answer).toBe(`created ${id}`);
   await expect(
     callTool(client, {}, "channel_list", { types: ["system"] }),
-  ).resolves.toBe(`${id} config (system, private)`);
+  ).resolves.toBe(`${id} config-team (system, private)`);
   await expect(callTool(client, {}, "channel_list", {})).resolves.toBe(
     `${room} plans`,
   );
   await expect(
     callTool(client, {}, "channel_list", { types: ["stream", "system"] }),
-  ).resolves.toBe(`${room} plans\n${id} config (system, private)`);
+  ).resolves.toBe(`${room} plans\n${id} config-team (system, private)`);
   await expect(
     callTool(client, {}, "channel_create", {
-      name: "config",
+      name: "config-team",
       visibility: "private",
       type: "dm",
     }),
@@ -1831,7 +1831,7 @@ it("creates a Solo chat with its members in the create, as Buzz does", async () 
   ).resolves.toBe(`${me}  (owner)\n${alice} Alice Smith\n${bob} `);
   // An ordinary private channel is not Solo.
   await callTool(client, {}, "channel_create", {
-    name: "ops",
+    name: "ops-team",
     visibility: "private",
   });
   const plain = published[1]?.tags[0]?.[1] as string;
@@ -1840,7 +1840,7 @@ it("creates a Solo chat with its members in the create, as Buzz does", async () 
   );
   await expect(
     callTool(client, {}, "channel_get", { channel: plain }),
-  ).resolves.toBe(`${plain} ops (stream, private)\nyou: owner`);
+  ).resolves.toBe(`${plain} ops-team (stream, private)\nyou: owner`);
 });
 
 it("discovers local workspaces and files only after creating a Solo with explicit members", async () => {
@@ -2835,7 +2835,7 @@ it("creates a channel from its owner's template, reporting each agent it could n
     { name: "Launch", canvas: "# Plan", agents: [alice, bob, me] },
   ]);
   const answer = await callTool(client, {}, "channel_create", {
-    name: "#launch ",
+    name: "#launch-team ",
     visibility: "private",
     template: "launch",
   });
@@ -2846,7 +2846,7 @@ it("creates a channel from its owner's template, reporting each agent it could n
       content: "",
       tags: [
         ["h", id],
-        ["name", "launch"],
+        ["name", "launch-team"],
         ["visibility", "private"],
         ["channel_type", "stream"],
       ],
@@ -2889,7 +2889,7 @@ it("adds no template agents when it cannot start the Canvas", async () => {
     { name: "Launch", canvas: "# Plan", agents: [alice] },
   ]);
   const answer = await callTool(client, {}, "channel_create", {
-    name: "launch",
+    name: "launch-team",
     visibility: "private",
     template: "Launch",
   });
@@ -2904,7 +2904,7 @@ it("creates nothing from a template it cannot name exactly", async () => {
   const { client, published } = relay();
   const create = (template: string) =>
     callTool(client, {}, "channel_create", {
-      name: "x",
+      name: "x-team",
       visibility: "open",
       template,
     });
@@ -3130,7 +3130,7 @@ it("reports a new channel whose join_role was refused", async () => {
     return publish(template);
   });
   const answer = await callTool(client, {}, "channel_create", {
-    name: "news",
+    name: "news-team",
     visibility: "open",
     join_role: "guest",
   });
@@ -3141,7 +3141,7 @@ it("reports a new channel whose join_role was refused", async () => {
   );
   // member is the default, so it needs no second event.
   await callTool(client, {}, "channel_create", {
-    name: "chat",
+    name: "chat-team",
     visibility: "open",
     join_role: "member",
   });
@@ -3381,7 +3381,7 @@ it("keeps what it changed when a read after the change fails", async () => {
   ]);
   const create = () =>
     callTool(client, {}, "channel_create", {
-      name: "launch",
+      name: "launch-team",
       visibility: "open",
       template: "Launch",
     });
@@ -4808,4 +4808,22 @@ it("addresses a new reaction to the actual message author and fails before publi
     callTool(client, {}, "react", { id: nested, emoji: "❤️" }),
   ).rejects.toThrow("No message");
   expect(published).toHaveLength(1);
+});
+
+it("holds channel_create to the naming rules only in a listed community", async () => {
+  vi.stubEnv(
+    "VITE_BUZZ_CHANNEL_NAMING_ENFORCED_COMMUNITIES",
+    "https://relay.example",
+  );
+  const { client } = relay();
+  const block = Object.assign(Object.create(client), {
+    relayUrl: "wss://relay.example",
+  });
+  await expect(
+    callTool(block, {}, "channel_create", { name: "ops", visibility: "open" }),
+  ).rejects.toThrow(/needs a fix/);
+  await expect(
+    callTool(client, {}, "channel_create", { name: "ops", visibility: "open" }),
+  ).resolves.toMatch(/^created /);
+  vi.unstubAllEnvs();
 });

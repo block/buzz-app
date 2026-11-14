@@ -4,6 +4,7 @@ import {
   type EntityRoute,
 } from "../repos/routes";
 import {
+  CHANNEL_ID,
   parseGitPluginSource,
   parseUrlPluginSource,
   parseOpenTarget,
@@ -201,7 +202,6 @@ export function parseBuzzLink(href: string): BuzzLink | null {
     if (entity) return { format: "entity", route: entity };
     if (url.hostname === "plugin") return parsePluginLink(url, href);
     if (url.hostname === "settings") return parseSettingsLink(url, href);
-    const channelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/;
     const eventPattern = /^[a-f0-9]{64}$/i;
     // Query parameters outside a form's grammar are ignored, values and repeats
     // included, as the original Buzz desktop client does. The channel forms carry
@@ -211,7 +211,7 @@ export function parseBuzzLink(href: string): BuzzLink | null {
       const [channelId = "", messageId] = parts;
       if (
         parts.length > 2 ||
-        !channelPattern.test(channelId) ||
+        !CHANNEL_ID.test(channelId) ||
         (messageId !== undefined && !eventPattern.test(messageId))
       )
         return null;
@@ -240,7 +240,7 @@ export function parseBuzzLink(href: string): BuzzLink | null {
     const messageId = url.searchParams.get("id") ?? "";
     const threadRootId = url.searchParams.get("thread");
     if (
-      !channelPattern.test(channelId) ||
+      !CHANNEL_ID.test(channelId) ||
       !eventPattern.test(messageId) ||
       (threadRootId !== null && !eventPattern.test(threadRootId))
     )

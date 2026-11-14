@@ -151,6 +151,10 @@ export type Panels = {
   handleOpenRequests(
     handler: (request: PanelOpenRequest) => boolean,
   ): () => void;
+  /** React hook for a panel component: names its tab, in place of the static
+   * `title`, while mounted. Does nothing outside a panel tab. Absent on hosts
+   * that predate it, so feature-detect before calling. */
+  useTabTitle?(label: string): void;
 };
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -171,6 +175,7 @@ export class PanelsService extends Service implements Panels {
   private readonly openHandlers = new Set<
     (request: PanelOpenRequest) => boolean
   >();
+  useTabTitle = (label: string) => usePanelTabTitle(label);
   snapshot = () => this.panels.snapshot();
   subscribe = (listener: () => void) => this.panels.subscribe(listener);
   requestOpen = (request: PanelOpenRequest) => {

@@ -1,6 +1,7 @@
 import { AcpProcess } from "../agent-harness/acp/process";
 import { GOOSE } from "../../bundled/goose/goose";
 import { fakeSpawn } from "../../bundled/goose/goose-testing";
+import { bundledOwner } from "../../plugins/provenance";
 import { UnattestedProfile } from "../relay/identity-archives";
 import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
 import type {
@@ -140,7 +141,11 @@ import {
   pastedMentionRecipient,
 } from "../messages/mention-admission";
 import type { ComposerSession } from "../messages/composer-session";
-import { setRuntimeRecommendation } from "./recommended";
+import {
+  recommendationReady,
+  recommendedSetup,
+  setRuntimeRecommendation,
+} from "./recommended";
 
 /** The tag that the echo type's default watch matches. */
 const DEPLOY = ["t", "deploy"];
@@ -3452,6 +3457,109 @@ it("ignores the model and effort asked of an agent on Automatic", async () => {
     expect(delivery?.effort).toBeUndefined();
   } finally {
     setRuntimeRecommendation(undefined);
+  }
+});
+
+it("asks the first plugin that recommends, and waits for plugins to start before using the build's setup", async () => {
+  // Synthetic candidates; real ones come only from a packager's plugin.
+  const ORG = { harness: "codex", model: "model-z", effort: "low", label: "Z" };
+  const start = () => {
+    const ctx = new Context();
+    let settled = false;
+    const listeners = new Set<() => void>();
+    ctx.provide("pluginStatus", {
+      isActive: () => true,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      settled: () => settled,
+    });
+    const client = fakeCommunities(fakeRelay());
+    new AgentsService(ctx, client.communities, fakeNative(), memoryStorage());
+    // As the plugin runtime marks a bundled module's owner (provenance.ts).
+    const owner = (id: string) =>
+      ctx.extend({
+        pluginOwner: bundledOwner(Object.freeze({ id, revision: "bundled" })),
+      });
+    const settle = () => {
+      settled = true;
+      for (const listener of listeners) listener();
+    };
+    return { owner, settle };
+  };
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const first = start();
+    let answer!: (setup: unknown) => void;
+    const source = vi.fn(
+      (_signal: AbortSignal) =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const other = vi.fn();
+    first.owner("org.example").agents.recommend(source);
+    first.owner("org.other").agents.recommend(other);
+    // Asked at once, before plugins finish starting.
+    await vi.waitFor(() => expect(source).toHaveBeenCalledTimes(1));
+    expect(other).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("org.other's recommended agent setup is ignored"),
+    );
+    first.settle();
+    let ready = false;
+    const waiting = recommendationReady().then(() => {
+      ready = true;
+    });
+    await Promise.resolve();
+    expect(ready).toBe(false);
+    answer({ recommendedBy: "Example Org", candidates: [ORG] });
+    await waiting;
+    expect(recommendedSetup()).toEqual({
+      recommendedBy: "Example Org",
+      candidates: [ORG],
+    });
+    // The setup is final: a later call is ignored.
+    first.owner("org.late").agents.recommend(other);
+    expect(other).not.toHaveBeenCalled();
+    expect(() =>
+      first.owner("org.bad").agents.recommend("nope" as never),
+    ).toThrow(/needs a function/);
+    // An installed plugin never takes it over.
+    expect(() =>
+      first
+        .owner("org.example")
+        .extend({
+          pluginOwner: Object.freeze({ id: "org.installed", revision: "one" }),
+        })
+        .agents.recommend(other),
+    ).toThrow(/bundled plugin/);
+    // Nor by claiming a "bundled" revision: only the runtime's mark counts.
+    expect(() =>
+      first
+        .owner("org.example")
+        .extend({
+          pluginOwner: Object.freeze({ id: "org.poser", revision: "bundled" }),
+        })
+        .agents.recommend(other),
+    ).toThrow(/bundled plugin/);
+    setRuntimeRecommendation(undefined);
+
+    // With no plugin recommending, the setup is final once plugins start.
+    const second = start();
+    let done = false;
+    const final = recommendationReady().then(() => {
+      done = true;
+    });
+    await Promise.resolve();
+    expect(done).toBe(false);
+    second.settle();
+    await final;
+    expect(recommendedSetup().candidates).toEqual([]);
+  } finally {
+    setRuntimeRecommendation(undefined);
+    warn.mockRestore();
   }
 });
 
@@ -17348,11 +17456,14 @@ it.each(["before", "during"])(
 
 it("discovers only active source providers and forgets unloaded registrations", async () => {
   let active = false;
-  let changed = () => {};
+  const listeners: (() => void)[] = [];
+  const changed = () => {
+    for (const listener of listeners) listener();
+  };
   const { service, plugin } = await setup({
     pluginActive: () => active,
     subscribePlugin: (listener) => {
-      changed = listener;
+      listeners.push(listener);
       return () => {};
     },
   });

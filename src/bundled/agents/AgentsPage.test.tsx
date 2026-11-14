@@ -487,6 +487,7 @@ function setup(
         : [],
     registerTab: () => {},
     controlAttention: () => {},
+    recommend: () => {},
     registerSessionRouter: () => {},
     registerExecution: () => {},
     bindExecution: async () => {},

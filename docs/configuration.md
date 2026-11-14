@@ -264,6 +264,16 @@ while it is on Recommended. Without a config channel, the mark is kept in the
 agent's local settings. Which harness an agent runs on is the `runtime` tag of
 its kind 30177 record.
 
+A bundled plugin, such as one in an organization's own build, can replace the
+setup for a launch with `ctx.agents.recommend(source)`,
+for example to choose candidates per person or team from the organization's
+own services; see [Plugin architecture](plugin-architecture.md). Its answer
+has this setting's object shape and is checked the same way. Buzz waits for it
+at most five seconds from start-up, and only before creating an agent or
+finding what one runs on. No answer, a failure, an invalid setup, or a late one
+keeps this setting's for that launch, so set `BUZZ_RECOMMENDED_AGENT` too, as
+the fallback.
+
 ## Mobile app links
 
 Packagers that publish a Buzz mobile app can link its store listings:

@@ -1100,6 +1100,23 @@ the base prompt ranks them below the owner's messages and above a Solo chat's
 Canvas. They are kept on this device for now. `conversationInstructions(agent,
 place)` resolves with the text. See [Agents](agents.md).
 
+A bundled plugin can give this launch's recommended agent setup in place of
+the build's `BUZZ_RECOMMENDED_AGENT` with
+`ctx.agents.recommend(source)`; see [Recommended agent](configuration.md#recommended-agent).
+Call it while the plugin starts. Buzz calls `source(signal)` once, as soon as
+the plugin registers it. Its answer has the setting's shape, `{recommendedBy?,
+description?, candidates}`, and Buzz checks it with `setRuntimeRecommendation`
+like the setting, replacing attribution, description and candidates together.
+Finds and picks wait until the answer comes, or until every plugin
+has started with none calling `recommend`, but never more than five seconds
+(`SOURCE_MS`) from when the agents service started. After that the setup is
+final for the launch: a late answer is dropped, so nothing already found would
+be found again. No answer (`undefined`, `null` or no candidates), a throw, or an
+invalid setup keeps the build's. `signal` aborts when the wait ends. Only the first
+plugin to call it in a launch is asked; later calls only log. Views that read
+the setup before it is final, such as whether a harness offers Automatic, see
+the build's. Turning the plugin off stops it answering from the next launch.
+
 ### Agent operation proofs
 
 A plugin can provide an operation that another installed plugin calls from a
@@ -1476,6 +1493,24 @@ signed-in `gh` account. That allows any query or mutation the account may make;
 the token stays inside `gh`. Without `gh` it reads public data only. Unsupported
 URLs retain ordinary link behavior. A host-owned GitHub connection with narrower scopes, and agent
 execution, remain future shared capabilities.
+
+### Organization plugins
+
+An organization that packages its own build of Buzz can bundle its own plugins
+without changing any other file. `src/bundled/org.json` lists each one's
+manifest and whether it starts on, as
+`[{ "manifest": { … }, "enabledByDefault": true }]`, and `src/bundled/org.ts`
+gives each one's code (its module) by manifest id. Both are empty in
+open-source builds; a packager replaces both at build time. The web build reads
+them through `orgPlugins`, which `bundledPlugins` lists after the rest, and the
+desktop app's native catalog (`crates/plugin-manager`) compiles `org.json` in,
+so both agree on the list, the defaults, and the host access each manifest
+declares. A listed plugin without code is left out and logged; the native catalog still
+lists it, so it shows as failing to load. Like any
+bundled plugin it shows in Settings → Plugins, where the person can turn it
+off, and it needs no README. Its declared network origins are granted without
+an access review, as for every bundled plugin: the packager chose them.
+Choose ids no other plugin uses, such as one under the organization's domain.
 
 ### Optional channel menu panels
 

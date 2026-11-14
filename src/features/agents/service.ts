@@ -73,7 +73,8 @@ import type { TeamResult, TeamSent } from "./team-ops";
 import type { Expected, SnapshotRead } from "./agent-config-artifacts";
 import type { revertTemplate, SettingsCheck } from "./agent-config-history";
 import type { RevertOutcome } from "./AgentConfigHistory";
-import type { RecommendedCandidate } from "./recommended";
+import { isBundledOwner } from "../../plugins/provenance";
+import { awaitRecommendation, type RecommendedCandidate } from "./recommended";
 import { nativeRelayInfo } from "../relay/native";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
@@ -1451,6 +1452,9 @@ export type NewAgent = Readonly<{
    * Hosted setup retains it until the provider has applied it. */
   config?: unknown;
 }>;
+/** A plugin's recommended agent setup for this launch,
+ * `{recommendedBy?, description?, candidates}`; see `Agents.recommend`. */
+export type RecommendedSource = (signal: AbortSignal) => unknown;
 export type Agents = {
   registerSessionRouter(router: AgentSessionRouter): void;
   registerExecution(provider: AgentExecutionProvider): void;
@@ -1519,6 +1523,14 @@ export type Agents = {
    * app runs, or of those `when` accepts, while the plugin is on. Each turn
    * shows them in a `<plugin-instructions>` section that names the plugin. */
   addInstructions(instructions: AgentInstructions): void;
+  /** Bundled plugins only: gives this launch's recommended agent setup in
+   * place of the build's `BUZZ_RECOMMENDED_AGENT` (docs/configuration.md).
+   * Call it while the plugin starts: `source` is asked once, at once, and its
+   * answer, `{recommendedBy?, description?, candidates}` checked like the
+   * setting, is used if it comes within `SOURCE_MS` of the app's start. No
+   * answer, a failure, an invalid or late setup keeps the build's. `signal` aborts when the wait ends. Only the first
+   * plugin to call it in a launch is asked; later calls are ignored. */
+  recommend(source: RecommendedSource): void;
   /** The Buzz side of a turn for an agent type a plugin brings: where a
    * delivery goes, the bundled harnesses' prompts, the agent's Buzz tools as
    * an MCP handler, and its replies. */
@@ -2327,6 +2339,7 @@ export class AgentsService extends Service implements Agents {
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     this.addedInstructions = createContributions<AgentInstructions>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
+    void awaitRecommendation((signal) => this.recommendedAnswer(signal));
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
     void migrateWatchFilters(storage);
@@ -3163,6 +3176,74 @@ export class AgentsService extends Service implements Agents {
   addedTabs = () => this.tabContributions.snapshot();
   controlAttention() {
     this.attentionControls.register(this.ctx, { id: "attention" });
+  }
+  /** The plugin `recommend` asks this launch, once it has called. */
+  private recommendSource?: Readonly<{
+    plugin: string;
+    source: RecommendedSource;
+  }>;
+  /** Whether this launch's setup is final, so `recommend` is too late. */
+  private recommendClosed = false;
+  /** Tells the wait in `recommendedAnswer` a plugin called `recommend`. */
+  private recommendCalled = () => {};
+  recommend(source: RecommendedSource) {
+    const owner = this.ctx.pluginOwner;
+    // Only the build's own plugins: an installed one must not take it over,
+    // even by claiming a "bundled" revision (provenance.ts).
+    if (!owner || !isBundledOwner(owner))
+      throw new Error(
+        "A recommended agent setup must come from a bundled plugin",
+      );
+    const plugin = owner.id;
+    if (typeof source !== "function")
+      throw new Error("recommend needs a function");
+    if (this.recommendSource || this.recommendClosed) {
+      console.warn(
+        `Plugin ${plugin}'s recommended agent setup is ignored: ${this.recommendSource ? "another plugin gives this launch's" : "it came after the setup was final"}`,
+      );
+      return;
+    }
+    this.recommendSource = { plugin, source };
+    this.recommendCalled();
+  }
+  /** This launch's answer from the plugin that calls `recommend`, asked as
+   * soon as it calls; nothing once plugins have started with none calling. */
+  private async recommendedAnswer(signal: AbortSignal) {
+    signal.addEventListener("abort", () => {
+      this.recommendClosed = true;
+    });
+    const status = this.ctx.pluginStatus as Context["pluginStatus"] | undefined;
+    const given = await new Promise<typeof this.recommendSource>((resolve) => {
+      let stop = () => {};
+      const check = () => {
+        if (
+          !this.recommendSource &&
+          !signal.aborted &&
+          !(status?.settled?.() ?? true)
+        )
+          return;
+        stop();
+        this.recommendCalled = () => {};
+        resolve(this.recommendSource);
+      };
+      this.recommendCalled = check;
+      signal.addEventListener("abort", check, { once: true });
+      stop = status?.subscribe(check) ?? stop;
+      check();
+    });
+    if (!given || signal.aborted) return undefined;
+    let answered = false;
+    signal.addEventListener("abort", () => {
+      if (!answered)
+        console.warn(
+          `Plugin ${given.plugin} gave no recommended agent setup in time; using this build's`,
+        );
+    });
+    try {
+      return await given.source(signal);
+    } finally {
+      answered = true;
+    }
   }
   /** Whether a plugin that shows Attention is on, so Attention may run. */
   private attentionShown = () => this.attentionControls.snapshot().length > 0;

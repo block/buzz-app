@@ -36,6 +36,8 @@ import {
   offRecommended,
   onRecommended,
   type RecommendedCandidate,
+  recommendationFinal,
+  recommendationReady,
   withRecommended,
 } from "../../features/agents/recommended";
 import {
@@ -325,10 +327,21 @@ export class CodexProvider {
     const found =
       candidatesFor("codex").find((candidate) => offers(data, candidate)) ??
       null;
-    if (found) this.found = found;
+    // Kept only once the setup is final: before that, a bundled plugin may
+    // still replace the build's, so readers are told to look again then.
+    if (recommendationFinal()) {
+      if (found) this.found = found;
+    } else if (!this.waiting) {
+      this.waiting = true;
+      void recommendationReady().then(() => {
+        this.waiting = false;
+        this.set({});
+      });
+    }
     return found;
   }
   private found: RecommendedCandidate | undefined;
+  private waiting = false;
   resolve(raw: unknown, remote = false): Config {
     // A remote target's catalog isn't this computer's: an agent on
     // Recommended there runs on its Codex default. Apps follow this
@@ -386,7 +399,9 @@ export class CodexProvider {
         ? "execution-unavailable"
         : execution === "remote"
           ? "remote"
-          : recommended && candidate === undefined
+          : // Before the setup is final, a bundled plugin may still
+            // replace the build's pick, so it isn't reported yet.
+            recommended && (candidate === undefined || !recommendationFinal())
             ? "not-loaded"
             : undefined;
     const data = this.state.data;

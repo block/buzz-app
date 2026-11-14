@@ -621,18 +621,23 @@ function ChannelWorkspace({
   // explains itself: its loss can arrive before its navigation, or,
   // unconfirmed, after its failure, until the relay answers for the channel by
   // dropping it or by a complete roster read that still lists it (see
-  // `unconfirmedLosses`). A confirmation still open has lost nothing: a loss
-  // behind it, or after Cancel, is someone else's.
+  // `ownLosses`). Until it ends, the snapshot stays: one that fails before
+  // publishing lost nothing, so a removal during it is someone else's. A
+  // confirmation still open has lost nothing either: a loss behind it, or
+  // after Cancel, is someone else's.
   const lifecycleDialog = handoff?.lifecycleDialog;
-  const ownLoss =
+  const recordedLoss =
     !!requestedChannel &&
-    ((lifecycleDialog?.channel.id === requestedChannel &&
+    !!handoff?.ownLosses.some(
+      ({ channelId }) => channelId === requestedChannel,
+    );
+  const ownLoss =
+    recordedLoss ||
+    (!!requestedChannel &&
+      lifecycleDialog?.channel.id === requestedChannel &&
       !!lifecycleDialog.submitted &&
       (lifecycleDialog.action === "leave" ||
-        lifecycleDialog.action === "delete")) ||
-      !!handoff?.unconfirmedLosses.some(
-        ({ channelId }) => channelId === requestedChannel,
-      ));
+        lifecycleDialog.action === "delete"));
   // From the roster, not the sidebar: an archived or hidden channel opened
   // from Search is joined too.
   const joinedHere =
@@ -666,7 +671,7 @@ function ChannelWorkspace({
       setJoinedVisit({ queries, id: joinedHere.id, label });
   } else if (
     joinedVisit &&
-    (ownLoss ||
+    (recordedLoss ||
       joinedVisit.id !== requestedChannel ||
       joinedVisit.queries !== queries)
   )
@@ -2246,7 +2251,8 @@ function ChannelWorkspace({
       focusAfterLoss.current = undefined;
       return;
     }
-    if (lost !== removedId) return;
+    // Access is still settling: a preview this visit resolved is reloading.
+    if (lost !== removedId || (!current && previewAvailable)) return;
     focusAfterLoss.current = undefined;
     const history = historyContainer.current;
     const active = document.activeElement;
@@ -2256,7 +2262,7 @@ function ChannelWorkspace({
         history)
       : backTrigger.current
     )?.focus({ preventScroll: true });
-  }, [removedId, current, requestedChannel, ownLoss]);
+  }, [removedId, current, requestedChannel, ownLoss, previewAvailable]);
   const channelNotice =
     !!current &&
     (current.archived ||

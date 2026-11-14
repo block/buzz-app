@@ -1158,21 +1158,25 @@ export function ChannelInventory({
   useLayoutEffect(() => () => menuActions?.publish(undefined), [menuActions]);
   const lifecycleCallbacks = handoff?.lifecycleCallbacks;
   const openSuccessor = handoff?.openSuccessor;
-  // The shown rows nearest the confirmed channel, else the open one: its own
-  // section's, then the nearest expanded sections'. Captured while it is still
-  // listed: completion, or removal while it is open, can drop it first.
-  const lifecycleNeighbors = useRef<{ id: string; ids: string[] }>(undefined);
+  // The shown rows nearest the confirmed channel and the open one: its own
+  // section's, then the nearest expanded sections'. Captured while each is
+  // still listed: completion, or removal while it is open, can drop it first.
+  // Kept apart, so a confirmation for another channel keeps the open one's.
+  const lifecycleNeighbors = useRef<
+    Partial<Record<"dialog" | "open", { id: string; ids: string[] }>>
+  >({});
   useLayoutEffect(() => {
     if (!lifecycleCallbacks || !openSuccessor) return;
-    const anchor =
-      lifecycleDialog?.channel.id ??
-      (target.kind === "conversation" ? target.channelId : undefined);
-    if (!anchor) lifecycleNeighbors.current = undefined;
-    const at = filteredSections.findIndex((section) =>
-      section.rows.some((row) => row.id === anchor),
-    );
-    const placement = filteredSections[at];
-    if (anchor && placement) {
+    const capture = (key: "dialog" | "open", anchor: string | undefined) => {
+      if (!anchor) {
+        delete lifecycleNeighbors.current[key];
+        return;
+      }
+      const at = filteredSections.findIndex((section) =>
+        section.rows.some((row) => row.id === anchor),
+      );
+      const placement = filteredSections[at];
+      if (!placement) return;
       const shown = (section: typeof placement) =>
         sidebar.collapsed.includes(section.key)
           ? []
@@ -1184,7 +1188,7 @@ export function ChannelInventory({
               .map((row) => row.id);
       const own = shown(placement);
       const index = Math.max(own.indexOf(anchor), 0);
-      lifecycleNeighbors.current = {
+      lifecycleNeighbors.current[key] = {
         id: anchor,
         ids: [
           ...own.slice(index + 1),
@@ -1193,16 +1197,23 @@ export function ChannelInventory({
           ...filteredSections.slice(0, at).flatMap(shown).reverse(),
         ],
       };
-    }
+    };
+    capture("dialog", lifecycleDialog?.channel.id);
+    capture(
+      "open",
+      target.kind === "conversation" ? target.channelId : undefined,
+    );
     // Its neighbor takes its place, so the sidebar stays where it is.
     const successor = (id: string) => {
       const listed = filteredSections
         .flatMap((section) => section.rows)
         .filter((row) => !pluginHiddenRows.current.has(row.id));
       return (
-        (lifecycleNeighbors.current?.id === id
-          ? lifecycleNeighbors.current.ids
-          : []
+        (
+          [
+            lifecycleNeighbors.current.dialog,
+            lifecycleNeighbors.current.open,
+          ].find((captured) => captured?.id === id)?.ids ?? []
         ).find((neighbor) => listed.some((row) => row.id === neighbor)) ??
         listed.find((channel) => channel.id !== id)?.id
       );

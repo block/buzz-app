@@ -92,14 +92,15 @@ type State = {
     | undefined;
   /** Undos chosen while another lifecycle action held the gate, oldest first. */
   queuedUndos: readonly ChannelSummary[];
-  /** The viewer's own Leave or Delete that failed unconfirmed, so the relay
-   * may still apply it; its loss of access is then not someone else's doing.
-   * Each is kept until the relay answers for its channel (see `answered`). */
-  unconfirmedLosses: readonly UnconfirmedLoss[];
+  /** The viewer's own Leave or Delete that completed, or failed unconfirmed
+   * so the relay may still apply it; its loss of access is then not someone
+   * else's doing. Each is kept until the relay answers for its channel (see
+   * `answered`). One that failed before publishing is not recorded. */
+  ownLosses: readonly OwnLoss[];
 };
-type UnconfirmedLoss = Readonly<{
+type OwnLoss = Readonly<{
   channelId: string;
-  /** `ChannelList.rosterAsOf` when it failed: the last complete roster read,
+  /** `ChannelList.rosterAsOf` when it ended: the last complete roster read,
    * which may predate the request. */
   rosterAsOf: number | undefined;
 }>;
@@ -241,26 +242,26 @@ export function ChannelNavigationProvider({
   }, [lifecycleOrigin, update]);
   // Settled losses go, so a failed or partial roster read long after cannot
   // make another loss of the same channel look like the viewer's own.
-  const unconfirmedLosses = state.unconfirmedLosses;
+  const ownLosses = state.ownLosses;
   const channels = connection.session.channels;
   useEffect(() => {
-    if (!unconfirmedLosses.length) return;
+    if (!ownLosses.length) return;
     const settle = () => {
       const list = channels.list();
-      const settled = unconfirmedLosses.filter((loss) => answered(loss, list));
+      const settled = ownLosses.filter((loss) => answered(loss, list));
       if (!settled.length) return;
       update((previous) => {
-        const kept = previous.unconfirmedLosses.filter(
+        const kept = previous.ownLosses.filter(
           (loss) => !settled.includes(loss),
         );
-        return kept.length === previous.unconfirmedLosses.length
+        return kept.length === previous.ownLosses.length
           ? previous
-          : { ...previous, unconfirmedLosses: kept };
+          : { ...previous, ownLosses: kept };
       });
     };
     settle();
     return channels.subscribeList(settle);
-  }, [channels, unconfirmedLosses, update]);
+  }, [channels, ownLosses, update]);
   const value = useMemo<Handoff>(
     () => ({
       ...state,
@@ -373,6 +374,34 @@ export function ChannelNavigationProvider({
     ],
   );
   const archived = state.lifecycleDialog?.channel;
+  // Closes the dialog; a Leave or Delete the relay applied, or may have,
+  // becomes the viewer's own loss.
+  const endLifecycle = (
+    dialog: State["lifecycleDialog"],
+    published: boolean,
+  ) => {
+    const loss =
+      published &&
+      dialog &&
+      (dialog.action === "leave" || dialog.action === "delete")
+        ? {
+            channelId: dialog.channel.id,
+            rosterAsOf: connection.session.channels.list().rosterAsOf,
+          }
+        : undefined;
+    update((previous) => ({
+      ...previous,
+      lifecycleDialog: undefined,
+      ...(loss && {
+        ownLosses: [
+          ...previous.ownLosses.filter(
+            ({ channelId }) => channelId !== loss.channelId,
+          ),
+          loss,
+        ],
+      }),
+    }));
+  };
   return (
     <ChannelNavigationContext value={value}>
       {children}
@@ -445,7 +474,7 @@ export function ChannelNavigationProvider({
               (
                 state.lifecycleDialog?.callbacks ?? lifecycleCallbacks.current
               )?.depart(departOnSubmit ? "current" : "origin");
-              value.closeLifecycle();
+              endLifecycle(state.lifecycleDialog, true);
             }}
             failed={(title, message, unconfirmed) => {
               setFailure({
@@ -455,28 +484,7 @@ export function ChannelNavigationProvider({
                   ? `${state.lifecycleDialog?.channel.name}: ${message}`
                   : message,
               });
-              const dialog = state.lifecycleDialog;
-              const loss =
-                unconfirmed &&
-                dialog &&
-                (dialog.action === "leave" || dialog.action === "delete")
-                  ? {
-                      channelId: dialog.channel.id,
-                      rosterAsOf: connection.session.channels.list().rosterAsOf,
-                    }
-                  : undefined;
-              update((previous) => ({
-                ...previous,
-                lifecycleDialog: undefined,
-                ...(loss && {
-                  unconfirmedLosses: [
-                    ...previous.unconfirmedLosses.filter(
-                      ({ channelId }) => channelId !== loss.channelId,
-                    ),
-                    loss,
-                  ],
-                }),
-              }));
+              endLifecycle(state.lifecycleDialog, unconfirmed);
             }}
           />
         )}
@@ -490,11 +498,11 @@ export function ChannelNavigationProvider({
     </ChannelNavigationContext>
   );
 }
-/** Whether the relay has answered for an unconfirmed loss: a ready list no
- * longer has its channel, or a complete roster read since the failure still
- * lists it. Live events and exact reads commit the list too, but only a
- * complete read proves the request did not take effect. */
-function answered(loss: UnconfirmedLoss, list: ChannelList) {
+/** Whether the relay has answered for an own loss: a ready list no longer
+ * has its channel, or a complete roster read since it ended still lists it.
+ * Live events and exact reads commit the list too, but only a complete read
+ * proves the request did not take effect. */
+function answered(loss: OwnLoss, list: ChannelList) {
   if (list.status !== "ready") return false;
   if (!list.channels.some(({ id }) => id === loss.channelId)) return true;
   return list.rosterAsOf !== undefined && list.rosterAsOf !== loss.rosterAsOf;
@@ -506,6 +514,6 @@ function restore(session: RelaySession, scope: string): State {
     preparingDm: undefined,
     lifecycleDialog: undefined,
     queuedUndos: [],
-    unconfirmedLosses: [],
+    ownLosses: [],
   };
 }

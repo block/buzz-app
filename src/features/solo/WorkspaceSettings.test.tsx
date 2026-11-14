@@ -2,7 +2,7 @@
 import { createChannelDetails } from "../relay/channel-details";
 import { SOLO_LABEL } from "./labels";
 import { PublishRejected } from "../relay/outbox";
-import { readView } from "../../shared/view-state";
+import { readView, writeView } from "../../shared/view-state";
 import { createChannelKit } from "../channel-templates/capability";
 import {
   LIVE_CANVAS_BYTES,
@@ -888,17 +888,110 @@ function project(entries: unknown[] = []) {
     },
     soloPreferences: { sectionRenameWritable: true, renameSection: rename },
   } as unknown as RelaySession;
-  const view = () => (
+  const view = (name = "Work") => (
     <WorkspaceSettings
       session={session}
       scope="test"
-      target={{ kind: "project", id: "work", name: "Work" }}
+      target={{ kind: "project", id: "work", name }}
       close={close}
     />
   );
   const mounted = render(view());
   return { close, rename, save, view, mounted };
 }
+
+it.each([false, true])(
+  "retries failed defaults with the current name (name already saved: %s)",
+  async (renamed) => {
+    const h = project();
+    fireEvent.change(await instructions(), {
+      target: { value: "Keep these instructions" },
+    });
+    if (renamed)
+      fireEvent.change(
+        screen.getByRole("textbox", { name: "Workspace name" }),
+        {
+          target: { value: "Projects" },
+        },
+      );
+    h.save.mockRejectedValueOnce(new Error("defaults offline"));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "defaults offline",
+    );
+    h.mounted.unmount();
+    const currentName = renamed ? "Projects" : "Renamed elsewhere";
+    render(h.view(currentName));
+    expect(await instructions()).toHaveValue("Keep these instructions");
+    expect(screen.getByRole("textbox", { name: "Workspace name" })).toHaveValue(
+      currentName,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+    expect(h.rename.mock.calls).toEqual(renamed ? [["work", "Projects"]] : []);
+    expect(h.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        name: `${currentName} chats`,
+        canvas: "Keep these instructions",
+      }),
+      undefined,
+    );
+  },
+);
+
+it.each([
+  { baseline: true, nameSaved: false },
+  { baseline: false, nameSaved: false },
+  { baseline: true, nameSaved: true },
+])(
+  "keeps a conflicting name draft for review before saving ($baseline baseline, $nameSaved confirmed)",
+  async ({ baseline, nameSaved }) => {
+    const h = project();
+    fireEvent.change(await instructions(), {
+      target: { value: "Keep the conflicting draft" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Workspace name" }), {
+      target: { value: "Projects" },
+    });
+    if (nameSaved) h.save.mockRejectedValueOnce(new Error("defaults offline"));
+    else h.rename.mockRejectedValueOnce(new Error("rename offline"));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      nameSaved ? "defaults offline" : "rename offline",
+    );
+    h.mounted.unmount();
+    if (!baseline) {
+      const key = "solo:workspace-draft:project:work";
+      const draft = readView<Record<string, unknown>>("test", key, {});
+      delete draft.nameBase;
+      writeView("test", key, draft);
+    }
+    render(h.view("Renamed elsewhere"));
+    expect(await instructions()).toHaveValue("Keep the conflicting draft");
+    expect(screen.getByRole("textbox", { name: "Workspace name" })).toHaveValue(
+      "Projects",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(/name.*review/i);
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(h.rename).toHaveBeenCalledTimes(1);
+    expect(h.save).toHaveBeenCalledTimes(nameSaved ? 1 : 0);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Review saved settings" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Discard draft and reload saved settings",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("textbox", { name: "Workspace name" }),
+      ).toHaveValue("Renamed elsewhere"),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+  },
+);
 
 it("validates workspace names and retains failed edits across remount and partial-save recovery", async () => {
   const user = userEvent.setup();

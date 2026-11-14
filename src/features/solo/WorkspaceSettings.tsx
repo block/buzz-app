@@ -60,6 +60,7 @@ export function WorkspaceSettings({
   const [reloadConfirmed, setReloadConfirmed] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [projectName, setProjectName] = useState(target.name);
+  const [nameConflict, setNameConflict] = useState(false);
   const confirmedName = useRef(target.name);
   const keptName = useRef(target.name);
   const nextName = projectName.trim();
@@ -140,6 +141,7 @@ export function WorkspaceSettings({
       if (target.kind === "project") {
         setProjectName(confirmedName.current);
         keptName.current = confirmedName.current;
+        setNameConflict(false);
       }
       const saved = replace ? null : readView<unknown>(scope, key, null);
       let adopted = content;
@@ -160,8 +162,25 @@ export function WorkspaceSettings({
           "name" in saved &&
           typeof saved.name === "string"
         ) {
-          setProjectName(saved.name);
-          keptName.current = saved.name;
+          const nameBase =
+            "nameBase" in saved && typeof saved.nameBase === "string"
+              ? saved.nameBase
+              : undefined;
+          // An unchanged draft name must not undo a rename made elsewhere.
+          if (saved.name.trim() !== nameBase) {
+            setProjectName(saved.name);
+            keptName.current = saved.name;
+            if (
+              saved.name.trim() !== confirmedName.current &&
+              nameBase !== confirmedName.current
+            ) {
+              setNameConflict(true);
+              setError(
+                "The saved workspace name needs review. Your draft is kept; copy it before reloading saved settings.",
+              );
+              setCanvasError(true);
+            }
+          }
         }
         adopted = adopt(saved.canvas);
         setBase(saved.base ?? undefined);
@@ -202,7 +221,7 @@ export function WorkspaceSettings({
     };
   }, []);
   const save = async () => {
-    if (!active() || inFlight.current) return;
+    if (!active() || inFlight.current || nameConflict) return;
     inFlight.current = true;
     setBusy(true);
     setError("");
@@ -258,7 +277,9 @@ export function WorkspaceSettings({
             canvas,
             base: base ?? null,
             lineup,
-            ...(target.kind === "project" ? { name: projectName } : {}),
+            ...(target.kind === "project"
+              ? { name: projectName, nameBase: confirmedName.current }
+              : {}),
           })
         )
           throw new CanvasSettingsError(
@@ -359,6 +380,7 @@ export function WorkspaceSettings({
         !!signal?.aborted ||
         (!loaded && !lifetime.eligible) ||
         !!nameError ||
+        nameConflict ||
         (nameChanged && !session.soloPreferences?.sectionRenameWritable) ||
         (lifetime.available &&
           !lifetime.checkOnly &&

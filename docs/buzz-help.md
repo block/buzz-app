@@ -481,6 +481,9 @@ and are asked to sign in again in Buzz.
   Plugins can also group tasks under joined channels. On supported hosts, each
   channel group keeps the native channel actions and details. New task appears
   only when the channel permits starting a chat.
+  To rename one, open **Workspace settings** from its heading’s **…** or right-click
+  menu, edit **Workspace name**, and choose **Save changes**. Chats, tasks and
+  starting settings stay in place.
   Plugins can show ordinary chats in a plain list without workspace headings.
   Their saved workspace assignments stay in place.
   With Nexus enabled, each workspace also contains its tasks and can have a Lead

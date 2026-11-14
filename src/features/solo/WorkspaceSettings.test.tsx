@@ -165,7 +165,7 @@ it("saves section defaults as an existing relay template without writing section
   fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "Work carefully" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(close).toHaveBeenCalled());
   expect(save).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -230,7 +230,7 @@ it("recreates deleted section defaults using the tombstone revision", async () =
       target: { value: "Old instructions" },
     },
   );
-  fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
   first.unmount();
   const saved = kit.capability.snapshot().entries[0];
@@ -245,7 +245,7 @@ it("recreates deleted section defaults using the tombstone revision", async () =
   fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "New instructions" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(close).toHaveBeenCalledTimes(2));
   const restored = kit.capability.snapshot().entries[0];
   expect(restored?.record.deleted).toBe(false);
@@ -877,38 +877,141 @@ it("closes untouched settings at once, and Cancel discards edits without asking"
 
 function project(entries: unknown[] = []) {
   const close = vi.fn();
+  const rename = vi.fn(async () => {});
+  const save = vi.fn(async () => {});
   const session = {
     scope: "https://relay.example.test:viewer",
     channelKit: {
       refresh: async () => {},
       snapshot: () => ({ status: "ready", entries }),
-      save: vi.fn(),
+      save,
     },
+    soloPreferences: { sectionRenameWritable: true, renameSection: rename },
   } as unknown as RelaySession;
-  render(
+  const view = () => (
     <WorkspaceSettings
       session={session}
       scope="test"
       target={{ kind: "project", id: "work", name: "Work" }}
       close={close}
-    />,
+    />
   );
-  return { close };
+  const mounted = render(view());
+  return { close, rename, save, view, mounted };
 }
 
-it("asks before closing Workspace settings with edited instructions", async () => {
+it("validates workspace names and retains failed edits across remount and partial-save recovery", async () => {
   const user = userEvent.setup();
   const h = project();
+  await instructions();
+  const name = screen.getByRole("textbox", { name: "Workspace name" });
+  expect(name).toHaveValue("Work");
+  expect(name).toHaveAttribute("maxlength", "120");
+  fireEvent.change(name, { target: { value: " " } });
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  fireEvent.change(name, { target: { value: " Projects " } });
+  await user.keyboard("{Escape}");
+  await user.click(
+    within(await prompt()).getByRole("button", { name: "Keep editing" }),
+  );
+  expect(h.close).not.toHaveBeenCalled();
   fireEvent.change(await instructions(), {
-    target: { value: "Work carefully" },
+    target: { value: "Keep these instructions" },
   });
+  h.rename.mockRejectedValueOnce(new Error("rename offline"));
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("rename offline");
+  expect(h.save).not.toHaveBeenCalled();
+  h.mounted.unmount();
+  render(h.view());
+  await instructions();
+  expect(screen.getByRole("textbox", { name: "Workspace name" })).toHaveValue(
+    " Projects ",
+  );
+  expect(await instructions()).toHaveValue("Keep these instructions");
+  h.save.mockRejectedValueOnce(new Error("defaults offline"));
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Workspace name saved. defaults offline",
+  );
+  const restoredName = screen.getByRole("textbox", { name: "Workspace name" });
+  fireEvent.change(restoredName, { target: { value: "Another name" } });
+  h.rename.mockRejectedValueOnce(new Error("new name offline"));
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent(/^new name offline$/),
+  );
+  fireEvent.change(restoredName, { target: { value: "Projects" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.rename).toHaveBeenCalledTimes(3);
+  expect(h.rename.mock.calls).toEqual([
+    ["work", "Projects"],
+    ["work", "Projects"],
+    ["work", "Another name"],
+  ]);
+  expect(h.save).toHaveBeenCalledTimes(2);
+  expect(h.save).toHaveBeenLastCalledWith(
+    expect.objectContaining({ name: "Projects chats" }),
+    undefined,
+  );
+});
+
+it("closes untouched legacy worktree settings and reverted edits without a discard prompt", async () => {
+  const user = userEvent.setup();
+  const canvas = [
+    '<!-- buzz-session-workspace:v1 {"folders":["/repo"],"worktree":{"location":"~/trees","baseBranch":"main"}} -->',
+    "## Workspace instructions",
+    "",
+    "- Use `/repo` for review only. Do not make changes directly in it.",
+    "- Before starting new work, fetch the latest `main` branch from origin.",
+    "- For each repository that needs changes, create a new worktree under `~/trees` from `origin/main`.",
+    "- Make all changes in that new worktree.",
+    "<!-- /buzz-session-workspace -->",
+    "",
+    "Instructions",
+  ].join("\n");
+  const h = project([
+    {
+      eventId: "saved",
+      createdAt: 1,
+      record: {
+        version: 1,
+        community: "https://relay.example.test",
+        deleted: false,
+        value: {
+          type: "template",
+          id: await projectTemplateId("work"),
+          name: "Work chats",
+          description: "",
+          agents: [],
+          teamIds: [],
+          canvas,
+        },
+      },
+    },
+  ]);
+  const field = await instructions();
+  expect(field).toHaveValue("Instructions");
+  await user.keyboard("{Escape}");
+  expect(h.close).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  fireEvent.change(field, { target: { value: "An edit" } });
   await user.click(
     within(
       screen.getByRole("dialog", { name: "Workspace settings" }),
     ).getByRole("button", { name: "Close" }),
   );
   expect(await prompt()).toBeVisible();
-  expect(h.close).not.toHaveBeenCalled();
+  expect(h.close).toHaveBeenCalledOnce();
+  await user.click(
+    within(await prompt()).getByRole("button", { name: "Keep editing" }),
+  );
+  fireEvent.change(field, { target: { value: "Instructions" } });
+  await user.keyboard("{Escape}");
+  expect(h.close).toHaveBeenCalledTimes(2);
+  expect(h.save).not.toHaveBeenCalled();
+  expect(h.rename).not.toHaveBeenCalled();
 });
 
 it("asks before closing Workspace settings with a different agent lineup", async () => {

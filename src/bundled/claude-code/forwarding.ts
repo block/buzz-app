@@ -33,7 +33,14 @@ export const managedRefusal = (name: string) =>
   `Claude's managed settings set ${name}, which would send this agent's requests around the agent gateway, so the turn didn't run.`;
 
 const NO_PROXY = ["NO_PROXY", "no_proxy"] as const;
-const PROXIES = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
+const PROXIES = [
+  "HTTPS_PROXY",
+  "https_proxy",
+  "HTTP_PROXY",
+  "http_proxy",
+  "ALL_PROXY",
+  "all_proxy",
+];
 /** What a no-proxy list names that reaches every generation; anything else,
  * a port or another range included, may not. */
 const BYPASSES = new Set(["*", "127.0.0.1", "127.0.0.1/32", "127.0.0.0/8"]);

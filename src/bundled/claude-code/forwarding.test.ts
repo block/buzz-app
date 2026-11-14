@@ -250,12 +250,13 @@ describe("managedRouting", () => {
     expect(managedRouting([list("corp.example")], false)).toBeUndefined();
     // The app's environment has a proxy, or managed settings set one.
     expect(managedRouting([list("corp.example")], true)).toBe("NO_PROXY");
-    expect(
-      managedRouting(
-        [settings({ https_proxy: "http://p:8080", no_proxy: "" })],
-        false,
-      ),
-    ).toBe("no_proxy");
+    for (const proxy of ["https_proxy", "HTTP_PROXY", "ALL_PROXY", "all_proxy"])
+      expect(
+        managedRouting(
+          [settings({ [proxy]: "http://p:8080", no_proxy: "" })],
+          false,
+        ),
+      ).toBe("no_proxy");
     for (const reaches of [
       "*",
       "corp.example, 127.0.0.1",

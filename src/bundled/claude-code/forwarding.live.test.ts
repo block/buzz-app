@@ -159,28 +159,29 @@ it.skipIf(!binary)(
   60_000,
 );
 
-/** The proxy variables each case names, all at a proxy that takes nothing. */
-const PROXIES = [
-  ["HTTP(S)_PROXY", ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"]],
-  ["ALL_PROXY", ["ALL_PROXY", "all_proxy"]],
-] as const;
-
-for (const [label, names] of PROXIES)
-  it.skipIf(!binary)(
-    `keeps a forwarded turn off a proxy the app's environment names in ${label}`,
-    async () => {
-      const home = await mkdtemp(join(tmpdir(), "buzz-claude-proxy-"));
-      const generation = await model();
-      // A proxy that takes nothing: a request sent to it never arrives.
-      const proxy = await model();
-      proxy.server.close();
-      const dead = proxy.url;
-      try {
+it.skipIf(!binary)(
+  "keeps a forwarded turn off a proxy the app's environment names",
+  async () => {
+    const home = await mkdtemp(join(tmpdir(), "buzz-claude-proxy-"));
+    const generation = await model();
+    // A proxy that takes nothing: a request sent to it never arrives.
+    const proxy = await model();
+    proxy.server.close();
+    const dead = proxy.url;
+    try {
+      // ALL_PROXY alone takes Claude's requests too.
+      for (const proxies of [
+        {
+          HTTPS_PROXY: dead,
+          HTTP_PROXY: dead,
+          https_proxy: dead,
+          http_proxy: dead,
+        },
+        { ALL_PROXY: dead, all_proxy: dead },
+      ]) {
+        generation.paths.length = 0;
         const claude = await ClaudeProcess.start(
-          nativeSpawn(home, {
-            ...Object.fromEntries(names.map((name) => [name, dead])),
-            NO_PROXY: "corp.example",
-          }),
+          nativeSpawn(home, { ...proxies, NO_PROXY: "corp.example" }),
           {
             cwd: home,
             systemPrompt: "Reply briefly.",
@@ -199,10 +200,11 @@ for (const [label, names] of PROXIES)
         expect(
           generation.paths.some((path) => path.startsWith("/v1/messages")),
         ).toBe(true);
-      } finally {
-        generation.server.close();
-        await rm(home, { recursive: true, force: true });
       }
-    },
-    60_000,
-  );
+    } finally {
+      generation.server.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+  60_000,
+);

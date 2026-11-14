@@ -192,7 +192,7 @@ no-proxy)
     printf '%s' "$value" | base64 | tr -d '\n'
     echo
   done
-  if [ -n "${HTTPS_PROXY-}${https_proxy-}${HTTP_PROXY-}${http_proxy-}" ]; then
+  if [ -n "${HTTPS_PROXY-}${https_proxy-}${HTTP_PROXY-}${http_proxy-}${ALL_PROXY-}${all_proxy-}" ]; then
     echo proxied
   else
     echo direct

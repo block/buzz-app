@@ -1374,7 +1374,7 @@ it.each(["New"])(
   },
 );
 
-it("keeps an ordinary chat editor and pending save through task-source recovery", async () => {
+it("keeps an ordinary chat editor and pending save through layout changes and task-source recovery", async () => {
   const h = createSoloRegionFixture(viewer);
   const preferences = createSidebarPreferencesStore({
     available: true,
@@ -1426,11 +1426,13 @@ it("keeps an ordinary chat editor and pending save through task-source recovery"
   h.roster([...h.session.channels.list().channels]);
   const source = await h.register({
     composeWorkspaces: true,
-    component: ({ ui }) => {
+    component: ({ ui, snapshot }) => {
       const Workspace = ui.Workspace;
       const Chats = ui.Chats;
-      if (!Workspace || !Chats)
+      const ChatList = ui.ChatList;
+      if (!Workspace || !Chats || !ChatList)
         throw new Error("Missing workspace composition");
+      if (snapshot.model === "list") return <ChatList />;
       return (
         <>
           <Workspace id="work">{null}</Workspace>
@@ -1451,24 +1453,40 @@ it("keeps an ordinary chat editor and pending save through task-source recovery"
     </ToastProvider>,
   );
   const user = userEvent.setup();
-  const change = (status: "loading" | "ready", revision: number) =>
-    act(() => source.update({ status, binding: source.binding(), revision }));
+  const change = (
+    status: "loading" | "ready",
+    revision: number,
+    model?: string,
+  ) =>
+    act(() =>
+      source.update({
+        status,
+        binding: source.binding(),
+        revision,
+        ...(model ? { model } : {}),
+      }),
+    );
   try {
     await user.dblClick(await screen.findByRole("button", { name: /^Chat$/ }));
     const input = await screen.findByRole("textbox", { name: "Chat name" });
     await waitFor(() => expect(input).toHaveFocus());
     await user.keyboard("Keep this name");
-    change("loading", 2);
+    change("ready", 2, "list");
+    expect(
+      screen.queryByRole("button", { name: "Work", exact: true }),
+    ).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Chat name" })).toBe(input);
+    change("loading", 3);
     expect(screen.getByRole("textbox", { name: "Chat name" })).toBe(input);
     expect(input).toHaveValue("Keep this name");
-    change("ready", 3);
+    change("ready", 4, "list");
     expect(screen.getByRole("textbox", { name: "Chat name" })).toBe(input);
     await user.keyboard("{Enter}");
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
-    change("loading", 4);
+    change("loading", 5);
     expect(savingSignal?.aborted).toBe(false);
     expect(screen.getByRole("textbox", { name: "Chat name" })).toBe(input);
-    change("ready", 5);
+    change("ready", 6, "list");
     expect(savingSignal?.aborted).toBe(false);
     await act(async () => {
       release();

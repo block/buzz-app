@@ -211,9 +211,10 @@ export function SoloWorkspaces({
       )?.id ?? "";
     // Resolve against current visibility when focus is restored, including when
     // collapse was requested after the asynchronous save began.
-    const target = collapsed.includes(project)
-      ? `project-${project}`
-      : rowFocus;
+    const target =
+      collapsed.includes(project) && !rowHosts.current.get(project)?.unframed
+        ? `project-${project}`
+        : rowFocus;
     document
       .querySelector<HTMLElement>(
         `[data-solo-menu-id="${target}"]:not([inert] *) button`,
@@ -412,16 +413,18 @@ export function SoloWorkspaces({
   const soloNeighborsRef = handoff?.soloNeighbors;
   useLayoutEffect(() => {
     if (!soloNeighborsRef) return;
-    const shown = visible.map((project) => ({
-      rows: project.rows,
-      shown: collapsed.includes(project.id)
-        ? []
-        : project.listed.map((item) => item.id),
-    }));
     const neighbors = (id: string) =>
-      soloNeighbors(shown, id).filter(
-        (neighbor) => !pluginHiddenRows.current.has(neighbor),
-      );
+      soloNeighbors(
+        visible.map((project) => ({
+          rows: project.rows,
+          shown:
+            collapsed.includes(project.id) &&
+            !rowHosts.current.get(project.id)?.unframed
+              ? []
+              : project.listed.map((item) => item.id),
+        })),
+        id,
+      ).filter((neighbor) => !pluginHiddenRows.current.has(neighbor));
     soloNeighborsRef.current = neighbors;
     return () => {
       if (soloNeighborsRef.current === neighbors)
@@ -737,6 +740,9 @@ export function SoloWorkspaces({
       header,
       panel,
       ordinary,
+      chatList: (
+        <WorkspaceRows key={project.id} host={rowsHost} unframed={project.id} />
+      ),
       rows: compose ? createPortal(rows, rowsHost.element, project.id) : null,
     };
   });
@@ -790,6 +796,7 @@ export function SoloWorkspaces({
         {compose
           ? compose({
               chats: entries.find((entry) => !entry.id)?.ordinary,
+              chatList: entries.map((entry) => entry.chatList),
               workspaces: entries,
               ordinary: entries.map((entry) => entry.ordinary),
             })
@@ -914,22 +921,31 @@ export function SoloWorkspaces({
 type WorkspaceRowsHost = {
   element: HTMLDivElement;
   focus?: HTMLElement | undefined;
+  unframed?: boolean | undefined;
 };
-function WorkspaceRows({ host }: { host: WorkspaceRowsHost }) {
+function WorkspaceRows({
+  host,
+  unframed,
+}: {
+  host: WorkspaceRowsHost;
+  unframed?: string;
+}) {
   const slot = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const parent = slot.current;
+    host.unframed = unframed !== undefined;
     parent?.appendChild(host.element);
     if (host.focus?.isConnected && document.activeElement === document.body)
       host.focus.focus({ preventScroll: true });
     host.focus = undefined;
     return () => {
+      host.unframed = false;
       if (host.element.contains(document.activeElement))
         host.focus = document.activeElement as HTMLElement;
       if (host.element.parentElement === parent) host.element.remove();
     };
-  }, [host]);
-  return <div ref={slot} />;
+  }, [host, unframed]);
+  return <div ref={slot} data-solo-project={unframed} />;
 }
 
 const DROP = "project:";

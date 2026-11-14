@@ -2,32 +2,43 @@ import { test as appTest } from "./fixture.mjs";
 import { test, expect } from "./playwright-test.mjs";
 import {
   closeSettings,
-  openPage,
   openSettings,
+  rail,
   selectSettingsSection,
-  settleShellToggle,
 } from "./navigation.mjs";
 import { setPluginEnabled } from "./plugin-settings.mjs";
+import { showRail } from "./rail-helpers.mjs";
 
 appTest.use({ pluginFixtures: true });
 
+// A plugin's sidebar section is a card in the rail beside Team and Solo.
+const workspace = (page) =>
+  rail(page)
+    .locator("[data-rail-section]")
+    .filter({
+      has: page.getByRole("button", { name: "Workspace", exact: true }),
+    });
+const grabber = (page) =>
+  rail(page).getByRole("button", { name: "Move Workspace section" });
+
+// A pointer drag from the section's grabber, past the 6px activation distance.
+async function startDrag(page) {
+  const bounds = await grabber(page).boundingBox();
+  if (!bounds) throw new Error("Workspace grabber is unavailable");
+  const x = bounds.x + bounds.width / 2;
+  const y = bounds.y + bounds.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 12, y + 12, { steps: 3 });
+}
+
 test.describe("plugin sidebar contributions", () => {
   appTest(
-    "stay inside the existing Solo and Team rail",
+    "stay inside the rail beside Solo and Team",
     async ({ page, app }, testInfo) => {
-      const title = "Sidebar section fixture";
-      const section = page.locator(
-        '[data-sidebar-section="plugin:fixture.sidebar-sections/work"]',
-      );
-      const toggle = page.locator("[data-shell-sidebar-toggle]");
-      const openSidebar = async () => {
-        await settleShellToggle(page);
-        if ((await toggle.getAttribute("aria-label"))?.startsWith("Show"))
-          await toggle.click();
-        await expect(toggle).toHaveAttribute("aria-expanded", "true");
-      };
       await page.goto(app.origin);
-      await openPage(page, "Messages");
+      const title = "Sidebar section fixture";
+      const section = workspace(page);
 
       for (const [width, mode, fontSize] of [
         [1440, "light", "16px"],
@@ -43,16 +54,16 @@ test.describe("plugin sidebar contributions", () => {
           },
           { mode, fontSize },
         );
-        await openSidebar();
+        await showRail(page);
         await expect(
-          page.getByRole("navigation", { name: "Solo conversations" }),
+          rail(page).locator('[data-rail-section="solo"]'),
         ).toBeVisible();
 
         await openSettings(page);
         await selectSettingsSection(page, "Manage plugins");
         await setPluginEnabled(page, title, false);
         await closeSettings(page);
-        await openSidebar();
+        await showRail(page);
         await expect(section).toHaveCount(0);
         await page.screenshot({
           path: testInfo.outputPath(
@@ -64,15 +75,12 @@ test.describe("plugin sidebar contributions", () => {
         await selectSettingsSection(page, "Manage plugins");
         await setPluginEnabled(page, title, true);
         await closeSettings(page);
-        await openSidebar();
+        await showRail(page);
         await expect(section).toBeVisible();
-        await expect(
-          section.getByRole("button", { name: "Queue" }),
-        ).toBeVisible();
+        const queue = section.getByRole("button", { name: "Queue" });
+        await expect(queue).toBeVisible();
         if (width === 390) {
-          const label = section
-            .getByRole("button", { name: "Queue" })
-            .locator(".navigation-item-label");
+          const label = queue.locator(".navigation-item-label");
           await expect
             .poll(() =>
               label.evaluate(
@@ -81,54 +89,25 @@ test.describe("plugin sidebar contributions", () => {
             )
             .toBe(true);
         }
-        const sectionHeader = section.locator("summary");
-        await sectionHeader.focus();
-        await page.keyboard.press("Space");
         await expect(
-          section.getByRole("button", { name: "Queue" }),
-        ).toBeHidden();
-        await page.keyboard.press("Space");
-        await expect(
-          section.getByRole("button", { name: "Queue" }),
+          rail(page).locator('[data-rail-section="solo"]'),
         ).toBeVisible();
-        await sectionHeader.evaluate((element) => element.blur());
-        await sectionHeader.click();
         await expect(
-          section.getByRole("button", { name: "Queue" }),
-        ).toBeHidden();
-        await sectionHeader.click();
-        await expect(
-          section.getByRole("button", { name: "Queue" }),
-        ).toBeVisible();
-        const sidebar = page.getByRole("complementary", {
-          name: "Sidebar",
-          exact: true,
-        });
-        await expect(
-          sidebar.getByRole("navigation", { name: "Solo conversations" }),
-        ).toBeVisible();
-        await expect(sidebar.getByRole("tab", { name: "Team" })).toBeVisible();
-        await expect(
-          page.locator('button[data-channel-id="alpha"]'),
+          rail(page).locator('[data-rail-team-view="channels"]'),
         ).toBeVisible();
 
-        const geometry = await sidebar.evaluate((panel) => {
-          const shell = panel.closest(".shell-sidebar");
-          const group = panel.querySelector(
-            '[data-sidebar-section="plugin:fixture.sidebar-sections/work"]',
+        const geometry = await rail(page).evaluate((nav) => {
+          const group = [...nav.querySelectorAll("[data-rail-section]")].find(
+            (card) => card.textContent.includes("Workspace"),
           );
-          if (
-            !(shell instanceof HTMLElement) ||
-            !(group instanceof HTMLElement)
-          )
-            throw new Error("Sidebar contribution geometry is unavailable");
-          const shellBox = shell.getBoundingClientRect();
+          if (!(group instanceof HTMLElement))
+            throw new Error("Rail contribution geometry is unavailable");
+          const navBox = nav.getBoundingClientRect();
           const groupBox = group.getBoundingClientRect();
           return {
-            noHorizontalOverflow: shell.scrollWidth <= shell.clientWidth,
+            noHorizontalOverflow: nav.scrollWidth <= nav.clientWidth,
             contained:
-              groupBox.left >= shellBox.left &&
-              groupBox.right <= shellBox.right,
+              groupBox.left >= navBox.left && groupBox.right <= navBox.right,
           };
         });
         expect(geometry).toEqual({
@@ -148,89 +127,53 @@ test.describe("plugin sidebar contributions", () => {
     "shows a drag preview for contributed sections",
     async ({ page, app }) => {
       await page.goto(app.origin);
-      await openPage(page, "Messages");
-
-      const section = page.locator(
-        '[data-sidebar-section="plugin:fixture.sidebar-sections/work"]',
-      );
-      const header = section.locator("summary");
+      await showRail(page);
+      const section = workspace(page);
       await expect(section).toBeVisible();
-      const bounds = await header.boundingBox();
-      if (!bounds)
-        throw new Error("Sidebar contribution header is unavailable");
+      await startDrag(page);
 
-      const x = bounds.x + bounds.width / 2;
-      const y = bounds.y + bounds.height / 2;
-      await page.mouse.move(x, y);
-      await page.mouse.down();
-      await page.mouse.move(x + 12, y + 12, { steps: 3 });
-
-      await expect(section).toHaveAttribute("data-section-dragging");
+      await expect(section).toHaveAttribute("data-dragging", "true");
       await expect(page.getByText("Workspace", { exact: true })).toHaveCount(2);
 
       await page.keyboard.press("Escape");
       await page.mouse.up();
-      await expect(page.locator("[data-section-dragging]")).toHaveCount(0);
+      await expect(rail(page).locator("[data-dragging]")).toHaveCount(0);
     },
   );
 
   appTest.describe("failed section icon recovery", () => {
     appTest.use({ expectedSidebarIconFailure: true });
 
+    // The section's fallback replaces its whole card, so it has no grabber.
     appTest(
-      "contains a failed contributed icon while dragging its fallback section",
+      "contains a failed contributed icon to its section's fallback",
       async ({ page, app }) => {
         await page.addInitScript(() => {
           window.fixtureSidebarWorkIconThrows = true;
         });
         await page.goto(app.origin);
-        await openPage(page, "Messages");
+        await showRail(page);
 
-        const sidebar = page.getByRole("complementary", {
-          name: "Sidebar",
-          exact: true,
-        });
-        const section = page.locator(
-          '[data-sidebar-section="plugin:fixture.sidebar-sections/work"]',
-        );
-        await expect(section).toContainText("Workspace is unavailable.");
         await expect(
-          sidebar.getByRole("navigation", { name: "Solo conversations" }),
+          rail(page)
+            .getByRole("alert")
+            .filter({ hasText: "Workspace is unavailable." }),
         ).toBeVisible();
-
-        const failureCountBeforeDrag = app.report.consoleErrors.filter(
-          (message) => message.includes("Fixture sidebar icon failure"),
-        ).length;
-        const header = section.locator("summary");
-        const bounds = await header.boundingBox();
-        if (!bounds)
-          throw new Error("Failed contribution header is unavailable");
-
-        const x = bounds.x + bounds.width / 2;
-        const y = bounds.y + bounds.height / 2;
-        await page.mouse.move(x, y);
-        await page.mouse.down();
-        await page.mouse.move(x + 12, y + 12, { steps: 3 });
-
-        await expect(section).toHaveAttribute("data-section-dragging");
+        await expect(grabber(page)).toHaveCount(0);
         await expect(
-          sidebar.getByRole("navigation", { name: "Solo conversations" }),
+          rail(page).locator('[data-rail-section="solo"]'),
         ).toBeVisible();
         await expect(
-          sidebar.getByText("Conversations couldn’t open."),
+          rail(page).locator('[data-rail-team-view="channels"]'),
+        ).toBeVisible();
+        await expect(
+          page.getByText("Conversations couldn’t open."),
         ).toHaveCount(0);
-        await expect
-          .poll(
-            () =>
-              app.report.consoleErrors.filter((message) =>
-                message.includes("Fixture sidebar icon failure"),
-              ).length,
-          )
-          .toBeGreaterThan(failureCountBeforeDrag);
-
-        await page.keyboard.press("Escape");
-        await page.mouse.up();
-        await expect(page.locator("[data-section-dragging]")).toHaveCount(0);
+        expect(
+          app.report.consoleErrors.filter((message) =>
+            message.includes("Fixture sidebar icon failure"),
+          ).length,
+        ).toBeGreaterThan(0);
       },
     );
   });

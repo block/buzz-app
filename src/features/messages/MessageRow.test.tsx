@@ -1702,79 +1702,66 @@ it.each([
   },
 );
 
-it.each([true, false])(
-  "offers thread starts only where the conversation starts threads (startsThreads=%s)",
-  (startsThreads) => {
-    const agent = "a".repeat(64);
-    const prompt = { ...row, id: "prompt", replyCount: 0 };
-    const channels = { channels: [], status: "ready" };
-    const library = { identities: [{ pubkey: agent, name: "Brain" }] };
-    // Local work records a top-level prompt as its thread root.
-    const typing: readonly TypingEntry[] = [
-      { channelId: row.channelId, threadRootId: "prompt", pubkey: agent },
-    ];
-    const session = {
-      channels: { list: () => channels, subscribeList: () => () => {} },
-      messages: {},
-      agentChoices: { snapshot: () => library, subscribe: () => () => {} },
-      typing: { snapshot: () => typing, subscribe: () => () => {} },
-    } as unknown as RelaySession;
-    const thread = vi.fn();
-    const view = renderMessage({
-      row: prompt,
-      viewer: row.authorId,
-      session,
-      onOpenThread: thread,
-      startsThreads,
-    });
-    try {
-      expect(!!screen.queryByRole("button", { name: "Reply" })).toBe(
-        startsThreads,
-      );
-      expect(
-        !!screen.queryByRole("button", { name: /^View thread.*working$/ }),
-      ).toBe(startsThreads);
-      // An existing thread still opens.
-      view.rerender(
-        <MessageRow
-          row={row}
-          viewer={row.authorId}
-          profile={undefined}
-          media={() => undefined}
-          onOpenLink={() => false}
-          day={false}
-          retry={undefined}
-          onOpenThread={thread}
-          startsThreads={startsThreads}
-        />,
-      );
-      fireEvent.click(
-        screen.getByRole("button", { name: /^View thread: 23 replies/ }),
-      );
-      expect(thread).toHaveBeenCalledWith("root", "root");
-      expect(!!screen.queryByRole("button", { name: "Reply" })).toBe(
-        startsThreads,
-      );
-    } finally {
-      view.unmount();
-    }
-  },
-);
+it("offers a thread start on a top-level message and opens an existing thread", () => {
+  const agent = "a".repeat(64);
+  const prompt = { ...row, id: "prompt", replyCount: 0 };
+  const channels = { channels: [], status: "ready" };
+  const library = { identities: [{ pubkey: agent, name: "Brain" }] };
+  // Local work records a top-level prompt as its thread root.
+  const typing: readonly TypingEntry[] = [
+    { channelId: row.channelId, threadRootId: "prompt", pubkey: agent },
+  ];
+  const session = {
+    channels: { list: () => channels, subscribeList: () => () => {} },
+    messages: {},
+    agentChoices: { snapshot: () => library, subscribe: () => () => {} },
+    typing: { snapshot: () => typing, subscribe: () => () => {} },
+  } as unknown as RelaySession;
+  const thread = vi.fn();
+  const view = renderMessage({
+    row: prompt,
+    viewer: row.authorId,
+    session,
+    onOpenThread: thread,
+  });
+  try {
+    expect(screen.getByRole("button", { name: "Reply" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^View thread.*working$/ }),
+    ).toBeInTheDocument();
+    // An existing thread still opens.
+    view.rerender(
+      <MessageRow
+        row={row}
+        viewer={row.authorId}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        onOpenThread={thread}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /^View thread: 23 replies/ }),
+    );
+    expect(thread).toHaveBeenCalledWith("root", "root");
+    expect(screen.getByRole("button", { name: "Reply" })).toBeInTheDocument();
+  } finally {
+    view.unmount();
+  }
+});
 
 it.each(
-  [
-    { startsThreads: true, replyCount: 0, thread: true },
-    { startsThreads: false, replyCount: 0, thread: false },
-    { startsThreads: false, replyCount: 23, thread: true },
-  ].flatMap((scenario) =>
+  [0, 23].flatMap((replyCount) =>
     (["message", "response"] as const).map((placement) => ({
-      ...scenario,
+      replyCount,
       placement,
     })),
   ),
 )(
-  "gives message accessories a thread only where the row has one to open (%o)",
-  ({ startsThreads, replyCount, thread, placement }) => {
+  "gives message accessories the row's thread to open or start (%o)",
+  ({ replyCount, placement }) => {
     const subscribe = () => () => {};
     const channels = { channels: [], status: "ready" };
     const noTyping: never[] = [];
@@ -1823,7 +1810,6 @@ it.each(
       scope: "test",
       viewer: row.authorId,
       onOpenThread: () => {},
-      startsThreads,
       extensions: {
         inline: empty,
         links: empty,
@@ -1833,16 +1819,13 @@ it.each(
       },
     });
     try {
-      expect(seen).toHaveBeenLastCalledWith(
-        placement === "message" && thread,
-        thread,
-      );
+      expect(seen).toHaveBeenLastCalledWith(placement === "message", true);
       expect(
         !!screen.getByText("Brain working").closest("[data-viewer-message]"),
       ).toBe(placement === "message");
       expect(screen.getByText("Brain working")).toBeInTheDocument();
       expect(!!screen.queryByRole("button", { name: /^View thread/ })).toBe(
-        placement === "message" ? thread : replyCount > 0,
+        placement === "message" || replyCount > 0,
       );
     } finally {
       view.unmount();

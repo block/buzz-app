@@ -109,7 +109,6 @@ export function RailConversationList({
           title={title}
           view={view}
           onChange={setView}
-          layout="collection"
           agentViews={agentViews}
         />
       )}
@@ -120,7 +119,6 @@ export function RailConversationList({
           scope={scope}
           target={target}
           view={view}
-          layout="feed"
           within={within}
           home={
             section === "messages"

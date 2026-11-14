@@ -27,7 +27,7 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
     { viewer: app.viewer, relay: fixtureRelayUrl },
   );
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await page
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Alpha", exact: true })

@@ -9,7 +9,7 @@ test("Personal space's Choose a community fits its pane and wheel-scrolls into v
 }) => {
   await page.setViewportSize({ width: 390, height: 800 });
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await selectCommunity(page, "Personal space");
   const pane = page.getByRole("region", { name: "Channels", exact: true });
   const heading = pane.getByRole("heading", {

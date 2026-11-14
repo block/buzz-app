@@ -1,7 +1,7 @@
 import { checkDurationConsumer } from "./duration-layout.mjs";
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
-import { openChannelDetails } from "./channel-details.mjs";
+import { channelRow, openChannel, openPage } from "./navigation.mjs";
+import { chooseChannelAction, openChannelDetails } from "./channel-details.mjs";
 
 const channelId = "11111111-1111-4111-8111-111111111111";
 const channelName = "channel-management-and-collaboration-with-a-long-name";
@@ -26,10 +26,8 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     localStorage.setItem("buzz-appearance.v1", "dark"),
   );
   await page.goto(app.origin);
-  await openPage(page, "Messages");
-  await page
-    .locator('button[data-channel-id="11111111-1111-4111-8111-111111111111"]')
-    .click();
+  await openPage(page, "Team");
+  await openChannel(page, channelId);
   // The header identity fills the title slot: a long name truncates only when
   // the header runs out of room, not at the tab strip's 12rem cap.
   const heading = page.getByRole("button", {
@@ -46,35 +44,31 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
       "the header title shows the whole channel name",
     )
     .toBe(true);
+  // Channel actions share the conversation header's actions popover.
   const trigger = page.getByRole("button", {
-    name: "Channel actions",
+    name: "Conversation actions",
     exact: true,
   });
-  const menu = page.getByRole("menu", { name: "Channel actions", exact: true });
+  const menu = page.getByRole("dialog", {
+    name: "Conversation actions",
+    exact: true,
+  });
+  const item = (name) => menu.getByRole("button", { name, exact: true });
   const settings = page.getByRole("complementary", {
     name: "Channel settings",
     exact: true,
   });
   await trigger.focus();
-  await trigger.press("ArrowDown");
-  await expect(menu).toHaveAttribute("data-size", "default");
-  await expect(menu.getByRole("menuitem").first()).toHaveText(
-    "View channel details",
+  await trigger.press("Enter");
+  await expect(item("View channel details")).toBeVisible();
+  await expect(item("Delete channel")).toBeVisible();
+  await expect(item("Leave channel")).toHaveCount(0);
+  await expect(item("Delete channel")).toHaveAttribute(
+    "data-variant",
+    "destructive",
   );
   await expect(
-    menu.getByRole("menuitem", { name: "View channel details", exact: true }),
-  ).toBeFocused();
-  await expect(
-    menu.getByRole("menuitem", { name: "Delete channel", exact: true }),
-  ).toBeVisible();
-  await expect(
-    menu.getByRole("menuitem", { name: "Leave channel", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    menu.getByRole("menuitem", { name: "Delete channel", exact: true }),
-  ).toHaveAttribute("data-tone", "danger");
-  await expect(
-    menu.getByRole("menuitem", { name: /Edit details|Review pending changes/ }),
+    menu.getByRole("button", { name: /Edit details|Review pending changes/ }),
   ).toHaveCount(0);
   expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
   await menu.screenshot({
@@ -92,26 +86,12 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   for (const label of [
     "View channel details",
     "View canvas",
-
     "Archive channel",
     "Delete channel",
-  ]) {
-    const item = menu.getByRole("menuitem", { name: label, exact: true });
-    await expect(item).toBeEnabled();
-    const box = await item.boundingBox();
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
-      steps: 5,
-    });
-    if (browserName === "webkit") {
-      // Playwright WebKit reports zero movementX/Y even when client coordinates
-      // change. Base UI intentionally ignores those events (stationary scrolling).
-      // Supply the missing delta to exercise the real handler, not a CSS/focus shim.
-      await item.dispatchEvent("mousemove", { movementX: 1, movementY: 1 });
-    }
-    await expect(item).toHaveAttribute("data-highlighted", "");
-    await expect(menu.locator("[data-highlighted]")).toHaveCount(1);
-  }
+  ])
+    await expect(item(label)).toBeEnabled();
   await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
   await openChannelDetails(page);
   await expect(settings).toBeVisible();
   await expect(
@@ -389,9 +369,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     .click();
   await expect(trigger).toBeFocused();
   await trigger.click();
-  await menu
-    .getByRole("menuitem", { name: "View canvas", exact: true })
-    .click();
+  await item("View canvas").click();
   const canvas = page.getByRole("region", {
     name: "Channel Canvas",
     exact: true,
@@ -415,7 +393,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await expect(trigger).toBeFocused();
   for (const label of ["Archive channel", "Delete channel"]) {
     await trigger.click();
-    await menu.getByRole("menuitem", { name: label, exact: true }).click();
+    await item(label).click();
     const dialog = page.getByRole("dialog", {
       name:
         label === "Delete channel"
@@ -430,9 +408,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await trigger.click();
-  await expect(
-    menu.getByRole("menuitem", { name: "Delete channel", exact: true }),
-  ).toBeVisible();
+  await expect(item("Delete channel")).toBeVisible();
   await expect(menu).toBeInViewport({ ratio: 1 });
   await menu.screenshot({
     path: testInfo.outputPath("channel-header-menu-narrow.png"),
@@ -446,77 +422,33 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
 // without stealing header focus, and hand modal/session focus to the existing owners.
 test.describe("sidebar actions in the header", () => {
   test.use({ channelLifecycle: false, savedSidebar: true, readState: true });
-  test("shares move, mute and read actions without transferring focus to the sidebar", async ({
+  test("shares mute and read actions without transferring focus to the sidebar", async ({
     page,
     app,
   }) => {
     await page.goto(app.origin);
-    await openPage(page, "Messages");
-    await page.locator('button[data-channel-id="beta"]').click();
+    await openPage(page, "Team");
+    await openChannel(page, "beta");
     const trigger = page.getByRole("button", {
-      name: "Channel actions",
+      name: "Conversation actions",
       exact: true,
     });
-    const menu = page.getByRole("menu", {
-      name: "Channel actions",
+    const menu = page.getByRole("dialog", {
+      name: "Conversation actions",
       exact: true,
     });
-    const openMove = async () => {
-      await trigger.click();
-      const move = menu.getByRole("menuitem", {
-        name: "Move channel",
-        exact: true,
-      });
-      await move.focus();
-      await page.keyboard.press("ArrowRight");
-      return page.getByRole("menu", {
-        name: "Move Beta to section",
-        exact: true,
-      });
-    };
-    let move = await openMove();
-    await expect(move).toHaveAttribute("data-size", "default");
-    await expect(
-      move.getByRole("menuitemradio", { name: "Work", exact: true }),
-    ).toBeChecked();
-    await move
-      .getByRole("menuitem", { name: "Create new…", exact: true })
-      .click();
-    const create = page.getByRole("dialog", {
-      name: "Move to new section",
-      exact: true,
-    });
-    await expect(
-      create.getByRole("textbox", { name: "Section name" }),
-    ).toBeFocused();
-    await expect(menu).toHaveCount(0);
-    await create.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(trigger).toBeFocused();
-    move = await openMove();
-    const saved = page.waitForResponse("**/sidebar-star");
-    await move
-      .getByRole("menuitemradio", { name: "Starred", exact: true })
-      .click();
-    await saved;
-    await expect(menu).toHaveCount(0);
-    await expect(
-      page.locator(
-        '[data-sidebar-section="starred"] button[data-channel-id="beta"]',
-      ),
-    ).toBeVisible();
-    await expect(trigger).toBeFocused();
+    // Sidebar sections are gone, so Move channel has no successor; mute and
+    // read state still belong to the conversation.
     await trigger.click();
     const muted = page.waitForResponse("**/sidebar-mute");
-    await menu.getByRole("menuitem", { name: "Mute", exact: true }).click();
+    await menu.getByRole("button", { name: "Mute", exact: true }).click();
     await muted;
     await expect(trigger).toBeFocused();
     await trigger.click();
     await expect(
-      menu.getByRole("menuitem", { name: "Unmute", exact: true }),
+      menu.getByRole("button", { name: "Unmute", exact: true }),
     ).toBeVisible();
-    await menu
-      .getByRole("menuitem", { name: /^Mark as (read|unread)$/ })
-      .click();
+    await menu.getByRole("button", { name: /^Mark as (read|unread)$/ }).click();
     await expect(menu).toHaveCount(0);
     await expect(trigger).toBeFocused();
     await trigger.click();
@@ -533,12 +465,12 @@ test.describe("dialog origin retirement", () => {
   test.use({ savedSidebar: true });
   async function start(page, app) {
     await page.goto(app.origin);
-    await openPage(page, "Messages");
-    await page.getByRole("button", { name: "Beta", exact: true }).click();
+    await openPage(page, "Team");
+    await openChannel(page, "beta");
     await expect(
       page.getByRole("button", { name: "Manage members of Beta", exact: true }),
     ).toBeVisible();
-    await page.locator(`button[data-channel-id="${channelId}"]`).click();
+    await channelRow(page, channelId).click();
     await expect(
       page.getByRole("button", {
         name: `Manage members of ${channelName}`,
@@ -568,12 +500,7 @@ test.describe("dialog origin retirement", () => {
     app,
   }) => {
     await start(page, app);
-    await page
-      .getByRole("button", { name: "Channel actions", exact: true })
-      .click();
-    await page
-      .getByRole("menuitem", { name: "View canvas", exact: true })
-      .click();
+    await chooseChannelAction(page, "View canvas");
     const canvas = page.getByRole("region", {
       name: "Channel Canvas",
       exact: true,
@@ -606,13 +533,13 @@ test.describe("dialog origin retirement", () => {
     await expect(canvas).toBeVisible();
     await edit.click();
     await expect(editor).toHaveValue("Draft belongs to the original channel");
-    // Choosing channels from the sidebar keeps the tab the same way.
-    await page.locator('button[data-channel-id="beta"]').click();
+    // Choosing channels from the list keeps the tab the same way.
+    await channelRow(page, "beta").click();
     await expect(
       page.getByRole("button", { name: "Manage members of Beta", exact: true }),
     ).toBeVisible();
     await expect(canvas).toHaveCount(0);
-    await page.locator(`button[data-channel-id="${channelId}"]`).click();
+    await channelRow(page, channelId).click();
     await expect(canvas).toBeVisible();
     await edit.click();
     await expect(editor).toHaveValue("Draft belongs to the original channel");
@@ -621,11 +548,11 @@ test.describe("dialog origin retirement", () => {
       .click();
     await expect(canvas).toHaveCount(0);
     // Close is the end: returning to the channel does not reopen it.
-    await page.locator('button[data-channel-id="beta"]').click();
+    await channelRow(page, "beta").click();
     await expect(
       page.getByRole("button", { name: "Manage members of Beta", exact: true }),
     ).toBeVisible();
-    await page.locator(`button[data-channel-id="${channelId}"]`).click();
+    await channelRow(page, channelId).click();
     await expect(
       page.getByRole("button", {
         name: `Manage members of ${channelName}`,
@@ -635,57 +562,27 @@ test.describe("dialog origin retirement", () => {
     await expect(canvas).toHaveCount(0);
     expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
   });
-  for (const entrance of ["header", "sidebar"]) {
-    for (const action of ["create", "delete"]) {
-      test(`${entrance} ${action} keeps only sidebar-origin dialogs on browser Back`, async ({
-        page,
-        app,
-      }) => {
-        await start(page, app);
-        if (entrance === "header")
-          await page
-            .getByRole("button", { name: "Channel actions", exact: true })
-            .click();
-        else
-          await page
-            .locator(`button[data-channel-id="${channelId}"]`)
-            .click({ button: "right" });
-        if (action === "create") {
-          await page
-            .getByRole("menuitem", { name: "Move channel", exact: true })
-            .focus();
-          await page.keyboard.press("ArrowRight");
-          await page
-            .getByRole("menuitem", { name: "Create new…", exact: true })
-            .click();
-        } else
-          await page
-            .getByRole("menuitem", { name: "Delete channel", exact: true })
-            .click();
-        const dialog = page.getByRole("dialog", {
-          name: action === "create" ? "Move to new section" : /^Delete .+\?$/,
-        });
-        await expect(dialog).toBeVisible();
-        await back(page);
-        if (entrance === "header") {
-          await expect(dialog).toHaveCount(0);
-          await page.goForward();
-          await expect(
-            page.getByRole("button", {
-              name: `Manage members of ${channelName}`,
-              exact: true,
-            }),
-          ).toBeVisible();
-          await expect(dialog).toHaveCount(0);
-        } else {
-          await expect(dialog).toBeVisible();
-          await dialog
-            .getByRole("button", { name: "Cancel", exact: true })
-            .click();
-        }
-        expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
-        expect(app.report.unexpected).toEqual([]);
-      });
-    }
-  }
+  // Sidebar sections (Move channel) and the row menu have no successor; the
+  // header's Delete remains, and its dialog is not kept on browser Back.
+  test("header delete keeps only sidebar-origin dialogs on browser Back", async ({
+    page,
+    app,
+  }) => {
+    await start(page, app);
+    await chooseChannelAction(page, "Delete channel");
+    const dialog = page.getByRole("dialog", { name: /^Delete .+\?$/ });
+    await expect(dialog).toBeVisible();
+    await back(page);
+    await expect(dialog).toHaveCount(0);
+    await page.goForward();
+    await expect(
+      page.getByRole("button", {
+        name: `Manage members of ${channelName}`,
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(dialog).toHaveCount(0);
+    expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
+    expect(app.report.unexpected).toEqual([]);
+  });
 });

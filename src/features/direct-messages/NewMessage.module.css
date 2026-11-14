@@ -385,21 +385,3 @@
 .soloComposer {
   padding: 0;
 }
-
-/* Activity owns the feed above this recipient/composer footer. */
-.page[data-layout="composer"] {
-  height: auto;
-  flex: none;
-}
-.page[data-layout="composer"][data-expanded] {
-  height: 100%;
-  flex: 1;
-  overflow: hidden;
-}
-.page[data-layout="composer"] .recipientHeader {
-  border-bottom: 0;
-  padding-block: var(--space-2);
-}
-.page[data-layout="composer"] .soloComposer {
-  padding: 0;
-}

@@ -318,7 +318,7 @@ test("a conversation opens the list of its sidebar section and retains it throug
     ({ viewer }) => {
       const scope = { viewer, communityOrigin: "https://primary.example" };
       localStorage.setItem(
-        `buzz-view.v1:${JSON.stringify([`${scope.communityOrigin}:${viewer}`, "navigation-layout:v1"])}`,
+        `buzz-view.v1:${JSON.stringify([`${scope.communityOrigin}:${viewer}`, "navigation-layout:v2"])}`,
         JSON.stringify({
           sections: [{ id: "custom:project", title: "Project chats" }],
           placements: ["alpha", "beta"].map((channelId) => ({

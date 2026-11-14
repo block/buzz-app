@@ -320,7 +320,7 @@ const test = base.extend({
   },
 });
 async function startNewMessage(page) {
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const messages = sidebar.locator('[data-sidebar-section="dms"] summary');
   await messages.hover();
@@ -457,7 +457,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     ).length;
   const beforeReopen = directoryReads();
   await openPage(page, "Workflows");
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await startNewMessage(page);
   await expect(page.getByRole("option").first()).toHaveAttribute(
     "aria-setsize",
@@ -799,7 +799,7 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
 }) => {
   app.seedChannel("22222222-2222-4222-8222-222222222222", "Hello from Avery");
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   const sidebar = page.getByRole("complementary", {
     name: "Sidebar",
     exact: true,

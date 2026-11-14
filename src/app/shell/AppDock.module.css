@@ -61,13 +61,6 @@ html:is([data-keyboard-input], [data-sidebar-resizing]) .frame {
 .frame[data-compact] .primary {
   padding: var(--space-1);
 }
-.footer {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding-inline: var(--space-2);
-}
-
 @media (max-width: 650px) {
   .frame {
     position: absolute;

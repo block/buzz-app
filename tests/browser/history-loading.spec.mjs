@@ -122,7 +122,7 @@ test("saved top resumes automatic history on an upward gesture after remount", a
   // Reload gives a new session/finite head but preserves that user-owned anchor.
   await page.reload();
   app.pending.shift().release();
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await expect(history(page)).toBeVisible();
   await expect(
     page.getByRole("dialog", {

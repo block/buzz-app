@@ -1,7 +1,7 @@
 import { pluginAction } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, wheel, virtuaIdle } from "./timeline.mjs";
-import { closeSettings } from "./navigation.mjs";
+import { channelRow, closeSettings } from "./navigation.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { animationsSettled } from "./animations.mjs";
@@ -90,7 +90,7 @@ test("sidebar activity opens the working agent's profile", async ({
   const key = generateSecretKey();
   const agent = getPublicKey(key);
   app.observer(activity("turn_liveness", "alpha", "sidebar"), key);
-  const row = page.locator('[data-channel-id="alpha"]');
+  const row = channelRow(page, "alpha");
   await expect(
     row.getByRole("img", { name: /working in Alpha$/ }),
   ).toBeVisible();
@@ -291,7 +291,7 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
     .toBe(false);
   expect(app.relay.sockets).toHaveLength(sockets);
   await closeSettings(page);
-  await page.locator('[data-channel-id="alpha"]').click();
+  await channelRow(page, "alpha").click();
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
@@ -314,7 +314,7 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   app.observer(activity("turn_liveness", "alpha", "after-reset"), firstKey);
   await closeSettings(page);
-  await page.locator('[data-channel-id="alpha"]').click();
+  await channelRow(page, "alpha").click();
   // Only the fresh agent returns; the disabled generation's evidence is gone.
   await expect(trigger).toHaveAccessibleName(onlyFirst);
   await viewAgentActivity(page, composer, first);
@@ -510,9 +510,9 @@ test.describe("thread activity", () => {
     const threadTrigger = activityTrigger(thread);
     const threadStatus = thread.locator("[data-agent-working-status]");
     const popup = workingNow(page);
-    const marker = page
-      .locator('[data-channel-id="alpha"]')
-      .getByRole("img", { name: /working in Alpha$/ });
+    const marker = channelRow(page, "alpha").getByRole("img", {
+      name: /working in Alpha$/,
+    });
     const sendEvent = (kind, threadId, signingKey = key, content = "") => {
       const event = finalizeEvent(
         {
@@ -941,7 +941,7 @@ test.describe("thread activity", () => {
     );
     publish(keys[1], undefined, 9);
     await expect(channelTrigger).toHaveCount(0);
-    await page.locator('[data-channel-id="beta"]').click();
+    await channelRow(page, "beta").click();
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();

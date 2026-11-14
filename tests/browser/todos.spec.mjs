@@ -2,7 +2,7 @@ import { pluginAction } from "./plugin-settings.mjs";
 import {
   activate,
   closeSettings,
-  openPage,
+  openChannel,
   pageChoice,
   pageChoices,
   openSettings,
@@ -75,7 +75,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     await selectSettingsSection(page, "Manage plugins");
   };
   const messages = async () => {
-    await openPage(page, "Messages");
+    await openChannel(page, "alpha");
     await expect(
       page
         .getByRole("article", { name: "Conversation" })
@@ -252,10 +252,6 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   };
   // Channel-specific drawers stay off other pages; returning to the same
   // channel shows the panel left open there, with a live launcher.
-  const sidebar = page.getByRole("complementary", {
-    name: "Sidebar",
-    exact: true,
-  });
   const choices = await pageChoices(page, "Bestie");
   await pageChoice(choices, "Create an agent — Bestie").click();
   await expect(page.getByRole("dialog", { name: "Search Buzz" })).toBeHidden();
@@ -264,8 +260,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   ).toBeVisible();
   await expect(drawer).toHaveCount(0);
   await expect(launcher).toHaveCount(0);
-  await openPage(page, "Messages");
-  await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+  await openChannel(page, "alpha");
   await expect(drawer).toBeVisible();
   await expect(launcher).toHaveAttribute("aria-expanded", "true");
   await expect(todo).toBeChecked();
@@ -314,7 +309,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
       .getByRole("article", { name: "Conversation" })
       .getByRole("button", { name: "Manage members of Beta", exact: true }),
   ).toBeVisible();
-  await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+  await openChannel(page, "alpha");
   await expect(
     page
       .getByRole("article", { name: "Conversation" })
@@ -412,7 +407,7 @@ test("Todos isn't a tab: Close all tabs keeps it, and its launcher tracks the pa
     return route.continue();
   });
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openChannel(page, "alpha");
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();

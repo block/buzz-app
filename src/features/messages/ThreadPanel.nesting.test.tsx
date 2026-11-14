@@ -69,10 +69,15 @@ vi.mock("./MessageComposer", () => ({
     replyParentId,
     onSend,
     disabled,
+    sendDisabled,
   }: MessageComposerProps) => (
     <section aria-label="Composer" data-parent={replyParentId}>
       {replyContext}
-      <button type="button" disabled={disabled} onClick={() => onSend?.("new")}>
+      <button
+        type="button"
+        disabled={disabled || sendDisabled}
+        onClick={() => onSend?.("new")}
+      >
         Send fixture reply
       </button>
       <button type="button" onClick={() => (heldSend = onSend)}>
@@ -144,8 +149,19 @@ function setup(messageId = "root") {
     loadMore: async () => {},
     dispose: () => {},
   };
+  // A reply target that leaves the loaded thread is read exactly; here it
+  // was deleted.
+  const reads: string[] = [];
+  const deleted = {
+    ...view,
+    snapshot: () => ({ ...snapshot, targetStatus: "unavailable" as const }),
+  };
   const session = {
-    thread: () => view,
+    thread: (_channelId: string, id: string) => {
+      if (id === messageId) return view;
+      reads.push(id);
+      return deleted;
+    },
     profiles: {
       ensure: async () => {},
       subscribe: () => () => {},
@@ -173,6 +189,7 @@ function setup(messageId = "root") {
     />,
   );
   return {
+    reads,
     setRoot(root: ChannelMessage | undefined) {
       act(() => {
         snapshot = { ...snapshot, root };
@@ -549,7 +566,13 @@ it("reveals all available ancestors for a selected descendant, including late hi
 it("does not silently retarget a deleted parent to the root", () => {
   const h = setup();
   fireEvent.click(screen.getByRole("button", { name: "Reply to parent" }));
+  // A loaded parent is its own evidence: no read, and Send is available.
+  expect(h.reads).toEqual([]);
+  expect(
+    screen.getByRole("button", { name: "Send fixture reply" }),
+  ).toBeEnabled();
   h.update([]);
+  expect(h.reads).toEqual(["parent"]);
   expect(
     screen.getByText("Reply target is no longer available."),
   ).toBeVisible();

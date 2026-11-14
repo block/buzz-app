@@ -1,4 +1,4 @@
-import { openPage } from "./navigation.mjs";
+import { channelRow, openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { anchor, expectAnchor, keyScroll, settle } from "./timeline.mjs";
 
@@ -23,9 +23,9 @@ test.afterEach(async ({ app }) => {
 
 async function openMessages(page, app) {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   // Unread evidence can extend the row's name; its channel id is stable.
-  await expect(page.locator('button[data-channel-id="alpha"]')).toBeVisible();
+  await expect(channelRow(page, "alpha")).toBeVisible();
   // A loop error is reported in the frame that delivers the observations.
   await page.evaluate(
     () =>
@@ -161,7 +161,7 @@ keyboardTest(
   async ({ page, app }) => {
     await openMessages(page, app);
     // The open channel's row is quiet, and its identity locates it.
-    const alpha = page.locator('button[data-channel-id="alpha"]');
+    const alpha = channelRow(page, "alpha");
     await expect(alpha).toHaveAttribute("aria-current", "page");
     await expect(alpha.getByRole("img")).toHaveCount(0);
     await alpha.click();

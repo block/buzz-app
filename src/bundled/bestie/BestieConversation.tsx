@@ -23,12 +23,11 @@ import {
 } from "../channels/useConversationTabs";
 import {
   rootOfTab,
-  tabPane,
   panelTabId,
-  entryPane,
   useChannelTabState,
   type ConversationTab,
 } from "../channels/useChannelTabState";
+import { useCloseAllTabsCommand } from "../channels/useCloseAllTabsCommand";
 import {
   ConversationChannel,
   ConversationComposer,
@@ -55,7 +54,6 @@ import { COMPANION_SPLIT } from "../../features/panels/PanelFrame";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import panelStyles from "../../features/panels/Panels.module.css";
-import { flushSync } from "react-dom";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
@@ -182,7 +180,6 @@ export function BestieConversation({
   const dismissContent = (
     tabs: readonly ConversationTab[],
     entries: readonly PanelOpening[],
-    pane: "main" | "side",
   ) => {
     if (navigation?.target.kind !== "page" || !ownsCurrentVisit()) return;
     const base = bestieBaseTarget(navigation.target);
@@ -190,20 +187,11 @@ export function BestieConversation({
     const remainingEntries = state.entries.filter(
       (entry) => !entries.includes(entry),
     );
-    const selections =
-      pane === "main"
-        ? [state.getMainSelected(), state.getSelected()]
-        : [state.getSelected(), state.getMainSelected()];
-    const survivor = selections
-      .map((id) => ({
-        thread: remainingTabs.find((tab) => tab.id === id),
-        panel: remainingEntries.find(
-          (entry) => panelTabId(entry) === id && historyPanel(entry),
-        ),
-      }))
-      .find((item) => item.thread || item.panel);
-    const keptThread = survivor?.thread;
-    const keptPanel = survivor?.panel;
+    const selected = state.getSelected();
+    const keptThread = remainingTabs.find((tab) => tab.id === selected);
+    const keptPanel = remainingEntries.find(
+      (entry) => panelTabId(entry) === selected && historyPanel(entry),
+    );
     const fallback = keptPanel
       ? bestieDetailTarget(base, {
           channelId: keptPanel.channelId,
@@ -289,7 +277,6 @@ export function BestieConversation({
     navigationSignal: navigation?.signal,
     isLive: ownsCurrentVisit,
     fallbackFocus: main,
-    mainPane: false,
     openLink: (url) => {
       if (!session.viewer) return false;
       const target = buzzLinkTarget(url, {
@@ -305,10 +292,9 @@ export function BestieConversation({
         ? { channelId: channel.id, messageId: routed.messageId, navigation }
         : undefined,
     onVisitPanel: visitPanel,
-    onClosePanel: (entry) =>
-      dismissContent([], [entry], entryPane(state.mainEntries, entry)),
+    onClosePanel: (entry) => dismissContent([], [entry]),
     onCloseThread: (tab, active, last) => {
-      dismissContent([tab], [], tabPane(tab));
+      dismissContent([tab], []);
       if (!active || !last) return;
       const opener = trigger.current;
       if (
@@ -318,7 +304,7 @@ export function BestieConversation({
         opener.focus({ preventScroll: true });
       else focusComposer((value) => value + 1);
     },
-    onCloseTabs: (tabs, entries) => dismissContent(tabs, entries, "main"),
+    onCloseTabs: dismissContent,
   });
   const appliedVisit = useRef<string>(undefined);
   useLayoutEffect(() => {
@@ -336,9 +322,7 @@ export function BestieConversation({
         channelId: channel.id,
         messageId: routed.messageId,
         rootId: routed.threadRootId,
-        pane: "side",
       },
-      !!detail,
       detail && { channelId: channel.id, target: detail.detail },
     );
     if (detail) {
@@ -431,25 +415,10 @@ export function BestieConversation({
     closeAll,
     closeOthers: secondary.closeOtherTabs,
   };
-  useLayoutEffect(() => {
-    const close = (event: Event) => {
-      const workspace = main.current;
-      if (
-        event.defaultPrevented ||
-        !ownsCurrentVisit() ||
-        !workspace?.isConnected ||
-        workspace.closest('[hidden], [inert], [aria-hidden="true"]') ||
-        !workspace.getClientRects().length ||
-        document.querySelector('dialog[open], [aria-modal="true"]')
-      )
-        return;
-      flushSync(() => {
-        if (closeAll()) event.preventDefault();
-      });
-    };
-    window.addEventListener("buzz:close-all-tabs", close);
-    return () => window.removeEventListener("buzz:close-all-tabs", close);
-  });
+  useCloseAllTabsCommand(
+    () => (ownsCurrentVisit() ? main.current : null),
+    closeAll,
+  );
   // Close All can remove both the focused content and its context menu.
   // Keep surviving controls focused; otherwise return to the main conversation.
   useLayoutEffect(() => {
@@ -465,12 +434,8 @@ export function BestieConversation({
       return;
     (
       main.current?.querySelector<HTMLElement>(
-        '[data-main-workspace] [role="tab"][data-tab-value="conversation"]',
-      ) ??
-      main.current?.querySelector<HTMLElement>(
         "[data-main-workspace] [data-workspace-identity] button",
-      ) ??
-      main.current
+      ) ?? main.current
     )?.focus({ preventScroll: true });
   });
   const toggle = (expanded: boolean) => (
@@ -517,7 +482,6 @@ export function BestieConversation({
           >
             <div
               ref={split.ref}
-              data-expando-scope=""
               style={split.style}
               className={`${panelStyles.frame} ${panelStyles.splitMotion}`}
             >
@@ -525,7 +489,6 @@ export function BestieConversation({
                 <Panel>
                   <PanelWorkspace
                     main
-                    identityPlacement="content"
                     headerDivider={false}
                     identity={
                       <ChannelHeaderIdentity
@@ -542,12 +505,9 @@ export function BestieConversation({
                     }
                     label="Bestie conversation tabs"
                     focusOnMount={false}
-                    value={secondary.selectedMain}
-                    select={(id) =>
-                      state.selectMain(id === "conversation" ? undefined : id)
-                    }
+                    value="conversation"
+                    select={() => {}}
                     tabMenu={tabMenu}
-                    drag={secondary.drag.main}
                     actions={
                       <>
                         {secondary.drawer.launchers}
@@ -613,10 +573,9 @@ export function BestieConversation({
                         label: bestie,
                         icon,
                         content: (
-                          <ConversationPresentation
-                            value={secondary.selectedMain === "conversation"}
-                          >
+                          <ConversationPresentation value>
                             <section
+                              ref={reply.surface}
                               className={styles.work}
                               data-attachment-drop-zone=""
                             >
@@ -640,16 +599,13 @@ export function BestieConversation({
                               />
                               <ConversationComposer
                                 label={`Message ${bestie}`}
-                                shown={
-                                  secondary.selectedMain === "conversation"
-                                }
+                                shown
                                 {...reply.composer}
                               />
                             </section>
                           </ConversationPresentation>
                         ),
                       },
-                      ...secondary.mainItems,
                     ]}
                   />
                 </Panel>
@@ -673,14 +629,13 @@ export function BestieConversation({
                       select={secondary.selectPanelTab}
                       actions={toggle(true)}
                       tabMenu={tabMenu}
-                      drag={secondary.drag.side}
+                      drag={secondary.drag.host}
                     />
                   </Panel>
                 )}
                 {secondary.drawer.side}
               </PanelDock>
             </div>
-            {secondary.drawer.content}
             {membersOpen && (
               <ChannelMembersDialog
                 session={session}

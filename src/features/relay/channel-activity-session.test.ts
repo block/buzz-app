@@ -1,10 +1,10 @@
-import { assert, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import type { EventTemplate } from "nostr-tools";
 import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
 import { ReadError } from "./errors";
 import {
-  flush,
+  flush as realFlush,
   keypair,
   message,
   metadata,
@@ -15,6 +15,20 @@ import {
 import type { LiveCallbacks } from "./live";
 import type { RelayEvent } from "./events";
 import type { SidebarSortMode } from "./sidebar-sort";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+/** Lets pending work run, on whichever clock the test uses. */
+const flush = () =>
+  vi.isFakeTimers() ? vi.advanceTimersByTimeAsync(0) : realFlush();
+/** Every roster head read starts within 500 ms (its jitter); tests that read
+ * heads hold the clock so they decide when. */
+const clocked = () =>
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+  });
+const headsStart = () => vi.advanceTimersByTimeAsync(500);
 function setup() {
   const viewer = keypair(),
     relay = keypair(),
@@ -24,13 +38,14 @@ function setup() {
   const pending: {
     ids: readonly string[];
     signal: AbortSignal;
+    topLevel: boolean;
     resolve(events: RelayEvent[]): void;
     reject(error: Error): void;
   }[] = [];
   const activity = vi.fn(
-    (ids: readonly string[], signal: AbortSignal) =>
+    (ids: readonly string[], signal: AbortSignal, topLevel?: boolean) =>
       new Promise<RelayEvent[]>((resolve, reject) =>
-        pending.push({ ids, signal, resolve, reject }),
+        pending.push({ ids, signal, topLevel: !!topLevel, resolve, reject }),
       ),
   );
   const publish = vi.fn(async (_event: RelayEvent) => {});
@@ -106,78 +121,139 @@ function setup() {
     initial,
   };
 }
-it("Active fetches activity independently of sort and shares Recent's demand lifetime", async () => {
+it("reads every roster channel's head once, whatever the sidebar sorts or filters by", async () => {
+  clocked();
   const h = setup();
   try {
     await h.initial();
-    await h.preferences.setFilter("channels", "unreads", []);
+    // Lists are loading from the start: an empty answer proves nothing yet.
+    expect(h.channels.list().activityStatus).toBe("loading");
     expect(h.activity).not.toHaveBeenCalled();
-    await h.preferences.setFilter("channels", "active", []);
+    await headsStart();
     expect(h.activity).toHaveBeenCalledOnce();
     const reading = take(h.pending);
     expect(reading.ids).toEqual(["alpha", "beta"]);
-    await h.preferences.setSort("channels", "recent", []);
-    await h.preferences.setFilter("channels", "all", []);
-    expect(reading.signal.aborted).toBe(false);
-    expect(h.activity).toHaveBeenCalledOnce();
+    expect(reading.topLevel).toBe(false);
     reading.resolve([message(h.peer, "beta", "recent activity", 100)]);
     await flush();
-    expect(
-      h.channels.list().channels.find((c) => c.id === "beta")?.lastActivityAt,
-    ).toBe(100);
-    await h.preferences.setSort("channels", "alpha", []);
+    const first = h.channels.list();
+    expect(first.activityStatus).toBe("ready");
+    expect(first.channels.find((c) => c.id === "beta")?.lastActivityAt).toBe(
+      100,
+    );
+    expect(first.channels.find((c) => c.id === "alpha")).toMatchObject({
+      activityKnown: true,
+    });
+    expect(h.channels.list()).toBe(first);
+    expect(h.owner.session.channelHeads.settled("alpha")).toBe(true);
+    // No sort or filter asks again.
+    await h.preferences.setSort("channels", "recent", []);
     await h.preferences.setFilter("channels", "active", []);
-    expect(h.activity).toHaveBeenCalledTimes(2);
-    const resumed = take(h.pending);
+    await h.preferences.setSort("channels", "alpha", []);
     await h.preferences.setFilter("channels", "all", []);
-    expect(resumed.signal.aborted).toBe(true);
+    await headsStart();
+    expect(h.activity).toHaveBeenCalledOnce();
   } finally {
     h.owner.dispose();
   }
 });
-it.each(["recent", "plugin:example.plugin/rows/oldest"] as const)(
-  "%s loads activity on demand, deduplicates reads, and projects verified live activity monotonically",
-  async (mode) => {
-    const h = setup();
-    try {
-      await h.initial();
-      expect(h.activity).not.toHaveBeenCalled();
-      await h.preferences.setSort("channels", mode, []);
-      expect(h.activity).toHaveBeenCalledOnce();
-      expect(h.channels.list().activityStatus).toBe("loading");
-      expect(h.pending[0]?.ids).toEqual(["alpha", "beta"]);
-      take(h.pending).resolve([message(h.peer, "alpha", "history", 50)]);
-      await flush();
-      const first = h.channels.list();
-      expect(first.activityStatus).toBe("ready");
-      expect(first.channels.find((c) => c.id === "alpha")?.lastActivityAt).toBe(
-        50,
-      );
-      expect(h.channels.list()).toBe(first);
-      await h.preferences.setSort("dms", mode, []);
-      expect(h.activity).toHaveBeenCalledOnce();
-      h.live().receive([message(h.peer, "alpha", "new", 90)]);
-      h.live().receive([
-        message(h.peer, "alpha", "older", 70),
-        signed(h.peer, {
-          kind: 39000,
-          created_at: 200,
-          tags: [["d", "beta"]],
-          content: "metadata is not activity",
-        }),
-      ]);
-      expect(
-        h.channels.list().channels.find((c) => c.id === "alpha")
-          ?.lastActivityAt,
-      ).toBe(90);
-      expect(
-        h.channels.list().channels.find((c) => c.id === "beta")?.lastActivityAt,
-      ).toBeUndefined();
-    } finally {
-      h.owner.dispose();
-    }
-  },
-);
+it("projects verified live activity monotonically", async () => {
+  clocked();
+  const h = setup();
+  try {
+    await h.initial();
+    await headsStart();
+    take(h.pending).resolve([message(h.peer, "alpha", "history", 50)]);
+    await flush();
+    h.live().receive([message(h.peer, "alpha", "new", 90)]);
+    h.live().receive([
+      message(h.peer, "alpha", "older", 70),
+      signed(h.peer, {
+        kind: 39000,
+        created_at: 200,
+        tags: [["d", "beta"]],
+        content: "metadata is not activity",
+      }),
+    ]);
+    expect(
+      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
+    ).toBe(90);
+    expect(
+      h.channels.list().channels.find((c) => c.id === "beta")?.lastActivityAt,
+    ).toBeUndefined();
+  } finally {
+    h.owner.dispose();
+  }
+});
+it("a channel whose newest event is a thread reply gets its top-level head in a second pass", async () => {
+  clocked();
+  const h = setup();
+  try {
+    await h.initial();
+    await headsStart();
+    const top = message(h.peer, "alpha", "top-level", 40);
+    const reply = message(h.peer, "alpha", "reply", 60, [
+      ["e", top.id, "", "root"],
+      ["e", top.id, "", "reply"],
+    ]);
+    take(h.pending).resolve([reply, message(h.peer, "beta", "plain", 50)]);
+    await flush();
+    const heads = h.owner.session.channelHeads;
+    expect(heads.settled("beta")).toBe(true);
+    expect(heads.latest("beta")?.content).toBe("plain");
+    expect(heads.settled("alpha")).toBe(false);
+    expect(heads.status()).toBe("loading");
+    const second = take(h.pending);
+    expect(second).toMatchObject({ ids: ["alpha"], topLevel: true });
+    second.resolve([top]);
+    await flush();
+    expect(heads.settled("alpha")).toBe(true);
+    expect(heads.status()).toBe("ready");
+    // The top-level head entered the session's own projections.
+    expect(heads.latest("alpha")?.id).toBe(top.id);
+    expect(
+      h.owner.session.unread.snapshot({ kind: "channel", channelId: "alpha" })
+        .latestTopLevel?.id,
+    ).toBe(top.id);
+    expect(
+      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
+    ).toBe(60);
+    expect(h.activity).toHaveBeenCalledTimes(2);
+  } finally {
+    h.owner.dispose();
+  }
+});
+it("a roster change reads only channels it adds, and a reconnect reads nothing", async () => {
+  clocked();
+  const h = setup();
+  try {
+    await h.initial();
+    await headsStart();
+    take(h.pending).resolve([message(h.peer, "alpha", "a", 50)]);
+    await flush();
+    h.live().receive([
+      roster(h.relay, "gamma", [h.viewer.pubkey]),
+      metadata(h.relay, "gamma", "Gamma"),
+    ]);
+    await headsStart();
+    expect(h.activity).toHaveBeenCalledTimes(2);
+    const added = take(h.pending);
+    expect(added.ids).toEqual(["gamma"]);
+    added.resolve([]);
+    await flush();
+    expect(h.channels.list().activityStatus).toBe("ready");
+
+    h.live().state({ status: "retrying", routes: [] });
+    h.live().state({ status: "connected", routes: [] });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(h.activity).toHaveBeenCalledTimes(2);
+    expect(
+      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
+    ).toBe(50);
+  } finally {
+    h.owner.dispose();
+  }
+});
 // Own sends updated the row preview at once but moved it in Recent and Active
 // only when the live socket echoed them.
 it.each(["connected", "retrying"] as const)(
@@ -185,8 +261,9 @@ it.each(["connected", "retrying"] as const)(
   async (status) => {
     const h = setup();
     try {
+      clocked();
       await h.initial();
-      await h.preferences.setSort("channels", "recent", []);
+      await headsStart();
       take(h.pending).resolve([message(h.peer, "alpha", "history", 50)]);
       await flush();
       h.live().state({ status, routes: [] });
@@ -298,92 +375,66 @@ it("keeps other channels' summaries when one channel's live activity advances", 
     h.owner.dispose();
   }
 });
-it("retries failed Recent activity after an explicit roster refresh", async () => {
+it("retries a transient head failure quietly; session recovery rereads only unsettled channels", async () => {
+  clocked();
   const h = setup();
   try {
     await h.initial();
     h.live().receive([message(h.peer, "alpha", "last good", 50)]);
-    await h.preferences.setSort("channels", "recent", []);
-    take(h.pending).reject(new Error("offline"));
-    await flush();
-    expect(h.channels.list().activityStatus).toBe("error");
-    expect(h.preferences.snapshot().data?.sort).toEqual({ channels: "recent" });
-    expect(
-      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
-    ).toBe(50);
-
-    h.channels.refreshList?.();
-    h.wire
-      .next()
-      .respond([
-        roster(h.relay, "alpha", [h.viewer.pubkey]),
-        roster(h.relay, "beta", [h.viewer.pubkey]),
-        metadata(h.relay, "alpha", "Alpha"),
-        metadata(h.relay, "beta", "Beta"),
-      ]);
-    await flush();
-    expect(h.activity).toHaveBeenCalledTimes(2);
-    expect(h.channels.list().activityStatus).toBe("loading");
-    expect(
-      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
-    ).toBe(50);
-    take(h.pending).resolve([
-      message(h.peer, "alpha", "last good", 50),
-      message(h.peer, "beta", "recovered", 100),
-    ]);
-    await flush();
-    expect(h.channels.list().activityStatus).toBe("ready");
-    expect(h.preferences.snapshot().data?.sort).toEqual({ channels: "recent" });
-    expect(
-      h.channels.list().channels.find((c) => c.id === "beta")?.lastActivityAt,
-    ).toBe(100);
-  } finally {
-    h.owner.dispose();
-  }
-});
-it("retries a transient activity failure quietly and reports a lasting one at once", async () => {
-  const h = setup();
-  try {
-    await h.initial();
-    vi.useFakeTimers();
-    void h.preferences.setSort("channels", "recent", []);
-    await vi.advanceTimersByTimeAsync(0);
+    await headsStart();
     take(h.pending).reject(
       new ReadError("unavailable", "Relay read failed (502)"),
     );
-    await vi.advanceTimersByTimeAsync(0);
+    await flush();
     // No error while the quiet retry waits (at most the first 1 s delay).
     expect(h.channels.list().activityStatus).toBe("loading");
     await vi.advanceTimersByTimeAsync(1_000);
     expect(h.activity).toHaveBeenCalledTimes(2);
     take(h.pending).resolve([message(h.peer, "beta", "recovered", 100)]);
-    await vi.advanceTimersByTimeAsync(0);
+    await flush();
     expect(h.channels.list().activityStatus).toBe("ready");
     expect(
       h.channels.list().channels.find((c) => c.id === "beta")?.lastActivityAt,
     ).toBe(100);
 
-    // A denial cannot clear on retry: the sidebar reports it without a retry.
-    void h.preferences.setSort("channels", "alpha", []);
-    await vi.advanceTimersByTimeAsync(0);
-    void h.preferences.setSort("channels", "recent", []);
-    await vi.advanceTimersByTimeAsync(0);
-    take(h.pending).reject(new ReadError("denied", "Relay read failed (403)"));
-    await vi.advanceTimersByTimeAsync(0);
+    // A denial cannot clear on a quiet retry: it is reported at once.
+    h.live().receive([
+      roster(h.relay, "gamma", [h.viewer.pubkey]),
+      metadata(h.relay, "gamma", "Gamma"),
+    ]);
+    await headsStart();
+    const denied = take(h.pending);
+    expect(denied.ids).toEqual(["gamma"]);
+    denied.reject(new ReadError("denied", "Relay read failed (403)"));
+    await flush();
     expect(h.channels.list().activityStatus).toBe("error");
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(h.activity).toHaveBeenCalledTimes(3);
+    expect(h.owner.session.recovery?.snapshot().recovering).toBe(true);
+    expect(
+      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
+    ).toBe(50);
+    // Recovery's first retry (1 s), then the head read's start jitter: it
+    // reads only what is still unsettled.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.pending).toHaveLength(0);
+    await headsStart();
+    expect(h.pending).toHaveLength(1);
+    const retried = take(h.pending);
+    expect(retried.ids).toEqual(["gamma"]);
+    retried.resolve([]);
+    await flush();
+    expect(h.channels.list().activityStatus).toBe("ready");
+    expect(h.activity).toHaveBeenCalledTimes(4);
   } finally {
-    vi.useRealTimers();
     h.owner.dispose();
   }
 });
-it("projects activity read before a later batch failed and leaves only unread channels unknown", async () => {
+it("projects heads read before a later batch failed and leaves only unread channels unknown", async () => {
+  clocked();
   const h = setup();
   try {
     const rooms = Array.from({ length: 127 }, (_, i) => `room-${1000 + i}`);
     await h.initial(rooms);
-    await h.preferences.setSort("channels", "recent", []);
+    await headsStart();
     const find = (id: string) =>
       h.channels.list().channels.find((c) => c.id === id);
     const first = take(h.pending);
@@ -391,7 +442,7 @@ it("projects activity read before a later batch failed and leaves only unread ch
     first.resolve([message(h.peer, "beta", "landed", 90)]);
     await flush();
     expect(h.channels.list().activityStatus).toBe("loading");
-    expect(find("beta")?.activityKnown).toBeUndefined();
+    expect(find("beta")?.lastActivityAt).toBe(90);
     const second = take(h.pending);
     expect(second.ids).toEqual(rooms.slice(126));
     second.reject(new Error("offline"));
@@ -404,107 +455,14 @@ it("projects activity read before a later batch failed and leaves only unread ch
     h.owner.dispose();
   }
 });
-it("retires failed activity only when the last Recent demand ends and recovers on re-entry", async () => {
-  const h = setup();
-  try {
-    await h.initial();
-    h.live().receive([message(h.peer, "alpha", "last good", 50)]);
-    await h.preferences.setSort("channels", "recent", []);
-    await h.preferences.setSort("dms", "recent", []);
-    take(h.pending).reject(new Error("offline"));
-    await flush();
-    expect(h.channels.list().activityStatus).toBe("error");
-
-    // Another section still needs Recent; its fresh failure must remain visible.
-    await h.preferences.setSort("channels", "alpha", []);
-    take(h.pending).reject(new Error("still offline"));
-    await flush();
-    expect(h.channels.list().activityStatus).toBe("error");
-    await h.preferences.setSort("dms", "alpha", []);
-    expect(h.channels.list().activityStatus).toBe("idle");
-    expect(h.preferences.snapshot().data?.sort).toEqual({});
-    expect(
-      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
-    ).toBe(50);
-    expect(h.activity).toHaveBeenCalledTimes(2);
-
-    await h.preferences.setSort("channels", "recent", []);
-    expect(h.channels.list().activityStatus).toBe("loading");
-    take(h.pending).reject(new Error("fresh failure"));
-    await flush();
-    expect(h.channels.list().activityStatus).toBe("error");
-    await h.preferences.setSort("channels", "alpha", []);
-    expect(h.channels.list().activityStatus).toBe("idle");
-    await h.preferences.setSort("channels", "recent", []);
-    expect(h.activity).toHaveBeenCalledTimes(4);
-    take(h.pending).resolve([message(h.peer, "alpha", "recovered", 120)]);
-    await flush();
-    expect(h.channels.list().activityStatus).toBe("ready");
-    expect(
-      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
-    ).toBe(120);
-    expect(h.preferences.snapshot().data?.sort).toEqual({ channels: "recent" });
-  } finally {
-    h.owner.dispose();
-  }
-});
-it.each(["recent", "plugin:example.plugin/rows/oldest"] as const)(
-  "%s cancels only after the last section clears and refreshes unchanged rosters on re-entry",
-  async (mode) => {
-    const h = setup();
-    try {
-      await h.initial();
-      await h.preferences.setSort("channels", mode, []);
-      const retired = take(h.pending);
-      await h.preferences.setSort("dms", mode, []);
-      await h.preferences.setSort("channels", "alpha", []);
-      expect(retired.signal.aborted).toBe(false);
-      expect(h.activity).toHaveBeenCalledOnce();
-      await h.preferences.setSort("dms", "alpha", []);
-      expect(retired.signal.aborted).toBe(true);
-      expect(h.channels.list().activityStatus).toBe("idle");
-      // Ignoring transport cancellation must not let late history win. Live
-      // activity remains valid even while every section is A–Z.
-      retired.resolve([message(h.peer, "alpha", "retired history", 200)]);
-      h.live().receive([message(h.peer, "alpha", "live", 90)]);
-      await flush();
-      expect(
-        h.channels.list().channels.find((c) => c.id === "alpha")
-          ?.lastActivityAt,
-      ).toBe(90);
-      await h.preferences.setSort("channels", mode, []);
-      expect(h.activity).toHaveBeenCalledTimes(2);
-      const resumed = take(h.pending);
-      expect(resumed.ids).toEqual(["alpha", "beta"]);
-      resumed.resolve([message(h.peer, "alpha", "fresh history", 120)]);
-      await flush();
-      expect(h.channels.list().activityStatus).toBe("ready");
-      expect(
-        h.channels.list().channels.find((c) => c.id === "alpha")
-          ?.lastActivityAt,
-      ).toBe(120);
-      // Completed data stays useful, but a new demand lifetime still refreshes it.
-      await h.preferences.setSort("channels", "alpha", []);
-      expect(
-        h.channels.list().channels.find((c) => c.id === "alpha")
-          ?.lastActivityAt,
-      ).toBe(120);
-      await h.preferences.setSort("channels", mode, []);
-      expect(h.activity).toHaveBeenCalledTimes(3);
-      take(h.pending).resolve([]);
-      await flush();
-    } finally {
-      h.owner.dispose();
-    }
-  },
-);
 // Clearing every value on one channel's access loss flashed Recent sections to
 // A–Z until the next read finished.
-it("losing one channel keeps the others' activity while the roster rereads", async () => {
+it("losing one channel keeps the others' activity and reads nothing more", async () => {
+  clocked();
   const h = setup();
   try {
     await h.initial();
-    await h.preferences.setSort("channels", "recent", []);
+    await headsStart();
     take(h.pending).resolve([
       message(h.peer, "alpha", "a", 50),
       message(h.peer, "beta", "b", 60),
@@ -517,17 +475,20 @@ it("losing one channel keeps the others' activity while the roster rereads", asy
       h.channels.list().channels.find((channel) => channel.id === id);
     expect(find("beta")?.lastActivityAt).toBe(60);
     expect(find("alpha")?.lastActivityAt).toBeUndefined();
+    await headsStart();
+    expect(h.activity).toHaveBeenCalledOnce();
   } finally {
     h.owner.dispose();
   }
 });
-it.each(["clear", "dispose", "revoke", "disconnect"] as const)(
-  "%s fences activity reads and cannot leak late data into a new lifetime",
+it.each(["clear", "dispose", "revoke"] as const)(
+  "%s fences head reads and cannot leak late data into a new lifetime",
   async (action) => {
+    clocked();
     const h = setup();
     try {
       await h.initial();
-      await h.preferences.setSort("channels", "recent", []);
+      await headsStart();
       const request = take(h.pending);
       if (action === "clear") await h.owner.clearCache();
       if (action === "dispose") h.owner.dispose();
@@ -535,8 +496,6 @@ it.each(["clear", "dispose", "revoke", "disconnect"] as const)(
         h.live().receive([
           roster(h.relay, "alpha", [], Math.floor(Date.now() / 1000) + 1),
         ]);
-      if (action === "disconnect")
-        h.live().state({ status: "retrying", routes: [] });
       expect(request.signal.aborted).toBe(true);
       request.resolve([message(h.peer, "alpha", "retired", 100)]);
       await flush();
@@ -549,6 +508,27 @@ it.each(["clear", "dispose", "revoke", "disconnect"] as const)(
     }
   },
 );
+it("a disconnect neither cancels the head read nor repeats it", async () => {
+  clocked();
+  const h = setup();
+  try {
+    await h.initial();
+    await headsStart();
+    const request = take(h.pending);
+    h.live().state({ status: "retrying", routes: [] });
+    expect(request.signal.aborted).toBe(false);
+    request.resolve([message(h.peer, "alpha", "kept", 100)]);
+    await flush();
+    h.live().state({ status: "connected", routes: [] });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(
+      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
+    ).toBe(100);
+    expect(h.activity).toHaveBeenCalledOnce();
+  } finally {
+    h.owner.dispose();
+  }
+});
 
 function take<T>(pending: T[]): T {
   const next = pending.shift();
@@ -556,25 +536,20 @@ function take<T>(pending: T[]): T {
   return next;
 }
 
-it("projects authoritative empty activity through later loading and failed refreshes", async () => {
+it("projects authoritative empty activity", async () => {
+  clocked();
   const h = setup();
   try {
     await h.initial();
-    await h.preferences.setFilter("channels", "active", []);
+    await headsStart();
     take(h.pending).resolve([]);
     await flush();
     const quiet = () =>
       h.channels.list().channels.find(({ id }) => id === "beta");
     expect(quiet()).toMatchObject({ activityKnown: true });
     expect(quiet()?.lastActivityAt).toBeUndefined();
-    await h.preferences.setFilter("channels", "all", []);
-    await h.preferences.setFilter("channels", "active", []);
-    expect(h.channels.list().activityStatus).toBe("loading");
-    expect(quiet()?.activityKnown).toBe(true);
-    take(h.pending).reject(new Error("offline"));
-    await flush();
-    expect(h.channels.list().activityStatus).toBe("error");
-    expect(quiet()?.activityKnown).toBe(true);
+    expect(h.owner.session.channelHeads.settled("beta")).toBe(true);
+    expect(h.owner.session.channelHeads.latest("beta")).toBeUndefined();
   } finally {
     h.owner.dispose();
   }

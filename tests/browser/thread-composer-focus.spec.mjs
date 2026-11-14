@@ -10,78 +10,57 @@ test.use({
 });
 
 // Browser-only: prove opener → retained portal → native editor focus, including
-// pointer tab selection and the main pane's inert transition.
-for (const pane of ["side", "main"]) {
-  test(`opening and reopening a ${pane} thread resumes typing`, async ({
-    page,
-    app,
-  }) => {
-    await page.addInitScript(
-      (pane) => localStorage.setItem("buzz-thread-placement.v1", pane),
-      pane,
-    );
-    await open(page, app);
-    const roots = app.histories
-      .get("primary/alpha")
-      .filter((row) => row.content.startsWith("Thread root"));
-    const main = page.locator("[data-main-workspace]");
-    const host = page.locator(
-      pane === "main" ? "[data-main-workspace]" : "[data-panel-workspace]",
-    );
-    const reply = host.getByRole("textbox", {
-      name: "Reply to thread",
-      exact: true,
-    });
-    const tab = (root) =>
-      host.locator(`[role="tab"][data-tab-value="thread:alpha:${root.id}"]`);
-    const showConversation = async () => {
-      const conversationTab = main.getByRole("tab", {
-        name: "Alpha",
-        exact: true,
-      });
-      if (pane === "main" && (await conversationTab.count()))
-        await conversationTab.click();
-    };
-    const openThread = async (root, keyboard = false) => {
-      await showConversation();
-      const trigger = page
-        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-        .getByRole("button", { name: /^View thread:/ });
-      if (keyboard) await activate(trigger);
-      else await clickRow(page, trigger);
-      await expect(reply).toBeFocused();
-    };
-    await openThread(roots[0]);
-    await page.keyboard.type("First thread draft");
-    await expect(reply).toHaveText("First thread draft");
-    for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowLeft");
-    const selection = () =>
-      reply.evaluate((editor) => [editor.selectionStart, editor.selectionEnd]);
-    await expect.poll(selection).toEqual([12, 12]);
-    await openThread(roots[1], true);
-    await page.keyboard.type("Second thread draft");
-    await expect(reply).toHaveText("Second thread draft");
-    await tab(roots[0]).click();
-    await expect(reply).toBeFocused();
-    await expect(reply).toHaveText("First thread draft");
-    await expect.poll(selection).toEqual([12, 12]);
-    await openThread(roots[1]);
-    await expect(reply).toHaveText("Second thread draft");
-    // Reopen the selected thread too, without relying on a selection change.
-    await openThread(roots[1], true);
-    await expect(reply).toHaveText("Second thread draft");
-    await expect(
-      host.locator('[role="tab"][data-tab-value^="thread:"]'),
-    ).toHaveCount(2);
-    await openThread(roots[0]);
-    await expect.poll(selection).toEqual([12, 12]);
-    await page.keyboard.type("X");
-    await expect(reply).toHaveText("First threadX draft");
-    // Reopening the selected thread also keeps its existing caret.
-    await openThread(roots[0], true);
-    await expect.poll(selection).toEqual([13, 13]);
+// pointer tab selection.
+test("opening and reopening a thread resumes typing", async ({ page, app }) => {
+  await open(page, app);
+  const roots = app.histories
+    .get("primary/alpha")
+    .filter((row) => row.content.startsWith("Thread root"));
+  const host = page.locator("[data-panel-workspace]");
+  const reply = host.getByRole("textbox", {
+    name: "Reply to thread",
+    exact: true,
   });
-}
+  const tab = (root) =>
+    host.locator(`[role="tab"][data-tab-value="thread:alpha:${root.id}"]`);
+  const openThread = async (root, keyboard = false) => {
+    const trigger = page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ });
+    if (keyboard) await activate(trigger);
+    else await clickRow(page, trigger);
+    await expect(reply).toBeFocused();
+  };
+  await openThread(roots[0]);
+  await page.keyboard.type("First thread draft");
+  await expect(reply).toHaveText("First thread draft");
+  for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowLeft");
+  const selection = () =>
+    reply.evaluate((editor) => [editor.selectionStart, editor.selectionEnd]);
+  await expect.poll(selection).toEqual([12, 12]);
+  await openThread(roots[1], true);
+  await page.keyboard.type("Second thread draft");
+  await expect(reply).toHaveText("Second thread draft");
+  await tab(roots[0]).click();
+  await expect(reply).toBeFocused();
+  await expect(reply).toHaveText("First thread draft");
+  await expect.poll(selection).toEqual([12, 12]);
+  await openThread(roots[1]);
+  await expect(reply).toHaveText("Second thread draft");
+  // Reopen the selected thread too, without relying on a selection change.
+  await openThread(roots[1], true);
+  await expect(reply).toHaveText("Second thread draft");
+  await expect(
+    host.locator('[role="tab"][data-tab-value^="thread:"]'),
+  ).toHaveCount(2);
+  await openThread(roots[0]);
+  await expect.poll(selection).toEqual([12, 12]);
+  await page.keyboard.type("X");
+  await expect(reply).toHaveText("First threadX draft");
+  // Reopening the selected thread also keeps its existing caret.
+  await openThread(roots[0], true);
+  await expect.poll(selection).toEqual([13, 13]);
+});
 
 // Beta has never been opened, so its root cannot seed the reply editor from the
 // timeline cache. Hold its read until a real gesture cancels the focus request.

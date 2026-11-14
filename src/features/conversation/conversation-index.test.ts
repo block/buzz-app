@@ -29,7 +29,7 @@ function fixture(initial: Partial<ChannelSummary>[]) {
   };
   const list = source();
   const inbox = source();
-  const previews = source();
+  const headListeners = new Set<(ids?: readonly string[]) => void>();
   const preferences = source();
   const activity = source();
   const typing = source();
@@ -54,11 +54,20 @@ function fixture(initial: Partial<ChannelSummary>[]) {
     muted: [] as string[],
     working: [] as string[],
     inbox: [] as unknown[],
+    /** What the roster head read found, before any live message. */
+    heads: new Map<
+      string,
+      { id: string; authorId: string; createdAt: number }
+    >(),
     profiles: new Map<string, { name: string; isAgent?: boolean }>(),
     agents: [] as string[],
     reactions: [] as unknown[],
   };
   const ensure = vi.fn(async () => {});
+  const ensureProfiles = vi.fn(async () => {});
+  const latest = vi.fn(
+    (id: string) => state.latest.get(id) ?? state.heads.get(id),
+  );
   const session = {
     viewer: "me",
     channels: {
@@ -99,6 +108,7 @@ function fixture(initial: Partial<ChannelSummary>[]) {
       },
     },
     profiles: {
+      ensure: ensureProfiles,
       subscribe: profiles.subscribe,
       snapshot: () => state.profiles,
       event: (id: string) =>
@@ -112,9 +122,14 @@ function fixture(initial: Partial<ChannelSummary>[]) {
         identities: state.agents.map((pubkey) => ({ pubkey })),
       }),
     },
-    channelPreviews: {
-      subscribe: previews.subscribe,
-      snapshot: () => new Map(),
+    channelHeads: {
+      latest,
+      settled: (id: string) => state.heads.has(id),
+      status: () => "ready",
+      subscribe: (listener: (ids?: readonly string[]) => void) => {
+        headListeners.add(listener);
+        return () => headListeners.delete(listener);
+      },
     },
     sidebarPreferences: {
       subscribe: preferences.subscribe,
@@ -136,6 +151,21 @@ function fixture(initial: Partial<ChannelSummary>[]) {
     session,
     state,
     ensure,
+    ensureProfiles,
+    latest,
+    /** The roster head read answers these channels. */
+    heads(
+      found: Record<string, { createdAt: number; authorId?: string }>,
+      announce: readonly string[] | undefined = Object.keys(found),
+    ) {
+      for (const [id, head] of Object.entries(found))
+        state.heads.set(id, {
+          id: `${id}-head-${head.createdAt}`,
+          authorId: head.authorId ?? "them",
+          createdAt: head.createdAt,
+        });
+      for (const listener of [...headListeners]) listener(announce);
+    },
     message(id: string, createdAt: number, authorId = "them") {
       state.latest.set(id, { id: `${id}-${createdAt}`, authorId, createdAt });
       state.unread.set(id, (state.unread.get(id) ?? 0) + 1);
@@ -474,4 +504,83 @@ test("reading does not load evidence; the first observer does, once", () => {
   index.watch(all, () => {});
   index.watchRecord("a", () => {});
   expect(ensure).toHaveBeenCalledTimes(2);
+});
+
+test("a Team channel never scrolled into view ranks by its roster head", () => {
+  const { session, heads } = fixture([{ id: "a" }, { id: "b" }, { id: "c" }]);
+  const index = conversationIndex(session);
+  const heard = vi.fn();
+  index.watch(feed, heard);
+  expect(index.keys(feed)).toEqual(["c:a", "c:b", "c:c"]);
+
+  // No row asked for it: the roster read alone orders and previews it.
+  heads({ c: { createdAt: 20 }, b: { createdAt: 10 } });
+
+  expect(heard).toHaveBeenCalledTimes(1);
+  expect(index.keys(feed)).toEqual(["c:c", "c:b", "c:a"]);
+  expect(index.record("c")).toMatchObject({
+    at: 20,
+    latest: { id: "c-head-20", createdAt: 20 },
+  });
+  // A cache reset names no channel: every one is described again.
+  heads({ a: { createdAt: 30 } }, undefined);
+  expect(index.keys(feed)).toEqual(["c:a", "c:c", "c:b"]);
+});
+
+test("a heads change for one channel re-describes only that channel", () => {
+  const { session, heads, latest } = fixture([{ id: "a" }, { id: "b" }]);
+  const index = conversationIndex(session);
+  const rows = { a: vi.fn(), b: vi.fn() };
+  index.watch(all, () => {});
+  index.watchRecord("a", rows.a);
+  index.watchRecord("b", rows.b);
+  const b = index.record("b");
+  latest.mockClear();
+
+  heads({ a: { createdAt: 5 } });
+
+  expect(latest.mock.calls.map(([id]) => id)).toEqual(["a"]);
+  expect(rows.a).toHaveBeenCalledTimes(1);
+  expect(rows.b).not.toHaveBeenCalled();
+  expect(index.record("b")).toBe(b);
+  expect(index.keys(all)).toEqual(["c:a", "c:b"]);
+
+  // Status-only news ([]) describes nothing again.
+  latest.mockClear();
+  heads({}, []);
+  expect(latest).not.toHaveBeenCalled();
+  expect(rows.a).toHaveBeenCalledTimes(1);
+});
+
+test("a sender filter asks once for authors it cannot judge, and follows their profiles", async () => {
+  const { session, heads, profile, agents, ensureProfiles } = fixture([
+    { id: "a" },
+    { id: "b" },
+  ]);
+  const index = conversationIndex(session);
+  const humans: ConversationQuery = { ...feed, sender: "humans" };
+  index.watch(humans, () => {});
+  heads({
+    a: { createdAt: 5, authorId: "sam" },
+    b: { createdAt: 4, authorId: "kim" },
+  });
+  expect(index.keys(humans)).toEqual([]);
+  await Promise.resolve();
+  // Both unknown authors, in one background request.
+  expect(ensureProfiles).toHaveBeenCalledOnce();
+  expect(ensureProfiles).toHaveBeenCalledWith(["sam", "kim"], "background");
+
+  // Judging again does not ask again.
+  agents([]);
+  index.keys(humans);
+  await Promise.resolve();
+  expect(ensureProfiles).toHaveBeenCalledOnce();
+
+  profile("sam", { name: "Sam" });
+  expect(index.keys(humans)).toEqual(["c:a"]);
+  profile("kim", { name: "Kim", isAgent: true });
+  expect(index.keys(humans)).toEqual(["c:a"]);
+  expect(index.keys({ ...feed, sender: "agents" })).toEqual(["c:b"]);
+  await Promise.resolve();
+  expect(ensureProfiles).toHaveBeenCalledOnce();
 });

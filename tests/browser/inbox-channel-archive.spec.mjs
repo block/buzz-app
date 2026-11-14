@@ -36,7 +36,7 @@ test("excludes a channel-archived conversation across reload without clearing lo
   await expect(rows.getByRole("img", { name: "Unread" })).toBeVisible();
 
   // Navigate to ordinary Channels without earning another Inbox read.
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await page
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Lifecycle channel", exact: true })

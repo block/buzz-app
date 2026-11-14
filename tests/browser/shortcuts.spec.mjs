@@ -1,6 +1,8 @@
 import { pluginAction } from "./plugin-settings.mjs";
 import {
+  channelRow,
   closeSettings,
+  hideNarrowConversationList,
   openPage,
   pageChoice,
   pageChoices,
@@ -9,6 +11,7 @@ import {
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, edge, settle } from "./timeline.mjs";
+import { showChannels } from "./rail-helpers.mjs";
 
 test.use({ pluginFixtures: true, historyCounts: { alpha: 1, beta: 0 } });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
@@ -145,7 +148,8 @@ test("zoom keys scale text, icons and spacing together and persist/reset", async
   expect(await page.evaluate(() => window.visualViewport.scale)).toBe(1);
   await page.reload();
   await scale(page, 1.1);
-  await openPage(page, "Messages");
+  await showChannels(page);
+  await channelRow(page, "alpha").click();
   await expect(composer).toHaveJSProperty("value", "Unsent zoom draft");
   await composer.focus();
   for (let i = 0; i < 15; i++) await page.keyboard.press(`${modifier}+=`);
@@ -220,6 +224,8 @@ test("interface zoom preserves an open emoji search and scales its controls", as
 }) => {
   await page.setViewportSize({ width: 800, height: 700 });
   await open(page, app);
+  // At this width Team's list lies over the reader; set it aside.
+  await hideNarrowConversationList(page);
   const modifier = await mod(page);
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
@@ -307,7 +313,7 @@ test.describe("scaled history", () => {
   test.use({ historyCounts: { alpha: 21, beta: 0 } });
   // Twenty rows fill one page; the extra row proves the virtualized paging edge.
   // Real layout and pointer coordinates cannot be established by a DOM emulator.
-  test("interface zoom keeps timeline paging and sidebar resizing usable", async ({
+  test("interface zoom keeps timeline paging and rail resizing usable", async ({
     page,
     app,
   }) => {
@@ -315,6 +321,8 @@ test.describe("scaled history", () => {
     const modifier = await mod(page);
     for (let i = 0; i < 10; i++) await page.keyboard.press(`${modifier}+=`);
     await scale(page, 2);
+    // Enlarged text narrows the reader until Team's list lies over it.
+    await hideNarrowConversationList(page);
     await settle(page);
     const history = page.getByRole("region", {
       name: "Channel message history",
@@ -329,12 +337,9 @@ test.describe("scaled history", () => {
         (el) => el.parentElement.getBoundingClientRect().height,
       ),
     ).toBe(112);
-    const sidebar = page.getByRole("complementary", {
-      name: "Sidebar",
-      exact: true,
-    });
+    const sidebar = page.locator("#shell-rail");
     const handle = page.getByRole("separator", {
-      name: "Resize sidebar",
+      name: "Resize app sidebar",
     });
     const before = await sidebar.boundingBox();
     const grip = await handle.boundingBox();

@@ -1,5 +1,10 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { openPage } from "./navigation.mjs";
+import {
+  channelRow,
+  hideNarrowConversationList,
+  openChannel,
+  openPage,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 test.use({
   productionBroker: true,
@@ -33,7 +38,8 @@ test.describe("held setup", () => {
       });
     });
 
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
+    await openChannel(page, "alpha");
     await expect(
       page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
     ).toBeVisible();
@@ -45,7 +51,7 @@ test.describe("held setup", () => {
     const streams = () =>
       app.report.brokerRequests.filter((r) => r.url.endsWith("/stream")).length;
     const before = streams();
-    await page.getByRole("button", { name: "Beta", exact: true }).click();
+    await channelRow(page, "beta").click();
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
@@ -66,7 +72,7 @@ test.describe("held setup", () => {
     app.relay.releaseEose("beta");
     await expect(warning).toHaveCount(0);
     for (const channel of ["Alpha", "Beta", "Alpha", "Beta"]) {
-      await page.getByRole("button", { name: channel, exact: true }).click();
+      await channelRow(page, channel.toLowerCase()).click();
       await expect(
         page.getByRole("textbox", { name: `Message #${channel}`, exact: true }),
       ).toBeVisible();
@@ -118,7 +124,8 @@ for (const target of ["alpha", "profiles"]) {
         localStorage.setItem("buzz-appearance.v1", "dark"),
       );
     await page.goto(app.origin);
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
+    await openChannel(page, "alpha");
     await expect(
       page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
     ).toBeVisible();
@@ -229,7 +236,10 @@ test("long recovery stays above the composer at enlarged text size", async ({
   await page.setViewportSize({ width: 390, height: 600 });
   await page.clock.install();
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
+  // A narrow window lays Team's list over the reader until it is put away.
+  await hideNarrowConversationList(page);
   const input = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -303,6 +313,8 @@ test.describe("public preview recovery", () => {
     app,
   }) => {
     await page.goto(app.origin);
+    await openPage(page, "Team");
+    await openChannel(page, "alpha");
     await expect(page.locator("[data-message-id]").first()).toBeVisible();
     const originalHistory = app.histories.get(`primary/${app.openChannelId}`);
     app.histories.set(`primary/${app.openChannelId}`, []);
@@ -389,6 +401,8 @@ test.describe("public preview recovery", () => {
     await page.setViewportSize({ width: 390, height: 700 });
     await page.clock.install();
     await page.goto(app.origin);
+    await openPage(page, "Team");
+    await openChannel(page, "alpha");
     await expect(page.locator("[data-message-id]").first()).toBeVisible();
     await page
       .getByRole("button", { name: "Search Buzz", exact: true })

@@ -1,3 +1,4 @@
+import { channelRow } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import {
   open,
@@ -230,9 +231,7 @@ test.describe("provisional reply cancellation", () => {
             );
           }
           last = app.inboxWindow.replies.at(-3);
-          await page
-            .locator(`button[data-channel-id="${pagedChannel}"]`)
-            .click();
+          await channelRow(page, pagedChannel).click();
           await openThreadLink(page, app, root.id, pagedChannel);
         }
         if (surface === "thread") {

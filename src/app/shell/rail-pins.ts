@@ -21,7 +21,7 @@ const KEY = "navigation-pins:v1";
 const kinds = new Set(["person", "agent", "channel", "chat", "page"]);
 
 /** Pins are local view intent, scoped by account and community like drafts. */
-export function readRailPins(scope: string): RailEntry[] {
+function readRailPins(scope: string): RailEntry[] {
   return parseRailEntries(readView<unknown>(scope, KEY, []));
 }
 

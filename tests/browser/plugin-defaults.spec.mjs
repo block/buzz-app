@@ -1,5 +1,5 @@
 import { pluginAction } from "./plugin-settings.mjs";
-import { openCommunityPicker } from "./navigation.mjs";
+import { openCommunityPicker, rail } from "./navigation.mjs";
 import {
   closeSettings,
   openSettings,
@@ -52,10 +52,11 @@ test("cold app startup pins fresh defaults and activates opt-in Bestie setup", a
     "buzz.workflows": false,
     "buzz.bestie": true,
   });
-  await openPage(fresh, "Messages");
-  const destination = fresh
-    .getByRole("navigation", { name: "Apps dock" })
-    .getByRole("tab", { name: "Create an agent", exact: true });
+  await openPage(fresh, "Team");
+  const destination = rail(fresh).getByRole("button", {
+    name: "Create an agent",
+    exact: true,
+  });
   await expect(destination).toBeVisible();
   await destination.click();
   const setup = fresh.getByRole("region", { name: "Bestie" });
@@ -125,11 +126,9 @@ test("an existing profile can opt in to Bestie and keep its choice across reload
   app,
 }) => {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await expect(
-    page
-      .getByRole("navigation", { name: "Apps dock" })
-      .getByRole("tab", { name: "Create an agent", exact: true }),
+    rail(page).getByRole("button", { name: "Create an agent", exact: true }),
   ).toHaveCount(0);
   await plugins(page);
   const bestie = pluginAction(page, "Bestie");
@@ -143,15 +142,16 @@ test("an existing profile can opt in to Bestie and keep its choice across reload
   await page.reload();
   await expect(bestie).toHaveAccessibleName(/^Disable /);
   await closeSettings(page);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await expect(
     page
       .locator(".shell-header")
       .getByRole("button", { name: "Create an agent", exact: true }),
   ).toHaveCount(0);
-  const destination = page
-    .getByRole("navigation", { name: "Apps dock" })
-    .getByRole("tab", { name: "Create an agent", exact: true });
+  const destination = rail(page).getByRole("button", {
+    name: "Create an agent",
+    exact: true,
+  });
   await expect(destination).toBeVisible();
   await destination.click();
   const bestiePage = page.getByRole("region", { name: "Bestie" });
@@ -171,9 +171,7 @@ test("an existing profile can opt in to Bestie and keep its choice across reload
   // The workspace behind Settings is hidden from the accessibility tree.
   await closeSettings(page);
   await expect(
-    page
-      .getByRole("navigation", { name: "Apps dock" })
-      .getByRole("tab", { name: "Create an agent", exact: true }),
+    rail(page).getByRole("button", { name: "Create an agent", exact: true }),
   ).toHaveCount(0);
 });
 
@@ -184,7 +182,7 @@ test("an existing profile keeps Reminders and Workflows until deliberately disab
   app,
 }) => {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await page.evaluate(() => {
     localStorage.setItem(
       "buzzodz.plugins.v1",
@@ -221,7 +219,7 @@ test("Membership action removes and restores the working Invite destination", as
     return route.continue();
   });
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   const invite = page.getByRole("menuitem", {
     name: "Invite to community",
     exact: true,

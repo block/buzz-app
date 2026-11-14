@@ -336,20 +336,17 @@ test("profile visits survive passive traversal and X retires active and inactive
   await expect(panel).toBeVisible();
 });
 
-test("closing a profile beside a main thread preserves the thread destination", async ({
+test("closing a profile beside a thread preserves the thread destination", async ({
   page,
 }) => {
-  await page.addInitScript(() =>
-    localStorage.setItem("buzz-thread-placement.v1", "main"),
-  );
   await page.goto("/tests/fixtures/profiles.html");
   await page
     .getByRole("button", { name: "View thread: 1 reply", exact: true })
     .click();
-  const main = page.locator("[data-main-workspace]");
-  const thread = main.locator('[role="tab"][data-tab-value^="thread:"]');
+  const side = page.locator("[data-panel-workspace]");
+  const thread = side.locator('[role="tab"][data-tab-value^="thread:"]');
   await expect(thread).toHaveAttribute("aria-selected", "true");
-  await page
+  await side
     .getByRole("button", { name: "View Pinky profile", exact: true })
     .click();
   const panel = page.getByRole("complementary", {
@@ -366,7 +363,7 @@ test("closing a profile beside a main thread preserves the thread destination", 
   await expect(panel).toHaveCount(0);
   await expect(thread).toHaveAttribute("aria-selected", "true");
   await expect(
-    main.getByRole("button", { name: "View Pinky profile", exact: true }),
+    side.getByRole("button", { name: "View Pinky profile", exact: true }),
   ).toBeVisible();
   await expect
     .poll(() =>

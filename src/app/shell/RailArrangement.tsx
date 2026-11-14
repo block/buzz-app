@@ -72,8 +72,9 @@ type Arrangement = {
   selectedSection?: string | undefined;
   openSection(id: string): void;
   groups: { id: string; title: string }[];
-  placements: ReturnType<typeof useRailLayout>["layout"]["placements"];
   membership: ReturnType<typeof railSections>;
+  /** Every entry by id as it is now, for rows saved in a section. */
+  current: ReadonlyMap<string, RailEntry>;
   /** Places an entry in a section; it leaves `from` when it moves from there. */
   move(entry: RailEntry, section: string, from?: string): void;
   /** Takes an entry out of a section a person put it in. */
@@ -181,6 +182,7 @@ export function RailArrangement(props: Parameters<typeof Arrangement>[0]) {
 function Arrangement({
   partition,
   sections,
+  current,
   renderEntry,
   renderSectionList,
   renderRowActions,
@@ -194,6 +196,9 @@ function Arrangement({
 }: {
   partition: string;
   sections: Group[];
+  /** Every entry by id as it is now: a row saved in a section shows its
+   * current name. */
+  current: ReadonlyMap<string, RailEntry>;
   /** Show this one card under a notice: a plugin has narrowed the rail. */
   only?: { section: string; banner: ReactNode } | undefined;
   renderEntry(entry: RailEntry, section?: string): ReactNode;
@@ -252,14 +257,16 @@ function Arrangement({
       id: group.id,
       title: group.title,
     })),
-    placements: layout.placements,
     membership: railSections(
       layout,
       groups.map(({ id, title }) => ({ id, title })),
     ),
+    current,
     move: (entry, section, from) => {
+      // Pins are their own list: a drop there pins, as the row's menu does.
+      if (section === "pins") onTogglePin(entry, true);
       // A conversation lives in Team or Solo: nothing moves or copies it there.
-      if (entry.kind === "page" || holdsCopy(entry, section))
+      else if (entry.kind === "page" || holdsCopy(entry, section))
         saved(move(entry, section, from));
     },
     unplace: (entry, section) => {
@@ -430,17 +437,7 @@ function Arrangement({
             retry={async () => {}}
             close={() => setCreating(undefined)}
             create={({ id, name }) => {
-              if (
-                !saved(
-                  create(
-                    id,
-                    name,
-                    creating.entry,
-                    groups.map((group) => group.id),
-                    creating.from,
-                  ),
-                )
-              )
+              if (!saved(create(id, name, creating.entry, creating.from)))
                 throw new Error("Couldn’t save this section. Try again.");
               setCreating(undefined);
               return true;
@@ -459,8 +456,6 @@ export function RailGroup({
   action,
   children,
   rows: sourceRows = [],
-  footer,
-  rowsLabel,
   unlimited = false,
   avatarGrid = id === "pins",
   leadingEntryIds = [],
@@ -475,8 +470,6 @@ export function RailGroup({
   action?: ReactNode;
   children?: ReactNode;
   rows?: readonly { entry: RailEntry; content: ReactNode }[];
-  footer?: ReactNode;
-  rowsLabel?: string;
   unlimited?: boolean;
   avatarGrid?: boolean;
   leadingEntryIds?: readonly string[];
@@ -542,6 +535,7 @@ export function RailGroup({
     arrangement?.membership.entries(
       id,
       sourceRows.map((row) => row.entry),
+      arrangement.current,
     ) ?? sourceRows.map((row) => row.entry);
   const rows = entries.map((entry) => (
     <RailSourceRow key={entry.id} section={id} entry={entry}>
@@ -549,8 +543,6 @@ export function RailGroup({
     </RailSourceRow>
   ));
   const notes = children;
-  const placed =
-    arrangement?.placements.filter((item) => item.section === id) ?? [];
   if (sortEntries)
     rows.sort((a, b) => sortEntries(a.props.entry, b.props.entry));
   if (trailingEntryId)
@@ -567,12 +559,12 @@ export function RailGroup({
     (row) => !leadingEntryIds.includes(row.props.entry.id),
   );
   const shown = limited ? preview.slice(0, 4) : preview;
-  const more = limited && preview.length > 4 && (!footer || placed.length > 0);
+  const more = limited && preview.length > 4;
   if (arrangement?.pageSection === id && pageContent) return pageContent;
   if (
     arrangement?.pageSection === id &&
     arrangement.renderSectionList &&
-    (id === "pins" || id === "agents" || id.startsWith("custom:"))
+    (id === "pins" || id.startsWith("custom:"))
   )
     return arrangement.renderSectionList(
       id,
@@ -700,13 +692,7 @@ export function RailGroup({
       >
         {leading}
         {views}
-        {rowsLabel ? (
-          <ul aria-label={rowsLabel} className={styles.rows}>
-            {shown.map((row) => (
-              <li key={row.key}>{row}</li>
-            ))}
-          </ul>
-        ) : avatarGrid ? (
+        {avatarGrid ? (
           <div
             className={styles.avatarGrid}
             data-pins-grid={id === "pins" ? "" : undefined}
@@ -717,22 +703,21 @@ export function RailGroup({
           shown
         )}
         {notes}
-        {(more || footer) && renderOpen ? (
-          renderOpen(
-            preview.slice(shown.length).map((row) => row.props.entry),
-            () => arrangement?.openSection(id),
-          )
-        ) : more ? (
-          <NavigationItem
-            label={`Open ${title}`}
-            data-rail-view-more=""
-            aria-label={`Open ${title}`}
-            icon={<ArrowRightIcon size={18} />}
-            onClick={() => arrangement?.openSection(id)}
-          />
-        ) : (
-          footer
-        )}
+        {more &&
+          (renderOpen ? (
+            renderOpen(
+              preview.slice(shown.length).map((row) => row.props.entry),
+              () => arrangement?.openSection(id),
+            )
+          ) : (
+            <NavigationItem
+              label={`Open ${title}`}
+              data-rail-view-more=""
+              aria-label={`Open ${title}`}
+              icon={<ArrowRightIcon size={18} />}
+              onClick={() => arrangement?.openSection(id)}
+            />
+          ))}
       </NavigationSection>
     </div>
   );
@@ -777,8 +762,8 @@ export function RailGroup({
   );
 }
 
-/** Agents retain their inventory entry; other rows move to their chosen section. */
-export function RailSourceRow({
+/** Pins list every pinned row; other rows move to their chosen section. */
+function RailSourceRow({
   entry,
   section,
   children,
@@ -789,7 +774,7 @@ export function RailSourceRow({
 }) {
   const arrangement = useContext(ArrangementContext);
   if (
-    section !== "agents" &&
+    section !== "pins" &&
     arrangement?.membership.assigned.has(entry.id) &&
     arrangement.membership.assigned.get(entry.id) !== section
   )
@@ -880,7 +865,7 @@ function RowMenu({
   focus(): void;
 }) {
   const arrangement = useContext(ArrangementContext);
-  const pinned = section === "pins" || arrangement?.isPinned(entry);
+  const pinned = !!arrangement?.isPinned(entry);
   const page = entry.kind === "page";
   // A conversation stays in Team or Solo: sections a person made hold copies.
   // Only its row in such a section, in the sidebar, moves on to another.

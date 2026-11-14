@@ -37,13 +37,17 @@ async function expectMode(page, mode, inSettings = false) {
     "content",
     mode === "dark" ? /^#101010$/ : /^#f1f1f2$/,
   );
+  // The shell paints the window underlay, which follows the color mode.
   await expect(page.locator(".shell-background")).toHaveCSS(
     "background-color",
-    mode === "dark" ? "rgb(16, 16, 16)" : "rgb(241, 241, 242)",
-  );
-  await expect(page.locator(".shell-background")).toHaveCSS(
-    "background-image",
-    /radial-gradient/,
+    await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.backgroundColor = "var(--surface-window-underlay)";
+      document.querySelector(".shell-background").append(probe);
+      const color = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return color;
+    }),
   );
   // Settings keeps its sections inside the modal at every width.
   if (inSettings) {
@@ -56,8 +60,8 @@ async function expectMode(page, mode, inSettings = false) {
   if (collapsed) await disclosure.click();
   await expect(
     page
-      .getByRole("complementary", { name: "Sidebar", exact: true })
-      .getByRole("navigation", { name: "Subscribed channels", exact: true }),
+      .getByRole("navigation", { name: "Apps", exact: true })
+      .locator('[data-rail-section="messages"]'),
   ).toBeVisible();
   if (collapsed) await button(page, "Hide navigation").click();
 }

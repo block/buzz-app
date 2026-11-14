@@ -74,6 +74,7 @@ export function useListColumn(navigator: Navigation | undefined) {
     () => navigator?.snapshot(),
   );
   const entryId = visit?.entry.id;
+  const attemptId = visit?.attempt.id;
   const saved = useRef(new Map<string, Saved>());
   const [state, setState] = useState<{
     entryId: string | undefined;
@@ -81,18 +82,11 @@ export function useListColumn(navigator: Navigation | undefined) {
   }>({ entryId: undefined, list: closed });
   // What an open in flight asked of the visit it lands on. Navigation may
   // return to a visit it already holds, which would otherwise look like Back.
+  // Rendering only reads it and `saved`; commits update them.
   const asked = useRef<
     | { from: string | undefined; attempt: string | undefined; list: Saved }
     | undefined
   >(undefined);
-  // An open that stayed on its visit starts a new attempt there: it asked
-  // nothing of any later visit.
-  if (
-    asked.current &&
-    asked.current.from === entryId &&
-    asked.current.attempt !== visit?.attempt.id
-  )
-    asked.current = undefined;
   let list = state.list;
   if (state.entryId !== entryId) {
     const target = visit?.entry.target;
@@ -101,7 +95,6 @@ export function useListColumn(navigator: Navigation | undefined) {
     const request = asked.current;
     const intent =
       request && request.from === state.entryId ? request.list : undefined;
-    asked.current = undefined;
     list = section
       ? { open: true, section, animate: false }
       : intent
@@ -115,7 +108,14 @@ export function useListColumn(navigator: Navigation | undefined) {
             };
     setState({ entryId, list });
   }
-  if (entryId) remember(saved.current, entryId, list);
+  // A request holds only on the visit and attempt that made it. The visit it
+  // landed on spent it; an open that stayed on its visit started a new
+  // attempt there and asked nothing of any later visit.
+  useLayoutEffect(() => {
+    const request = asked.current;
+    if (request && (request.from !== entryId || request.attempt !== attemptId))
+      asked.current = undefined;
+  }, [entryId, attemptId]);
   const setOpen = useCallback(
     (open: boolean, animate = false) =>
       setState((current) => ({
@@ -127,6 +127,7 @@ export function useListColumn(navigator: Navigation | undefined) {
   const latest = useRef({ entryId, list });
   useLayoutEffect(() => {
     latest.current = { entryId, list };
+    if (entryId) remember(saved.current, entryId, list);
   });
   /**
    * Call before opening: the visit that open lands on shows the list as it is

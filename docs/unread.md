@@ -71,7 +71,7 @@ thread panel also qualifies, including its selected owning tab header. Explicitl
 returning to a channel reads both its main conversation and its visible selected
 side-pane thread tab for that channel: while focus stays anywhere in that
 channel's workspace (normally the main composer), that side-pane thread
-qualifies too. A thread in the main pane never borrows this grant. A link to
+qualifies too. A link to
 a message or thread (Activity, a message link) is not a plain visit and reads
 only what holds focus. A hidden or collapsed pane, another channel's tab, a
 members or media-review view, and a passive restoration (`preserve` focus) keep

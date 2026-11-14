@@ -31,16 +31,9 @@ import { useConversationTabs } from "./useConversationTabs";
 
 afterEach(cleanup);
 
-it.each([
-  ["main", true],
-  ["side", true],
-  ["main", false],
-  ["side", false],
-  ["main", undefined],
-  ["side", undefined],
-] as const)(
-  "preserves %s panel lifetimes with deferred mounting=%s",
-  (pane, deferUntilShown) => {
+it.each([true, false, undefined] as const)(
+  "preserves panel lifetimes with deferred mounting=%s",
+  (deferUntilShown) => {
     const channels = [
       { id: "alpha", name: "Alpha" },
       { id: "beta", name: "Beta" },
@@ -112,23 +105,15 @@ it.each([
         conversationIcon: () => null,
         leadingIds: [],
         continuingVisit,
-        mainPane: true,
         isLive: () => true,
         openLink: () => false,
       });
       return (
         <PanelWorkspace
           key={channelId}
-          main={pane === "main"}
-          value={
-            pane === "main" ? workspace.selectedMain : workspace.selectedTab
-          }
-          select={(id) =>
-            pane === "main"
-              ? state.selectMain(id)
-              : workspace.selectPanelTab(id)
-          }
-          items={pane === "main" ? workspace.mainItems : workspace.items}
+          value={workspace.selectedTab}
+          select={(id) => workspace.selectPanelTab(id)}
+          items={workspace.items}
         />
       );
     }
@@ -144,19 +129,12 @@ it.each([
     }));
     act(() => {
       for (const entry of entries) workspace.open(entry, true);
-      if (pane === "main")
-        for (const entry of entries)
-          state.moveEntry(`app:${entry.target}`, "main");
-      else {
-        state.select("app:target-49");
-        state.setPaneOpen(false);
-      }
+      state.select("app:target-49");
+      state.setPaneOpen(false);
     });
     expect(screen.getAllByRole("tab")).toHaveLength(50);
-    if (pane === "side") {
-      expect(mounted.size).toBe(deferUntilShown ? 0 : 50);
-      act(() => state.setPaneOpen(true));
-    }
+    expect(mounted.size).toBe(deferUntilShown ? 0 : 50);
+    act(() => state.setPaneOpen(true));
     const allTargets = entries.map((entry) => entry.target);
     expect([...mounted]).toEqual(deferUntilShown ? ["target-49"] : allTargets);
     if (!deferUntilShown)
@@ -165,11 +143,7 @@ it.each([
       );
     const draft = screen.getByRole("textbox", { name: "Draft target-49" });
     fireEvent.change(draft, { target: { value: "Unfinished reply" } });
-    act(() =>
-      pane === "main"
-        ? state.selectMain("app:target-0")
-        : workspace.selectPanelTab("app:target-0"),
-    );
+    act(() => workspace.selectPanelTab("app:target-0"));
     expect([...mounted].sort()).toEqual(
       deferUntilShown ? ["target-0", "target-49"] : [...allTargets].sort(),
     );
@@ -179,25 +153,11 @@ it.each([
       for (const listener of listeners) listener();
     });
     expect(draft).toHaveAttribute("aria-description", "Background revision 1");
-    act(() =>
-      pane === "main"
-        ? state.selectMain("app:target-49")
-        : workspace.selectPanelTab("app:target-49"),
-    );
+    act(() => workspace.selectPanelTab("app:target-49"));
     expect(screen.getByRole("textbox", { name: "Draft target-49" })).toBe(
       draft,
     );
     expect(draft).toHaveValue("Unfinished reply");
-    if (pane === "side") {
-      act(() => {
-        state.moveEntry("app:target-49", "main");
-        workspace.open(entries[49], true, "side");
-      });
-      expect(
-        document.querySelector("[data-panel-workspace]")?.contains(draft),
-      ).toBe(true);
-      expect(draft).toHaveValue("Unfinished reply");
-    }
     view.rerender(
       <StrictMode>
         <Harness channelId="beta" />
@@ -221,10 +181,9 @@ it.each([
     act(() => workspace.closeAllTabs());
     expect(mounted.size).toBe(0);
     expect(disposed).toContain("target-0");
-    act(() => {
-      workspace.open({ panel, channelId: "alpha", target: "target-0" }, true);
-      if (pane === "main") state.moveEntry("app:target-0", "main");
-    });
+    act(() =>
+      workspace.open({ panel, channelId: "alpha", target: "target-0" }, true),
+    );
     expect(screen.getByRole("textbox", { name: "Draft target-0" })).toHaveValue(
       "",
     );
@@ -275,7 +234,6 @@ it("keeps a channel's menu tab while away and drops it if the channel became ine
       conversationIcon: () => null,
       leadingIds: [],
       continuingVisit: false,
-      mainPane: true,
       isLive: () => true,
       openLink: () => false,
       eligible: (entry) =>

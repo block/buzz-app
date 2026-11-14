@@ -1,21 +1,20 @@
 import type { RailLayout } from "./rail-layout";
 import type { RailEntry } from "./rail-pins";
 
-export type RailSection = { id: string; title: string };
+type RailSection = { id: string; title: string };
 const builtins: readonly RailSection[] = [
   { id: "navigation", title: "Plugins" },
   { id: "pins", title: "Pins" },
   { id: "messages", title: "Team" },
   { id: "solo", title: "Solo" },
-  { id: "agents", title: "Agents" },
 ];
 
 /** A conversation's own list, and where apps live: nothing is copied here. */
-const homes = new Set(["navigation", "messages", "solo", "agents"]);
+const homes = new Set(["navigation", "messages", "solo"]);
 /**
  * Whether a section holds its own copy of this entry. A conversation always
- * stays in Team or Solo, so a section a person made, like Pins, lists it as
- * well. An app's row has no such home: it moves.
+ * stays in Team or Solo, so a section a person made lists it as well. An
+ * app's row has no such home: it moves.
  */
 export const holdsCopy = (entry: RailEntry, section: string) =>
   entry.kind !== "page" && !homes.has(section);
@@ -64,7 +63,7 @@ export function railSections(
         defaults
           .filter(
             (entry) =>
-              id === "agents" ||
+              id === "pins" ||
               !assigned.has(entry.id) ||
               assigned.get(entry.id) === id,
           )

@@ -65,9 +65,7 @@ test("registered backdrops paint in order between the shell and its controls, an
     const main = document
       .getElementById("main-content")
       .getBoundingClientRect();
-    const dock = document
-      .querySelector(".shell-side-dock")
-      .getBoundingClientRect();
+    const dock = document.getElementById("shell-rail").getBoundingClientRect();
     return {
       // Below the header row, beside the bottom of the window: a bare gutter.
       gutter: [2, window.innerHeight - 2],
@@ -76,7 +74,7 @@ test("registered backdrops paint in order between the shell and its controls, an
       group: [history.left + history.width / 2, history.top + 3],
       floor: [toggle.left - 3, header.top + header.height / 2],
       pane: [main.left + main.width / 2, main.top + main.height / 2],
-      // The app dock's column, below its last tile: its own floor.
+      // The rail's column, below its last card: its own floor.
       dock: [dock.left + dock.width / 2, dock.bottom - 3],
     };
   });
@@ -94,7 +92,7 @@ test("registered backdrops paint in order between the shell and its controls, an
     const app = await appColor(page);
     expect(near(group, app), `${mode} header group ${group}`).toBe(true);
     expect(near(floor, app), `${mode} header floor ${floor}`).toBe(true);
-    expect(near(dock, app), `${mode} dock floor ${dock}`).toBe(true);
+    expect(near(dock, app), `${mode} rail floor ${dock}`).toBe(true);
     expect(near(pane, blue) || near(pane, red), `${mode} pane ${pane}`).toBe(
       false,
     );

@@ -1,5 +1,13 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { chooseChannelAction } from "./channel-details.mjs";
+import {
+  channelRow,
+  openChannel,
+  openPage,
+  showConversationList,
+} from "./navigation.mjs";
+
+const lifecycleChannel = "11111111-1111-4111-8111-111111111111";
 import { hoverMessage } from "./message-actions.mjs";
 
 test.use({
@@ -126,11 +134,8 @@ test.describe("Guest-default permalinks", () => {
       await expect(
         page.getByRole("button", { name: "Join", exact: true }),
       ).toHaveCount(0);
-      await expect(
-        page
-          .getByRole("navigation", { name: "Subscribed channels" })
-          .getByRole("button", { name: /^Lifecycle channel/ }),
-      ).toBeVisible();
+      await showConversationList(page);
+      await expect(channelRow(page, lifecycleChannel)).toBeVisible();
       await readPermalink(page, app, app.exact.target.id, true);
       expect(app.report.lifecyclePublications.map(({ kind }) => kind)).toEqual([
         9021,
@@ -143,12 +148,7 @@ test.describe("Guest-default permalinks", () => {
     app,
   }) => {
     await readPermalink(page, app, app.exact.target.id, true);
-    await page
-      .getByRole("button", { name: "Channel actions", exact: true })
-      .click();
-    await page
-      .getByRole("menuitem", { name: "Leave channel", exact: true })
-      .click();
+    await chooseChannelAction(page, "Leave channel");
     const dialog = page.getByRole("dialog", {
       name: "Leave channel: Lifecycle channel",
       exact: true,
@@ -176,13 +176,8 @@ test("a joined guest can read and leave without receiving a composer or Join pro
   app,
 }) => {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
-  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
-  const row = sidebar.getByRole("button", {
-    name: "Lifecycle channel",
-    exact: true,
-  });
-  await row.click();
+  await openPage(page, "Team");
+  await openChannel(page, lifecycleChannel);
   await expect(
     page.getByRole("region", { name: "Read-only channel" }),
   ).toHaveText("Read-only access");
@@ -201,19 +196,14 @@ test("a joined guest can read and leave without receiving a composer or Join pro
   await expect(
     page.getByText("Start the conversation below.", { exact: true }),
   ).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Channel actions", exact: true })
-    .click();
-  await page
-    .getByRole("menuitem", { name: "Leave channel", exact: true })
-    .click();
+  await chooseChannelAction(page, "Leave channel");
   const dialog = page.getByRole("dialog");
   await expect(
     dialog.getByRole("button", { name: "Cancel", exact: true }),
   ).toBeFocused();
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Channel actions", exact: true }),
+    page.getByRole("button", { name: "Conversation actions", exact: true }),
   ).toBeFocused();
   await page
     .getByRole("button", { name: /^Channel access for /, exact: true })
@@ -231,12 +221,7 @@ test("a joined guest can read and leave without receiving a composer or Join pro
   ).toHaveCount(0);
   await members.getByRole("button", { name: "Done", exact: true }).click();
   // The registered channel menu and panel must retain Guest reading access.
-  await page
-    .getByRole("button", { name: "Channel actions", exact: true })
-    .click();
-  await page
-    .getByRole("menuitem", { name: "View canvas", exact: true })
-    .click();
+  await chooseChannelAction(page, "View canvas");
   const canvas = page.getByRole("region", {
     name: "Channel Canvas",
     exact: true,

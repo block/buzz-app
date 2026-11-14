@@ -1,5 +1,6 @@
 import { hoverMessage, openThreadLink } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
+import { openDm } from "./navigation.mjs";
 import { open, settle } from "./timeline.mjs";
 
 test.use({
@@ -500,10 +501,9 @@ test("copied Buzz links and the desktop alias reveal their destination from a co
   ).toBeVisible();
   const copiedLink = await page.evaluate(() => window.copiedMessageLink);
   expect(copiedLink).toBe(`buzz://message?channel=alpha&id=${event.id}`);
-  const sharedConversation = page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: "Alice Fixture", exact: true });
-  await sharedConversation.click();
+  // The DM opens from Team's DMs list; a link it holds opens directly.
+  const sharedConversation = () => openDm(page, "Alice Fixture");
+  await sharedConversation();
   const sharedChannel = await page
     .locator("[data-channel-timeline]")
     .getAttribute("data-channel-timeline");
@@ -513,7 +513,7 @@ test("copied Buzz links and the desktop alias reveal their destination from a co
     `${copiedLink}\n\n[Desktop alias](buzz://channel/alpha/${event.id})`,
   );
   for (const href of [copiedLink, `buzz://channel/alpha/${event.id}`]) {
-    await sharedConversation.click();
+    await sharedConversation();
     await page.locator(`[data-channel-timeline] a[href="${href}"]`).click();
     await expect(row).toBeVisible();
     await expect(row).toBeFocused();
@@ -522,10 +522,7 @@ test("copied Buzz links and the desktop alias reveal their destination from a co
 
 test("DM actions select the correct inline reply", async ({ page, app }) => {
   await open(page, app);
-  await page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: "Alice Fixture", exact: true })
-    .click();
+  await openDm(page, "Alice Fixture");
   const timeline = page.locator("[data-channel-timeline]");
   const channel = await timeline.getAttribute("data-channel-timeline");
   const event = app.append("primary", channel, "DM menu check");
@@ -763,10 +760,7 @@ test("historical single-day DMs and their threads expose dates without hover", a
   app,
 }) => {
   await open(page, app);
-  await page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: "Alice Fixture", exact: true })
-    .click();
+  await openDm(page, "Alice Fixture");
   const timeline = page.locator("[data-channel-timeline]");
   const channel = await timeline.getAttribute("data-channel-timeline");
   const event = app.append("primary", channel, "Historical message");

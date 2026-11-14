@@ -40,14 +40,6 @@ type Frames = {
         note: ReactNode;
       }) => ReactNode)
     | undefined;
-  renderRow?:
-    | ((
-        id: string,
-        label: string,
-        target: OpenTarget,
-        content: ReactNode,
-      ) => ReactNode)
-    | undefined;
 };
 
 /** A host for the existing contribution contract, sharing the rail's row owners. */
@@ -57,7 +49,6 @@ export function ContributedRailSections({
   partition,
   only,
   renderSection,
-  renderRow,
   rowId,
   fallbackRow,
   fullPage,
@@ -89,7 +80,6 @@ export function ContributedRailSections({
                 partition={partition}
                 active={active}
                 renderSection={renderSection}
-                renderRow={renderRow}
                 rowId={rowId}
                 fallbackRow={fallbackRow}
                 fullPage={fullPage}
@@ -106,7 +96,6 @@ function Section({
   partition,
   active,
   renderSection,
-  renderRow,
   rowId,
   fallbackRow,
   fullPage,
@@ -233,11 +222,7 @@ function Section({
   );
   const children = [
     rowId && !rows.some((row) => row.id === rowId) && fallbackRow,
-    ...items.map((item) =>
-      renderRow
-        ? renderRow(item.id, item.label, item.target, item.content)
-        : item.content,
-    ),
+    ...items.map((item) => item.content),
     note,
   ];
   return renderSection ? (

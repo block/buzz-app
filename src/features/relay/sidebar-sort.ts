@@ -11,7 +11,3 @@ export function isSidebarSortMode(value: unknown): value is SidebarSortMode {
       ))
   );
 }
-
-export function sidebarSortNeedsActivity(mode: SidebarSortMode): boolean {
-  return mode === "recent" || mode.startsWith("plugin:");
-}

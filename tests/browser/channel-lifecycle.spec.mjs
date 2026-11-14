@@ -4,7 +4,7 @@ import { frames } from "./timeline.mjs";
 import { test, expect } from "./fixture.mjs";
 async function openLifecycle(page, app) {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await page
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Alpha", exact: true })
@@ -295,7 +295,7 @@ for (const action of ["archive", "hide"]) {
       app,
     }) => {
       await page.goto(app.origin);
-      await openPage(page, "Messages");
+      await openPage(page, "Team");
       const sidebar = page.getByRole("navigation", {
         name: "Subscribed channels",
       });
@@ -601,7 +601,7 @@ test.describe("remote archive focus", () => {
         });
       });
       await page.goto(app.origin);
-      await openPage(page, "Messages");
+      await openPage(page, "Team");
       await page
         .getByRole("navigation", { name: "Subscribed channels" })
         .locator('button[data-channel-id="alpha"]')
@@ -758,7 +758,7 @@ test.describe("remote Solo unarchive", () => {
     app,
   }) => {
     await page.goto(app.origin);
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
     await page
       .getByRole("button", { name: "Search Buzz", exact: true })
       .click();
@@ -854,7 +854,7 @@ test.describe("Solo chat owned through its agent", () => {
     app,
   }) => {
     await page.goto(app.origin);
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
     const row = page
       .getByRole("navigation", { name: "Subscribed channels" })
       .getByRole("button", { name: "Lifecycle channel", exact: true });

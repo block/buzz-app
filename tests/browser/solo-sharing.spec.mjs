@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { conversationAction, conversationActions } from "./rail-helpers.mjs";
 import { generateSecretKey } from "nostr-tools";
 import { formatPublicKey } from "../../src/shared/identity/public-key.ts";
 
@@ -362,11 +363,10 @@ test.describe("View only channel share", () => {
         "--buzz-text-scale",
         String(scale),
       );
-      // The cached header has only Share. Live Chat actions shifts Share left;
-      // wait for that header before pointer hit-testing can straddle the change.
-      await expect(
-        page.getByRole("button", { name: "Chat actions", exact: true }),
-      ).toBeVisible();
+      // The cached header has only Share. Live Conversation actions shifts
+      // Share left; wait for that header before pointer hit-testing can
+      // straddle the change.
+      await expect(conversationActions(page)).toBeVisible();
       await trigger.click();
       await expect(search).toBeFocused();
       await search.fill("Alpha");
@@ -1021,12 +1021,8 @@ test.describe("Messages Share navigation", () => {
       dialog.getByRole("searchbox", { name: "Search people and channels" }),
     ).toHaveValue("");
     await dialog.getByRole("button", { name: "Done", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Chat actions", exact: true })
-      .click();
-    await page
-      .getByRole("menuitem", { name: "Chat settings", exact: true })
-      .click();
+    await conversationActions(page).click();
+    await conversationAction(page, "Chat settings").click();
     const settings = page.getByRole("dialog", {
       name: "Edit chat",
       exact: true,

@@ -1,14 +1,7 @@
 import { readFileSync } from "node:fs";
 import { test, expect } from "./fixture.mjs";
-import {
-  activate,
-  clickRow,
-  expectAnchor,
-  open,
-  settle,
-  upper,
-  virtuaIdle,
-} from "./timeline.mjs";
+import { channelRow } from "./navigation.mjs";
+import { activate, clickRow, open, settle, virtuaIdle } from "./timeline.mjs";
 
 import { wheel } from "./timeline.mjs";
 
@@ -30,46 +23,12 @@ test("Back restores each thread visit before the previous channel", async ({
   page,
   app,
 }) => {
-  const beta = page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .locator('button[data-channel-id="beta"]');
-  // Intent preparation can supply the same badge as the held unread batch.
-  // Gate both sources; focus explicitly instead of relying on roster warming.
-  let releaseHead;
-  let sawHead;
-  const headHeld = new Promise((resolve) => {
-    releaseHead = resolve;
-  });
-  const headStarted = new Promise((resolve) => {
-    sawHead = resolve;
-  });
-  await page.route("**/api/relay/**/query", async (route) => {
-    if (
-      route
-        .request()
-        .postDataJSON()
-        .some((filter) => filter.top_level && filter["#h"]?.includes("beta"))
-    ) {
-      sawHead();
-      await headHeld;
-    }
-    await route.continue().catch(() => {});
-  });
-  app.relay.holdUnread();
-  try {
-    await open(page, app);
-    await beta.focus(); // Prepare without selecting or adding a navigation visit.
-    await headStarted;
-    await expect.poll(() => app.report.unreadHolds.length).toBe(1);
-    await expect(beta).toHaveAccessibleName("Beta");
-  } finally {
-    releaseHead();
-    app.relay.releaseUnread();
-  }
-  // Unread evidence changes the accessible name independently of navigation.
-  await expect(beta.getByRole("img")).toHaveAccessibleName(
-    "20 observed unread messages. Not an exact total.",
-  );
+  const beta = channelRow(page, "beta");
+  await open(page, app);
+  // Unread evidence marks the row independently of navigation: the roster's
+  // head read shows Beta unread before it is ever opened.
+  await expect(beta).toHaveAttribute("data-state", "unread");
+  await expect(beta.getByRole("img", { name: "Unread" })).toBeVisible();
   const roots = app.histories
     .get("primary/alpha")
     .filter((row) => row.content.startsWith("Thread root"));
@@ -192,8 +151,9 @@ for (const reading of [false, true]) {
       await virtuaIdle(page);
       await trigger.click();
       await expect.poll(() => requested).toBe(true);
-      // One of the 50 loaded replies is a collapsed descendant.
-      await expect(region.locator("[data-message-id]")).toHaveCount(50);
+      // The root leads the first page of replies; a collapsed descendant
+      // stays hidden.
+      await expect(region.locator("[data-message-id]")).toHaveCount(51);
       await expect(
         region.getByText("Broadcast descendant", { exact: true }),
       ).toHaveCount(0);
@@ -417,7 +377,7 @@ test("choosing a thread tab resumes typing where its reply was left", async ({
 });
 
 // Real pointer capture, hit testing and retained editor DOM are browser-only.
-test("dragging thread tabs reorders and crosses panes without losing the reply", async ({
+test("dragging thread tabs reorders them without losing the reply", async ({
   page,
   app,
 }) => {
@@ -437,7 +397,6 @@ test("dragging thread tabs reorders and crosses panes without losing the reply",
     ).toBeVisible();
   }
   const side = page.locator("[data-panel-workspace]");
-  const main = page.locator("[data-main-workspace]");
   const threadTabs = (host) =>
     host.locator('[role="tab"][data-tab-value^="thread:"]');
   const ids = await threadTabs(side).evaluateAll((tabs) =>
@@ -468,103 +427,9 @@ test("dragging thread tabs reorders and crosses panes without losing the reply",
     )
     .toEqual([ids[1], ids[0]]);
 
-  // The empty header beyond the compact tab strip accepts a transfer too.
-  const header = await main.locator("header").first().boundingBox();
-  await begin();
-  await page.mouse.move(
-    header.x + header.width / 2,
-    header.y + header.height / 2,
-    { steps: 8 },
-  );
-  await expect(page.locator(".buzz-tab-drag-insertion")).toBeVisible();
-  await page.mouse.up();
-  await expect(threadTabs(main)).toHaveCount(1);
-  await expect(threadTabs(side)).toHaveCount(1);
+  // The reply editor survives the reorder with its draft.
   expect(await retained.evaluate((editor) => editor.isConnected)).toBe(true);
-  await expect(
-    main.getByRole("textbox", { name: "Reply to thread", exact: true }),
-  ).toHaveText("Keep this reply");
-
-  const destination = await threadTabs(side).first().boundingBox();
-  await begin();
-  await page.mouse.move(
-    destination.x + 2,
-    destination.y + destination.height / 2,
-    { steps: 8 },
-  );
-  await expect(page.locator(".buzz-tab-drag-insertion")).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".buzz-tab-drag-insertion")).toHaveCount(0);
-  await page.mouse.up();
-  await expect(threadTabs(main)).toHaveCount(1);
-  await expect(
-    main.getByRole("textbox", { name: "Reply to thread", exact: true }),
-  ).toHaveText("Keep this reply");
-
-  // With the side pane closed there is no header to drop onto. Separating
-  // at the main workspace's right edge reveals it without creating a blank tab.
-  await side
-    .getByRole("button", { name: "Toggle tab pane", exact: true })
-    .click();
-  await expect(side).toBeHidden();
-  const bounds = await main.boundingBox();
-  const closedHeader = await main.locator("header").first().boundingBox();
-  await begin();
-  // Even near the right edge, the full header remains an insertion target.
-  await page.mouse.move(
-    bounds.x + bounds.width - 4,
-    closedHeader.y + closedHeader.height / 2,
-    { steps: 8 },
-  );
-  await expect(page.locator(".buzz-tab-drag-insertion")).toBeVisible();
-  await expect(page.locator(".buzz-tab-drag-edge")).toHaveCount(0);
-  await page.mouse.move(
-    bounds.x + bounds.width - 110,
-    bounds.y + bounds.height / 2,
-    { steps: 8 },
-  );
-  await expect(page.locator(".buzz-tab-drag-edge")).toBeVisible();
-  await expect(side).toBeHidden();
-  await page.mouse.up();
-  await expect(side).toBeVisible();
-  await expect(threadTabs(main)).toHaveCount(0);
-  await expect(threadTabs(side)).toHaveCount(2);
-  await expect(
-    side.getByRole("tab", { name: "New tab", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    side.getByRole("textbox", { name: "Reply to thread", exact: true }),
-  ).toHaveText("Keep this reply");
-  expect(await retained.evaluate((editor) => editor.isConnected)).toBe(true);
-
-  // Moving the last side tab away also removes the pane, without toggling it.
-  for (let remaining = 2; remaining > 0; remaining--) {
-    const moved = await threadTabs(side).first().getAttribute("data-tab-value");
-    await threadTabs(side).first().focus();
-    await page.keyboard.press("Alt+Shift+ArrowLeft");
-    await expect(threadTabs(side)).toHaveCount(remaining - 1);
-    // Placement commits before moveBy's animation-frame focus handoff. Finish
-    // that handoff before focusing another tab for the next shortcut.
-    await page.evaluate(() => new Promise(requestAnimationFrame));
-    await expect(
-      main.locator(`[role="tab"][data-tab-value="${moved}"]`),
-    ).toBeFocused();
-  }
-  await expect(side).toBeHidden();
-  const emptyBounds = await main.boundingBox();
-  await begin();
-  await page.mouse.move(
-    emptyBounds.x + emptyBounds.width - 4,
-    emptyBounds.y + emptyBounds.height / 2,
-    { steps: 8 },
-  );
-  await expect(page.locator(".buzz-tab-drag-edge")).toBeVisible();
-  await page.mouse.up();
-  await expect(side).toBeVisible();
-  await expect(threadTabs(side)).toHaveCount(1);
-  await expect(
-    side.getByRole("textbox", { name: "Reply to thread", exact: true }),
-  ).toHaveText("Keep this reply");
+  await expect(reply).toHaveText("Keep this reply");
 });
 
 // Native frontmost hit testing and pointer capture across history navigation
@@ -714,37 +579,6 @@ test("closing an active thread highlights its visible channel origin without scr
     .toBe("none");
 });
 
-// Real retained main-pane selection/focus order differs from DOM-emulator steps.
-test("closing a main-pane thread with Escape returns keyboard focus to its opener", async ({
-  page,
-  app,
-}) => {
-  await page.addInitScript(() =>
-    localStorage.setItem("buzz-thread-placement.v1", "main"),
-  );
-  await open(page, app);
-  const root = app.histories
-    .get("primary/alpha")
-    .find((row) => row.content.startsWith("Thread root"));
-  const trigger = page
-    .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
-    .getByRole("button", { name: /^View thread:/ });
-  await trigger.focus();
-  await trigger.press("Enter");
-  const main = page.locator("[data-main-workspace]");
-  const editor = main.getByRole("textbox", {
-    name: "Reply to thread",
-    exact: true,
-  });
-  await expect(editor).toBeVisible();
-  await editor.focus();
-  await page.keyboard.press("Escape");
-  await expect(
-    main.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-  ).toBeVisible();
-  await expect(trigger).toBeFocused();
-});
-
 // Native Close follows real focus across both workspaces, and the page's
 // opener return runs after the tab host's own focus recovery.
 test("consecutive native Close requests close each side thread, then return focus to its opener", async ({
@@ -779,49 +613,6 @@ test("consecutive native Close requests close each side thread, then return focu
   await expect(threads).toHaveCount(0);
   await expect(triggers.at(-1)).toBeFocused();
   // With no tab left, Close does nothing and keeps the window.
-  expect(await close()).toBe("unhandled");
-});
-
-// Closing the addressed thread also starts a channel history visit; only the
-// real navigation and visit wiring shows whether it keeps the remaining tab.
-test("consecutive native Close requests close each main-pane thread, then return focus to its opener", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  const triggers = app.histories
-    .get("primary/alpha")
-    .filter((row) => row.content.startsWith("Thread root"))
-    .map((root) =>
-      page
-        .locator(
-          `[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`,
-        )
-        .getByRole("button", { name: /^View thread:/ }),
-    );
-  for (const trigger of triggers) await activate(trigger);
-  const side = page.locator("[data-panel-workspace]");
-  const main = page.locator("[data-main-workspace]");
-  const threads = (host) =>
-    host.locator('[role="tab"][data-tab-value^="thread:"]');
-  await expect(threads(side)).toHaveCount(2);
-  for (const count of [1, 2]) {
-    await threads(side).first().focus();
-    await page.keyboard.press("Alt+Shift+ArrowLeft");
-    await expect(threads(main)).toHaveCount(count);
-  }
-  await main
-    .getByRole("textbox", { name: "Reply to thread", exact: true })
-    .focus();
-  const close = () => page.evaluate(closeRequest);
-  expect(await close()).toBe("handled");
-  await expect(threads(main)).toHaveCount(1);
-  const selected = main.locator('[role="tab"][aria-selected="true"]');
-  await expect(selected).toHaveAttribute("data-tab-value", /^thread:/);
-  await expect(selected).toBeFocused();
-  expect(await close()).toBe("handled");
-  await expect(threads(main)).toHaveCount(0);
-  await expect(triggers.at(-1)).toBeFocused();
   expect(await close()).toBe("unhandled");
 });
 
@@ -878,47 +669,6 @@ for (const how of ["native Close", "the close button"]) {
   });
 }
 
-// Header openings reset a retained main-pane thread selection after mount;
-// only real layout-effect order shows whether that steals the tab's focus.
-test("header openings keep focus while a main-pane thread is retained", async ({
-  page,
-  app,
-}) => {
-  await page.addInitScript(() =>
-    localStorage.setItem("buzz-thread-placement.v1", "main"),
-  );
-  await open(page, app);
-  const root = app.histories
-    .get("primary/alpha")
-    .find((row) => row.content.startsWith("Thread root"));
-  const main = page.locator("[data-main-workspace]");
-  const topbar = page.getByRole("navigation", { name: "Apps dock" });
-  const messages = topbar.getByRole("tab", {
-    name: "Team",
-    exact: true,
-  });
-  const projects = topbar.getByRole("tab", { name: "Workflows", exact: true });
-  for (const leave of [projects]) {
-    await page
-      .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
-      .getByRole("button", { name: /^View thread:/ })
-      .click();
-    await expect(
-      main.getByRole("textbox", { name: "Reply to thread", exact: true }),
-    ).toBeVisible();
-    await leave.click();
-    await messages.focus();
-    await messages.press("Enter");
-    await expect(
-      main.getByRole("tab", { name: "Alpha", exact: true }),
-    ).toHaveAttribute("aria-selected", "true");
-    await messages.evaluate(
-      () => new Promise((resolve) => requestAnimationFrame(resolve)),
-    );
-    await expect(messages).toBeFocused();
-  }
-});
-
 // A malformed root hint crosses real navigation/reader/store/portal wiring;
 // only the verified message ancestry may replace selection, never an old editor.
 test("a wrong link hint preserves both open thread editors and selects the verified destination", async ({
@@ -937,25 +687,22 @@ test("a wrong link hint preserves both open thread editors and selects the verif
       .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
       .getByRole("button", { name: /^View thread:/ });
   const side = page.locator("[data-panel-workspace]");
-  const main = page.locator("[data-main-workspace]");
-  const reply = (host) =>
-    host.getByRole("textbox", { name: "Reply to thread", exact: true });
+  const reply = side.getByRole("textbox", {
+    name: "Reply to thread",
+    exact: true,
+  });
   await activate(threadButton(roots[0]));
-  await reply(side).fill("Destination draft");
-  const destinationEditor = await reply(side).elementHandle();
+  await reply.fill("Destination draft");
+  const destinationEditor = await reply.elementHandle();
   await activate(threadButton(roots[1]));
-  await reply(side).fill("Keep original draft");
-  const originalEditor = await reply(side).elementHandle();
-  await side.locator('[role="tab"][aria-selected="true"]').focus();
-  await page.keyboard.press("Alt+Shift+ArrowLeft");
-  await page.keyboard.press("Alt+Shift+ArrowLeft");
-  await expect(reply(main)).toHaveText("Keep original draft");
+  await reply.fill("Keep original draft");
+  const originalEditor = await reply.elementHandle();
+  // The link names the open thread but points into the other one.
   const linked = app.append(
     "primary",
     "alpha",
     `Open <buzz://message?channel=alpha&id=${target.id}&thread=${roots[1].id}>.`,
   );
-  await main.getByRole("tab", { name: "Alpha", exact: true }).click();
   await page
     .locator(`[data-channel-timeline="alpha"] [data-message-id="${linked.id}"]`)
     .getByRole("link", { name: "Alice Fixture in #Alpha", exact: true })
@@ -966,97 +713,16 @@ test("a wrong link hint preserves both open thread editors and selects the verif
   await expect(
     side.locator(`[data-message-id="${target.id}"]`),
   ).toBeInViewport();
-  await expect(reply(side)).toHaveText("Destination draft");
+  await expect(reply).toHaveText("Destination draft");
   await expect(
-    main.locator('[role="tab"][data-tab-value^="thread:"]'),
-  ).toHaveCount(1);
+    side.locator('[role="tab"][data-tab-value^="thread:"]'),
+  ).toHaveCount(2);
   expect(await originalEditor.evaluate((el) => el.isConnected)).toBe(true);
   expect(await destinationEditor.evaluate((el) => el.isConnected)).toBe(true);
-  await main.locator('[role="tab"][data-tab-value^="thread:"]').click();
-  await expect(reply(main)).toHaveText("Keep original draft");
-});
-
-test.describe(() => {
-  test.use({ historyCounts: { alpha: 80, beta: 20 } });
-
-  // A covered tab skips layout, so it misses resizes and arrivals while hidden.
-  // Revealing it must still restore the reading position, not a stale one.
-  test("a covered conversation keeps its reading position through a resize and a new message", async ({
-    page,
-    app,
-  }) => {
-    await page.addInitScript(() =>
-      localStorage.setItem("buzz-thread-placement.v1", "main"),
-    );
-    await open(page, app);
-    const main = page.locator("[data-main-workspace]");
-    const conversation = main.getByRole("tab", { name: "Alpha", exact: true });
-    const root = app.histories
-      .get("primary/alpha")
-      .find((row) => row.content === "Thread root 1");
-    await activate(
-      page
-        .locator(
-          `[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`,
-        )
-        .getByRole("button", { name: /^View thread:/ }),
-    );
-    const reply = main.getByRole("textbox", {
-      name: "Reply to thread",
-      exact: true,
-    });
-    await expect(reply).toBeVisible();
-    const thread = main.locator(
-      `[role="tab"][data-tab-value="thread:alpha:${root.id}"]`,
-    );
-    await expect(thread).toHaveAttribute("aria-selected", "true");
-    // The main pane pushes threads across the conversation; let it land.
-    const motion = main.locator("[data-entering], [data-leaving]");
-    await expect(motion).toHaveCount(0);
-    await conversation.click();
-    await expect(motion).toHaveCount(0);
-    await settle(page);
-    const saved = await upper(page);
-    await thread.click();
-    await expect(reply).toBeVisible();
-    await expect(motion).toHaveCount(0);
-    const covered = page.locator(
-      `[id="${await conversation.getAttribute("aria-controls")}"]`,
-    );
-    await expect(covered).toHaveAttribute("data-covered", "true");
-    await expect
-      .poll(() =>
-        covered.evaluate(
-          (element) => getComputedStyle(element).contentVisibility,
-        ),
-      )
-      .toBe("hidden");
-    await page.setViewportSize({ width: 1100, height: 760 });
-    const arrival = app.append("primary", "alpha", "Arrived while covered");
-    // The covered timeline receives it without being shown.
-    // Covered content has no accessible name; its text still updates.
-    await expect(covered.locator("button[data-jump-to-latest]")).toHaveText(
-      "1 new message",
-    );
-    await conversation.click();
-    await expect(conversation).toHaveAttribute("aria-selected", "true");
-    // A pointer reveal hands focus to the tab's composer, as before.
-    await expect(
-      main.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-    ).toBeFocused();
-    await expect(motion).toHaveCount(0);
-    await settle(page);
-    await expectAnchor(page, saved);
-    const history = page.getByRole("region", {
-      name: "Channel message history",
-    });
-    await expect(
-      history.locator("button[data-jump-to-latest]"),
-    ).toHaveAccessibleName("1 new message");
-    await expect(
-      history.locator(`[data-message-id="${arrival.id}"]`),
-    ).not.toBeInViewport();
-  });
+  await side
+    .locator(`[role="tab"][data-tab-value="thread:alpha:${roots[1].id}"]`)
+    .click();
+  await expect(reply).toHaveText("Keep original draft");
 });
 
 // Browser-only: real popstate traversal remounts a thread tab left in another
@@ -1077,14 +743,16 @@ test("Back and Forward return to a root-linked thread's reading place; a fresh l
       false,
       root.id,
     );
-  const betaRoot = app.append("primary", "beta", "Beta root", false, false);
-  const betaReply = app.append(
+  // A link to another channel opens its thread beside this conversation
+  // without a visit, so the second thread is another of Alpha's.
+  const otherRoot = app.append("primary", "alpha", "Other root", false, false);
+  const otherReply = app.append(
     "primary",
-    "beta",
-    "Beta reply",
+    "alpha",
+    "Other reply",
     false,
     false,
-    betaRoot.id,
+    otherRoot.id,
   );
   // No thread hint: the link names the root, so its opening reveals it.
   // Thread-row links would reach the fixture's catch-all panel; these
@@ -1092,7 +760,7 @@ test("Back and Forward return to a root-linked thread's reading place; a fresh l
   const opener = app.append(
     "primary",
     "alpha",
-    `Start at <buzz://message?channel=alpha&id=${root.id}>, then <buzz://message?channel=beta&id=${betaReply.id}&thread=${betaRoot.id}>`,
+    `Start at <buzz://message?channel=alpha&id=${root.id}>, then <buzz://message?channel=alpha&id=${otherReply.id}&thread=${otherRoot.id}>`,
     false,
   );
   await open(page, app);
@@ -1192,9 +860,9 @@ test("Back and Forward return to a root-linked thread's reading place; a fresh l
     await wheel(page, 4000, region);
   expect(await gap()).toBeLessThan(4);
   await links
-    .getByRole("link", { name: "Alice Fixture in #Beta", exact: true })
+    .getByRole("link", { name: "Alice Fixture in #Alpha", exact: true })
     .click();
-  await expect(panel.getByText("Beta reply", { exact: true })).toBeVisible();
+  await expect(panel.getByText("Other reply", { exact: true })).toBeVisible();
 
   // Back remounts the thread where it was left: the end, not the root.
   await page.goBack();
@@ -1210,7 +878,7 @@ test("Back and Forward return to a root-linked thread's reading place; a fresh l
   expect(await region.evaluate((node) => node.scrollTop)).toBeGreaterThan(400);
   const saved = await place();
   await page.goForward();
-  await expect(panel.getByText("Beta reply", { exact: true })).toBeVisible();
+  await expect(panel.getByText("Other reply", { exact: true })).toBeVisible();
   await opened();
   // The remounted thread stays hidden until its route restores the place:
   // no frame shows the bottom it positions at first.

@@ -20,6 +20,7 @@ import type {
 } from "./unread";
 import type { SavedHead } from "./persistence";
 import type { ReadStateSigning } from "./read-state-host";
+import type { ReadTransport } from "./transport";
 import { READ_RESERVE_KEYS, retainReadState } from "./read-state-retention";
 import { SOLO_LABEL } from "../solo/labels";
 import {
@@ -41,6 +42,7 @@ const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 /** The device clock, in seconds, that an explicit channel read captures. */
 const clock = (seconds: number) =>
@@ -50,6 +52,7 @@ function setup(
   signer = true,
   preloaded?: (journal: ReadJournal) => ReadJournal,
   workflowAuthority = false,
+  channelActivity?: ReadTransport["channelActivity"],
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -111,6 +114,7 @@ function setup(
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
       ...(workflowAuthority ? { archiveAuthority: relay.pubkey } : {}),
+      ...(channelActivity ? { channelActivity } : {}),
       query,
       media: () => undefined,
       readState: signer ? host : { decode: host.decode },
@@ -189,176 +193,175 @@ function setup(
   };
 }
 
-it("session previews reconcile edits and deletions without reviving a cached newer post", async () => {
-  const h = setup();
-  h.grant("room");
-  const previous = message(h.alice, "room", "Previous post", 11);
-  const newest = message(h.alice, "room", "Newest post", 12);
-  const edit = signed(h.alice, {
+/** A roster head reader the test answers: `topLevel` marks the second pass. */
+function headReader(
+  answer: (
+    ids: readonly string[],
+    topLevel: boolean,
+  ) => RelayEvent[] | Promise<RelayEvent[]>,
+) {
+  return vi.fn(
+    async (ids: readonly string[], _signal: AbortSignal, topLevel?: boolean) =>
+      answer(ids, !!topLevel),
+  );
+}
+/** Past the roster head read's start jitter (at most 500 ms). */
+const headsStart = () => vi.advanceTimersByTimeAsync(500);
+const previewRead = (filters: readonly import("./events").ReadFilter[]) =>
+  filters.some((filter) => filter.top_level && filter.limit === 1);
+
+it("roster heads reconcile edits and deletions without reviving a cached newer post", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const alice = keypair();
+  const newest = message(alice, "room", "Newest post", 12);
+  const edit = signed(alice, {
     kind: 40003,
     content: "Edited post",
     tags: [["e", newest.id]],
     created_at: 13,
   });
+  const activity = headReader(() => [newest, edit]);
+  const h = setup({}, true, undefined, false, activity);
+  const heads = h.session.channelHeads;
+  h.grant("room");
+  const previous = message(h.alice, "room", "Previous post", 11);
   h.emit([previous]);
-  h.query.mockImplementation(async (filters) =>
-    filters.some((filter) => filter.top_level && filter.limit === 1)
-      ? [newest, edit]
-      : [],
-  );
-  const previews = h.session.channelPreviews;
-  const release = previews.retain(["room"]);
-  try {
-    await vi.waitFor(() =>
-      expect(previews.snapshot().get("room")?.content).toBe("Edited post"),
-    );
-    const before = h.query.mock.calls.filter(([filters]) =>
-      filters.some((filter) => filter.top_level && filter.limit === 1),
-    ).length;
-    h.emit([
-      signed(h.viewer, {
-        kind: 5,
-        content: "",
-        tags: [["e", newest.id]],
-        created_at: 14,
-      }),
-    ]);
-    expect(previews.snapshot().get("room")?.id).toBe(newest.id);
-    h.emit([
-      signed(h.alice, {
-        kind: 5,
-        content: "",
-        tags: [["e", newest.id]],
-        created_at: 15,
-      }),
-    ]);
-    expect(previews.snapshot().get("room")?.id).toBe(previous.id);
-    expect(previews.snapshot().get("room")?.content).toBe("Previous post");
-    await flush();
-    expect(
-      h.query.mock.calls.filter(([filters]) =>
-        filters.some((filter) => filter.top_level && filter.limit === 1),
-      ),
-    ).toHaveLength(before);
-    expect(h.host.sign).not.toHaveBeenCalled();
-    expect(h.session.channels.window("room").status).toBe("idle");
-  } finally {
-    release();
-  }
+  // Live evidence answers until the head read lands.
+  expect(heads.latest("room")?.id).toBe(previous.id);
+  await headsStart();
+  expect(activity).toHaveBeenCalledOnce();
+  expect(heads.latest("room")?.content).toBe("Edited post");
+  expect(heads.settled("room")).toBe(true);
+  h.emit([
+    signed(h.viewer, {
+      kind: 5,
+      content: "",
+      tags: [["e", newest.id]],
+      created_at: 14,
+    }),
+  ]);
+  expect(heads.latest("room")?.id).toBe(newest.id);
+  h.emit([
+    signed(alice, {
+      kind: 5,
+      content: "",
+      tags: [["e", newest.id]],
+      created_at: 15,
+    }),
+  ]);
+  expect(heads.latest("room")?.id).toBe(previous.id);
+  expect(heads.latest("room")?.content).toBe("Previous post");
+  await headsStart();
+  expect(activity).toHaveBeenCalledOnce();
+  expect(
+    h.query.mock.calls.filter(([filters]) => previewRead(filters)),
+  ).toEqual([]);
+  expect(h.host.sign).not.toHaveBeenCalled();
+  expect(h.session.channels.window("room").status).toBe("idle");
 });
 
-it("repairs a removed last preview only while visible and purges it on access loss", async () => {
-  const h = setup();
-  h.grant("room");
-  h.grant("retained");
-  const newest = message(h.alice, "room", "Last post", 11);
-  const retained = message(h.alice, "retained", "Still visible", 11);
-  let present = true;
-  h.query.mockImplementation(async (filters) =>
-    filters.flatMap((filter) =>
-      filter.top_level && filter.limit === 1
-        ? (filter["#h"]?.flatMap((id) =>
-            id === "retained" ? [retained] : present ? [newest] : [],
-          ) ?? [])
-        : [],
+it("a deleted roster head is dropped without another read and access loss purges its channel", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const author = keypair();
+  const newest = message(author, "room", "Last post", 11);
+  const retained = message(author, "retained", "Still listed", 11);
+  const activity = headReader((ids) =>
+    ids.flatMap((id) =>
+      id === "room" ? [newest] : id === "retained" ? [retained] : [],
     ),
   );
-  const previews = h.session.channelPreviews;
-  const release = previews.retain(["room", "retained"]);
-  try {
-    await vi.waitFor(() =>
-      expect(previews.snapshot().get("room")?.id).toBe(newest.id),
-    );
-    present = false;
-    h.emit([
-      signed(h.alice, {
-        kind: 5,
-        content: "",
-        tags: [["e", newest.id]],
-        created_at: 12,
-      }),
-    ]);
-    await vi.waitFor(() => expect(previews.snapshot().get("room")).toBeNull());
-    expect(
-      h.query.mock.calls.filter(([filters]) =>
-        filters.some((filter) => filter.top_level && filter.limit === 1),
-      ),
-    ).toHaveLength(2);
-    h.emit([roster(h.relay, "room", [], 13)]);
-    expect(previews.snapshot().has("room")).toBe(false);
-    expect(previews.snapshot().get("retained")?.id).toBe(retained.id);
-    await flush();
-    expect(
-      h.query.mock.calls.filter(([filters]) =>
-        filters.some((filter) => filter.top_level && filter.limit === 1),
-      ),
-    ).toHaveLength(2);
-  } finally {
-    release();
-  }
+  const h = setup({}, true, undefined, false, activity);
+  const heads = h.session.channelHeads;
+  h.grant("room");
+  h.grant("retained");
+  await headsStart();
+  expect(heads.latest("room")?.id).toBe(newest.id);
+  expect(heads.latest("retained")?.id).toBe(retained.id);
+  const reads = activity.mock.calls.length;
+  h.emit([
+    signed(author, {
+      kind: 5,
+      content: "",
+      tags: [["e", newest.id]],
+      created_at: 12,
+    }),
+  ]);
+  expect(heads.latest("room")).toBeUndefined();
+  h.emit([roster(h.relay, "room", [], 13)]);
+  expect(heads.latest("room")).toBeUndefined();
+  expect(heads.settled("room")).toBe(false);
+  expect(heads.latest("retained")?.id).toBe(retained.id);
+  expect(heads.settled("retained")).toBe(true);
+  await headsStart();
+  expect(activity).toHaveBeenCalledTimes(reads);
+  expect(
+    h.query.mock.calls.filter(([filters]) => previewRead(filters)),
+  ).toEqual([]);
 });
 
-it("an open verified conversation supplies its preview without another relay read", async () => {
-  const h = setup();
-  h.grant("room");
-  const top = message(h.alice, "room", "Top-level post", 11);
-  const reply = message(h.alice, "room", "Newer reply", 12, [
-    ["e", top.id, "", "reply"],
-  ]);
-  h.query.mockResolvedValue([
-    top,
-    reply,
-    bounds(h.relay, "room", "head", { has_more: false, next_cursor: null }),
-  ]);
-  h.session.channels.ensure("room");
-  await vi.waitFor(() =>
-    expect(h.session.channels.window("room").status).toBe("ready"),
+it("an open verified conversation supplies its head before the roster read answers", async () => {
+  let release: (events: RelayEvent[]) => void = () => {};
+  const activity = headReader(
+    () =>
+      new Promise<RelayEvent[]>((resolve) => {
+        release = resolve;
+      }),
   );
-  const previews = h.session.channelPreviews;
-  const release = previews.retain(["room"]);
+  const h = setup({}, true, undefined, false, activity);
   try {
-    await flush();
-    expect(previews.snapshot().get("room")?.id).toBe(top.id);
+    h.grant("room");
+    const top = message(h.alice, "room", "Top-level post", 11);
+    const reply = message(h.alice, "room", "Newer reply", 12, [
+      ["e", top.id, "", "reply"],
+    ]);
+    h.query.mockResolvedValue([
+      top,
+      reply,
+      bounds(h.relay, "room", "head", { has_more: false, next_cursor: null }),
+    ]);
+    h.session.channels.ensure("room");
+    await vi.waitFor(() =>
+      expect(h.session.channels.window("room").status).toBe("ready"),
+    );
+    expect(h.session.channelHeads.settled("room")).toBe(false);
+    expect(h.session.channelHeads.latest("room")?.id).toBe(top.id);
     expect(
-      h.query.mock.calls.filter(([filters]) =>
-        filters.some((filter) => filter.top_level && filter.limit === 1),
-      ),
+      h.query.mock.calls.filter(([filters]) => previewRead(filters)),
     ).toHaveLength(0);
     expect(h.host.sign).not.toHaveBeenCalled();
   } finally {
-    release();
+    release([]);
   }
 });
 
-it("cache clear fences a pending preview and resumes the visible row", async () => {
-  const h = setup();
-  h.grant("room");
-  const old = message(h.alice, "room", "Before clearing", 11);
-  const fresh = message(h.alice, "room", "After clearing", 12);
+it("cache clear fences a pending head read and reads the roster again", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const author = keypair();
+  const old = message(author, "room", "Before clearing", 11);
+  const fresh = message(author, "room", "After clearing", 12);
   let finish: ((events: RelayEvent[]) => void) | undefined;
-  let calls = 0;
-  h.query.mockImplementation(async (filters) => {
-    if (!filters.some((filter) => filter.top_level && filter.limit === 1))
-      return [];
-    if (++calls > 1) return [fresh];
-    return new Promise((resolve) => {
-      finish = resolve;
-    });
-  });
-  const previews = h.session.channelPreviews;
-  const release = previews.retain(["room"]);
+  const activity = headReader(() =>
+    activity.mock.calls.length > 1
+      ? [fresh]
+      : new Promise<RelayEvent[]>((resolve) => {
+          finish = resolve;
+        }),
+  );
+  const h = setup({}, true, undefined, false, activity);
+  const heads = h.session.channelHeads;
   try {
-    await vi.waitFor(() => expect(finish).toBeDefined());
+    h.grant("room");
+    await headsStart();
+    expect(finish).toBeDefined();
     await h.clearCache();
-    expect(previews.snapshot().has("room")).toBe(false);
+    expect(heads.latest("room")).toBeUndefined();
     finish?.([old]);
-    await vi.waitFor(() =>
-      expect(previews.snapshot().get("room")?.id).toBe(fresh.id),
-    );
-    expect(calls).toBe(2);
+    await headsStart();
+    expect(activity).toHaveBeenCalledTimes(2);
+    expect(heads.latest("room")?.id).toBe(fresh.id);
+    expect(heads.settled("room")).toBe(true);
   } finally {
     finish?.([old]);
-    release();
   }
 });
 

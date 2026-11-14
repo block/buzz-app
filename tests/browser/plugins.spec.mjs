@@ -1,6 +1,8 @@
 import { pluginAction } from "./plugin-settings.mjs";
 import {
+  channelRow,
   closeSettings,
+  conversationList,
   newChat,
   openPage,
   openSettings,
@@ -90,9 +92,9 @@ test("the launched card works with an empty Channels roster", async ({
   app.omitChannel("alpha");
   app.omitChannel("beta");
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await expect(
-    page.getByText("No channels yet.", { exact: true }),
+    conversationList(page).getByText("Nothing here yet", { exact: true }),
   ).toBeVisible();
   await companionLauncher(page, "Companion fixture").click();
   await expect(card(page, "Companion fixture")).toHaveCount(1);
@@ -140,11 +142,9 @@ test("companion remains usable while Channels connection is pending", async ({
   });
   try {
     await page.goto(app.origin);
-    await openPage(page, "Messages", { connected: false });
+    await openPage(page, "Team", { connected: false });
     await expect(
-      page
-        .getByRole("complementary", { name: "Sidebar", exact: true })
-        .getByText("Connecting…", { exact: true }),
+      page.getByRole("main").getByText("Connecting…", { exact: true }),
     ).toBeVisible();
     await button(page, "Notes").click();
     await expect(card(page, "Notes")).toHaveCount(1);
@@ -152,9 +152,8 @@ test("companion remains usable while Channels connection is pending", async ({
     await expect(button(page, "Notes")).toBeFocused();
     await companionLauncher(page, "Companion fixture").click();
     release();
-    await expect(
-      page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-    ).toBeVisible();
+    // Team opens on its list once connected.
+    await expect(channelRow(page, "alpha")).toBeVisible();
     await expect(card(page, "Companion fixture")).toHaveCount(1);
   } finally {
     release();
@@ -170,7 +169,7 @@ test("A new Solo chat places companion plugins in its draft state and removes di
   await page.goto(app.origin);
   await newChat(page);
   await expect(
-    page.getByRole("heading", { name: "New chat", exact: true }),
+    page.getByRole("region", { name: "New chat", exact: true }),
   ).toBeVisible();
   await button(page, "Notes").click();
   await expect(card(page, "Notes")).toHaveCount(1);

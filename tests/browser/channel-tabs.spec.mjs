@@ -4,6 +4,7 @@ import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import {
+  channelRow,
   closeSettings,
   openPage,
   settingsDialog,
@@ -269,7 +270,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   // Shared Beta lists with the viewer's chats.
   await page.locator('button[data-solo-channel-id="beta"]').click();
   await expect(workspace).toHaveCount(0);
-  await page.locator('button[data-channel-id="alpha"]').click();
+  await channelRow(page, "alpha").click();
   await expect(
     workspace.locator('[role="tab"][data-tab-value^="thread:alpha:"]'),
   ).toHaveAttribute("aria-selected", "true");
@@ -559,7 +560,7 @@ test("Canvas opens once beside Thread and retains its channel draft", async ({
   // Leaving a channel keeps its Canvas tab open for the return.
   await page.locator('button[data-solo-channel-id="beta"]').click();
   await expect(workspace).toHaveCount(0);
-  await page.locator('button[data-channel-id="alpha"]').click();
+  await channelRow(page, "alpha").click();
   await expect(thread).toBeVisible();
   await expect(canvas).toHaveCount(1);
   await expect(canvas).toHaveAttribute("aria-selected", "true");
@@ -589,7 +590,7 @@ test.describe("archived Canvas", () => {
       return route.fulfill({ json: [revision] });
     });
     await page.goto(app.origin);
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
     const scope = await page.evaluate(
       () => history.state.buzzNavigationV1.entry.target.scope,
     );

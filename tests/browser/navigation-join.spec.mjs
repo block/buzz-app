@@ -8,7 +8,7 @@ const entry = (page) =>
   page.evaluate(() => history.state.buzzNavigationV1.entry);
 
 for (const startingScope of ["Primary", "Personal space"]) {
-  test(`successful community setup navigates from ${startingScope} Messages and restores both visits`, async ({
+  test(`successful community setup navigates from ${startingScope} Team and restores both visits`, async ({
     page,
     app,
   }) => {
@@ -20,7 +20,9 @@ for (const startingScope of ["Primary", "Personal space"]) {
     if (startingScope === "Personal space") {
       await selectCommunity(page, "Personal space");
       await expect(
-        page.getByRole("heading", { name: "Your channels, one conversation." }),
+        page.getByRole("heading", {
+          name: "Choose a community to see your activity",
+        }),
       ).toBeVisible();
     }
     const before = await entry(page);
@@ -60,12 +62,17 @@ for (const startingScope of ["Primary", "Personal space"]) {
     ).toBeVisible();
     expect(await entry(page)).toEqual(before);
     if (startingScope === "Primary")
+      // The list's preview repeats it; the conversation is the reader's.
       await expect(
-        page.getByText("primary alpha message 639", { exact: false }),
+        page
+          .locator("[data-channel-timeline]")
+          .getByText("primary alpha message 639", { exact: false }),
       ).toBeVisible();
     else
       await expect(
-        page.getByRole("heading", { name: "Your channels, one conversation." }),
+        page.getByRole("heading", {
+          name: "Choose a community to see your activity",
+        }),
       ).toBeVisible();
     await button(page, "Go forward").click();
     await expect(

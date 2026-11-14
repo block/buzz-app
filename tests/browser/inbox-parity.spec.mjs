@@ -94,7 +94,7 @@ test("the same signed mention opens its profile in Inbox and Channels", async ({
   await expect(composer).toHaveJSProperty("value", "Preserved Inbox reply");
   // Channels shows the same signed reply in its own thread.
   await page.setViewportSize({ width: 1280, height: 900 });
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await page
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: /^Alpha/ })

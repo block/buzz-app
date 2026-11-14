@@ -66,6 +66,9 @@ test("Create menu numbers activate rows and rail controls share one card", async
   ).toBeVisible();
   await create.click();
   await expect(menu).toBeVisible();
+  await expect
+    .poll(() => menu.evaluate((node) => node.contains(document.activeElement)))
+    .toBe(true);
   await page.keyboard.press("5");
   const section = page.getByRole("dialog", {
     name: "Create new section",

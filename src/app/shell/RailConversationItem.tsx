@@ -120,6 +120,10 @@ export function RailOpenConversations({
   label: string;
   onClick: () => void;
 }) {
+  // The card lists its hidden rows anew on every render; what they are is
+  // their ids, so a rail render keeps these subscriptions.
+  const ids = hidden.map((entry) => entry.id).join("\n");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `ids` keys `hidden`.
   const targets = useMemo(
     () =>
       hidden.flatMap(({ target }) => {
@@ -140,7 +144,7 @@ export function RailOpenConversations({
             : { kind: "channel", channelId: target.channelId };
         return [{ read, channel }];
       }),
-    [hidden, channels],
+    [ids, channels],
   );
   const subscribe = useCallback(
     (listener: () => void) => {

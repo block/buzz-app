@@ -85,7 +85,6 @@ it.each(["bottom", "side"] as const)(
               Close settings
             </button>
           )}
-          {drawer.content}
           {drawer.side}
         </>
       );
@@ -203,7 +202,6 @@ it("keeps a side panel with its channel until closed, while bottom drawers close
           Conversation
         </button>
         {drawer.launchers}
-        {drawer.content}
         {drawer.side}
       </>
     );
@@ -368,7 +366,6 @@ it.each(["bottom", "side"] as const)(
       return (
         <>
           {drawer.launchers}
-          {drawer.content}
           {drawer.side}
         </>
       );

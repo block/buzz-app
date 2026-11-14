@@ -747,8 +747,9 @@ export function validChannelActivityFilters(filters) {
         filter["#h"].length === 1 &&
         typeof filter["#h"][0] === "string" &&
         /^[a-zA-Z0-9_-]{1,128}$/.test(filter["#h"][0]) &&
+        (filter.top_level === undefined || filter.top_level === true) &&
         Object.keys(filter).every((key) =>
-          ["kinds", "#h", "limit"].includes(key),
+          ["kinds", "#h", "limit", "top_level"].includes(key),
         ),
     )
   );

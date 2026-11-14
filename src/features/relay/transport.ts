@@ -211,10 +211,12 @@ export interface ReadTransport {
   readVerifiedProfileAuthority?(
     signal: AbortSignal,
   ): Promise<VerifiedProfileAuthority | null>;
-  /** Purpose-bound authoritative recency, verified and max 128 channel IDs. */
+  /** Purpose-bound newest event of each of at most 128 channels, verified:
+   * of any activity kind, or the newest top-level one. */
   channelActivity?(
     channelIds: readonly string[],
     signal: AbortSignal,
+    topLevel?: boolean,
   ): Promise<RelayEvent[]>;
   query(
     filters: readonly ReadFilter[],
@@ -1277,7 +1279,7 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.channelActivity
       ? {
-          async channelActivity(channelIds, signal) {
+          async channelActivity(channelIds, signal, topLevel) {
             return measureQuery(endpoint, "background", async (sized) => {
               const result = await fetch(`${endpoint}/channel-activity`, {
                 method: "POST",
@@ -1291,6 +1293,7 @@ export async function connectBrokerTransport(
                     kinds: [9, 40002, 40008, 45001, 45003],
                     "#h": [channelId],
                     limit: 1,
+                    ...(topLevel ? { top_level: true } : {}),
                   })),
                 ),
                 signal,

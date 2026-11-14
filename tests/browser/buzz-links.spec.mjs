@@ -1,5 +1,6 @@
 import { setPluginEnabled } from "./plugin-settings.mjs";
 import {
+  channelRow,
   closeSettings,
   openPage,
   openSettings,
@@ -645,11 +646,11 @@ test("thread and detail tabs preserve drafts, scroll, focus and local-detail lif
   await expect(threadTab).toHaveCount(1);
   await page.setViewportSize({ width: 1440, height: 900 });
   // Sidebar navigation must preserve the complete set, including the routed thread.
-  await page.locator('button[data-channel-id="beta"]').click();
+  await channelRow(page, "beta").click();
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
-  await page.locator('button[data-channel-id="alpha"]').click();
+  await channelRow(page, "alpha").click();
   await expect(details).toHaveCount(1);
   await expect(threadTab).toHaveCount(1);
   await expect(details).toHaveAttribute("aria-selected", "true");

@@ -27,7 +27,6 @@ it("offers appearance and the message and agent preferences, and nothing else", 
     { key: "appearance.accent", value: "citrus", saved: true },
     { key: "appearance.vibe", value: "low", saved: true },
     { key: "conversations.message_density", value: "default", saved: true },
-    { key: "conversations.thread_placement", value: "side", saved: true },
     {
       key: "conversations.follow_up_behavior",
       value: "immediate",
@@ -95,17 +94,15 @@ it("answers saved false with the owner's reason when storage refuses", () => {
     saved: false,
     problem: expect.stringMatching(/could not be saved/),
   });
-  expect(set(settings, "conversations.thread_placement", "main")).toEqual(
+  expect(set(settings, "search.unread_first", false)).toEqual(
     expect.objectContaining({
-      value: "main",
+      value: false,
       saved: false,
       problem: expect.stringMatching(/could not be saved/),
     }),
   );
   vi.mocked(Storage.prototype.setItem).mockRestore();
-  expect(set(settings, "conversations.thread_placement", "side").saved).toBe(
-    true,
-  );
+  expect(set(settings, "search.unread_first", true).saved).toBe(true);
   appearance.dispose();
 });
 
@@ -117,25 +114,6 @@ it("changes nothing after the appearance it was made with is disposed", () => {
     "Buzz is closing",
   );
   expect(localStorage.length).toBe(0);
-});
-
-it("moves new threads, saved and announced to open settings screens", () => {
-  const appearance = createAppearance(window);
-  const settings = deviceSettings(appearance);
-  const changed = vi.fn();
-  window.addEventListener("buzz-thread-placement-changed", changed);
-  expect(set(settings, "conversations.thread_placement", "main")).toEqual({
-    key: "conversations.thread_placement",
-    description: expect.any(String),
-    schema: { type: "string", enum: ["side", "main"] },
-    applies: expect.stringMatching(/New thread tabs only/),
-    value: "main",
-    saved: true,
-  });
-  expect(changed).toHaveBeenCalledOnce();
-  expect(localStorage.getItem("buzz-thread-placement.v1")).toBe("main");
-  window.removeEventListener("buzz-thread-placement-changed", changed);
-  appearance.dispose();
 });
 
 it("changes the message and agent preferences through their own setters", () => {

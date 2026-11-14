@@ -1,6 +1,7 @@
 import { ActivityNavigationProvider } from "./ActivityNavigation";
 import { PageNavigation } from "./PageNavigation";
 import { AppDock } from "./AppDock";
+import { ConnectionNotices } from "./ConnectionNotices";
 import styles from "./AppShell.module.css";
 import { ResizeHandle } from "../../features/panels/ResizeHandle";
 import { RailNavigation } from "./RailNavigation";
@@ -353,7 +354,6 @@ function AppShellContent({
       showPrimaryNavigation={
         !(connection.viewer && connection.scope && searchServices?.navigation)
       }
-      search={null}
       open={visibleRail || compactRail}
       compact={compactRail}
       onDismiss={() => {
@@ -366,11 +366,12 @@ function AppShellContent({
       currentPage={selected}
       onSelect={onSelect}
       previews
-      community={null}
-      profile={null}
-      settings={null}
       header={railActions}
     >
+      <ConnectionNotices
+        communities={communities}
+        federatedIdentity={federatedIdentity}
+      />
       {shellScope && searchServices && railNavigator ? (
         <RailNavigation
           key={connection.scope}
@@ -380,7 +381,6 @@ function AppShellContent({
           sidebarSections={searchServices.sidebarSections}
           sidebarScope={searchServices.sidebarScope}
           navigator={railNavigator}
-          listNavigator={listNavigator ?? searchServices.navigation}
           openInSection={openInSection}
           pages={pages}
           selected={selected}
@@ -575,7 +575,6 @@ function AppShellContent({
                                               searchServices.sidebarSections
                                             }
                                             navigator={listNavigator}
-                                            listNavigator={listNavigator}
                                             openInSection={openInSection}
                                             pages={pages}
                                             selected={selected}

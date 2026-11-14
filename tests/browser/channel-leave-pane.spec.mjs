@@ -1,5 +1,10 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { openPage } from "./navigation.mjs";
+import {
+  channelRow,
+  conversationList,
+  openChannel,
+  openPage,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 const channelId = "11111111-1111-4111-8111-111111111111";
@@ -12,9 +17,9 @@ const dialogFor = (page) =>
   });
 async function openSettings(page, app) {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
-  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
-  await sidebar.locator(`[data-channel-id="${channelId}"]`).click();
+  await openPage(page, "Team");
+  const sidebar = conversationList(page);
+  await openChannel(page, channelId);
   await expect(
     page.getByRole("textbox", {
       name: "Message #Lifecycle channel",
@@ -126,9 +131,7 @@ test("management Leave restores focus on cancel, holds pending, and completes th
       await expect(pending).not.toHaveAttribute("aria-modal", "true");
       await page.keyboard.press("Escape");
       await expect(pending).toBeVisible();
-      await expect(
-        page.locator(`[data-channel-id="${channelId}"]`),
-      ).toBeVisible();
+      await expect(channelRow(page, channelId)).toBeVisible();
       expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
     } finally {
       release();
@@ -137,7 +140,7 @@ test("management Leave restores focus on cancel, holds pending, and completes th
     // response is still withheld. Content cleanup must not fail the dialog.
     await published;
     await expect(
-      sidebar.locator(`[data-channel-id="${channelId}"]`),
+      sidebar.locator(`[data-activity-row="${channelId}"]`),
     ).toHaveCount(0);
     await expect(pending).toBeVisible();
     await expect(
@@ -155,13 +158,14 @@ test("management Leave restores focus on cancel, holds pending, and completes th
   ).toBeVisible();
   await expect(dialog).toHaveCount(0);
   await expect(panel).toHaveCount(0);
-  await expect(sidebar.locator(`[data-channel-id="${channelId}"]`)).toHaveCount(
-    0,
-  );
-  // Its sidebar neighbor opens as it does from its row.
   await expect(
-    sidebar.getByRole("button", { name: "Beta", exact: true }),
-  ).toHaveAttribute("aria-current", "page");
+    sidebar.locator(`[data-activity-row="${channelId}"]`),
+  ).toHaveCount(0);
+  // Its sidebar neighbor opens as it does from its row.
+  await expect(channelRow(page, "beta")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeFocused();
@@ -169,9 +173,9 @@ test("management Leave restores focus on cancel, holds pending, and completes th
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
-  await expect(sidebar.locator(`[data-channel-id="${channelId}"]`)).toHaveCount(
-    0,
-  );
+  await expect(
+    sidebar.locator(`[data-activity-row="${channelId}"]`),
+  ).toHaveCount(0);
   expect(app.report.lifecyclePublications.map((event) => event.kind)).toEqual([
     9022,
   ]);
@@ -201,7 +205,7 @@ test.describe("last visible channel", () => {
     await expect(
       page.getByText("Select a channel to read it.", { exact: true }),
     ).toBeVisible();
-    await expect(sidebar.locator("button[data-channel-id]")).toHaveCount(0);
+    await expect(sidebar.locator("[data-activity-row]")).toHaveCount(0);
     await expect(page.getByRole("textbox", { name: /^Message #/ })).toHaveCount(
       0,
     );
@@ -214,7 +218,7 @@ test.describe("last visible channel", () => {
       .poll(() =>
         page.evaluate(
           () =>
-            document.activeElement?.closest('[aria-label="Sidebar"]') !== null,
+            document.activeElement?.closest("[data-activity-sidebar]") !== null,
         ),
       )
       .toBe(true);
@@ -222,7 +226,7 @@ test.describe("last visible channel", () => {
     await expect(
       page.getByText("Select a channel to read it.", { exact: true }),
     ).toBeVisible();
-    await expect(sidebar.locator("button[data-channel-id]")).toHaveCount(0);
+    await expect(sidebar.locator("[data-activity-row]")).toHaveCount(0);
     expect(app.report.lifecyclePublications.map((event) => event.kind)).toEqual(
       [9022],
     );

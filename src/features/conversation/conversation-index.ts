@@ -10,15 +10,15 @@ import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import type { InboxItem } from "../relay/inbox";
 import type { InboxReaction } from "../relay/inbox-reactions";
-import type { LatestMessage } from "../relay/channel-previews";
+import type { LatestMessage } from "../relay/channel-heads";
 import type { ThreadActivityItem } from "../relay/unread";
 import { channelUnread } from "../../bundled/channels/UnreadBadge";
 import { dmLabel } from "./dm-label";
 import { reactionRows } from "./reaction-rows";
 
 /** Conversation kind determines artwork and the recency evidence to use. */
-export type ConversationKind = "solo" | "team" | "dm";
-export const conversationKind = (
+type ConversationKind = "solo" | "team" | "dm";
+const conversationKind = (
   channel: ChannelSummary,
 ): ConversationKind | undefined =>
   channel.channelType === "solo"
@@ -36,7 +36,7 @@ export type ConversationRecord = Readonly<{
   kind: ConversationKind;
   /** What rows and A–Z call it: a DM by its people, the rest by name. */
   label: string;
-  /** Newest top-level message, from a fetched preview or live evidence. */
+  /** Newest top-level message, from the roster's heads and live traffic. */
   latest: LatestMessage | undefined;
   /** Team: the newest thread you're in, at its latest reply. */
   thread: ThreadActivityItem | undefined;
@@ -93,7 +93,7 @@ export type ConversationQuery = Readonly<{
   keep?: string | undefined;
 }>;
 
-export type ConversationIndex = Readonly<{
+type ConversationIndex = Readonly<{
   /** Row keys in order: `c:` a conversation, `e:` an event, `r:` a reaction. */
   keys(query: ConversationQuery): readonly string[];
   /** Keeps the view in order and calls back when its rows or order change. */
@@ -160,7 +160,6 @@ function createConversationIndex(session: RelaySession): ConversationIndex {
   let inboxAt = new Map<string, number>();
   let muted: ReadonlySet<string> = new Set();
   let working: ReadonlySet<string> = new Set();
-  let previews: ReadonlyMap<string, LatestMessage | null> = new Map();
   /** A channel's threads you're in, from its own activity. */
   const channelThreads = new Map<string, readonly ConversationEvent[]>();
   let inboxThreads: readonly ConversationEvent[] = [];
@@ -169,6 +168,23 @@ function createConversationIndex(session: RelaySession): ConversationIndex {
   let reactions: readonly InboxReaction[] = [];
   const reactionsBy = new Map<string, ReadonlyMap<string, InboxReaction>>();
   const senders = new Map<string, "agent" | "human" | "unknown">();
+  /** Authors a sender filter could not judge, asked for once each. */
+  const asked = new Set<string>();
+  let asking: string[] | undefined;
+  const ask = (authorId: string) => {
+    if (asked.has(authorId)) return;
+    asked.add(authorId);
+    if (asking) {
+      asking.push(authorId);
+      return;
+    }
+    const ids = [authorId];
+    asking = ids;
+    queueMicrotask(() => {
+      asking = undefined;
+      void session.profiles.ensure(ids, "background").catch(() => {});
+    });
+  };
   let agents: ReadonlySet<string> = new Set();
 
   // What one source's change touched, announced together when it is done.
@@ -208,6 +224,8 @@ function createConversationIndex(session: RelaySession): ConversationIndex {
       } catch {
         // A malformed profile is unknown.
       }
+      // A row the filter leaves out never mounts to ask for its own people.
+      if (kind === "unknown") ask(authorId);
     }
     senders.set(authorId, kind);
     return kind;
@@ -241,9 +259,7 @@ function createConversationIndex(session: RelaySession): ConversationIndex {
       kind: "channel",
       channelId: id,
     });
-    const latest = previews.has(id)
-      ? (previews.get(id) ?? undefined)
-      : snapshot.latestTopLevel;
+    const latest = session.channelHeads.latest(id);
     const items = session.unread.activity(id).items ?? [];
     let thread: ThreadActivityItem | undefined;
     if (kind === "team")
@@ -485,12 +501,6 @@ function createConversationIndex(session: RelaySession): ConversationIndex {
     for (const id of new Set([...previous, ...next]))
       if (previous.has(id) !== next.has(id)) touch(id);
   }
-  function readPreviews() {
-    const previous = previews;
-    previews = session.channelPreviews.snapshot();
-    for (const id of records.keys())
-      if (previous.get(id) !== previews.get(id)) touch(id);
-  }
   /** Names and faces arrive after the roster: DMs are labelled by them. */
   function readPeople() {
     senders.clear();
@@ -709,7 +719,10 @@ function createConversationIndex(session: RelaySession): ConversationIndex {
     };
     session.channels.subscribeList(source(readChannels));
     session.unread.subscribeInbox(source(readInbox));
-    session.channelPreviews.subscribe(source(readPreviews));
+    session.channelHeads.subscribe((ids) => {
+      for (const id of ids ?? [...records.keys()]) touch(id);
+      publish();
+    });
     session.sidebarPreferences.subscribe(source(readMuted));
     session.agentActivity.subscribe(source(readWorking));
     session.typing.subscribe(source(readWorking));
@@ -717,7 +730,6 @@ function createConversationIndex(session: RelaySession): ConversationIndex {
     session.names?.subscribe(source(readPeople));
     session.agentChoices.subscribe(source(readAgents));
     session.inboxFeed.reactions.subscribe(source(readReactions));
-    previews = session.channelPreviews.snapshot();
     readAgents();
     readMuted();
     readWorking();

@@ -938,7 +938,7 @@ export async function connectNativeTransport(
           },
         }
       : {}),
-    async channelActivity(channelIds, signal) {
+    async channelActivity(channelIds, signal, topLevel) {
       if (
         channelIds.length < 1 ||
         channelIds.length > 128 ||
@@ -950,6 +950,7 @@ export async function connectNativeTransport(
           kinds: [9, 40002, 40008, 45001, 45003],
           "#h": [channelId],
           limit: 1,
+          ...(topLevel ? { top_level: true } : {}),
         })),
         signal,
         "channel-activity",

@@ -552,6 +552,7 @@ export function SearchChoices({
         aria-selected={selected === key}
         tabIndex={-1}
         className="search-control-row"
+        data-search-key={watching ? key : undefined}
         data-highlighted={selected === key || undefined}
         onClick={(event) => {
           if (!event.currentTarget.contains(event.target as Node)) return;

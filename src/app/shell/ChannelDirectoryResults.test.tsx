@@ -14,6 +14,7 @@ import { type Filter, matchFilter } from "nostr-tools";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { LiveCallbacks } from "../../features/relay/live";
+import { ChannelLifecycleUnconfirmed } from "../../features/relay/channel-lifecycle";
 import { createRelaySession } from "../../features/relay/session";
 import {
   keypair,
@@ -66,6 +67,8 @@ const open = [
 function connected(
   options: {
     fail?: boolean;
+    /** Stands in for the relay's answer to a Join. */
+    join?: (channelId: string) => Promise<void>;
     /** Newer open channels, which fill the directory's first page. */
     newer?: number;
     /** The newer channels' name prefix. */
@@ -198,9 +201,23 @@ function connected(
   const bindings = createShortcutBindings(window);
   const shortcuts = new ShortcutsService(root, window, bindings);
   const navigate = vi.fn(async () => {});
+  const joins: string[] = [];
+  const join = options.join;
   const connection = {
     status: "ready",
-    session: owner.session,
+    session: join
+      ? {
+          ...owner.session,
+          channelLifecycle: {
+            ...owner.session.channelLifecycle,
+            available: true,
+            run: (action: string, channelId: string) => {
+              joins.push(`${action}:${channelId}`);
+              return join(channelId);
+            },
+          },
+        }
+      : owner.session,
     scope: "scope",
     generation: 0,
   };
@@ -224,10 +241,18 @@ function connected(
   } as unknown as SearchServices;
   return {
     navigate,
+    joins,
     directoryReads: () => directoryReads,
     countReads: () => countReads,
     recover: () => {
       failing = false;
+    },
+    /** The relay adds the viewer to `channelId`, live, as a Join does. */
+    admit(channelId: string) {
+      live?.state({ status: "connected", routes: [] });
+      live?.receive([
+        roster(relay, channelId, [other.pubkey, viewer.pubkey], 1700000200),
+      ]);
     },
     /** The relay drops the viewer from `channelId`, live, in this session. */
     revoke(channelId: string) {
@@ -259,12 +284,13 @@ const browse = async () => {
   return screen.findByRole("dialog", { name: "Browse channels" });
 };
 const field = () => screen.getByRole("combobox", { name: "Search channels" });
+/** Each row as it is announced: its name, then what it says beneath. */
 const rows = () =>
   Array.from(
     screen
-      .getByRole("listbox", { name: "Channels" })
-      .querySelectorAll('[role="option"]'),
-    (row) => row.textContent,
+      .getByRole("grid", { name: "Channels" })
+      .querySelectorAll('[role="row"]'),
+    (row) => row.getAttribute("aria-label"),
   );
 const offered = [
   expect.stringContaining("buzz-community"),
@@ -281,7 +307,7 @@ it("Browse channels lists the open channels to join A–Z, and nothing else of s
     expect(field()).toHaveFocus();
     expect(field()).toHaveAttribute("placeholder", "Search channels");
     expect(
-      screen.getByRole("group", { name: "Channels you can join" }),
+      screen.getByRole("rowgroup", { name: "Channels you can join" }),
     ).toBeVisible();
     // One plain list: no rail of result groups and no preview beside it.
     expect(within(dialog).queryByRole("navigation")).toBeNull();
@@ -289,9 +315,9 @@ it("Browse channels lists the open channels to join A–Z, and nothing else of s
     // Member counts fill in after the rows, in one read for the rows shown.
     await waitFor(() =>
       expect(rows()).toEqual([
-        "buzz-communityQuestions and tips2 members",
-        "design-crit1 member",
-        "release-notes1 member",
+        "buzz-community — 2 members · Questions and tips",
+        "design-crit — 1 member",
+        "release-notes — 1 member",
       ]),
     );
     expect(t.countReads()).toBe(1);
@@ -304,9 +330,9 @@ it("Browse channels lists the open channels to join A–Z, and nothing else of s
       /old-news/,
       /secret-plans/,
     ])
-      expect(screen.queryByRole("option", { name: hidden })).toBeNull();
+      expect(screen.queryByRole("row", { name: hidden })).toBeNull();
     // The first row is ready for Enter, which opens its preview.
-    expect(screen.getAllByRole("option")[0]).toHaveAttribute(
+    expect(screen.getAllByRole("row")[0]).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -332,11 +358,11 @@ it("marks joined matches and says when nothing matches", async () => {
     await userEvent.type(field(), "design");
     await waitFor(() =>
       expect(rows()).toEqual([
-        "designJoined1 member",
+        "design — Joined · 1 member",
         // Guests are members, open or private, so they're marked Joined.
-        "design-guestsJoined1 member",
-        "design-privateJoined1 member",
-        "design-crit1 member",
+        "design-guests — Joined · 1 member",
+        "design-private — Joined · 1 member",
+        "design-crit — 1 member",
       ]),
     );
     await userEvent.clear(field());
@@ -357,7 +383,7 @@ it("leaves search as it was: ⌘K after browsing opens all of search, fresh", as
     await browse();
     await userEvent.type(field(), "design");
     await waitFor(() => expect(rows()).toHaveLength(4));
-    await userEvent.click(screen.getByRole("option", { name: /^design-crit/ }));
+    await userEvent.click(screen.getByRole("row", { name: /^design-crit/ }));
     await waitFor(() =>
       expect(
         screen.queryByRole("dialog", { name: "Browse channels" }),
@@ -427,10 +453,13 @@ it("draws the first rows of a long list and more as its end nears, counting them
     t.render();
     await browse();
     await waitFor(() => expect(rows()).toHaveLength(100));
-    const options = screen.getAllByRole("option");
-    // Assistive technology hears the whole list's size.
-    expect(options[0]).toHaveAttribute("aria-setsize", "153");
-    expect(options[99]).toHaveAttribute("aria-posinset", "100");
+    const options = screen.getAllByRole("row");
+    // Assistive technology hears the whole list's size, once it settles.
+    expect(
+      await screen.findByText("153 channels you can join", undefined, {
+        timeout: 2000,
+      }),
+    ).toBeInTheDocument();
     // A row well above the end coming into view draws nothing more.
     const near = (index: number) =>
       options[index]?.closest("[data-search-key]") ?? undefined;
@@ -446,10 +475,6 @@ it("draws the first rows of a long list and more as its end nears, counting them
     // Nearing the last drawn rows draws the rest.
     show(near(90));
     await waitFor(() => expect(rows()).toHaveLength(153));
-    expect(screen.getAllByRole("option")[152]).toHaveAttribute(
-      "aria-posinset",
-      "153",
-    );
     // Every drawn row is watched once, the old ones still included.
     expect(observed.size).toBe(153);
   } finally {
@@ -562,20 +587,126 @@ it("puts joined matches first among equal matches after later pages land", async
     );
     await userEvent.type(field(), "design-");
     await waitFor(() =>
-      expect(rows().map((row) => row?.split(/Joined|\d+ members?/)[0])).toEqual(
-        [
-          "design-guests",
-          "design-private",
-          "design-new-000",
-          "design-new-001",
-          "design-new-002",
-          "design-new-003",
-          "design-crit",
-        ],
-      ),
+      expect(rows().map((row) => row?.split(" — ")[0])).toEqual([
+        "design-guests",
+        "design-private",
+        "design-new-000",
+        "design-new-001",
+        "design-new-002",
+        "design-new-003",
+        "design-crit",
+      ]),
     );
   } finally {
     release();
+    await t.dispose();
+  }
+});
+
+it("joins from the list: the row keeps its place and says Joined", async () => {
+  let land = () => {};
+  const t = connected({
+    join: () =>
+      new Promise<void>((resolve) => {
+        land = resolve;
+      }),
+  });
+  try {
+    t.render();
+    await browse();
+    await waitFor(() => expect(rows()).toEqual(offered));
+    // Joined channels offer no Join.
+    expect(screen.queryByRole("button", { name: /^Join design$/ })).toBeNull();
+    const button = screen.getByRole("button", { name: "Join design-crit" });
+    await userEvent.click(button);
+    expect(t.joins).toEqual(["join:design-crit"]);
+    // Choosing Join doesn't also open the channel.
+    expect(t.navigate).not.toHaveBeenCalled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+    // A second click while it runs starts nothing more.
+    await userEvent.click(button);
+    expect(t.joins).toHaveLength(1);
+    // Membership lands as the Join settles: the row stays, not hidden as
+    // already joined.
+    act(() => {
+      t.admit("design-crit");
+      land();
+    });
+    await waitFor(() =>
+      expect(rows()).toEqual([
+        expect.stringContaining("buzz-community"),
+        "design-crit — Joined · 1 member",
+        expect.stringContaining("release-notes"),
+      ]),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Join design-crit" }),
+    ).toBeNull();
+    // Focus left with the Join it was on, back to the field.
+    expect(field()).toHaveFocus();
+    // The list stays open for the next one.
+    expect(
+      screen.getByRole("button", { name: "Join release-notes" }),
+    ).toBeVisible();
+  } finally {
+    await t.dispose();
+  }
+});
+
+it("says on its row why a Join failed, and Join tries again", async () => {
+  let fail = true;
+  const t = connected({
+    join: () =>
+      fail
+        ? Promise.reject(new ChannelLifecycleUnconfirmed(new Error("timeout")))
+        : Promise.resolve(),
+  });
+  try {
+    t.render();
+    await browse();
+    await waitFor(() => expect(rows()).toEqual(offered));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Join release-notes" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Join may have taken effect, but it is not confirmed yet. Try again to check.",
+    );
+    fail = false;
+    await userEvent.click(
+      screen.getByRole("button", { name: "Join release-notes" }),
+    );
+    await waitFor(() =>
+      expect(rows()).toContain("release-notes — Joined · 1 member"),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(t.joins).toEqual(["join:release", "join:release"]);
+  } finally {
+    await t.dispose();
+  }
+});
+
+it("says Joined once membership shows, though the Join wasn't confirmed", async () => {
+  const t = connected({
+    join: () =>
+      Promise.reject(new ChannelLifecycleUnconfirmed(new Error("timeout"))),
+  });
+  try {
+    t.render();
+    await browse();
+    await waitFor(() => expect(rows()).toEqual(offered));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Join release-notes" }),
+    );
+    expect(await screen.findByRole("alert")).toBeVisible();
+    act(() => t.admit("release"));
+    await waitFor(() =>
+      expect(rows()).toContain("release-notes — Joined · 1 member"),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Join release-notes" }),
+    ).toBeNull();
+  } finally {
     await t.dispose();
   }
 });

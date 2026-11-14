@@ -7,9 +7,11 @@ import {
 import { useChannelRoster } from "../../features/relay/react";
 import type { RelaySession } from "../../features/relay/session";
 import { matchName } from "../../features/search/match";
+import { MatchedLabel } from "../../features/search/MatchedLabel";
+import { joinFailure } from "../../features/messages/ChannelJoinNotice";
 import { Button } from "../../shared/design-system/ui/Button";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
-import { UserIcon } from "../../shared/design-system/icons";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import {
   SearchChoices,
@@ -24,6 +26,12 @@ const collator = new Intl.Collator();
 const FIRST_ROWS = 100;
 const MORE_ROWS = 100;
 const GROW_AHEAD = 25;
+
+/** A Join started from the list, until the list closes. */
+type Join =
+  | { status: "pending" }
+  | { status: "joined" }
+  | { status: "failed"; error: string };
 
 /** Read-only isn't unjoined: guests and cached channels are members too.
  * The same rule as All's "Public channel · not joined". */
@@ -55,6 +63,48 @@ export function ChannelDirectoryResults({
   const directory = useChannelDirectory(session.channels, ready);
   const members = useMemberCounts(session.channels);
   const needle = query.trim().toLowerCase().replace(/^#/, "");
+  // Join from the list, as the preview does: a joined row keeps its place,
+  // saying Joined, so the next one is where it was.
+  const lifecycle = session.channelLifecycle;
+  const [joins, setJoins] = useState<ReadonlyMap<string, Join>>(new Map());
+  const joining = useRef(new Map<string, AbortController>());
+  useEffect(() => {
+    const running = joining.current;
+    return () => {
+      for (const controller of running.values()) controller.abort();
+    };
+  }, []);
+  const settle = (channelId: string, join: Join) =>
+    setJoins((current) => new Map(current).set(channelId, join));
+  const join = (channelId: string) => {
+    if (!lifecycle?.available || joins.get(channelId)?.status === "pending")
+      return;
+    joining.current.get(channelId)?.abort();
+    const controller = new AbortController();
+    joining.current.set(channelId, controller);
+    settle(channelId, { status: "pending" });
+    lifecycle.run("join", channelId, controller.signal).then(
+      () => {
+        if (controller.signal.aborted) return;
+        // Joined, the row drops its Join: focus it held returns to the
+        // field, which owns keyboard navigation.
+        if (
+          document
+            .getElementById(`directory:${channelId}`)
+            ?.contains(document.activeElement)
+        )
+          input.current?.focus();
+        settle(channelId, { status: "joined" });
+      },
+      (reason: unknown) => {
+        if (!controller.signal.aborted)
+          settle(channelId, {
+            status: "failed",
+            error: joinFailure(reason, "channel"),
+          });
+      },
+    );
+  };
   const { joined, member } = useMemo(
     () => ({
       joined: list.channels.filter(
@@ -103,10 +153,17 @@ export function ChannelDirectoryResults({
     () =>
       [
         ...(needle
-          ? joined.map((channel) => ({ channel, joined: true }) as const)
+          ? joined
+              // Joined from this list: already listed, in its place.
+              .filter((channel) => !joins.has(channel.id))
+              .map((channel) => ({ channel, joined: true }) as const)
           : []),
         ...directory.directory
-          .filter((channel) => !channel.archived && !member.has(channel.id))
+          .filter(
+            (channel) =>
+              !channel.archived &&
+              (!member.has(channel.id) || joins.has(channel.id)),
+          )
           .map((channel) => ({ channel, joined: false }) as const),
       ]
         .flatMap((row) => {
@@ -123,7 +180,7 @@ export function ChannelDirectoryResults({
             collator.compare(a.channel.name, b.channel.name) ||
             a.channel.id.localeCompare(b.channel.id),
         ),
-    [directory.directory, needle, joined, member],
+    [directory.directory, needle, joined, member, joins],
   );
   // A kept place reopens with its row drawn.
   const placed = () => {
@@ -155,32 +212,68 @@ export function ChannelDirectoryResults({
     .slice(0, drawn)
     .map(({ channel, joined, match }) => {
       const people = members.counts.get(channel.id);
-      const detail = [joined && "Joined", channel.description]
-        .filter(Boolean)
-        .join(" · ");
+      const state = joins.get(channel.id);
+      // A Join that may not have landed is Joined once membership shows.
+      const isJoined =
+        joined || state?.status === "joined" || member.has(channel.id);
+      const detail =
+        state?.status === "failed" && !isJoined
+          ? state.error
+          : [
+              isJoined && "Joined",
+              people !== undefined &&
+                `${people.toLocaleString()} ${people === 1 ? "member" : "members"}`,
+              channel.description,
+            ]
+              .filter(Boolean)
+              .join(" · ");
+      const Icon = channelIcon(channel);
       return {
         key: `directory:${channel.id}`,
         label: channel.name,
-        ...(match ? { matches: match.positions } : {}),
         ...(detail ? { detail } : {}),
-        // The count's space is held from the start, so its arrival neither
-        // makes a row taller nor trims the description again.
-        trailing: (
-          <span className="search-palette-count text-body-sm">
-            {people !== undefined && (
-              <>
-                <UserIcon size={14} aria-hidden="true" />
-                {people.toLocaleString()}
-                <span className="sr-only">
-                  {people === 1 ? " member" : " members"}
+        icon: Icon,
+        content: (
+          <PreferenceRow
+            variant="search"
+            icon={<Icon size={21} />}
+            title={
+              <MatchedLabel label={channel.name} positions={match?.positions} />
+            }
+            // Always a second line, so a count arriving doesn't grow the row.
+            subtitle={
+              state?.status === "failed" && !isJoined ? (
+                <span className="text-danger" role="alert">
+                  {state.error}
                 </span>
-              </>
-            )}
-          </span>
+              ) : (
+                detail || "\u00a0"
+              )
+            }
+            trailing={
+              // Membership can show before the Join settles; the button
+              // stays until then, so the focus it holds has somewhere to go.
+              (!isJoined || state?.status === "pending") &&
+              lifecycle?.available ? (
+                // Shown on hover or highlight, and kept while joining or
+                // after a failure.
+                <span data-search-reveal={state ? undefined : ""}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label={`Join ${channel.name}`}
+                    loading={state?.status === "pending"}
+                    onClick={() => join(channel.id)}
+                  >
+                    Join
+                  </Button>
+                </span>
+              ) : undefined
+            }
+          />
         ),
-        icon: channelIcon(channel),
         run: () =>
-          joined ? openConversation(channel.id) : openPreview(channel.id),
+          isJoined ? openConversation(channel.id) : openPreview(channel.id),
       };
     });
   const failed = list.status === "error" || directory.error;

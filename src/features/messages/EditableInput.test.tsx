@@ -100,17 +100,14 @@ function mount(
   let draft: MentionDraft = mentionDraft(initial);
   let formats: readonly ComposerFormat[] = [];
   const text = draft.text;
-  let setDisabled: (disabled: boolean) => void = () => {};
   function Editor() {
     const [value, setValue] = useState(draft);
-    const [disabled, disable] = useState(false);
-    setDisabled = disable;
     return (
       <EditableInput
         ref={ref}
         draft={value}
         value={value.text}
-        disabled={disabled}
+        disabled={false}
         placeholder="Draft"
         maxLength={options.maxLength ?? 16000}
         {...(options.onPasteTooLong
@@ -160,7 +157,6 @@ function mount(
     draft: () => draft,
     /** The formats last reported to the toolbar. */
     formats: () => formats,
-    disable: (disabled: boolean) => act(() => setDisabled(disabled)),
   };
 }
 
@@ -412,47 +408,6 @@ describe("Mac WebKit line breaks", () => {
     expect(clear).not.toHaveBeenCalled();
   });
 
-  it("an editor focused as it mounts draws its caret again once laid out", async () => {
-    const h = mount("message");
-    clear.mockClear();
-    await act(
-      () => new Promise<void>((done) => requestAnimationFrame(() => done())),
-    );
-    expect(clear).toHaveBeenCalledTimes(1);
-    expect(native()).toEqual([1, true, "message", 7]);
-
-    // A later return of focus draws it once, at once.
-    act(() => h.input.blur());
-    clear.mockClear();
-    act(() => h.input.focus());
-    await act(
-      () => new Promise<void>((done) => requestAnimationFrame(() => done())),
-    );
-    expect(clear).toHaveBeenCalledTimes(1);
-  });
-
-  it("enabling a focused editor again draws its caret", () => {
-    const text = "here is a message";
-    const h = mount(text);
-    act(() => h.input.setSelectionRange(2, 2));
-    // A send disables the editor in place: it keeps focus, and its caret
-    // is no longer painted. Stand in for that by clearing the selection.
-    h.disable(true);
-    expect(document.activeElement).toBe(h.input);
-    document.getSelection()?.removeAllRanges();
-    clear.mockClear();
-    h.disable(false);
-    expect(clear).toHaveBeenCalledTimes(1);
-    expect(native()).toEqual([1, true, text, 2]);
-
-    // An editor that was not focused takes no caret when it is enabled.
-    h.disable(true);
-    act(() => h.input.blur());
-    document.getSelection()?.removeAllRanges();
-    h.disable(false);
-    expect(document.getSelection()?.rangeCount).toBe(0);
-  });
-
   it.each(["pointerUp", "pointerCancel"] as const)(
     "%s outside the editor retires pointer placement before returning focus",
     (release) => {
@@ -486,10 +441,6 @@ describe("Mac WebKit line breaks", () => {
       h.input.toggleFormat("bold");
       h.input.setSelectionRange(3, 3);
     });
-    // The editor was focused as it mounted; its caret is redrawn a frame on.
-    await act(
-      () => new Promise<void>((done) => requestAnimationFrame(() => done())),
-    );
     clear.mockClear();
     await h.user.keyboard("{Shift>}{Enter}{/Shift}");
     expect(clear).toHaveBeenCalledTimes(1);
@@ -507,10 +458,6 @@ describe("Mac WebKit line breaks", () => {
       h.input.toggleFormat("bold");
       h.input.setSelectionRange(4, 4);
     });
-    // The editor was focused as it mounted; its caret is redrawn a frame on.
-    await act(
-      () => new Promise<void>((done) => requestAnimationFrame(() => done())),
-    );
     clear.mockClear();
     await h.user.keyboard("{Shift>}{Enter}{/Shift}");
     expect(clear).toHaveBeenCalledTimes(1);

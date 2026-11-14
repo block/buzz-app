@@ -345,6 +345,20 @@ export function CommunityPicker({
                 }}
               />
             )}
+            {onOpenTarget && (
+              <NavigationItem
+                label="Manage communities…"
+                onClick={() => {
+                  navigated.current = true;
+                  setSwitcherOpen(false);
+                  onOpenTarget({
+                    version: 1,
+                    kind: "settings",
+                    section: "manage-communities",
+                  });
+                }}
+              />
+            )}
           </PopoverPopup>
         </PopoverRoot>
       </nav>

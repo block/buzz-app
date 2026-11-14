@@ -694,6 +694,7 @@ confirmedPresence(
         "Shortcuts",
         "Agent setup",
         "Decisions API",
+        "Manage communities",
         "Channel templates",
         "Software updates",
         "Manage plugins",

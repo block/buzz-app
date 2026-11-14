@@ -251,6 +251,12 @@ mention anyone. Explicit agent watches on that room can still receive them.
   community picker and paste an invite link or type an address such as
   `relay.example.com`; an invite link fills in its invite code. Paste the whole
   link there; a code on its own is refused.
+- In the community switcher, other communities show a number for mentions, DMs
+  and followed-thread replies waiting for you, or a dot for other unread. A dot on
+  the closed switcher means another community has unread. Muted channels never
+  count. A blank row means its unread is unknown, for example because that
+  community isn't connected or was closed to make room for one you opened. Only
+  the first 24 communities get badges at startup; others show one once opened.
 - Community owners and admins manage access in the community's **Membership**
   settings (also reached from **Invite to community** in the community picker's
   right-click menu). **Members** shows the roster and updates as membership changes arrive.

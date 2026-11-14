@@ -21,6 +21,7 @@ import type { SettingsCards } from "../../features/settings/service";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { AccountActionsService } from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
+import type { CommunityUnreads } from "../../features/notifications/community-unread";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import { ResizableSidebar } from "../../features/channel-navigation/ResizableSidebar";
 import type { JoinRequest } from "../../features/communities/invite-intent";
@@ -71,6 +72,7 @@ function AppShellContent({
   workspaceRef,
   sidebar,
   communities,
+  communityUnreads,
   invite,
   onInviteClose,
   settingsCards,
@@ -102,6 +104,8 @@ function AppShellContent({
   workspaceRef?: Ref<HTMLDivElement>;
   sidebar?: (pages: ReactNode, creationAction: ReactNode) => ReactNode;
   communities: Communities;
+  /** Unread for communities other than the selected one, on the switcher. */
+  communityUnreads?: CommunityUnreads | undefined;
   invite?: (JoinRequest & { requestId: number }) | undefined;
   onInviteClose?: ((requestId: number) => void) | undefined;
   settingsCards?: SettingsCards | undefined;
@@ -373,6 +377,7 @@ function AppShellContent({
           <div className="shell-community-switcher">
             <CommunityPicker
               communities={communities}
+              unreads={communityUnreads}
               invite={invite}
               onInviteClose={onInviteClose}
               settingsCards={settingsCards}

@@ -123,6 +123,31 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
   app,
 }) => {
   await holdReadingFocus(page);
+  // The held unread read must outlive the app's 10s read deadline and the
+  // broker's 20s upstream deadline on slow runners. Only those deadlines
+  // started while it is held are suspended; the test releases it explicitly,
+  // so neither deadline is under test. The broker runs in this process.
+  const timeout = AbortSignal.timeout;
+  let holdUpstreamDeadline = true;
+  AbortSignal.timeout = (ms) =>
+    holdUpstreamDeadline && ms === 20_000
+      ? new AbortController().signal
+      : timeout.call(AbortSignal, ms);
+  // The caller's deadline is an abort signal and the reader's is a timer; a
+  // suspended timer still gets a clearable id, but never fires.
+  await page.addInitScript(() => {
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const schedule = window.setTimeout.bind(window);
+    window.__holdReadDeadline = true;
+    AbortSignal.timeout = (ms) =>
+      window.__holdReadDeadline && ms === 10_000
+        ? new AbortController().signal
+        : timeout(ms);
+    window.setTimeout = (callback, ms, ...args) =>
+      window.__holdReadDeadline && ms === 10_000
+        ? schedule(() => {}, ms)
+        : schedule(callback, ms, ...args);
+  });
   const alphaHeads = () =>
     app.report.queries.filter(
       ({ community, filter }) =>
@@ -141,11 +166,14 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
         filter.depth_limit === undefined &&
         filter.until === undefined,
     );
+  // Every joined community holds its unread batch; only primary's is under test.
+  const holds = () =>
+    app.report.unreadHolds.filter(({ community }) => community === "primary");
   app.relay.holdEose("alpha");
   app.relay.holdUnread();
   const opening = open(page, app);
   try {
-    await expect.poll(() => app.report.unreadHolds.length).toBe(1);
+    await expect.poll(() => holds().length).toBe(1);
     expect(evidence()[0].filter["#h"]).toContain("alpha");
     expect(evidence()[0].filter["#h"]).toContain("dm-090");
     await expect.poll(() => alphaHeads().length).toBe(1);
@@ -154,10 +182,16 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
     // before releasing evidence. No sleep or scheduler luck creates the overlap.
     app.relay.releaseEose("alpha");
     await expect.poll(() => alphaHeads().length).toBe(2);
-    expect(app.report.unreadHolds).toEqual([{ pending: true, aborted: false }]);
+    expect(holds()).toEqual([
+      { community: "primary", pending: true, aborted: false },
+    ]);
     await opening;
     await expect(row(page, "dm-090")).toHaveCount(1);
     await expect(row(page, "dm-090").getByRole("img")).toHaveCount(0);
+    await page.evaluate(() => {
+      window.__holdReadDeadline = false;
+    });
+    holdUpstreamDeadline = false;
     app.relay.releaseUnread();
     await expect(row(page, "dm-030").getByRole("img")).toHaveCount(1);
     await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
@@ -171,11 +205,12 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
     expect(evidence().map(({ filter }) => filter["#h"].length)).toEqual([
       128, 2,
     ]);
-    expect(app.report.unreadHolds).toEqual([
-      { pending: false, aborted: false },
+    expect(holds()).toEqual([
+      { community: "primary", pending: false, aborted: false },
     ]);
     expect(app.report.readPublications).toEqual([]);
   } finally {
+    AbortSignal.timeout = timeout;
     app.relay.releaseEose("alpha");
     app.relay.releaseUnread();
     await opening;

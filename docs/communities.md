@@ -116,7 +116,21 @@ reporting success. This confirmation is not a transaction against other clients.
 Use the dock's community switcher to select a saved community or Personal
 space. Personal space
 clears selection without forgetting memberships. Its **Join a community** item opens the
-existing join dialog; displaying saved communities reads relay metadata but does not open sessions for them.
+existing join dialog. Displaying saved communities reads relay metadata. So the
+switcher can show their unread, the app connects in the background to the first 24
+saved communities, plus any selected this launch. When a community opened for its
+own work needs a connection and none is free, the least recently opened community
+connected only for its badge is closed, and its badge stays blank until you open
+it again. The browser development broker connects fewer for badges: at most three
+sessions are connected only for a badge, with one of those kept for a community
+you open, so its streams leave the origin's connections free for ordinary
+requests. Communities you visit and agents' communities can still add sessions
+beyond three.
+A community other than the selected one shows a count of items that need you
+(mentions, DMs and replies in threads you follow) at the end of its row, or a dot
+for other unread, and the closed switcher shows a dot while any does. Muted
+channels and conversations your notification settings exclude are left out, and a
+community whose unread is not known yet shows nothing.
 Right-click a saved community (or press the ContextMenu key or Shift+F10 on it)
 for Mark all as read, Copy community URL, Invite to community, Community
 settings and, last, Leave community. Only the selected community can be marked
@@ -274,14 +288,17 @@ the queue intact.
 ## Session lifetime
 
 Selecting a saved membership lazily acquires its session. Sessions survive page
-navigation and switching; startup opens only the selected one. Once its agent
+navigation and switching. Startup opens the selected one and, for switcher badges,
+the first 24 saved communities. Once its agent
 list loads, Agents also opens each joined community where the viewer has an
 agent, through `open`, which connects without selecting so those agents keep
 running, and retries one whose connection failed while it is not selected. Opened communities
 retain their existing per-session query/cache budgets. Arbitrary destinations mean
 there is **no longer a two-session maximum**: retained session count grows with
-communities opened until app disposal. This slice does not add background eviction
-or change in-flight delivery ownership. A failed session remains retryable without
+communities opened, until app disposal. When a community opened for its own work
+needs room, the least recently opened community connected only for its badge is
+closed; communities opened for their own work are never closed this way. This
+does not change in-flight delivery ownership. A failed session remains retryable without
 replacing the shell or its siblings.
 App disposal closes all owned contexts and their subscriptions.
 
@@ -301,8 +318,9 @@ Packaged builds do not include the broker. Native macOS, Windows and Linux
 discovery, admission, leave requests, profile publication, authenticated reads and
 supported event writes. Native invite minting and relay-advertised KLIPY GIF search
 use the same captured HTTPS community; neither requires the development broker.
-Windows/Linux installed-app acceptance remains unverified. Community creation and
-background connection eviction are not implemented. Avatar uploads still require
+Windows/Linux installed-app acceptance remains unverified. Community creation is
+not implemented; the only background connection eviction is closing a badge-only
+community to make room, described in [Session lifetime](#session-lifetime). Avatar uploads still require
 the development media host. Agents have local
 configuration plus separately scoped participation; selecting a community must
 not become a deployment or enrollment command.

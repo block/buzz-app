@@ -86,6 +86,9 @@ export const test = base.extend({
   expectedSidebarIconFailure: [false, { option: true }],
   largeSidebar: [false, { option: true }],
   iconCongestion: [false, { option: true }],
+  // Saved communities. Each connected one holds a live stream, and this
+  // harness serves them all over one HTTP/1.1 origin; the native app does not.
+  savedCommunities: [["primary", "secondary"], { option: true }],
   dmLabels: [false, { option: true }],
   dmMembers: [{}, { option: true }],
   agentPeers: [false, { option: true }],
@@ -172,6 +175,7 @@ export const test = base.extend({
       expectedSidebarIconFailure,
       largeSidebar,
       iconCongestion,
+      savedCommunities,
       dmLabels,
       dmMembers,
       agentPeers,
@@ -2209,10 +2213,15 @@ export const test = base.extend({
         const parts = request.url.split("/");
         const route = parts.at(-1);
         const requestedCommunity = decodeURIComponent(parts[3]);
-        const community =
-          requestedCommunity.match(
-            /^https:\/\/(primary|secondary)\.(?:example|fixture\.invalid)$/,
-          )?.[1] ?? requestedCommunity;
+        // Congestion's saved communities read primary's data.
+        const saved =
+          iconCongestion &&
+          /^https:\/\/saved-\d+\.example$/.test(requestedCommunity);
+        const community = saved
+          ? "primary"
+          : (requestedCommunity.match(
+              /^https:\/\/(primary|secondary)\.(?:example|fixture\.invalid)$/,
+            )?.[1] ?? requestedCommunity);
         const parsed = await fixtureBody(request, report);
         if (!parsed) return; // The client disconnected; there is no response to send.
         const { body } = parsed;
@@ -2236,14 +2245,16 @@ export const test = base.extend({
             uses_remaining: body.max_uses ?? null,
           });
         if (route === "session") {
-          report.sessions.push(community);
+          report.sessions.push(saved ? requestedCommunity : community);
           return send(response, {
             viewer,
             relayAuthor: getPublicKey(relayKey),
             writeKinds:
               channelWriteKinds ??
               (soloChannels.length ? [9, 9007, 30315] : [9, 30315]),
-            relayUrl: JSON.parse(fixtureAliases)[community],
+            relayUrl: saved
+              ? requestedCommunity
+              : JSON.parse(fixtureAliases)[community],
             live: true,
           });
         }
@@ -2574,7 +2585,13 @@ export const test = base.extend({
           observer.observe(document, { childList: true, subtree: true });
         });
       await page.addInitScript(
-        ({ viewer, profilePicture, iconCongestion, enabledPlugins }) => {
+        ({
+          viewer,
+          profilePicture,
+          iconCongestion,
+          savedCommunities,
+          enabledPlugins,
+        }) => {
           // Model fresh plugin choices before seeding an existing community.
           // Feature journeys opt in once; reloads retain later user choices.
           if (!localStorage.getItem("buzzodz.plugins.v1"))
@@ -2599,20 +2616,31 @@ export const test = base.extend({
                   ? [
                       { id: "primary", name: "Primary" },
                       { id: "secondary", name: "Secondary" },
-                      ...Array.from({ length: 6 }, (_, index) => ({
-                        id: `https://saved-${index}.example`,
-                        name: `Saved ${index}`,
-                      })),
+                      ...Array.from(
+                        {
+                          length: iconCongestion === true ? 6 : iconCongestion,
+                        },
+                        (_, index) => ({
+                          id: `https://saved-${index}.example`,
+                          name: `Saved ${index}`,
+                        }),
+                      ),
                     ]
                   : [
                       { id: "primary", name: "Primary" },
                       { id: "secondary", name: "Secondary" },
-                    ],
+                    ].filter(({ id }) => savedCommunities.includes(id)),
                 selected: "primary",
               }),
             );
         },
-        { viewer, profilePicture, iconCongestion, enabledPlugins },
+        {
+          viewer,
+          profilePicture,
+          iconCongestion,
+          savedCommunities,
+          enabledPlugins,
+        },
       );
       await use({
         sign: (template) => finalizeEvent(template, userKey),

@@ -1,4 +1,5 @@
 import { takeSignInRequest } from "../identity/sign-in-requests";
+import { createInviteIntent } from "../communities/invite-intent";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ClientSnapshot } from "../communities/service";
 import {
@@ -374,6 +375,134 @@ it.each([""])(
     }
   },
 );
+
+/** An invite's ingress with first run's slot wired as `services.ts` wires it. */
+function inviteHarness(initial: Client, pending: string[] = []) {
+  const { firstRun } = createInviteIntent();
+  const queue = [...pending];
+  let ping: () => void = () => {};
+  let client = initial;
+  const changed = new Set<() => void>();
+  const invite = vi.fn();
+  const fail = vi.fn();
+  const controller = createNavigationController(createMemoryHistory());
+  const stop = bindDeepLinks(
+    {
+      navigation: controller.navigation,
+      fail,
+      invite,
+      firstRun,
+      rejected: vi.fn(),
+      inbox: inboxOn,
+      accepted: vi.fn(),
+    },
+    {
+      snapshot: () => client,
+      subscribe(fn) {
+        changed.add(fn);
+        return () => changed.delete(fn);
+      },
+    },
+    {
+      take: async () => queue.splice(0),
+      watch(fn) {
+        ping = fn;
+        return () => {
+          ping = () => {};
+        };
+      },
+    },
+  );
+  return {
+    firstRun,
+    invite,
+    fail,
+    queue,
+    arrive(url: string) {
+      queue.push(url);
+      ping();
+    },
+    become(next: Client) {
+      client = next;
+      for (const fn of changed) fn();
+    },
+    stop() {
+      stop();
+      controller.dispose();
+    },
+  };
+}
+const joinLink = (code: string) =>
+  `buzz://join?relay=wss%3A%2F%2Frelay.example&code=${code}`;
+const invited = (code: string) => ({
+  community: "https://relay.example",
+  code,
+});
+
+it("offers a launch invite to first run before any client exists, again when first run's answer changes, and drops it only once taken", async () => {
+  const t = inviteHarness(loading, [joinLink("v2.invite")]);
+  const decline = vi.fn(() => false);
+  const take = vi.fn(() => true);
+  try {
+    await vi.waitFor(() => expect(t.queue).toEqual([]));
+    await settle();
+    // First run cannot take it yet (its identity is still being restored).
+    t.firstRun.handle(decline);
+    expect(decline).toHaveBeenCalledWith(invited("v2.invite"));
+    expect(decline).toHaveBeenCalledTimes(1);
+    // Still held: a client change offers it again.
+    t.become({ status: "loading", selected: null });
+    expect(decline).toHaveBeenCalledTimes(2);
+    t.firstRun.handle(take);
+    expect(take).toHaveBeenCalledWith(invited("v2.invite"));
+    expect(take).toHaveBeenCalledTimes(1);
+    // Taken: neither first run nor the join dialog is asked again.
+    t.firstRun.handle(take);
+    t.become(ready);
+    expect(take).toHaveBeenCalledTimes(1);
+    expect(t.invite).not.toHaveBeenCalled();
+    expect(t.fail).not.toHaveBeenCalled();
+  } finally {
+    t.stop();
+  }
+});
+
+it("opens the join dialog for an invite first run leaves, at launch once the identity is ready and at once in a running app", async () => {
+  const t = inviteHarness(loading, [joinLink("launch")]);
+  const decline = vi.fn(() => false);
+  try {
+    t.firstRun.handle(decline);
+    await vi.waitFor(() =>
+      expect(decline).toHaveBeenCalledWith(invited("launch")),
+    );
+    expect(t.invite).not.toHaveBeenCalled();
+    t.become(ready);
+    expect(t.invite.mock.calls).toEqual([[invited("launch"), viewer]]);
+    t.arrive(joinLink("warm"));
+    await vi.waitFor(() => expect(t.invite).toHaveBeenCalledTimes(2));
+    expect(decline).toHaveBeenLastCalledWith(invited("warm"));
+    expect(t.invite).toHaveBeenLastCalledWith(invited("warm"), viewer);
+    expect(t.fail).not.toHaveBeenCalled();
+  } finally {
+    t.stop();
+  }
+});
+
+it("an invite first run takes with an identity present never reaches the join dialog", async () => {
+  const t = inviteHarness(ready);
+  const take = vi.fn(() => true);
+  try {
+    await settle();
+    t.firstRun.handle(take);
+    t.arrive(joinLink("again"));
+    await vi.waitFor(() => expect(take).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(take).toHaveBeenCalledWith(invited("again"));
+    expect(t.invite).not.toHaveBeenCalled();
+  } finally {
+    t.stop();
+  }
+});
 
 it("drains the shell at startup and opens a held link only once the client is ready", async () => {
   const t = harness(loading, ["buzz://channel/general"]);

@@ -237,6 +237,7 @@ export function createServices() {
   const deepLinks = {
     ...navigationHost,
     invite: invites.open,
+    firstRun: invites.firstRun,
     authorize: externalApps.open,
     rejected: rejectedLinks.reject,
     accepted: () => rejectedLinks.clear(),

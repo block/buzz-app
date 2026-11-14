@@ -14,6 +14,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { App } from "./App";
 import { createServices, type AppServices } from "./services";
+import { firstRunCredential } from "../bundled/builderlab/oauth/first-run";
 import type { JoinPolicy } from "../features/communities/join-policy";
 import type { RelayEvent } from "../features/relay/events";
 import {
@@ -452,4 +453,67 @@ it("a refused handed-off code keeps the dialog open with the refusal and stays o
     memberships: [{ id: relayA }],
     selected: relayA,
   });
+});
+
+it("an invite link opened with no identity reaches first run through the app's services: it names the community, signs in only when asked, and keeps the code for the join", async () => {
+  relays[relayB] = { self: keypair().pubkey, admitted: false };
+  const launched = [appInvite];
+  const native = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "deep_link_take") return launched.splice(0);
+    // This build's Builderlab hosts relay-b.
+    if (command === "federated_identity_servers")
+      return [
+        {
+          status: "signed-out",
+          authority: {
+            id: "example",
+            identityOrigin: "https://builderlab.example",
+            apiBasePath: "/api/goose/",
+            signIn: "on-demand",
+            organization: null,
+            communityHosts: ["relay-b.example"],
+          },
+          revision: "",
+          email: null,
+          failure: null,
+          expiresAt: null,
+          expiring: false,
+          cleanup: false,
+        },
+      ];
+    return native?.(command, args);
+  });
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  const current = createServices();
+  services = current;
+  render(<App services={current} />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(15_000);
+  });
+  expect(
+    await screen.findByRole("heading", { name: "You’re invited" }),
+  ).toBeVisible();
+  expect(screen.getByText("relay-b.example")).toBeVisible();
+  // The link alone looked the community up; no sign-in, key or dialog yet.
+  expect(firstRunCredential).not.toHaveBeenCalled();
+  expect(current.identity?.snapshot().status).toBe("missing");
+  expect(current.invites.snapshot()).toBeUndefined();
+  expect(
+    requests.filter((r) => r.community === relayB).map((r) => r.path),
+  ).toEqual(["/", "/api/join-policy"]);
+  await user.click(screen.getByRole("button", { name: "Create account" }));
+  // The account's saved community opens the app, and the invite, with its
+  // code, goes on to the join dialog as a typed invite link does.
+  const dialog = await screen.findByRole("dialog", {
+    name: "Join a community",
+  });
+  expect(firstRunCredential).toHaveBeenCalledTimes(1);
+  expect(within(dialog).getByLabelText("Community URL")).toHaveValue(relayB);
+  expect(current.invites.snapshot()).toMatchObject({
+    community: relayB,
+    code,
+    viewer: member.pubkey,
+  });
+  expect(inviteRequests()).toEqual([]);
 });

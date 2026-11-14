@@ -59,6 +59,7 @@ import { CommunityUrlField } from "./CommunityUrlField";
 import { ConnectChoice } from "./ConnectChoice";
 import { CreateCommunityStep } from "./CreateCommunityStep";
 import { InviteCodeField } from "./InviteCodeField";
+import { Invited } from "./Invited";
 import styles from "./IdentitySetup.module.css";
 import { parseFirstRunAccountSeed } from "./first-run-seed";
 import { JoinCommunity } from "./JoinCommunity";
@@ -168,9 +169,12 @@ export function Welcome({
   >;
   /**
    * The app's invite intent: a typed address the restore did not admit is
-   * handed to the rail's Add-a-community dialog as the gate lifts.
+   * handed to the rail's Add-a-community dialog as the gate lifts. Through
+   * `firstRun`, where the host has OS links, first run takes an invite link
+   * that arrives before any identity exists.
    */
-  invites: Pick<ReturnType<typeof createInviteIntent>, "open">;
+  invites: Pick<ReturnType<typeof createInviteIntent>, "open"> &
+    Partial<Pick<ReturnType<typeof createInviteIntent>, "firstRun">>;
   children: ReactNode;
   /**
    * The NIP-FI session as the bundled Builderlab plugin calls it
@@ -285,6 +289,15 @@ export function Welcome({
   // (`accountConsents`). Every submit sets it with `finding`; Back from a
   // failed join clears it.
   const [joinAtOnce, setJoinAtOnce] = useState(false);
+  // Set while `finding` came from an OS link first run took, not a typed
+  // address. `arrival` names its lookup, so the same link opened again looks
+  // the community up afresh. `found` is the community once this build's
+  // Builderlab is known to host it: the invited page, which waits for the
+  // person to start the sign-in a typed address starts by itself.
+  const [invited, setInvited] = useState<{
+    arrival: number;
+    found?: FoundCommunity;
+  }>();
   const [joinError, setJoinError] = useState<{
     title: string;
     error: string;
@@ -357,7 +370,63 @@ export function Welcome({
     handle();
     return onSignInRequest(handle);
   }, [state.status]);
+  // An OS invite link, offered by the deep-link owner (`invite-intent.ts`).
+  // First run takes it only with nothing under way, in two places. Before
+  // setup: no identity here and none being saved, setup idle and no sign-in
+  // waiting on the browser; the latest link then replaces whatever shows, a
+  // failed sign-in included. After setup: resting on Join a community, where
+  // the link is looked up as an address entered there is. Anywhere else, the
+  // link first run already carries is consumed, so it cannot open the join
+  // dialog later, and any other stays with the deep-link owner, as every
+  // link does once the app is open. Each change to the answer registers it
+  // again, which offers a link still held: one that launched Buzz waits for
+  // the saved identity this way.
+  const noIdentity = state.status === "missing" && !state.busy;
+  const resting =
+    progress.status === "done" &&
+    !finding &&
+    !profileStep &&
+    !joinError &&
+    !creating;
+  useEffect(
+    () =>
+      invites.firstRun?.handle((link) => {
+        if (!resting) {
+          if (progress.status !== "idle" || auth.status !== "signed-out")
+            return finding === link.community && inviteCode === link.code;
+          if (!noIdentity) return false;
+          // The link starts first run over, as returning to the landing
+          // does: a failed sign-in's page gives way, with no sign-in left
+          // to cancel, and a restart's expected key no longer applies.
+          expectedKey.current = undefined;
+          if (auth.error) login.cancel();
+          setOtherOptions(false);
+        }
+        setFinding(link.community);
+        setInviteCode(link.code);
+        // Opening a link is not Continue: its join always waits for Join.
+        setJoinAtOnce(false);
+        // Only a link taken before sign-in asks on the invited page.
+        setInvited(resting ? undefined : { arrival: ++lookups.current });
+        return true;
+      }),
+    [
+      invites.firstRun,
+      login,
+      noIdentity,
+      resting,
+      progress.status,
+      auth.status,
+      auth.error,
+      finding,
+      inviteCode,
+    ],
+  );
   const discovering = finding && auth.status === "signed-out";
+  // The invited page's community: shown from the lookup's answer until setup
+  // starts, through the sign-in the person starts there.
+  const invitation =
+    progress.status === "idle" && !auth.error ? invited?.found : undefined;
   /**
    * The page rendered below, keyed in the order the JSX decides it, so a
    * change of key is a page replacing another; `undefined` while nothing of
@@ -376,9 +445,12 @@ export function Welcome({
               ? "auth-timeout"
               : auth.error
                 ? "auth-error"
-                : discovering
-                  ? "discover"
-                  : "landing"
+                : invitation
+                  ? "invited"
+                  : discovering
+                    ? // Each link's lookup is a page of its own.
+                      `discover:${invited?.arrival ?? ""}`
+                    : "landing"
           : progress.status === "done"
             ? profileStep
               ? "done:profile"
@@ -392,17 +464,21 @@ export function Welcome({
             : progress.status === "paused"
               ? `paused:${progress.at}`
               : progress.status;
-  // Existing identities and restore errors bypass first-run presentation.
-  // Release the parser's hidden-window hold as soon as that outcome is known.
+  // Existing identities, restore errors and a link that launched Buzz bypass
+  // the landing, whose entrance alone uses the parser's hidden-window hold.
+  // Release it as soon as that outcome is known, so no later landing starts
+  // the entrance over a window already in use.
+  const bypassesLanding =
+    state.status === "ready" || (page !== undefined && page !== "landing");
   useEffect(() => {
     if (
-      (state.status === "ready" || state.status === "error") &&
+      bypassesLanding &&
       document.documentElement.dataset.welcomeIntro === "pending"
     ) {
       delete document.documentElement.dataset.welcomeIntro;
       void invoke("plugin:window|show", { label: "main" }).catch(() => {});
     }
-  }, [state.status]);
+  }, [bypassesLanding]);
   // A page replacing another takes focus with it: Back returns it to the
   // choice that opened the page it leaves (`data-return-focus`); otherwise
   // the new heading has it — unless the page focused a field itself, which
@@ -673,6 +749,7 @@ export function Welcome({
       );
     handoff.current = undefined;
     setFinding(undefined);
+    setInvited(undefined);
     setInviteCode("");
     setEntered("");
     setCreatable(undefined);
@@ -773,6 +850,7 @@ export function Welcome({
   };
   /** A submitted address or invite link: what to look up, and the code to claim. */
   const find = (origin: string, code = "", justCreated = false) => {
+    setInvited(undefined);
     setFinding(origin);
     setInviteCode(code);
     setJoinAtOnce(justCreated || accountConsents(federatedIdentity, origin));
@@ -783,6 +861,7 @@ export function Welcome({
     expectedKey.current = undefined;
     setOtherOptions(false);
     setFinding(undefined);
+    setInvited(undefined);
     setInviteCode("");
     setSwitchError(undefined);
     setLinked(undefined);
@@ -1158,12 +1237,16 @@ export function Welcome({
   };
   // Restart sign-in in place of one waiting on an earlier browser tab: the
   // browser's account session finishes it. Setup already under way, or a
-  // community-link lookup, has no sign-in to restart; one that timed out does.
+  // community-link lookup, has no sign-in to restart; one that timed out does,
+  // and the invited page offers the same sign-in.
   requestedSignIn.current =
     state.status === "loading" || state.status === "error"
       ? undefined
       : () => {
-          if (progress.status !== "idle" || (discovering && !auth.error))
+          if (
+            progress.status !== "idle" ||
+            (discovering && !invitation && !auth.error)
+          )
             return;
           setOtherOptions(false);
           resumeSignIn();
@@ -1251,9 +1334,10 @@ export function Welcome({
     );
   // Discovery: the same unauthenticated lookup Join Community runs after
   // setup, so a bad address fails here, before sign-in and before a key
-  // exists. A community hosted by this build's Builderlab signs in at once;
-  // any other asks the user whether to connect at the build portal or bring
-  // a key.
+  // exists. For a community hosted by this build's Builderlab, a typed
+  // address signs in at once and a link asks first, on the invited page; any
+  // other asks the user whether to connect at the build portal or bring a
+  // key.
   if (
     progress.status === "idle" &&
     auth.status !== "pending" &&
@@ -1303,6 +1387,19 @@ export function Welcome({
     session?.status === "signed-in" ||
     session?.status === "reauthentication-required";
   const restoring = session?.status === "restoring";
+  if (invitation)
+    return (
+      <WireframeScreen>
+        <Invited
+          found={invitation}
+          coded={!!inviteCode}
+          returning={returning}
+          restoring={restoring}
+          onStart={start}
+          onDecline={backToLanding}
+        />
+      </WireframeScreen>
+    );
   if (progress.status === "idle" && !auth.error && !discovering)
     return (
       <OnboardingScreen
@@ -1522,6 +1619,7 @@ export function Welcome({
         />
       ) : finding ? (
         <FindCommunity
+          key={invited?.arrival}
           onboarding
           url={finding}
           onCancel={backToLanding}
@@ -1531,9 +1629,17 @@ export function Welcome({
             const lookup = ++lookups.current;
             void hostedByThisBuilderlab(found, servers).then((hosted) => {
               if (lookup !== lookups.current) return;
-              if (hosted) void signIn();
               // Without a Builderlab sign-in, a key is the only way in.
-              else pause(connect ? "connect-choice" : "key-import");
+              if (!hosted) pause(connect ? "connect-choice" : "key-import");
+              // A link asks before it opens the browser; a typed address
+              // signs in at once.
+              else if (invited)
+                setInvited((current) =>
+                  current?.arrival === invited.arrival
+                    ? { ...current, found }
+                    : current,
+                );
+              else void signIn();
             });
           }}
           titleId="welcome-title"

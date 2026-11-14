@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { App } from "../../src/app/App";
 import type { AppServices } from "../../src/app/services";
+import { createInviteIntent } from "../../src/features/communities/invite-intent";
 import { createIdentity } from "../../src/features/identity/service";
 import "../../src/shared/styles/globals.css";
 
@@ -27,11 +28,13 @@ mockIPC((command) => {
 });
 window.windowChrome = { calls, restore };
 const identity = createIdentity();
+// First run registers for OS invite links as it mounts; none arrives here.
+const invites = createInviteIntent();
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing app root");
 // This fixture stops at the real missing-identity screen, before ConnectedApp.
 createRoot(root).render(
   <StrictMode>
-    <App services={{ identity } as AppServices} />
+    <App services={{ identity, invites } as AppServices} />
   </StrictMode>,
 );

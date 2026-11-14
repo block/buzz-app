@@ -3,6 +3,7 @@
 // admission path alone decides whether a target opens. Browsers have no OS scheme
 // handler, so everything here is a no-op outside Tauri.
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
+import type { createInviteIntent } from "../communities/invite-intent";
 import { parseInviteLink, type InviteLink } from "../communities/invite-link";
 import { communityDestination } from "../communities/destination";
 import type { ClientSnapshot } from "../communities/service";
@@ -39,6 +40,11 @@ export type DeepLinkHost = Readonly<{
   }>;
   /** Invite presentation belongs to the community switcher, not navigation. */
   invite?: (invite: InviteLink, viewer: string) => void;
+  /** First run may take an invite instead; when it can is its own decision. */
+  firstRun?: Pick<
+    ReturnType<typeof createInviteIntent>["firstRun"],
+    "offer" | "subscribe"
+  >;
   authorize?: (request: ExternalAuthorization, viewer: string) => void;
 }>;
 type Client = Pick<ClientSnapshot, "status" | "viewer" | "selected">;
@@ -208,9 +214,14 @@ export function bindDeepLinks(
       host.fail("denied");
       return Promise.resolve({ status: "failed", reason: "denied" });
     }
+    const invite = incoming.invite;
+    // Offered before any identity or client exists: first run needs neither.
+    if (invite && host.firstRun?.offer(invite)) {
+      held = undefined;
+      return Promise.resolve({ status: "cancelled" });
+    }
     if (client.status === "loading")
       return Promise.resolve({ status: "failed", reason: "unavailable" });
-    const invite = incoming.invite;
     if (incoming.authorization) {
       if (!client.viewer || client.status !== "ready")
         return Promise.resolve({ status: "failed", reason: "unavailable" });
@@ -255,7 +266,11 @@ export function bindDeepLinks(
     ) {
       held = undefined;
       host.fail("denied");
-    } else if (client.status !== "loading" && !held.reported && !draining) {
+    } else if (
+      (held.invite || client.status !== "loading") &&
+      !held.reported &&
+      !draining
+    ) {
       void openHeld();
     }
   };
@@ -344,6 +359,7 @@ export function bindDeepLinks(
     flush();
   });
   const stopInbox = host.inbox.subscribe(flush);
+  const stopFirstRun = host.firstRun?.subscribe(flush);
   const stopNavigation = host.navigation.subscribe(() => {
     const next = host.navigation.snapshot();
     // fail() emits synchronously; its ingress marker distinguishes our failure
@@ -364,6 +380,7 @@ export function bindDeepLinks(
     closed = true;
     stopClient();
     stopInbox();
+    stopFirstRun?.();
     stopNavigation();
     stopShell();
     held = undefined;

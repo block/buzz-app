@@ -34,6 +34,10 @@ import { IdentitySetup } from "./IdentitySetup";
 import { PrivateKey } from "./PrivateKey";
 import { SignOutDialog, WIPE_PHRASE } from "./SignOut";
 import { Welcome } from "./Welcome";
+import { createInviteIntent } from "../communities/invite-intent";
+import { bindDeepLinks } from "../navigation/deep-links";
+import { createNavigationController } from "../navigation/controller";
+import { createMemoryHistory } from "../navigation/history";
 import {
   federatedFixture,
   forwardingSession,
@@ -4774,6 +4778,813 @@ it("a buzz://join link pasted on Connect to a community claims its code at the l
     ...claimCalls(relay, member),
   ]);
   identity.dispose();
+});
+
+/** A build whose Builderlab hosts `nativeRelay`'s community. */
+const hostingServers = async (): Promise<SessionSnapshot[]> =>
+  (await publicServers()).map((server) => ({
+    ...server,
+    authority: server.authority && {
+      ...server.authority,
+      communityHosts: ["relay.example.com:8443"],
+    },
+  }));
+/** The link a relay's invite page opens, as the OS delivers it. */
+const osInvite = (origin: string, code = inviteCode) =>
+  `buzz://join?relay=${encodeURIComponent(origin.replace("https:", "wss:"))}&code=${code}`;
+/** The invited page's heading, once its community row names `name`. */
+const invitedHeading = async (name: string) => {
+  const heading = await screen.findByRole("heading", {
+    name: "You’re invited",
+  });
+  expect(screen.getByText(name)).toBeVisible();
+  return heading;
+};
+const INVITED_COPY =
+  "You need an account to join. Your browser will open so you can create one or sign in, then you’ll come back to Buzz to join.";
+const stops: Array<() => void> = [];
+afterEach(() => {
+  for (const stop of stops.splice(0)) stop();
+});
+/**
+ * OS links through their owners, wired as `services.ts` wires them: the
+ * deep-link ingress holds each link and offers an invite to first run through
+ * the app's invite intent, whose snapshot is what the join dialog would open.
+ * `launch` holds the links that started Buzz; `offers` records each offer's
+ * code and whether first run took it.
+ */
+function osLinks(
+  communities: ReturnType<typeof communitiesFor>,
+  launch: string[] = [],
+) {
+  const requests = createInviteIntent();
+  const controller = createNavigationController(createMemoryHistory());
+  const queue = [...launch];
+  const offers: Array<[code: string, taken: boolean]> = [];
+  let ping = () => {};
+  const stop = bindDeepLinks(
+    {
+      navigation: controller.navigation,
+      fail: (reason, retry) => controller.fail(reason, retry),
+      invite: requests.open,
+      firstRun: {
+        subscribe: requests.firstRun.subscribe,
+        offer(invite) {
+          const taken = requests.firstRun.offer(invite);
+          offers.push([invite.code, taken]);
+          return taken;
+        },
+      },
+      accepted: () => {},
+      rejected: () => {},
+      inbox: { status: () => "off", subscribe: () => () => {} },
+    },
+    communities,
+    {
+      take: async () => queue.splice(0),
+      watch(listener) {
+        ping = listener;
+        return () => {
+          ping = () => {};
+        };
+      },
+    },
+  );
+  stops.push(() => {
+    stop();
+    controller.dispose();
+  });
+  return {
+    requests,
+    offers,
+    arrive(url: string) {
+      queue.push(url);
+      ping();
+    },
+  };
+}
+
+/**
+ * First run with OS links wired to it, on a build whose Builderlab is
+ * `publicServers` unless `servers` says otherwise. The test's native mock
+ * must be installed first: creating the identity reads the saved key.
+ */
+function firstRunWithLinks({
+  launch,
+  ...props
+}: { launch?: string[] } & Partial<ComponentProps<typeof Welcome>> = {}) {
+  const identity = createIdentity();
+  const communities = communitiesFor(identity);
+  const links = osLinks(communities, launch);
+  stops.push(() => identity.dispose());
+  const view = render(
+    <Welcome
+      identity={identity}
+      communities={communities}
+      invites={links.requests}
+      account={unlinked}
+      connect={vi.fn()}
+      servers={publicServers}
+      {...props}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  return { identity, communities, links, ...view };
+}
+/** A sign-in the browser holds until `signedIn` settles; `signals` has each attempt's. */
+function heldSignIn() {
+  const signedIn = deferred<Credential>();
+  const signals: AbortSignal[] = [];
+  const connect = vi.fn((signal: AbortSignal, _options: SignInOptions) => {
+    signals.push(signal);
+    return signedIn.promise;
+  });
+  return { signedIn, signals, connect };
+}
+/** A community `publicServers` hosts, and the claim a Join with `inviteCode` sends. */
+const design = "https://design.communities.buzz.xyz";
+const claimOf = (
+  relay: ReturnType<typeof nativeRelay>,
+  body: Record<string, string> = { code: inviteCode },
+) => ({
+  community: relay.origin,
+  path: "/api/invites/claim",
+  method: "POST",
+  body,
+});
+
+it.each(["launches Buzz", "arrives on the landing"])(
+  "an invite link that %s with no identity is looked up and named on the invited page, opens the browser only when asked, stays through sign-in, and claims its code only on Join",
+  async (how) => {
+    const member = keypair();
+    const relay = nativeRelay(member);
+    relay.admitted = false;
+    relay.policy = invitePolicy;
+    const link = osInvite(relay.origin);
+    const { signedIn, connect } = heldSignIn();
+    const { identity, communities, links } = firstRunWithLinks({
+      launch: how === "launches Buzz" ? [link] : [],
+      connect,
+      servers: hostingServers,
+    });
+    const user = userEvent.setup();
+    try {
+      if (how !== "launches Buzz") {
+        await screen.findByRole("button", { name: SIGN_IN });
+        links.arrive(link);
+      }
+      const heading = await invitedHeading("relay.example.com:8443");
+      expect(heading).toBeVisible();
+      // Focus follows the page in a passive effect, after the heading renders.
+      await waitFor(() => expect(heading).toHaveFocus());
+      expect(screen.getByText(INVITED_COPY)).toBeVisible();
+      expect(landingButtons()).toEqual(["Create account", SIGN_IN, "Not now"]);
+      // Opening the link sent the lookup and nothing else: no browser, no key.
+      expect(connect).not.toHaveBeenCalled();
+      expect(relay.calls).toEqual(lookupCalls(relay));
+      expect(identity.snapshot().status).toBe("missing");
+      await user.click(screen.getByRole("button", { name: "Create account" }));
+      expect(connect).toHaveBeenCalledTimes(1);
+      expect(connect.mock.calls[0]?.[1]).toEqual(createAccount);
+      // The page stays while the browser completes the sign-in.
+      expect(heading).toBeVisible();
+      expect(screen.queryByRole("heading", { name: "Buzz" })).toBeNull();
+      await act(async () => signedIn.resolve(credential));
+      await screen.findByRole("heading", { name: "Join Community" });
+      // Neither the link nor the sign-in accepted the policy or claimed.
+      expect(screen.getByRole("button", { name: "Join" })).toBeDisabled();
+      expect(claims(relay)).toEqual([]);
+      await consent(user);
+      await user.click(screen.getByRole("button", { name: "Join" }));
+      await completeRequiredProfile(user);
+      expect(await screen.findByText("Signed in")).toBeVisible();
+      expect(claims(relay)).toEqual([
+        claimOf(relay, { code: inviteCode, policy_receipt: "policy-receipt" }),
+      ]);
+      expect(communities.snapshot().selected).toBe(relay.origin);
+      // First run joined with the link: nothing is left for the join dialog.
+      expect(links.requests.snapshot()).toBeUndefined();
+    } finally {
+      signedIn.resolve(credential);
+    }
+  },
+);
+
+it("a link that launched Buzz waits for the saved identity: first run takes it only once none is found", async () => {
+  const relay = landingRelay(design);
+  relay.info.resolve();
+  const restored = deferred<null>();
+  const answer = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation((command, args) =>
+    command === "identity_restore"
+      ? restored.promise
+      : (answer?.(command, args) as Promise<unknown>),
+  );
+  const connect = vi.fn();
+  const { links } = firstRunWithLinks({ launch: [osInvite(design)], connect });
+  try {
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Opening your saved identity…",
+    );
+    // Read and offered while the identity is still unknown, and left held.
+    await waitFor(() =>
+      expect(links.offers).toContainEqual([inviteCode, false]),
+    );
+    expect(links.offers).not.toContainEqual([inviteCode, true]);
+    expect(relay.relayCalls).toEqual([]);
+    await act(async () => restored.resolve(null));
+    expect(await invitedHeading("design")).toBeVisible();
+    expect(links.offers.at(-1)).toEqual([inviteCode, true]);
+    expect(relay.relayCalls).toEqual(relay.lookup);
+    expect(connect).not.toHaveBeenCalled();
+  } finally {
+    restored.resolve(null);
+  }
+});
+
+it("a link that launched Buzz on a device with an identity opens the join dialog as before, never a first-run page", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  const restored = deferred<string>();
+  const answer = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation((command, args) =>
+    command === "identity_restore"
+      ? restored.promise
+      : (answer?.(command, args) as Promise<unknown>),
+  );
+  const { links } = firstRunWithLinks({
+    launch: [osInvite(relay.origin)],
+    servers: hostingServers,
+  });
+  try {
+    await waitFor(() =>
+      expect(links.offers).toContainEqual([inviteCode, false]),
+    );
+    expect(links.requests.snapshot()).toBeUndefined();
+    await act(async () => restored.resolve(member.pubkey));
+    expect(await screen.findByText("Signed in")).toBeVisible();
+    await waitFor(() =>
+      expect(links.requests.snapshot()).toMatchObject({
+        community: relay.origin,
+        code: inviteCode,
+        viewer: member.pubkey,
+      }),
+    );
+    expect(links.offers).not.toContainEqual([inviteCode, true]);
+    expect(relay.calls).toEqual([]);
+  } finally {
+    restored.resolve(member.pubkey);
+  }
+});
+
+it("a link that launches Buzz for the first time releases the landing's hidden-window hold, so a later landing starts no entrance over the window", async () => {
+  const relay = landingRelay(design);
+  relay.info.resolve();
+  const answer = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation((command, args) =>
+    command === "plugin:window|show"
+      ? Promise.resolve()
+      : (answer?.(command, args) as Promise<unknown>),
+  );
+  // A Mac's first launch: the parser holds the window for the landing's
+  // entrance, which waits while the launch mark still shows.
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    media: query,
+    matches: false,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
+  document.documentElement.dataset.welcomeIntro = "pending";
+  const mark = document.createElement("div");
+  mark.id = "buzz-launch";
+  document.body.append(mark);
+  const user = userEvent.setup();
+  try {
+    firstRunWithLinks({ launch: [osInvite(design)] });
+    await invitedHeading("design");
+    expect(document.documentElement.dataset.welcomeIntro).toBeUndefined();
+    expect(invoke).toHaveBeenCalledWith("plugin:window|show", {
+      label: "main",
+    });
+    await user.click(screen.getByRole("button", { name: "Not now" }));
+    expect(welcomeHeading()).toBeVisible();
+    expect(screen.getByRole("main")).toHaveAttribute("data-intro", "done");
+    expect(invoke).not.toHaveBeenCalledWith("onboarding_preserve_window");
+    expect(getCurrentWindow).not.toHaveBeenCalled();
+  } finally {
+    delete document.documentElement.dataset.welcomeIntro;
+    mark.remove();
+  }
+});
+
+it("a code-less community link is headed Join this community, not as an invitation, names the community with its icon and host, and leads with Sign in on a returning device", async () => {
+  const relay = landingRelay(design);
+  relay.info.resolve();
+  const fi = federatedFixture();
+  fi.publish({ status: "signed-in" });
+  const connect = vi.fn(
+    (_signal: AbortSignal, _options: SignInOptions) =>
+      new Promise<Credential>(() => {}),
+  );
+  const { links, container } = firstRunWithLinks({
+    connect,
+    federatedIdentity: fi.service,
+  });
+  const user = userEvent.setup();
+  await screen.findByRole("button", { name: SIGN_IN });
+  links.arrive("buzz://connect?relay=wss%3A%2F%2Fdesign.communities.buzz.xyz");
+  expect(
+    await screen.findByRole("heading", { name: "Join this community" }),
+  ).toBeVisible();
+  expect(screen.getByText(INVITED_COPY)).toBeVisible();
+  expect(screen.getByText("design")).toBeVisible();
+  expect(screen.getByText("design.communities.buzz.xyz")).toBeVisible();
+  expect(
+    container.querySelector('img[src="https://cdn.example.com/icon.png"]'),
+  ).not.toBeNull();
+  expect(landingButtons()).toEqual([SIGN_IN, "Create account", "Not now"]);
+  expect(connect).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: SIGN_IN }));
+  expect(connect).toHaveBeenCalledTimes(1);
+  expect(connect.mock.calls[0]?.[1]).toEqual(plainSignIn);
+  await user.click(screen.getByRole("button", { name: "Create account" }));
+  expect(connect).toHaveBeenCalledTimes(2);
+  expect(connect.mock.calls[1]?.[1]).toEqual(createAccount);
+});
+
+it("Not now drops the invite and its waiting sign-in for the landing, where a late sign-in does nothing and a typed address still signs in at once", async () => {
+  const relay = landingRelay(design);
+  relay.info.resolve();
+  const { signedIn, signals, connect } = heldSignIn();
+  const { identity, links } = firstRunWithLinks({
+    launch: [osInvite(design)],
+    connect,
+  });
+  const user = userEvent.setup();
+  try {
+    await invitedHeading("design");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+    expect(connect).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Not now" }));
+    expect(welcomeHeading()).toBeVisible();
+    expect(landingButtons()).toEqual([
+      "Create account",
+      SIGN_IN,
+      "Other options",
+    ]);
+    expect(signals[0]?.aborted).toBe(true);
+    // The retired sign-in finishing later starts no setup and makes no key.
+    await act(async () => signedIn.resolve(credential));
+    expect(welcomeHeading()).toBeVisible();
+    expect(identity.snapshot().status).toBe("missing");
+    expect(links.requests.snapshot()).toBeUndefined();
+    // Nothing of the invite is left: the typed address takes today's path.
+    await user.type(urlField(), "design.communities.buzz.xyz{Enter}");
+    await waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+    expect(connect.mock.calls[1]?.[1]).toEqual(plainSignIn);
+    expect(
+      screen.queryByRole("heading", { name: /^You’re invited/ }),
+    ).toBeNull();
+  } finally {
+    signedIn.resolve(credential);
+  }
+});
+
+it("Cancel from an invite's lookup returns to the landing, and its late answer opens no page and no browser", async () => {
+  const relay = landingRelay(design);
+  const connect = vi.fn();
+  const { identity, links } = firstRunWithLinks({
+    launch: [osInvite(design)],
+    connect,
+  });
+  const user = userEvent.setup();
+  try {
+    await screen.findByRole("heading", { name: "Finding community" });
+    expect(screen.getByText("design.communities.buzz.xyz")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(welcomeHeading()).toBeVisible();
+    await act(async () => relay.info.resolve());
+    expect(welcomeHeading()).toBeVisible();
+    expect(connect).not.toHaveBeenCalled();
+    expect(links.requests.snapshot()).toBeUndefined();
+    expect(identity.snapshot().status).toBe("missing");
+  } finally {
+    relay.info.resolve();
+  }
+});
+
+it("the same invite opened again over its failed lookup looks the community up afresh, with focus on the new page", async () => {
+  const failed = landingRelay(design);
+  const connect = vi.fn();
+  const { links } = firstRunWithLinks({
+    launch: [osInvite(design, "first")],
+    connect,
+  });
+  let next: ReturnType<typeof landingRelay> | undefined;
+  try {
+    await screen.findByRole("heading", { name: "Finding community" });
+    // The lookup starts in an effect; fail its request once it is waiting.
+    await waitFor(() =>
+      expect(failed.relayCalls).toContainEqual(failed.lookup[0]),
+    );
+    await act(async () => failed.info.reject(new Error("Offline")));
+    await screen.findByRole("heading", { name: "Couldn’t find community" });
+    // The page's own Retry would be lost with the lookup it belongs to.
+    screen.getByRole("button", { name: "Retry" }).focus();
+    next = landingRelay(design);
+    links.arrive(osInvite(design, "second"));
+    const finding = await screen.findByRole("heading", {
+      name: "Finding community",
+    });
+    await waitFor(() => expect(finding).toHaveFocus());
+    await act(async () => next?.info.resolve());
+    expect(await invitedHeading("design")).toBeVisible();
+    expect(next.relayCalls).toEqual(next.lookup);
+    expect(links.offers.filter(([, taken]) => taken)).toEqual([
+      ["first", true],
+      ["second", true],
+    ]);
+    expect(connect).not.toHaveBeenCalled();
+  } finally {
+    failed.info.resolve();
+    next?.info.resolve();
+  }
+});
+
+it("the latest link wins over a lookup still in flight and over the invited page, and the retired lookup's answer changes nothing", async () => {
+  const first = landingRelay(design);
+  const connect = vi.fn();
+  const { links } = firstRunWithLinks({
+    launch: [osInvite(design, "first")],
+    connect,
+  });
+  let second: ReturnType<typeof landingRelay> | undefined;
+  try {
+    await screen.findByText("design.communities.buzz.xyz");
+    second = landingRelay("https://art.communities.buzz.xyz");
+    links.arrive(osInvite("https://art.communities.buzz.xyz", "second"));
+    await screen.findByText("art.communities.buzz.xyz");
+    await act(async () => first.info.resolve());
+    expect(
+      screen.getByRole("heading", { name: "Finding community" }),
+    ).toBeVisible();
+    await act(async () => second?.info.resolve());
+    expect(await invitedHeading("art")).toBeVisible();
+    landingRelay(design).info.resolve();
+    links.arrive(
+      "buzz://connect?relay=wss%3A%2F%2Fdesign.communities.buzz.xyz",
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Join this community" }),
+    ).toBeVisible();
+    expect(screen.getByText("design")).toBeVisible();
+    expect(screen.queryByText("art")).toBeNull();
+    expect(connect).not.toHaveBeenCalled();
+  } finally {
+    first.info.resolve();
+    second?.info.resolve();
+  }
+});
+
+it("an invite to a community this build's Builderlab does not host keeps the connect choice, where another link waits for Back", async () => {
+  const relay = landingRelay();
+  relay.info.resolve();
+  const connect = vi.fn();
+  const { links } = firstRunWithLinks({
+    launch: [osInvite("https://relay.example.com:8443")],
+    connect,
+  });
+  const user = userEvent.setup();
+  const choice = await screen.findByRole("heading", {
+    name: "Connect to your community",
+  });
+  expect(connectChoiceHost()).toBeVisible();
+  expect(connect).not.toHaveBeenCalled();
+  expect(relay.relayCalls).toEqual(relay.lookup);
+  // The choice is a pause of setup: a different link is not taken there.
+  const next = landingRelay(design);
+  next.info.resolve();
+  links.arrive(osInvite(design, "other"));
+  await waitFor(() => expect(links.offers).toContainEqual(["other", false]));
+  expect(choice).toBeVisible();
+  expect(next.relayCalls).toEqual([]);
+  // Back returns to the landing, where first run can take the held link.
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(await invitedHeading("design")).toBeVisible();
+  expect(links.offers.at(-1)).toEqual(["other", true]);
+  expect(connect).not.toHaveBeenCalled();
+});
+
+it("the same invite opened again during sign-in and after setup is consumed without restarting anything, and never reaches the join dialog", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.admitted = false;
+  const link = osInvite(relay.origin);
+  const { signedIn, signals, connect } = heldSignIn();
+  const { communities, links } = firstRunWithLinks({
+    launch: [link],
+    connect,
+    servers: hostingServers,
+  });
+  const user = userEvent.setup();
+  try {
+    const heading = await invitedHeading("relay.example.com:8443");
+    await user.click(screen.getByRole("button", { name: SIGN_IN }));
+    const taken = () => links.offers.filter(([, taken]) => taken);
+    expect(taken()).toHaveLength(1);
+    // Again while the browser has the sign-in: taken, and nothing moves.
+    links.arrive(link);
+    await waitFor(() => expect(taken()).toHaveLength(2));
+    expect(heading).toBeVisible();
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(signals[0]?.aborted).toBe(false);
+    expect(relay.calls).toEqual(lookupCalls(relay));
+    await act(async () => signedIn.resolve(credential));
+    await screen.findByRole("heading", { name: "Join Community" });
+    await waitFor(() => expect(communities.snapshot().status).toBe("ready"));
+    const sent = relay.calls.length;
+    // Again with the key made and the client ready, where a link the deep-link
+    // owner kept would open the join dialog.
+    links.arrive(link);
+    await waitFor(() => expect(taken()).toHaveLength(3));
+    expect(
+      screen.getByRole("heading", { name: "Join Community" }),
+    ).toBeVisible();
+    expect(relay.calls).toHaveLength(sent);
+    expect(links.requests.snapshot()).toBeUndefined();
+    await user.click(screen.getByRole("button", { name: "Join" }));
+    await completeRequiredProfile(user);
+    expect(await screen.findByText("Signed in")).toBeVisible();
+    expect(claims(relay)).toHaveLength(1);
+    expect(links.requests.snapshot()).toBeUndefined();
+  } finally {
+    signedIn.resolve(credential);
+  }
+});
+
+it("a different invite opened during sign-in stays with the deep-link owner: first run keeps its own, and the join dialog gets the other once a key exists", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.admitted = false;
+  const { signedIn, signals, connect } = heldSignIn();
+  const { links } = firstRunWithLinks({
+    launch: [osInvite(relay.origin)],
+    connect,
+    servers: hostingServers,
+  });
+  const user = userEvent.setup();
+  try {
+    const heading = await invitedHeading("relay.example.com:8443");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+    links.arrive(osInvite("https://other.example.com", "other"));
+    await waitFor(() => expect(links.offers).toContainEqual(["other", false]));
+    expect(heading).toBeVisible();
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(signals[0]?.aborted).toBe(false);
+    expect(relay.calls).toEqual(lookupCalls(relay));
+    expect(links.requests.snapshot()).toBeUndefined();
+    await act(async () => signedIn.resolve(credential));
+    // First run still lands on its own invite's community.
+    await screen.findByRole("heading", { name: "Join Community" });
+    expect(screen.getByText(relay.origin)).toBeVisible();
+    await waitFor(() =>
+      expect(links.requests.snapshot()).toMatchObject({
+        community: "https://other.example.com",
+        code: "other",
+        viewer: member.pubkey,
+      }),
+    );
+    expect(links.offers).not.toContainEqual(["other", true]);
+    await user.click(screen.getByRole("button", { name: "Join" }));
+    await completeRequiredProfile(user);
+    expect(await screen.findByText("Signed in")).toBeVisible();
+    expect(claims(relay)).toEqual([claimOf(relay)]);
+    // The other invite waits for the app's join dialog.
+    expect(links.requests.snapshot()).toMatchObject({ code: "other" });
+  } finally {
+    signedIn.resolve(credential);
+  }
+});
+
+it("a link opened on the post-setup Join a community page is looked up there and waits for Join, and another opened while that join is in flight is left for the join dialog", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.admitted = false;
+  const claimed = deferred<void>();
+  relay.claim = claimed.promise;
+  const { communities, links } = firstRunWithLinks({
+    connect: vi.fn().mockResolvedValue(credential),
+    servers: hostingServers,
+  });
+  const user = userEvent.setup();
+  try {
+    // An account made from the plain landing, before any link.
+    await user.click(
+      await screen.findByRole("button", { name: "Create account" }),
+    );
+    await screen.findByRole("heading", { name: "Connect to a community" });
+    await waitFor(() => expect(communities.snapshot().status).toBe("ready"));
+    links.arrive(osInvite(relay.origin));
+    expect(
+      await screen.findByRole("heading", { name: "Join Community" }),
+    ).toBeVisible();
+    // Taken by first run, so no join dialog waits behind it; only looked up.
+    expect(links.offers).toEqual([[inviteCode, true]]);
+    expect(links.requests.snapshot()).toBeUndefined();
+    expect(relay.calls).toEqual(lookupCalls(relay));
+    await user.click(screen.getByRole("button", { name: "Join" }));
+    expect(await screen.findByText("Joining…")).toBeVisible();
+    // With the join in flight first run takes nothing more.
+    links.arrive(osInvite("https://other.example.com", "other"));
+    await waitFor(() =>
+      expect(links.requests.snapshot()).toMatchObject({
+        community: "https://other.example.com",
+        code: "other",
+        viewer: member.pubkey,
+      }),
+    );
+    expect(links.offers.at(-1)).toEqual(["other", false]);
+    expect(screen.getByText("Joining…")).toBeVisible();
+    await act(async () => claimed.resolve());
+    await completeRequiredProfile(user);
+    expect(await screen.findByText("Signed in")).toBeVisible();
+    expect(claims(relay)).toEqual([claimOf(relay)]);
+    expect(communities.snapshot().selected).toBe(relay.origin);
+    expect(links.requests.snapshot()).toMatchObject({ code: "other" });
+  } finally {
+    claimed.resolve();
+  }
+});
+
+it("a link never joins at once, even after a typed address that the signed-in account's consent would have joined", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.admitted = false;
+  relay.policy = invitePolicy;
+  // Holds the typed address's lookup, so it can be cancelled.
+  const lookup = deferred<void>();
+  let hold = true;
+  const answer = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "relay_http" && hold) await lookup.promise;
+    return answer?.(command, args);
+  });
+  const fi = federatedFixture();
+  const authority = fi.service.snapshot().authority;
+  if (!authority) throw new Error("The fixture has an authority");
+  fi.publish({
+    status: "signed-in",
+    authority: { ...authority, communityHosts: ["relay.example.com:8443"] },
+  });
+  const { links } = firstRunWithLinks({
+    connect: vi.fn().mockResolvedValue(credential),
+    federatedIdentity: fi.service,
+    servers: hostingServers,
+  });
+  const user = userEvent.setup();
+  try {
+    await screen.findByRole("button", { name: SIGN_IN });
+    // Continue on an address the account consents to would join at once.
+    await user.type(urlField(), "relay.example.com:8443{Enter}");
+    await screen.findByRole("heading", { name: "Finding community" });
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(welcomeHeading()).toBeVisible();
+    hold = false;
+    await act(async () => lookup.resolve());
+    links.arrive(osInvite(relay.origin));
+    await invitedHeading("relay.example.com:8443");
+    await user.click(screen.getByRole("button", { name: SIGN_IN }));
+    // The account's consent leaves no boxes to tick, yet Join is still asked.
+    expect(
+      await screen.findByRole("heading", { name: "Join Community" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(claims(relay)).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Join" }));
+    await screen.findByRole("heading", { name: "Set up your profile" });
+    expect(claims(relay)).toEqual([
+      claimOf(relay, { code: inviteCode, policy_receipt: "policy-receipt" }),
+    ]);
+  } finally {
+    lookup.resolve();
+  }
+});
+
+it("a failed sign-in from the invited page leaves through Back to the plain landing, and the invite opened again over the failure starts afresh", async () => {
+  const relay = landingRelay(design);
+  relay.info.resolve();
+  const connect = vi
+    .fn<(signal: AbortSignal, options: SignInOptions) => Promise<Credential>>()
+    .mockRejectedValue(new Error("Browser could not open."));
+  const link = osInvite(design);
+  const { identity, links } = firstRunWithLinks({ launch: [link], connect });
+  const user = userEvent.setup();
+  await invitedHeading("design");
+  await user.click(screen.getByRole("button", { name: "Create account" }));
+  expect(
+    await screen.findByRole("heading", { name: "Couldn’t sign in" }),
+  ).toBeVisible();
+  // Opened again over the failure: looked up again, and asks again.
+  links.arrive(link);
+  expect(await invitedHeading("design")).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(relay.relayCalls).toEqual([...relay.lookup, ...relay.lookup]);
+  expect(connect).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: SIGN_IN }));
+  await screen.findByRole("heading", { name: "Couldn’t sign in" });
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(welcomeHeading()).toBeVisible();
+  expect(landingButtons()).toEqual([
+    "Create account",
+    SIGN_IN,
+    "Other options",
+  ]);
+  expect(links.requests.snapshot()).toBeUndefined();
+  expect(identity.snapshot().status).toBe("missing");
+});
+
+it("a link taken over the failed sign-in that followed Replace's restart drops the key that restart expected, as returning to the landing does", async () => {
+  const relay = nativeRelay(keypair());
+  localStorage.setItem(
+    AFTER_RESTART,
+    JSON.stringify({ at: Date.now(), expected: owned.pubkey }),
+  );
+  const connect = vi
+    .fn<(signal: AbortSignal, options: SignInOptions) => Promise<Credential>>()
+    .mockRejectedValueOnce(new Error("Browser could not open."))
+    .mockResolvedValue(credential);
+  const { links } = firstRunWithLinks({ connect, servers: hostingServers });
+  const user = userEvent.setup();
+  // The restart's own sign-in, for the account linked to the replaced key.
+  await screen.findByRole("heading", { name: "Couldn’t sign in" });
+  links.arrive(osInvite(relay.origin));
+  await invitedHeading("relay.example.com:8443");
+  // An account with no linked key: the restart's sign-in would stop on it.
+  await user.click(screen.getByRole("button", { name: SIGN_IN }));
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(connect).toHaveBeenCalledTimes(2);
+});
+
+it("an invite opened while old Buzz's identity is being saved is left for the join dialog that identity opens", async () => {
+  const imported = deferred<string>();
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "nsec_backup_choice")
+      return Promise.resolve({
+        available: false,
+        pubkey: viewer,
+        automatic: null,
+      });
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_legacy_available") return Promise.resolve(true);
+    if (command === "identity_import_legacy") return imported.promise;
+    if (command === "get_os_idle_seconds") return Promise.resolve(0);
+    return idleUploader(command);
+  });
+  vi.stubEnv("VITE_BUZZ_LIVE", "0");
+  const { links } = firstRunWithLinks();
+  const user = userEvent.setup();
+  try {
+    await otherOptions(user);
+    const offer = await legacyOffer();
+    await user.click(within(offer).getByRole("button", { name: BRING_OVER }));
+    links.arrive(osInvite(design));
+    await waitFor(() =>
+      expect(links.offers).toContainEqual([inviteCode, false]),
+    );
+    expect(offer).toBeInTheDocument();
+    await act(async () => imported.resolve(viewer));
+    expect(await screen.findByText("Signed in")).toBeVisible();
+    await waitFor(() =>
+      expect(links.requests.snapshot()).toMatchObject({
+        community: design,
+        code: inviteCode,
+        viewer,
+      }),
+    );
+    expect(links.offers).not.toContainEqual([inviteCode, true]);
+  } finally {
+    imported.resolve(viewer);
+  }
+});
+
+it("Open Buzz from the account pages signs in from the invited page, which stays", async () => {
+  const relay = landingRelay(design);
+  relay.info.resolve();
+  const connect = vi.fn(
+    (_signal: AbortSignal, _options: SignInOptions) =>
+      new Promise<Credential>(() => {}),
+  );
+  const { links } = firstRunWithLinks({ launch: [osInvite(design)], connect });
+  const heading = await invitedHeading("design");
+  links.arrive("buzz://sign-in");
+  await waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
+  expect(connect.mock.calls[0]?.[1]).toEqual(plainSignIn);
+  expect(heading).toBeVisible();
 });
 
 it("a refused invite link lands on the invite page with the refusal under the code field and no read, and a new code there joins", async () => {

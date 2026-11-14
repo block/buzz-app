@@ -115,10 +115,20 @@ The same forms work in message content.
 The navigation forms above do not carry a community, so each binds to the currently
 selected community and viewer, and fails `unavailable` when no community is
 selected or no identity is known. `buzz://join` is the separate invitation form.
-It holds through identity setup and opens the
+With an identity on the device it opens the
 existing join dialog with the relay and code prefilled; it never claims or saves
 membership until the user completes discovery, policy acceptance, claim and profile
-confirmation. The first-run welcome screen hands an address (and invite code)
+confirmation. With no identity, first run takes the invite instead of leaving it
+unseen behind the welcome screen
+([identity](identity.md)): the
+deep-link owner offers each invite it holds to first run
+(`firstRun` in `src/features/communities/invite-intent.ts`) before it waits for
+an identity, and again whenever first run's answer changes, so a link that
+launched the app waits for identity restoration to settle. An invite first run
+takes is no longer held; one it declines stays held and follows the join-dialog
+path above. First run also takes an invite while it rests on its post-setup
+**Join a community** page. When first run can take an invite is its own decision; the deep-link owner only
+offers. The first-run welcome screen hands an address (and invite code)
 typed there to the same intent when it enters the app on a restored community
 instead ([identity](identity.md)), so one dialog serves both. The relay's HTTPS `/invite/<code>` page supplies that `buzz://join`
 link; HTTPS itself is not registered as an OS handler. `buzz://connect`

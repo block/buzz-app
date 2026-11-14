@@ -10,8 +10,6 @@ export type SoloDraft = Readonly<{
   linked?: string;
   /** The Solo region label whose source opened this draft. */
   region?: string;
-  /** The region draft starts its workspace's lead. */
-  lead?: true;
   /** Source-owned context and identity for this unsent region draft. */
   draft?: NonNullable<SoloDraftStart["draft"]>;
 }>;
@@ -25,6 +23,7 @@ export function soloDraft(
   const value = params as { readonly [key: string]: JsonValue };
   if (value.kind !== "solo-draft") return;
   if (
+    !value.region &&
     Object.keys(value).some(
       (key) =>
         key !== "kind" &&
@@ -32,22 +31,20 @@ export function soloDraft(
         key !== "agent" &&
         key !== "linked" &&
         key !== "region" &&
-        key !== "lead" &&
         key !== "draft",
     )
   )
     return;
-  const { project, agent, linked, region, lead, draft } = value;
+  const { project, agent, linked, region, draft } = value;
   if (
-    (region !== undefined &&
-      (typeof region !== "string" ||
-        !regionLabels([region]).length ||
-        linked !== undefined)) ||
-    (lead !== undefined && (lead !== true || !region || !project))
+    region !== undefined &&
+    (typeof region !== "string" ||
+      !regionLabels([region]).length ||
+      linked !== undefined)
   )
     return;
   if (
-    draft !== undefined &&
+    "draft" in value &&
     (!region ||
       !draft ||
       typeof draft !== "object" ||
@@ -82,8 +79,12 @@ export function soloDraft(
     ...(agent ? { agent } : {}),
     ...(linked ? { linked } : {}),
     ...(region ? { region } : {}),
-    ...(lead ? { lead: true as const } : {}),
-    ...(draft ? { draft: draft as NonNullable<SoloDraftStart["draft"]> } : {}),
+    ...(draft
+      ? { draft: draft as NonNullable<SoloDraftStart["draft"]> }
+      : region
+        ? // Preserve prior source fields without interpreting their meaning.
+          { draft: { context: { saved: value } } }
+        : {}),
   };
 }
 
@@ -113,6 +114,28 @@ export function soloDraftTarget(
   };
 }
 
+/** New focuses an already open ordinary draft, including its route context. */
+export function resumeSoloDraftTarget(
+  scope: string,
+  current: OpenTarget | undefined,
+  project?: string,
+): OpenTarget {
+  const parts = splitPartition(scope);
+  if (
+    current?.kind === "page" &&
+    current.pluginId === "buzz.channels" &&
+    current.pageId === "channels" &&
+    parts &&
+    current.scope?.communityOrigin === parts.communityOrigin &&
+    current.scope?.viewer === parts.viewer
+  ) {
+    const draft = soloDraft(current.route?.params);
+    if (draft && !draft.region && (!project || draft.project === project))
+      return current;
+  }
+  return soloDraftTarget(scope, project ? { project } : {});
+}
+
 export function conversationTarget(
   scope: string,
   channelId: string,
@@ -120,4 +143,19 @@ export function conversationTarget(
   const parts = splitPartition(scope);
   if (!parts) throw new Error("Invalid conversation destination");
   return { version: 1, kind: "conversation", scope: parts, channelId };
+}
+
+/** A reopened conversation must still belong to this community and viewer. */
+export function matchesConversation(
+  target: OpenTarget | undefined,
+  scope: string,
+  channelId: string,
+): boolean {
+  const parts = splitPartition(scope);
+  return (
+    target?.kind === "conversation" &&
+    target.channelId === channelId &&
+    target.scope.communityOrigin === parts?.communityOrigin &&
+    target.scope.viewer === parts?.viewer
+  );
 }

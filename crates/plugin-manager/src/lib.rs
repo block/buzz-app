@@ -461,9 +461,9 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         serde_json::from_str(include_str!("../../../src/bundled/charts/manifest.json"))
             .expect("bundled charts manifest"),
         serde_json::from_str(include_str!(
-            "../../../src/bundled/link-previews/manifest.json"
+            "../../../src/bundled/file-viewer/manifest.json"
         ))
-        .expect("bundled link previews manifest"),
+        .expect("bundled file viewer manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/identity-naming/manifest.json"
         ))
@@ -549,7 +549,6 @@ fn enabled_by_default(id: &str) -> bool {
     matches!(
         id,
         "buzz.channels"
-            | "buzz.mesh-compute"
             | "buzz.feedback"
             | "buzz.diffs"
             | "buzz.mermaid"
@@ -558,7 +557,6 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.terminal"
             | "buzz.profiles"
             | "buzz.links"
-            | "buzz.link-previews"
             | "buzz.voice-notes"
             | "buzz.huddles"
             | "buzz.github"
@@ -680,9 +678,7 @@ fn pin_bundled_defaults(registry: &mut Registry, existing_profile: bool) -> bool
             .entry(manifest.id.clone())
             .or_insert_with(|| {
                 changed = true;
-                if existing_profile
-                    && matches!(manifest.id.as_str(), "buzz.bestie" | "buzz.mesh-compute")
-                {
+                if existing_profile && manifest.id == "buzz.bestie" {
                     false
                 } else {
                     enabled_by_default(&manifest.id)
@@ -1814,38 +1810,32 @@ mod tests {
             .collect();
         assert_eq!(native, expected);
 
-        let storage: String = fs::read_to_string(format!("{root}/../plugins/storage.ts"))
+        let storage = fs::read_to_string(format!("{root}/../plugins/storage.ts")).unwrap();
+        let mut browser_legacy_on: Vec<_> = storage
+            .split("(existing && (")
+            .nth(1)
+            .expect("browser legacy-On condition")
+            .split("))")
+            .next()
             .unwrap()
-            .split_whitespace()
+            .split('"')
+            .skip(1)
+            .step_by(2)
             .collect();
+        browser_legacy_on.sort_unstable();
         let mut upgraded = super::Registry::default();
         super::pin_bundled_defaults(&mut upgraded, true);
-        for (condition, legacy_default) in [("(existing&&(", true), ("!(existing&&(", false)] {
-            let mut browser_legacy: Vec<_> = storage
-                .rsplit_once(condition)
-                .expect("browser legacy-default condition")
-                .1
-                .split("))")
-                .next()
-                .unwrap()
-                .split('"')
-                .skip(1)
-                .step_by(2)
-                .collect();
-            browser_legacy.sort_unstable();
-            let native_legacy: Vec<_> = upgraded
-                .bundled_overrides
-                .iter()
-                .filter_map(|(id, enabled)| {
-                    (*enabled == legacy_default && *enabled != enabled_by_default(id))
-                        .then_some(id.as_str())
-                })
-                .collect();
-            assert_eq!(
-                native_legacy, browser_legacy,
-                "legacy={legacy_default} migration set"
-            );
-        }
+        let native_legacy_on: Vec<_> = upgraded
+            .bundled_overrides
+            .iter()
+            .filter_map(|(id, enabled)| {
+                (*enabled && !enabled_by_default(id)).then_some(id.as_str())
+            })
+            .collect();
+        assert_eq!(
+            native_legacy_on, browser_legacy_on,
+            "legacy-On migration set"
+        );
 
         let features =
             fs::read_to_string(format!("{root}/../app/conversation-features.ts")).unwrap();

@@ -966,6 +966,15 @@ keep it short: it is sent with every turn. `addInstructions` throws on text over
 4096 UTF-8 bytes after trimming. Context for one turn belongs in a note, which
 the agent reads as data.
 
+`ctx.agents.setConversationInstructions(agent, { channelId, root? }, text)`
+gives one of the owner's local agents standing instructions in one
+conversation, at most 8192 UTF-8 bytes after trimming; empty text clears them.
+Each of that agent's turns there shows them in an `<owner-instructions
+source="…">` section after the plugin instructions, escaped the same way, and
+the base prompt ranks them below the owner's messages and above a Solo chat's
+Canvas. They are kept on this device for now. `conversationInstructions(agent,
+place)` resolves with the text. See [Agents](agents.md).
+
 ### Agent operation proofs
 
 A plugin can provide an operation that another installed plugin calls from a
@@ -1293,7 +1302,7 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Todos, Usage, Reminders,
-Workflows, Changesets and Charts are off by default for fresh installs. Bestie, Shared compute,
+Workflows, Changesets, Shared compute, Charts and File viewer are off by default for fresh installs. Bestie,
 Feedback, Diff viewer, Identity Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and
@@ -1311,9 +1320,6 @@ on the next read; explicit edits and resets still report write failures.
 Existing profiles without saved Reminders or Workflows choices retain
 their former On state; fresh profiles start both Off. Bestie starts On for fresh
 profiles; existing profiles without a saved choice retain its former Off state.
-Shared compute follows the same fresh-On, existing-Off migration; enabling it
-exposes settings and the desktop agent type without granting hardware-sharing
-or model-download consent.
 Reopening preserves these results, and an explicit reset uses current defaults.
 Future default changes must follow [the fresh-install decision](plugin-defaults.md), including legacy
 backfills for releases without saved states.
@@ -1478,6 +1484,14 @@ in a workspace visit, then retain it for that visit. The default remains eager.
 Component-provided titles (`usePanelTabTitle`) and local detail tabs (`PanelLocalTab`)
 are also deferred; opt in when the contribution's static title is sufficient until
 selection.
+
+A plugin panel, which cannot import host modules, names its tab with
+`ctx.panels.useTabTitle(label)`, a React hook called in the panel component (for
+example `ctx.panels.useTabTitle("#12554892")` for a build opened from a link). The
+label replaces the static `title` while the component is mounted and the static
+`title` returns when it unmounts; outside a panel tab the call does nothing. It
+takes a label only, no icon. Hosts that predate it lack the hook, so plugins that
+support them test `typeof ctx.panels.useTabTitle === "function"` first.
 
 Channels keeps layout and channel/thread selection. The Terminal plugin binds its
 mounted launcher into the existing shortcut dispatcher, and owns sessions separately
@@ -2836,6 +2850,22 @@ tooltips and anything else that fetches or injects. Marks use the four
 `chart-series` roles, with extra version 1 series summed into Other. Its action
 opens the chart in an expanded dialog, and invalid JSON shows the error with the
 source. The host's Copy action copies the fenced JSON.
+The bundled **File viewer** plugin (`buzz.file-viewer`, off by default) claims
+file cards for PDFs, Markdown, code, text, CSV and TSV at `order: 100`, the
+bundled catch-all band, so a plugin registered at a lower order for the same
+files takes them over. The
+card's preview opens a `buzz-file:?url=…&name=…&mime=…&time=…` panel target,
+which other plugins may also open. The panel reads only `/media/` URLs on the
+current community's origin, through the session's media proxy, and caps text at
+20 MB and PDFs at 100 MB; tables stop at 50,000 cells. Markdown, code and text
+are indexed once and shown in parts of at most 12,500 characters, mounted near
+the view and dropped away from it. Markdown renders through the shared `MarkdownDocument` with the document profile,
+which the viewer extends with heading ids, code highlighting, in-document `#`
+links and images, which load only from the same community media. PDFs use
+[PDF.js](https://mozilla.github.io/pdf.js/) in a worker, loaded on the first
+PDF, and draw only the pages near the viewport. Its CMaps, standard fonts and
+image decoders are bundled assets served through a `BinaryDataFactory`, so
+PDFs need no network access beyond the file.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
 methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` / `.Conversation` /

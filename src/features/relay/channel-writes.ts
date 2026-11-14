@@ -2,14 +2,35 @@ import { canonicalDetailsName } from "./channel-details-protocol";
 import { exactLifecycleTag } from "./channel-lifecycle-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
-import type { Outbox } from "./outbox";
+import type { Outbox, OutgoingEvent } from "./outbox";
 import { isBatchAddition } from "../channel-members/members";
 import { withdraw } from "./withdraw";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
 import type { RelayReader } from "./reader";
 import type { EventData } from "./events";
+import { refusalSentence } from "./refusal";
 
 export const DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+/** Why a Canvas or recipe save didn't go through, in plain words; the
+ * stored reason is for Diagnostics. Other writes keep the reason their own
+ * screens and recovery read. */
+function unsavedChange(
+  item: Pick<
+    OutgoingEvent,
+    "event" | "delivery" | "refused" | "error" | "reason"
+  >,
+) {
+  if (item.event.kind !== 40100 && item.event.kind !== 30078)
+    return item.error ?? unconfirmedChange;
+  return item.refused
+    ? (refusalSentence(item) ?? "The community didn’t accept this change.")
+    : item.delivery === "failed"
+      ? "Buzz couldn’t send this change. Try again."
+      : unconfirmedChange;
+}
+const unconfirmedChange =
+  "Buzz couldn’t confirm this change was saved. Try again to check. Buzz won’t save it twice.";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -73,9 +94,7 @@ export function createChannelWrites(
     check();
     // Recipe and Canvas saves share delivery, not channel-creation authority.
     if (signal.aborted || !outbox)
-      throw new Error(
-        "The community connection cannot confirm this operation.",
-      );
+      throw new Error("Buzz can’t confirm this right now. Try again.");
     const source = addition ? writer(true) : outbox;
     const journal = receipts ?? source;
     const existing = journal.snapshot().find((item) => item.event.id === id);
@@ -92,9 +111,7 @@ export function createChannelWrites(
         check();
         return;
       }
-      throw new Error(
-        "The saved operation could not be confirmed. Reconnect and retry.",
-      );
+      throw new Error(unconfirmedChange);
     }
     if (existing.delivery === "failed" || existing.delivery === "unknown") {
       // Ordinary channel creation rejects a repeated channel UUID. An exact,
@@ -140,9 +157,7 @@ export function createChannelWrites(
           { signal },
         );
         if (events.some((event) => event.id === id)) return;
-        throw new Error(
-          existing.error ?? "The operation could not be confirmed.",
-        );
+        throw new Error(unsavedChange(existing));
       }
       if (active) source.retry(id, active);
       else source.retry(id);
@@ -169,7 +184,7 @@ export function createChannelWrites(
             new Error(
               addition
                 ? "Agent addition is unconfirmed. Check channel membership before retrying; the request may already have reached the relay."
-                : "Still waiting for confirmation. Retry without starting another session.",
+                : "Buzz hasn’t confirmed this change yet. Try again to check. Buzz won’t save it twice.",
             ),
           ),
         15000,
@@ -180,12 +195,12 @@ export function createChannelWrites(
           finish();
         else if (item?.delivery === "failed" || item?.delivery === "unknown")
           finish(
-            new Error(
-              item.error ??
-                (addition
-                  ? "Agent addition could not be confirmed. Check membership before retrying."
-                  : "The operation could not be confirmed."),
-            ),
+            addition
+              ? new Error(
+                  item.error ??
+                    "Agent addition could not be confirmed. Check membership before retrying.",
+                )
+              : new Error(unsavedChange(item)),
           );
       };
       unsubscribe = journal.subscribe(inspect);

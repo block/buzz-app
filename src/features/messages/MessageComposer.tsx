@@ -3590,7 +3590,12 @@ function Composer({
               emoji={emojiCatalog.entries}
               onPasteTooLong={() => setPasteTooLong(true)}
               aria-describedby={
-                pasteTooLong ? `${inputId}-paste-error` : undefined
+                [
+                  pasteTooLong && `${inputId}-paste-error`,
+                  (error || editing.error) && `${inputId}-error`,
+                ]
+                  .filter(Boolean)
+                  .join(" ") || undefined
               }
               onDraftChange={(next) => {
                 setPasteTooLong(false);
@@ -3923,7 +3928,9 @@ function Composer({
           </p>
         )}
         {(error || editing.error) && (
-          <p role="alert">{error ?? editing.error}</p>
+          <p id={`${inputId}-error`} role="alert">
+            {error ?? editing.error}
+          </p>
         )}
         {stickyPicks && (pickReadPending || pickReadFailed) && (
           <div className={pickReadFailed ? undefined : "sr-only"}>

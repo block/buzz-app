@@ -122,6 +122,8 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
             old.delivery === operation.delivery &&
             old.error === operation.error &&
             old.refused === operation.refused &&
+            old.reason === operation.reason &&
+            old.unsent === operation.unsent &&
             old.acknowledged === operation.acknowledged &&
             old.signed?.id === operation.signed?.id &&
             old.recovery?.key === operation.recovery?.key &&

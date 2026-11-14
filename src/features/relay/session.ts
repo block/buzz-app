@@ -119,6 +119,7 @@ import {
 import { accessOnce, eventVisibility } from "./event-access";
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import {
+  PublishBlocked,
   PublishRejected,
   browserOutboxStorage,
   createOutbox,
@@ -1647,7 +1648,8 @@ export function createRelaySession(
       })
     )
       return;
-    throw new Error("You have read-only access to this channel.");
+    // Sending it again is refused the same way until the role changes.
+    throw new PublishBlocked("You have read-only access to this channel.");
   }
   /** Only a new publication is signed, so a retry that confirms an event
    * already published is never refused here. Admission owns the archive half

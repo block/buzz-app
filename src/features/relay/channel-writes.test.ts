@@ -1356,7 +1356,7 @@ it.each([true, false])(
         expect(outbox.retry).not.toHaveBeenCalled();
       } else {
         await expect(service.delivered(creation.id)).rejects.toThrow(
-          /could not be confirmed/,
+          /couldn’t confirm this change/,
         );
         expect(outbox.retry).toHaveBeenCalledWith(creation.id);
       }
@@ -1374,7 +1374,7 @@ it("confirms shared delivery without channel-creation authority while additions 
   ).rejects.toThrow(/cannot add agents/);
   test.controller.abort();
   await expect(test.service.delivered(event.id)).rejects.toThrow(
-    /cannot confirm/,
+    /can’t confirm this right now/,
   );
 });
 

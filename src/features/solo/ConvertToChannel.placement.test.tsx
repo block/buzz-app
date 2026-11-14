@@ -256,8 +256,9 @@ it("reconciles unknown removal from the fresh selected record without replaying 
   f.loseRemovalAck();
   await f.mount();
   await submit();
+  // The lost acknowledgment's own text stays out of the alert.
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Lost removal acknowledgment",
+    "Buzz couldn’t confirm this change was saved.",
   );
   expect(f.converted).not.toHaveBeenCalled();
   const removal = f.publish.mock.calls.find(

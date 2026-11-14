@@ -463,7 +463,7 @@ it.each(["agent", "team", "solo", "agent-share"] as const)(
       );
       await waitFor(() =>
         expect(screen.getByRole("alert")).toHaveTextContent(
-          "Confirm this message",
+          "Buzz may still send this",
         ),
       );
       expect(outbox.snapshot()[0]?.event.id).toBe(id);

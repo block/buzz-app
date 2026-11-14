@@ -184,3 +184,124 @@ for (const mode of ["dismiss-first", "adopt-first", "peer-accepted"])
           : { order: ["consumed", "dismissed"], remaining: 0 },
     );
   });
+
+// Whether Retry can work rests on why the last attempt failed. A reload, and
+// the journal save that follows it, must keep that cause as it was written.
+test("a refused or blocked change keeps its cause across reloads", async ({
+  page,
+  context,
+  sourceOrigin,
+}) => {
+  await context.route(`${sourceOrigin}/outbox-refusal-test`, (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: "<!doctype html><title>Outbox refusal reload</title>",
+    }),
+  );
+  await page.goto(`${sourceOrigin}/outbox-refusal-test`);
+  const { finalizeEvent } = await import("nostr-tools");
+  const [refused, blocked, removed] = ["Refused", "Blocked", "Removed"].map(
+    (content, i) =>
+      finalizeEvent(
+        { kind: 9, created_at: 1 + i, content, tags: [["h", "chat"]] },
+        new Uint8Array(32).fill(7),
+      ),
+  );
+  const result = await page.evaluate(
+    async ({ refused, blocked, removed }) => {
+      const { browserOutboxStorage, purgeOutboxStorage } = await import(
+        "/src/features/relay/outbox-storage.ts"
+      );
+      const { createOutbox } = await import("/src/features/relay/outbox.ts");
+      const { retryable } = await import("/src/features/relay/refusal.ts");
+      const scope = `refusal-${crypto.randomUUID()}`;
+      const writer = {
+        sign: async () => {
+          throw new Error("Unexpected signing");
+        },
+        publish: async () => {
+          throw new Error("Unexpected publishing");
+        },
+      };
+      const seed = browserOutboxStorage(scope);
+      await seed.load();
+      // As outbox.ts records each failure.
+      await seed.save([
+        {
+          event: refused,
+          signed: refused,
+          delivery: "failed",
+          error: "Not a member",
+          refused: true,
+          reason: "blocked: not a member",
+        },
+        {
+          event: blocked,
+          signed: blocked,
+          delivery: "failed",
+          error: "Buzz can’t send this as written.",
+          unsent: "blocked",
+        },
+        { event: removed, signed: removed, delivery: "failed" },
+      ]);
+      seed.close();
+      const open = async () => {
+        const opened = createOutbox(
+          refused.pubkey,
+          writer,
+          browserOutboxStorage(scope),
+        );
+        await opened.outbox.ready();
+        return opened;
+      };
+      const causes = (items) =>
+        items
+          .filter((item) => item.event.id !== removed.id)
+          .map(({ event, delivery, error, refused, reason, unsent }) => ({
+            content: event.content,
+            delivery,
+            error,
+            refused,
+            reason,
+            unsent,
+            retryable: retryable({ error, refused, reason, unsent }),
+          }))
+          // The journal reads back in key order, not the order it was saved.
+          .sort((a, b) => a.content.localeCompare(b.content));
+      const first = await open();
+      let reloaded;
+      try {
+        const restored = causes(first.outbox.snapshot());
+        // Removing another change saves the journal this window restored.
+        await first.outbox.dismiss(removed.id);
+        first.dispose();
+        reloaded = await open();
+        return { restored, saved: causes(reloaded.outbox.snapshot()) };
+      } finally {
+        first.dispose();
+        reloaded?.dispose();
+        await purgeOutboxStorage(scope);
+      }
+    },
+    { refused, blocked, removed },
+  );
+  const expected = [
+    {
+      content: "Blocked",
+      delivery: "failed",
+      error: "Buzz can’t send this as written.",
+      unsent: "blocked",
+      retryable: false,
+    },
+    {
+      content: "Refused",
+      delivery: "failed",
+      error: "Not a member",
+      refused: true,
+      reason: "blocked: not a member",
+      retryable: false,
+    },
+  ];
+  expect(result.restored).toEqual(expected);
+  expect(result.saved).toEqual(expected);
+});

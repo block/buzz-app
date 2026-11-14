@@ -1,5 +1,6 @@
 import { isWorkflowOperation } from "../workflows/protocol";
 import { yieldToHost } from "./yield";
+import { isTransientFailure } from "./errors";
 import { getEventHash, type EventTemplate } from "nostr-tools";
 import { eventDto, type EventData, type RelayEvent } from "./events";
 import type { RelayWriter } from "./transport";
@@ -47,6 +48,13 @@ export type OutgoingEvent = Readonly<{
   /** The relay refused the last attempt, rather than it failing on this
    * device, being asked to wait, or going unanswered. */
   refused?: true | undefined;
+  /** That refusal in the relay's own words, when they differ from `error`:
+   * a transport's summary can drop the NIP-01 prefix refusal.ts reads. */
+  reason?: string | undefined;
+  /** Why a failed attempt that wasn't refused never left: no connection, or
+   * a check on this device that sending it again fails the same way
+   * (PublishBlocked). Unset when Buzz can't tell. */
+  unsent?: "offline" | "blocked" | undefined;
 }>;
 type OutboxInput = Pick<EventTemplate, "kind" | "content" | "tags"> & {
   /** NIP-AP: created_at of the newest observed head this event replaces. */
@@ -125,6 +133,16 @@ export class PublishRejected extends Error {
  * device, or the relay asked it to wait. Retrying may succeed. */
 export class PublishNotSent extends PublishRejected {}
 
+/** Not sent, and sending it again fails the same way before anything
+ * leaves this device: access the viewer lacks, or a signer that signs
+ * something else. `message` is plain enough to show. */
+export class PublishBlocked extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PublishBlocked";
+  }
+}
+
 export { browserOutboxStorage } from "./outbox-storage";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
 const MAX_PENDING = 256;
@@ -137,9 +155,10 @@ const CONFIRMED_BYTES = 8 * 1024 * 1024;
 /** Stored delivery diagnostics are clipped to this many characters. */
 const ERROR_CHARS = 256;
 /** Everything a pending record can gain after admission besides its signed
- * copy: two signatures, `signed`, delivery state and flags, and an error of
- * at most `ERROR_CHARS` characters, each escaped to at most 6 bytes. */
-const LIFECYCLE_BYTES = 512 + 6 * ERROR_CHARS;
+ * copy: two signatures, `signed`, delivery state and flags, and an error and
+ * a refusal's own words of at most `ERROR_CHARS` characters each, escaped to
+ * at most 6 bytes a character. */
+const LIFECYCLE_BYTES = 512 + 2 * 6 * ERROR_CHARS;
 const clip = (error: string) => error.slice(0, ERROR_CHARS);
 const unsigned = ({ sig: _, ...event }: EventData & { sig?: string }) => event;
 /** Any journal save accepts: the `[…]` list, confirmed records with their
@@ -186,8 +205,12 @@ export function createOutbox(
     ) => Promise<(() => void) | undefined>;
     /** Work a signed event waits for before it publishes, such as its
      * channel's creation. A held event takes no delivery slot, and its
-     * deadline starts when the hold ends; a rejected hold fails it. */
-    holdPublish?: (event: RelayEvent) => Promise<void> | undefined;
+     * deadline starts when the hold ends; a rejected hold fails it. `signal`
+     * aborts when the attempt ends without the hold. */
+    holdPublish?: (
+      event: RelayEvent,
+      signal: AbortSignal,
+    ) => Promise<void> | undefined;
   } = {},
 ) {
   const awaitsReceipt = needsReceipt;
@@ -436,6 +459,23 @@ export function createOutbox(
       : item.event;
     if (!event || event.pubkey !== viewer || getEventHash(event) !== event.id)
       throw new Error("Saved outbox event is invalid");
+    const delivery: Delivery =
+      item.delivery === "seen" && signed
+        ? "seen"
+        : item.delivery === "failed"
+          ? "failed"
+          : "unknown";
+    // Why the last attempt failed decides whether Retry can work (refusal.ts
+    // retryable), so it survives a reload as the failure wrote it: only on a
+    // failed record, refused or never sent, never both. Records saved before
+    // these fields, or holding values Buzz never writes, restore without them.
+    const refused = delivery === "failed" && item.refused === true;
+    const unsent =
+      delivery === "failed" &&
+      !refused &&
+      (item.unsent === "offline" || item.unsent === "blocked")
+        ? item.unsent
+        : undefined;
     return Object.freeze({
       event: Object.freeze({
         ...event,
@@ -447,13 +487,13 @@ export function createOutbox(
       ...(item.recovery ? { recovery: recoveryValue(item.recovery) } : {}),
       ...(item.acknowledged === true ? { acknowledged: true as const } : {}),
       ...(item.guarded ? { guarded: true } : {}),
-      delivery:
-        item.delivery === "seen" && signed
-          ? "seen"
-          : item.delivery === "failed"
-            ? "failed"
-            : "unknown",
+      delivery,
       ...(item.error ? { error: clip(item.error) } : {}),
+      ...(refused ? { refused: true as const } : {}),
+      ...(refused && typeof item.reason === "string" && item.reason
+        ? { reason: clip(item.reason) }
+        : {}),
+      ...(unsent ? { unsent } : {}),
     });
   }
   function restore(restored: readonly OutgoingEvent[]) {
@@ -594,13 +634,14 @@ export function createOutbox(
       );
       if (closed || signal.aborted) throw abortError();
       if (signed.id !== id || signed.pubkey !== viewer)
-        throw new Error("Signer changed the outgoing event");
+        // The account or the event changed under the signer.
+        throw new PublishBlocked("Buzz can’t send this as written.");
       const current = find(id);
       if (!current) return; // A verified echo already completed delivery.
       replace({ ...current, signed });
       await Promise.race([persist(id), aborted]);
       if (closed || signal.aborted || !find(id)) return;
-      const hold = holdPublish?.(signed);
+      const hold = holdPublish?.(signed, signal);
       if (hold) {
         attempt.held = true;
         clearTimeout(attempt.timer);
@@ -658,15 +699,28 @@ export function createOutbox(
             : publishing && !(error instanceof PublishRejected)
               ? "unknown"
               : failedDelivery(attempt));
+      const refused =
+        delivery === "failed" &&
+        error instanceof PublishRejected &&
+        !(error instanceof PublishNotSent);
+      const unsent =
+        delivery !== "failed" || refused
+          ? undefined
+          : error instanceof PublishBlocked
+            ? ("blocked" as const)
+            : isTransientFailure(error) &&
+                !(error instanceof Error && error.name === "AbortError")
+              ? ("offline" as const)
+              : undefined;
       if (latest && delivery)
         saveStatus({
           ...latest,
           delivery,
-          refused:
-            delivery === "failed" &&
-            error instanceof PublishRejected &&
-            !(error instanceof PublishNotSent)
-              ? true
+          refused: refused ? true : undefined,
+          unsent,
+          reason:
+            refused && error.reason && error.reason !== error.message
+              ? clip(error.reason)
               : undefined,
           error: clip(
             awaitsReceipt(latest.event)
@@ -676,7 +730,8 @@ export function createOutbox(
               : `${
                   attempt.previousDelivery === "unknown" ||
                   attempt.previousDelivery === "accepted"
-                    ? error instanceof PublishRejected
+                    ? error instanceof PublishRejected ||
+                      error instanceof PublishBlocked
                       ? "Retry blocked: "
                       : "Retry failed: "
                     : ""
@@ -911,11 +966,11 @@ export function createOutbox(
         let item = visible.find((entry) => entry.event.id === id);
         if (!item || dismissing.has(id))
           throw new Error(
-            "The original operation is unavailable. Refresh before retrying.",
+            "Buzz is no longer sending the earlier attempt. Try again.",
           );
         if (!shared && restoredReceipts.has(id))
           throw new Error(
-            "The original operation was removed in another window. Try Send again.",
+            "The earlier attempt was removed in another window. Try again.",
           );
         if (
           shared?.recovery?.key === saved.key &&
@@ -1073,6 +1128,8 @@ export function createOutbox(
           delivery: "sending",
           error: undefined,
           refused: undefined,
+          reason: undefined,
+          unsent: undefined,
         });
         schedule(id, undefined, item.delivery);
       }
@@ -1096,9 +1153,7 @@ export function createOutbox(
       )
         return Promise.reject(
           new Error(
-            item.event.kind === 9000
-              ? "Confirm this addition in Members before removing it"
-              : "Confirm this message in New message before removing it",
+            "Buzz may still send this. Remove it once it shows Not sent.",
           ),
         );
       const remove = () => persist(id, "dismiss");

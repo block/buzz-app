@@ -202,7 +202,7 @@ it("waits for hydration, prevents duplicate recovery keys, and retries the exact
     "Recover the earlier",
   );
   await expect(second.outbox.dismiss(id)).rejects.toThrow(
-    "Confirm this message",
+    "Buzz may still send this",
   );
   second.outbox.retry(id);
   await vi.waitFor(() => expect(second.publish).toHaveBeenCalledOnce());
@@ -233,7 +233,9 @@ it("allows removing a definitive failure but preserves confirmed recovery until 
   await vi.waitFor(() =>
     expect(h.outbox.snapshot()[0]?.delivery).toBe("accepted"),
   );
-  await expect(h.outbox.dismiss(next)).rejects.toThrow("Confirm this message");
+  await expect(h.outbox.dismiss(next)).rejects.toThrow(
+    "Buzz may still send this",
+  );
   const operation = h.outbox.snapshot()[0];
   assert.exists(operation);
   h.observe([signed(viewer, operation.event)]);
@@ -289,7 +291,9 @@ it("adopts a retained legacy echo durably before allowing recovery", async () =>
   expect(h.outbox.snapshot()).toEqual([]);
   await h.outbox.recover(id, recovery);
   expect(store.load()[0]).toMatchObject({ recovery, delivery: "seen" });
-  await expect(h.outbox.dismiss(id)).rejects.toThrow("Confirm this message");
+  await expect(h.outbox.dismiss(id)).rejects.toThrow(
+    "Buzz may still send this",
+  );
   h.dispose();
   const restored = setup(store);
   await restored.outbox.ready();
@@ -318,7 +322,9 @@ it("keeps failed adoption protected and persists again before a later recovery",
   await vi.waitFor(() => expect(store.load()[0]?.delivery).toBe("accepted"));
   save.mockRejectedValue(new Error("Disk full"));
   await expect(h.outbox.recover(id, recovery)).rejects.toThrow("Disk full");
-  await expect(h.outbox.dismiss(id)).rejects.toThrow("Confirm this message");
+  await expect(h.outbox.dismiss(id)).rejects.toThrow(
+    "Buzz may still send this",
+  );
   expect(store.load()[0]?.recovery).toBeUndefined();
   save.mockImplementation(async (records) => store.save(records));
   await h.outbox.recover(id, recovery);
@@ -331,7 +337,7 @@ it("keeps failed adoption protected and persists again before a later recovery",
     "Recover the earlier",
   );
   await expect(h.outbox.recover("missing", recovery)).rejects.toThrow(
-    "unavailable",
+    "Buzz is no longer sending the earlier attempt.",
   );
 });
 

@@ -51,6 +51,26 @@ const channelOf = (session: RelaySession, channelId: string) =>
   session.channels.list().channels.find((item) => item.id === channelId) ??
   session.channels.get?.(channelId);
 
+/** The name a profile gives, if it gives one: never the fragment of the key a
+ * profile without a name stands in with. */
+export const profileName = (
+  profile: { name?: string; nameIsFallback?: true | undefined } | undefined,
+) => (profile?.nameIsFallback ? undefined : profile?.name);
+
+/** The name people know someone by in this community, if Buzz has one: their
+ * profile's own name or a known agent's, never part of their key. */
+export const memberName = (
+  session: Pick<RelaySession, "names" | "profiles" | "agentChoices">,
+  pubkey: string,
+) =>
+  session.names.resolve(
+    pubkey,
+    profileName(session.profiles.snapshot().get(pubkey)) ??
+      session.agentChoices
+        .snapshot()
+        .identities.find((agent) => agent.pubkey === pubkey)?.name,
+  );
+
 const knownAgent = (session: RelaySession, pubkey: string) =>
   session.agentChoices
     .snapshot()

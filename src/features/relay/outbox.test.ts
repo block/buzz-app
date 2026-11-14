@@ -10,6 +10,7 @@ import {
 import type { EventTemplate } from "nostr-tools";
 import type { RelayEvent } from "./events";
 import { byteSize } from "./budget";
+import { retryable } from "./refusal";
 import { LIVE_CANVAS_BYTES } from "../channel-templates/canvas-limits.ts";
 import {
   bounds,
@@ -188,6 +189,180 @@ it("a send held back before the relay saw it fails without being refused", async
   await flush();
   expect(h.outbox.snapshot()[0]).toMatchObject({ delivery: "failed" });
   expect(h.outbox.snapshot()[0]?.refused).toBeUndefined();
+});
+it("keeps a refusal's own relay words until the next attempt", async () => {
+  const h = setup();
+  await h.open();
+  const id = h.send();
+  await h.signNext();
+  const publication = h.publications.shift();
+  assert.exists(publication);
+  // transport.ts summarises "blocked: not a member" as "Not a member".
+  publication.reject(
+    new PublishRejected("Not a member", "blocked: not a member"),
+  );
+  await flush();
+  expect(h.outbox.snapshot()[0]).toMatchObject({
+    delivery: "failed",
+    refused: true,
+    error: "Not a member",
+    reason: "blocked: not a member",
+  });
+  h.outbox.retry(id);
+  expect(h.outbox.snapshot()[0]?.reason).toBeUndefined();
+});
+it.each([
+  [
+    "offline",
+    async () => {
+      throw new TypeError("Failed to fetch");
+    },
+    "Failed to fetch",
+  ],
+  [
+    // A signer that signs for another account fails the same way again.
+    "blocked",
+    async (event: EventTemplate) => signed(keypair(), event),
+    "Buzz can’t send this as written.",
+  ],
+] as const)(
+  "records a send that never left as %s",
+  async (unsent, signing, error) => {
+    const h = setup();
+    await h.open();
+    h.sign.mockImplementationOnce(signing);
+    const id = h.send();
+    await flush();
+    expect(h.publish).not.toHaveBeenCalled();
+    expect(h.outbox.snapshot()[0]).toMatchObject({
+      delivery: "failed",
+      error,
+      unsent,
+    });
+    expect(h.outbox.snapshot()[0]?.refused).toBeUndefined();
+    h.outbox.retry(id);
+    expect(h.outbox.snapshot()[0]?.unsent).toBeUndefined();
+  },
+);
+type Harness = ReturnType<typeof setup>;
+it.each([
+  [
+    "a refusal in the relay's own words",
+    () => {},
+    async (h: Harness) => {
+      await h.signNext();
+      h.publications
+        .shift()
+        ?.reject(new PublishRejected("Not a member", "blocked: not a member"));
+    },
+    {
+      refused: true,
+      error: "Not a member",
+      reason: "blocked: not a member",
+    },
+    false,
+  ],
+  [
+    "a send this device blocked",
+    // A signer that signs for another account fails the same way again.
+    (h: Harness) =>
+      h.sign.mockImplementationOnce(async (event: EventTemplate) =>
+        signed(keypair(), event),
+      ),
+    () => flush(),
+    { unsent: "blocked", error: "Buzz can’t send this as written." },
+    false,
+  ],
+  [
+    "a send that never left while offline",
+    (h: Harness) =>
+      h.sign.mockImplementationOnce(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    () => flush(),
+    { unsent: "offline", error: "Failed to fetch" },
+    true,
+  ],
+] as const)(
+  "keeps %s, and whether Retry can work, across a reload",
+  async (_, before, after, recorded, canRetry) => {
+    const storage = memoryStorage();
+    const first = setup(storage);
+    await first.open();
+    before(first);
+    const id = first.send();
+    await after(first);
+    await vi.waitFor(async () =>
+      expect((await storage.load())[0]).toMatchObject({
+        delivery: "failed",
+        ...recorded,
+      }),
+    );
+    first.dispose();
+    const second = setup(storage);
+    const [restored] = second.outbox.snapshot();
+    assert.exists(restored);
+    expect(restored).toMatchObject({
+      event: { id },
+      delivery: "failed",
+      ...recorded,
+    });
+    // Refused or never sent, as the failure wrote it, never both.
+    expect(restored.refused && restored.unsent).toBeFalsy();
+    expect(retryable(restored)).toBe(canRetry);
+    expect(second.publish).not.toHaveBeenCalled();
+  },
+);
+it("restores older records without a failure's cause, and ignores causes Buzz never writes", async () => {
+  const make = (content: string) => {
+    const event = signed(viewer, {
+      kind: 9,
+      content,
+      tags: [["h", "c"]],
+      created_at: 1700000000,
+    });
+    return { event, signed: event };
+  };
+  const old = make("saved before refusals were kept");
+  const odd = make("unknown cause");
+  const stale = make("refused, then retried before a crash");
+  const storage = memoryStorage();
+  await storage.save([
+    { ...old, delivery: "failed", error: "You don't have permission." },
+    {
+      ...odd,
+      delivery: "failed",
+      error: "Not sent",
+      unsent: "elsewhere",
+      reason: 42,
+    } as unknown as OutgoingEvent,
+    // Only a failed record carries why it failed.
+    {
+      ...stale,
+      delivery: "sending",
+      refused: true,
+      reason: "blocked: not a member",
+      unsent: "blocked",
+    },
+  ]);
+  const h = setup(storage);
+  const restored = new Map(
+    h.outbox.snapshot().map((item) => [item.event.id, item]),
+  );
+  expect(restored.size).toBe(3);
+  for (const item of restored.values()) {
+    expect(item.refused).toBeUndefined();
+    expect(item.reason).toBeUndefined();
+    expect(item.unsent).toBeUndefined();
+  }
+  expect(restored.get(old.event.id)).toMatchObject({
+    delivery: "failed",
+    error: "You don't have permission.",
+  });
+  expect(restored.get(stale.event.id)?.delivery).toBe("unknown");
+  // Retry stays: Buzz can't tell these would fail the same way again.
+  expect(retryable(restored.get(old.event.id) ?? {})).toBe(true);
+  expect(retryable(restored.get(odd.event.id) ?? {})).toBe(true);
 });
 it("failed sends remain retryable, and retry republishes exactly the same signed event", async () => {
   const h = setup();

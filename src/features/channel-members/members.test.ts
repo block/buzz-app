@@ -8,9 +8,33 @@ import {
   addChannelMember,
   addChannelMembersAtOnce,
   canAddMembers,
+  memberName,
 } from "./members";
 
 const cleanups: (() => void)[] = [];
+it("never names someone by the start of their key that a nameless profile shows", () => {
+  const nameless = `3f9a0c12bd${"4".repeat(54)}`;
+  const agent = `b7e1d09a3c${"5".repeat(54)}`;
+  const named = `c04f8e2a61${"6".repeat(54)}`;
+  const session = {
+    // As the names service does when it has no name of its own.
+    names: { resolve: (_key: string, fallback?: string) => fallback },
+    profiles: {
+      snapshot: () =>
+        new Map([
+          [nameless, { name: nameless.slice(0, 10), nameIsFallback: true }],
+          [agent, { name: agent.slice(0, 10), nameIsFallback: true }],
+          [named, { name: "Sam" }],
+        ]),
+    },
+    agentChoices: {
+      snapshot: () => ({ identities: [{ pubkey: agent, name: "Atlas" }] }),
+    },
+  } as unknown as Parameters<typeof memberName>[0];
+  expect(memberName(session, nameless)).toBeUndefined();
+  expect(memberName(session, agent)).toBe("Atlas");
+  expect(memberName(session, named)).toBe("Sam");
+});
 it.each([
   ["guest", "member", false],
   ["guest", "guest", false],
@@ -654,7 +678,9 @@ it("does not mistake external retry and echo removal for dismissal of a failed a
   await vi.waitFor(() =>
     expect(t.session.outbox?.snapshot()[0]?.delivery).toBe("seen"),
   );
-  await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(/Confirm/);
+  await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(
+    /Buzz may still send this/,
+  );
   await expect(t.managedAdd()).rejects.toThrow(
     /not confirmed in the member list/,
   );
@@ -730,11 +756,15 @@ it.each(["unknown", "accepted"])(
     await expect(t.managedAdd()).rejects.toThrow();
     const first = t.publish.mock.calls[0]?.[0].id;
     if (!first) throw new Error("Expected invitation");
-    await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(/Confirm/);
+    await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(
+      /Buzz may still send this/,
+    );
     await vi.waitFor(() => expect(t.records()[0]?.delivery).toBe(delivery));
     t.restart();
     await t.ready();
-    await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(/Confirm/);
+    await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(
+      /Buzz may still send this/,
+    );
     t.setFail("");
     t.setApply(true);
     await t.managedAdd();
@@ -784,7 +814,9 @@ it("protects a legacy echoed invitation until roster confirmation, including acr
   t.restart();
   await t.ready();
   await expect(t.managedAdd()).rejects.toThrow(/not confirmed/);
-  await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(/Confirm/);
+  await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(
+    /Buzz may still send this/,
+  );
   expect(t.publish).toHaveBeenCalledOnce();
   t.confirmPerson();
   await t.managedAdd();
@@ -965,7 +997,9 @@ it("does not replay a legacy Solo invitation that could now admit a Guest", asyn
     delivery: "unknown",
   });
   expect(t.records()[0]?.acknowledged).toBeUndefined();
-  await expect(t.session.outbox?.dismiss(original)).rejects.toThrow(/Confirm/);
+  await expect(t.session.outbox?.dismiss(original)).rejects.toThrow(
+    /Buzz may still send this/,
+  );
   t.restart();
   await t.ready();
   await expect(t.managedAdd()).rejects.toThrow(/15-minute delivery window/i);

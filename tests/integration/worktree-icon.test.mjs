@@ -91,6 +91,7 @@ function fixture(t) {
       "desktop-build.mjs",
       "desktop-config.mjs",
       "desktop-dev.mjs",
+      "dev-credential-helper.mjs",
       "worktree-icon.mjs",
       "worktree-port.mjs",
     ]) {

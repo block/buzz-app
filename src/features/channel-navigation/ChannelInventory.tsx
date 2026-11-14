@@ -63,6 +63,10 @@ import {
   XIcon,
 } from "../../shared/design-system/icons";
 import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
+import {
+  setChannelActivity,
+  useActivityChannels,
+} from "../notifications/channel-activity";
 import { ChannelCopyLinkMenuItem } from "../../bundled/channels/ChannelCopyLinkMenuItem";
 import { ChannelSidebarItem } from "../../bundled/channels/ChannelSidebarItem";
 import { ChannelSidebarRows } from "./ChannelSidebarRows";
@@ -213,6 +217,8 @@ export function ChannelInventory({
   }, [list.activityStatus]);
   const handoff = useChannelNavigation();
   const mute = handoff?.session === queries ? handoff.mute : undefined;
+  const activityChannels = useActivityChannels(scope);
+  const [activityFailure, setActivityFailure] = useState<string>();
   const readAction = useChannelReadAction();
   const readWrite = readAction.state;
   const [rowFocus, setRowFocus] = useState<string>();
@@ -932,6 +938,27 @@ export function ChannelInventory({
             {muted ? <BellIcon size={14} /> : <BellSlashIcon size={14} />}
           </MenuIcon>
           {muted ? "Unmute" : "Mute"}
+        </MenuItem>,
+      );
+    }
+    // A DM already alerts for every message.
+    if (channel.channelType !== "dm") {
+      const all = activityChannels.includes(channel.id);
+      actions.push(
+        <MenuItem
+          key="all-activity"
+          onClick={() =>
+            setActivityFailure(
+              setChannelActivity(scope, channel.id, !all)
+                ? undefined
+                : channel.name,
+            )
+          }
+        >
+          <MenuIcon>
+            <BellIcon size={14} />
+          </MenuIcon>
+          {all ? "Stop notifying for all activity" : "Notify for all activity"}
         </MenuItem>,
       );
     }
@@ -1661,6 +1688,14 @@ export function ChannelInventory({
     ),
     after: (
       <>
+        {activityFailure !== undefined && (
+          <ToastNotice
+            title={`Couldn’t save notifications for ${activityFailure}`}
+            description="Please try again."
+            tone="warning"
+            onDismiss={() => setActivityFailure(undefined)}
+          />
+        )}
         {cached && connectionError && (
           <p className={styles.preferenceNotice} role="status">
             Offline · Showing saved conversations.

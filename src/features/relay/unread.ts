@@ -78,6 +78,12 @@ export type MessageAttention = Readonly<{
    * attention when the lookup finishes. */
   pending?: boolean;
   unread: boolean;
+  /** Unread as all of its channel's activity: like `unread`, but a reply
+   * outside the viewer's conversations counts too, unless the viewer
+   * unfollowed its thread. Badges and alerts by category still use `unread`. */
+  activityUnread?: true;
+  /** The viewer unfollowed this reply's thread. */
+  unfollowed?: true;
   /** This row is explicitly forced unread during the current channel visit. */
   forced: boolean;
   viewing: boolean;
@@ -580,6 +586,9 @@ export function createUnread({
     done: boolean;
     evidence: string | undefined;
     more: boolean;
+    /** The lookup fetched the reply's thread root, which may since have left
+     * the structural cache: asking for it again cannot place it for long. */
+    rooted?: true;
   };
   const lookups = new Map<string, Lookup>();
   const lookupEvents = new Map<string, RelayEvent>();
@@ -1051,11 +1060,18 @@ export function createUnread({
     // A queued or running lookup may still make this reply thread attention.
     // A read reply is never looked up, so it is undecided but not pending.
     const open = undecided(entry, dm);
-    if (open) want(entry, dm);
+    // A reply's thread read frontier applies once its root is known, so a
+    // root recovery also leaves it pending, even for a broadcast reply that
+    // needs no conversation lookup.
+    want(entry, dm, true);
     const pending =
-      open &&
-      lookups.get(conversationKey(channelId, entry.parentId ?? ""))?.done ===
-        false;
+      (open &&
+        lookups.get(conversationKey(channelId, entry.parentId ?? ""))?.done ===
+          false) ||
+      (!entry.rootId &&
+        lookups.get(
+          `${conversationKey(channelId, entry.threadRootId ?? "")}:structure`,
+        )?.done === false);
     const viewing = [...views.values()].some(
       (view) =>
         view.channelId === channelId &&
@@ -1070,6 +1086,7 @@ export function createUnread({
           : -1,
         reads.floor(),
       ) >= event.created_at;
+    const unread = isUnread(entry, state, dm);
     return Object.freeze({
       status: kind
         ? "eligible"
@@ -1080,7 +1097,11 @@ export function createUnread({
       ...(pending ? { pending: true } : {}),
       ...(entry.mentioned ? { mentioned: true } : {}),
       ...(entry.rootId ? { rootId: entry.rootId } : {}),
-      unread: isUnread(entry, state, dm),
+      ...(unread || (chosen(entry) !== false && afterFrontier(entry, state, dm))
+        ? { activityUnread: true }
+        : {}),
+      ...(chosen(entry) === false ? { unfollowed: true } : {}),
+      unread,
       forced: forcedMessages.get(channelId)?.has(messageId) ?? false,
       viewing,
       ...(prefixRead ? { prefixRead: true as const } : {}),
@@ -1827,16 +1848,27 @@ export function createUnread({
   // so channels nobody observes cost nothing. Fetched events are structure
   // only: they never count and never start another lookup, so a lookup cannot
   // walk up an old thread.
-  function want(entry: Evidence, dm: boolean) {
+  function want(entry: Evidence, dm: boolean, activity = false) {
     const { event, channelId, parentId, threadRootId } = entry;
     if (!parentId || event.pubkey === viewer) return;
     // Activity groups unread thread replies by root, so fetch a root the
     // sampled window dropped for a followed thread or an unread reply in it.
+    // A reply counted as channel activity (`attention` only) needs its root
+    // too, because the thread's read frontier applies only once it is known.
+    // That is after the conversation lookup: an undecided reply's lookup
+    // fetches the root itself, and a structural one must not replace it. A
+    // root that lookup already fetched is not asked for again: past the
+    // structural cache's bound, each refetch would only evict another root.
     const structuralRootId =
       !entry.rootId &&
       (chosen(entry) === true ||
         ((entry.mentioned || entry.broadcast || conversation(entry)) &&
-          isUnread(entry, reads.state(), dm)))
+          isUnread(entry, reads.state(), dm)) ||
+        (activity &&
+          !undecided(entry, dm) &&
+          !lookups.get(conversationKey(channelId, parentId))?.rooted &&
+          chosen(entry) !== false &&
+          afterFrontier(entry, reads.state(), dm)))
         ? threadRootId
         : undefined;
     const structuralRecovery = structuralRootId !== undefined;
@@ -2085,6 +2117,9 @@ export function createUnread({
             done: true,
             evidence: undefined,
             more: found.length + authored.length > 1,
+            ...(!target.rootId || target.ids.has(target.rootId)
+              ? { rooted: true as const }
+              : {}),
           };
           remember(conversationKey(channelId, target.parentId), lookup);
           // The viewer's own parent or root is the witness when there is one:

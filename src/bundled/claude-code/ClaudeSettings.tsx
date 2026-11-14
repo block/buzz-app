@@ -1,14 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { SavedApiKey } from "../../features/settings/SavedApiKey";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { Header } from "../../shared/design-system/ui/Header";
+import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SignIn } from "./auth";
-import { SavedApiKey } from "../../features/settings/SavedApiKey";
+import { SignInCode } from "./SignInCode";
 import type { ClaudeSetup } from "./setup";
 
 export type ClaudeConnection = {
@@ -60,10 +67,9 @@ export function ClaudeSettings({
     setChecking(true);
     setReadError("");
     try {
-      const account = await setup.auth.check();
-      if (request.current === current) {
-        setConfigured(account !== undefined);
-      }
+      await setup.auth.check();
+      // Claude may run on the account without a key; this group is the key's.
+      if (request.current === current) setConfigured(setup.auth.found.key);
     } catch (error) {
       if (request.current === current) {
         setReadError(String(error));
@@ -133,7 +139,7 @@ export function ClaudeSettings({
         title="Claude"
         subtitle={
           configured === false && !checking && !readError
-            ? "Claude requires an API key to connect to your account."
+            ? "Claude needs your Claude account or an API key to connect."
             : "Manage Claude’s credentials on this computer."
         }
       />
@@ -191,6 +197,16 @@ export function ClaudeSettings({
             </SettingsGroup>
           )}
         </LoadingRegion>
+        <div>
+          <InlineHeader title="Claude account" />
+          <SettingsGroup layout="form">
+            <ClaudeAccount
+              setup={setup}
+              active={active}
+              disabled={checking || saving || clearing || !active()}
+            />
+          </SettingsGroup>
+        </div>
       </div>
       {configured === false && (
         <SignIn
@@ -285,5 +301,75 @@ export function ClaudeSettings({
         </AlertDialog>
       )}
     </section>
+  );
+}
+
+/** Which way Claude signs in, and the switch to the other. Signing in is
+ * setup's step, which reuses the sign-in Claude Code already has. */
+function ClaudeAccount({
+  setup,
+  active,
+  disabled,
+}: {
+  setup: ClaudeSetup;
+  active(): boolean;
+  disabled: boolean;
+}) {
+  const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
+  const { method, key, account } = setup.auth.found;
+  const signingIn = state.running === "sign-in";
+  const busy = disabled || !!state.running;
+  const onAccount = method === "account" && account !== undefined;
+  const signIn = () => {
+    if (active()) void setup.run("sign-in");
+  };
+  const useKey = () => {
+    if (active())
+      void setup.auth.use("api-key").then(
+        () => setup.check(),
+        () => undefined,
+      );
+  };
+  return (
+    <div className="grid gap-3">
+      <p className="m-0 text-body-sm text-secondary">
+        {onAccount
+          ? `Claude runs with your Claude account${account.label ? ` (${account.label})` : ""}.`
+          : method === "account"
+            ? "Claude is not signed in to your Claude account."
+            : key
+              ? "Claude runs with your Anthropic API key."
+              : "Sign in with your Claude account (Pro, Max, Team or Enterprise) instead of an API key."}
+      </p>
+      {/* Where `claude auth login` prints its link when no browser opens,
+       * and why a sign-in failed. */}
+      {state.output && state.running !== "install" && (
+        <div
+          role="log"
+          aria-label="Setup output"
+          className="m-0 max-h-60 overflow-auto whitespace-pre-wrap text-body-sm text-subtle"
+        >
+          {state.output}
+        </div>
+      )}
+      {signingIn && <SignInCode setup={setup} />}
+      <div>
+        {signingIn ? (
+          <Button size="sm" onClick={() => void setup.cancel()}>
+            Cancel
+          </Button>
+        ) : onAccount ? (
+          key && (
+            <Button size="sm" disabled={busy} onClick={useKey}>
+              Use your API key
+            </Button>
+          )
+        ) : (
+          <Button size="sm" disabled={busy} onClick={signIn}>
+            {key && method === "api-key" ? "Use Claude account" : "Sign in"}
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }

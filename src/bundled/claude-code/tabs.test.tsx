@@ -273,7 +273,9 @@ function applied({
               ? "Darwin arm64\n"
               : args === "--version"
                 ? `${version} (Claude Code)\n`
-                : "",
+                : args === "auth login"
+                  ? "If the browser didn't open, visit: https://claude.example/oauth\n"
+                  : "",
       ),
     );
     return {
@@ -1018,7 +1020,7 @@ it("asks for an API key and is ready once one is saved", async () => {
   // The key's form takes the dialog over, saying once is enough.
   expect(
     await screen.findByText(
-      "Claude requires an API key to connect to your account. Create one at console.anthropic.com and paste it below. You only have to set this up once.",
+      "Sign in with your Claude account (Pro, Max, Team or Enterprise), or create an API key at console.anthropic.com and paste it below. You only have to set this up once.",
     ),
   ).toBeVisible();
   expect(
@@ -1086,8 +1088,11 @@ it("replaces generic installation copy with the latest installer state", async (
   const installedType = installed({ available: false }).type;
   const Setup = providerSetup(installedType);
   render(<Setup onClose={vi.fn()} />);
-  expect(await screen.findByRole("status")).toHaveTextContent(
-    "The Claude integration isn't installed yet.",
+  // After the first check, which also looks for an account.
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "The Claude integration isn't installed yet.",
+    ),
   );
   await userEvent
     .setup()
@@ -1153,7 +1158,7 @@ it("signs in from the Settings row directly when the build has a sign-in", async
     await waitFor(() =>
       expect(type.provider?.snapshot()).toMatchObject({
         readiness: "attention",
-        attentionLabel: "Add Claude API key",
+        attentionLabel: "Sign in to Claude",
       }),
     );
     const action = type.provider?.attentionAction;
@@ -1825,7 +1830,7 @@ it("offers Set up Claude beside Harness when Claude is picked, then its models",
   const dialog = await screen.findByRole("dialog", { name: "Set up Claude" });
   expect(
     within(dialog).getByText(
-      "Claude requires an API key to connect to your account. Create one at console.anthropic.com and paste it below. You only have to set this up once.",
+      "Sign in with your Claude account (Pro, Max, Team or Enterprise), or create an API key at console.anthropic.com and paste it below. You only have to set this up once.",
     ),
   ).toBeVisible();
   expect(within(dialog).queryByRole("button", { name: "Sign in" })).toBeNull();
@@ -1887,12 +1892,15 @@ it("offers an interactive sign-in in Set up Claude when the build has one", asyn
     );
     const user = userEvent.setup();
     const open = await screen.findByRole("button", {
-      name: "Add Claude API key",
+      name: "Sign in to Claude",
     });
     expect(open).toHaveTextContent("Sign in");
     await user.click(open);
     const dialog = await screen.findByRole("dialog", { name: "Set up Claude" });
-    await user.click(within(dialog).getByRole("button", { name: "Sign in" }));
+    const signIn = within(dialog).getByRole("button", { name: "Sign in" });
+    // Enabled once the first check, which also asks for an account, ends.
+    await waitFor(() => expect(signIn).toBeEnabled());
+    await user.click(signIn);
     await waitFor(() =>
       expect(
         screen.queryByRole("dialog", { name: "Set up Claude" }),
@@ -1900,14 +1908,14 @@ it("offers an interactive sign-in in Set up Claude when the build has one", asyn
     );
     expect(await screen.findByText("Claude is set up")).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: "Add Claude API key" }),
+      screen.queryByRole("button", { name: "Sign in to Claude" }),
     ).toBeNull();
   } finally {
     interactive.signIn = false;
   }
 });
 
-it("stops a sign-in still running when Set up Claude closes", async () => {
+it("stops a sign-in still running when Set up Claude closes, and holds the key form meanwhile", async () => {
   interactive.signIn = true;
   let release = () => {};
   interactive.hold = new Promise<void>((resolve) => {
@@ -1921,14 +1929,21 @@ it("stops a sign-in still running when Set up Claude closes", async () => {
     render(<Action disabled={false} />);
     const user = userEvent.setup();
     await user.click(
-      await screen.findByRole("button", { name: "Add Claude API key" }),
+      await screen.findByRole("button", { name: "Sign in to Claude" }),
     );
     const dialog = await screen.findByRole("dialog", { name: "Set up Claude" });
-    await user.click(within(dialog).getByRole("button", { name: "Sign in" }));
+    const signIn = within(dialog).getByRole("button", { name: "Sign in" });
+    await waitFor(() => expect(signIn).toBeEnabled());
+    await user.click(signIn);
     await waitFor(() =>
       expect(
         within(dialog).queryByRole("button", { name: "Sign in" }),
       ).toBeNull(),
+    );
+    // A key saved now would be overwritten when the sign-in ends.
+    expect(within(dialog).getByLabelText("Anthropic API key")).toHaveAttribute(
+      "aria-disabled",
+      "true",
     );
     expect(cancel).not.toHaveBeenCalled();
     await user.keyboard("{Escape}");
@@ -1959,15 +1974,23 @@ it("restores pending sign-in controls after unmount and can cancel and retry", a
     const user = userEvent.setup();
     view = render(<Action disabled={false} />);
     await user.click(
-      await screen.findByRole("button", { name: "Add Claude API key" }),
+      await screen.findByRole("button", { name: "Sign in to Claude" }),
     );
     let dialog = await screen.findByRole("dialog", { name: "Set up Claude" });
-    await user.click(within(dialog).getByRole("button", { name: "Sign in" }));
+    const first = within(dialog).getByRole("button", { name: "Sign in" });
+    await waitFor(() => expect(first).toBeEnabled());
+    await user.click(first);
     const signIns = () =>
       spawn.mock.calls.filter(
         ([, options]) => options?.args?.slice(-2).join(" ") === "auth login",
       );
     await waitFor(() => expect(signIns()).toHaveLength(1));
+    // The link to open by hand when no browser opens.
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole("log", { name: "Setup output" }),
+      ).toHaveTextContent("https://claude.example/oauth"),
+    );
     const index = spawn.mock.calls.findIndex(
       ([, options]) => options?.args?.slice(-2).join(" ") === "auth login",
     );
@@ -1988,9 +2011,12 @@ it("restores pending sign-in controls after unmount and can cancel and retry", a
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await process.exited;
     expect(kill).toHaveBeenCalledTimes(1);
-    await user.click(
-      await within(dialog).findByRole("button", { name: "Sign in" }),
-    );
+    const retry = await within(dialog).findByRole("button", {
+      name: "Sign in",
+    });
+    // Enabled once the check after the cancelled sign-in ends.
+    await waitFor(() => expect(retry).toBeEnabled());
+    await user.click(retry);
     await waitFor(() => expect(signIns()).toHaveLength(2));
     const secondIndex = spawn.mock.calls.findIndex(
       ([, options], next) =>
@@ -2082,9 +2108,7 @@ it.each([true, false])(
         onChange={vi.fn()}
       />,
     );
-    expect(
-      await screen.findByText(/Claude is missing an API key\./),
-    ).toBeVisible();
+    expect(await screen.findByText(/Claude is not set up\./)).toBeVisible();
     expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
     await userEvent
       .setup()

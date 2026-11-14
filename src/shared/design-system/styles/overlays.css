@@ -605,6 +605,12 @@
     transform var(--duration-state) var(--easing-state),
     opacity var(--duration-state) var(--easing-state);
 }
+/* A notice with no controls must not take hover or clicks from the content it
+   covers, such as a message's actions above a docked composer. Sonner's
+   hover-gap ::after inherits this. */
+.buzz-toast-viewport [data-sonner-toast]:has(.buzz-toast[data-passive]) {
+  pointer-events: none;
+}
 .buzz-toast-viewport
   [data-sonner-toast][data-mounted="true"][data-expanded="true"] {
   --y: translateY(0);

@@ -294,6 +294,89 @@ async function openDiagnostics(page) {
   await expect(summary.locator("..")).toHaveAttribute("open", "");
 }
 
+// Browser hit-testing: the buttonless notice lets the pointer reach the newest
+// message beneath it, so that row still reveals its actions and Add reaction.
+test.describe("recovery over the timeline", () => {
+  test.use({ historyCounts: { alpha: 30, beta: 1 } });
+  test("passes the pointer through to the message beneath it", async ({
+    page,
+    app,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.clock.install();
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    const timeline = page.locator("[data-channel-timeline]");
+    const newest = timeline.locator("[data-message-id]").last();
+    await expect(newest).toBeVisible();
+    await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+    app.relay.holdEose("alpha");
+    const requests = () =>
+      app.relay.requests.filter(
+        (r) => r.community === "primary" && r.routes.includes("alpha"),
+      ).length;
+    const before = requests();
+    app.relay.failRoute("primary", "alpha", "error: relay unavailable");
+    await expect.poll(requests).toBeGreaterThan(before);
+    await page.clock.fastForward(30_000);
+    await expect(notice(page)).toBeVisible();
+    // Measure only once Sonner has mounted the item (which adds its hover gap)
+    // and its entrance transition has settled.
+    const item = notice(page).locator("xpath=ancestor::li[@data-sonner-toast]");
+    await expect(item).toHaveAttribute("data-mounted", "true");
+    await expect(item).toHaveAttribute("data-expanded", "true");
+    await item.evaluate((li) =>
+      Promise.all(li.getAnimations().map((animation) => animation.finished)),
+    );
+    // Sonner's hover gap above the card passes the pointer through too.
+    const gapHit = await notice(page).evaluate((card) => {
+      const item = card.closest("[data-sonner-toast]");
+      const { left, width, top } = item.getBoundingClientRect();
+      const gap = parseFloat(getComputedStyle(item).getPropertyValue("--gap"));
+      const hit = document.elementFromPoint(left + width / 2, top - gap / 2);
+      return { gap, inToaster: !!hit?.closest("[data-sonner-toaster]") };
+    });
+    expect(gapHit.gap).toBeGreaterThan(0);
+    expect(gapHit.inToaster).toBe(false);
+    // Where the notice covers the newest message's content, which is what
+    // activates its actions.
+    const content = newest.locator("[data-message-action-anchor]").first();
+    const box = await notice(page).boundingBox();
+    const bubble = await content.boundingBox();
+    const top = Math.max(box.y, bubble.y);
+    const bottom = Math.min(box.y + box.height, bubble.y + bubble.height);
+    const right = Math.min(box.x + box.width, bubble.x + bubble.width);
+    expect(bottom).toBeGreaterThan(top);
+    expect(right).toBeGreaterThan(box.x);
+    const covered = { x: (box.x + right) / 2, y: (top + bottom) / 2 };
+    expect(
+      await page.evaluate(
+        ({ x, y }) =>
+          !!document.elementFromPoint(x, y)?.closest("[data-message-id]"),
+        covered,
+      ),
+    ).toBe(true);
+    // Reveal the actions from the uncovered content, then glide right under
+    // the notice, as a pointer heading for the toolbar does.
+    const actions = newest.getByRole("group", {
+      name: "Message actions",
+      includeHidden: true,
+    });
+    const open = () => actions.evaluate((bar) => bar.matches(":popover-open"));
+    await page.mouse.move(bubble.x + 24, covered.y);
+    await expect.poll(open).toBe(true);
+    await page.mouse.move(covered.x, covered.y, { steps: 10 });
+    // The pointer still counts as over the row once it is under the notice.
+    await expect(newest.locator("[data-layout]")).toHaveAttribute(
+      "data-actions-revealed",
+      "",
+    );
+    await expect.poll(open).toBe(true);
+    app.relay.releaseEose("alpha");
+    await expect(notice(page)).toHaveCount(0);
+  });
+});
+
 test.describe("public preview recovery", () => {
   test.use({ openSearch: true });
   // The empty loading/error placeholder is replaced by the real timeline once

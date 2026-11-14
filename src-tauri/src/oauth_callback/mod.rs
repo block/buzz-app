@@ -171,10 +171,11 @@ impl OAuthCallbackHost {
         } else {
             None
         };
-        // Generic OAuth keeps Builderlab presentation and browser-close behavior.
+        // Generic OAuth keeps Builderlab presentation.
         let builderlab = callback_parameter == "redirect_uri";
         let id = uuid::Uuid::new_v4().to_string();
         let focus = focus::FocusReturn::default();
+        let armed = browser.is_some();
         focus.arm(&id, browser);
         let completion = (focus.clone(), id.clone());
         let (send, receive) = oneshot::channel();
@@ -187,6 +188,7 @@ impl OAuthCallbackHost {
                     &path,
                     expected_state.as_deref(),
                     builderlab,
+                    armed,
                 ),
             )
             .await
@@ -277,6 +279,7 @@ async fn receive_callback(
     path: &str,
     expected_state: Option<&str>,
     builderlab: bool,
+    armed: bool,
 ) -> CallbackResult {
     loop {
         let (mut stream, _) = listener
@@ -286,7 +289,14 @@ async fn receive_callback(
         // Bound slow/oversize requests; malformed callbacks do not consume the attempt.
         let result = tokio::time::timeout(
             Duration::from_secs(5),
-            callback(&mut stream, authority, path, expected_state, builderlab),
+            callback(
+                &mut stream,
+                authority,
+                path,
+                expected_state,
+                builderlab,
+                armed,
+            ),
         )
         .await;
         if let Ok(Some(response)) = result {
@@ -303,6 +313,7 @@ async fn callback(
     path: &str,
     expected_state: Option<&str>,
     builderlab: bool,
+    armed: bool,
 ) -> Option<OAuthCallback> {
     let mut bytes = Vec::new();
     let mut chunk = [0; 1024];
@@ -313,12 +324,15 @@ async fn callback(
         }
         bytes.extend_from_slice(&chunk[..count]);
         if bytes.len() > 8192 {
-            reply(stream, 400, "Invalid callback", builderlab).await;
+            reply(stream, 400, "Invalid callback", builderlab, false).await;
             return None;
         }
     }
     let (status, message, result) = parse_callback(&bytes, authority, path, expected_state);
-    reply(stream, status, message, builderlab).await;
+    // A callback that ends the attempt sends the person back to the app. Only an
+    // armed focus return can take a success there for them; an error retires it.
+    let return_link = result.is_some() && !(status == 200 && armed);
+    reply(stream, status, message, builderlab, return_link).await;
     result
 }
 
@@ -400,10 +414,15 @@ fn inline_csp_hash(source: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(Sha256::digest(source.as_bytes()))
 }
 
-async fn reply(stream: &mut TcpStream, status: u16, message: &str, builderlab: bool) {
+async fn reply(
+    stream: &mut TcpStream,
+    status: u16,
+    message: &str,
+    builderlab: bool,
+    return_link: bool,
+) {
     // All copy comes from the fixed responses above, never from callback values.
     let heading = match status {
-        200 if builderlab => "Signing you in…",
         200 => "Sign-in received",
         404 => "Page not found",
         _ => "Sign-in needs attention",
@@ -414,10 +433,20 @@ async fn reply(stream: &mut TcpStream, status: u16, message: &str, builderlab: b
     );
     let style_hash = inline_csp_hash(&style);
     let mut policy = format!("default-src 'none'; img-src data:; font-src data:; style-src 'sha256-{style_hash}'; base-uri 'none'; frame-ancestors 'none'");
-    let script = include_str!("page.js");
-    let script_hash = inline_csp_hash(script);
-    policy.push_str(&format!("; script-src 'sha256-{script_hash}'"));
-    let script = format!("<script>{script}</script>");
+    // The page that offers the link back cannot close itself: it has no script,
+    // close delay or closing hint, only the link and the manual-close text.
+    let (script, close_delay, close_hint) = if return_link {
+        (String::new(), String::new(), include_str!("return.html"))
+    } else {
+        let script = include_str!("page.js");
+        let script_hash = inline_csp_hash(script);
+        policy.push_str(&format!("; script-src 'sha256-{script_hash}'"));
+        (
+            format!("<script>{script}</script>"),
+            format!("data-close-delay=\"{}\"", READABLE_DELAY.as_secs()),
+            include_str!("close-hint.html"),
+        )
+    };
     let artwork = base64::engine::general_purpose::STANDARD.encode(include_bytes!("cubes.webp"));
     let artwork = include_str!("artwork.html").replace("{{artwork}}", &artwork);
     let provider = if builderlab { "Builderlab" } else { "Buzz" };
@@ -437,19 +466,13 @@ async fn reply(stream: &mut TcpStream, status: u16, message: &str, builderlab: b
         .replace("<!-- {{style}} -->", &format!("<style>{style}</style>"))
         .replace("<!-- {{script}} -->", &script)
         .replace("<!-- {{artwork}} -->", &artwork)
-        .replace("<!-- {{closeHint}} -->", include_str!("close-hint.html"))
+        .replace("<!-- {{closeHint}} -->", close_hint)
         .replace("{{provider}}", provider)
         .replace("{{complete}}", if status == 200 { "true" } else { "false" })
-        .replace("{{closeDelay}}", &READABLE_DELAY.as_secs().to_string())
+        // The whole attribute, so the template stays valid HTML on its own.
+        .replace("data-close-delay=\"{{closeDelay}}\"", &close_delay)
         .replace("{{heading}}", heading)
-        .replace(
-            "{{message}}",
-            if builderlab && status == 200 {
-                ""
-            } else {
-                message
-            },
-        );
+        .replace("{{message}}", message);
     let reason = match status {
         200 => "OK",
         404 => "Not Found",

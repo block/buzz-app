@@ -178,6 +178,51 @@ async fn send(url: &url::Url, target: &str, extra: &str) -> String {
     response
 }
 
+const RETURN_LINK: &str = "<a class=\"action\" href=\"buzz://\">Return to Buzz</a>";
+
+/// A reply either offers the link back with nothing that could close it, or
+/// keeps the hashed close script with its delay and closing hint and no link.
+fn assert_way_back(response: &str, return_link: bool) {
+    let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+    assert_eq!(body.matches(RETURN_LINK).count(), usize::from(return_link));
+    assert_eq!(body.matches("buzz://").count(), usize::from(return_link));
+    assert!(headers.contains("default-src 'none'"));
+    // Either way the manual-close text is in the page for when it stays open.
+    assert_eq!(body.matches("You can close this window.").count(), 1);
+    let closing = [
+        "<script",
+        "data-close-delay",
+        "Closing this window automatically",
+        "id=\"close-spinner\"",
+        "class=\"hint\"",
+    ];
+    if return_link {
+        // The link sits in the card, followed only by the manual-close text.
+        let card = body.split_once("</h1>").unwrap().1;
+        let link = card.find(RETURN_LINK).unwrap();
+        assert!(card.find("</p>").unwrap() < link);
+        let rest: String = card[link + RETURN_LINK.len()..]
+            .split_whitespace()
+            .collect();
+        assert!(rest.starts_with("<p>Youcanclosethiswindow.</p></main>"));
+        assert!(!headers.contains("script-src"));
+        for markup in closing {
+            assert!(!body.contains(markup), "{markup}");
+        }
+    } else {
+        let script = include_str!("page.js");
+        assert!(body.contains(&format!("<script>{script}</script>")));
+        let parsed_script = script.replace("\r\n", "\n").replace('\r', "\n");
+        let hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(parsed_script));
+        assert!(headers.contains(&format!("; script-src 'sha256-{hash}'\r\n")));
+        assert!(body.contains("data-close-delay=\"3\""));
+        assert!(body.contains("<span id=\"close-hint\">You can close this window.</span>"));
+        for markup in closing {
+            assert_eq!(body.matches(markup).count(), 1, "{markup}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn real_listener_preserves_callback_parameters_and_closes_after_completion() {
     let state = OAuthCallbackHost::default();
@@ -219,13 +264,11 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
         assert!(response.contains("<title>Builderlab sign-in</title>"));
         assert!(response.contains("role=\"img\" aria-label=\"Builderlab\""));
         assert!(response.contains(include_str!("../../../public/builderlab-mark.svg")));
-        assert!(response.contains("<h1 id=\"heading\">Signing you in…</h1>"));
-        assert!(!response.contains("Return to the app to finish verification."));
+        // Restore arms no focus return, so its page stays and offers the link back.
+        assert!(response.contains("<h1 id=\"heading\">Sign-in received</h1>"));
+        assert!(response.contains("<p>Return to the app to finish verification.</p>"));
+        assert_way_back(&response, true);
         assert!(response.contains("data-complete=\"true\""));
-        assert!(response.contains("data-close-delay=\"3\""));
-        assert!(response.contains("Closing this window automatically</span>"));
-        assert!(response.contains("You can close this window.</span>"));
-        assert!(response.contains("id=\"close-spinner\""));
         assert!(!response.contains("{{"));
         let (headers, body) = response.split_once("\r\n\r\n").unwrap();
         let style = body
@@ -270,19 +313,6 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
         assert!(headers.contains("base-uri 'none'; frame-ancestors 'none'"));
         assert!(headers.contains(&format!("Content-Length: {}\r\n", body.len())));
         assert!(!headers.contains("unsafe-inline"));
-        let script = body
-            .split_once("<script>")
-            .unwrap()
-            .1
-            .split_once("</script>")
-            .unwrap()
-            .0;
-        assert_eq!(script, include_str!("page.js"));
-        let parsed_script = script.replace("\r\n", "\n").replace('\r', "\n");
-        let script_hash =
-            base64::engine::general_purpose::STANDARD.encode(Sha256::digest(parsed_script));
-        assert!(headers.contains(&format!("script-src 'sha256-{script_hash}'")));
-        assert_eq!(body.matches("<script").count(), 1);
         assert!(!response.contains("one+time"));
         assert!(!response.contains("attempt"));
         assert!(!response.contains("one%2Btime"));
@@ -524,6 +554,8 @@ async fn default_state_rejects_invalid_success_and_error_callbacks_then_complete
             assert!(html.contains("Invalid callback"));
             assert!(html.contains("<h1 id=\"heading\">Sign-in needs attention</h1>"));
             assert!(html.contains("data-complete=\"false\""));
+            // The attempt is still pending, so there is nothing to go back for.
+            assert_way_back(&html, false);
             assert!(!html.contains(&state));
             assert!(!html.contains("access_denied"));
             assert!(host.0.lock().unwrap().contains_key(OWNER));
@@ -565,6 +597,8 @@ async fn default_state_rejects_invalid_success_and_error_callbacks_then_complete
     );
     assert!(html.starts_with("HTTP/1.1 400"));
     assert!(html.contains("<h1 id=\"heading\">Sign-in needs attention</h1>"));
+    assert!(html.contains("<p>Sign-in failed. Return to the app to retry.</p>"));
+    assert_way_back(&html, true);
     assert!(html.contains("data-complete=\"false\""));
     assert!(!html.contains("access_denied"));
     assert!(!html.contains(&next_state));
@@ -666,7 +700,7 @@ async fn federated_handoff_uses_return_to_without_legacy_oauth_fields_and_keeps_
     ] {
         let html = send(&callback, &target, "").await;
         assert!(html.starts_with(&format!("HTTP/1.1 {status}")));
-        assert_federated_callback(&html, message);
+        assert_federated_callback(&html, message, false);
         assert!(html.contains("data-complete=\"false\""));
         assert!(html.contains(if status == "404" {
             "<h1 id=\"heading\">Page not found</h1>"
@@ -681,7 +715,8 @@ async fn federated_handoff_uses_return_to_without_legacy_oauth_fields_and_keeps_
     )
     .await;
     assert!(html.starts_with("HTTP/1.1 200"));
-    assert_federated_callback(&html, "Return to the app to finish verification.");
+    // With a focus return armed, the page closes itself and offers no link.
+    assert_federated_callback(&html, "Return to the app to finish verification.", false);
     assert!(html.contains("<h1 id=\"heading\">Sign-in received</h1>"));
     assert!(html.contains("data-complete=\"true\""));
     assert!(!html.contains("fixture-code"));
@@ -710,7 +745,8 @@ async fn federated_handoff_uses_return_to_without_legacy_oauth_fields_and_keeps_
     host.cancel(&next.id).unwrap();
 }
 
-fn assert_federated_callback(response: &str, message: &str) {
+fn assert_federated_callback(response: &str, message: &str, return_link: bool) {
+    assert_way_back(response, return_link);
     let (headers, body) = response.split_once("\r\n\r\n").unwrap();
     assert!(body.contains("<title>Buzz sign-in</title>"));
     assert!(body.contains("data-provider=\"Buzz\""));
@@ -722,15 +758,6 @@ fn assert_federated_callback(response: &str, message: &str) {
     assert!(body.contains("name=\"viewport\""));
     assert!(!body.contains("{{"));
     assert!(!body.contains("Builderlab"));
-    assert!(body.contains(include_str!("page.js")));
-    let parsed_script = include_str!("page.js")
-        .replace("\r\n", "\n")
-        .replace('\r', "\n");
-    let script_hash =
-        base64::engine::general_purpose::STANDARD.encode(Sha256::digest(parsed_script));
-    assert!(headers.contains(&format!("script-src 'sha256-{script_hash}'")));
-    assert!(body.contains("Closing this window automatically"));
-    assert!(body.contains("id=\"close-spinner\""));
     let (shell, card) = body
         .split_once("<main aria-labelledby=\"heading\">")
         .unwrap();
@@ -750,7 +777,6 @@ fn assert_federated_callback(response: &str, message: &str) {
             .unwrap(),
         include_bytes!("cubes.webp")
     );
-    assert!(body.contains("data-close-delay=\"3\""));
     let style = body
         .split_once("<style>")
         .unwrap()
@@ -875,6 +901,45 @@ async fn concurrent_servers_keep_independent_return_permissions_until_cancel_or_
 #[tokio::test]
 async fn federated_error_uses_buzz_presentation_and_keeps_private_details_native() {
     let host = OAuthCallbackHost::default();
+    // An error retires an armed focus return, so either attempt offers the link back.
+    for browser in [None, Some("synthetic-browser".to_owned())] {
+        let attempt = host
+            .begin_federated(
+                OWNER,
+                "https://organization.example/v1/login/start".into(),
+                |_| Ok(()),
+                browser,
+            )
+            .unwrap();
+        let callback = url::Url::parse(&attempt.callback_url).unwrap();
+        let html = send(
+            &callback,
+            &format!(
+                "{}?error=access_denied&error_description=private-detail",
+                callback.path()
+            ),
+            "",
+        )
+        .await;
+        assert!(html.starts_with("HTTP/1.1 400"));
+        assert_federated_callback(&html, "Sign-in failed. Return to the app to retry.", true);
+        assert!(html.contains("<h1 id=\"heading\">Sign-in needs attention</h1>"));
+        assert!(html.contains("data-complete=\"false\""));
+        assert!(!html.contains("private-detail"));
+        assert!(!html.contains("access_denied"));
+        assert_eq!(
+            host.wait(&attempt.id).await.unwrap(),
+            response(&[
+                ("error", "access_denied"),
+                ("error_description", "private-detail")
+            ])
+        );
+    }
+}
+
+#[tokio::test]
+async fn federated_success_without_an_armed_return_stays_open_and_offers_the_link_back() {
+    let host = OAuthCallbackHost::default();
     let attempt = host
         .begin_federated(
             OWNER,
@@ -884,26 +949,23 @@ async fn federated_error_uses_buzz_presentation_and_keeps_private_details_native
         )
         .unwrap();
     let callback = url::Url::parse(&attempt.callback_url).unwrap();
-    let html = send(
-        &callback,
-        &format!(
-            "{}?error=access_denied&error_description=private-detail",
-            callback.path()
-        ),
-        "",
-    )
-    .await;
+    let target = format!("{}?code=fixture-code", callback.path());
+    // One byte past the request bound, so the listener has read all of it:
+    // the oversize reply leaves the attempt pending and offers no link.
+    let pad = |length| format!("X-Pad: {}\r\n", "a".repeat(length));
+    let authority = format!("127.0.0.1:{}", callback.port().unwrap());
+    let unpadded = request(&authority, &target, &pad(0)).len();
+    let html = send(&callback, &target, &pad(8193 - unpadded)).await;
     assert!(html.starts_with("HTTP/1.1 400"));
-    assert_federated_callback(&html, "Sign-in failed. Return to the app to retry.");
-    assert!(html.contains("<h1 id=\"heading\">Sign-in needs attention</h1>"));
-    assert!(html.contains("data-complete=\"false\""));
-    assert!(!html.contains("private-detail"));
-    assert!(!html.contains("access_denied"));
+    assert_federated_callback(&html, "Invalid callback", false);
+    let html = send(&callback, &target, "").await;
+    assert!(html.starts_with("HTTP/1.1 200"));
+    assert_federated_callback(&html, "Return to the app to finish verification.", true);
+    assert!(html.contains("<h1 id=\"heading\">Sign-in received</h1>"));
+    assert!(html.contains("data-complete=\"true\""));
+    assert!(!html.contains("fixture-code"));
     assert_eq!(
         host.wait(&attempt.id).await.unwrap(),
-        response(&[
-            ("error", "access_denied"),
-            ("error_description", "private-detail")
-        ])
+        response(&[("code", "fixture-code")])
     );
 }

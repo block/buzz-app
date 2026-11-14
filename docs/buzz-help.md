@@ -236,9 +236,11 @@ mention anyone. Explicit agent watches on that room can still receive them.
   opens, and again when that sign-in ends. Before it ends, a notice offers
   **Sign in again** so Buzz stays open. Finish in the browser and Buzz opens.
   If the browser doesn't open, **Copy sign-in link** and paste it into a browser.
-  The callback tab attempts to close after three seconds. On macOS, Buzz can
-  regain focus after verification while the sign-in browser is still foreground.
-  If the tab stays open, you can close it yourself.
+  On macOS, when Buzz was in front as the browser opened, the callback tab
+  attempts to close after three seconds and Buzz can regain focus after
+  verification while the sign-in browser is still foreground. Otherwise,
+  including on Windows and Linux, the tab stays open with **Return to Buzz**,
+  which brings Buzz to the front; close the tab yourself afterwards.
   **Not now** opens Buzz anyway, but that organization's communities stay
   unavailable until you sign in. Sign-in, sign-out and when the current
   sign-in ends also live under

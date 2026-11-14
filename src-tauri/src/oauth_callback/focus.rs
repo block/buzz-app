@@ -117,7 +117,8 @@ fn browser_is_foreground(browser: &str) -> bool {
         .is_some_and(|url| url.to_string() == browser)
 }
 
-// Without a reliable foreground-browser check, completion must not activate Buzz.
+// Without a reliable foreground-browser check, completion must not activate Buzz:
+// no return is armed, so the callback page offers its link back instead.
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn capture<R: tauri::Runtime>(_: &tauri::AppHandle<R>, _: &str) -> Option<String> {
     None

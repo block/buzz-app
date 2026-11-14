@@ -19,7 +19,13 @@ import {
   useState,
 } from "react";
 import { SoloRegions } from "./SoloRegions";
-import { ChannelNavigationProvider } from "./ChannelNavigationState";
+import { SoloInventory } from "./SoloInventory";
+import {
+  ChannelNavigationProvider,
+  useChannelNavigation,
+} from "./ChannelNavigationState";
+import type { ChannelSummary } from "../relay/contracts";
+import type { ConfigurationState } from "../../plugins/types";
 import { conversationTarget, soloDraftTarget } from "./routes";
 import { MessageComposer } from "../messages/MessageComposer";
 import { composerDOMFixture } from "../messages/composer-testing";
@@ -57,8 +63,11 @@ function mount(
   h: ReturnType<typeof fixture>,
   target: OpenTarget = { version: 1, kind: "home" },
   wrap: (children: ReactNode) => ReactNode = (children) => children,
+  fallback?: ReactNode,
 ) {
-  const open = vi.fn(async () => ({ status: "opened" as const }));
+  const open = vi.fn<Navigation["open"]>(async () => ({
+    status: "opened" as const,
+  }));
   const retryReveal = vi.fn();
   const revealAgain = vi.fn();
   const navigator = { ...h.navigator, open } as Navigation;
@@ -81,6 +90,7 @@ function mount(
         scope={h.scope}
         target={target}
         navigator={navigator}
+        fallback={fallback}
         sidebar={{
           list,
           collapsed,
@@ -192,6 +202,8 @@ it.each([
   ["archive", "selected"],
   ["delete", "other chat"],
   ["delete", "navigated away"],
+  ["delete", "reopened"],
+  ["delete", "other community"],
   ["delete", "failed"],
 ] as const)(
   "%s of a plugin-owned chat preserves Solo and newer navigation (%s)",
@@ -251,6 +263,7 @@ it.each([
         {children}
       </ChannelNavigationProvider>
     ));
+    view.open.mockImplementation((next) => h.navigate(next));
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Actions for Owned" }));
     const actionName = action === "delete" ? "Delete chat" : "Archive chat";
@@ -272,8 +285,27 @@ it.each([
     }
     try {
       await waitFor(() => expect(run).toHaveBeenCalledOnce());
+      if (action === "delete" && outcome !== "other chat")
+        expect(view.open).toHaveBeenCalledExactlyOnceWith(
+          soloDraftTarget(h.scope),
+        );
+      else expect(view.open).not.toHaveBeenCalled();
       if (outcome === "navigated away")
         act(() => view.navigate(conversationTarget(h.scope, "chat")));
+      if (outcome === "reopened")
+        act(() => view.navigate(conversationTarget(h.scope, owned)));
+      if (outcome === "other community")
+        act(() =>
+          view.navigate(
+            conversationTarget(
+              h.scope.replace(
+                "https://fixture.invalid",
+                "https://other.invalid",
+              ),
+              owned,
+            ),
+          ),
+        );
       if (outcome === "failed")
         await act(async () => fail(new Error("Deletion unavailable")));
       else {
@@ -294,7 +326,13 @@ it.each([
             ? "Delete chat failed"
             : `${action === "delete" ? "Chat deleted" : "Chat archived"}: Owned`,
       });
-      if (outcome === "selected")
+      if (outcome === "reopened") {
+        expect(view.open).toHaveBeenCalledTimes(2);
+        expect(view.open).toHaveBeenLastCalledWith(soloDraftTarget(h.scope));
+      } else if (
+        outcome === "selected" ||
+        (action === "delete" && outcome !== "other chat")
+      )
         expect(view.open).toHaveBeenCalledExactlyOnceWith(
           soloDraftTarget(h.scope),
         );
@@ -1306,6 +1344,226 @@ it("keeps recovery chats reachable while distinguishing installed, unknown and n
   expect(screen.queryByText(/buzz\.region:/)).not.toBeInTheDocument();
 });
 
+it.each([
+  { composing: false, hidden: false },
+  { composing: true, hidden: false },
+  { composing: false, hidden: true },
+  { composing: true, hidden: true },
+])(
+  "shows explicitly disabled region chats once in ordinary Solo (composing: $composing, hidden: $hidden)",
+  async ({ composing, hidden }) => {
+    const h = fixture();
+    const source = await h.register({
+      composeWorkspaces: true,
+      workspace: () => ({ id: "personal", file: async () => {} }),
+    });
+    source.update({
+      status: "ready",
+      binding: source.binding(),
+      revision: 2,
+      hidden,
+    });
+    if (composing)
+      await h.register(
+        {
+          title: "Other work",
+          composeWorkspaces: true,
+          component: ({ ui }) => {
+            const Chats = ui.Chats;
+            const Workspace = ui.Workspace;
+            assert(Chats);
+            assert(Workspace);
+            return (
+              <>
+                <Workspace id="personal" />
+                <Chats />
+              </>
+            );
+          },
+        },
+        "other",
+      );
+    const saved = {
+      sections: [{ id: "personal", name: "Personal", order: 0 }],
+      assignments: { owned: "personal" },
+      starred: [],
+      muted: [],
+    };
+    const preferences = { status: "ready" as const, data: saved };
+    Object.assign(h.session, {
+      soloPreferences: {
+        ...h.session.soloPreferences,
+        snapshot: () => preferences,
+        subscribe: () => () => {},
+      },
+    });
+    const configuration: ConfigurationState = {
+      status: "ready",
+      externalPluginsPaused: false,
+      catalog: {
+        profile: "fixture",
+        location: "Fixture",
+        plugins: [
+          {
+            manifest: { id: "example", name: "Example", apiVersion: 1 },
+            source: "external",
+            enabled: false,
+            revision: "one",
+            previous: null,
+            reloadable: false,
+            error: null,
+          },
+          ...(composing
+            ? [
+                {
+                  manifest: {
+                    id: "other",
+                    name: "Other",
+                    apiVersion: 1 as const,
+                  },
+                  source: "external" as const,
+                  enabled: true,
+                  revision: "one",
+                  previous: null,
+                  reloadable: false,
+                  error: null,
+                },
+              ]
+            : []),
+        ],
+      },
+    };
+    const channel = h.session.channels
+      .list()
+      .channels.find((item) => item.id === "owned");
+    assert(channel);
+    const target = {
+      version: 1,
+      kind: "conversation",
+      scope: {
+        communityOrigin: "https://fixture.invalid",
+        viewer: h.session.viewer ?? "",
+      },
+      channelId: "owned",
+    } as const;
+    await act(async () => {
+      await h.navigate(target);
+      h.plugins(configuration);
+    });
+    function Inventory() {
+      const sidebar = useSidebarView(h.scope, true);
+      return (
+        <SoloInventory
+          session={h.session}
+          scope={h.scope}
+          navigator={h.navigator}
+          target={target}
+          renderContents={(ordinary, header, pendingClick, composeOrdinary) => (
+            <SoloRegions
+              session={h.session}
+              scope={h.scope}
+              navigator={h.navigator}
+              target={target}
+              sidebar={sidebar}
+              ordinary={ordinary}
+              composeOrdinary={composeOrdinary}
+              pendingClick={pendingClick}
+              fallback={
+                <>
+                  {header}
+                  {ordinary}
+                </>
+              }
+            />
+          )}
+        />
+      );
+    }
+    render(
+      <ToastProvider>
+        <ChannelNavigationProvider relay={h.relay}>
+          <Inventory />
+          <SoloHeading
+            session={h.session}
+            scope={h.scope}
+            channel={channel}
+            onConvert={() => {}}
+            onLifecycle={() => {}}
+            onMove={() => {}}
+          >
+            <WorkspaceControl session={h.session} channelId="owned" />
+          </SoloHeading>
+        </ChannelNavigationProvider>
+      </ToastProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "Owned" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    if (composing)
+      expect(screen.getByLabelText("Other work")).toBeInTheDocument();
+    for (const id of ["owned", "shared"]) {
+      expect(
+        document.querySelectorAll(`[data-solo-channel-id="${id}"]`),
+      ).toHaveLength(1);
+    }
+    expect(screen.getByRole("button", { name: "Shared" })).toBeInTheDocument();
+    expect(
+      document
+        .querySelector('[data-solo-project="personal"]')
+        ?.querySelector('[data-solo-channel-id="owned"]'),
+    ).toBeNull();
+    expect(
+      document
+        .querySelector('[data-solo-project=""]')
+        ?.querySelector('[data-solo-channel-id="owned"]'),
+    ).not.toBeNull();
+    expect(
+      document
+        .querySelector('[data-solo-project=""]')
+        ?.querySelector('[data-solo-channel-id="shared"]'),
+    ).not.toBeNull();
+    expect(saved.assignments).toEqual({ owned: "personal" });
+    expect(
+      screen.queryByText("The plugin for these chats is off."),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Work could not load")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Open plugin settings" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "In Work" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Workspace: Personal" }),
+    ).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    if (!composing) {
+      await user.click(
+        screen.getByRole("button", { name: "New chat or workspace" }),
+      );
+      expect(
+        await screen.findByRole("menuitem", { name: "New chat" }),
+      ).toBeInTheDocument();
+      await user.keyboard("{Escape}");
+    }
+    expect(
+      screen.getByRole("button", { name: "Chat actions" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Chat actions" }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Chat settings" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Move to" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /convert/i }),
+    ).not.toBeInTheDocument();
+  },
+);
+
 it("uses shared populated menus for header choices and refuses retired menu callbacks", async () => {
   const h = fixture();
   const select = vi.fn();
@@ -1374,6 +1632,26 @@ it("contains a throwing contributed menu without losing the source body", async 
   expect(
     screen.queryByRole("button", { name: "Broken menu" }),
   ).not.toBeInTheDocument();
+});
+
+it("draws nothing for a hidden region and restores it when the source shows it", async () => {
+  const h = fixture();
+  const source = await h.register({ component: Body });
+  source.update({
+    status: "ready",
+    binding: source.binding(),
+    revision: 2,
+    hidden: true,
+  });
+  mount(h);
+  expect(screen.queryByText("Work")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Owned" }),
+  ).not.toBeInTheDocument();
+  await act(async () =>
+    source.update({ status: "ready", binding: source.binding(), revision: 3 }),
+  );
+  expect(screen.getByRole("button", { name: "Owned" })).toBeVisible();
 });
 
 it("allows an unadorned source heading without a placeholder icon", async () => {
@@ -1770,7 +2048,7 @@ it.each([
   ["ellipsis", "pointer"],
   ["ellipsis", "keyboard"],
 ] as const)(
-  "hands the %s destination action focus after %s menu close completes",
+  "hands the seventh %s destination action focus after %s menu close completes",
   async (surface, input) => {
     const h = fixture();
     const pending: readonly never[] = [];
@@ -1793,6 +2071,12 @@ it.each([
             ui={ui}
             channelId="owned"
             menuActions={[
+              ...Array.from({ length: 6 }, (_, index) => ({
+                id: `action-${index}`,
+                label: `Action ${index + 1}`,
+                icon: <span />,
+                onSelect: () => {},
+              })),
               {
                 id: "new-task",
                 label: "New task",
@@ -2249,4 +2533,263 @@ it("keeps native rename and selection with a source-owned destination", async ()
   expect(
     await screen.findByRole("textbox", { name: "Chat name" }),
   ).toBeInTheDocument();
+});
+
+it.each([
+  { name: "joined stream", change: {}, visible: true, writable: true },
+  {
+    name: "joined forum",
+    change: { channelType: "forum" },
+    visible: true,
+    writable: true,
+  },
+  { name: "cached", change: { cached: true }, visible: true, writable: false },
+  {
+    name: "archived",
+    change: { archived: true },
+    visible: true,
+    writable: false,
+  },
+  {
+    name: "read-only guest",
+    change: { readOnly: true, viewerRole: "guest" },
+    visible: true,
+    writable: false,
+  },
+  {
+    name: "not joined",
+    change: { members: [] },
+    visible: false,
+    writable: false,
+  },
+  {
+    name: "Solo chat",
+    change: { channelType: "solo" },
+    visible: false,
+    writable: false,
+  },
+  {
+    name: "system channel",
+    change: { channelType: "system" },
+    visible: false,
+    writable: false,
+  },
+  { name: "missing", change: {}, visible: false, writable: false },
+] satisfies {
+  name: string;
+  change: Partial<ChannelSummary>;
+  visible: boolean;
+  writable: boolean;
+}[])(
+  "channel groups retain host access rules for $name",
+  async ({ name, change, visible, writable }) => {
+    const h = fixture();
+    const viewer = h.session.viewer;
+    assert(viewer);
+    h.session.channelWrites = { ...h.session.channelWrites, available: true };
+    h.roster(
+      name === "missing"
+        ? []
+        : [
+            {
+              id: "source",
+              name: "Source channel",
+              channelType: "stream",
+              members: [viewer],
+              ...change,
+            },
+          ],
+    );
+    await h.register({
+      component: ({ ui }) => {
+        const Group = ui.ChannelGroup;
+        assert(Group);
+        return (
+          <Group
+            channelId="source"
+            onSelect={() => {}}
+            expanded
+            controls="source-tasks"
+            disclosureLabel="Hide source tasks"
+            onToggle={() => {}}
+            onNewTask={() => {}}
+          >
+            Task content
+          </Group>
+        );
+      },
+    });
+    mount(h);
+    expect(!!screen.queryByRole("button", { name: "Source channel" })).toBe(
+      visible,
+    );
+    expect(!!screen.queryByText("Task content")).toBe(visible);
+    expect(
+      !!screen.queryByRole("button", { name: "New task in Source channel" }),
+    ).toBe(writable);
+  },
+);
+
+it("channel groups separate selection from disclosure, preserve children, and recheck task access", async () => {
+  const h = fixture();
+  const viewer = h.session.viewer;
+  assert(viewer);
+  h.session.channelWrites = { ...h.session.channelWrites, available: true };
+  const channel: ChannelSummary = {
+    id: "source",
+    name: "Source channel",
+    channelType: "stream",
+    members: [viewer],
+  };
+  h.roster([channel]);
+  const select = vi.fn(),
+    create = vi.fn();
+  function Body({ ui }: SoloRegionProps) {
+    const [expanded, setExpanded] = useState(true);
+    const Group = ui.ChannelGroup;
+    assert(Group);
+    return (
+      <Group
+        channelId="source"
+        onSelect={select}
+        expanded={expanded}
+        controls="source-tasks"
+        disclosureLabel="Toggle source tasks"
+        onToggle={() => setExpanded(!expanded)}
+        onNewTask={create}
+      >
+        <input aria-label="Task draft" defaultValue="Saved draft" />
+      </Group>
+    );
+  }
+  await h.register({ component: Body });
+  mount(h);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Source channel" }));
+  expect(select).toHaveBeenCalledOnce();
+  const disclosure = screen.getByRole("button", {
+    name: "Toggle source tasks",
+  });
+  expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  const draft = screen.getByRole("textbox", { name: "Task draft" });
+  await user.click(disclosure);
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  expect(draft).toBeInTheDocument();
+  expect(draft).not.toBeVisible();
+  await user.click(disclosure);
+  expect(screen.getByRole("textbox", { name: "Task draft" })).toBe(draft);
+  const newTask = screen.getByRole("button", {
+    name: "New task in Source channel",
+  });
+  // The connection can lose its writer before a roster notification rerenders it.
+  h.session.channelWrites = { ...h.session.channelWrites, available: false };
+  await user.click(newTask);
+  expect(create).not.toHaveBeenCalled();
+  h.session.channelWrites = { ...h.session.channelWrites, available: true };
+  await user.click(newTask);
+  expect(create).toHaveBeenCalledOnce();
+  await user.click(
+    screen.getByRole("button", { name: "Actions for Source channel" }),
+  );
+  await screen.findByRole("menu");
+  await act(() => h.reconnect());
+  await waitFor(() =>
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+  );
+  await act(() => h.roster([{ ...channel, members: [] }]));
+  expect(draft).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Source channel" }),
+  ).not.toBeInTheDocument();
+});
+
+it("channel groups share a 3,000-record roster and retain the complete native menu", async () => {
+  const h = fixture();
+  const viewer = h.session.viewer;
+  assert(viewer);
+  const channels: ChannelSummary[] = Array.from(
+    { length: 3_000 },
+    (_, index) => ({
+      id: `source-${index}`,
+      name: `Source ${index}`,
+      channelType: "stream",
+      members: [viewer],
+    }),
+  );
+  h.roster(channels);
+  await h.register({
+    component: ({ ui }) => {
+      const Group = ui.ChannelGroup;
+      assert(Group);
+      return (
+        <>
+          {channels.slice(-100).map((channel) => (
+            <Group
+              key={channel.id}
+              channelId={channel.id}
+              onSelect={() => {}}
+              expanded={false}
+              controls={`tasks-${channel.id}`}
+              disclosureLabel={`Show ${channel.name}`}
+              onToggle={() => {}}
+            />
+          ))}
+        </>
+      );
+    },
+  });
+  const list = vi.spyOn(h.session.channels, "list");
+  const ensureList = vi.spyOn(h.session.channels, "ensureList");
+  const ensureChannel = vi.spyOn(h.session.channels, "ensure");
+  const ensureProfiles = vi.fn(h.session.profiles.ensure);
+  h.session.profiles = { ...h.session.profiles, ensure: ensureProfiles };
+  const offered = Array.from(
+    { length: 12 },
+    (_, index) => `Native action ${index + 1}`,
+  );
+  const nativeActions = vi.fn(() =>
+    offered.map((label) => <MenuItem key={label}>{label}</MenuItem>),
+  );
+  function NativeMenuOwner() {
+    const navigation = useChannelNavigation();
+    useEffect(() => {
+      navigation?.menuActions.publish(nativeActions);
+      return () => navigation?.menuActions.publish(undefined);
+    }, [navigation?.menuActions]);
+    return null;
+  }
+  const view = mount(h, undefined, (children) => (
+    <ChannelNavigationProvider relay={h.relay}>
+      <NativeMenuOwner />
+      {children}
+    </ChannelNavigationProvider>
+  ));
+  expect(
+    view.container.querySelectorAll("[data-solo-channel-group]"),
+  ).toHaveLength(100);
+  expect(list.mock.calls.length).toBeLessThan(20);
+  expect(ensureList).not.toHaveBeenCalled();
+  expect(ensureChannel).not.toHaveBeenCalled();
+  expect(ensureProfiles).not.toHaveBeenCalled();
+  expect(nativeActions).not.toHaveBeenCalled();
+  const user = userEvent.setup();
+  const group = view.container.querySelector<HTMLElement>(
+    '[data-solo-channel-group="source-2999"]',
+  );
+  assert(group);
+  await user.click(
+    within(group).getByRole("button", {
+      name: "Actions for Source 2999",
+    }),
+  );
+  const menu = await screen.findByRole("menu");
+  expect(
+    within(menu)
+      .getAllByRole("menuitem")
+      .map((item) => item.textContent),
+  ).toEqual([
+    "View channel details",
+    ...offered,
+    "Channel actions unavailable on this connection",
+  ]);
 });

@@ -1,4 +1,5 @@
 import { protectionTranscript } from "./protection-transcript";
+import type { PRESET } from "../../features/agents/recommended";
 import { fileStore } from "../../features/agents/state";
 import type { AgentExecution } from "../../features/agents/execution";
 import { executionSpawn } from "./execution";
@@ -111,6 +112,8 @@ export type Config = Readonly<{
   workspace: string;
   /** Whether each thread is its own session, or the whole channel is one. */
   scope: Scope;
+  /** On Recommended, whose model and thinking level runs replace these. */
+  preset?: typeof PRESET;
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
   model: "",
@@ -1124,7 +1127,10 @@ export class ClaudeRuntime {
               ? undefined
               : (threadReference(event)?.rootId ?? event.id);
           const notes = agent.notes?.(channel, noteRoot) ?? [];
-          const text = [sessionContext, this.review(entry, prepared, notes)]
+          const text = [
+            sessionContext,
+            this.review(entry, prepared, notes, channel, noteRoot),
+          ]
             .filter(Boolean)
             .join("\n\n");
           // A conversation's tools default to its thread; a session shared by
@@ -1149,6 +1155,8 @@ export class ClaudeRuntime {
                       entry,
                       (await prompt(fresh)).text,
                       notes,
+                      channel,
+                      noteRoot,
                     );
                     return [sessionContext, text].filter(Boolean).join("\n\n");
                   },
@@ -1158,7 +1166,13 @@ export class ClaudeRuntime {
             fresh: async () =>
               [
                 sessionContext,
-                this.review(entry, (await prompt(true)).text, notes),
+                this.review(
+                  entry,
+                  (await prompt(true)).text,
+                  notes,
+                  channel,
+                  noteRoot,
+                ),
               ]
                 .filter(Boolean)
                 .join("\n\n"),
@@ -1320,9 +1334,15 @@ export class ClaudeRuntime {
   }
 
   /** `text` with the notes plugins left for the turn and the Buzz tools'
-   * end-of-turn note, when there are any. */
-  private review(entry: Entry, text: string, notes: readonly string[] = []) {
-    return [text, ...notes, turnNote(entry.handle)]
+   * end-of-turn note for its conversation, when there are any. */
+  private review(
+    entry: Entry,
+    text: string,
+    notes: readonly string[],
+    channelId: string,
+    root: string | undefined,
+  ) {
+    return [text, ...notes, turnNote(entry.handle, channelId, root)]
       .filter(Boolean)
       .join("\n\n");
   }

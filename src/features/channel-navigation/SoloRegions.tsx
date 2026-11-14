@@ -1,4 +1,5 @@
 import { SoloDisclosure } from "./SoloDisclosure";
+import { RegionChannelGroup, RegionChannelGroups } from "./RegionChannelGroup";
 import {
   WorkspaceCompositionContext,
   RegionWorkspace,
@@ -98,10 +99,13 @@ export function SoloRegions({
   const snapshot = useSoloNavigation(session);
   const service = soloNavigationFor(session);
   const regions = orderContributedSidebarSections(
-    snapshot.regions.map((region) => ({
-      key: `solo-region:${region.key}`,
-      region,
-    })),
+    // Hidden sources draw nothing; explicitly disabled chats use ordinary Solo.
+    snapshot.regions
+      .filter((region) => !region.hidden && region.reason !== "disabled")
+      .map((region) => ({
+        key: `solo-region:${region.key}`,
+        region,
+      })),
     sidebar.contributionOrder,
   ).map(({ region }) => region);
   const primary = regions.findIndex((region) => region.source);
@@ -499,7 +503,9 @@ function RegionFrame({
           <>
             {hasActions && <NavigationSectionHeading actions={headerActions} />}
             {headerNotice}
-            {contents}
+            <RegionChannelGroups session={session}>
+              {contents}
+            </RegionChannelGroups>
             {!composing && groupDisclosure ? ordinary : null}
           </>
         ) : (
@@ -523,7 +529,9 @@ function RegionFrame({
             headerActions={headerActions}
             headerNotice={headerNotice}
           >
-            {contents}
+            <RegionChannelGroups session={session}>
+              {contents}
+            </RegionChannelGroups>
             {!composing && groupDisclosure ? ordinary : null}
           </SidebarSection>
         )}
@@ -653,4 +661,5 @@ const destinationUi = {
   Conversation: RegionConversation,
   Card: RegionCard,
   Disclosure: SoloDisclosure,
+  ChannelGroup: RegionChannelGroup,
 };

@@ -1373,6 +1373,10 @@ available rather than silently discarding it.
   (`team_update`). A proposal opens a review: nothing changes until you save
   it, members never change this way, and Save is refused if the team changed
   since the proposal.
+- Your agents can search messages (`search`) by words, person, channel or DM,
+  and date, and link each message they cite. They search with their own access:
+  channels they're in and open channels. They don't find messages in your
+  private channels or DMs unless they're members.
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. An open transcript updates by itself
   while the agent works; **Refresh transcript** stays at the top as you scroll.

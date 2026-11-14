@@ -229,35 +229,54 @@ export const TOOLS: readonly Tool[] = [
     { id: str, emoji: str, off: { type: "boolean" } },
     ["id", "emoji"],
   ),
-  tool(
-    "read",
-    "Read a thread (default: current), a channel's latest, or search with q.",
-    {
-      channel: str,
-      thread: str,
-      message_url: {
-        type: "string",
-        description: "Buzz message link; replaces channel and thread.",
-      },
-      q: str,
-      author: {
-        type: "string",
-        description: "With q or channel: only this hex pubkey or npub.",
-      },
-      since: {
-        type: "integer",
-        description: "With q or channel: Unix seconds, at or after.",
-      },
-      before: { type: "integer", description: "Unix seconds, at or before." },
-      before_id: {
-        type: "string",
-        description: "For paginating: with before, from a continue line.",
-      },
-      limit: {
-        type: "integer",
-        description: "Search 20 (max 100), thread 100 (500), channel 30 (200).",
-      },
+  tool("read", "Read a thread (default: current) or a channel's latest.", {
+    channel: str,
+    thread: str,
+    message_url: {
+      type: "string",
+      description: "Buzz message link; replaces channel and thread.",
     },
+    author: {
+      type: "string",
+      description: "With channel: only this hex pubkey or npub.",
+    },
+    since: {
+      type: "integer",
+      description: "With channel: Unix seconds, at or after.",
+    },
+    before: { type: "integer", description: "Unix seconds, at or before." },
+    before_id: {
+      type: "string",
+      description: "For paginating: with before, from a continue line.",
+    },
+    limit: {
+      type: "integer",
+      description: "Thread 100 (max 500), channel 30 (200).",
+    },
+  }),
+  tool(
+    "search",
+    'Search messages you can read, best match first. q matches whole words only, not other forms of a word: "exact phrase", -word, a or b. Without q, the newest messages matching the other fields. Each result has a link to cite it or open it with read.',
+    {
+      q: str,
+      from: { type: "string", description: "me, a name, npub or hex pubkey." },
+      in: {
+        type: "string",
+        description:
+          "A channel's name or ID, @name for your DM with someone, or a Buzz link.",
+      },
+      after: {
+        type: "string",
+        description:
+          "YYYY-MM-DD (UTC) or a time back from now: 7d, 2w, 3m, 1y. Included.",
+      },
+      before: { type: "string", description: "Same forms as after. Excluded." },
+      sort: { type: "string", enum: ["relevance", "newest"] },
+      limit: { type: "integer", description: "Default 20, max 50." },
+      page: { type: "integer", description: "From a continue line." },
+    },
+    [],
+    { readOnlyHint: true },
   ),
   tool(
     "channel_list",
@@ -443,6 +462,8 @@ const SEARCH = [9, 40002, 45001, 45003];
 const HEX = /^[0-9a-f]{64}$/;
 /** A NIP-23 long-form note, as `buzz notes` writes it. */
 const NOTE = 30023;
+/** A channel ID, as Buzz links accept it. */
+const CHANNEL_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/;
 /** A repository name the community accepts. */
 const REPO = /^[a-zA-Z0-9_-][a-zA-Z0-9._-]{0,63}$/;
 /** Pages of a channel's repository announcements read before giving up. */
@@ -747,7 +768,11 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       "message_url",
       "author",
       "before_id",
+      "q",
     ]);
+    // Earlier versions searched here; a stale prompt must not get a thread.
+    if (args.q !== undefined)
+      throw new Error("read does not search; use search.");
     if (args.message_url !== undefined) {
       if (args.channel !== undefined || args.thread !== undefined)
         throw new Error(
@@ -792,32 +817,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       ...(before !== undefined ? { until: before } : {}),
       ...(beforeId ? { before_id: beforeId } : {}),
     };
-    const q = text(args.q);
     let channel = text(args.channel) ?? context.channel;
-    if (q) {
-      if (beforeId)
-        throw new Error(
-          "before_id pages thread and channel reads; narrow a search with before or since.",
-        );
-      const max = bound(limit, 20, 100);
-      const found = await client.query([
-        {
-          kinds: SEARCH,
-          search: q,
-          limit: max,
-          ...(args.channel ? { "#h": [channel] } : {}),
-          ...cursor,
-          ...filters,
-        },
-      ]);
-      const lines = await tools.messages(found, {});
-      if (!lines.length) return "No messages.";
-      if (found.length >= max)
-        lines.push(
-          "Result limit reached; more matches may exist. Narrow with channel, author, since or before.",
-        );
-      return lines.join("\n");
-    }
     let scope: { channel?: string; root?: string };
     let max: number;
     let more: Args;
@@ -826,7 +826,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (text(args.thread) || (args.channel === undefined && context.root)) {
       if (author || since !== undefined)
         throw new Error(
-          "author and since filter a search (q) or a channel read, not a thread; add q or channel.",
+          "author and since filter a channel read, not a thread; add channel, or use search.",
         );
       const id = text(args.thread) ?? (context.root as string);
       let root = id;
@@ -893,6 +893,148 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       last && found.length > max
         ? `Older ${noun} remain; continue with ${JSON.stringify({ ...more, before: last.created_at, before_id: last.id })}`
         : `The relay returned no older ${noun}.`,
+    ].join("\n");
+  },
+
+  async search(tools, args) {
+    const { client } = tools;
+    args = ignoreBlankFields(args, ["q", "from", "in", "after", "before"]);
+    const q = text(args.q);
+    // 0 is what a model sends for a field it means to leave out.
+    const limit = bound(
+      typeof args.limit === "number" ? args.limit || undefined : undefined,
+      20,
+      50,
+    );
+    const page = (args.page as number) || 1;
+    if (!Number.isSafeInteger(page) || page < 1)
+      throw new Error("page must be a whole number, 1 or more.");
+    const sort = text(args.sort) ?? "relevance";
+    if (sort !== "relevance" && sort !== "newest")
+      throw new Error("sort must be relevance or newest.");
+    const since = searchTime(args, "after");
+    const before = searchTime(args, "before");
+    // `before` excludes its time; the relay's `until` includes it.
+    const until = before === undefined ? undefined : before - 1;
+    if (since !== undefined && until !== undefined && since > until)
+      throw new Error("after must be earlier than before.");
+    const from =
+      args.from === undefined
+        ? undefined
+        : await tools.author(String(args.from).trim().replace(/^@/, ""));
+    const place =
+      args.in === undefined ? undefined : await tools.place(String(args.in));
+    if (!q && !from && !place && since === undefined && until === undefined)
+      throw new Error("Give q, or from, in, after or before.");
+    const newest = !q || sort === "newest";
+    const found = await client.query([
+      {
+        kinds: q ? SEARCH : MESSAGES,
+        limit,
+        ...(q ? { search: q } : {}),
+        // Bridge extensions: a newest-first search, and a later page.
+        ...(q && newest ? { search_sort: "newest" } : {}),
+        ...(page > 1 ? { page } : {}),
+        ...(from ? { authors: [from] } : {}),
+        ...(place ? { "#h": [place.id] } : {}),
+        ...(since !== undefined ? { since } : {}),
+        ...(until !== undefined ? { until } : {}),
+      },
+    ]);
+    // Keep the relay's order: for a search, best match first.
+    const edits = found.length
+      ? await client.query([
+          { kinds: [40003], "#e": found.map((e) => e.id), limit: 500 },
+        ])
+      : [];
+    const latest = new Map(edited([...found, ...edits]).map((e) => [e.id, e]));
+    const hits = found.flatMap((event) => latest.get(event.id) ?? []);
+    // A relay without newest-first search ranks by relevance instead.
+    const unsorted =
+      q &&
+      newest &&
+      hits.some(
+        (event, i) =>
+          i > 0 && event.created_at > (hits[i - 1] as BuzzEvent).created_at,
+      );
+    const order = !newest
+      ? "best match first"
+      : unsorted
+        ? "best match first (this community can't sort a search by newest)"
+        : "newest first";
+    const owners = hits.flatMap((event) => tag(event, "auth") ?? []);
+    const names = await tools.names([
+      ...(from ? [from] : []),
+      ...hits.map((e) => e.pubkey),
+      ...owners,
+    ]);
+    const asked = [
+      q && JSON.stringify(q),
+      from && `from ${names.get(from) ?? from}`,
+      place && `in ${place.label}`,
+      text(args.after) && `after ${text(args.after)}`,
+      text(args.before) && `before ${text(args.before)}`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const scope =
+      "Searched with your own access: channels you're in and open channels, not other people's private channels or DMs.";
+    if (!hits.length)
+      return `No messages${page > 1 ? ` on page ${page}` : ""} for ${asked}.\n${scope}`;
+    const places = await tools.places(hits.flatMap((e) => tag(e, "h") ?? []));
+    const shared = new Map<string, Set<string>>();
+    for (const { pubkey } of hits) {
+      const name = names.get(pubkey);
+      if (name) shared.set(name, (shared.get(name) ?? new Set()).add(pubkey));
+    }
+    const who = (key: string) => {
+      const name = names.get(key);
+      return !name
+        ? key
+        : (shared.get(name)?.size ?? 0) > 1
+          ? `${name} (${key})`
+          : name;
+    };
+    const words = q?.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+    const lines = hits.map((event, i) => {
+      const channel = tag(event, "h");
+      const thread = threadReference(event)?.rootId;
+      const owner = tag(event, "auth");
+      const link = channel
+        ? `buzz://message?${new URLSearchParams({ channel, id: event.id, ...(thread ? { thread } : {}) })}`
+        : event.id;
+      const meta = [
+        link,
+        channel && (places.get(channel) ?? channel),
+        who(event.pubkey),
+        owner && `agent, claimed owner ${who(owner)}`,
+        time(event.created_at),
+        thread && "in a thread",
+      ].filter(Boolean);
+      const body = snippet(
+        event.content.replace(/\s+/g, " ").trim(),
+        words,
+        400,
+      );
+      return `[${(page - 1) * limit + i + 1}] ${meta.join(" · ")}\n    ${body}`;
+    });
+    const more = {
+      ...(q ? { q } : {}),
+      ...(from ? { from } : {}),
+      ...(place ? { in: place.id } : {}),
+      ...(text(args.after) ? { after: text(args.after) } : {}),
+      ...(text(args.before) ? { before: text(args.before) } : {}),
+      ...(q && newest ? { sort } : {}),
+      limit,
+      page: page + 1,
+    };
+    return [
+      `${hits.length} result${hits.length === 1 ? "" : "s"} for ${asked}, ${order}.`,
+      scope,
+      ...lines,
+      found.length >= limit
+        ? `More may match; continue with ${JSON.stringify(more)}`
+        : "No more matches.",
     ].join("\n");
   },
 
@@ -1067,22 +1209,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const { client } = tools;
     const to = list(args.to).map(pubkey);
     if (!to.length) throw new Error("to is required.");
-    const people = new Set([client.pubkey, ...to]);
-    const find = async () =>
-      (
-        await client.query([
-          { kinds: [39000], "#p": [client.pubkey], "#t": ["dm"], limit: 500 },
-        ])
-      ).find((event) => {
-        const members = new Set(
-          event.tags.filter((t) => t[0] === "p").map((t) => t[1]),
-        );
-        return (
-          members.size === people.size &&
-          [...people].every((key) => members.has(key))
-        );
-      });
-    let found = await find();
+    let found = await tools.findDm(to);
     if (!found) {
       await client.publish({
         kind: 41010,
@@ -1092,7 +1219,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       // The relay creates the channel's metadata just after answering.
       for (let tries = 0; !found && tries < 5; tries++) {
         if (tries) await new Promise((resolve) => setTimeout(resolve, 400));
-        found = await find();
+        found = await tools.findDm(to);
       }
     }
     const channel = found && tag(found, "d");
@@ -1740,6 +1867,100 @@ class Tools {
       { kinds: [39000], "#d": [channel], limit: 1 },
     ]);
     return metadata;
+  }
+
+  /** Your DM with exactly `people`, if it exists; never creates one. */
+  async findDm(people: readonly string[]) {
+    const wanted = new Set([this.client.pubkey, ...people]);
+    const dms = await this.client.query([
+      { kinds: [39000], "#p": [this.client.pubkey], "#t": ["dm"], limit: 500 },
+    ]);
+    return dms.find((event) => {
+      const members = new Set(
+        event.tags.filter((t) => t[0] === "p").map((t) => t[1]),
+      );
+      return (
+        members.size === wanted.size &&
+        [...wanted].every((key) => members.has(key))
+      );
+    });
+  }
+
+  /** The channel `value` names: a Buzz link, @person for your DM with them,
+   * or a channel's ID or name (optionally #name). */
+  async place(value: string) {
+    const v = value.trim();
+    const link = parseBuzzLink(v);
+    if (link?.format === "legacy") return this.placeOf(link.channelId);
+    if (v.startsWith("@")) {
+      const person = await this.author(v.slice(1));
+      const dm =
+        person === this.client.pubkey ? undefined : await this.findDm([person]);
+      if (!dm) throw new Error(`You have no DM with ${v.slice(1)}.`);
+      return this.placeOf(tag(dm, "d") as string);
+    }
+    const name = v.replace(/^#/, "");
+    if (name === v && CHANNEL_ID.test(v) && (await this.metadata(v)))
+      return this.placeOf(v);
+    const lower = name.toLowerCase();
+    const named: BuzzEvent[] = [];
+    const similar: BuzzEvent[] = [];
+    await this.scan({ kinds: [39000] }, (event) => {
+      const channel = tag(event, "name")?.toLowerCase();
+      if (channel === lower) named.push(event);
+      else if (channel?.includes(lower) && similar.length < 5)
+        similar.push(event);
+      return true;
+    });
+    const rows = (events: BuzzEvent[]) =>
+      events.map((e) => `${tag(e, "d")} #${tag(e, "name")}`).join("\n");
+    if (named.length > 1)
+      throw new Error(
+        `${named.length} channels are named ${name}; give its ID.\n${rows(named)}`,
+      );
+    if (!named[0])
+      throw new Error(
+        `No channel you can see is named ${name}.${similar.length ? `\nSimilar:\n${rows(similar)}` : ""}`,
+      );
+    return this.placeOf(tag(named[0], "d") as string);
+  }
+
+  async placeOf(id: string) {
+    return { id, label: (await this.places([id])).get(id) ?? id };
+  }
+
+  /** Labels for `channels`: #name, or "DM with" its other members. */
+  async places(channels: readonly string[]) {
+    const wanted = [...new Set(channels)];
+    const labels = new Map<string, string>();
+    if (!wanted.length) return labels;
+    const found = await this.client.query([
+      { kinds: [39000], "#d": wanted, limit: wanted.length },
+    ]);
+    const others = (event: BuzzEvent) =>
+      event.tags
+        .filter((t) => t[0] === "p" && t[1] && t[1] !== this.client.pubkey)
+        .map((t) => t[1] as string);
+    const dms = found.filter((event) => tag(event, "t") === "dm");
+    const names = await this.names(dms.flatMap(others));
+    for (const event of found) {
+      const id = tag(event, "d");
+      if (!id) continue;
+      const name = tag(event, "name");
+      labels.set(
+        id,
+        tag(event, "t") === "dm"
+          ? `DM with ${
+              others(event)
+                .map((key) => names.get(key) ?? key)
+                .join(", ") || "yourself"
+            }`
+          : name
+            ? `#${name}`
+            : id,
+      );
+    }
+    return labels;
   }
 
   async details(channel: string) {
@@ -2451,15 +2672,20 @@ function searchMemory(entries: readonly Memory[], q: string) {
   ].join("\n");
 }
 
-/** `line`, cut to SEARCH_LINE_CHARS around its first match. */
-function snippet(line: string, words: readonly string[]) {
-  if (line.length <= SEARCH_LINE_CHARS) return line;
+/** `line`, cut to `chars` around its first match, or its start without one. */
+function snippet(
+  line: string,
+  words: readonly string[],
+  chars = SEARCH_LINE_CHARS,
+) {
+  if (line.length <= chars) return line;
   const lower = line.toLowerCase();
   const at = Math.min(
     ...words.map((word) => lower.indexOf(word)).filter((index) => index >= 0),
   );
-  const start = Math.max(0, Math.min(at - 40, line.length - SEARCH_LINE_CHARS));
-  const end = start + SEARCH_LINE_CHARS;
+  const start =
+    at === Infinity ? 0 : Math.max(0, Math.min(at - 40, line.length - chars));
+  const end = start + chars;
   return `${start ? "…" : ""}${line.slice(start, end)}${end < line.length ? "…" : ""}`;
 }
 
@@ -2814,6 +3040,30 @@ function unixTime(args: Args, key: string) {
       `${key} must be Unix seconds: a whole number, not milliseconds.`,
     );
   return value as number;
+}
+
+const AGO: Record<string, number> = { d: 1, w: 7, m: 30, y: 365 };
+
+/** `args[key]` as Unix seconds: the start of a UTC date (YYYY-MM-DD), or a
+ * span back from now (7d, 2w, 3m, 1y; a month is 30 days). */
+function searchTime(args: Args, key: string) {
+  const value = text(args[key]);
+  if (value === undefined) return undefined;
+  const ago = /^(\d{1,4})([dwmy])$/i.exec(value);
+  if (ago)
+    return (
+      Math.floor(Date.now() / 1000) -
+      Number(ago[1]) * (AGO[(ago[2] as string).toLowerCase()] as number) * 86400
+    );
+  const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  const ms = date
+    ? Date.UTC(Number(date[1]), Number(date[2]) - 1, Number(date[3]))
+    : NaN;
+  if (!date || new Date(ms).toISOString().slice(0, 10) !== value)
+    throw new Error(
+      `${key} must be a date (YYYY-MM-DD) or a span back from now (7d, 2w, 3m, 1y).`,
+    );
+  return ms / 1000;
 }
 
 /** The checks Buzz makes on a channel's name, description and lifetime. */

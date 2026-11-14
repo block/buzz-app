@@ -1401,7 +1401,8 @@ function ChannelWorkspace({
     continuingVisit,
     navigationSignal: navigation?.signal,
     isLive: () => !destination.current.navigation?.signal.aborted,
-    openLink: (url) => openLink(url, { fromThread: true }),
+    openLink: (url, returnFocus) =>
+      openLink(url, { fromThread: true, returnFocus }),
     // A Solo conversation has no channel menu; its history takes focus instead.
     fallbackFocus: solo ? historyContainer : settingsTrigger,
     openMembers: () => setMembersOpen(true),
@@ -1726,13 +1727,20 @@ function ChannelWorkspace({
     },
     [currentId, openChannelThread],
   );
-  // Closing a linked thread returns focus to its link, as an opened thread does.
+  // Closing a linked thread returns focus to its link, as an opened thread does,
+  // unless the link names another target.
   const openLinkedThread = useCallback(
-    (channelId: string, messageId: string, rootId: string) => {
+    (
+      channelId: string,
+      messageId: string,
+      rootId: string,
+      returnFocus?: HTMLElement,
+    ) => {
       const trigger =
-        document.activeElement instanceof HTMLElement
+        returnFocus ??
+        (document.activeElement instanceof HTMLElement
           ? document.activeElement
-          : null;
+          : null);
       if (!secondary.openLinkedThread(channelId, messageId, rootId))
         return false;
       threadTrigger.current = trigger;
@@ -1857,9 +1865,10 @@ function ChannelWorkspace({
           if (target.kind === "conversation" && target.messageId) {
             if (!opensAnotherChannel) tabState.leaveVisit();
             threadTrigger.current =
-              document.activeElement instanceof HTMLElement
+              returnFocus ??
+              (document.activeElement instanceof HTMLElement
                 ? document.activeElement
-                : null;
+                : null);
           }
           if (!opensAnotherChannel) open(undefined);
           void navigator.open(target);

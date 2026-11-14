@@ -1,10 +1,11 @@
 import { useLayoutEffect } from "react";
 import type { PluginModule } from "../../plugins/api";
 import type { PageNavigation } from "../../features/navigation/service";
-import type { OpenTarget } from "../../features/navigation/targets";
 import type { RelayData } from "../../features/relay/service";
 import { useRelayConnection } from "../../features/relay/react";
 import { saveActivityView } from "../../features/conversation/ConversationList";
+import { BellIcon } from "../../shared/design-system/icons";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { InboxPreview } from "./InboxPreview";
 import {
   composingOf,
@@ -64,8 +65,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
 /**
  * Activity is Team's list on All: conversations with the threads, mentions and
- * reactions among them. Its address opens that list on the view it names, and
- * an address that names a conversation opens the conversation.
+ * reactions among them. The shell shows that list for this address; this page
+ * sets the view the address names. An address that names a conversation or a
+ * new message opens it.
  */
 function ActivityAddress({
   relay,
@@ -74,29 +76,19 @@ function ActivityAddress({
   relay: RelayData;
   navigation: PageNavigation | undefined;
 }) {
-  const { viewer, scope: partition } = useRelayConnection(relay);
+  const { status, viewer, scope: partition } = useRelayConnection(relay);
+  const signedIn = !!viewer && !!partition?.endsWith(`:${viewer}`);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: A visit applies its address once; Back keeps what the list showed.
   useLayoutEffect(() => {
-    if (!navigation) return;
+    if (!navigation || navigation.traversal || !viewer || !partition) return;
+    if (!signedIn) return;
     const { target } = navigation;
-    const scope =
-      target.kind === "page" && target.scope
-        ? target.scope
-        : viewer && partition?.endsWith(`:${viewer}`)
-          ? {
-              viewer,
-              communityOrigin: partition.slice(0, -(viewer.length + 1)),
-            }
-          : undefined;
+    const scope = {
+      viewer,
+      communityOrigin: partition.slice(0, -(viewer.length + 1)),
+    };
     const detail = detailOf(target);
-    const team = (params?: "compose"): OpenTarget => ({
-      version: 1,
-      kind: "page",
-      pluginId: "buzz.channels",
-      pageId: "channels",
-      ...(scope && { scope }),
-      ...(params && { route: { version: 1, params } }),
-    });
-    if (detail && scope) {
+    if (detail) {
       navigation.resolve({
         version: 1,
         kind: "conversation",
@@ -111,29 +103,39 @@ function ActivityAddress({
       return;
     }
     if (composingOf(target)) {
-      navigation.resolve(team("compose"));
+      navigation.resolve({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+        scope,
+        route: { version: 1, params: "compose" },
+      });
       return;
     }
     const route = routeOf(target);
-    if (scope)
-      saveActivityView(`${scope.communityOrigin}:${scope.viewer}`, (view) => {
-        const { sender: _, ...rest } = view;
-        const from = route?.sender ?? view.sender ?? "everyone";
-        const activity = route?.activity ?? "all";
-        return {
-          ...rest,
-          ...(from !== "everyone" && { sender: from }),
-          // Direct was DMs and mentions together; Team has no agent views.
-          filter:
-            activity === "direct"
-              ? "dms"
-              : activity === "working" || activity === "waiting"
-                ? "all"
-                : activity,
-          ...(route?.attention && { unread: route.attention === "unread" }),
-        };
-      });
-    navigation.resolve(team());
-  }, [navigation, viewer, partition]);
-  return null;
+    saveActivityView(partition, (view) => {
+      const { sender: _, ...rest } = view;
+      const from = route?.sender ?? view.sender ?? "everyone";
+      const activity = route?.activity ?? "all";
+      return {
+        ...rest,
+        ...(from !== "everyone" && { sender: from }),
+        // Direct was DMs and mentions together; Team has no agent views.
+        filter:
+          activity === "direct"
+            ? "dms"
+            : activity === "working" || activity === "waiting"
+              ? "all"
+              : activity,
+        ...(route?.attention && { unread: route.attention === "unread" }),
+      };
+    });
+  }, [navigation?.entryId, signedIn]);
+  return status === "ready" && signedIn ? null : (
+    <EmptyState
+      icon={<BellIcon />}
+      title="Choose a community to see your activity"
+    />
+  );
 }

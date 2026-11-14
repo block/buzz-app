@@ -10,13 +10,20 @@ import type { OpenTarget } from "../../features/navigation/targets";
 import { isSidebarSectionRoute } from "../../features/channel-navigation/sidebar-section-route";
 import { soloDraft } from "../../features/channel-navigation/routes";
 
+/** Activity is Team's list: its address shows that list and no page of its own. */
+const activityAddress = (target: OpenTarget) =>
+  target.kind === "page" &&
+  target.pluginId === "buzz.inbox" &&
+  target.pageId === "inbox";
+
 /** Pages whose content is a conversation, a draft of one, or a section's home. */
 export function listsConversations(target: OpenTarget) {
   return (
     target.kind === "conversation" ||
     (target.kind === "page" &&
       target.pluginId === "buzz.channels" &&
-      target.pageId === "channels")
+      target.pageId === "channels") ||
+    activityAddress(target)
   );
 }
 
@@ -26,7 +33,7 @@ export function listsConversations(target: OpenTarget) {
  */
 export function routedSection(target: OpenTarget) {
   if (target.kind !== "page" || !listsConversations(target)) return;
-  if (!target.route) return "messages";
+  if (!target.route || activityAddress(target)) return "messages";
   const params = target.route.params;
   return isSidebarSectionRoute(params) ? params.section : undefined;
 }

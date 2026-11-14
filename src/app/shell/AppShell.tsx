@@ -338,7 +338,6 @@ function AppShellContent({
       ),
     [pages],
   );
-  const activityPage = selected === "buzz.inbox/inbox";
   const search = (
     <PageSearch
       pages={pages}
@@ -530,10 +529,8 @@ function AppShellContent({
           } as CSSProperties
         }
         data-detail-container=""
-        data-feed-layout={activityPage || undefined}
         data-full-width-workspace={
           !!listSection ||
-          activityPage ||
           selected === "buzz.drafts-and-sent/drafts-sent" ||
           undefined
         }

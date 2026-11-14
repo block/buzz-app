@@ -260,6 +260,14 @@ describe("step", () => {
       2 * T,
     );
     expect(step(rechecked.watch, ready, 3 * T).wake).toBeUndefined();
+    // Even when other news wakes it while they run.
+    const review = { feedback: [comment("9")] };
+    const rerunning = snap({ ...review, decision: "APPROVED", running: true });
+    const reviewed = step(rechecked.watch, rerunning, 3 * T);
+    const told = step(reviewed.watch, rerunning, 4 * T);
+    expect(news(told.wake)).toMatch(/note 9/);
+    const passed = snap({ ...review, decision: "APPROVED", settled: true });
+    expect(step(told.watch, passed, 5 * T).wake).toBeUndefined();
     // A push makes it not ready until CI passes again.
     const pushed = step(
       first.watch,

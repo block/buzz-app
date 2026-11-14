@@ -227,9 +227,10 @@ export function step(
       reported: news.ci ? result : next.reported,
       failing: news.ci ? snapshot.failed : next.failing,
       stuck: news.stuck ? pendingHead : next.stuck,
-      conflicted: merging.conflicted,
-      behind: merging.behind,
-      ready: merging.ready,
+      // What it was told stays told while checks run again.
+      conflicted: merging.conflicted || next.conflicted,
+      behind: merging.behind || next.behind,
+      ready: merging.ready || next.ready,
       armed: merging.armed,
       wakes: watch.wakes + 1,
       woken: told,

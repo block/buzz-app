@@ -335,11 +335,12 @@ function mergingOf(pull: StateData) {
     ...(pull.autoMergeRequest && { autoMerge: true as const }),
     ...(pull.isInMergeQueue && { queued: true as const }),
     // Threads beyond those listed are older; when none listed is open, they
-    // may be.
-    ...((unresolved > 0 ||
-      (pull.reviewThreads?.totalCount ?? 0) <= threads.length) && {
-      unresolved,
-    }),
+    // may be. A partial answer without them says nothing.
+    ...(pull.reviewThreads &&
+      (unresolved > 0 ||
+        (pull.reviewThreads.totalCount ?? 0) <= threads.length) && {
+        unresolved,
+      }),
   };
 }
 

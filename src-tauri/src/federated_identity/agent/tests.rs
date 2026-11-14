@@ -2249,8 +2249,14 @@ async fn a_reused_agent_assertion_keeps_its_deadline() {
 
 #[tokio::test]
 async fn a_zero_budget_agent_assertion_is_never_dispatched() {
-    let (f, _) = skewed_agent(vec![(Duration::from_secs(2), 60, 1)]).await;
+    let (f, served) = skewed_agent(vec![
+        (Duration::from_secs(2), 60, 1),
+        (Duration::ZERO, 60, 300),
+    ])
+    .await;
     assert!(admitted(&f).await.and_then(|a| a.dispatch()).is_err());
+    assert!(admitted(&f).await.and_then(|a| a.dispatch()).is_ok());
+    assert_eq!(bounded(served).await.unwrap().len(), 3);
 }
 
 #[tokio::test]

@@ -749,10 +749,15 @@ export function createThreadView({
         // the first window's rows are read only after it.
         // Revalidate once per run, not once per page of a retained-range repair.
         const rootRead = reader.read([rootFilter], { signal: owned.signal });
-        firstWindow = windowRead(
-          AbortSignal.any([owned.signal, overlapped.signal]),
-        );
-        firstWindow.catch(() => undefined);
+        // Only an exact view's reader returns rows unadmitted. An ordinary
+        // view's reader admits as it resolves, so a window answered before
+        // the root would drop root aux; it reads the window after the root.
+        if (exact) {
+          firstWindow = windowRead(
+            AbortSignal.any([owned.signal, overlapped.signal]),
+          );
+          firstWindow.catch(() => undefined);
+        }
         const rootResponse = await rootRead;
         if (!active()) return;
         root = admit(rootResponse);

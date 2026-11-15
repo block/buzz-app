@@ -6,6 +6,7 @@ import type { ReadFilter, RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
 import { keypair, message, roster, signed } from "./testing";
 import { threadBinding, threadAuthority } from "./thread-window";
+import { createThreadView, type ThreadResume } from "./threads";
 
 const channel = "00000000-0000-0000-0000-000000000000";
 const origin = "https://relay.example:8443";
@@ -58,6 +59,7 @@ function bounds(
     }),
   });
 }
+const flushPromises = () => new Promise((resolve) => setTimeout(resolve, 0));
 const cleanup: (() => void)[] = [];
 afterEach(() => {
   for (const dispose of cleanup.splice(0)) dispose();
@@ -805,20 +807,110 @@ it("a thread view opened before the first connection keeps its first read for th
   ]);
 });
 
-/** The signal of the first window read sent after the `from`th fetch call. */
-const windowSignal = (
-  fetcher: {
-    mock: { calls: [url: string, options?: RequestInit | undefined][] };
-  },
-  from = 0,
-) =>
-  fetcher.mock.calls
-    .slice(from)
-    .find(
-      ([url, options]) =>
-        !url.endsWith("/session") &&
-        (JSON.parse(options?.body as string) as ReadFilter[])[0]?.thread_window,
-    )?.[1]?.signal;
+it("keeps a root edit from a window that answers before an unretained root", async () => {
+  const edit = signed(author, {
+    kind: 40003,
+    created_at: 50,
+    content: "edited root",
+    tags: [["e", root.id]],
+  });
+  // Like the session's verified reader, each answer is admitted as it
+  // resolves: an edit whose target is not known yet is dropped.
+  const known = new Set<string>();
+  let slowRoot = false;
+  const reader = {
+    async read(filters: readonly ReadFilter[]) {
+      const [f] = filters;
+      assert.exists(f);
+      let events: RelayEvent[];
+      if (f.ids) {
+        if (slowRoot) await new Promise((resolve) => setTimeout(resolve, 20));
+        events = [root];
+      } else events = [edit, bounds(f)];
+      const admitted = events.filter(
+        (event) =>
+          event.kind !== 40003 ||
+          event.tags.every(([name, id]) => name !== "e" || known.has(id ?? "")),
+      );
+      for (const event of admitted) known.add(event.id);
+      return admitted;
+    },
+  };
+  const open = (resume?: ThreadResume) =>
+    createThreadView({
+      channelId: channel,
+      messageId: root.id,
+      relayAuthor: relay.pubkey,
+      reader,
+      seed: undefined,
+      resume,
+      local: undefined,
+      canAccess: () => true,
+      visible: (events) => events,
+      notify: () => {},
+    });
+  const first = open();
+  await first.view.refresh();
+  const resume = first.resume();
+  first.view.dispose();
+  assert(typeof resume === "object");
+  // The resume holds the root; the shared evidence no longer does.
+  known.clear();
+  slowRoot = true;
+  const reopened = open(resume);
+  await reopened.view.refresh();
+  expect(reopened.view.snapshot()).toMatchObject({
+    status: "ready",
+    root: { id: root.id, content: "edited root" },
+  });
+});
+
+it("stops an exact view's overlapped window when the root is missing", async () => {
+  let rootReads = 0;
+  let window:
+    | { filter: ReadFilter; signal: AbortSignal | undefined }
+    | undefined;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const reader = {
+    async read(
+      filters: readonly ReadFilter[],
+      settings?: { signal?: AbortSignal },
+    ) {
+      const [f] = filters;
+      assert.exists(f);
+      if (f.ids) return ++rootReads === 1 ? [root] : [];
+      if (!f.thread_window) return [];
+      window = { filter: f, signal: settings?.signal };
+      await held;
+      return [reply(0), bounds(f)];
+    },
+  };
+  const view = createThreadView({
+    channelId: channel,
+    messageId: root.id,
+    relayAuthor: relay.pubkey,
+    reader,
+    seed: undefined,
+    local: undefined,
+    exact: true,
+    canAccess: () => true,
+    visible: (events) => events,
+    notify: () => {},
+  });
+  // The target read finds the root; the root read that follows does not.
+  const loading = view.view.refresh();
+  await vi.waitFor(() => expect(rootReads).toBe(2));
+  await loading;
+  // The window read started with the root read and is stopped.
+  expect(window?.filter.thread_window).toBe(true);
+  expect(window?.signal?.aborted).toBe(true);
+  release();
+  await flushPromises();
+  expect(view.view.snapshot()).toMatchObject({ status: "error", replies: [] });
+});
 
 it("revalidates a missing strict root before repair and preserves tombstones on retry", async () => {
   const row = reply(0);
@@ -837,15 +929,10 @@ it("revalidates a missing strict root before repair and preserves tombstones on 
   ]);
   missing = true;
   const before = h.requests.length;
-  const calls = h.fetcher.mock.calls.length;
   await h.view.refresh();
-  // The first window read overlaps the root read; with no root it is stopped
-  // and its rows are never admitted (replies stay empty below).
-  const [rootRead, windowRead, ...rest] = h.requests.slice(before);
-  expect(rootRead).toEqual([{ ids: [root.id], "#h": [channel], limit: 1 }]);
-  expect(windowRead?.[0]?.thread_window).toBe(true);
-  expect(rest).toEqual([]);
-  expect(windowSignal(h.fetcher, calls)?.aborted).toBe(true);
+  expect(h.requests.slice(before)).toEqual([
+    [{ ids: [root.id], "#h": [channel], limit: 1 }],
+  ]);
   expect(h.view.snapshot()).toMatchObject({
     status: "error",
     root: undefined,
@@ -897,9 +984,7 @@ it.each([
   await loading;
   expect(h.view.snapshot().replies).toEqual([]);
   expect(h.view.snapshot().root).toBeUndefined();
-  // The first window read starts with the root read; the fence stops it.
-  expect(h.requests).toHaveLength(2);
-  expect(windowSignal(h.fetcher)?.aborted).toBe(true);
+  expect(h.requests).toHaveLength(phase === "root" ? 1 : 2);
 });
 
 it.each([8_210_266_876_800, Number.MAX_SAFE_INTEGER])(

@@ -1,3 +1,4 @@
+import { promptSections } from "../../features/agents/activity-transcript";
 import { openVoice } from "./voice";
 import {
   createToolOperation,
@@ -8843,3 +8844,41 @@ it("waits for community compaction before opening voice", async () => {
     f.runtime.dispose();
   }
 });
+
+it.each(["mention", "attention"] as const)(
+  "keeps structured context after the community Canvas prefix for %s",
+  async (kind) => {
+    const f = fixture();
+    const delivery = f.delivery("ordinary context remains parseable");
+    await f.runtime.run({
+      ...delivery,
+      config: { ...(delivery.config as object), scope: "community" },
+      ...(kind === "attention"
+        ? {
+            trigger: {
+              type: "attention",
+              channel: "channel",
+              root,
+              id: "d".repeat(64),
+              at: 100,
+              text: "ordinary wake context remains parseable",
+            } as Delivery["trigger"],
+          }
+        : {}),
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const start = f.starts()[0];
+    if (!start) throw new Error("Codex did not submit");
+    const input =
+      (start.params as { input: { text: string }[] }).input[0]?.text ?? "";
+    const sections = promptSections(input);
+    expect(
+      sections.find((part) => part.tag === "workspace-canvas"),
+    ).toBeDefined();
+    const context = sections.find((part) => part.tag === "context");
+    expect(context).toBeDefined();
+    expect(JSON.parse(context?.body ?? "{}").session_scope).toBe("community");
+    if (kind === "mention")
+      expect(sections.some((part) => part.tag === "buzz-event")).toBe(true);
+  },
+);

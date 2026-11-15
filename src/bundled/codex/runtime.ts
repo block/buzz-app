@@ -3282,15 +3282,18 @@ export class CodexRuntime {
           return;
         }
         if (settings.scope === "community")
-          request.project = [
-            entry.project.resolve(
-              request.unaddressed ? undefined : request.conversation.channelId,
-              request.solo ? request.canvas : NO_PROJECT,
-            ).section,
-            request.project,
-          ]
-            .filter(Boolean)
-            .join("\n\n");
+          request.project =
+            [
+              entry.project.resolve(
+                request.unaddressed
+                  ? undefined
+                  : request.conversation.channelId,
+                request.solo ? request.canvas : NO_PROJECT,
+              ).section,
+              request.project,
+            ]
+              .filter(Boolean)
+              .join("\n\n") + "\n\n";
         const turn = await rpc
           .request<{ turn: { id: string } }>("turn/start", {
             threadId: active.threadId,

@@ -2537,13 +2537,23 @@ it("hands different channels to the same community conversation key", async () =
   });
   const config = { ...DEFAULT_CONFIG, scope: "community" as const };
 
+  f.solo.add(channel);
+  const conversationInstructions = vi.fn((source: string, root?: string) =>
+    source === channel && !root
+      ? { plugin: "acme.tasks", text: "SOURCE_ONLY" }
+      : undefined,
+  );
+  Object.assign(f.agent, { conversationInstructions });
   const listed = f.session.channels.list();
   const firstChannel = listed.channels[0];
   if (!firstChannel) throw new Error("Expected the source channel");
   vi.spyOn(f.session.channels, "list").mockImplementation(() => ({
     ...listed,
     status: "ready",
-    channels: [...listed.channels, { ...firstChannel, id: "other" }],
+    channels: [
+      { ...firstChannel, channelType: "solo" },
+      { ...firstChannel, id: "other" },
+    ],
   }));
   try {
     const first = f.deliver(
@@ -2574,6 +2584,11 @@ it("hands different channels to the same community conversation key", async () =
     ]);
     expect(requests[1]?.params.context).toMatchObject({ channel: "other" });
     expect(requests[1]?.params.text).toContain("Session scope: community");
+    expect(requests[0]?.params.text).toContain("SOURCE_ONLY");
+    expect(requests[1]?.params.text).toContain(
+      "Disregard any earlier <owner-instructions>",
+    );
+    expect(conversationInstructions).toHaveBeenCalledWith(channel, undefined);
   } finally {
     f.runtime.dispose();
   }
@@ -2598,7 +2613,7 @@ it("uses the shared community lifetime for an unaddressed wake with no tool dest
     expect(f.host.requests("deliver")[0]?.params).toMatchObject({
       key: "@community",
       context: {},
-      text: "check",
+      text: expect.stringContaining("check"),
     });
   } finally {
     f.runtime.dispose();

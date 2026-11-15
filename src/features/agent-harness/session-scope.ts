@@ -91,13 +91,24 @@ export async function communityTurn<T>(
     topLevel: false,
     handed: done,
     settled: done.catch(() => undefined),
-    cancel: () => cancel.abort(),
+    cancel: () => {
+      for (const policy of prior) policy.cancel();
+      cancel.abort();
+    },
   };
   policies.set(COMMUNITY_SESSION, policy);
-  try {
-    return await done;
-  } finally {
+  // Keep the ordering barrier until prior work drains, even when this caller
+  // has already left because its deadline expired.
+  void policy.settled.then(() => {
     if (policies.get(COMMUNITY_SESSION) === policy)
       policies.delete(COMMUNITY_SESSION);
-  }
+  });
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(lifetime.reason);
+    if (lifetime.aborted) abort();
+    else lifetime.addEventListener("abort", abort, { once: true });
+    void done
+      .then(resolve, reject)
+      .finally(() => lifetime.removeEventListener("abort", abort));
+  });
 }

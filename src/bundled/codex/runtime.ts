@@ -1927,6 +1927,10 @@ export class CodexRuntime {
           };
           entry.lanes.set(key, lane);
         }
+        if (settings.scope === "community") {
+          this.start(request, text, key, lane, entry);
+          return;
+        }
         if (lane.active) {
           const active = lane.active;
           let queued = false;
@@ -1952,7 +1956,6 @@ export class CodexRuntime {
                 active.finished ||
                 active.stopped ||
                 lane.queued ||
-                request.settings.scope === "community" ||
                 request.conversation.topLevel !==
                   active.reply.conversation.topLevel ||
                 (request.model && request.model !== active.model) ||

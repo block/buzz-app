@@ -3932,12 +3932,30 @@ describe("a conversation given its own folder", () => {
     expect(fake.processes.some((process) => process.id === "workspace")).toBe(
       false,
     );
+    const shared = {
+      agent: self,
+      channelId: channel,
+      root: root.id,
+      community: true as const,
+    };
+    const signal = new AbortController().signal;
+    await runtime.transcript(shared, "~/.buzz", false, signal);
+    await runtime.latestTurns(shared, "~/.buzz", false, signal, []);
+    expect(
+      fake.processes.filter((process) => process.id === "workspace"),
+    ).toHaveLength(2);
   });
 });
 
 it("shares a community session across channels without steering into another destination", async () => {
-  const f = setup([], { hold: true });
+  const f = setup([], { hold: true, solo: new Set([channel]) });
   const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const conversationInstructions = vi.fn((source: string, root?: string) =>
+    source === channel && !root
+      ? { plugin: "acme.tasks", text: "SOURCE_ONLY" }
+      : undefined,
+  );
+  Object.assign(f.agent, { conversationInstructions });
   const listed = f.session.channels.list();
   const firstChannel = listed.channels[0];
   if (!firstChannel) throw new Error("Expected the source channel");
@@ -3974,6 +3992,11 @@ it("shares a community session across channels without steering into another des
     await vi.waitFor(() => expect(worker.prompts).toHaveLength(2));
     expect(worker.prompts[1]).toContain("Session scope: community");
     expect(worker.prompts[1]).toContain("other");
+    expect(worker.prompts[0]).toContain("SOURCE_ONLY");
+    expect(worker.prompts[1]).toContain(
+      "Disregard any earlier <owner-instructions>",
+    );
+    expect(conversationInstructions).toHaveBeenCalledWith(channel, undefined);
     worker.finish();
     await vi.waitFor(() =>
       expect(f.runtime.conversations(self)).toHaveLength(1),

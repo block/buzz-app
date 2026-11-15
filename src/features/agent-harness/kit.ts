@@ -407,13 +407,14 @@ export function harnessKit(sources: Sources): HarnessKit {
           ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
           : {}),
       });
-      const noteRoot = conversation.root;
+      const noteRoot =
+        scope === "community" && !topLevel && !dm ? rootId : conversation.root;
       const notes = agent.notes?.(channelId, noteRoot) ?? [];
       return {
         text: [
           resumed ? `${text}\n\n${RESUMED_PROMPT}` : text,
           ...notes,
-          turnNote(agent, channelId, noteRoot),
+          turnNote(agent, channelId, noteRoot, scope === "community"),
         ]
           .filter(Boolean)
           .join("\n\n"),

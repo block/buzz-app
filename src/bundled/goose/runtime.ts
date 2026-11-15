@@ -555,7 +555,7 @@ export class GooseRuntime {
           // Plugins' notes wait until the turn is handed over, so one that
           // fails or is cancelled before then leaves them for the next.
           noteRoot =
-            key === channel || (key === COMMUNITY_SESSION && dm)
+            topLevel || key === channel || (key === COMMUNITY_SESSION && dm)
               ? undefined
               : (threadReference(event)?.rootId ?? event.id);
           notes = agent.notes?.(channel, noteRoot) ?? [];
@@ -697,18 +697,32 @@ export class GooseRuntime {
               if (text === undefined || !delivery.current())
                 return { ok: true };
               entry.contexts.set(COMMUNITY_SESSION, {});
-              return entry.sessions.deliver(
-                COMMUNITY_SESSION,
-                standalonePrompt(agent.key, text),
-                0,
-                {
-                  signal,
-                  current: () => !signal.aborted && delivery.current(),
-                  ...(delivery.synced?.effort
-                    ? { kept: delivery.synced.effort }
-                    : {}),
-                },
-              );
+              signal.throwIfAborted();
+              const stop = () => {
+                void entry.sessions.interrupt(COMMUNITY_SESSION);
+              };
+              signal.addEventListener("abort", stop, { once: true });
+              try {
+                return await entry.sessions.deliver(
+                  COMMUNITY_SESSION,
+                  [
+                    standalonePrompt(agent.key, text),
+                    turnNote(entry.handle, undefined, undefined, true),
+                  ]
+                    .filter(Boolean)
+                    .join("\n\n"),
+                  0,
+                  {
+                    signal,
+                    current: () => !signal.aborted && delivery.current(),
+                    ...(delivery.synced?.effort
+                      ? { kept: delivery.synced.effort }
+                      : {}),
+                  },
+                );
+              } finally {
+                signal.removeEventListener("abort", stop);
+              }
             },
           )
         : entry.sessions.runOnce(
@@ -741,7 +755,16 @@ export class GooseRuntime {
     channelId: string,
     root: string | undefined,
   ) {
-    return [text, ...notes, turnNote(entry.handle, channelId, root)]
+    return [
+      text,
+      ...notes,
+      turnNote(
+        entry.handle,
+        channelId,
+        root,
+        entry.config.scope === "community",
+      ),
+    ]
       .filter(Boolean)
       .join("\n\n");
   }

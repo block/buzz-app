@@ -7806,3 +7806,38 @@ it("restores the saved community session from a different channel", async () => 
   );
   await restored.complete();
 });
+
+it("reserves community mentions before later unaddressed wakes during startup", async () => {
+  const f = fixture();
+  const gate = deferred<void>();
+  const reading = deferred<void>();
+  f.read.mockImplementationOnce(async () => {
+    reading.resolve();
+    await gate.promise;
+    return [];
+  });
+  const base = f.delivery("first");
+  const delivery = {
+    ...base,
+    config: { ...(base.config as object), scope: "community" },
+  };
+  await f.runtime.run(delivery);
+  await reading.promise;
+  await f.runtime.run({ ...f.delivery("second"), config: delivery.config });
+  const wake = f.runtime.runOnce({
+    delivery,
+    key: "third",
+    signal: new AbortController().signal,
+    prompt: async () => "third wake",
+  });
+  gate.resolve();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(inputText(f.starts()[1])).toContain("second");
+  await f.complete(1);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(inputText(f.starts()[2])).toContain("third wake");
+  await f.complete(2);
+  await wake;
+});

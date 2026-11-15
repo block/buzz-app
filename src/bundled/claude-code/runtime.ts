@@ -1164,7 +1164,9 @@ export class ClaudeRuntime {
           // Plugins' notes wait until the turn is handed over, so one that
           // fails or is cancelled before then leaves them for the next.
           const noteRoot =
-            key === channel || (key === COMMUNITY_SESSION && !source.root)
+            topLevel ||
+            key === channel ||
+            (key === COMMUNITY_SESSION && !source.root)
               ? undefined
               : (threadReference(event)?.rootId ?? event.id);
           const notes = agent.notes?.(channel, noteRoot) ?? [];
@@ -1379,7 +1381,9 @@ export class ClaudeRuntime {
               try {
                 return await entry.sessions.deliver(
                   COMMUNITY_SESSION,
-                  text,
+                  [text, turnNote(entry.handle, undefined, undefined, true)]
+                    .filter(Boolean)
+                    .join("\n\n"),
                   0,
                   {
                     current: () => !signal.aborted && delivery.current(),
@@ -1418,7 +1422,16 @@ export class ClaudeRuntime {
     channelId: string,
     root: string | undefined,
   ) {
-    return [text, ...notes, turnNote(entry.handle, channelId, root)]
+    return [
+      text,
+      ...notes,
+      turnNote(
+        entry.handle,
+        channelId,
+        root,
+        entry.config.scope === "community",
+      ),
+    ]
       .filter(Boolean)
       .join("\n\n");
   }

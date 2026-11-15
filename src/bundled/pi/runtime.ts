@@ -662,7 +662,7 @@ export class PiRuntime {
               : {}),
           }),
           channel,
-          key === channel || (key === COMMUNITY_SESSION && dm)
+          topLevel || key === channel || (key === COMMUNITY_SESSION && dm)
             ? undefined
             : root,
         );
@@ -838,7 +838,11 @@ export class PiRuntime {
         conversation: number;
       }>(community ? "deliver" : "once", {
         agent: agent.key,
-        text,
+        text: community
+          ? [text, turnNote(entry.handle, undefined, undefined, true)]
+              .filter(Boolean)
+              .join("\n\n")
+          : text,
         request,
         ...turn,
         ...(community
@@ -1291,7 +1295,12 @@ export class PiRuntime {
     channelId: string,
     root: string | undefined,
   ) {
-    const note = turnNote(entry.handle, channelId, root);
+    const note = turnNote(
+      entry.handle,
+      channelId,
+      root,
+      entry.config.scope === "community",
+    );
     return note ? `${text}\n\n${note}` : text;
   }
 

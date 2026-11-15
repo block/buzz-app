@@ -2613,8 +2613,14 @@ it("runs an agent on Recommended on the current candidate", () => {
 });
 
 it("uses one ordered community session across source channels", async () => {
-  const f = setup({ hold: true, scope: "community" });
+  const f = setup({ hold: true, scope: "community", solo: new Set([channel]) });
 
+  const conversationInstructions = vi.fn((source: string, root?: string) =>
+    source === channel && !root
+      ? { plugin: "acme.tasks", text: "SOURCE_ONLY" }
+      : undefined,
+  );
+  Object.assign(f.agent, { conversationInstructions });
   const listed = f.session.channels.list();
   const firstChannel = listed.channels[0];
   if (!firstChannel) throw new Error("Expected the source channel");
@@ -2644,8 +2650,38 @@ it("uses one ordered community session across source channels", async () => {
     expect(process.turns[1]?.sessionId).toBe(process.turns[0]?.sessionId);
     expect(process.turns[1]?.text).toContain("Session scope: community");
     expect(process.turns[1]?.text).toContain("other");
+    expect(process.turns[0]?.text).toContain("SOURCE_ONLY");
+    expect(process.turns[1]?.text).toContain(
+      "Disregard any earlier <owner-instructions>",
+    );
+    expect(conversationInstructions).toHaveBeenCalledWith(channel, undefined);
     process.turns[1]?.finish();
   } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("interrupts an executing community wake when its deadline expires", async () => {
+  const f = setup({ hold: true, scope: "community" });
+  const abort = new AbortController();
+  const done = f.runtime.runOnce({
+    delivery: {
+      agent: f.agent,
+      config: { ...DEFAULT_CONFIG, scope: "community" },
+      current: () => true,
+    },
+    key: "deadline",
+    signal: abort.signal,
+    prompt: async () => "check",
+  } as unknown as Parameters<GooseRuntime["runOnce"]>[0]);
+  void done.catch(() => {});
+  try {
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    abort.abort(new Error("deadline"));
+    await vi.waitFor(() => expect(f.goose()?.cancelled).toHaveLength(1));
+  } finally {
+    f.goose()?.turns[0]?.finish();
+    await done.catch(() => {});
     f.runtime.dispose();
   }
 });

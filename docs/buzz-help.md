@@ -1033,9 +1033,14 @@ available rather than silently discarding it.
   device and their provider support.
 - For supported local agents, **One session per thread** keeps each channel
   thread's context separate. **One session per channel** lets threads in the
-  same channel share context. This setting changes what the agent remembers
-  together, not where its reply appears. A DM, huddle room, or Solo chat is one
-  continuing conversation under either choice.
+  same channel share context. **One session per community** shares one session
+  across that agent's channels, threads, DMs, Solo chats and huddles in the same
+  community. Work joins that shared session in order, and replies keep the
+  current request's destination. New and Compact affect that shared session
+  from any conversation. Community scope does not grant additional channel
+  access or share context with another community. Under the thread and channel
+  choices, each DM, huddle room and Solo chat remains its own continuing
+  conversation. Session lifetime and restoration still depend on the harness.
 - An agent's own messages do not wake it, even when they mention its name.
   To pass work to the same agent in another conversation, use `self_handoff`
   with the channel, text, and a thread message ID outside a Solo chat.

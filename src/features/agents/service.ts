@@ -737,8 +737,8 @@ export type Trigger =
       /** This is its last allowed occurrence. */
       spent: boolean;
     }>;
-/** A turn with no conversation and nothing saved, such as for a watch or a
- * timer. */
+/** An unaddressed wake with no default posting destination. A harness can
+ * retain it in the agent's community session. */
 export type StandaloneTurn<Config = unknown> = Readonly<{
   /** The watch's or timer's delivery. */
   delivery: Delivery<Config>;
@@ -831,6 +831,7 @@ export type SessionControlAction = SessionAction | "interrupt";
 export type SessionPlace = Readonly<{
   channelId: string;
   root?: string;
+  community?: true;
 }>;
 export type SessionState = "idle" | "active" | "compacting" | "unavailable";
 export type AgentMigrationSetting = Readonly<{
@@ -1025,7 +1026,7 @@ export type AgentType<Config = unknown> = {
    * `thread` it starts a thread of its own, with no session to act on. A DM or
    * Solo chat is one session either way. */
   sessionControls?: {
-    scope(agent: Agent<Config>): "thread" | "channel";
+    scope(agent: Agent<Config>): "thread" | "channel" | "community";
     state(agent: Agent<Config>, place: SessionPlace): SessionState;
     run(
       agent: Agent<Config>,
@@ -4813,12 +4814,17 @@ export class AgentsService extends Service implements Agents {
     source: SessionPlace,
   ): SessionPlace {
     const summary = this.channelOf(agent, { tags: [["h", source.channelId]] });
+    const scope = type.sessionControls?.scope(agent);
     const whole =
       summary?.channelType === "solo" ||
       summary?.channelType === "dm" ||
-      type.sessionControls?.scope(agent) === "channel";
+      scope === "channel" ||
+      scope === "community";
     return {
       channelId: source.channelId,
+      ...(type.sessionControls?.scope(agent) === "community"
+        ? { community: true }
+        : {}),
       ...(!whole && source.root ? { root: source.root } : {}),
     };
   }
@@ -4971,7 +4977,7 @@ export class AgentsService extends Service implements Agents {
    * no turn would show them. So does a huddle room, whose conversations
    * harnesses key differently. */
   private async instructionsPlace(key: AgentKey, place: SessionPlace) {
-    const found = this.folderPlace(key, place);
+    const found = this.folderPlace(key, place, "instructions");
     const reads = ownerReads(this.relay(key), pubkeyOf(key));
     if (isHuddleRoom((await reads?.channel(place.channelId))?.about))
       throw new Error("Conversation instructions are unavailable in a huddle");
@@ -5023,13 +5029,24 @@ export class AgentsService extends Service implements Agents {
   }
   /** Where the owner's local agent keeps a conversation's folder: keyed as
    * its harness keys the conversation's session. */
-  private folderPlace(key: AgentKey, place: SessionPlace) {
+  private folderPlace(
+    key: AgentKey,
+    place: SessionPlace,
+    purpose: "folder" | "instructions" = "folder",
+  ) {
     const agent = this.agent(key);
     const type = agent && this.types().find((kind) => kind.key === agent.type);
     if (!agent || !this.liveMember(key) || type?.remote)
       throw new Error("No such local agent on this device");
     const scope = ownerReads(this.relay(key), pubkeyOf(key))?.scope;
     if (!scope) throw new Error("The agent's community is not connected");
+    if (
+      purpose === "folder" &&
+      type?.sessionControls?.scope(agent) === "community"
+    )
+      throw new Error(
+        "A community session uses the agent workspace, not a conversation folder",
+      );
     const channel = type?.sessionControls?.scope(agent) === "channel";
     return {
       scope,

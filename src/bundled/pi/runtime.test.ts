@@ -1,3 +1,4 @@
+import { memoryStorage } from "../../features/agents/test-fakes";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   promptMessage,
@@ -135,6 +136,9 @@ function setup(
       connection.live && key === self
         ? (agent as unknown as AgentHandle)
         : undefined,
+    undefined,
+    undefined,
+    memoryStorage(),
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
@@ -2526,3 +2530,77 @@ it.each(["stop", "retire"])(
     expect(check).not.toHaveBeenCalled();
   },
 );
+
+it("hands different channels to the same community conversation key", async () => {
+  const f = setup({
+    wait: () => ({ status: "done", answer: 1, text: "Done" }),
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+
+  const listed = f.session.channels.list();
+  const firstChannel = listed.channels[0];
+  if (!firstChannel) throw new Error("Expected the source channel");
+  vi.spyOn(f.session.channels, "list").mockImplementation(() => ({
+    ...listed,
+    status: "ready",
+    channels: [...listed.channels, { ...firstChannel, id: "other" }],
+  }));
+  try {
+    const first = f.deliver(
+      { type: "mention", event: reply("2", "first") },
+      { config },
+    );
+    await first.run;
+    await f.settled(first);
+    const next = f.deliver(
+      {
+        type: "mention",
+        event: message("3", "second", {
+          tags: [
+            ["h", "other"],
+            ["p", self],
+          ],
+        }),
+      },
+      { config, channelId: "other" },
+    );
+    await next.run;
+    await f.settled(next);
+    const requests = f.host.requests("deliver");
+    expect(requests).toHaveLength(2);
+    expect(requests.map((request) => request.params.key)).toEqual([
+      "@community",
+      "@community",
+    ]);
+    expect(requests[1]?.params.context).toMatchObject({ channel: "other" });
+    expect(requests[1]?.params.text).toContain("Session scope: community");
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("uses the shared community lifetime for an unaddressed wake with no tool destination", async () => {
+  const f = setup({
+    wait: () => ({ status: "done", answer: 1, text: "Done" }),
+  });
+  try {
+    await f.runtime.runOnce({
+      delivery: {
+        agent: f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "community" },
+        current: () => true,
+      },
+      key: "check",
+      signal: new AbortController().signal,
+      prompt: async () => "check",
+    } as unknown as StandaloneTurn);
+    expect(f.host.requests("once")).toEqual([]);
+    expect(f.host.requests("deliver")[0]?.params).toMatchObject({
+      key: "@community",
+      context: {},
+      text: "check",
+    });
+  } finally {
+    f.runtime.dispose();
+  }
+});

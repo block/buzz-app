@@ -1,3 +1,4 @@
+import { sessionScope } from "../../features/agent-harness/session-scope";
 import type { AgentExecutionBinding } from "../../features/agents/execution";
 import type { AgentKey } from "../../features/agents/membership";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
@@ -66,8 +67,10 @@ import type { CodexRuntime, SavedConversation } from "./runtime";
 import type { CodexSetup } from "./setup";
 import { readTranscript, TURN_LIMIT } from "./transcript";
 
-const label = ({ channelId, name, root }: SavedConversation) =>
-  `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
+const label = ({ channelId, name, root, community }: SavedConversation) =>
+  community
+    ? "Community session"
+    : `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 
 type Catalog = {
   models: Model[];
@@ -314,6 +317,7 @@ const SCOPES = [
     options: [
       { value: "thread", label: "One session per thread" },
       { value: "channel", label: "One session per channel" },
+      { value: "community", label: "One session per community" },
     ],
   },
 ];
@@ -1116,8 +1120,14 @@ export function createTabs(
       conversations,
       conversation,
       (place, signal) =>
-        runtime.find({ key: agent.key, name: agent.name }, place, signal),
+        runtime.find(
+          { key: agent.key, name: agent.name },
+          place,
+          signal,
+          readConfig(agent.config).scope === "community",
+        ),
       (channelId) => runtime.channelLabel(agent.key, channelId),
+      readConfig(agent.config).scope,
     );
     const recent = conversations
       .filter((item) => item.key !== here?.key)
@@ -1443,6 +1453,7 @@ export function createTabs(
             </Field>
             <Select
               label="Sessions"
+              description="Community shares context across channels, DMs, Solo chats and huddles in this community."
               variant="preference"
               value={draft.scope}
               groups={SCOPES}
@@ -1450,7 +1461,7 @@ export function createTabs(
               onValueChange={(value) =>
                 setDraft({
                   ...draft,
-                  scope: value === "channel" ? "channel" : "thread",
+                  scope: sessionScope(value),
                 })
               }
             />

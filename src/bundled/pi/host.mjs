@@ -1663,6 +1663,10 @@ export function serve({
     async unfinished({ agent }) {
       const opened = await agentOf(agent);
       const { submissions } = await opened.harness.inspect(context);
+      const places = (await opened.harness.snapshot(Places, context)) ?? {};
+      const keys = new Map(
+        Object.entries(places).map(([key, place]) => [place.conversation, key]),
+      );
       const replies = (await opened.harness.snapshot(Replies, context)) ?? {};
       return {
         submissions: submissions.flatMap(
@@ -1673,6 +1677,9 @@ export function serve({
                   {
                     submission: id,
                     conversation: conversationId,
+                    ...(keys.has(conversationId)
+                      ? { key: keys.get(conversationId) }
+                      : {}),
                     request: requestId,
                     ...(replies[requestId]
                       ? { reply: replies[requestId] }

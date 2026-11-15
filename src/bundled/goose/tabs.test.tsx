@@ -921,6 +921,10 @@ function activity(
     },
     sessions: () => live,
     conversations: () => world.saved,
+    source: (_agent: string, key: string) => {
+      const [channelId = key, root] = key.split("/");
+      return { channelId, ...(root ? { root } : {}) };
+    },
     channelLabel: (_: string, id: string) =>
       world.names?.[id] ? { name: world.names[id], kind: "stream" } : undefined,
     prompts: () => ({

@@ -40,6 +40,7 @@ export type Conversation = Readonly<{
   /** The agent's membership key, as its turn prompts name it. */
   agent: string;
   sessionId?: string;
+  community?: true;
   channelId: string;
   root?: string;
 }>;
@@ -268,11 +269,15 @@ export function startedFor(file: string, conversation: Conversation) {
     const agent = field("Agent");
     return (
       (agent === undefined || agent === conversation.agent) &&
-      !!field("Channel")?.endsWith(`(#${conversation.channelId})`) &&
-      (conversation.root
-        ? field("Session scope") === "thread" &&
-          field("Thread root") === conversation.root
-        : field("Session scope") !== "thread")
+      (conversation.community
+        ? field("Session scope") === "community"
+        : field("Session scope") !== "community" &&
+          !!field("Channel")?.endsWith(`(#${conversation.channelId})`)) &&
+      (conversation.community ||
+        (conversation.root
+          ? field("Session scope") === "thread" &&
+            field("Thread root") === conversation.root
+          : field("Session scope") !== "thread"))
     );
   }
   return false;

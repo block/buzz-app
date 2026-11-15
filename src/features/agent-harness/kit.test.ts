@@ -508,3 +508,25 @@ describe("harnessKit.tools", () => {
     );
   });
 });
+
+it("uses one community identity across sources without crossing agent memberships", async () => {
+  const f = setup();
+  const trigger = { type: "mention", event: message("1", "first") } as const;
+  const first = await f.kit.conversation(f.delivery(trigger), "community");
+  const second = await f.kit.conversation(
+    f.delivery(
+      { type: "mention", event: message("2", "second") },
+      { channelId: "other" },
+    ),
+    "community",
+  );
+  expect(second?.key).toBe(first?.key);
+  expect(second?.channel).toBe("other");
+  const isolated = await f.kit.conversation(
+    f.delivery(trigger, {
+      agent: { ...f.agent, key: `${self}@other.example` },
+    }),
+    "community",
+  );
+  expect(isolated?.key).not.toBe(first?.key);
+});

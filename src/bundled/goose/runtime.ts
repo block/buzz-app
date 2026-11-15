@@ -1,3 +1,12 @@
+import {
+  COMMUNITY_SESSION,
+  sessionScope,
+  communityTurn,
+  scopedSessionKey,
+  scopeOfSession,
+  rememberCommunitySource,
+  sessionSource,
+} from "../../features/agent-harness/session-scope";
 // Turns Agents deliveries into goose turns. Each agent of this type runs in
 // its own `goose-acp` process; a delivery becomes a prompt in the harness format,
 // sent to the agent's ACP session for its conversation; a watch or timer wake
@@ -97,6 +106,11 @@ export const DEFAULT_CONFIG: Config = Object.freeze({
 export const config = (value: unknown): Config => ({
   ...DEFAULT_CONFIG,
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
+  scope: sessionScope(
+    value && typeof value === "object"
+      ? (value as Partial<Config>).scope
+      : undefined,
+  ),
 });
 /** What an agent runs on: its config, with `candidate`'s provider, model and
  * thinking level in place of its own while it is on Recommended. */
@@ -325,6 +339,9 @@ export class GooseRuntime {
       session?.profiles.snapshot().get(pubkey)?.name
     );
   }
+  source(agent: AgentKey, key: string) {
+    return sessionSource(this.agentStore, agent, key);
+  }
   /** The agent's saved conversations, most recently used first. Removing an
    * agent keeps them. */
   conversations(agent: AgentKey) {
@@ -350,9 +367,11 @@ export class GooseRuntime {
   }
   private readonly controls = new SessionControls(() => this.notify());
   private controlKey(agent: Agent, place: SessionPlace) {
-    return config(agent.config).scope === "channel" || !place.root
-      ? place.channelId
-      : `${place.channelId}/${place.root}`;
+    return scopedSessionKey(
+      config(agent.config).scope,
+      place.channelId,
+      place.root,
+    );
   }
   sessionState(agent: Agent, place: SessionPlace): SessionState {
     const key = this.controlKey(agent, place);
@@ -495,6 +514,7 @@ export class GooseRuntime {
       });
       return {
         key: turn.key,
+        dm: turn.channel.dm,
         shown: turn.shown,
         place: where.name
           ? `#${where.name}`
@@ -504,7 +524,8 @@ export class GooseRuntime {
         text: resumed ? `${text}\n\n${RESUMED_PROMPT}` : text,
       };
     };
-    const { key, text: prepared, place, shown } = await prompt(false);
+    const { key, text: prepared, place, shown, dm } = await prompt(false);
+    await rememberCommunitySource(this.agentStore, agent.key, key, channel);
     signal.throwIfAborted();
     const handoff = this.controls.deliver(
       `${agent.key}/${key}`,
@@ -516,8 +537,13 @@ export class GooseRuntime {
         let noteRoot: string | undefined;
         let notes: ReturnType<NonNullable<AgentHandle["notes"]>> = [];
         const prior = entry.policies.get(key);
-        const same = prior?.topLevel === topLevel;
-        const wait = prior && (same ? prior.handed : prior.settled);
+        const same = key !== COMMUNITY_SESSION && prior?.topLevel === topLevel;
+        const wait =
+          key === COMMUNITY_SESSION
+            ? Promise.all(
+                [...entry.policies.values()].map((policy) => policy.settled),
+              )
+            : prior && (same ? prior.handed : prior.settled);
         let delivered!: ReturnType<AgentSessions["deliver"]>;
         let interrupted = false;
         const handed = (async () => {
@@ -529,7 +555,7 @@ export class GooseRuntime {
           // Plugins' notes wait until the turn is handed over, so one that
           // fails or is cancelled before then leaves them for the next.
           noteRoot =
-            key === channel
+            key === channel || (key === COMMUNITY_SESSION && dm)
               ? undefined
               : (threadReference(event)?.rootId ?? event.id);
           notes = agent.notes?.(channel, noteRoot) ?? [];
@@ -548,7 +574,7 @@ export class GooseRuntime {
             key,
             topLevel
               ? { channel, ...(solo ? { topLevel } : {}) }
-              : key === channel
+              : key === channel || (key === COMMUNITY_SESSION && dm)
                 ? { channel }
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
@@ -577,7 +603,11 @@ export class GooseRuntime {
                 channel,
                 noteRoot,
               ),
-            title: sessionTitle(entry.name, place, key.split("/")[1]),
+            title: sessionTitle(
+              entry.name,
+              key === COMMUNITY_SESSION ? "Community" : place,
+              key.split("/")[1],
+            ),
             // A Solo chat takes the name goose gives its first session.
             ...(solo && named ? { named } : {}),
             ...(!deferred && !wait ? { signal } : {}),
@@ -655,21 +685,49 @@ export class GooseRuntime {
     const entry = this.entry(agent.key, this.settings(delivery.config));
     entry.handle = agent;
     entry.team = team ?? "";
-    const done = entry.sessions.runOnce(
-      key,
-      async () => {
-        const text = await prompt();
-        return text === undefined
-          ? undefined
-          : standalonePrompt(agent.key, text);
-      },
-      {
-        signal,
-        title: sessionTitle(entry.name, key),
-        current: delivery.current,
-        ...(delivery.synced?.effort ? { kept: delivery.synced.effort } : {}),
-      },
-    );
+    const done =
+      entry.config.scope === "community"
+        ? communityTurn(
+            entry.policies,
+            signal,
+            this.controls,
+            `${agent.key}/${COMMUNITY_SESSION}`,
+            async (signal) => {
+              const text = await prompt();
+              if (text === undefined || !delivery.current())
+                return { ok: true };
+              entry.contexts.set(COMMUNITY_SESSION, {});
+              return entry.sessions.deliver(
+                COMMUNITY_SESSION,
+                standalonePrompt(agent.key, text),
+                0,
+                {
+                  signal,
+                  current: () => !signal.aborted && delivery.current(),
+                  ...(delivery.synced?.effort
+                    ? { kept: delivery.synced.effort }
+                    : {}),
+                },
+              );
+            },
+          )
+        : entry.sessions.runOnce(
+            key,
+            async () => {
+              const text = await prompt();
+              return text === undefined
+                ? undefined
+                : standalonePrompt(agent.key, text);
+            },
+            {
+              signal,
+              title: sessionTitle(entry.name, key),
+              current: delivery.current,
+              ...(delivery.synced?.effort
+                ? { kept: delivery.synced.effort }
+                : {}),
+            },
+          );
     this.notify();
     return done.finally(() => this.notify());
   }
@@ -756,15 +814,20 @@ export class GooseRuntime {
     // A Solo chat is one conversation, as a DM is.
     const key =
       admitted ??
-      (topLevel || dm || entry.config.scope === "channel"
-        ? channelId
-        : `${channelId}/${rootId}`);
+      scopedSessionKey(
+        entry.config.scope,
+        channelId,
+        topLevel || dm ? undefined : rootId,
+      );
 
     // The conversation it was admitted to, not the scope as it is now.
-    const scope: Scope = key === channelId ? "channel" : "thread";
+    const scope: Scope = scopeOfSession(key, channelId);
     // A resumed turn's session never saw its thread, its own replies included,
     // even when another resumed turn already opened it in a channel session.
-    const seen = fresh || resumed ? 0 : entry.sessions.seen(key);
+    const seen =
+      fresh || resumed || key === COMMUNITY_SESSION
+        ? 0
+        : entry.sessions.seen(key);
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const owner = entry.handle?.owner;
     const reading = solo

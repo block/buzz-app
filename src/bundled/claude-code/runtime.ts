@@ -1,3 +1,12 @@
+import {
+  COMMUNITY_SESSION,
+  sessionScope,
+  communityTurn,
+  scopedSessionKey,
+  scopeOfSession,
+  rememberCommunitySource,
+  sessionSource,
+} from "../../features/agent-harness/session-scope";
 import { protectionTranscript } from "./protection-transcript";
 import type { PRESET } from "../../features/agents/recommended";
 import { fileStore } from "../../features/agents/state";
@@ -125,6 +134,11 @@ export const DEFAULT_CONFIG: Config = Object.freeze({
 export const config = (value: unknown): Config => ({
   ...DEFAULT_CONFIG,
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
+  scope: sessionScope(
+    value && typeof value === "object"
+      ? (value as Partial<Config>).scope
+      : undefined,
+  ),
 });
 
 /** A saved session, for the owner's transcript list, with the channel's name
@@ -651,11 +665,16 @@ export class ClaudeRuntime {
             })
         : this.savedSessions(agent).list();
     return saved.map(([key, saved]) => {
-      const [channelId = key, root] = key.split("/");
+      const { channelId, root, ...location } = sessionSource(
+        this.storage,
+        agent,
+        key,
+      );
       return {
         key,
         agent,
         sessionId: saved.id,
+        ...location,
         channelId,
         ...(root ? { root } : {}),
         ...reads?.channelLabel(channelId),
@@ -742,26 +761,34 @@ export class ClaudeRuntime {
     place: Readonly<{ channelId: string; root?: string }>,
     workspace: string,
     signal: AbortSignal,
+    community = false,
   ): Promise<SavedConversation | undefined> {
     if (await this.inspect?.(agent)) return undefined;
     const transcript = await readTranscript(
       this.spawn,
       this.place(
         agent,
-        conversationKey(place.channelId, place.root),
+        community
+          ? COMMUNITY_SESSION
+          : conversationKey(place.channelId, place.root),
         workspace,
       ),
-      { agent, ...place },
+      { agent, ...place, ...(community ? { community: true } : {}) },
       false,
       signal,
     );
     const last = transcript?.turns.at(-1);
     if (!last?.sessionId) return undefined;
     return {
-      key: place.root ? `${place.channelId}/${place.root}` : place.channelId,
+      key: community
+        ? COMMUNITY_SESSION
+        : place.root
+          ? `${place.channelId}/${place.root}`
+          : place.channelId,
       agent,
       sessionId: last.sessionId,
       ...place,
+      ...(community ? { community: true as const } : {}),
       at: last.endedAt ?? last.startedAt,
     };
   }
@@ -788,9 +815,11 @@ export class ClaudeRuntime {
   }
   private readonly controls = new SessionControls(() => this.notify());
   private controlKey(agent: Agent, place: SessionPlace) {
-    return config(agent.config).scope === "channel" || !place.root
-      ? place.channelId
-      : `${place.channelId}/${place.root}`;
+    return scopedSessionKey(
+      config(agent.config).scope,
+      place.channelId,
+      place.root,
+    );
   }
   sessionState(agent: Agent, place: SessionPlace): SessionState {
     const key = this.controlKey(agent, place);
@@ -1006,6 +1035,7 @@ export class ClaudeRuntime {
       channel,
       topLevel,
     );
+    await rememberCommunitySource(this.storage, agent.key, key, channel);
     const admission = (deferred: boolean) =>
       delivery.prepareSession?.(
         {
@@ -1017,9 +1047,11 @@ export class ClaudeRuntime {
             : source,
           conversation: {
             channelId: channel,
-            ...(key !== channel
-              ? { root: threadReference(event)?.rootId ?? event.id }
-              : {}),
+            ...(key === COMMUNITY_SESSION
+              ? { community: true }
+              : key !== channel
+                ? { root: threadReference(event)?.rootId ?? event.id }
+                : {}),
           },
         },
         deferred,
@@ -1105,8 +1137,13 @@ export class ClaudeRuntime {
         // the other policy waits for the conversation's turns to settle rather
         // than steering into them and changing their tools' context.
         const prior = entry.policies.get(key);
-        const same = prior?.topLevel === topLevel;
-        const wait = prior && (same ? prior.handed : prior.settled);
+        const same = key !== COMMUNITY_SESSION && prior?.topLevel === topLevel;
+        const wait =
+          key === COMMUNITY_SESSION
+            ? Promise.all(
+                [...entry.policies.values()].map((policy) => policy.settled),
+              )
+            : prior && (same ? prior.handed : prior.settled);
         let delivered!: Promise<Settled>;
         let interrupted = false;
         const handed = (async () => {
@@ -1123,7 +1160,7 @@ export class ClaudeRuntime {
           // Plugins' notes wait until the turn is handed over, so one that
           // fails or is cancelled before then leaves them for the next.
           const noteRoot =
-            key === channel
+            key === channel || (key === COMMUNITY_SESSION && !source.root)
               ? undefined
               : (threadReference(event)?.rootId ?? event.id);
           const notes = agent.notes?.(channel, noteRoot) ?? [];
@@ -1139,7 +1176,7 @@ export class ClaudeRuntime {
             ...(session ? { session } : {}),
             ...(topLevel
               ? { channel, ...(solo ? { topLevel } : {}) }
-              : key === channel
+              : key === channel || (key === COMMUNITY_SESSION && !source.root)
                 ? { channel }
                 : {
                     channel,
@@ -1292,19 +1329,24 @@ export class ClaudeRuntime {
   }: StandaloneTurn): Promise<TurnResult> {
     const { agent, team } = delivery;
     if (await this.inspect?.(agent.key)) {
-      const conversation = `once:${crypto.randomUUID()}`;
+      const shared = this.resolveConfig(delivery.config).scope === "community";
+      const conversation = shared
+        ? COMMUNITY_SESSION
+        : `once:${crypto.randomUUID()}`;
       const record = this.executionKey(agent.key, conversation);
       try {
         const remote = await this.connection(agent.key, conversation, signal);
         return await remote.runOnce({ delivery, key, signal, prompt });
       } finally {
-        const held = this.remote.get(record);
-        if (held) {
-          await held.runtime.retire(agent.key);
-          await held.execution.dispose();
-          this.remote.delete(record);
+        if (!shared) {
+          const held = this.remote.get(record);
+          if (held) {
+            await held.runtime.retire(agent.key);
+            await held.execution.dispose();
+            this.remote.delete(record);
+          }
+          await this.storage.set(record, null);
         }
-        await this.storage.set(record, null);
       }
     }
     const entry = this.entry(agent, this.resolveConfig(delivery.config));
@@ -1314,7 +1356,37 @@ export class ClaudeRuntime {
     if (refused) return { ok: false, error: refused };
     // Its new process launches on the core memory read now.
     entry.memory = await this.core(agent.key);
-    const done = entry.sessions.runOnce(key, prompt, signal);
+    const done =
+      entry.config.scope === "community"
+        ? communityTurn(
+            entry.policies,
+            signal,
+            this.controls,
+            `${agent.key}/${COMMUNITY_SESSION}`,
+            async (signal) => {
+              const text = await prompt();
+              if (text === undefined || !delivery.current())
+                return { ok: true };
+              entry.contexts.set(COMMUNITY_SESSION, {});
+              const stop = () => {
+                void entry.sessions.interrupt(COMMUNITY_SESSION);
+              };
+              signal.addEventListener("abort", stop, { once: true });
+              try {
+                return await entry.sessions.deliver(
+                  COMMUNITY_SESSION,
+                  text,
+                  0,
+                  {
+                    current: () => !signal.aborted && delivery.current(),
+                  },
+                );
+              } finally {
+                signal.removeEventListener("abort", stop);
+              }
+            },
+          )
+        : entry.sessions.runOnce(key, prompt, signal);
     this.notify();
     return done.finally(() => this.notify());
   }
@@ -1396,10 +1468,11 @@ export class ClaudeRuntime {
     const summary = await this.reads(agent.key)?.channel(channelId);
     const root = threadReference(event)?.rootId ?? event.id;
     return {
-      key:
-        topLevel || summary?.dm === true || entry.config.scope === "channel"
-          ? channelId
-          : `${channelId}/${root}`,
+      key: scopedSessionKey(
+        entry.config.scope,
+        channelId,
+        topLevel || summary?.dm ? undefined : root,
+      ),
       source: {
         channelId,
         ...(summary?.dm !== true ? { root } : {}),
@@ -1430,10 +1503,14 @@ export class ClaudeRuntime {
     const thread = threadReference(event);
     const rootId = thread?.rootId ?? event.id;
     // The conversation it was admitted to, not the scope as it is now.
-    const scope: Scope = key === channelId ? "channel" : "thread";
+    const scope: Scope = scopeOfSession(key, channelId);
     // Sharing a session does not mean it has seen every thread in the channel.
     const contextRoot =
-      scope === "channel" && !dm && !topLevel ? rootId : undefined;
+      scope === "community"
+        ? `${channelId}/${!dm && !topLevel ? rootId : "channel"}`
+        : scope === "channel" && !dm && !topLevel
+          ? rootId
+          : undefined;
     const seen = fresh ? 0 : entry.sessions.seen(key, contextRoot);
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const canvas = reads?.canvas?.bind(reads);

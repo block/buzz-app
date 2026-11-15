@@ -1,3 +1,12 @@
+import {
+  COMMUNITY_SESSION,
+  sessionScope,
+  communityTurn,
+  scopedSessionKey,
+  scopeOfSession,
+  rememberCommunitySource,
+  sessionSource,
+} from "../../features/agent-harness/session-scope";
 // Turns Agents deliveries into Pi turns. Every Pi agent here runs in the one
 // Pi host (pi.ts), each with its own Pi durable storage, where each Buzz
 // conversation is one Pi conversation. A delivery becomes a prompt in the
@@ -94,6 +103,11 @@ export const DEFAULT_CONFIG: Config = Object.freeze({
 export const config = (value: unknown): Config => ({
   ...DEFAULT_CONFIG,
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
+  scope: sessionScope(
+    value && typeof value === "object"
+      ? (value as Partial<Config>).scope
+      : undefined,
+  ),
 });
 
 const CONVERSATION_READ_TIMEOUT_MS = 4_000;
@@ -117,6 +131,7 @@ export type Place = Readonly<
     key: string;
     conversation: number;
     channelId: string;
+    community?: true;
     root?: string;
     /** When the newest message it was shown was sent. */
     at: number;
@@ -338,10 +353,15 @@ export class PiRuntime {
     if (changed) this.notify();
     return places
       .map(({ key, conversation, seen }) => {
-        const [channelId = key, root] = key.split("/");
+        const { channelId, root, ...location } = sessionSource(
+          this.storage,
+          agent,
+          key,
+        );
         return {
           key,
           conversation,
+          ...location,
           channelId,
           ...(root ? { root } : {}),
           at: seen * 1000,
@@ -396,8 +416,13 @@ export class PiRuntime {
     return [...known]
       .sort(([, a], [, b]) => b.at - a.at)
       .map(([key, { conversation, at }]) => {
-        const [channelId = key, root] = key.split("/");
+        const { channelId, root, ...location } = sessionSource(
+          this.storage,
+          agent,
+          key,
+        );
         return {
+          ...location,
           channelId,
           ...(root && { root }),
           at,
@@ -459,6 +484,7 @@ export class PiRuntime {
     if (this.controls.compacting(control)) return "compacting";
     const receipts = this.agents.get(agent.key)?.receipts.values() ?? [];
     return this.controls.active(control) ||
+      this.agents.get(agent.key)?.policies.has(key) ||
       [...receipts].some((receipt) => receipt.key === key)
       ? "active"
       : "idle";
@@ -569,15 +595,27 @@ export class PiRuntime {
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
-    const key = await this.key(entry, agent.key, event, channel, topLevel);
+    const { key, dm } = await this.key(
+      entry,
+      agent.key,
+      event,
+      channel,
+      topLevel,
+    );
+    await rememberCommunitySource(this.storage, agent.key, key, channel);
     const root = threadReference(event)?.rootId ?? event.id;
     const where = { channel, root, topLevel };
     // A turn keeps the posting policy it was admitted with: a request under
     // the other policy waits for the conversation's turns to settle rather
     // than steering into them and changing their tools' context.
     const prior = entry.policies.get(key);
-    const same = prior?.topLevel === topLevel;
-    const wait = prior && (same ? prior.handed : prior.settled);
+    const same = key !== COMMUNITY_SESSION && prior?.topLevel === topLevel;
+    const wait =
+      key === COMMUNITY_SESSION
+        ? Promise.all(
+            [...entry.policies.values()].map((policy) => policy.settled),
+          )
+        : prior && (same ? prior.handed : prior.settled);
     const request = wake?.type === "plugin" ? `${WAKE}${wake.id}` : event.id;
     let submitted: Delivered | false | undefined;
     // A delivery during a session action waits for it, past its handover.
@@ -593,7 +631,8 @@ export class PiRuntime {
         [...entry.receipts.values()]
           .filter(
             (receipt) =>
-              receipt.key === key && receipt.where.topLevel !== topLevel,
+              key === COMMUNITY_SESSION ||
+              (receipt.key === key && receipt.where.topLevel !== topLevel),
           )
           .map((receipt) => receipt.settled),
       );
@@ -623,13 +662,15 @@ export class PiRuntime {
               : {}),
           }),
           channel,
-          key === channel ? undefined : root,
+          key === channel || (key === COMMUNITY_SESSION && dm)
+            ? undefined
+            : root,
         );
       // A conversation's tools default to its thread; a conversation shared
       // by several threads is told which to reply in instead.
       const context: Context = topLevel
         ? { channel, ...(solo ? { topLevel } : {}) }
-        : key === channel
+        : key === channel || (key === COMMUNITY_SESSION && dm)
           ? { channel }
           : { channel, root };
       // Known before Pi has it, as it can say it joined a run first.
@@ -754,21 +795,31 @@ export class PiRuntime {
 
   /** Runs a standalone turn, such as a watch's or a timer's, in a one-off
    * Pi conversation, stopped when `signal` aborts. */
-  async runOnce({
-    delivery,
-    key,
-    signal,
-    prompt,
-  }: StandaloneTurn): Promise<TurnResult> {
+  async runOnce(
+    { delivery, key, signal, prompt }: StandaloneTurn,
+    community = false,
+  ): Promise<TurnResult> {
     const { agent, team } = delivery;
     const entry = this.entry(agent, config(delivery.config));
     entry.handle = agent;
     entry.team = team ?? "";
+    if (entry.config.scope === "community" && !community)
+      return communityTurn(
+        entry.policies,
+        signal,
+        this.controls,
+        `${agent.key}/${COMMUNITY_SESSION}`,
+        (signal) => this.runOnce({ delivery, key, signal, prompt }, true),
+      );
     let stop: (() => void) | undefined;
     let request: string | undefined;
     try {
       await this.open(agent.key);
       await this.adopted(entry, agent.key);
+      if (community)
+        await Promise.all(
+          [...entry.receipts.values()].map((receipt) => receipt.settled),
+        );
       signal.throwIfAborted();
       const text = await prompt();
       if (text === undefined) return { ok: true };
@@ -785,7 +836,15 @@ export class PiRuntime {
       const { submission, conversation } = await this.pi.request<{
         submission: number;
         conversation: number;
-      }>("once", { agent: agent.key, text, request, ...turn });
+      }>(community ? "deliver" : "once", {
+        agent: agent.key,
+        text,
+        request,
+        ...turn,
+        ...(community
+          ? { key: COMMUNITY_SESSION, at: Date.now() / 1000, context: {} }
+          : {}),
+      });
       // A removed agent's storage is closed, and stays so.
       stop = () => {
         if (!entry.closed)
@@ -983,6 +1042,7 @@ export class PiRuntime {
         submission: number;
         conversation: number;
         request: string;
+        key?: string;
         context?: { channel: string; root?: string; topLevel?: boolean };
         reply?: Where;
       }[];
@@ -994,13 +1054,14 @@ export class PiRuntime {
     // The conversations with a mention's or Attention wake's run to continue.
     const continued = new Set(
       unfinished.flatMap(({ conversation, request, context }) =>
-        context && !request.startsWith(WAKE) ? [conversation] : [],
+        context?.channel && !request.startsWith(WAKE) ? [conversation] : [],
       ),
     );
     for (const {
       submission,
       conversation,
       request,
+      key,
       context,
       reply,
     } of unfinished) {
@@ -1037,7 +1098,7 @@ export class PiRuntime {
       }
       // A watch's or timer's run ends with the app, as other harnesses' do:
       // continued, it would have no deadline, lane or Stop.
-      if (!context) {
+      if (!context?.channel) {
         dropped.push({ submission, conversation });
         continue;
       }
@@ -1054,9 +1115,11 @@ export class PiRuntime {
       };
       const receipt: Receipt = {
         // Only a thread's own conversation has a root.
-        key: context.root
-          ? `${context.channel}/${context.root}`
-          : context.channel,
+        key:
+          key ??
+          (context.root
+            ? `${context.channel}/${context.root}`
+            : context.channel),
         scope: where.topLevel ? context.channel : root,
         where,
       };
@@ -1257,9 +1320,16 @@ export class PiRuntime {
     topLevel: boolean,
   ) {
     const summary = await this.reads(agent)?.channel(channelId);
-    return topLevel || summary?.dm === true || entry.config.scope === "channel"
-      ? channelId
-      : `${channelId}/${threadReference(event)?.rootId ?? event.id}`;
+    return {
+      dm: summary?.dm === true,
+      key: scopedSessionKey(
+        entry.config.scope,
+        channelId,
+        topLevel || summary?.dm
+          ? undefined
+          : (threadReference(event)?.rootId ?? event.id),
+      ),
+    };
   }
 
   /** What the event's prompt needs: its channel and thread, and the messages
@@ -1279,7 +1349,7 @@ export class PiRuntime {
     const thread = threadReference(event);
     const rootId = thread?.rootId ?? event.id;
     // The conversation it was admitted to, not the scope as it is now.
-    const scope: Scope = key === channelId ? "channel" : "thread";
+    const scope: Scope = scopeOfSession(key, channelId);
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const canvas = reads?.canvas?.bind(reads);
     const owner = this.agents.get(agent.key)?.handle?.owner;
@@ -1318,7 +1388,8 @@ export class PiRuntime {
     // A conversation already has its own replies; a new one is shown them too.
     const unseen = earlier.filter(
       (item) =>
-        item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
+        key === COMMUNITY_SESSION ||
+        (item.created_at > seen && (!seen || item.pubkey !== agent.pubkey)),
     );
     const signingAuthority = reads?.workflowAuthority();
     const [names, project] = await Promise.all([
@@ -1402,9 +1473,7 @@ export class PiRuntime {
 /** The conversation key session controls in `place` act on, as `key` makes
  * it: a DM or Solo chat has no root here. */
 const controlKey = (agent: Agent, place: SessionPlace) =>
-  config(agent.config).scope === "channel" || !place.root
-    ? place.channelId
-    : `${place.channelId}/${place.root}`;
+  scopedSessionKey(config(agent.config).scope, place.channelId, place.root);
 
 /** Why Pi left a request unanswered, in words. */
 function unanswered({

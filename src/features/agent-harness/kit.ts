@@ -1,3 +1,4 @@
+import { scopedSessionKey } from "./session-scope";
 // The Buzz side of an agent turn, for a harness a plugin brings: whether a
 // delivery is the harness's to act on and which conversation it goes to, the
 // prompts the bundled harnesses give, the agent's Buzz tools as an MCP
@@ -36,13 +37,13 @@ import { wakeAnchor, wakeLands } from "./plugin-wake";
 import { readAuthorNames } from "./author-names";
 import { ownerCanvas, readProject } from "./project";
 
-/** Whether each thread is its own conversation, or the whole channel is one. */
-export type HarnessScope = "thread" | "channel";
+/** Which conversations share the agent's native session. */
+export type HarnessScope = import("./session-scope").SessionScope;
 
 /** Where a delivery's turn goes, frozen for the turn. */
 export type HarnessConversation = Readonly<{
-  /** The channel id, or `<channel>/<root>` for a thread's own conversation.
-   * A Solo chat and a DM are always one conversation. */
+  /** Opaque session identity. Community keys include the agent membership;
+   * thread and channel keys retain their existing forms. */
   key: string;
   channel: string;
   /** The thread's root, when the conversation is one thread. */
@@ -127,6 +128,7 @@ type Sources = Readonly<{
 /** What the kit keeps of a conversation it admitted. */
 type Admitted = Readonly<{
   event: EventData;
+  scope: HarnessScope;
   solo: boolean;
   dm: boolean;
   name?: string;
@@ -252,9 +254,12 @@ export function harnessKit(sources: Sources): HarnessKit {
       const found = summary(agent.key, channel);
       const dm = found?.channelType === "dm";
       const root = threadReference(event)?.rootId ?? event.id;
-      const whole = topLevel || dm || scope === "channel";
+      const whole = topLevel || dm || scope !== "thread";
       const conversation: HarnessConversation = Object.freeze({
-        key: whole ? channel : `${channel}/${root}`,
+        key:
+          scope === "community"
+            ? JSON.stringify(["community", agent.key])
+            : scopedSessionKey(scope, channel, whole ? undefined : root),
         channel,
         ...(whole ? {} : { root }),
         topLevel,
@@ -262,6 +267,7 @@ export function harnessKit(sources: Sources): HarnessKit {
       });
       admitted.set(conversation, {
         event,
+        scope,
         solo,
         dm,
         ...(found?.name ? { name: found.name } : {}),
@@ -295,7 +301,8 @@ export function harnessKit(sources: Sources): HarnessKit {
       conversation,
       options = {},
     ) {
-      const { event, solo, dm, name, wake, resumed } = known(conversation);
+      const { event, scope, solo, dm, name, wake, resumed } =
+        known(conversation);
       const { key, channel: channelId, topLevel } = conversation;
       const ready = session(agent.key);
       const thread = threadReference(event);
@@ -304,7 +311,11 @@ export function harnessKit(sources: Sources): HarnessKit {
       // Sharing a session does not mean it has seen every thread in the
       // channel, so a channel conversation keeps a mark for each thread.
       const contextRoot =
-        key === channelId && !dm && !topLevel ? rootId : undefined;
+        scope === "community"
+          ? `${channelId}/${!dm && !topLevel ? rootId : "channel"}`
+          : key === channelId && !dm && !topLevel
+            ? rootId
+            : undefined;
       // A resumed turn's session never saw its thread, its own replies
       // included.
       const since = resumed
@@ -377,7 +388,12 @@ export function harnessKit(sources: Sources): HarnessKit {
       const text = turnPrompt({
         agent: agent.key,
         event,
-        scope: key === channelId ? "channel" : "thread",
+        scope:
+          scope === "community"
+            ? "community"
+            : key === channelId
+              ? "channel"
+              : "thread",
         topLevel,
         channelLevel: topLevel && !solo,
         channel: { id: channelId, ...(name ? { name } : {}), dm },

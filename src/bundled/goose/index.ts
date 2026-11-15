@@ -161,11 +161,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
       return [provider, model].filter(Boolean).join(" · ") || "Goose";
     },
     sessions: {
-      list: (key) => {
-        const live = runtime.sessions(key);
+      list: (agentKey) => {
+        const live = runtime.sessions(agentKey);
         const busy = new Map(live.map((view) => [view.key, view.busy]));
         const used = new Map(
-          runtime.conversations(key).map(({ key, at }) => [key, at]),
+          runtime.conversations(agentKey).map(({ key, at }) => [key, at]),
         );
         // Open ones are listed even when saving them failed. A one-off turn
         // joins no conversation.
@@ -173,7 +173,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         return [...used]
           .sort(([, a], [, b]) => b - a)
           .map(([key, at]) => {
-            const [channelId = key, root] = key.split("/");
+            const { channelId, root } = runtime.source(agentKey, key);
             const working = busy.get(key);
             return {
               channelId,

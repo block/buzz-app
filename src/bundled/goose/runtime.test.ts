@@ -1,3 +1,4 @@
+import { memoryStorage } from "../../features/agents/test-fakes";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import {
@@ -76,7 +77,7 @@ function setup(
     hold?: boolean;
     reply?: string;
     thread?: readonly EventData[];
-    scope?: "thread" | "channel";
+    scope?: "thread" | "channel" | "community";
     /** The agent's `core` memory as the host keeps it. */
     core?: string | null;
     /** The channel's Canvas. */
@@ -200,7 +201,7 @@ function setup(
     storage,
     () => options.added ?? [],
     options.repositories,
-    undefined,
+    memoryStorage(),
     options.recommended,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
@@ -257,6 +258,7 @@ function setup(
     readFile,
     runtime,
     spawn,
+    session,
     memoryOpen: session.agentMemories.open,
     reconnect: () => {
       connected = { ...session };
@@ -2608,4 +2610,42 @@ it("runs an agent on Recommended on the current candidate", () => {
   // With none offered it runs on goose's own default.
   expect(running(saved, null)).toEqual(saved);
   expect(running(DEFAULT_CONFIG, candidate)).toEqual(DEFAULT_CONFIG);
+});
+
+it("uses one ordered community session across source channels", async () => {
+  const f = setup({ hold: true, scope: "community" });
+
+  const listed = f.session.channels.list();
+  const firstChannel = listed.channels[0];
+  if (!firstChannel) throw new Error("Expected the source channel");
+  vi.spyOn(f.session.channels, "list").mockImplementation(() => ({
+    ...listed,
+    status: "ready",
+    channels: [...listed.channels, { ...firstChannel, id: "other" }],
+  }));
+  try {
+    await f.deliver(message("1", "first"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("No Goose process");
+    await f.deliver(
+      message("2", "second", {
+        tags: [
+          ["h", "other"],
+          ["p", self],
+        ],
+      }),
+      { channelId: "other" },
+    );
+    expect(process.turns).toHaveLength(1);
+    expect(process.turns[0]?.steered).toEqual([]);
+    process.turns[0]?.finish();
+    await vi.waitFor(() => expect(process.turns).toHaveLength(2));
+    expect(process.turns[1]?.sessionId).toBe(process.turns[0]?.sessionId);
+    expect(process.turns[1]?.text).toContain("Session scope: community");
+    expect(process.turns[1]?.text).toContain("other");
+    process.turns[1]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
 });

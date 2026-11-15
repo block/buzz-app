@@ -1,3 +1,4 @@
+import { sessionScope } from "../../features/agent-harness/session-scope";
 import { ModelDiscoveryRecovery } from "../../features/agents/ModelDiscoveryRecovery";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { formatItemTimestamp } from "../../shared/datetime";
@@ -75,8 +76,10 @@ import {
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-const label = ({ channelId, name, root }: SavedConversation) =>
-  `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
+const label = ({ channelId, name, root, community }: SavedConversation) =>
+  community
+    ? "Community session"
+    : `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 const CONVERSATION_LIMIT = 30;
 
 const options = (choices: readonly (readonly [string, string])[]) => [
@@ -177,6 +180,7 @@ const thinkingOptions = (
 const SCOPES = options([
   ["thread", "One session per thread"],
   ["channel", "One session per channel"],
+  ["community", "One session per community"],
 ]);
 
 /** A model field's stand-in while Claude cannot run. `inline` asks for
@@ -1021,8 +1025,16 @@ export function createTabs({
     } = useOpenedSession(
       conversations,
       conversation,
-      (place, signal) => runtime.find(agent.key, place, workspace, signal),
+      (place, signal) =>
+        runtime.find(
+          agent.key,
+          place,
+          workspace,
+          signal,
+          readConfig(agent.config).scope === "community",
+        ),
       (channelId) => runtime.channelLabel(agent.key, channelId),
+      readConfig(agent.config).scope,
     );
     // Newest first, the opened conversation's channel above the rest.
     const recent = conversations
@@ -1205,9 +1217,11 @@ export function createTabs({
         return `${model} · ${config.effort ? effortLabel(config.effort) : "Automatic"} thinking`;
       }
       if (group === "scope")
-        return config.scope === "channel"
-          ? "One session per channel"
-          : "One session per thread";
+        return config.scope === "community"
+          ? "One session per community"
+          : config.scope === "channel"
+            ? "One session per channel"
+            : "One session per thread";
       return config[group];
     };
     const conflict = (group: SettingGroup) =>
@@ -1414,13 +1428,14 @@ export function createTabs({
               {conflict("scope")}
               <Select
                 label="Sessions"
+                description="Community shares context across channels, DMs, Solo chats and huddles in this community."
                 variant="preference"
                 value={draft.scope}
                 groups={SCOPES}
                 onValueChange={(value) =>
                   setDraft({
                     ...draft,
-                    scope: value === "channel" ? "channel" : "thread",
+                    scope: sessionScope(value),
                   })
                 }
               />

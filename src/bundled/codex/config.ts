@@ -1,3 +1,7 @@
+import {
+  sessionScope,
+  type SessionScope,
+} from "../../features/agent-harness/session-scope";
 import { PRESET } from "../../features/agents/recommended";
 
 export type Config = {
@@ -5,7 +9,7 @@ export type Config = {
   effort: string;
   instructions: string;
   workspace: string;
-  scope: "thread" | "channel";
+  scope: SessionScope;
   /** On Recommended, whose model and thinking level runs replace these. */
   preset?: typeof PRESET;
 };
@@ -40,7 +44,7 @@ export function config(raw: unknown): Config {
       typeof value.workspace === "string" && value.workspace.trim()
         ? value.workspace.trim()
         : defaults.workspace,
-    scope: value.scope === "channel" ? "channel" : "thread",
+    scope: sessionScope(value.scope),
     ...(value.preset === PRESET ? { preset: PRESET } : {}),
   };
 }

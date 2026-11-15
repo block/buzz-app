@@ -1,3 +1,8 @@
+import {
+  COMMUNITY_SESSION,
+  rememberCommunitySource,
+  sessionSource,
+} from "../../features/agent-harness/session-scope";
 import { openVoice } from "./voice";
 import { isHuddleRoom } from "../../features/huddle/lifecycle";
 import type {
@@ -97,8 +102,15 @@ import {
 } from "./rpc";
 import { findConversation } from "./transcript";
 
+const scopedKey = (scope: Config["scope"], channel: string, root?: string) =>
+  JSON.stringify([
+    scope === "community" ? COMMUNITY_SESSION : channel,
+    scope === "thread" && root ? root : "channel",
+  ]);
+
 type Request = {
   current?: () => boolean;
+  unaddressed?: Pick<StandaloneTurn, "prompt" | "signal">;
   /** The agent's community and owner, as `origin:viewer`. */
   scope: string;
   /** Publish/activity root; unlike toolRoot, retained in DMs. */
@@ -201,6 +213,7 @@ type Lane = {
   queued: number;
   active?: Active;
   voice?: { loaded: Loaded; signal: AbortSignal };
+  voiceOpening?: true;
 };
 type Entry = {
   storageKey: string;
@@ -231,6 +244,7 @@ export type SessionView = { key: string; status: string; detail: string };
 export type SavedConversation = Partial<ChannelLabel> & {
   key: string;
   channelId: string;
+  community?: true;
   root?: string;
   threadId: string;
   at?: number;
@@ -399,12 +413,10 @@ export class CodexRuntime {
     conversation: Readonly<{ channelId: string; root?: string }>,
     settings: Config,
   ): Promise<{ cwd: string; home?: string }> {
-    const assigned = this.folder(
-      scope,
-      agent,
-      conversation.channelId,
-      conversation.root,
-    );
+    const assigned =
+      settings.scope === "community"
+        ? undefined
+        : this.folder(scope, agent, conversation.channelId, conversation.root);
     const workspace = await this.workspace(settings.workspace);
     if (!assigned) return { cwd: workspace };
     return {
@@ -548,12 +560,11 @@ export class CodexRuntime {
     for (const listener of this.listeners) listener();
   });
   private controlKey(agent: Agent, place: SessionPlace) {
-    return JSON.stringify([
+    return scopedKey(
+      this.resolveConfig(agent.config).scope,
       place.channelId,
-      this.resolveConfig(agent.config).scope === "channel"
-        ? "channel"
-        : (place.root ?? "channel"),
-    ]);
+      place.root,
+    );
   }
   sessionState(agent: Agent, place: SessionPlace): SessionState {
     const scope = this.reads(agent.key)?.scope;
@@ -1350,13 +1361,21 @@ export class CodexRuntime {
       .reverse()
       .flatMap(([key, { threadId, at }]) => {
         try {
-          const [channelId, root] = JSON.parse(key) as unknown[];
+          let [channelId, root] = JSON.parse(key) as unknown[];
+          const community = channelId === COMMUNITY_SESSION;
+          if (community)
+            channelId = sessionSource(
+              this.storage,
+              agent,
+              COMMUNITY_SESSION,
+            ).channelId;
           if (typeof channelId !== "string" || typeof root !== "string")
             return [];
           return [
             {
               key,
               channelId,
+              ...(community ? { community: true as const } : {}),
               ...reads?.channelLabel(channelId),
               ...(root === "channel" ? {} : { root }),
               threadId,
@@ -1379,18 +1398,29 @@ export class CodexRuntime {
     agent: Readonly<{ key: AgentKey; name: string }>,
     place: Readonly<{ channelId: string; root?: string }>,
     signal: AbortSignal,
+    community = false,
   ): Promise<SavedConversation | undefined> {
     if (this.target || (await this.inspect?.(agent.key))) return;
     const label = this.reads(agent.key)?.channelLabel(place.channelId);
     const found = await findConversation(
       this.spawn,
-      { agent, ...place, ...(label ? { name: label.name } : {}) },
+      {
+        agent,
+        ...place,
+        ...(community ? { community: true } : {}),
+        ...(label ? { name: label.name } : {}),
+      },
       signal,
     );
     return (
       found && {
-        key: JSON.stringify([place.channelId, place.root ?? "channel"]),
+        key: scopedKey(
+          community ? "community" : "thread",
+          place.channelId,
+          place.root,
+        ),
         ...place,
+        ...(community ? { community: true as const } : {}),
         ...found,
       }
     );
@@ -1472,12 +1502,27 @@ export class CodexRuntime {
     if (!validWorkspace(settings.workspace))
       throw new Error("Choose an absolute Codex workspace first");
     const { channelId } = seat.conversation;
-    const key = JSON.stringify([channelId, "channel"]);
+    const key = scopedKey(settings.scope, channelId);
+    await rememberCommunitySource(
+      this.storage,
+      agent.key,
+      settings.scope === "community" ? COMMUNITY_SESSION : channelId,
+      channelId,
+    );
     const entry = this.entry(agent.key, reads.scope);
-    const lane = entry.lanes.get(key) ?? { tail: entry.after, queued: 0 };
-    if (lane.voice)
+    const lane = entry.lanes.get(key) ?? {
+      tail:
+        settings.scope === "community"
+          ? Promise.all(
+              [...entry.lanes.values()].map((other) => other.tail),
+            ).then(() => {})
+          : entry.after,
+      queued: 0,
+    };
+    if (lane.voice || lane.voiceOpening)
       throw new Error("This conversation already has a voice seat");
     entry.lanes.set(key, lane);
+    lane.voiceOpening = true;
     const abort = new AbortController();
     const signal = AbortSignal.any([
       seat.signal,
@@ -1494,6 +1539,7 @@ export class CodexRuntime {
       conversation: {
         channelId,
         name: reads.channelLabel(channelId)?.name ?? channelId,
+        ...(settings.scope === "community" ? { community: true } : {}),
         topLevel: true,
       },
       answered() {},
@@ -1662,6 +1708,8 @@ export class CodexRuntime {
     } catch (error) {
       await close();
       throw error;
+    } finally {
+      delete lane.voiceOpening;
     }
   }
   async run(delivery: Delivery): Promise<void> {
@@ -1725,7 +1773,13 @@ export class CodexRuntime {
     const toolRoot = channel?.dm || topLevel ? undefined : rootOf(event);
     const root = settings.scope === "channel" ? undefined : toolRoot;
     delivery.signal.throwIfAborted();
-    const conversationKey = JSON.stringify([channelId, root ?? "channel"]);
+    const conversationKey = scopedKey(settings.scope, channelId, root);
+    await rememberCommunitySource(
+      this.storage,
+      agent.key,
+      settings.scope === "community" ? COMMUNITY_SESSION : channelId,
+      channelId,
+    );
     const sourceRoot = wake ? wake.root : rootOf(event);
     const admission = (deferred: boolean) =>
       delivery.prepareSession?.(
@@ -1734,7 +1788,14 @@ export class CodexRuntime {
             channelId,
             ...(!channel?.dm && sourceRoot ? { root: sourceRoot } : {}),
           },
-          conversation: { channelId, ...(root ? { root } : {}) },
+          conversation: {
+            channelId,
+            ...(settings.scope === "community"
+              ? { community: true }
+              : root
+                ? { root }
+                : {}),
+          },
         },
         deferred,
       );
@@ -1805,6 +1866,7 @@ export class CodexRuntime {
       conversation: {
         channelId,
         name: channel?.name ?? channelId,
+        ...(settings.scope === "community" ? { community: true } : {}),
         ...(root ? { root } : {}),
         ...(topLevel ? { topLevel } : {}),
         ...(topLevel && !solo && !huddle ? { threadReplies: true } : {}),
@@ -1835,7 +1897,7 @@ export class CodexRuntime {
       );
       return;
     }
-    const key = JSON.stringify([channelId, root ?? "channel"]);
+    const key = conversationKey;
     const entry = this.entry(agent.key, request.scope);
     entry.waiting.add(request);
     delivery.interruptible?.(() => this.interrupt(entry, key, request));
@@ -1854,7 +1916,15 @@ export class CodexRuntime {
         const text = textOf(request.event, agent.name);
         let lane = entry.lanes.get(key);
         if (!lane) {
-          lane = { tail: entry.after, queued: 0 };
+          lane = {
+            tail:
+              settings.scope === "community"
+                ? Promise.all(
+                    [...entry.lanes.values()].map((other) => other.tail),
+                  ).then(() => {})
+                : entry.after,
+            queued: 0,
+          };
           entry.lanes.set(key, lane);
         }
         if (lane.active) {
@@ -1882,6 +1952,7 @@ export class CodexRuntime {
                 active.finished ||
                 active.stopped ||
                 lane.queued ||
+                request.settings.scope === "community" ||
                 request.conversation.topLevel !==
                   active.reply.conversation.topLevel ||
                 (request.model && request.model !== active.model) ||
@@ -1969,11 +2040,9 @@ export class CodexRuntime {
       .catch((error) => console.warn("Codex handover failed", error));
   }
 
-  /** Runs a standalone turn, such as a watch's or a timer's: a new
-   * ephemeral thread that joins no conversation and is not saved, stopped
-   * when the turn's signal aborts. Asks for its prompt once the thread can
-   * start, and starts none when the turn is no longer wanted. A failure is
-   * logged, not posted. */
+  /** Runs an unaddressed wake without a default posting destination. Community
+   * scope retains it in the shared session; other scopes use an ephemeral
+   * thread. Asks for its prompt when admitted and logs failures without posting. */
   async runOnce({
     delivery,
     key,
@@ -1986,6 +2055,65 @@ export class CodexRuntime {
     if (!reads)
       return { ok: false, error: "Connect to the agent's community first" };
     const { scope } = reads;
+    const settings = this.resolveConfig(delivery.config);
+    if (settings.scope === "community") {
+      const key = scopedKey(settings.scope, COMMUNITY_SESSION);
+      if (this.execution && (await this.inspect?.(agent.key))) {
+        const runtime = await this.connection(
+          agent.key,
+          scope,
+          key,
+          turnSignal,
+        );
+        return runtime.runOnce({ delivery, key, signal: turnSignal, prompt });
+      }
+      const entry = this.entry(agent.key, scope);
+      const lane = entry.lanes.get(key) ?? {
+        tail: Promise.all(
+          [...entry.lanes.values()].map((other) => other.tail),
+        ).then(() => {}),
+        queued: 0,
+      };
+      entry.lanes.set(key, lane);
+      let outcome: TurnResult = { ok: true };
+      const request: TextRequest = {
+        scope,
+        agent,
+        settings,
+        team: delivery.team ?? "",
+        current: () => !turnSignal.aborted && delivery.current(),
+        unaddressed: { prompt, signal: turnSignal },
+        activityScope: COMMUNITY_SESSION,
+        conversation: {
+          channelId: COMMUNITY_SESSION,
+          name: "Community",
+          community: true,
+        },
+        event: {
+          id: crypto.randomUUID(),
+          pubkey: agent.pubkey,
+          kind: 9,
+          content: "",
+          created_at: Date.now() / 1000,
+          tags: [],
+        } as EventData,
+        ...(delivery.synced ? { synced: delivery.synced } : {}),
+        answered() {},
+        failActivity(error) {
+          if (error !== "Codex ended without a final reply")
+            outcome = { ok: false, error };
+        },
+      };
+      const handoff = this.controls.deliver(`${agent.key}/${key}`, async () => {
+        await this.start(request, "", key, lane, entry);
+      });
+      try {
+        await handoff.done;
+      } catch (error) {
+        return { ok: false, error: message(error) };
+      }
+      return outcome;
+    }
     if (this.execution && (await this.inspect?.(agent.key))) {
       const conversation = `once:${crypto.randomUUID()}`;
       const storageKey = this.executionKey(agent.key, scope, conversation);
@@ -2015,7 +2143,7 @@ export class CodexRuntime {
     if (turnSignal.aborted)
       return { ok: false, error: message(turnSignal.reason) };
     const entry = this.entry(agent.key, scope);
-    const settings = this.resolveConfig(delivery.config);
+
     const team = delivery.team ?? "";
     if (entry.abort.signal.aborted)
       return { ok: false, error: "Codex was stopped" };
@@ -2285,6 +2413,7 @@ export class CodexRuntime {
     const reads = this.reads(request.agent.key);
     if (reads?.scope !== request.scope)
       throw new Error("The community changed");
+    if (request.unaddressed) return "";
     // A chat its owner is still creating has nothing earlier to read.
     const starting = (await reads.channel(request.conversation.channelId))
       ?.starting;
@@ -2300,6 +2429,7 @@ export class CodexRuntime {
   // Tags the owner even when a sibling asked: tagging the sibling would wake
   // it, and two agents failing alike would wake each other without end.
   private publish(request: Request, content: string) {
+    if (request.unaddressed) return Promise.resolve();
     return request.agent.publish({
       kind: 9,
       content: this.explain(content),
@@ -2390,20 +2520,21 @@ export class CodexRuntime {
       },
     });
     // A watch or timer turn has no default destination.
-    const context: Context = request
-      ? {
-          ...(request.session ? { session: request.session } : {}),
-          channel: request.conversation.channelId,
-          ...(request.toolRoot ? { root: request.toolRoot } : {}),
-          ...(request.toolRoot && !request.conversation.root
-            ? { wholeChannel: true }
-            : {}),
-          ...(request.conversation.topLevel &&
-          !request.conversation.threadReplies
-            ? { topLevel: true }
-            : {}),
-        }
-      : {};
+    const context: Context =
+      request && !request.unaddressed
+        ? {
+            ...(request.session ? { session: request.session } : {}),
+            channel: request.conversation.channelId,
+            ...(request.toolRoot ? { root: request.toolRoot } : {}),
+            ...(request.toolRoot && !request.conversation.root
+              ? { wholeChannel: true }
+              : {}),
+            ...(request.conversation.topLevel &&
+            !request.conversation.threadReplies
+              ? { topLevel: true }
+              : {}),
+          }
+        : {};
     const final = isFinalMessage(call.tool, args);
     const reply = await callSessionTool(
       this.target
@@ -2847,6 +2978,7 @@ export class CodexRuntime {
     const signal = AbortSignal.any([
       entry.abort.signal,
       turnAbort.signal,
+      ...(request.unaddressed ? [request.unaddressed.signal] : []),
       ...(adopted && lane.voice ? [lane.voice.signal] : []),
     ]);
     const active: Active = {
@@ -2893,6 +3025,17 @@ export class CodexRuntime {
     try {
       const rpc = await server.opening;
       signal.throwIfAborted();
+      const standaloneText = request.unaddressed
+        ? await request.unaddressed.prompt()
+        : undefined;
+      if (
+        request.unaddressed &&
+        (standaloneText === undefined || !request.current?.())
+      ) {
+        active.finished = true;
+        ready();
+        return;
+      }
       const seat = lane.voice;
       const loaded =
         seat?.loaded ??
@@ -2960,7 +3103,8 @@ export class CodexRuntime {
           .request<{ turn: { id: string } }>("turn/start", {
             threadId: active.threadId,
             input: input(
-              `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, false, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey))}`,
+              standaloneText ??
+                `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, false, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey))}`,
             ),
             model,
             effort,

@@ -7670,3 +7670,139 @@ describe("a conversation given its own folder", () => {
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   });
 });
+
+it("shares a community session across channels and Solo chats while retaining each reply destination", async () => {
+  const f = fixture();
+  const community = (text: string, channel = "channel") => {
+    const base = f.delivery(text);
+    const delivery: Delivery = {
+      ...base,
+      config: { ...(base.config as object), scope: "community" },
+      channelId: channel,
+    };
+    if (delivery.trigger.type === "mention")
+      delivery.trigger.event.tags = delivery.trigger.event.tags.map((tag) =>
+        tag[0] === "h" ? ["h", channel] : tag,
+      );
+    return delivery;
+  };
+  f.soloChannels.add("channel");
+  await f.runtime.run(community("first in Solo"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run(community("next in another channel", "other"));
+  expect(f.starts()).toHaveLength(1);
+  expect(f.sent.filter((item) => item.method === "turn/steer")).toEqual([]);
+  f.complete(0, "SOLO ANSWER");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const first = f.starts()[0]?.params as { threadId: string };
+  expect(f.starts()[1]?.params).toMatchObject({ threadId: first.threadId });
+  expect(JSON.stringify(f.starts()[1]?.params)).toContain("community");
+  f.complete(1, "CHANNEL ANSWER");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    tags: [["h", "channel"]],
+  });
+  expect(f.publish.mock.calls[1]?.[0]).toMatchObject({
+    tags: expect.arrayContaining([
+      ["h", "other"],
+      ["e", root, "", "reply"],
+    ]),
+  });
+  expect(f.runtime.conversations(pubkey)).toHaveLength(1);
+  expect(f.runtime.conversations(pubkey)[0]).toMatchObject({
+    channelId: "other",
+    community: true,
+  });
+});
+
+it("keeps community sessions apart for memberships of the same identity", async () => {
+  const f = fixture();
+  const base = f.delivery("here");
+  const here = {
+    ...base,
+    config: { ...(base.config as object), scope: "community" },
+  };
+  const there = {
+    ...f.delivery("there"),
+    config: here.config,
+    agent: { ...base.agent, key: `${pubkey}@other.example` },
+  };
+  await f.runtime.run(here);
+  await f.runtime.run(there);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(
+    (f.starts()[0]?.params as { threadId: string } | undefined)?.threadId,
+  ).not.toBe(
+    (f.starts()[1]?.params as { threadId: string } | undefined)?.threadId,
+  );
+  f.complete(0, "here");
+  f.complete(1, "there");
+});
+
+it("runs an unaddressed wake in the community session without inheriting a posting destination", async () => {
+  const f = fixture();
+  const base = f.delivery("first");
+  const delivery = {
+    ...base,
+    config: { ...(base.config as object), scope: "community" },
+  };
+  await f.runtime.run(delivery);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  const once = f.runtime.runOnce({
+    delivery,
+    key: "check",
+    signal: new AbortController().signal,
+    prompt: async () => "Check status without a default destination",
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(f.starts()[1]?.params).toMatchObject({
+    threadId: (f.starts()[0]?.params as { threadId: string } | undefined)
+      ?.threadId,
+  });
+  const refused = await f.tool("send", {
+    audience: "everyone",
+    text: "NO DESTINATION",
+  });
+  expect(refused?.result).toMatchObject({
+    success: false,
+    contentItems: [{ type: "inputText", text: "channel is required here." }],
+  });
+  expect(f.publish).toHaveBeenCalledTimes(1);
+  await f.complete(1, "");
+  await expect(once).resolves.toEqual({ ok: true });
+});
+
+it("restores the saved community session from a different channel", async () => {
+  const first = fixture();
+  const base = first.delivery("first");
+  const config = { ...(base.config as object), scope: "community" };
+  await first.runtime.run({ ...base, config });
+  await vi.waitFor(() => expect(first.starts()).toHaveLength(1));
+  await first.complete();
+  await vi.waitFor(() =>
+    expect(first.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  const restored = fixture();
+  for (const [key, value] of first.storage) restored.storage.set(key, value);
+  const next = restored.delivery("continue in another channel");
+  if (next.trigger.type === "mention")
+    next.trigger.event.tags = next.trigger.event.tags.map((tag) =>
+      tag[0] === "h" ? ["h", "other"] : tag,
+    );
+  await restored.runtime.run({ ...next, config, channelId: "other" });
+  await vi.waitFor(() => expect(restored.starts()).toHaveLength(1));
+  expect(
+    restored.sent.find((wire) => wire.method === "thread/resume")?.params,
+  ).toMatchObject({
+    threadId: (first.starts()[0]?.params as { threadId: string } | undefined)
+      ?.threadId,
+  });
+  expect(restored.sent.some((wire) => wire.method === "thread/start")).toBe(
+    false,
+  );
+  await restored.complete();
+});

@@ -40,8 +40,10 @@ native agent session before execution. The argument type is
 The host verifies the request and selects the native conversation first.
 The hook receives both the source message's channel/thread and that native
 conversation. It cannot change session scope, reply placement or access.
-Solo keeps each agent's existing channel conversation. Thread-scoped agents
-keep their existing thread conversations.
+Community-scoped agents use one logical lifetime across their conversations,
+including DMs, Solo chats and huddles. The admission's `conversation.community`
+identifies it; `source` still names the current request. Other scopes retain
+Solo and DM channel conversations and their existing thread/channel selection.
 
 `ready()` opens only the plugin's local keyed storage. It must not wait for
 relay publication or sidebar loading. `matches()` selects the sources the

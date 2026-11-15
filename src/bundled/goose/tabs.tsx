@@ -1,3 +1,7 @@
+import {
+  COMMUNITY_SESSION,
+  sessionScope,
+} from "../../features/agent-harness/session-scope";
 import { ModelDiscoveryRecovery } from "../../features/agents/ModelDiscoveryRecovery";
 // goose's New agent choices and agent settings. Providers, their keys and
 // their models are goose's own: listed from it, and saved into its config.
@@ -79,6 +83,7 @@ const SCOPES = [
     options: [
       { value: "thread", label: "One session per thread" },
       { value: "channel", label: "One session per channel" },
+      { value: "community", label: "One session per community" },
     ],
   },
 ];
@@ -129,6 +134,7 @@ type Row = Readonly<{
   sessionId: string;
   title: string;
   channelId: string;
+  community?: true;
   root?: string;
   at?: number;
   /** The goose sessions saved for its place. */
@@ -153,6 +159,7 @@ export function activityRows(
     conversation?: string | null;
   }[],
   label: (channelId: string) => { name?: string } | undefined = () => undefined,
+  source: (key: string) => Place = placeOf,
 ) {
   const running = new Map(
     live.flatMap((session) =>
@@ -170,7 +177,7 @@ export function activityRows(
     .map(([key, { at, sessions }]): Row => {
       const id = running.get(key)?.sessionId;
       const ids = [...new Set([...(id ? [id] : []), ...sessions])];
-      const place = placeOf(key);
+      const place = source(key);
       return {
         key,
         sessionId: ids[0] ?? "",
@@ -864,7 +871,15 @@ export function createTabs({
           workspace,
           ...(row.sessionId ? { sessionId: row.sessionId } : {}),
           ...(row.sessions ? { sessions: row.sessions } : {}),
-          ...(row.channelId ? { place: placeOf(row.key) } : {}),
+          ...(row.channelId
+            ? {
+                place: {
+                  channelId: row.channelId,
+                  ...(row.root ? { root: row.root } : {}),
+                  ...(row.community ? { community: true } : {}),
+                },
+              }
+            : {}),
           ...(working ? { working } : {}),
         },
         signal,
@@ -941,6 +956,7 @@ export function createTabs({
       live,
       starts,
       (id) => runtime.channelLabel(agent.key, id),
+      (key) => runtime.source(agent.key, key),
     );
     // The opened conversation's session: a thread's saved or live one, else
     // its channel's, read again each render so a first save is picked up.
@@ -955,12 +971,20 @@ export function createTabs({
       conversation &&
       (() => {
         const { channelId, rootId } = conversation;
-        const found = (rootId && match(channelId, rootId)) || match(channelId);
+        const shared = readConfig(agent.config).scope === "community";
+        const found = shared
+          ? conversations.find((row) => row.community)
+          : (rootId && match(channelId, rootId)) || match(channelId);
         if (found) return found;
         const root =
-          readConfig(agent.config).scope === "channel" ? undefined : rootId;
+          readConfig(agent.config).scope !== "thread" ? undefined : rootId;
         return {
-          key: root ? `${channelId}/${root}` : channelId,
+          key: shared
+            ? COMMUNITY_SESSION
+            : root
+              ? `${channelId}/${root}`
+              : channelId,
+          ...(shared ? { community: true as const } : {}),
           sessionId: "",
           title: "",
           channelId,
@@ -975,9 +999,11 @@ export function createTabs({
       return working === undefined ? undefined : working ? "Working" : "Idle";
     };
     const label = (row: Row) =>
-      row.title
-        ? titled(agent.name, row.title)
-        : `${row.name || row.channelId.slice(0, 8)} · ${row.root ? `thread ${row.root.slice(0, 8)}` : "channel"}`;
+      row.community
+        ? "Community session"
+        : row.title
+          ? titled(agent.name, row.title)
+          : `${row.name || row.channelId.slice(0, 8)} · ${row.root ? `thread ${row.root.slice(0, 8)}` : "channel"}`;
     const { open, show, back } = useOpenTranscript(
       conversation,
       label,
@@ -1450,13 +1476,14 @@ export function createTabs({
             </Field>
             <Select
               label="Sessions"
+              description="Community shares context across channels, DMs, Solo chats and huddles in this community."
               variant="preference"
               value={draft.scope}
               groups={SCOPES}
               onValueChange={(value) =>
                 setDraft({
                   ...draft,
-                  scope: value === "channel" ? "channel" : "thread",
+                  scope: sessionScope(value),
                 })
               }
             />

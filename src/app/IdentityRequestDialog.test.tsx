@@ -27,14 +27,18 @@ const opened = () =>
     .mock.calls.filter(([command]) => command === "plugin:opener|open_url")
     .map(([, args]) => new URL((args as { url: string }).url));
 
+function request(pubkey = agent, requestState = state) {
+  const parsed = parseIdentityRequest(
+    `buzz://authorize-identity?${new URLSearchParams({ version: "1", pubkey, callback: "https://app.example.org/buzz/callback", state: requestState })}`,
+  );
+  if (!parsed) throw new Error("expected a request");
+  return parsed;
+}
+
 function show(pubkey = agent) {
   const requests = createIdentityRequests();
-  const request = parseIdentityRequest(
-    `buzz://authorize-identity?${new URLSearchParams({ version: "1", pubkey, callback: "https://app.example.org/buzz/callback", state })}`,
-  );
-  if (!request) throw new Error("expected a request");
   render(<IdentityRequestDialog requests={requests} />);
-  act(() => requests.open(request, viewer));
+  act(() => requests.open(request(pubkey), viewer));
   return requests;
 }
 
@@ -100,4 +104,51 @@ it("never authorizes the owner's own key", () => {
     screen.getByRole("button", { name: "Authorize this key" }),
   ).toBeDisabled();
   expect(screen.getByText(/your own key/)).toBeInTheDocument();
+});
+
+it("lets a newer request replace one still signing, which then answers nothing", async () => {
+  const user = userEvent.setup();
+  let finish: (value: string[]) => void = () => {};
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "identity_restore") return viewer;
+    if (command === "identity_prepare_remote_agent_authorization")
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    if (command === "plugin:opener|open_url") return undefined;
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const requests = show();
+  await user.click(screen.getByRole("button", { name: "Authorize this key" }));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith(
+      "identity_prepare_remote_agent_authorization",
+      expect.anything(),
+    ),
+  );
+  const newer = request(agent, `${"B".repeat(42)}A`);
+  act(() => requests.open(newer, viewer));
+  await act(async () => finish(tag));
+  expect(requests.snapshot()?.request).toBe(newer);
+  expect(opened()).toHaveLength(0);
+});
+
+it("can try again after a failure", async () => {
+  const user = userEvent.setup();
+  let failures = 1;
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "identity_restore") return viewer;
+    if (command === "identity_prepare_remote_agent_authorization") {
+      if (failures-- > 0) throw "Keychain is locked";
+      return tag;
+    }
+    if (command === "plugin:opener|open_url") return undefined;
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const requests = show();
+  await user.click(screen.getByRole("button", { name: "Authorize this key" }));
+  expect(await screen.findByText("Keychain is locked")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Authorize this key" }));
+  await waitFor(() => expect(requests.snapshot()).toBeNull());
+  expect(opened()).toHaveLength(1);
 });

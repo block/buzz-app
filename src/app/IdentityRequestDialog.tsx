@@ -1,4 +1,4 @@
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import { invoke } from "@tauri-apps/api/core";
 import { prepareRemoteAgentAuthorization } from "../features/host/service";
@@ -29,7 +29,7 @@ export function IdentityRequestDialog({
       key={`${pending.request.state}:${pending.viewer}`}
       request={pending.request}
       viewer={pending.viewer}
-      close={requests.close}
+      close={() => requests.close(pending.request)}
     />
   );
 }
@@ -43,14 +43,13 @@ function Consent({
   viewer: string;
   close: () => void;
 }) {
+  const ownKey = request.pubkey === viewer;
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState(
-    request.pubkey === viewer
-      ? "This site asked to authorize your own key. Buzz never does that."
-      : "",
-  );
+  const [error, setError] = useState("");
   const cancelButton = useRef<HTMLButtonElement>(null);
   const operation = useRef<AbortController | null>(null);
+  // A replaced or closed request's signing must not answer or close anything.
+  useEffect(() => () => operation.current?.abort(), []);
 
   function deny() {
     operation.current?.abort();
@@ -59,10 +58,11 @@ function Consent({
   }
 
   async function authorize() {
-    if (operation.current || error) return;
+    if (operation.current || ownKey) return;
     const attempt = new AbortController();
     operation.current = attempt;
     setPending(true);
+    setError("");
     try {
       const proof = await prepareRemoteAgentAuthorization(
         request.pubkey,
@@ -72,6 +72,7 @@ function Consent({
       if (proof[1] !== viewer)
         throw new Error("Your Buzz identity changed. Ask the site again.");
       await answer(identityAnswerUrl(request, { proof }));
+      if (attempt.signal.aborted) return;
       close();
     } catch (failure) {
       if (attempt.signal.aborted) return;
@@ -100,7 +101,7 @@ function Consent({
           <Button
             variant="prominent"
             loading={pending}
-            disabled={!!error}
+            disabled={ownKey}
             onClick={() => void authorize()}
           >
             {pending ? "Authorizing…" : "Authorize this key"}
@@ -108,7 +109,14 @@ function Consent({
         </>
       }
     >
-      <Field label="Application identity (npub)" error={error}>
+      <Field
+        label="Application identity (npub)"
+        error={
+          ownKey
+            ? "This site asked to authorize your own key. Buzz never does that."
+            : error
+        }
+      >
         <Textarea
           variant="code"
           readOnly

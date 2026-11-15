@@ -90,7 +90,10 @@ export function createIdentityRequests() {
     },
     open: (request: IdentityRequest, viewer: string) =>
       set({ request, viewer }),
-    close: () => set(null),
+    /** Closes this request only: a newer one that replaced it stays. */
+    close(request: IdentityRequest) {
+      if (pending?.request === request) set(null);
+    },
   };
 }
 export type IdentityRequests = ReturnType<typeof createIdentityRequests>;

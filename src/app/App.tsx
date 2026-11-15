@@ -121,6 +121,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
       portalContainer={document.getElementById("buzz-toast-root") ?? undefined}
     >
       <AgentCompletionNotifications services={services} />
+      {/* Identity-only, so it shows during community onboarding too. */}
+      <IdentityRequestDialog requests={services.identityRequests} />
       <AgentsContext.Provider value={services.agents}>
         <PluginUpdates
           plugins={services.plugins}
@@ -743,7 +745,6 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             communities={services.communities}
             relay={services.relay}
           />
-          <IdentityRequestDialog requests={services.identityRequests} />
           <InterruptedNotice agents={services.agents} />
           <MediaMenuDownloadNotice />
           <CreationReview agents={services.agents} />

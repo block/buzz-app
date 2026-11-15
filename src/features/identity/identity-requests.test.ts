@@ -70,7 +70,9 @@ it("keeps one request at a time, the newest", () => {
   requests.open(first, "ab".repeat(32));
   requests.open(second, "ab".repeat(32));
   expect(requests.snapshot()?.request.state).toBe(`${"B".repeat(42)}A`);
-  requests.close();
+  requests.close(first);
+  expect(requests.snapshot()?.request).toBe(second);
+  requests.close(second);
   expect(requests.snapshot()).toBeNull();
   expect(changes).toBe(3);
 });

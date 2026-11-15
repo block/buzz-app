@@ -4399,3 +4399,65 @@ it("kills community wake execution if its deadline interrupt is refused", async 
     f.runtime.dispose();
   }
 });
+
+it("keeps addressed community admission ahead of a later wake during compaction", async () => {
+  const f = setup([], { hold: true });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const agent = { ...f.agent, config } as unknown as Agent;
+  let wake: Promise<unknown> | undefined;
+  try {
+    await f.deliver(
+      { type: "mention", event: message("1", "first") },
+      { config },
+    );
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("missing worker");
+    worker.finish();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, { channelId: channel })).toBe(
+        "idle",
+      ),
+    );
+    const compacted = f.runtime.session(
+      agent,
+      { channelId: channel },
+      "compact",
+    );
+    await vi.waitFor(() => expect(worker.prompts[1]).toBe("/compact"));
+    await f.deliver(
+      { type: "mention", event: message("2", "ADDRESSED_BEFORE_WAKE") },
+      { config },
+    );
+    vi.useFakeTimers();
+    wake = f.runtime
+      .runOnce({
+        delivery: {
+          agent: f.agent as unknown as Delivery["agent"],
+          config,
+          current: () => true,
+        },
+        key: "later-wake",
+        signal: new AbortController().signal,
+        prompt: async () => "WAKE_AFTER_ADDRESSED",
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0])
+      .catch((error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+    worker.finish();
+    await compacted;
+    await vi.waitFor(() => expect(worker.prompts.length).toBe(3));
+    expect(worker.prompts[2]).toContain("ADDRESSED_BEFORE_WAKE");
+    worker.finish();
+    await vi.waitFor(() => expect(worker.prompts.length).toBe(4));
+    expect(worker.prompts[3]).toContain("WAKE_AFTER_ADDRESSED");
+    worker.finish();
+    await wake;
+  } finally {
+    vi.useRealTimers();
+    f.runtime.dispose();
+    await wake;
+  }
+});

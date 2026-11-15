@@ -2911,3 +2911,61 @@ it("retains the Solo Canvas when a stopped admitted source finishes preparation"
     f.runtime.dispose();
   }
 });
+
+it("keeps addressed community admission ahead of a later wake during compaction", async () => {
+  const f = setup({
+    hold: true,
+    scope: "community",
+    reply: "Compaction complete",
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const agent = { ...f.agent, config } as unknown as Agent;
+  let wake: Promise<unknown> | undefined;
+  try {
+    await f.deliver(message("1", "first"));
+    await vi.waitFor(() => expect(!!f.goose()?.turns.length).toBe(true));
+    const worker = f.goose();
+    if (!worker) throw new Error("missing worker");
+    worker.turns[0]?.finish();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, { channelId: channel })).toBe(
+        "idle",
+      ),
+    );
+    const compacted = f.runtime.session(
+      agent,
+      { channelId: channel },
+      "compact",
+    );
+    await vi.waitFor(() => expect(worker.turns[1]?.text).toBe("/compact"));
+    await f.deliver(message("2", "ADDRESSED_BEFORE_WAKE"));
+    vi.useFakeTimers();
+    wake = f.runtime
+      .runOnce({
+        delivery: {
+          agent: f.agent as unknown as Delivery["agent"],
+          config,
+          current: () => true,
+        },
+        key: "later-wake",
+        signal: new AbortController().signal,
+        prompt: async () => "WAKE_AFTER_ADDRESSED",
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0])
+      .catch((error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+    worker.turns[1]?.finish();
+    await compacted;
+    await vi.waitFor(() => expect(worker.turns.length).toBe(3));
+    expect(worker.turns[2]?.text).toContain("ADDRESSED_BEFORE_WAKE");
+    worker.turns[2]?.finish();
+    await vi.waitFor(() => expect(worker.turns.length).toBe(4));
+    expect(worker.turns[3]?.text).toContain("WAKE_AFTER_ADDRESSED");
+    worker.turns[3]?.finish();
+    await wake;
+  } finally {
+    vi.useRealTimers();
+    f.runtime.dispose();
+    await wake;
+  }
+});

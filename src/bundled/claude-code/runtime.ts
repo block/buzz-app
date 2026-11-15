@@ -1106,12 +1106,26 @@ export class ClaudeRuntime {
       }
       return handoff.done;
     }
+    const prior = entry.policies.get(key);
+    const same = key !== COMMUNITY_SESSION && prior?.topLevel === topLevel;
+    const wait =
+      key === COMMUNITY_SESSION
+        ? Promise.all(
+            [...entry.policies.values()].map((policy) => policy.settled),
+          )
+        : prior && (same ? prior.handed : prior.settled);
+    let delivered!: Promise<Settled>;
+    let interrupted = false;
+    let submitted = false;
     const handoff = this.controls.deliver(
       `${agent.key}/${key}`,
       async (deferred) => {
         // Accepted deferred work belongs to the captured agent lifetime, not
         // the short deadline for handing a message to the harness.
-        if (this.agents.get(agent.key) !== entry) return;
+        if (this.agents.get(agent.key) !== entry) {
+          delivered = Promise.resolve({ ok: true });
+          return;
+        }
         if (!deferred) signal.throwIfAborted();
         const admitted = await admission(deferred);
         session = admitted?.session ?? session;
@@ -1151,158 +1165,143 @@ export class ClaudeRuntime {
         // A turn keeps the posting policy it was admitted with: a request under
         // the other policy waits for the conversation's turns to settle rather
         // than steering into them and changing their tools' context.
-        const prior = entry.policies.get(key);
-        const same = key !== COMMUNITY_SESSION && prior?.topLevel === topLevel;
-        const wait =
-          key === COMMUNITY_SESSION
-            ? Promise.all(
-                [...entry.policies.values()].map((policy) => policy.settled),
-              )
-            : prior && (same ? prior.handed : prior.settled);
-        let delivered!: Promise<Settled>;
-        let interrupted = false;
-        let submitted = false;
-        const handed = (async () => {
-          await wait;
-          if (interrupted) {
-            delivered = Promise.resolve({ ok: true });
-            return;
-          }
-          const { text: prepared, contextRoot } = await prompt(false);
-          if (interrupted) {
-            delivered = Promise.resolve({ ok: true });
-            return;
-          }
-          entry.handle = agent;
-          entry.team = team ?? "";
-          // Plugins' notes wait until the turn is handed over, so one that
-          // fails or is cancelled before then leaves them for the next.
-          const noteRoot =
-            topLevel ||
-            key === channel ||
-            (key === COMMUNITY_SESSION && !source.root)
-              ? undefined
-              : (threadReference(event)?.rootId ?? event.id);
-          const notes = agent.notes?.(channel, noteRoot) ?? [];
-          const text = [
-            sessionContext,
-            this.review(entry, prepared, notes, channel, noteRoot, key),
-          ]
-            .filter(Boolean)
-            .join("\n\n");
-          // A conversation's tools default to its thread; a session shared by
-          // several threads is told which to reply in instead.
-          entry.contexts.set(key, {
-            ...(session ? { session } : {}),
-            ...(topLevel
-              ? { channel, ...(solo ? { topLevel } : {}) }
-              : key === channel || (key === COMMUNITY_SESSION && !source.root)
-                ? { channel }
-                : {
-                    channel,
-                    root: threadReference(event)?.rootId ?? event.id,
-                  }),
-          });
-          submitted = true;
-          delivered = entry.sessions.deliver(key, text, event.created_at, {
-            current: () => !interrupted && (!current || current()),
-            ...(wake
-              ? {
-                  refresh: async (fresh = false) => {
-                    const text = this.review(
-                      entry,
-                      (await prompt(fresh)).text,
-                      notes,
-                      channel,
-                      noteRoot, key);
-                    return [sessionContext, text].filter(Boolean).join("\n\n");
-                  },
-                }
-              : {}),
-            steer: steerPrompt(text),
-            fresh: async () =>
-              [
-                sessionContext,
-                this.review(
-                  entry,
-                  (await prompt(true)).text,
-                  notes,
+        await wait;
+        if (interrupted) {
+          delivered = Promise.resolve({ ok: true });
+          return;
+        }
+        const { text: prepared, contextRoot } = await prompt(false);
+        if (interrupted) {
+          delivered = Promise.resolve({ ok: true });
+          return;
+        }
+        entry.handle = agent;
+        entry.team = team ?? "";
+        // Plugins' notes wait until the turn is handed over, so one that
+        // fails or is cancelled before then leaves them for the next.
+        const noteRoot =
+          topLevel ||
+          key === channel ||
+          (key === COMMUNITY_SESSION && !source.root)
+            ? undefined
+            : (threadReference(event)?.rootId ?? event.id);
+        const notes = agent.notes?.(channel, noteRoot) ?? [];
+        const text = [
+          sessionContext,
+          this.review(entry, prepared, notes, channel, noteRoot, key),
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        // A conversation's tools default to its thread; a session shared by
+        // several threads is told which to reply in instead.
+        entry.contexts.set(key, {
+          ...(session ? { session } : {}),
+          ...(topLevel
+            ? { channel, ...(solo ? { topLevel } : {}) }
+            : key === channel || (key === COMMUNITY_SESSION && !source.root)
+              ? { channel }
+              : {
                   channel,
-                  noteRoot, key),
-              ]
-                .filter(Boolean)
-                .join("\n\n"),
-            ...(contextRoot ? { contextRoot } : {}),
-            activityScope: topLevel
-              ? channel
-              : (threadReference(event)?.rootId ?? event.id),
-            ...(step ? { step } : {}),
-            ...(acknowledged ? { acknowledged } : {}),
-            ...(superseded ? { superseded } : {}),
-            pick: {
-              ...(model ? { model } : {}),
-              ...(effort ? { effort } : {}),
-            },
-            admit,
-          });
-          void delivered.then(
-            (result) => {
-              if (result.undelivered)
-                agent.restoreNotes?.(channel, notes, noteRoot);
-            },
-            () => undefined,
-          );
-        })();
-        const done = handed.then(
-          () => delivered,
-          (error: unknown): Settled => ({ ok: false, error: String(error) }),
-        );
-        const policy = {
-          topLevel,
-          cancel() {
-            interrupted = true;
-            prior?.cancel();
+                  root: threadReference(event)?.rootId ?? event.id,
+                }),
+        });
+        submitted = true;
+        delivered = entry.sessions.deliver(key, text, event.created_at, {
+          current: () => !interrupted && (!current || current()),
+          ...(wake
+            ? {
+                refresh: async (fresh = false) => {
+                  const text = this.review(
+                    entry,
+                    (await prompt(fresh)).text,
+                    notes,
+                    channel,
+                    noteRoot,
+                    key,
+                  );
+                  return [sessionContext, text].filter(Boolean).join("\n\n");
+                },
+              }
+            : {}),
+          steer: steerPrompt(text),
+          fresh: async () =>
+            [
+              sessionContext,
+              this.review(
+                entry,
+                (await prompt(true)).text,
+                notes,
+                channel,
+                noteRoot,
+                key,
+              ),
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+          ...(contextRoot ? { contextRoot } : {}),
+          activityScope: topLevel
+            ? channel
+            : (threadReference(event)?.rootId ?? event.id),
+          ...(step ? { step } : {}),
+          ...(acknowledged ? { acknowledged } : {}),
+          ...(superseded ? { superseded } : {}),
+          pick: {
+            ...(model ? { model } : {}),
+            ...(effort ? { effort } : {}),
           },
-          handed: handed.catch(() => undefined),
-          settled: Promise.allSettled([
-            same ? prior.settled : undefined,
-            done,
-          ]).then(() =>
-            key === COMMUNITY_SESSION ? entry.sessions.idle(key) : undefined,
-          ),
-        };
-        entry.policies.set(key, policy);
-        void policy.settled.then(() => {
-          if (entry.policies.get(key) !== policy) return;
-          entry.policies.delete(key);
-          this.notify();
+          admit,
         });
-        // Deliveries keep their order: a later one waits on this handover, and
-        // one with nothing to wait for is handed over before `run` returns.
-        if (!wait) await handed;
-        // The turn outlives `run`, which the host is told so it shows it as working.
-        workingUntil(done);
-        interruptible?.(() => {
-          interrupted = true;
-          return key !== COMMUNITY_SESSION || submitted
-            ? entry.sessions.interrupt(key)
-            : Promise.resolve();
-        });
-        this.notify();
-        this.watch(done, async (error) => {
-          if (error) await this.report(agent, channel, event, error, topLevel);
-        });
-        if (solo && named && settings.scope !== "community")
-          void this.offerTitle(done, agent.key, key, settings.workspace, named);
+        void delivered.then(
+          (result) => {
+            if (result.undelivered)
+              agent.restoreNotes?.(channel, notes, noteRoot);
+          },
+          () => undefined,
+        );
       },
     );
-    if (!handoff.deferred) return handoff.done;
-    workingUntil(handoff.done);
-    void handoff.done
-      .catch((error) =>
-        this.report(agent, channel, event, String(error), topLevel),
-      )
-      .catch((error) => console.warn("Claude handover failed", error));
+    const handed = handoff.done;
+    const done = handed.then(
+      () => delivered,
+      (error: unknown): Settled => ({ ok: false, error: String(error) }),
+    );
+    const policy = {
+      topLevel,
+      cancel() {
+        interrupted = true;
+        prior?.cancel();
+      },
+      handed: handed.catch(() => undefined),
+      settled: Promise.allSettled([
+        same ? prior.settled : undefined,
+        done,
+      ]).then(() =>
+        key === COMMUNITY_SESSION ? entry.sessions.idle(key) : undefined,
+      ),
+    };
+    entry.policies.set(key, policy);
+    void policy.settled.then(() => {
+      if (entry.policies.get(key) !== policy) return;
+      entry.policies.delete(key);
+      this.notify();
+    });
+    // Deliveries keep their order: a later one waits on this handover, and
+    // one with nothing to wait for is handed over before `run` returns.
+    if (!wait && !handoff.deferred) await handed;
+    // The turn outlives `run`, which the host is told so it shows it as working.
+    workingUntil(done);
+    interruptible?.(() => {
+      interrupted = true;
+      return key !== COMMUNITY_SESSION || submitted
+        ? entry.sessions.interrupt(key)
+        : Promise.resolve();
+    });
+    this.notify();
+    this.watch(done, async (error) => {
+      if (error) await this.report(agent, channel, event, error, topLevel);
+    });
+    if (solo && named && settings.scope !== "community")
+      void this.offerTitle(done, agent.key, key, settings.workspace, named);
   }
 
   /** After a Solo chat's turn, offers the host the title Claude Code generated

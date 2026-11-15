@@ -542,154 +542,160 @@ export class GooseRuntime {
     const { key, text: prepared, place, shown, dm } = await prompt(false);
     await rememberCommunitySource(this.agentStore, agent.key, key, channel);
     signal.throwIfAborted();
+    let noteRoot: string | undefined;
+    let notes: ReturnType<NonNullable<AgentHandle["notes"]>> = [];
+    const prior = entry.policies.get(key);
+    const same = key !== COMMUNITY_SESSION && prior?.topLevel === topLevel;
+    const wait =
+      key === COMMUNITY_SESSION
+        ? Promise.all(
+            [...entry.policies.values()].map((policy) => policy.settled),
+          )
+        : prior && (same ? prior.handed : prior.settled);
+    let delivered!: ReturnType<AgentSessions["deliver"]>;
+    let interrupted = false;
+    const valid = () => !interrupted && (!current || current());
+    let submitted = false;
     const handoff = this.controls.deliver(
       `${agent.key}/${key}`,
       async (deferred) => {
         // Accepted deferred work belongs to the captured agent lifetime, not
         // the short deadline for handing a message to the harness.
-        if (this.agents.get(agent.key) !== entry) return;
+        if (this.agents.get(agent.key) !== entry) {
+          delivered = Promise.resolve({ ok: true, undelivered: true });
+          return;
+        }
         if (!deferred) signal.throwIfAborted();
-        let noteRoot: string | undefined;
-        let notes: ReturnType<NonNullable<AgentHandle["notes"]>> = [];
-        const prior = entry.policies.get(key);
-        const same = key !== COMMUNITY_SESSION && prior?.topLevel === topLevel;
-        const wait =
-          key === COMMUNITY_SESSION
-            ? Promise.all(
-                [...entry.policies.values()].map((policy) => policy.settled),
-              )
-            : prior && (same ? prior.handed : prior.settled);
-        let delivered!: ReturnType<AgentSessions["deliver"]>;
-        let interrupted = false;
-        const valid = () => !interrupted && (!current || current());
-        let submitted = false;
-        const handed = (async () => {
-          await wait;
-          if (interrupted || this.agents.get(agent.key) !== entry) {
-            delivered = Promise.resolve({ ok: true, undelivered: true });
-            return;
-          }
-          entry.handle = agent;
-          entry.team = team ?? "";
-          // Plugins' notes wait until the turn is handed over, so one that
-          // fails or is cancelled before then leaves them for the next.
-          noteRoot =
-            topLevel || key === channel || (key === COMMUNITY_SESSION && dm)
-              ? undefined
-              : (threadReference(event)?.rootId ?? event.id);
-          notes = agent.notes?.(channel, noteRoot) ?? [];
-          const text = this.review(
-            entry,
-            wait ? (await prompt(false, key, valid)).text : prepared,
-            notes,
-            channel,
-            noteRoot, key);
-          if (interrupted || this.agents.get(agent.key) !== entry) {
-            delivered = Promise.resolve({ ok: true, undelivered: true });
-            return;
-          }
-          entry.contexts.set(
-            key,
-            topLevel
-              ? { channel, ...(solo ? { topLevel } : {}) }
-              : key === channel || (key === COMMUNITY_SESSION && dm)
-                ? { channel }
-                : { channel, root: threadReference(event)?.rootId ?? event.id },
-          );
-          submitted = true;
-          delivered = entry.sessions.deliver(key, text, shown, {
-            ...(wake
-              ? {
-                  current,
-                  refresh: async (fresh = false) => {
-                    const text = this.review(
-                      entry,
-                      (await prompt(fresh, key, valid)).text,
-                      notes,
-                      channel,
-                      noteRoot, key);
-                    return text;
-                  },
-                }
-              : {}),
-            steer: steerPrompt(text),
-            fresh: async () =>
-              this.review(
-                entry,
-                (await prompt(true, key, valid)).text,
-                notes,
-                channel,
-                noteRoot, key),
-            title: sessionTitle(
-              entry.name,
-              key === COMMUNITY_SESSION ? "Community" : place,
-              key.split("/")[1],
+        await wait;
+        if (interrupted || this.agents.get(agent.key) !== entry) {
+          delivered = Promise.resolve({ ok: true, undelivered: true });
+          return;
+        }
+        entry.handle = agent;
+        entry.team = team ?? "";
+        // Plugins' notes wait until the turn is handed over, so one that
+        // fails or is cancelled before then leaves them for the next.
+        noteRoot =
+          topLevel || key === channel || (key === COMMUNITY_SESSION && dm)
+            ? undefined
+            : (threadReference(event)?.rootId ?? event.id);
+        notes = agent.notes?.(channel, noteRoot) ?? [];
+        const text = this.review(
+          entry,
+          wait ? (await prompt(false, key, valid)).text : prepared,
+          notes,
+          channel,
+          noteRoot,
+          key,
+        );
+        if (interrupted || this.agents.get(agent.key) !== entry) {
+          delivered = Promise.resolve({ ok: true, undelivered: true });
+          return;
+        }
+        entry.contexts.set(
+          key,
+          topLevel
+            ? { channel, ...(solo ? { topLevel } : {}) }
+            : key === channel || (key === COMMUNITY_SESSION && dm)
+              ? { channel }
+              : { channel, root: threadReference(event)?.rootId ?? event.id },
+        );
+        submitted = true;
+        delivered = entry.sessions.deliver(key, text, shown, {
+          ...(wake
+            ? {
+                current,
+                refresh: async (fresh = false) => {
+                  const text = this.review(
+                    entry,
+                    (await prompt(fresh, key, valid)).text,
+                    notes,
+                    channel,
+                    noteRoot,
+                    key,
+                  );
+                  return text;
+                },
+              }
+            : {}),
+          steer: steerPrompt(text),
+          fresh: async () =>
+            this.review(
+              entry,
+              (await prompt(true, key, valid)).text,
+              notes,
+              channel,
+              noteRoot,
+              key,
             ),
-            // A Solo chat takes the name goose gives its first session.
-            ...(solo && named ? { named } : {}),
-            ...(!deferred && !wait ? { signal } : {}),
-            ...(model ? { model } : {}),
-            ...(effort ? { effort } : {}),
-            // A pick runs on its own level; a synced one is checked.
-            ...(synced?.effort && !model && !effort
-              ? { kept: synced.effort }
-              : {}),
-            activityScope: topLevel
-              ? channel
-              : (threadReference(event)?.rootId ?? event.id),
-            ...(step ? { step } : {}),
-            ...(acknowledged ? { acknowledged } : {}),
-            ...(superseded ? { superseded } : {}),
-          });
-        })();
-        const done = handed.then(() => delivered);
-        const policy = {
-          topLevel,
-          handed,
-          settled: Promise.all([same ? prior.settled : undefined, done]).then(
-            () => entry.sessions.idle(key),
+          title: sessionTitle(
+            entry.name,
+            key === COMMUNITY_SESSION ? "Community" : place,
+            key.split("/")[1],
           ),
-          cancel() {
-            interrupted = true;
-            prior?.cancel();
-          },
-        };
-        entry.policies.set(key, policy);
-        void policy.settled.then(() => {
-          if (entry.policies.get(key) !== policy) return;
-          entry.policies.delete(key);
-          this.notify();
+          // A Solo chat takes the name goose gives its first session.
+          ...(solo && named ? { named } : {}),
+          ...(!deferred && !wait ? { signal } : {}),
+          ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
+          // A pick runs on its own level; a synced one is checked.
+          ...(synced?.effort && !model && !effort
+            ? { kept: synced.effort }
+            : {}),
+          activityScope: topLevel
+            ? channel
+            : (threadReference(event)?.rootId ?? event.id),
+          ...(step ? { step } : {}),
+          ...(acknowledged ? { acknowledged } : {}),
+          ...(superseded ? { superseded } : {}),
         });
-        if (!wait) await handed;
-        workingUntil(done);
-        interruptible?.(() => {
-          if (key === COMMUNITY_SESSION) interrupted = true;
-          else policy.cancel();
-          return key !== COMMUNITY_SESSION || submitted
-            ? entry.sessions.interrupt(key)
-            : Promise.resolve();
-        });
-        this.notify();
-        void done
-          .then((result) => {
-            if (result.undelivered)
-              agent.restoreNotes?.(channel, notes, noteRoot);
-            // Of the messages one turn answered, only one has its error. An
-            // answer goose wrote without `send` stays in local activity.
-            if (result.error !== undefined)
-              return this.report(agent, channel, event, result.error, topLevel);
-          })
-          .catch((error) => console.warn("goose turn failed", error))
-          .finally(() => this.notify());
       },
     );
-    if (!handoff.deferred) return handoff.done;
-    workingUntil(handoff.done);
-    void handoff.done
-      .catch((error) =>
-        this.report(agent, channel, event, String(error), topLevel),
-      )
-      .catch((error) => console.warn("goose handover failed", error));
+    const handed = handoff.done;
+    const done = handed
+      .then(() => delivered)
+      .catch((error) => ({
+        ok: false,
+        error: String(error),
+        undelivered: true,
+      }));
+    const policy = {
+      topLevel,
+      handed,
+      settled: Promise.all([same ? prior.settled : undefined, done]).then(() =>
+        entry.sessions.idle(key),
+      ),
+      cancel() {
+        interrupted = true;
+        prior?.cancel();
+      },
+    };
+    entry.policies.set(key, policy);
+    void policy.settled.then(() => {
+      if (entry.policies.get(key) !== policy) return;
+      entry.policies.delete(key);
+      this.notify();
+    });
+    if (!wait && !handoff.deferred) await handed;
+    workingUntil(done);
+    interruptible?.(() => {
+      if (key === COMMUNITY_SESSION) interrupted = true;
+      else policy.cancel();
+      return key !== COMMUNITY_SESSION || submitted
+        ? entry.sessions.interrupt(key)
+        : Promise.resolve();
+    });
+    this.notify();
+    void done
+      .then((result) => {
+        if (result.undelivered) agent.restoreNotes?.(channel, notes, noteRoot);
+        // Of the messages one turn answered, only one has its error. An
+        // answer goose wrote without `send` stays in local activity.
+        if (result.error !== undefined)
+          return this.report(agent, channel, event, result.error, topLevel);
+      })
+      .catch((error) => console.warn("goose turn failed", error))
+      .finally(() => this.notify());
   }
 
   /** Runs a standalone turn, such as a watch's or a timer's, in a one-off

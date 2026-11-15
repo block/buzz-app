@@ -3771,19 +3771,33 @@ it("labels a large roster again only when a name input changes, not on every key
     expect(memberData()).toHaveAttribute("data-refreshing", "false"),
   );
   const search = screen.getByRole("searchbox");
-  // One letter is too short to search the relay, so no name input changes.
-  fireEvent.change(search, { target: { value: "z" } });
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  });
   const resolve = vi.spyOn(t.session.names, "resolve");
-  fireEvent.change(search, { target: { value: "y" } });
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  });
-  expect(search).toHaveValue("y");
-  // Labelling the roster again would resolve each of its 120 members; the
-  // dialog header and choices resolve a few names of their own.
+  const wait = (ms: number) =>
+    act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    });
+  const type = async (value: string, ms: number) => {
+    fireEvent.change(search, { target: { value } });
+    await wait(ms);
+  };
+  // Until no name is resolved for a while: opening and the first filter
+  // load names, which labels the roster again, as it should.
+  const settle = async () => {
+    for (let calls = -1; calls !== resolve.mock.calls.length; await wait(100))
+      calls = resolve.mock.calls.length;
+  };
+  // One letter is too short to search the relay. A filter that changes which
+  // members are shown loads their profiles, which also relabels, so these
+  // letters are ones a fallback name (bech32) never holds: the shown members
+  // match by display name alone.
+  await type("b", 0);
+  await settle();
+  resolve.mockClear();
+  for (const value of ["i", "o", "b", "i"]) await type(value, 50);
+  expect(search).toHaveValue("i");
+  // Labelling the roster on each keystroke would resolve each of its 120
+  // members per letter; the dialog header and choices resolve a few names of
+  // their own.
   expect(resolve.mock.calls.length).toBeLessThan(120);
 });
 

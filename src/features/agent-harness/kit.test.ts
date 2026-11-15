@@ -580,3 +580,81 @@ it("tells a community agent to specify channel for a top-level post", async () =
   if (!c) throw new Error("not admitted");
   expect((await f.kit.turnPrompt(d, c)).text).toContain("pass `channel`");
 });
+
+it.each(["send", "read"])(
+  "keeps the source thread for default community %s tools",
+  async (name) => {
+    const f = setup();
+    const event = reply("2", "1", "@Ampy go");
+    const c = await f.kit.conversation(
+      f.delivery({ type: "mention", event }),
+      "community",
+    );
+    if (!c) throw new Error("not admitted");
+    const result = await f.kit.tools(
+      f.agent,
+      c,
+    )({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name,
+        arguments:
+          name === "send" ? { text: "Done", audience: "everyone" } : {},
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('"isError":true');
+    expect(c.key).toBe(JSON.stringify(["community", self]));
+    expect(c.root).toBeUndefined();
+    if (name === "send")
+      expect(f.published[0]?.tags).toContainEqual([
+        "e",
+        "1".repeat(64),
+        "",
+        "reply",
+      ]);
+    else
+      expect(f.agent.query).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ "#e": ["1".repeat(64)] }),
+        ]),
+      );
+  },
+);
+
+it.each(["dm", "solo"] as const)(
+  "keeps default community tools at the %s channel level",
+  async (type) => {
+    const f = setup({ type });
+    const c = await f.kit.conversation(
+      f.delivery({ type: "mention", event: reply("2", "1", "go") }),
+      "community",
+    );
+    if (!c) throw new Error("not admitted");
+    const tools = f.kit.tools(f.agent, c);
+    await tools({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "send",
+        arguments: { text: "Done", audience: "everyone" },
+      },
+    });
+    await tools({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "read", arguments: {} },
+    });
+    expect(f.published).toHaveLength(1);
+    expect(f.agent.query).toHaveBeenCalledOnce();
+    expect(f.published[0]?.tags).not.toEqual(
+      expect.arrayContaining([expect.arrayContaining(["e"])]),
+    );
+    expect(JSON.stringify(vi.mocked(f.agent.query).mock.calls)).not.toContain(
+      '"#e"',
+    );
+  },
+);

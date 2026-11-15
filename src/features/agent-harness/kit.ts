@@ -438,7 +438,12 @@ export function harnessKit(sources: Sources): HarnessKit {
       `<context>\nScope: standalone\nAgent: ${agent.key}\n</context>\n\n${text}`,
 
     tools(agent, conversation, options = {}) {
-      const solo = conversation && known(conversation).solo;
+      const source = conversation && known(conversation);
+      const solo = source?.solo;
+      const root =
+        source?.scope === "community" && !source.dm
+          ? (threadReference(source.event)?.rootId ?? source.event.id)
+          : conversation?.root;
       const context: Context = !conversation
         ? {}
         : conversation.topLevel
@@ -446,8 +451,8 @@ export function harnessKit(sources: Sources): HarnessKit {
               channel: conversation.channel,
               ...(solo ? { topLevel: true } : {}),
             }
-          : conversation.root
-            ? { channel: conversation.channel, root: conversation.root }
+          : root
+            ? { channel: conversation.channel, root }
             : { channel: conversation.channel };
       const pubkey = agent.pubkey;
       const reads = () => ownerReads(sources.relay(agent.key), pubkey);

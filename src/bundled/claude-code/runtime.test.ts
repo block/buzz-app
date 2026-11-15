@@ -4114,3 +4114,133 @@ it("stops only the queued community request selected by the user", async () => {
     f.runtime.dispose();
   }
 });
+
+it("does not offer a shared native title to a later Solo source", async () => {
+  const named = vi.fn();
+  const f = setup([], {
+    solo: new Set([channel]),
+    named,
+    title: "PRIVATE_SUBJECT",
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [
+      ...listed.channels,
+      { ...first, id: "other", channelType: "stream" },
+    ],
+  });
+  try {
+    await f.deliver(
+      {
+        type: "mention",
+        event: message("1", "private subject", {
+          tags: [
+            ["h", "other"],
+            ["p", self],
+          ],
+        }),
+      },
+      { channelId: "other", config },
+    );
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    await f.deliver(
+      { type: "mention", event: message("2", "new Solo") },
+      { config },
+    );
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    await flush();
+    expect(named).not.toHaveBeenCalled();
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("keeps a background continuation on its source until native work drains", async () => {
+  const f = setup([], { hold: true, solo: new Set([channel]) });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [
+      ...listed.channels,
+      { ...first, id: "other", channelType: "stream" },
+    ],
+  });
+  try {
+    await f.deliver(
+      { type: "mention", event: message("1", "start background") },
+      { config },
+    );
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("no worker");
+    worker.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ id: "background" }],
+    });
+    worker.finish();
+    await f.workingUntil.mock.calls[0]?.[0];
+    await f.deliver(
+      {
+        type: "mention",
+        event: message("2", "other source", {
+          tags: [
+            ["h", "other"],
+            ["p", self],
+          ],
+        }),
+      },
+      { channelId: "other", config },
+    );
+    worker.emit({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "background",
+    });
+    worker.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [],
+    });
+    worker.emit({
+      type: "system",
+      subtype: "session_state_changed",
+      state: "working",
+    });
+    await mcp(worker, 200, "tools/call", {
+      name: "send",
+      arguments: { text: "background result", audience: "everyone" },
+    });
+    expect(f.published.at(-1)?.tags).toContainEqual(["h", channel]);
+    expect(worker.prompts).toHaveLength(1);
+    worker.emit({
+      type: "system",
+      subtype: "session_state_changed",
+      state: "idle",
+    });
+    worker.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [],
+    });
+    await vi.waitFor(() => expect(worker.prompts).toHaveLength(2));
+    worker.finish();
+    worker.emit({
+      type: "system",
+      subtype: "session_state_changed",
+      state: "idle",
+    });
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+  } finally {
+    f.runtime.dispose();
+  }
+});

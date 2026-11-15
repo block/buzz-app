@@ -1261,7 +1261,9 @@ export class ClaudeRuntime {
           settled: Promise.allSettled([
             same ? prior.settled : undefined,
             done,
-          ]).then(() => undefined),
+          ]).then(() =>
+            key === COMMUNITY_SESSION ? entry.sessions.idle(key) : undefined,
+          ),
         };
         entry.policies.set(key, policy);
         void policy.settled.then(() => {
@@ -1282,7 +1284,7 @@ export class ClaudeRuntime {
         this.watch(done, async (error) => {
           if (error) await this.report(agent, channel, event, error, topLevel);
         });
-        if (solo && named)
+        if (solo && named && settings.scope !== "community")
           void this.offerTitle(done, agent.key, key, settings.workspace, named);
       },
     );
@@ -1390,7 +1392,7 @@ export class ClaudeRuntime {
               };
               signal.addEventListener("abort", stop, { once: true });
               try {
-                return await entry.sessions.deliver(
+                const result = await entry.sessions.deliver(
                   COMMUNITY_SESSION,
                   [
                     `<context>\nScope: standalone\nSession scope: community\nAgent: ${agent.key}\n</context>\n\n${NO_PROJECT.section}\n\n${text}`,
@@ -1403,6 +1405,8 @@ export class ClaudeRuntime {
                     current: () => !signal.aborted && delivery.current(),
                   },
                 );
+                await entry.sessions.idle(COMMUNITY_SESSION);
+                return result;
               } finally {
                 signal.removeEventListener("abort", stop);
               }

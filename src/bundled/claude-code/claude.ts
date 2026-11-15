@@ -201,9 +201,13 @@ export class ClaudeProcess {
   private working = false;
   /** Its live background tasks that are activity, as Claude last listed them. */
   private tasks = 0;
+  private taskIds = new Set<string>();
+  /** A completion notification queues its own turn after the task disappears. */
+  private continuation: "waiting" | "running" | undefined;
   /** Called when it was active and is no longer. */
   onActivity: (() => void) | undefined;
   onQuiet?: () => void;
+  private readonly idleWaiters = new Set<() => void>();
   private requests = 0;
   /** Control requests awaiting Claude's answer, by request id. */
   private calls = new Map<string, (response: Message) => void>();
@@ -535,7 +539,21 @@ export class ClaudeProcess {
   }
   /** Busy, in a turn of its own, or running background work that may call back. */
   get active() {
-    return this.busy || this.working || this.tasks > 0;
+    return (
+      this.busy ||
+      this.working ||
+      this.tasks > 0 ||
+      this.continuation !== undefined
+    );
+  }
+  /** Includes background tasks that can start tool-using continuations. */
+  idle(): Promise<void> {
+    if (!this.alive || !this.active) return Promise.resolve();
+    return new Promise((resolve) => this.idleWaiters.add(resolve));
+  }
+  private releaseIdle() {
+    for (const resolve of this.idleWaiters) resolve();
+    this.idleWaiters.clear();
   }
   get started() {
     return this.began;
@@ -733,6 +751,7 @@ export class ClaudeProcess {
     this.stopped = false;
     this.compacting = false;
     for (const resolve of this.waiters.splice(0)) resolve(settled);
+    if (!this.alive) this.releaseIdle();
   }
 
   private readError(data: string) {
@@ -796,13 +815,28 @@ export class ClaudeProcess {
       const active = this.active;
       const starts = !this.working && !this.busy && message.state !== "idle";
       this.working = message.state !== "idle";
+      if (this.working && this.continuation === "waiting")
+        this.continuation = "running";
+      if (!this.working && (this.continuation === "running" || this.stopping))
+        this.continuation = undefined;
       if (!this.working) this.callEpoch++;
       // A turn of its own, such as a background task's, is new work.
       if (starts) this.renew();
       if (!this.working && this.pending) this.done();
       if (!this.active) this.stopping = false;
       if (active !== this.active) this.onActivity?.();
-      if (active && !this.active) this.onQuiet?.();
+      if (active && !this.active) {
+        this.onQuiet?.();
+        this.releaseIdle();
+      }
+      return;
+    }
+    if (
+      message.type === "system" &&
+      message.subtype === "task_notification" &&
+      this.taskIds.has(String(message.task_id))
+    ) {
+      this.continuation = "waiting";
       return;
     }
     // The whole set each time; ambient tasks, such as watchers, are not activity.
@@ -812,12 +846,23 @@ export class ClaudeProcess {
       Array.isArray(message.tasks)
     ) {
       const active = this.active;
-      this.tasks = message.tasks.filter(
+      const tasks = message.tasks.filter(
         (task) => !(task as Message | null)?.ambient,
-      ).length;
+      );
+      this.tasks = tasks.length;
+      this.taskIds = new Set(
+        tasks.flatMap((task) => {
+          const id =
+            (task as Message | null)?.task_id ?? (task as Message | null)?.id;
+          return typeof id === "string" ? [id] : [];
+        }),
+      );
       if (!this.active) this.stopping = false;
       if (active !== this.active) this.onActivity?.();
-      if (active && !this.active) this.onQuiet?.();
+      if (active && !this.active) {
+        this.onQuiet?.();
+        this.releaseIdle();
+      }
       return;
     }
     // `/compact` ends in a successful result even when compacting failed.

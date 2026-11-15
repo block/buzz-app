@@ -138,6 +138,11 @@ export class AgentSessions {
   active(key: string) {
     return this.opening.has(key) || !!this.live.get(key)?.process.active;
   }
+  /** Foreground work and native background continuations have drained. */
+  async idle(key: string) {
+    await this.opening.get(key);
+    await this.live.get(key)?.process.idle();
+  }
   async forget(key: string) {
     // Commit the reset before dropping the live process; failed writes must
     // not report success and resume the old session after restarting Buzz.

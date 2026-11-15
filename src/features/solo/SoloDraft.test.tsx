@@ -3695,7 +3695,8 @@ function preparingRegionDraft() {
   const prepareStart = vi.fn<NonNullable<SoloRegionSource["prepareStart"]>>(
     () => pending,
   );
-  regionNavigation.set({ source: { prepareStart }, binding: regionBinding });
+  const source = { prepareStart };
+  regionNavigation.set({ source, binding: regionBinding });
   writeView(
     "test",
     `${regionDraftKey(REGION)}:new-draft`,
@@ -3709,7 +3710,7 @@ function preparingRegionDraft() {
       onStarted={vi.fn()}
     />,
   );
-  return { ...test, prepareStart, resolve, reject, view };
+  return { ...test, source, prepareStart, resolve, reject, view };
 }
 
 it("awaits asynchronous region preparation before creating or sending", async () => {
@@ -3803,6 +3804,46 @@ it.each(["source stops", "draft unmounts"])(
     expect(test.channelWrites.start).not.toHaveBeenCalled();
     expect(test.messages.send).not.toHaveBeenCalled();
     expect(readView("test", regionStartKey(id), null)).toBeNull();
+  },
+);
+
+it.each(["source", "binding"])(
+  "keeps the draft when its %s is replaced during preparation",
+  async (replacement) => {
+    const test = preparingRegionDraft();
+    const replacementPrepare = vi.fn();
+    try {
+      await userEvent.click(
+        screen.getByRole("button", { name: "Send message" }),
+      );
+      expect(test.prepareStart).toHaveBeenCalledOnce();
+      const id = test.prepareStart.mock.calls[0]?.[1]?.channelId;
+      assert(id);
+      act(() =>
+        regionNavigation.set({
+          source:
+            replacement === "source"
+              ? { prepareStart: replacementPrepare }
+              : test.source,
+          binding:
+            replacement === "binding"
+              ? { ...regionBinding, incarnation: 2 }
+              : regionBinding,
+        }),
+      );
+      await act(async () => test.resolve());
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "This chat's plugin is unavailable. Your draft is saved.",
+      );
+      expect(test.channelWrites.start).not.toHaveBeenCalled();
+      expect(test.channelWrites.create).not.toHaveBeenCalled();
+      expect(test.messages.send).not.toHaveBeenCalled();
+      expect(replacementPrepare).not.toHaveBeenCalled();
+      expect(readView("test", regionStartKey(id), null)).toBeNull();
+      expect(screen.getByRole("textbox")).toHaveTextContent("Plan the launch");
+    } finally {
+      test.resolve();
+    }
   },
 );
 

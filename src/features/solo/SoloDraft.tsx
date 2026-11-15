@@ -514,7 +514,12 @@ export function SoloDraft({
             if (startKey) writeView(scope, startKey, null);
             return;
           }
-          regionOwner();
+          const current = regionOwner();
+          if (
+            current?.source !== owner.source ||
+            current?.binding !== owner.binding
+          )
+            throw new Error(REGION_UNAVAILABLE);
         }
         starting = session.channelWrites.start(
           channelId,

@@ -1913,6 +1913,8 @@ it("opens a confirmed human DM once, then hands navigation off without a members
     expect.any(AbortSignal),
   );
   expect(await screen.findByText("Opening conversation…")).toBeVisible();
+  await vi.waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(actions.closest("li")).not.toHaveAttribute("data-menu-open");
   await t.user.click(actions);
   expect(
     await screen.findByRole("menuitem", { name: "Send message" }),

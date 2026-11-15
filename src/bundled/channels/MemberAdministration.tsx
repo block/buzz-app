@@ -136,9 +136,10 @@ export function MemberMenus({
   if (open && !menu) setOpen(undefined);
   useEffect(() => {
     if (!open || !target) return;
-    const { id } = target;
-    rows.get(id)?.shown(open);
-    return () => rows.get(id)?.shown(undefined);
+    // A row re-registering in the closing commit has already left `rows`.
+    const row = rows.get(target.id);
+    row?.shown(open);
+    return () => row?.shown(undefined);
   }, [open, target, rows]);
   useEffect(() => {
     const viewport = scrollport.current;

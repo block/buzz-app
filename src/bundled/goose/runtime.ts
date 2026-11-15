@@ -499,7 +499,11 @@ export class GooseRuntime {
     // Found only for a delivery it takes, so nothing it drops starts goose.
     await this.follow(raw);
     const entry = this.entry(agent.key, this.settings(raw));
-    if (this.settings(raw).scope !== "community" || !entry.handle) {
+    if (
+      (this.settings(raw).scope !== "community" &&
+        !entry.policies.has(COMMUNITY_SESSION)) ||
+      !entry.handle
+    ) {
       entry.handle = agent;
       entry.team = team ?? "";
     }
@@ -564,7 +568,7 @@ export class GooseRuntime {
     const prior = entry.policies.get(key);
     const same = key !== COMMUNITY_SESSION && prior?.topLevel === topLevel;
     const wait =
-      key === COMMUNITY_SESSION
+      key === COMMUNITY_SESSION || entry.policies.has(COMMUNITY_SESSION)
         ? Promise.all(
             [...entry.policies.values()].map((policy) => policy.settled),
           )

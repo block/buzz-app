@@ -2763,7 +2763,13 @@ it("retains the Solo Canvas when a source is invalidated during preparation", as
   }
 });
 
-it.each(["waiting", "submitting", "scope changed"] as const)(
+it.each([
+  "waiting",
+  "submitting",
+  "scope changed",
+  "thread scope",
+  "channel scope",
+] as const)(
   "cancels a community Pi request while %s without losing native ownership",
   async (phase) => {
     const firstDone = deferred<unknown>();
@@ -2773,7 +2779,7 @@ it.each(["waiting", "submitting", "scope changed"] as const)(
     const f = setup({
       wait: () => firstDone.promise,
       deliver: async () => {
-        if (++deliveries === 2) {
+        if (++deliveries === 2 && phase === "submitting") {
           submitting();
           return admitted.promise;
         }
@@ -2802,11 +2808,18 @@ it.each(["waiting", "submitting", "scope changed"] as const)(
       await vi.waitFor(() =>
         expect(f.host.requests("deliver")).toHaveLength(1),
       );
-      if (phase === "scope changed")
+      if (
+        phase === "scope changed" ||
+        phase === "thread scope" ||
+        phase === "channel scope"
+      )
         f.runtime.sync([
           {
             ...f.agent,
-            config: { ...config, scope: "thread" },
+            config: {
+              ...config,
+              scope: phase === "channel scope" ? "channel" : "thread",
+            },
           } as unknown as Agent,
         ]);
       const b = f.deliver(
@@ -2820,7 +2833,13 @@ it.each(["waiting", "submitting", "scope changed"] as const)(
           }),
         },
         {
-          config,
+          config:
+            phase === "thread scope" || phase === "channel scope"
+              ? {
+                  ...config,
+                  scope: phase === "thread scope" ? "thread" : "channel",
+                }
+              : config,
           channelId: "other",
           interruptible,
           agent: {
@@ -2862,7 +2881,8 @@ it.each(["waiting", "submitting", "scope changed"] as const)(
       firstDone.resolve({ status: "done", answer: 1, text: "done" });
       await f.settled(a);
       const result = await f.settled(b);
-      if (phase !== "submitting") expect(result).toMatchObject({ ok: false });
+      if (phase === "waiting" || phase === "scope changed")
+        expect(result).toMatchObject({ ok: false });
       if (phase !== "submitting")
         expect(f.host.requests("deliver")).toHaveLength(1);
     } finally {

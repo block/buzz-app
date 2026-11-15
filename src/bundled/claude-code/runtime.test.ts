@@ -4746,7 +4746,7 @@ it.each(["community", "thread"] as const)(
   },
 );
 
-it.each(["mention", "attention"] as const)(
+it.each(["mention", "attention", "thread", "channel"] as const)(
   "keeps active community ownership and unsuccessful queued %s completion after scope sync and Stop",
   async (kind) => {
     const f = setup([], { hold: true });
@@ -4776,11 +4776,14 @@ it.each(["mention", "attention"] as const)(
       f.runtime.sync([
         {
           ...f.agent,
-          config: { ...config, scope: "thread" },
+          config: {
+            ...config,
+            scope: kind === "channel" ? "channel" : "thread",
+          },
         } as unknown as Agent,
       ]);
       await f.deliver(
-        kind === "mention"
+        kind !== "attention"
           ? { type: "mention", event: message("2", "queued second") }
           : {
               type: "attention",
@@ -4790,7 +4793,15 @@ it.each(["mention", "attention"] as const)(
               at: 200_000,
               text: "queued second",
             },
-        { config, agent, interruptible, workingUntil },
+        {
+          config:
+            kind === "thread" || kind === "channel"
+              ? { ...config, scope: kind }
+              : config,
+          agent,
+          interruptible,
+          workingUntil,
+        },
       );
       await interruptible.mock.calls[0]?.[0]();
       await mcp(worker, 1, "tools/call", {
@@ -4801,7 +4812,8 @@ it.each(["mention", "attention"] as const)(
       expect(f.agent.publish).toHaveBeenCalled();
       worker.finish();
       const results = await Promise.all(held);
-      expect(results).toContainEqual(expect.objectContaining({ ok: false }));
+      if (kind === "mention" || kind === "attention")
+        expect(results).toContainEqual(expect.objectContaining({ ok: false }));
       expect(worker.prompts).toHaveLength(1);
     } finally {
       worker?.finish();

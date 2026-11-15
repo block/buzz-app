@@ -1032,7 +1032,11 @@ export class ClaudeRuntime {
         (accepted, deferred) => this.admitDelivery(accepted, true, deferred),
       );
     const entry = this.entry(agent, settings);
-    if (settings.scope !== "community" || !entry.handle) {
+    if (
+      (settings.scope !== "community" &&
+        !entry.policies.has(COMMUNITY_SESSION)) ||
+      !entry.handle
+    ) {
       entry.handle = agent;
       entry.team = team ?? "";
     }
@@ -1126,7 +1130,7 @@ export class ClaudeRuntime {
     const prior = entry.policies.get(key);
     const same = key !== COMMUNITY_SESSION && prior?.topLevel === topLevel;
     const wait =
-      key === COMMUNITY_SESSION
+      key === COMMUNITY_SESSION || entry.policies.has(COMMUNITY_SESSION)
         ? Promise.all(
             [...entry.policies.values()].map((policy) => policy.settled),
           )

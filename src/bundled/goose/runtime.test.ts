@@ -2845,6 +2845,7 @@ it("retains the Solo Canvas when a stopped admitted source finishes preparation"
     await f.deliver(message("1", "first"), { workingUntil });
     await Promise.all(workingUntil.mock.calls.map(([done]) => done));
     const read = f.session.canvas.read.getMockImplementation();
+    if (!read) throw new Error("Missing Canvas reader");
     let reads = 0;
     const started = vi.fn();
     f.session.canvas.read.mockImplementation((...args) => {
@@ -2853,7 +2854,7 @@ it("retains the Solo Canvas when a stopped admitted source finishes preparation"
           started();
           release = () => resolve(null);
         });
-      return read!(...args);
+      return read(...args);
     });
     const pending = f.deliver(
       message("2", "cancel", {

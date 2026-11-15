@@ -2768,3 +2768,54 @@ it("keeps the active Solo Canvas when a speculative community request is stopped
     f.runtime.dispose();
   }
 });
+
+it("retains a community wake deadline after final publication until native idle", async () => {
+  const f = setup({ hold: true, scope: "community" });
+  f.agent.query.mockResolvedValue([message("1", "origin")]);
+  const abort = new AbortController();
+  const settled = vi.fn();
+  const done = f.runtime
+    .runOnce({
+      delivery: {
+        agent: f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "community" },
+        current: () => true,
+      },
+      key: "deadline",
+      signal: abort.signal,
+      prompt: async () => "check",
+    } as unknown as Parameters<GooseRuntime["runOnce"]>[0])
+    .then(settled);
+  void done.catch(() => {});
+  try {
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("missing process");
+    const reply = await process.mcp(
+      process.turns[0]?.sessionId ?? "",
+      "tools/call",
+      {
+        name: "send",
+        arguments: {
+          channel,
+          reply: "1".repeat(64),
+          text: "Done",
+          audience: "everyone",
+          final: true,
+        },
+        _meta: { "agent-tool-call-request-id": "wake-final" },
+      },
+    );
+    expect(reply.result).not.toMatchObject({ isError: true });
+    await vi.waitFor(() =>
+      expect(f.published.some((event) => event.kind === 9)).toBe(true),
+    );
+    expect(settled).not.toHaveBeenCalled();
+    abort.abort(new Error("deadline"));
+    await vi.waitFor(() => expect(process.cancelled).toHaveLength(1));
+  } finally {
+    f.goose()?.turns[0]?.finish();
+    await done.catch(() => {});
+    f.runtime.dispose();
+  }
+});

@@ -718,7 +718,7 @@ export class GooseRuntime {
               };
               signal.addEventListener("abort", stop, { once: true });
               try {
-                return await entry.sessions.deliver(
+                const result = await entry.sessions.deliver(
                   COMMUNITY_SESSION,
                   [
                     standalonePrompt(agent.key, text, true),
@@ -736,6 +736,8 @@ export class GooseRuntime {
                       : {}),
                   },
                 );
+                await entry.sessions.idle(COMMUNITY_SESSION);
+                return result;
               } finally {
                 signal.removeEventListener("abort", stop);
               }

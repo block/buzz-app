@@ -249,6 +249,10 @@ confirm the update to save the new source; no reinstall is needed.
 
 Manage plugins shows **Update** as soon as the background check finds a newer version. Buzz checks saved folders and eligible Git sources at startup and hourly while the app is visible. Saved folders are checked offline too. Opening Settings or returning to the window does not start a separate check. Automatic Git checks require update support and a network connection. To check a saved folder or Git source yourself, open the plugin’s details and choose **Check for updates**. Choosing **Update** opens a review before installing anything.
 
+To share a plugin installed from Git, choose **Copy install link** in its
+menu and paste the link in a message. Agents can make the same link for a
+GitHub repository. Nothing installs until the person opening it confirms.
+
 A plugin runs with the same reach as Buzz itself, with no sandbox. Install
 one only if you trust its author with your account and your computer. An optional
 [plugin trust file](plugin-trust.md) restricts external plugins to trusted

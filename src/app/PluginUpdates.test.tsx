@@ -417,6 +417,29 @@ it.each([true, false])(
   },
 );
 
+it("copies an install link to a plugin installed from Git", async () => {
+  const f = fixture();
+  const write = vi.fn(async () => {});
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText: write },
+    configurable: true,
+  });
+  render(
+    <ToastProvider>
+      <PluginMenu plugin={f.plugin} plugins={f.manager} busy={false} />
+    </ToastProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "More plugin actions" }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Copy install link" }),
+  );
+  expect(await screen.findByText("Link copied.")).toBeVisible();
+  expect(write).toHaveBeenCalledWith(
+    "buzz://plugin-install?repository=https%3A%2F%2Fexample.com%2Fplugins.git&ref=main",
+  );
+  Reflect.deleteProperty(navigator, "clipboard");
+});
+
 it.each(["checks disabled", "signature repaired"] as const)(
   "retires a pending preview when the installed plugin changes: %s",
   async (change) => {

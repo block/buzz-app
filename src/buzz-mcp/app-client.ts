@@ -357,6 +357,10 @@ export function appClient(
           check();
           return plugins.discover(repository, reference);
         },
+        link: (input) => {
+          check();
+          return plugins.link(input);
+        },
         disable: (id) => {
           check();
           return plugins.disable(id);

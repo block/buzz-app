@@ -268,6 +268,29 @@ export function parseBuzzLink(href: string): BuzzLink | null {
   }
 }
 
+/** The `buzz://plugin-install` link for a plugin in a Git repository, to post
+ * or copy. Refuses a source `parseBuzzLink` would not read back. */
+export function pluginInstallLink(
+  source: Readonly<{
+    repository: string;
+    reference?: string | undefined;
+    path?: string | undefined;
+    commit?: string | undefined;
+  }>,
+): string {
+  const { repository, reference, path, commit } = parseGitPluginSource({
+    repository: source.repository,
+    reference: source.reference ?? "",
+    ...(source.path !== undefined && { path: source.path }),
+    ...(source.commit !== undefined && { commit: source.commit }),
+  });
+  const query = new URLSearchParams({ repository });
+  if (reference) query.set("ref", reference);
+  if (path !== undefined && path !== ".") query.set("path", path);
+  if (commit) query.set("commit", commit);
+  return `buzz://plugin-install?${query}`;
+}
+
 /** A settings link's target; it has no community scope. */
 export const settingsTarget = ({
   section,

@@ -21,6 +21,8 @@ describe("plugin tools", () => {
     expect(listed.map(({ name, load }) => [name, load])).toEqual([
       ["plugin_list", "search"],
       ["plugin_discover", "search"],
+
+      ["plugin_link", "search"],
       ["plugin_disable", "search"],
       ["plugin_request", "search"],
       ["plugin_request_status", "search"],
@@ -32,6 +34,7 @@ describe("plugin tools", () => {
     for (const name of [
       "plugin_list",
       "plugin_discover",
+      "plugin_link",
       "plugin_disable",
       "plugin_request",
       "plugin_request_status",
@@ -58,6 +61,30 @@ describe("plugin tools", () => {
     });
     expect(discover).toHaveBeenCalledWith("owner/x", "main");
     await expect(call(client, "plugin_discover")).rejects.toThrow(
+      "repository is required",
+    );
+  });
+
+  it("make a link to share", async () => {
+    const made = { link: "buzz://plugin-install?repository=x" };
+    const link = vi.fn(async () => made);
+    const client = fake({ link: link as never });
+    expect(
+      JSON.parse(
+        (await call(client, "plugin_link", {
+          repository: "owner/x",
+          path: "notes",
+          pin: true,
+        })) as string,
+      ),
+    ).toEqual(made);
+    expect(link).toHaveBeenCalledWith({
+      repository: "owner/x",
+      reference: undefined,
+      path: "notes",
+      pin: true,
+    });
+    await expect(call(client, "plugin_link")).rejects.toThrow(
       "repository is required",
     );
   });

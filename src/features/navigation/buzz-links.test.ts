@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import {
   buzzLinkKind,
   buzzLinkTarget,
+  pluginInstallLink,
   isBuzzLink,
   parseBuzzLink,
 } from "./buzz-links";
@@ -187,6 +188,35 @@ it.each(["//", "/extra", "/%2F", "/./", "/extra/..", "/%2e/"])(
     ).toBeNull();
   },
 );
+
+it("writes plugin install links that read back as the same source", () => {
+  const commit = "a".repeat(40);
+  const link = pluginInstallLink({
+    repository: "example/plugins",
+    reference: "release/stable",
+    path: "plugins/one",
+    commit,
+  });
+  expect(link).toBe(
+    `buzz://plugin-install?repository=https%3A%2F%2Fgithub.com%2Fexample%2Fplugins&ref=release%2Fstable&path=plugins%2Fone&commit=${commit}`,
+  );
+  expect(parseBuzzLink(link)).toEqual({
+    format: "plugin-install",
+    source: {
+      repository: "https://github.com/example/plugins",
+      reference: "release/stable",
+      path: "plugins/one",
+      commit,
+    },
+  });
+  // The default branch and the repository root need no keys.
+  expect(pluginInstallLink({ repository: "example/plugin", path: "." })).toBe(
+    "buzz://plugin-install?repository=https%3A%2F%2Fgithub.com%2Fexample%2Fplugin",
+  );
+  expect(() =>
+    pluginInstallLink({ repository: "https://user:secret@github.com/a/b" }),
+  ).toThrow();
+});
 
 const pluginRepository = "ssh://git@github.com/example/plugin.git";
 const pluginLink = `buzz://plugin-install?repository=${encodeURIComponent(pluginRepository)}&ref=release%2Fstable`;

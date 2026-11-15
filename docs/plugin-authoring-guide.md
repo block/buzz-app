@@ -13,6 +13,7 @@ API v1 loads one file from a blob URL: no CSS, no assets and no runtime imports.
 3. After that, edit the files and call `plugin_reload` with the manifest id. If the new code fails to start, the running revision comes back. Read its `application` result (`applied`, `saved` or `failed`, with `nextStep`). `plugin_status` shows state, errors and what the plugin registered.
 4. Reload refuses a changed `manifest.host` or `id`. The owner applies a host change with the plugin's **Update** in Settings; a new id is a new plugin.
 5. Check what the user will see, then refine.
+6. To share it, push `manifest.json` and `plugin.js` to a repository the people you share with can read, such as a public GitHub one, call `plugin_link` with the repository (and `path` if it holds several plugins), and post the `markdown` it returns. Opening the link shows the install review. `plugin_link` refuses Buzz-hosted repositories, which open only for people in that community.
 
 ## Minimal template
 

@@ -50,6 +50,28 @@ export const PLUGIN_TOOLS: readonly Tool[] = [
     ["repository"],
   ),
   tool(
+    "plugin_link",
+    "Make a link that installs a plugin from a Git repository anyone opening it can read, such as a public GitHub repository, to share in a message. Opening it shows that person the install review; nothing installs until they confirm. Returns link and markdown, ready to post.",
+    {
+      repository: {
+        ...str,
+        description:
+          "HTTPS or SSH Git URL, GitHub owner/repo, or a github.com/owner/repo/tree/<branch>/<folder> page.",
+      },
+      reference,
+      path: {
+        ...str,
+        description: "The plugin's folder, when the repository has several.",
+      },
+      pin: {
+        type: "boolean",
+        description:
+          "Install exactly the commit there now, instead of the latest; a pinned link also updates a copy already installed from this repository.",
+      },
+    },
+    ["repository"],
+  ),
+  tool(
     "plugin_disable",
     "Disable an installed plugin now. plugin_request with action enable turns it back on.",
     { id: str },
@@ -133,6 +155,18 @@ export async function callPluginTool(
       if (!repository) throw new Error("repository is required");
       return JSON.stringify(
         await plugins.discover(repository, text(args.reference)),
+      );
+    }
+    case "plugin_link": {
+      const repository = text(args.repository);
+      if (!repository) throw new Error("repository is required");
+      return JSON.stringify(
+        await plugins.link({
+          repository,
+          reference: text(args.reference),
+          path: text(args.path),
+          pin: args.pin === true,
+        }),
       );
     }
     case "plugin_disable": {

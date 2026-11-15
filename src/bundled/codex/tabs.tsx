@@ -1456,6 +1456,17 @@ export function createTabs(
                 disabled={saving || checking}
                 onValueChange={(voice) => setDraft({ ...draft, voice })}
               />
+              {data && !data.voices && !checking && (
+                <div className="grid justify-items-start gap-2">
+                  <p role="status" className="m-0 text-body-sm text-subtle">
+                    Voice choices could not be checked. Try again, update Codex,
+                    or choose Codex default.
+                  </p>
+                  <Button variant="ghost" onClick={check}>
+                    Check voices again
+                  </Button>
+                </div>
+              )}
             </SettingsGroup>
             <AgentInstructions
               value={draft.instructions}

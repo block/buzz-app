@@ -73,6 +73,7 @@ function fixture({
   configured = {},
   voices = ["cove", "maple"],
   voicesGate,
+  voicesError = () => false,
   modelAReasoningEfforts = ["low", "high"],
   modelBReasoningEfforts = ["medium"],
   storage = localStore(),
@@ -98,6 +99,7 @@ function fixture({
   configured?: { model?: string; model_reasoning_effort?: string };
   voices?: string[] | null;
   voicesGate?: Promise<void>;
+  voicesError?: () => boolean;
   modelAReasoningEfforts?: string[];
   modelBReasoningEfforts?: string[];
 } = {}) {
@@ -175,6 +177,12 @@ function fixture({
           };
         if (wire.method === "thread/realtime/listVoices") {
           await voicesGate;
+          if (voicesError()) {
+            options?.onStdout?.(
+              `${JSON.stringify({ id: wire.id, error: { code: -32603, message: "Voice discovery failed" } })}\n`,
+            );
+            return;
+          }
           result = {
             voices: { v2: ["alloy"], ...(voices ? { v3: voices } : {}) },
           };
@@ -2850,6 +2858,9 @@ it("keeps model settings usable when an older Codex has no v3 voice catalog", as
   expect(
     screen.getByRole("combobox", { name: "Huddle voice" }),
   ).toHaveTextContent("Cove");
+  expect(
+    screen.getByRole("button", { name: "Check voices again" }),
+  ).toBeEnabled();
 });
 
 it("retains the saved voice label while discovery is pending", async () => {
@@ -2867,4 +2878,29 @@ it("retains the saved voice label while discovery is pending", async () => {
   }
   await waitFor(() => expect(voice).toBeEnabled());
   expect(voice).toHaveTextContent("Cove");
+});
+
+it("explains failed voice discovery and retries without losing the saved choice", async () => {
+  let failed = true;
+  const f = fixture({ voicesError: () => failed });
+  render(<f.tabs.SettingsTab {...f.props({ ...defaults, voice: "cove" })} />);
+  const retry = await screen.findByRole("button", {
+    name: "Check voices again",
+  });
+  expect(screen.getByText(/Voice choices could not be checked/)).toBeVisible();
+  expect(screen.getByLabelText("Model")).toBeEnabled();
+  expect(
+    screen.getByRole("combobox", { name: "Huddle voice" }),
+  ).toHaveTextContent("Cove");
+  failed = false;
+  await userEvent.setup().click(retry);
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Check voices again" }),
+    ).not.toBeInTheDocument(),
+  );
+  const voice = screen.getByRole("combobox", { name: "Huddle voice" });
+  await waitFor(() => expect(voice).toBeEnabled());
+  await userEvent.setup().click(voice);
+  expect(await screen.findByRole("option", { name: "Maple" })).toBeVisible();
 });

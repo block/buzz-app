@@ -2846,6 +2846,38 @@ it.each(["waiting", "submitting"] as const)(
   },
 );
 
+it.each(["thread", "community"] as const)(
+  "notifies mounted controls when an addressed %s policy ends",
+  async (scope) => {
+    const done = deferred<unknown>();
+    const f = setup({ wait: () => done.promise });
+    const config = { ...DEFAULT_CONFIG, scope };
+    const agent = { ...f.agent, config } as unknown as Agent;
+    const place = { channelId: channel, root: root.id };
+    const states: string[] = [];
+    const off = f.runtime.subscribe(() =>
+      states.push(f.runtime.sessionState(agent, place)),
+    );
+    try {
+      const turn = f.deliver(
+        { type: "mention", event: reply("2", "first") },
+        { config },
+      );
+      await turn.run;
+      done.resolve({ status: "done", answer: 1, text: "Done" });
+      await f.settled(turn);
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+      expect(states.at(-1)).toBe("idle");
+    } finally {
+      off();
+      done.resolve({ status: "done" });
+      f.runtime.dispose();
+    }
+  },
+);
+
 it("drains a recovered destinationless community wake before another turn", async () => {
   const drained = deferred<unknown>();
   const f = setup({

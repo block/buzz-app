@@ -9,6 +9,7 @@ import { threadReference } from "./thread-reference";
 export { threadReference } from "./thread-reference";
 import type { ChannelMessage } from "./contracts";
 import type { EventData, ReadFilter, RelayEvent } from "./events";
+import { newer } from "./events";
 import type { LocalEvents } from "./outbox";
 import type { Priority, RelayReader } from "./reader";
 import { listByteSize } from "./budget";
@@ -285,9 +286,22 @@ export function createThreadView({
     return [...result.values()];
   }
   function union(...batches: readonly (readonly RelayEvent[])[]) {
-    return [
-      ...new Map(batches.flat().map((event) => [event.id, event])).values(),
-    ];
+    const events = new Map<string, RelayEvent>();
+    const summaries = new Map<string, RelayEvent>();
+    for (const event of batches.flat()) {
+      if (event.kind === 39005) {
+        const target = event.tags.find(([name]) => name === "e")?.[1];
+        if (!target || event.pubkey !== relayAuthor) continue;
+        const previous = summaries.get(target);
+        const latest = newer(previous, event);
+        if (latest !== event) continue;
+        if (previous) events.delete(previous.id);
+        summaries.set(target, event);
+      }
+      events.set(event.id, event);
+    }
+    // Match the fold before budgeting; messages and tombstones remain evidence.
+    return [...events.values()];
   }
   /** A fold that changed nothing keeps the snapshot and notifies no one. */
   function emit(next: ThreadSnapshot) {

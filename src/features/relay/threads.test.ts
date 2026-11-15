@@ -1003,6 +1003,120 @@ it("explicitly limits oversized evidence rather than evicting aux and resurrecti
   });
 });
 
+it.each(["live", "read"])(
+  "compacts superseded summaries before the %s thread budget without evicting messages or tombstones",
+  async (source) => {
+    const deleted = reply("deleted", 2);
+    const replies = [
+      deleted,
+      ...Array.from({ length: 999 }, (_, i) => reply(`${i}`, i + 3)),
+    ];
+    const summaries = replies.map((_, i) =>
+      signed(relay, {
+        kind: 39005,
+        created_at: i + 2,
+        tags: [["e", root.id]],
+        content: JSON.stringify({ reply_count: i + 1 }),
+      }),
+    );
+    const events = [root, ...replies, ...summaries];
+    const thread = createThreadView({
+      channelId: "a",
+      messageId: root.id,
+      relayAuthor: relay.pubkey,
+      reader: { read: async () => events },
+      seed: root,
+      local: undefined,
+      canAccess: () => true,
+      visible: (events) => events,
+      notify: (listener) => listener(),
+    });
+    try {
+      if (source === "read") await thread.view.refresh();
+      else thread.receive(events);
+      expect(thread.view.snapshot()).toMatchObject({
+        limited: false,
+        error: undefined,
+        root: { id: root.id, replyCount: 1000 },
+      });
+      expect(thread.view.snapshot().replies).toHaveLength(1000);
+      expect(thread.events()).toHaveLength(1002);
+      expect(thread.events()).toContain(summaries.at(-1));
+
+      const tombstone = signed(alice, {
+        kind: 5,
+        content: "",
+        tags: [["e", deleted.id]],
+      });
+      thread.receive([tombstone]);
+      thread.receive([deleted, ...summaries.slice(0, -1)]);
+      expect(thread.view.snapshot().replies).toHaveLength(999);
+      expect(thread.events()).toContain(deleted);
+      expect(thread.events()).toContain(tombstone);
+      expect(thread.events()).toHaveLength(1003);
+
+      // The cap still applies to messages, even after summary compaction.
+      thread.receive(
+        Array.from({ length: 998 }, (_, i) => reply(`more ${i}`, i + 1002)),
+      );
+      expect(thread.view.snapshot()).toMatchObject({
+        status: "error",
+        limited: true,
+        root: undefined,
+        replies: [],
+      });
+    } finally {
+      thread.view.dispose();
+    }
+  },
+);
+
+it("retains one authorized summary per target with replay-independent timestamp and id ordering", () => {
+  const answer = reply("answer", 2);
+  const summary = (
+    key: typeof relay,
+    target: string,
+    time: number,
+    count: number,
+  ) =>
+    signed(key, {
+      kind: 39005,
+      created_at: time,
+      tags: [["e", target]],
+      content: JSON.stringify({ reply_count: count }),
+    });
+  const first = summary(relay, root.id, 3, 2);
+  const second = summary(relay, root.id, 3, 3);
+  const winner = first.id < second.id ? first : second;
+  const loser = winner === first ? second : first;
+  const childSummary = summary(relay, answer.id, 2, 1);
+  const thread = createThreadView({
+    channelId: "a",
+    messageId: root.id,
+    relayAuthor: relay.pubkey,
+    reader: {} as RelayReader,
+    seed: root,
+    local: undefined,
+    canAccess: () => true,
+    visible: (events) => events,
+    notify: (listener) => listener(),
+  });
+  try {
+    thread.receive([answer, loser, childSummary]);
+    thread.receive([winner, summary(alice, root.id, 100, 999)]);
+    thread.receive([loser, summary(relay, root.id, 2, 1)]);
+    expect(thread.events().filter((event) => event.kind === 39005)).toEqual(
+      expect.arrayContaining([winner, childSummary]),
+    );
+    expect(thread.events()).toHaveLength(4);
+    expect(thread.view.snapshot().root?.replyCount).toBe(
+      JSON.parse(winner.content).reply_count,
+    );
+  } finally {
+    thread.view.dispose();
+  }
+});
+
 it("trips the live byte limit at exactly the whole-thread serialised size", async () => {
   const h = seeded();
   const first = reply("first", 10);

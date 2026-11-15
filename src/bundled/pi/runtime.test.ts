@@ -3353,3 +3353,63 @@ it.each(["community", "thread"] as const)(
     }
   },
 );
+
+it.each(["thread", "channel"] as const)(
+  "preserves active community publication ownership when a promptless %s wake starts",
+  async (scope) => {
+    const done = deferred<unknown>();
+    const f = setup({ wait: () => done.promise });
+    const first = f.deliver(
+      { type: "mention", event: reply("2", "active community") },
+      { config: { ...DEFAULT_CONFIG, scope: "community" } },
+    );
+    await first.run;
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(1));
+    try {
+      let reached!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      const runtime = f.runtime as unknown as {
+        entry(...args: unknown[]): unknown;
+      };
+      const original = runtime.entry.bind(runtime);
+      vi.spyOn(runtime, "entry").mockImplementation((...args) => {
+        const entry = original(...args);
+        reached();
+        return entry;
+      });
+      const prompt = vi.fn(async () => undefined);
+      const wakePublish = vi.fn((...args: Parameters<typeof f.agent.publish>) =>
+        f.agent.publish(...args),
+      );
+      const wake = f.runtime.runOnce({
+        delivery: {
+          agent: { ...f.agent, publish: wakePublish },
+          config: { ...DEFAULT_CONFIG, scope },
+          current: () => true,
+        },
+        key: "independent-wake",
+        signal: new AbortController().signal,
+        prompt,
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+      await entered;
+      await f.runtime.tool({
+        agent: self,
+        conversation: CONVERSATION,
+        context: { channel },
+        name: "send",
+        arguments: { text: "active reply", audience: "everyone" },
+      });
+      expect(wakePublish).not.toHaveBeenCalled();
+      expect(f.agent.publish).toHaveBeenCalled();
+      done.resolve({ status: "done", answer: 1, text: "done" });
+      await f.settled(first);
+      await expect(wake).resolves.toMatchObject({ ok: true });
+      expect(prompt).toHaveBeenCalledOnce();
+    } finally {
+      done.resolve({ status: "done", answer: 1, text: "done" });
+      f.runtime.dispose();
+    }
+  },
+);

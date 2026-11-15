@@ -4,6 +4,7 @@ import {
 } from "../../features/agent-harness/project";
 import {
   COMMUNITY_SESSION,
+  abortable,
   sessionScope,
   communityTurn,
   scopedSessionKey,
@@ -1412,6 +1413,11 @@ export class ClaudeRuntime {
       }
     }
     const entry = this.entry(agent, settings);
+    const shared = entry.policies.get(COMMUNITY_SESSION);
+    if (settings.scope !== "community" && shared) {
+      await abortable(shared.settled, signal);
+      signal.throwIfAborted();
+    }
     if (settings.scope !== "community" || !entry.handle) {
       entry.handle = agent;
       entry.team = team ?? "";

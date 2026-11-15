@@ -3173,3 +3173,56 @@ it.each(["mention", "attention", "thread", "channel"] as const)(
     }
   },
 );
+
+it.each(["thread", "channel"] as const)(
+  "preserves active community publication ownership when a promptless %s wake starts",
+  async (scope) => {
+    const f = setup({ hold: true, scope: "community" });
+    await f.deliver(message("1", "active community"));
+    await vi.waitFor(() => expect(f.goose()).toBeDefined());
+    const worker = f.goose();
+    if (!worker) throw new Error("Missing active native worker");
+    try {
+      let reached!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      const runtime = f.runtime as unknown as {
+        entry(...args: unknown[]): unknown;
+      };
+      const original = runtime.entry.bind(runtime);
+      vi.spyOn(runtime, "entry").mockImplementation((...args) => {
+        const entry = original(...args);
+        reached();
+        return entry;
+      });
+      const prompt = vi.fn(async () => undefined);
+      const wakePublish = vi.fn((...args: Parameters<typeof f.agent.publish>) =>
+        f.agent.publish(...args),
+      );
+      const wake = f.runtime.runOnce({
+        delivery: {
+          agent: { ...f.agent, publish: wakePublish },
+          config: { ...DEFAULT_CONFIG, scope },
+          current: () => true,
+        },
+        key: "independent-wake",
+        signal: new AbortController().signal,
+        prompt,
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+      await entered;
+      await worker.mcp(worker.turns[0]?.sessionId ?? "", "tools/call", {
+        name: "send",
+        arguments: { text: "active reply", audience: "everyone" },
+      });
+      expect(wakePublish).not.toHaveBeenCalled();
+      expect(f.agent.publish).toHaveBeenCalled();
+      worker.turns[0]?.finish();
+      await expect(wake).resolves.toMatchObject({ ok: true });
+      expect(prompt).toHaveBeenCalledOnce();
+    } finally {
+      worker.turns[0]?.finish();
+      f.runtime.dispose();
+    }
+  },
+);

@@ -430,6 +430,13 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(skinTone).toHaveText("🤙");
     await expect(skinTone).toHaveAttribute("aria-expanded", "false");
     const footerBox = await footer.boundingBox();
+    // The footer keeps one height whether it shows Add emoji or a preview.
+    await page
+      .locator('em-emoji-picker .category button[aria-label="😀"]')
+      .first()
+      .hover();
+    await expect(footer).toHaveAttribute("data-buzz-previewing", "");
+    expect((await footer.boundingBox()).height).toBe(footerBox.height);
     const skinToneBox = await skinTone.boundingBox();
     expect(skinToneBox.y).toBeGreaterThanOrEqual(footerBox.y);
     expect(skinToneBox.x + skinToneBox.width).toBeGreaterThan(

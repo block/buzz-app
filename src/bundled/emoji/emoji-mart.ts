@@ -277,8 +277,11 @@ export function mountEmojiMart({
       color: inherit;
     }
 
+    /* The picker is a fixed-height column; without flex-shrink the footer
+       collapses to its content, so idle and hovered states differ in height. */
     #preview {
       box-sizing: border-box;
+      flex-shrink: 0;
       height: var(--buzz-preview-height);
       gap: var(--space-2);
       padding: var(--space-2) var(--picker-grid-gutter, var(--space-3));

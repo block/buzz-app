@@ -2825,3 +2825,75 @@ it.each(["waiting", "submitting"] as const)(
     }
   },
 );
+
+it("drains a recovered destinationless community wake before another turn", async () => {
+  const drained = deferred<unknown>();
+  const f = setup({
+    unfinished: () => ({
+      submissions: [
+        {
+          submission: 41,
+          conversation: CONVERSATION,
+          request: "timer/left",
+          key: "@community",
+          context: {},
+        },
+      ],
+    }),
+    abort: () => drained.promise,
+    wait: () => ({ status: "done", answer: 1, text: "done" }),
+  });
+  const turn = f.deliver(
+    { type: "mention", event: reply("2", "after restart") },
+    { config: { ...DEFAULT_CONFIG, scope: "community" } },
+  );
+  try {
+    await vi.waitFor(() => expect(f.host.requests("drop")).toHaveLength(1));
+    await vi.waitFor(() => expect(f.host.requests("abort")).toHaveLength(1));
+    expect(f.host.requests("deliver")).toHaveLength(0);
+  } finally {
+    drained.resolve({});
+    await turn.run;
+    await f.settled(turn);
+    f.runtime.dispose();
+  }
+});
+
+it("preserves an addressed recovery sharing a destinationless community wake", async () => {
+  const f = setup({
+    unfinished: () => ({
+      submissions: [
+        {
+          submission: 41,
+          conversation: CONVERSATION,
+          request: "timer/left",
+          key: "@community",
+          context: {},
+        },
+        {
+          submission: 42,
+          conversation: CONVERSATION,
+          request: "4".repeat(64),
+          key: "@community",
+          context: { channel },
+        },
+      ],
+    }),
+    wait: () => ({ status: "done", answer: 1, text: "done" }),
+  });
+  try {
+    const turn = f.deliver(
+      { type: "mention", event: reply("2", "after restart") },
+      { config: { ...DEFAULT_CONFIG, scope: "community" } },
+    );
+    await turn.run;
+    await f.settled(turn);
+    expect(f.host.requests("drop")).toHaveLength(0);
+    expect(f.host.requests("abort")).toHaveLength(0);
+    expect(f.host.requests("wait").map((r) => r.params.submission)).toEqual(
+      expect.arrayContaining([41, 42]),
+    );
+  } finally {
+    f.runtime.dispose();
+  }
+});

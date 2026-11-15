@@ -1117,13 +1117,16 @@ export class PiRuntime {
         entry.standalone.has(request)
       )
         continue;
-      // A plugin's wake ends with the app, as in other harnesses, unless its
+      // Plugin and destinationless community wakes end with the app unless their
       // conversation has a continued request, which ending it would end or
       // leave queued untaken. Then it goes on, and nothing is reported for
       // it, as a plugin's wake saves no destination of its own. It is still
       // waited for, as only then does its run's failure end what is queued
       // behind it, which reports it.
-      if (request.startsWith(WAKE)) {
+      if (
+        request.startsWith(WAKE) ||
+        (!context?.channel && key === COMMUNITY_SESSION)
+      ) {
         if (!continued.has(conversation)) {
           dropped.push({ submission, conversation });
           aborted.add(conversation);

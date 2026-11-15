@@ -8199,3 +8199,30 @@ it("session Interrupt discards queued unaddressed community wakes", async () => 
     await once?.catch(() => {});
   }
 });
+
+it("Stop cancels only the selected queued Codex community request", async () => {
+  const f = fixture();
+  const d = f.delivery("first");
+  const config = { ...(d.config as object), scope: "community" };
+  const interruptible = vi.fn();
+  try {
+    await f.runtime.run({ ...d, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.run({
+      ...f.delivery("STOPPED_REQUEST"),
+      config,
+      channelId: "other",
+      interruptible,
+    });
+    expect(interruptible).toHaveBeenCalledOnce();
+    await expect(interruptible.mock.calls[0]?.[0]()).resolves.toBeUndefined();
+    expect(f.sent.filter((w) => w.method === "turn/interrupt")).toHaveLength(0);
+    await f.complete(0);
+    await f.runtime.run({ ...f.delivery("AFTER_STOP"), config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(inputText(f.starts()[1])).toContain("AFTER_STOP");
+    await f.complete(1);
+  } finally {
+    f.runtime.dispose();
+  }
+});

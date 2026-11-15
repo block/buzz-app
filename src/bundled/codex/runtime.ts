@@ -2346,14 +2346,18 @@ export class CodexRuntime {
     }
   }
 
-  /** Stops the turn in conversation `key` that took `request` in, once it
-   * started. A request still waiting for its turn is not stopped. Stops of
-   * one turn share its interrupt, so one that fails cannot undo another. */
+  /** Drops a queued community request or stops the turn that took it in.
+   * Stops of one turn share its interrupt, so one that fails cannot undo another. */
   private interrupt(entry: Entry, key: string, request: Request) {
-    if (entry.waiting.has(request))
-      return Promise.reject(
-        new Error("Codex has not started on this message yet"),
-      );
+    if (entry.waiting.has(request)) {
+      if (request.settings.scope !== "community")
+        return Promise.reject(
+          new Error("Codex has not started on this message yet"),
+        );
+      request.current = () => false;
+      request.answered(true);
+      return Promise.resolve();
+    }
     const active = entry.lanes.get(key)?.active;
     if (!active?.requests.includes(request) || active.finished)
       return Promise.resolve();

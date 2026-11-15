@@ -100,12 +100,19 @@ it("cancels prior queued policies when the shared session is interrupted", async
     release = resolve;
   });
   const cancel = vi.fn();
+  const independentCancel = vi.fn();
   const policies = new Map([
     [
       COMMUNITY_SESSION,
       { topLevel: false, handed: previous, settled: previous, cancel },
     ],
   ]);
+  policies.set("channel/thread", {
+    topLevel: false,
+    handed: previous,
+    settled: previous,
+    cancel: independentCancel,
+  });
   const turn = communityTurn(
     policies,
     new AbortController().signal,
@@ -117,6 +124,7 @@ it("cancels prior queued policies when the shared session is interrupted", async
   try {
     policies.get(COMMUNITY_SESSION)?.cancel();
     expect(cancel).toHaveBeenCalledOnce();
+    expect(independentCancel).not.toHaveBeenCalled();
   } finally {
     release();
     await turn.catch(() => {});

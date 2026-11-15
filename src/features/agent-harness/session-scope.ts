@@ -81,6 +81,7 @@ export async function communityTurn<T>(
   changed: () => void = () => {},
 ) {
   const prior = [...policies.values()];
+  const shared = policies.get(COMMUNITY_SESSION);
   const cancel = new AbortController();
   const lifetime = AbortSignal.any([signal, cancel.signal]);
   const done = Promise.resolve().then(async () => {
@@ -98,7 +99,7 @@ export async function communityTurn<T>(
     handed: done,
     settled: done.catch(() => undefined),
     cancel: () => {
-      for (const policy of prior) policy.cancel();
+      shared?.cancel();
       cancel.abort();
     },
   };

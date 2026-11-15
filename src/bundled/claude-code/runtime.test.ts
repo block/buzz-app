@@ -4312,3 +4312,51 @@ it("retains the Solo Canvas when a stopped source finishes preparation", async (
     f.runtime.dispose();
   }
 });
+
+it("kills community wake execution if its deadline interrupt is refused", async () => {
+  const f = setup([], { hold: true });
+  const abort = new AbortController();
+  const done = f.runtime.runOnce({
+    delivery: {
+      agent: f.agent,
+      config: { ...DEFAULT_CONFIG, scope: "community" },
+      current: () => true,
+    },
+    key: "expired",
+    signal: abort.signal,
+    prompt: async () => "check",
+  } as unknown as Parameters<ClaudeRuntime["runOnce"]>[0]);
+  const settled = vi.fn();
+  const observed = done.then(settled, settled);
+  try {
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("missing Claude");
+    worker.interruptError = "cannot interrupt";
+    worker.exitOnKill = false;
+    abort.abort(new Error("deadline"));
+    await vi.waitFor(() => expect(worker.killed).toBe(true));
+    const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+    await f.deliver(
+      { type: "mention", event: message("2", "next") },
+      { config },
+    );
+    expect(f.claudes().flatMap((process) => process.prompts)).toHaveLength(1);
+    expect(
+      f.runtime.sessionState({ ...f.agent, config } as unknown as Agent, {
+        channelId: channel,
+      }),
+    ).toBe("active");
+    worker.exit(0);
+    await observed;
+    await vi.waitFor(() =>
+      expect(f.claudes().flatMap((process) => process.prompts)).toHaveLength(2),
+    );
+  } finally {
+    for (const worker of f.claudes()) worker.exit(0);
+    await observed;
+    f.runtime.dispose();
+  }
+});

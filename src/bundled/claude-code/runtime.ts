@@ -1393,7 +1393,11 @@ export class ClaudeRuntime {
               entry.directories.delete(COMMUNITY_SESSION);
               entry.contexts.set(COMMUNITY_SESSION, {});
               const stop = () => {
-                void entry.sessions.interrupt(COMMUNITY_SESSION);
+                void entry.sessions
+                  .interrupt(COMMUNITY_SESSION, true)
+                  .catch((error) =>
+                    console.error("Claude could not stop expired work", error),
+                  );
               };
               signal.addEventListener("abort", stop, { once: true });
               try {

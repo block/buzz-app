@@ -392,9 +392,16 @@ export class AgentSessions {
 
   /** Stops the turn running in conversation `key`, if any, once a process
    * starting for it has taken its message. */
-  async interrupt(key: string) {
+  async interrupt(key: string, killOnFailure = false) {
     await this.opening.get(key);
-    await this.live.get(key)?.process.interrupt();
+    const process = this.live.get(key)?.process;
+    try {
+      await process?.interrupt();
+    } catch (error) {
+      if (!killOnFailure) throw error;
+      await process?.kill();
+      await process?.exited;
+    }
   }
   /** Compacts the conversation's session, resuming it when its process has
    * stopped. Without a session there is nothing to compact. */

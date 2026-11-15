@@ -805,6 +805,21 @@ it("a thread view opened before the first connection keeps its first read for th
   ]);
 });
 
+/** The signal of the first window read sent after the `from`th fetch call. */
+const windowSignal = (
+  fetcher: {
+    mock: { calls: [url: string, options?: RequestInit | undefined][] };
+  },
+  from = 0,
+) =>
+  fetcher.mock.calls
+    .slice(from)
+    .find(
+      ([url, options]) =>
+        !url.endsWith("/session") &&
+        (JSON.parse(options?.body as string) as ReadFilter[])[0]?.thread_window,
+    )?.[1]?.signal;
+
 it("revalidates a missing strict root before repair and preserves tombstones on retry", async () => {
   const row = reply(0);
   let missing = false;
@@ -822,10 +837,15 @@ it("revalidates a missing strict root before repair and preserves tombstones on 
   ]);
   missing = true;
   const before = h.requests.length;
+  const calls = h.fetcher.mock.calls.length;
   await h.view.refresh();
-  expect(h.requests.slice(before)).toEqual([
-    [{ ids: [root.id], "#h": [channel], limit: 1 }],
-  ]);
+  // The first window read overlaps the root read; with no root it is stopped
+  // and its rows are never admitted (replies stay empty below).
+  const [rootRead, windowRead, ...rest] = h.requests.slice(before);
+  expect(rootRead).toEqual([{ ids: [root.id], "#h": [channel], limit: 1 }]);
+  expect(windowRead?.[0]?.thread_window).toBe(true);
+  expect(rest).toEqual([]);
+  expect(windowSignal(h.fetcher, calls)?.aborted).toBe(true);
   expect(h.view.snapshot()).toMatchObject({
     status: "error",
     root: undefined,
@@ -877,7 +897,9 @@ it.each([
   await loading;
   expect(h.view.snapshot().replies).toEqual([]);
   expect(h.view.snapshot().root).toBeUndefined();
-  expect(h.requests).toHaveLength(phase === "root" ? 1 : 2);
+  // The first window read starts with the root read; the fence stops it.
+  expect(h.requests).toHaveLength(2);
+  expect(windowSignal(h.fetcher)?.aborted).toBe(true);
 });
 
 it.each([8_210_266_876_800, Number.MAX_SAFE_INTEGER])(

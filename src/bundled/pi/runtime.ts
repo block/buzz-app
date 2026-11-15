@@ -678,8 +678,7 @@ export class PiRuntime {
           channel,
           topLevel || key === channel || (key === COMMUNITY_SESSION && dm)
             ? undefined
-            : root,
-        );
+            : root, key);
       };
       // A conversation's tools default to its thread; a conversation shared
       // by several threads is told which to reply in instead.
@@ -1347,12 +1346,13 @@ export class PiRuntime {
     text: string,
     channelId: string,
     root: string | undefined,
+    key: string,
   ) {
     const note = turnNote(
       entry.handle,
       channelId,
       root,
-      entry.config.scope === "community",
+      key === COMMUNITY_SESSION,
     );
     return note ? `${text}\n\n${note}` : text;
   }

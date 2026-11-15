@@ -583,8 +583,7 @@ export class GooseRuntime {
             wait ? (await prompt(false, key, valid)).text : prepared,
             notes,
             channel,
-            noteRoot,
-          );
+            noteRoot, key);
           if (interrupted || this.agents.get(agent.key) !== entry) {
             delivered = Promise.resolve({ ok: true, undelivered: true });
             return;
@@ -608,8 +607,7 @@ export class GooseRuntime {
                       (await prompt(fresh, key, valid)).text,
                       notes,
                       channel,
-                      noteRoot,
-                    );
+                      noteRoot, key);
                     return text;
                   },
                 }
@@ -621,8 +619,7 @@ export class GooseRuntime {
                 (await prompt(true, key, valid)).text,
                 notes,
                 channel,
-                noteRoot,
-              ),
+                noteRoot, key),
             title: sessionTitle(
               entry.name,
               key === COMMUNITY_SESSION ? "Community" : place,
@@ -785,16 +782,12 @@ export class GooseRuntime {
     notes: readonly string[],
     channelId: string,
     root: string | undefined,
+    key: string,
   ) {
     return [
       text,
       ...notes,
-      turnNote(
-        entry.handle,
-        channelId,
-        root,
-        entry.config.scope === "community",
-      ),
+      turnNote(entry.handle, channelId, root, key === COMMUNITY_SESSION),
     ]
       .filter(Boolean)
       .join("\n\n");

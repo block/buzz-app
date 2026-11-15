@@ -2949,3 +2949,60 @@ it("preserves an addressed recovery sharing a destinationless community wake", a
     f.runtime.dispose();
   }
 });
+
+it("clears source instructions using a queued Pi request's admitted scope", async () => {
+  const finished = deferred<unknown>();
+  const f = setup({ wait: () => finished.promise });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  Object.assign(f.agent, {
+    conversationInstructions: (source: string) =>
+      source === channel
+        ? { plugin: "example", text: "SOURCE_ONLY" }
+        : undefined,
+  });
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [...listed.channels, { ...first, id: "other" }],
+  });
+  try {
+    const a = f.deliver(
+      { type: "mention", event: reply("2", "first") },
+      { config },
+    );
+    await a.run;
+    const b = f.deliver(
+      {
+        type: "mention",
+        event: message("3", "queued", {
+          tags: [
+            ["h", "other"],
+            ["p", self],
+          ],
+        }),
+      },
+      { config, channelId: "other" },
+    );
+    await b.run;
+    f.runtime.sync([
+      {
+        ...f.agent,
+        config: { ...config, scope: "thread" },
+      } as unknown as Agent,
+    ]);
+    finished.resolve({ status: "done", answer: 1, text: "done" });
+    await f.settled(a);
+    await f.settled(b);
+    const sent = f.host.requests("deliver");
+    expect(sent).toHaveLength(2);
+    expect(sent[1]?.params.key).toBe("@community");
+    expect(sent[1]?.params.text).toContain(
+      "Disregard any earlier <owner-instructions>",
+    );
+  } finally {
+    finished.resolve({ status: "done" });
+    f.runtime.dispose();
+  }
+});

@@ -2612,66 +2612,80 @@ it("runs an agent on Recommended on the current candidate", () => {
   expect(running(DEFAULT_CONFIG, candidate)).toEqual(DEFAULT_CONFIG);
 });
 
-it("uses one ordered community session across source channels", async () => {
-  const f = setup({
-    hold: true,
-    scope: "community",
-    solo: new Set([channel]),
-    canvas: "SOURCE_CANVAS",
-  });
+it.each([false, true])(
+  "uses one ordered community session across source channels (scope changed: %s)",
+  async (changed) => {
+    const f = setup({
+      hold: true,
+      scope: "community",
+      solo: new Set([channel]),
+      canvas: "SOURCE_CANVAS",
+    });
 
-  const conversationInstructions = vi.fn((source: string, root?: string) =>
-    source === channel && !root
-      ? { plugin: "acme.tasks", text: "SOURCE_ONLY" }
-      : undefined,
-  );
-  Object.assign(f.agent, { conversationInstructions });
-  const listed = f.session.channels.list();
-  const firstChannel = listed.channels[0];
-  if (!firstChannel) throw new Error("Expected the source channel");
-  vi.spyOn(f.session.channels, "list").mockImplementation(() => ({
-    ...listed,
-    status: "ready",
-    channels: [
-      ...listed.channels,
-      { ...firstChannel, id: "other", channelType: "stream" },
-    ],
-  }));
-  try {
-    await f.deliver(message("1", "first"));
-    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
-    const process = f.goose();
-    if (!process) throw new Error("No Goose process");
-    await f.deliver(
-      message("2", "second", {
-        tags: [
-          ["h", "other"],
-          ["p", self],
-        ],
-      }),
-      { channelId: "other" },
+    const conversationInstructions = vi.fn((source: string, root?: string) =>
+      source === channel && !root
+        ? { plugin: "acme.tasks", text: "SOURCE_ONLY" }
+        : undefined,
     );
-    expect(process.turns).toHaveLength(1);
-    expect(process.turns[0]?.steered).toEqual([]);
-    process.turns[0]?.finish();
-    await vi.waitFor(() => expect(process.turns).toHaveLength(2));
-    expect(process.turns[1]?.sessionId).toBe(process.turns[0]?.sessionId);
-    expect(process.turns[1]?.text).toContain("Session scope: community");
-    expect(process.turns[1]?.text).toContain("other");
-    expect(process.turns[0]?.text).toContain("SOURCE_ONLY");
-    expect(process.turns[0]?.text).toContain("SOURCE_CANVAS");
-    expect(process.turns[1]?.text).toContain(
-      "Disregard any earlier workspace Canvas",
-    );
-    expect(process.turns[1]?.text).toContain(
-      "Disregard any earlier <owner-instructions>",
-    );
-    expect(conversationInstructions).toHaveBeenCalledWith(channel, undefined);
-    process.turns[1]?.finish();
-  } finally {
-    f.runtime.dispose();
-  }
-});
+    Object.assign(f.agent, { conversationInstructions });
+    const listed = f.session.channels.list();
+    const firstChannel = listed.channels[0];
+    if (!firstChannel) throw new Error("Expected the source channel");
+    vi.spyOn(f.session.channels, "list").mockImplementation(() => ({
+      ...listed,
+      status: "ready",
+      channels: [
+        ...listed.channels,
+        { ...firstChannel, id: "other", channelType: "stream" },
+      ],
+    }));
+    try {
+      await f.deliver(message("1", "first"));
+      await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+      const process = f.goose();
+      if (!process) throw new Error("No Goose process");
+      await f.deliver(
+        message("2", "second", {
+          tags: [
+            ["h", "other"],
+            ["p", self],
+          ],
+        }),
+        { channelId: "other" },
+      );
+      if (changed)
+        f.runtime.sync([
+          {
+            ...f.agent,
+            config: {
+              ...DEFAULT_CONFIG,
+              scope: "thread",
+            },
+          } as unknown as Agent,
+        ]);
+      expect(process.turns).toHaveLength(1);
+      expect(process.turns[0]?.steered).toEqual([]);
+      process.turns[0]?.finish();
+      await vi.waitFor(() => expect(process.turns).toHaveLength(2));
+      if (!changed)
+        expect(process.turns[1]?.sessionId).toBe(process.turns[0]?.sessionId);
+      expect(process.turns[1]?.text).toContain("Session scope: community");
+      expect(process.turns[1]?.text).toContain("other");
+      expect(process.turns[0]?.text).toContain("SOURCE_ONLY");
+      expect(process.turns[0]?.text).toContain("SOURCE_CANVAS");
+      expect(process.turns[1]?.text).toContain(
+        "Disregard any earlier workspace Canvas",
+      );
+      expect(process.turns[1]?.text).toContain(
+        "Disregard any earlier <owner-instructions>",
+      );
+      expect(conversationInstructions).toHaveBeenCalledWith(channel, undefined);
+      process.turns[1]?.finish();
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
 
 it("interrupts an executing community wake when its deadline expires", async () => {
   const f = setup({ hold: true, scope: "community" });

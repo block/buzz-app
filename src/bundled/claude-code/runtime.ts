@@ -1186,7 +1186,7 @@ export class ClaudeRuntime {
           const notes = agent.notes?.(channel, noteRoot) ?? [];
           const text = [
             sessionContext,
-            this.review(entry, prepared, notes, channel, noteRoot),
+            this.review(entry, prepared, notes, channel, noteRoot, key),
           ]
             .filter(Boolean)
             .join("\n\n");
@@ -1214,8 +1214,7 @@ export class ClaudeRuntime {
                       (await prompt(fresh)).text,
                       notes,
                       channel,
-                      noteRoot,
-                    );
+                      noteRoot, key);
                     return [sessionContext, text].filter(Boolean).join("\n\n");
                   },
                 }
@@ -1229,8 +1228,7 @@ export class ClaudeRuntime {
                   (await prompt(true)).text,
                   notes,
                   channel,
-                  noteRoot,
-                ),
+                  noteRoot, key),
               ]
                 .filter(Boolean)
                 .join("\n\n"),
@@ -1458,16 +1456,12 @@ export class ClaudeRuntime {
     notes: readonly string[],
     channelId: string,
     root: string | undefined,
+    key: string,
   ) {
     return [
       text,
       ...notes,
-      turnNote(
-        entry.handle,
-        channelId,
-        root,
-        entry.config.scope === "community",
-      ),
+      turnNote(entry.handle, channelId, root, key === COMMUNITY_SESSION),
     ]
       .filter(Boolean)
       .join("\n\n");

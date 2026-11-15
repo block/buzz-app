@@ -3947,79 +3947,92 @@ describe("a conversation given its own folder", () => {
   });
 });
 
-it("shares a community session across channels without steering into another destination", async () => {
-  const f = setup([], {
-    hold: true,
-    solo: new Set([channel]),
-    canvas: { content: "SOURCE_CANVAS" },
-  });
-  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
-  const conversationInstructions = vi.fn((source: string, root?: string) =>
-    source === channel && !root
-      ? { plugin: "acme.tasks", text: "SOURCE_ONLY" }
-      : undefined,
-  );
-  Object.assign(f.agent, { conversationInstructions });
-  const listed = f.session.channels.list();
-  const firstChannel = listed.channels[0];
-  if (!firstChannel) throw new Error("Expected the source channel");
-  vi.spyOn(f.session.channels, "list").mockImplementation(() => ({
-    ...listed,
-    status: "ready",
-    channels: [
-      ...listed.channels,
-      { ...firstChannel, id: "other", channelType: "stream" },
-    ],
-  }));
-
-  try {
-    await f.deliver(
-      { type: "mention", event: message("1", "first") },
-      { config },
-    );
-    await vi.waitFor(() =>
-      expect(f.claudes().flatMap((p) => p.prompts)).toHaveLength(1),
-    );
-    const worker = f.claudes().find((p) => p.prompts.length);
-    if (!worker) throw new Error("No Claude process");
-    await f.deliver(
-      {
-        type: "mention",
-        event: message("2", "second", {
-          tags: [
-            ["h", "other"],
-            ["p", self],
-          ],
-        }),
-      },
-      { config, channelId: "other" },
-    );
-    expect(worker.prompts).toHaveLength(1);
-    worker.finish();
-    await vi.waitFor(() => expect(worker.prompts).toHaveLength(2));
-    expect(worker.prompts[1]).toContain("Session scope: community");
-    expect(worker.prompts[1]).toContain("other");
-    expect(worker.prompts[0]).toContain("SOURCE_ONLY");
-    expect(worker.prompts[0]).toContain("SOURCE_CANVAS");
-    expect(worker.prompts[1]).toContain(
-      "Disregard any earlier workspace Canvas",
-    );
-    expect(worker.prompts[1]).toContain(
-      "Disregard any earlier <owner-instructions>",
-    );
-    expect(conversationInstructions).toHaveBeenCalledWith(channel, undefined);
-    worker.finish();
-    await vi.waitFor(() =>
-      expect(f.runtime.conversations(self)).toHaveLength(1),
-    );
-    expect(f.runtime.conversations(self)[0]).toMatchObject({
-      community: true,
-      channelId: "other",
+it.each([false, true])(
+  "shares a community session across channels without steering into another destination (scope changed: %s)",
+  async (changed) => {
+    const f = setup([], {
+      hold: true,
+      solo: new Set([channel]),
+      canvas: { content: "SOURCE_CANVAS" },
     });
-  } finally {
-    f.runtime.dispose();
-  }
-});
+    const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+    const conversationInstructions = vi.fn((source: string, root?: string) =>
+      source === channel && !root
+        ? { plugin: "acme.tasks", text: "SOURCE_ONLY" }
+        : undefined,
+    );
+    Object.assign(f.agent, { conversationInstructions });
+    const listed = f.session.channels.list();
+    const firstChannel = listed.channels[0];
+    if (!firstChannel) throw new Error("Expected the source channel");
+    vi.spyOn(f.session.channels, "list").mockImplementation(() => ({
+      ...listed,
+      status: "ready",
+      channels: [
+        ...listed.channels,
+        { ...firstChannel, id: "other", channelType: "stream" },
+      ],
+    }));
+
+    try {
+      await f.deliver(
+        { type: "mention", event: message("1", "first") },
+        { config },
+      );
+      await vi.waitFor(() =>
+        expect(f.claudes().flatMap((p) => p.prompts)).toHaveLength(1),
+      );
+      const worker = f.claudes().find((p) => p.prompts.length);
+      if (!worker) throw new Error("No Claude process");
+      await f.deliver(
+        {
+          type: "mention",
+          event: message("2", "second", {
+            tags: [
+              ["h", "other"],
+              ["p", self],
+            ],
+          }),
+        },
+        { config, channelId: "other" },
+      );
+      if (changed)
+        f.runtime.sync([
+          {
+            ...f.agent,
+            config: { ...config, scope: "thread" },
+          } as unknown as Agent,
+        ]);
+      expect(worker.prompts).toHaveLength(1);
+      worker.finish();
+      const prompts = () => f.claudes().flatMap((p) => p.prompts);
+      await vi.waitFor(() => expect(prompts()).toHaveLength(2));
+      expect(prompts()[1]).toContain("Session scope: community");
+      expect(prompts()[1]).toContain("other");
+      expect(worker.prompts[0]).toContain("SOURCE_ONLY");
+      expect(worker.prompts[0]).toContain("SOURCE_CANVAS");
+      expect(prompts()[1]).toContain("Disregard any earlier workspace Canvas");
+      expect(prompts()[1]).toContain(
+        "Disregard any earlier <owner-instructions>",
+      );
+      expect(conversationInstructions).toHaveBeenCalledWith(channel, undefined);
+      const next = f
+        .claudes()
+        .find((p) => p.prompts.includes(prompts()[1] ?? ""));
+      if (!next) throw new Error("missing next worker");
+      next.finish();
+      await vi.waitFor(() =>
+        expect(f.runtime.conversations(self)).toHaveLength(1),
+      );
+      expect(f.runtime.conversations(self)[0]).toMatchObject({
+        community: true,
+        channelId: "other",
+      });
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
 
 it("withdraws the previous Solo folders when a community session moves to a channel", async () => {
   const f = setup([], {

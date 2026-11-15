@@ -14,7 +14,7 @@ export function SwitchPreferenceRow({
   variant?: "default" | "search";
   icon?: ReactNode;
   label: string;
-  description?: ReactNode;
+  description?: string;
   "aria-label"?: string;
 } & Omit<ComponentProps<typeof Switch>, "label" | "aria-label">) {
   const generatedId = useId();

@@ -85,9 +85,6 @@ const STORAGE_KEY = "buzz.codex.provider-defaults.v1";
 const SIGN_IN_ERROR = "Codex needs you to sign in.";
 const NOT_INSTALLED = "The Codex integration isn't installed yet.";
 const CONVERSATION_LIMIT = 30;
-const CODEX_APPS_DOCS =
-  "https://help.openai.com/en/articles/11487775-connected-apps-in-chatgpt";
-const CODEX_PLUGINS_DOCS = "https://developers.openai.com/codex/plugins";
 /** Read-only setup/catalog discovery uses the same declared native transport. */
 async function catalog(spawn: Spawn, signal: AbortSignal) {
   const rpc = new AppServer();
@@ -1466,31 +1463,9 @@ export function createTabs(
               <SwitchPreferenceRow
                 label="Codex apps and plugins"
                 description={
-                  agent.protection ? (
-                    "Protected agents never use Codex apps or plugins."
-                  ) : (
-                    <>
-                      The agent may use{" "}
-                      <a
-                        className="text-link underline"
-                        href={CODEX_APPS_DOCS}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        apps
-                      </a>{" "}
-                      and{" "}
-                      <a
-                        className="text-link underline"
-                        href={CODEX_PLUGINS_DOCS}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        plugins
-                      </a>{" "}
-                      that are installed in Codex.
-                    </>
-                  )
+                  agent.protection
+                    ? "Protected agents never use Codex apps or plugins."
+                    : "The agent may use apps and plugins that are installed in Codex."
                 }
                 checked={!!draft.apps && !agent.protection}
                 disabled={saving || !!agent.protection}

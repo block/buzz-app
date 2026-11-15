@@ -1051,14 +1051,6 @@ it("saves Codex apps and plugins on and off, and keeps them off for a protected 
     name: "Codex apps and plugins",
   });
   expect(allow).not.toBeChecked();
-  expect(screen.getByRole("link", { name: "apps" })).toHaveAttribute(
-    "href",
-    "https://help.openai.com/en/articles/11487775-connected-apps-in-chatgpt",
-  );
-  expect(screen.getByRole("link", { name: "plugins" })).toHaveAttribute(
-    "href",
-    "https://developers.openai.com/codex/plugins",
-  );
   await user.click(allow);
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>

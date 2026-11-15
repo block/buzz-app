@@ -619,7 +619,7 @@ export class PiRuntime {
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const { key, dm } = await this.key(
-      entry,
+      config(raw).scope,
       agent.key,
       event,
       channel,
@@ -1411,7 +1411,7 @@ export class PiRuntime {
   /** The conversation the event's turn goes to: a Solo chat or DM is one
    * conversation, as is a channel for an agent with channel scope. */
   private async key(
-    entry: Entry,
+    scope: Scope,
     agent: AgentKey,
     event: EventData,
     channelId: string,
@@ -1421,7 +1421,7 @@ export class PiRuntime {
     return {
       dm: summary?.dm === true,
       key: scopedSessionKey(
-        entry.config.scope,
+        scope,
         channelId,
         topLevel || summary?.dm
           ? undefined

@@ -1055,7 +1055,7 @@ export class ClaudeRuntime {
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const { key, source } = await this.key(
-      entry,
+      settings.scope,
       agent,
       event,
       channel,
@@ -1533,7 +1533,7 @@ export class ClaudeRuntime {
   /** The conversation the event's turn goes to: a Solo chat or DM is one
    * conversation, as is a channel for an agent with channel scope. */
   private async key(
-    entry: Entry,
+    scope: Scope,
     agent: Pick<Agent, "key">,
     event: EventData,
     channelId: string,
@@ -1543,7 +1543,7 @@ export class ClaudeRuntime {
     const root = threadReference(event)?.rootId ?? event.id;
     return {
       key: scopedSessionKey(
-        entry.config.scope,
+        scope,
         channelId,
         topLevel || summary?.dm ? undefined : root,
       ),

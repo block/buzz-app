@@ -526,6 +526,7 @@ export class GooseRuntime {
       const wakePrompt = wake ? ((await wakeText?.()) ?? wake.text) : undefined;
       const turn = await this.turn(
         entry,
+        this.settings(raw).scope,
         agent,
         event,
         channel,
@@ -870,6 +871,7 @@ export class GooseRuntime {
   /** Where the event's turn goes, and what its prompt needs. */
   private async turn(
     entry: Entry,
+    sessionScope: Scope,
     agent: Pick<Agent, "key" | "pubkey">,
     event: EventData,
     channelId: string,
@@ -894,7 +896,7 @@ export class GooseRuntime {
     const key =
       admitted ??
       scopedSessionKey(
-        entry.config.scope,
+        sessionScope,
         channelId,
         topLevel || dm ? undefined : rootId,
       );

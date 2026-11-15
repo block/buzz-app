@@ -3021,3 +3021,52 @@ it("reserves community work before source preparation", async () => {
     await Promise.allSettled([turn, wake]);
   }
 });
+
+it("keeps deferred community admission in its captured session scope after settings change", async () => {
+  const f = setup({ scope: "community" });
+  let release!: () => void;
+  let mark!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const entered = new Promise<void>((resolve) => {
+    mark = resolve;
+  });
+  const runtime = f.runtime as unknown as {
+    turn(...args: unknown[]): Promise<{ key: string }>;
+  };
+  const original = runtime.turn;
+  const keys: string[] = [];
+  let held = false;
+  vi.spyOn(runtime, "turn").mockImplementation(async (...args) => {
+    if (!held) {
+      held = true;
+      mark();
+      await gate;
+    }
+    const result = await original.apply(f.runtime, args);
+    keys.push(result.key);
+    return result;
+  });
+  const first = f.deliver(message("1", "FIRST_SCOPE"));
+  let second: ReturnType<typeof f.deliver> | undefined;
+  try {
+    await entered;
+    second = f.deliver(message("2", "DEFERRED_SCOPE"));
+    await second;
+    f.runtime.sync([
+      {
+        ...f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "thread" },
+      } as unknown as Agent,
+    ]);
+    release();
+    await first;
+    await vi.waitFor(() => expect(keys.length).toBeGreaterThanOrEqual(2));
+    expect(keys.every((key) => key === "@community")).toBe(true);
+  } finally {
+    release();
+    f.runtime.dispose();
+    await Promise.allSettled([first, second]);
+  }
+});

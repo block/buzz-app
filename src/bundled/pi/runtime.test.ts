@@ -3226,3 +3226,62 @@ it.each(["community", "channel", "thread"] as const)(
     }
   },
 );
+
+it("keeps deferred community admission in its captured session scope after settings change", async () => {
+  const f = setup({
+    wait: () => ({ status: "done", answer: 1, text: "done" }),
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  let release!: () => void;
+  let mark!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const entered = new Promise<void>((resolve) => {
+    mark = resolve;
+  });
+  const runtime = f.runtime as unknown as {
+    key(...args: unknown[]): Promise<{ key: string }>;
+  };
+  const original = runtime.key;
+  const keys: string[] = [];
+  let held = false;
+  vi.spyOn(runtime, "key").mockImplementation(async (...args) => {
+    if (!held) {
+      held = true;
+      mark();
+      await gate;
+    }
+    const result = await original.apply(f.runtime, args);
+    keys.push(result.key);
+    return result;
+  });
+  const first = f.deliver(
+    { type: "mention", event: reply("2", "FIRST_SCOPE") },
+    { config },
+  );
+  let second: ReturnType<typeof f.deliver> | undefined;
+  try {
+    await entered;
+    second = f.deliver(
+      { type: "mention", event: reply("3", "DEFERRED_SCOPE") },
+      { config },
+    );
+    await second.run;
+    f.runtime.sync([
+      {
+        ...f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "thread" },
+      } as unknown as Agent,
+    ]);
+    release();
+    await first.run;
+    await f.settled(first);
+    await vi.waitFor(() => expect(keys.length).toBeGreaterThanOrEqual(2));
+    expect(keys.every((key) => key === "@community")).toBe(true);
+  } finally {
+    release();
+    f.runtime.dispose();
+    await Promise.allSettled([first.run, second?.run]);
+  }
+});

@@ -35,7 +35,7 @@ import { threadReference } from "../relay/thread-reference";
 import { MemoryReads, READ_TIMEOUT_MS } from "./core-memory";
 import { wakeAnchor, wakeLands } from "./plugin-wake";
 import { readAuthorNames } from "./author-names";
-import { ownerCanvas, readProject } from "./project";
+import { NO_PROJECT, ProjectSource, ownerCanvas, readProject } from "./project";
 
 /** Which conversations share the agent's native session. */
 export type HarnessScope = import("./session-scope").SessionScope;
@@ -190,6 +190,7 @@ const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 export function harnessKit(sources: Sources): HarnessKit {
   const admitted = new WeakMap<HarnessConversation, Admitted>();
   const memoryReads = new MemoryReads();
+  const projects = new Map<AgentKey, ProjectSource>();
   const session = (key: AgentKey) => {
     const snapshot = sources.relay(key)?.snapshot();
     return snapshot?.status === "ready" ? snapshot.session : undefined;
@@ -377,14 +378,20 @@ export function harnessKit(sources: Sources): HarnessKit {
       );
       const reads = ownerReads(sources.relay(agent.key), agent.pubkey);
       const signingAuthority = reads?.workflowAuthority();
-      const [names, project] = await Promise.all([
+      const [names, loadedProject] = await Promise.all([
         readAuthorNames(
           reads,
           [event, ...unseen.slice(-CONTEXT_LIMIT)],
           signingAuthority,
         ),
-        reading.then((read) => read?.section),
+        reading,
       ]);
+      let project = loadedProject;
+      if (scope === "community") {
+        const source = projects.get(agent.key) ?? new ProjectSource();
+        projects.set(agent.key, source);
+        project = source.resolve(channelId, solo ? loadedProject : NO_PROJECT);
+      }
       const text = turnPrompt({
         agent: agent.key,
         event,
@@ -402,7 +409,7 @@ export function harnessKit(sources: Sources): HarnessKit {
         total: earlier.length + 1,
         names,
         ...(signingAuthority ? { signingAuthority } : {}),
-        ...(project ? { project } : {}),
+        ...(project ? { project: project.section } : {}),
         ...(wake
           ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
           : {}),

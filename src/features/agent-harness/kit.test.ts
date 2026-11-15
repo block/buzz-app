@@ -125,7 +125,7 @@ function setup(
       current: () => true,
       ...extra,
     }) as unknown as Delivery;
-  return { kit, agent, delivery, published, restored, read };
+  return { kit, agent, delivery, published, restored, read, session };
 }
 
 describe("harnessKit.conversation", () => {
@@ -529,4 +529,54 @@ it("uses one community identity across sources without crossing agent membership
     "community",
   );
   expect(isolated?.key).not.toBe(first?.key);
+});
+
+it("withdraws a Solo Canvas when a community plugin session changes sources", async () => {
+  const f = setup({ type: "solo" });
+  f.session.canvas.available = true;
+  f.session.canvas.read.mockResolvedValue({
+    pubkey: alice,
+    content: "SOURCE_CANVAS",
+    tags: [],
+    kind: 40100,
+    created_at: 100,
+  } as never);
+  const first = f.delivery({ type: "mention", event: message("1", "first") });
+  const admitted = await f.kit.conversation(first, "community");
+  if (!admitted) throw new Error("not admitted");
+  expect((await f.kit.turnPrompt(first, admitted)).text).toContain(
+    "SOURCE_CANVAS",
+  );
+  f.session.channels.list = () =>
+    ({
+      status: "ready",
+      channels: [
+        { id: "other", name: "other", channelType: "stream", members: [] },
+      ],
+    }) as never;
+  const next = f.delivery(
+    {
+      type: "mention",
+      event: message("2", "second", {
+        tags: [
+          ["h", "other"],
+          ["p", self],
+        ],
+      }),
+    },
+    { channelId: "other" },
+  );
+  const other = await f.kit.conversation(next, "community");
+  if (!other) throw new Error("not admitted");
+  expect((await f.kit.turnPrompt(next, other)).text).toContain(
+    "Disregard any earlier workspace Canvas",
+  );
+});
+
+it("tells a community agent to specify channel for a top-level post", async () => {
+  const f = setup();
+  const d = f.delivery({ type: "mention", event: reply("2", "1", "hello") });
+  const c = await f.kit.conversation(d, "community");
+  if (!c) throw new Error("not admitted");
+  expect((await f.kit.turnPrompt(d, c)).text).toContain("pass `channel`");
 });

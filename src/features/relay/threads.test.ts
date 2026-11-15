@@ -1003,23 +1003,43 @@ it("explicitly limits oversized evidence rather than evicting aux and resurrecti
   });
 });
 
-it.each(["live", "read"])(
-  "compacts superseded summaries before the %s thread budget without evicting messages or tombstones",
-  async (source) => {
-    const deleted = reply("deleted", 2);
-    const replies = [
-      deleted,
-      ...Array.from({ length: 999 }, (_, i) => reply(`${i}`, i + 3)),
-    ];
-    const summaries = replies.map((_, i) =>
+// Sign this immutable evidence once at module setup, outside each test's clock.
+const summaryBudgetFixture = (() => {
+  const deleted = reply("deleted", 2);
+  const replies = [
+    deleted,
+    ...Array.from({ length: 999 }, (_, i) => reply(`${i}`, i + 3)),
+  ];
+  const summaries = Object.freeze(
+    replies.map((_, i) =>
       signed(relay, {
         kind: 39005,
         created_at: i + 2,
         tags: [["e", root.id]],
         content: JSON.stringify({ reply_count: i + 1 }),
       }),
-    );
-    const events = [root, ...replies, ...summaries];
+    ),
+  );
+  return Object.freeze({
+    deleted,
+    summaries,
+    events: Object.freeze([root, ...replies, ...summaries]),
+    tombstone: signed(alice, {
+      kind: 5,
+      content: "",
+      tags: [["e", deleted.id]],
+    }),
+    overflow: Object.freeze(
+      Array.from({ length: 998 }, (_, i) => reply(`more ${i}`, i + 1002)),
+    ),
+  });
+})();
+
+it.each(["live", "read"])(
+  "compacts superseded summaries before the %s thread budget without evicting messages or tombstones",
+  async (source) => {
+    const { deleted, summaries, events, tombstone, overflow } =
+      summaryBudgetFixture;
     const thread = createThreadView({
       channelId: "a",
       messageId: root.id,
@@ -1043,11 +1063,6 @@ it.each(["live", "read"])(
       expect(thread.events()).toHaveLength(1002);
       expect(thread.events()).toContain(summaries.at(-1));
 
-      const tombstone = signed(alice, {
-        kind: 5,
-        content: "",
-        tags: [["e", deleted.id]],
-      });
       thread.receive([tombstone]);
       thread.receive([deleted, ...summaries.slice(0, -1)]);
       expect(thread.view.snapshot().replies).toHaveLength(999);
@@ -1056,9 +1071,7 @@ it.each(["live", "read"])(
       expect(thread.events()).toHaveLength(1003);
 
       // The cap still applies to messages, even after summary compaction.
-      thread.receive(
-        Array.from({ length: 998 }, (_, i) => reply(`more ${i}`, i + 1002)),
-      );
+      thread.receive(overflow);
       expect(thread.view.snapshot()).toMatchObject({
         status: "error",
         limited: true,

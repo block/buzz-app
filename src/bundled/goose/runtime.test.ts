@@ -2697,3 +2697,28 @@ it("interrupts an executing community wake when its deadline expires", async () 
     f.runtime.dispose();
   }
 });
+
+it("stops only the queued community request selected by the user", async () => {
+  const f = setup({ hold: true, scope: "community" });
+  const interruptible = vi.fn();
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  try {
+    await f.deliver(message("1", "first"), { workingUntil });
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const worker = f.goose();
+    if (!worker) throw new Error("No Goose process");
+    await f.deliver(message("2", "queued"), { interruptible, workingUntil });
+    const before = worker.received.filter(
+      (i) => i.method === "session/cancel",
+    ).length;
+    await interruptible.mock.calls[0]?.[0]();
+    expect(
+      worker.received.filter((i) => i.method === "session/cancel"),
+    ).toHaveLength(before);
+    worker.turns[0]?.finish();
+    await Promise.all(workingUntil.mock.calls.map(([done]) => done));
+    expect(worker.turns).toHaveLength(1);
+  } finally {
+    f.runtime.dispose();
+  }
+});

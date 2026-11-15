@@ -129,8 +129,12 @@ const TITLE_LIMIT = 80;
 
 /** A watch's or timer's prompt, after a context naming the agent as a
  * conversation's first prompt does, so its session is listed as the agent's. */
-export function standalonePrompt(agent: string, text: string) {
-  return `<context>\nScope: standalone\nAgent: ${agent}\n</context>\n\n${text}`;
+export function standalonePrompt(
+  agent: string,
+  text: string,
+  community = false,
+) {
+  return `<context>\nScope: standalone\n${community ? "Session scope: community\n" : ""}Agent: ${agent}\n</context>\n\n${text}`;
 }
 
 /** A session's title in goose, as harness agents name theirs:
@@ -551,6 +555,7 @@ export class GooseRuntime {
             : prior && (same ? prior.handed : prior.settled);
         let delivered!: ReturnType<AgentSessions["deliver"]>;
         let interrupted = false;
+        let submitted = false;
         const handed = (async () => {
           await wait;
           if (interrupted || this.agents.get(agent.key) !== entry) {
@@ -583,6 +588,7 @@ export class GooseRuntime {
                 ? { channel }
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
+          submitted = true;
           delivered = entry.sessions.deliver(key, text, shown, {
             ...(wake
               ? {
@@ -651,8 +657,11 @@ export class GooseRuntime {
         if (!wait) await handed;
         workingUntil(done);
         interruptible?.(() => {
-          policy.cancel();
-          return entry.sessions.interrupt(key);
+          if (key === COMMUNITY_SESSION) interrupted = true;
+          else policy.cancel();
+          return key !== COMMUNITY_SESSION || submitted
+            ? entry.sessions.interrupt(key)
+            : Promise.resolve();
         });
         this.notify();
         void done
@@ -712,7 +721,7 @@ export class GooseRuntime {
                 return await entry.sessions.deliver(
                   COMMUNITY_SESSION,
                   [
-                    standalonePrompt(agent.key, text),
+                    standalonePrompt(agent.key, text, true),
                     NO_PROJECT.section,
                     turnNote(entry.handle, undefined, undefined, true),
                   ]

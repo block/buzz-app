@@ -1155,6 +1155,7 @@ export class ClaudeRuntime {
             : prior && (same ? prior.handed : prior.settled);
         let delivered!: Promise<Settled>;
         let interrupted = false;
+        let submitted = false;
         const handed = (async () => {
           await wait;
           if (interrupted) {
@@ -1194,6 +1195,7 @@ export class ClaudeRuntime {
                     root: threadReference(event)?.rootId ?? event.id,
                   }),
           });
+          submitted = true;
           delivered = entry.sessions.deliver(key, text, event.created_at, {
             current: () => !interrupted && (!current || current()),
             ...(wake
@@ -1272,7 +1274,9 @@ export class ClaudeRuntime {
         workingUntil(done);
         interruptible?.(() => {
           interrupted = true;
-          return entry.sessions.interrupt(key);
+          return key !== COMMUNITY_SESSION || submitted
+            ? entry.sessions.interrupt(key)
+            : Promise.resolve();
         });
         this.notify();
         this.watch(done, async (error) => {

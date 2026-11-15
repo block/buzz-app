@@ -4076,3 +4076,41 @@ it("withdraws the previous Solo folders when a community session moves to a chan
   );
   f.runtime.dispose();
 });
+
+it("stops only the queued community request selected by the user", async () => {
+  const f = setup([], { hold: true });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  try {
+    await f.deliver(
+      { type: "mention", event: message("1", "first") },
+      { config },
+    );
+    await vi.waitFor(() =>
+      expect(f.claudes().flatMap((p) => p.prompts)).toHaveLength(1),
+    );
+    await f.deliver(
+      { type: "mention", event: message("2", "queued") },
+      { config },
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("No Claude process");
+    const before = worker.received.filter(
+      (i) =>
+        i.type === "control_request" &&
+        (i.request as { subtype?: string }).subtype === "interrupt",
+    ).length;
+    await f.interruptible.mock.calls[1]?.[0]();
+    expect(
+      worker.received.filter(
+        (i) =>
+          i.type === "control_request" &&
+          (i.request as { subtype?: string }).subtype === "interrupt",
+      ),
+    ).toHaveLength(before);
+    worker.finish();
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(worker.prompts).toHaveLength(1);
+  } finally {
+    f.runtime.dispose();
+  }
+});

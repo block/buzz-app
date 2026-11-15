@@ -188,6 +188,7 @@ export function createThreadView({
     ? "loading"
     : undefined;
   let remote: readonly RelayEvent[] = [];
+  let remoteIds = new Set<string>();
   let staged: readonly RelayEvent[] = [];
   let selectionStaged: readonly RelayEvent[] = [];
   let selectionController: AbortController | undefined;
@@ -406,6 +407,7 @@ export function createThreadView({
       selectionController?.abort();
       selectionStaged = [];
       remote = [];
+      remoteIds.clear();
       staged = [];
       rootId = undefined;
       cursor = undefined;
@@ -423,12 +425,17 @@ export function createThreadView({
       });
       return false;
     }
-    if (commit) remote = events;
+    if (commit) {
+      remote = events;
+      remoteIds = new Set(events.map((event) => event.id));
+    }
     return true;
   }
   function receive(events: readonly RelayEvent[]) {
     if (disposed || !canAccess() || (!rootId && !exact)) return;
-    const incoming = related(events);
+    const fresh = events.filter((event) => !remoteIds.has(event.id));
+    if (!fresh.length) return;
+    const incoming = related(fresh);
     if (!incoming.length) return;
     if (retain(union(remote, incoming))) {
       publish();
@@ -436,7 +443,10 @@ export function createThreadView({
   }
   if (seed && canAccess() && contentKind(seed) && inChannel(seed, channelId)) {
     rootId = threadReference(seed)?.rootId ?? seed.id;
-    if (seed.id === rootId) remote = [seed];
+    if (seed.id === rootId) {
+      remote = [seed];
+      remoteIds.add(seed.id);
+    }
     publish();
   }
   if (
@@ -477,6 +487,7 @@ export function createThreadView({
       pages = 0;
       held = undefined;
     } else remote = visible(remote);
+    remoteIds = new Set(remote.map((event) => event.id));
     publish({
       status: "idle",
       canLoadMore: false,

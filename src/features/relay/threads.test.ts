@@ -8,7 +8,7 @@ import {
   threadReference,
   type ThreadResume,
 } from "./threads";
-import { byteSize } from "./budget";
+import { byteSize, listByteSize } from "./budget";
 import { ReadError } from "./errors";
 import { foldMessages } from "./fold";
 import type { RelayReader } from "./reader";
@@ -26,6 +26,7 @@ import {
 } from "./testing";
 
 vi.mock("./fold", { spy: true });
+vi.mock("./budget", { spy: true });
 
 const relay = keypair(),
   viewer = keypair(),
@@ -1189,6 +1190,69 @@ it.each([
     );
   },
 );
+
+it("skips folding and budgeting known replay IDs while admitting new evidence after reads and purge", async () => {
+  const events = [
+    root,
+    ...Array.from({ length: 500 }, (_, i) => reply(`${i}`, i + 2)),
+  ];
+  let hidden: string | undefined;
+  const thread = createThreadView({
+    channelId: "a",
+    messageId: root.id,
+    relayAuthor: relay.pubkey,
+    reader: { read: async () => events },
+    seed: root,
+    local: undefined,
+    canAccess: () => true,
+    visible: (events) => events.filter((event) => event.id !== hidden),
+    notify: (listener) => listener(),
+  });
+  const clear = () => {
+    vi.mocked(foldMessages).mockClear();
+    vi.mocked(listByteSize).mockClear();
+  };
+  try {
+    clear();
+    thread.receive([root]);
+    expect(foldMessages).not.toHaveBeenCalled();
+    expect(listByteSize).not.toHaveBeenCalled();
+
+    await thread.view.refresh();
+    const snapshot = thread.view.snapshot();
+    expect(snapshot.replies).toHaveLength(500);
+    const listener = vi.fn();
+    thread.view.subscribe(listener);
+    clear();
+    // Reconnect delivers retained replies individually, not as one batch.
+    for (const event of events) thread.receive([event]);
+    expect(foldMessages).not.toHaveBeenCalled();
+    expect(listByteSize).not.toHaveBeenCalled();
+    expect(listener).not.toHaveBeenCalled();
+    expect(thread.view.snapshot()).toBe(snapshot);
+
+    const fresh = reply("new", 502);
+    thread.receive([...events, fresh]);
+    expect(thread.view.snapshot().replies).toHaveLength(501);
+    expect(foldMessages).toHaveBeenCalledTimes(1);
+    expect(listByteSize).toHaveBeenCalledTimes(1);
+    clear();
+    thread.receive([fresh]);
+    expect(foldMessages).not.toHaveBeenCalled();
+    expect(listByteSize).not.toHaveBeenCalled();
+
+    // Pruned IDs may be received again; this is not an unbounded seen-ID set.
+    hidden = fresh.id;
+    thread.purge();
+    expect(thread.view.snapshot().replies).toHaveLength(500);
+    hidden = undefined;
+    thread.receive([fresh]);
+    expect(thread.view.snapshot().replies).toHaveLength(501);
+    expect(thread.events()).toContain(fresh);
+  } finally {
+    thread.view.dispose();
+  }
+});
 
 it("re-folds for local operations and profiles only when the thread's own change", () => {
   const agent = keypair();

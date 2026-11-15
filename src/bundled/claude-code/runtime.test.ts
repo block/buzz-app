@@ -4568,3 +4568,88 @@ it.each(["reset", "admission", "source"])(
     }
   },
 );
+
+it("retains a deferred remote community handoff until admission finishes", async () => {
+  const f = setup();
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const agent = { ...f.agent, config } as unknown as Agent;
+  let releaseReset!: () => void,
+    resetEntered!: () => void,
+    releaseAdmission!: () => void,
+    admissionEntered!: () => void;
+  const resetGate = new Promise<void>((resolve) => {
+    releaseReset = resolve;
+  });
+  const resetting = new Promise<void>((resolve) => {
+    resetEntered = resolve;
+  });
+  const admissionGate = new Promise<void>((resolve) => {
+    releaseAdmission = resolve;
+  });
+  const preparing = new Promise<void>((resolve) => {
+    admissionEntered = resolve;
+  });
+  const order: string[] = [];
+  const remote = {
+    target: { signal: new AbortController().signal },
+    run: vi.fn(async () => {
+      order.push("addressed");
+    }),
+    runOnce: vi.fn(async () => {
+      order.push("wake");
+      return { ok: true };
+    }),
+  };
+  const connection = vi.fn(async () => remote);
+  Object.assign(f.runtime, {
+    inspect: async () => ({}),
+    execution: async () => ({}),
+    connection,
+  });
+  const reset = f.runtime.session(
+    agent,
+    { channelId: channel },
+    "new",
+    async (change) => {
+      resetEntered();
+      await resetGate;
+      await change();
+    },
+  );
+  let wake: Promise<unknown> | undefined;
+  try {
+    await resetting;
+    await f.deliver(
+      { type: "mention", event: message("1", "earlier") },
+      {
+        config,
+        prepareSession: async () => {
+          admissionEntered();
+          await admissionGate;
+        },
+      },
+    );
+    releaseReset();
+    await reset;
+    await preparing;
+    wake = f.runtime.runOnce({
+      delivery: { agent: f.agent, config, current: () => true },
+      key: "later",
+      signal: new AbortController().signal,
+      prompt: async () => "later wake",
+    } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+    expect(connection).not.toHaveBeenCalled();
+    releaseAdmission();
+    await wake;
+    expect(order).toEqual(["addressed", "wake"]);
+  } finally {
+    vi.useRealTimers();
+    releaseReset();
+    releaseAdmission();
+    await Promise.allSettled([reset, wake]);
+    f.runtime.dispose();
+  }
+});

@@ -1926,7 +1926,7 @@ export class CodexRuntime {
           });
         },
       );
-      if (handoff.deferred || admittedDeferred) {
+      if (handoff.deferred && !reserved) {
         delivery.workingUntil(handoff.done);
         return;
       }

@@ -1117,7 +1117,7 @@ export class ClaudeRuntime {
           });
         },
       );
-      if (handoff.deferred || admittedDeferred) {
+      if (handoff.deferred && !reserved) {
         workingUntil(handoff.done);
         return;
       }

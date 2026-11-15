@@ -1850,7 +1850,10 @@ export class CodexRuntime {
       );
 
     if (await this.inspect?.(agent.key)) {
-      if (this.folder(reads.scope, agent.key, channelId, root))
+      if (
+        settings.scope !== "community" &&
+        this.folder(reads.scope, agent.key, channelId, root)
+      )
         throw new Error(
           "Conversation folders are unavailable for agents on an execution target",
         );
@@ -3170,6 +3173,7 @@ export class CodexRuntime {
               (standaloneText === undefined
                 ? undefined
                 : [
+                    `<context>\n${JSON.stringify({ agent: agent.key, session_scope: "community" })}\n</context>`,
                     request.project,
                     standaloneText,
                     turnNote(agent, undefined, undefined, true),

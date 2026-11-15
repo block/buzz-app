@@ -7769,6 +7769,10 @@ it("runs an unaddressed wake in the community session without inheriting a posti
     threadId: (f.starts()[0]?.params as { threadId: string } | undefined)
       ?.threadId,
   });
+  const wakeInput = JSON.parse(inputText(f.starts()[1])) as { text: string }[];
+  expect(wakeInput.map((part) => part.text).join("\n")).toContain(
+    JSON.stringify({ agent: pubkey, session_scope: "community" }),
+  );
   const refused = await f.tool("send", {
     audience: "everyone",
     text: "NO DESTINATION",
@@ -7998,5 +8002,30 @@ it("replaces community source policies on voice startup and adopted speech", asy
   } finally {
     await connection.close();
     f.runtime.dispose();
+  }
+});
+
+it("ignores retained conversation folders for remote community admission", async () => {
+  const guest = fixture();
+  const execution = vi.fn(async () => guestTarget(guest));
+  const f = fixture([], undefined, false, {}, undefined, undefined, execution);
+  await assignConversationFolder(
+    f.store,
+    scope,
+    pubkey,
+    `channel/${root}`,
+    "/old-thread",
+  );
+  const d = f.delivery("shared remote");
+  try {
+    await f.runtime.run({
+      ...d,
+      config: { ...(d.config as object), scope: "community" },
+    });
+    await vi.waitFor(() => expect(guest.starts()).toHaveLength(1));
+    await guest.complete();
+  } finally {
+    f.runtime.dispose();
+    guest.runtime.dispose();
   }
 });

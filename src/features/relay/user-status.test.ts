@@ -279,6 +279,7 @@ it("keeps recently unwatched authors loaded, current from live traffic, and boun
   );
   const owner = createUserStatuses({ read });
   owners.push(owner);
+  owner.live(true);
   // Rows scroll out of view and back: nothing is read again.
   const first = owner.queries.watch([bob.pubkey, carol.pubkey]);
   await vi.advanceTimersByTimeAsync(0);
@@ -320,6 +321,7 @@ it("reads an idle author again after a reconnect, which can miss live changes", 
   const read = vi.fn<RelayReader["read"]>(async () => []);
   const owner = createUserStatuses({ read });
   owners.push(owner);
+  owner.live(true);
   const unwatch = owner.queries.watch([bob.pubkey]);
   await vi.advanceTimersByTimeAsync(0);
   unwatch();
@@ -338,6 +340,40 @@ it("reads an idle author again after a reconnect, which can miss live changes", 
   owner.queries.watch([bob.pubkey]);
   await vi.advanceTimersByTimeAsync(0);
   expect(read).toHaveBeenCalledTimes(2);
+});
+
+it("keeps unwatched authors loaded only while the profiles stream is live", async () => {
+  const read = vi.fn<RelayReader["read"]>(async () => [
+    signed(bob, {
+      kind: 30315,
+      created_at: now,
+      content: "Remote",
+      tags: [["d", "general"]],
+    }),
+  ]);
+  const owner = createUserStatuses({ read });
+  owners.push(owner);
+  owner.live(true);
+  const rows = () => {
+    const unwatch = owner.queries.watch([bob.pubkey]);
+    return vi.advanceTimersByTimeAsync(0).then(unwatch);
+  };
+  await rows();
+  await rows();
+  expect(read).toHaveBeenCalledOnce();
+  // The stream stops: nothing keeps bob's status current, so it is dropped
+  // and read again when his row returns, and dropped again when it leaves.
+  owner.live(false);
+  expect(owner.queries.snapshot().has(bob.pubkey)).toBe(false);
+  await rows();
+  expect(read).toHaveBeenCalledTimes(2);
+  await rows();
+  expect(read).toHaveBeenCalledTimes(3);
+  // Live again: an unwatched author stays loaded.
+  owner.live(true);
+  await rows();
+  await rows();
+  expect(read).toHaveBeenCalledTimes(4);
 });
 
 it("recovers a mounted status after a transient read failure without hot-looping", async () => {

@@ -3897,6 +3897,13 @@ export function createRelaySession(
       )
         refreshRoster();
       liveSnapshot = snapshot;
+      // Only live profiles traffic keeps unwatched authors' statuses current.
+      statuses.live(
+        snapshot.status === "connected" &&
+          snapshot.routes.some(
+            (route) => route.id === "profiles" && route.status === "live",
+          ),
+      );
       // A global route that failed before it established proves nothing, so
       // the finite reads stand in for its replay on this connection.
       if (snapshot.status === "connected")

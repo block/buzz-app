@@ -19,8 +19,9 @@ export type UserStatus = Readonly<{
   expiresAt?: number;
 }>;
 export type StatusInput = Pick<UserStatus, "text" | "emoji" | "expiresAt">;
-/** Unwatched authors whose status stays loaded, so rows that scroll or switch
- * back into view read nothing again. Live traffic keeps them current. */
+/** Unwatched authors whose status stays loaded while the profiles stream is
+ * live, so rows that scroll or switch back into view read nothing again. Live
+ * traffic keeps them current. */
 const IDLE_AUTHORS = 500;
 
 function parse(event: RelayEvent): UserStatus | undefined {
@@ -70,6 +71,8 @@ export function createUserStatuses(
   const loaded = new Set<string>();
   /** Unwatched authors still held, oldest first. */
   const idle = new Set<string>();
+  /** Whether live profiles traffic keeps idle authors current. */
+  let live = false;
   const listeners = new Set<() => void>();
   let snapshot: ReadonlyMap<string, UserStatus> = new Map();
   let controller = new AbortController();
@@ -183,6 +186,18 @@ export function createUserStatuses(
       });
     return pending;
   }
+  /** Drops the oldest idle authors beyond `limit`. */
+  function evictIdle(limit: number) {
+    let evicted = false;
+    for (const id of idle) {
+      if (idle.size <= limit) break;
+      idle.delete(id);
+      // Evict the whole coordinate, never only its latest replacement evidence.
+      loaded.delete(id);
+      evicted = records.delete(id) || evicted;
+    }
+    if (evicted) publish();
+  }
   function schedule() {
     if (scheduled || closed || retryTimer !== undefined) return;
     scheduled = true;
@@ -214,20 +229,12 @@ export function createUserStatuses(
           if (id !== viewer) idle.add(id);
         }
       }
-      let evicted = false;
-      for (const id of idle) {
-        if (idle.size <= IDLE_AUTHORS) break;
-        idle.delete(id);
-        // Evict the whole coordinate, never only its latest replacement evidence.
-        loaded.delete(id);
-        evicted = records.delete(id) || evicted;
-      }
       if (!watched.size) {
         clearTimeout(retryTimer);
         retryTimer = undefined;
         retryAttempt = 0;
       }
-      if (evicted) publish();
+      evictIdle(live ? IDLE_AUTHORS : 0);
     };
   }
   async function save(input: StatusInput) {
@@ -393,6 +400,13 @@ export function createUserStatuses(
     resume() {
       resetRetries();
       schedule();
+    },
+    /** Whether the profiles stream is live. Without it nothing keeps an idle
+     * author's status current, so idle authors are dropped and read again
+     * when their rows return. */
+    live(next: boolean) {
+      live = next;
+      if (!live) evictIdle(0);
     },
     dispose() {
       closed = true;

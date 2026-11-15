@@ -2969,3 +2969,55 @@ it("keeps addressed community admission ahead of a later wake during compaction"
     await wake;
   }
 });
+
+it("reserves community work before source preparation", async () => {
+  const f = setup({ scope: "community" });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  let release!: () => void;
+  let mark!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const entered = new Promise<void>((resolve) => {
+    mark = resolve;
+  });
+  const original = (
+    f.runtime as unknown as { follow(raw: unknown): Promise<void> }
+  ).follow;
+  let held = false;
+  Object.assign(f.runtime, {
+    follow: async (raw: unknown) => {
+      if (!held) {
+        held = true;
+        mark();
+        await gate;
+      }
+      return original.call(f.runtime, raw);
+    },
+  });
+  let wake: Promise<unknown> | undefined;
+  const turn = f.deliver(message("1", "ADDRESSED_BEFORE_SOURCE_WAKE"));
+  try {
+    await entered;
+    wake = f.runtime.runOnce({
+      delivery: { agent: f.agent, config, current: () => true },
+      key: "source",
+      signal: new AbortController().signal,
+      prompt: async () => "WAKE_AFTER_SOURCE",
+    } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+    release();
+    await turn;
+    await wake;
+    await vi.waitFor(() => expect(f.goose()?.turns.length).toBe(2));
+    expect(f.goose()?.turns[0]?.text).toContain("ADDRESSED_BEFORE_SOURCE_WAKE");
+    expect(f.goose()?.turns[1]?.text).toContain("WAKE_AFTER_SOURCE");
+  } finally {
+    vi.useRealTimers();
+    release();
+    f.runtime.dispose();
+    await Promise.allSettled([turn, wake]);
+  }
+});

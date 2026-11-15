@@ -3023,3 +3023,66 @@ it("clears source instructions using a queued Pi request's admitted scope", asyn
     f.runtime.dispose();
   }
 });
+
+it("reserves community work before source preparation", async () => {
+  const f = setup({
+    wait: () => ({ status: "done", answer: 1, text: "done" }),
+  });
+  const gate = deferred<void>();
+  const entered = deferred<void>();
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const reads = (
+    f.runtime as unknown as {
+      reads(key: string): ReturnType<typeof ownerReads>;
+    }
+  ).reads;
+  let held = false;
+  Object.assign(f.runtime, {
+    reads: (key: string) => {
+      const source = reads(key);
+      return (
+        source && {
+          ...source,
+          soloChat: async (...args: Parameters<typeof source.soloChat>) => {
+            if (!held) {
+              held = true;
+              entered.resolve();
+              await gate.promise;
+            }
+            return source.soloChat(...args);
+          },
+        }
+      );
+    },
+  });
+  let wake: Promise<unknown> | undefined;
+  const turn = f.deliver(
+    { type: "mention", event: reply("2", "ADDRESSED_BEFORE_SOURCE_WAKE") },
+    { config },
+  );
+  try {
+    await entered.promise;
+    wake = f.runtime.runOnce({
+      delivery: { agent: f.agent, config, current: () => true },
+      key: "source",
+      signal: new AbortController().signal,
+      prompt: async () => "WAKE_AFTER_SOURCE",
+    } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+    gate.resolve();
+    await turn.run;
+    await f.settled(turn);
+    await wake;
+    const sent = f.host.requests("deliver");
+    expect(sent).toHaveLength(2);
+    expect(sent[0]?.params.text).toContain("ADDRESSED_BEFORE_SOURCE_WAKE");
+    expect(sent[1]?.params.text).toContain("WAKE_AFTER_SOURCE");
+  } finally {
+    vi.useRealTimers();
+    gate.resolve();
+    f.runtime.dispose();
+    await Promise.allSettled([turn.run, wake]);
+  }
+});

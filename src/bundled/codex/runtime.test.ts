@@ -8503,7 +8503,7 @@ it.each([false, true])(
   },
 );
 
-it.each(["reset", "admission"])(
+it.each(["reset", "admission", "source"])(
   "orders remote community wakes across %s",
   async (boundary) => {
     const f = fixture();
@@ -8522,6 +8522,32 @@ it.each(["reset", "admission"])(
         return { ok: true };
       }),
     };
+    if (boundary === "source") {
+      const reads = (
+        f.runtime as unknown as {
+          reads(key: string): ReturnType<typeof ownerReads>;
+        }
+      ).reads;
+      let held = false;
+      Object.assign(f.runtime, {
+        reads: (key: string) => {
+          const source = reads(key);
+          return (
+            source && {
+              ...source,
+              soloChat: async (...args: Parameters<typeof source.soloChat>) => {
+                if (!held) {
+                  held = true;
+                  entered.resolve();
+                  await gate.promise;
+                }
+                return source.soloChat(...args);
+              },
+            }
+          );
+        },
+      });
+    }
     const connection = vi.fn(async () => remote);
     Object.assign(f.runtime, {
       inspect: async () => ({}),

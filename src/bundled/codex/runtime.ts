@@ -939,6 +939,9 @@ export class CodexRuntime {
     return disposal.done;
   }
   retire(agent: AgentKey): Promise<void> {
+    this.controls.interrupt(
+      `${agent}/${scopedKey("community", COMMUNITY_SESSION)}`,
+    );
     const prior = this.stopping.get(agent);
     const disposals = [...(this.disposals.get(agent)?.keys() ?? [])].map(
       (execution) => this.disposeExecution(agent, execution, true),
@@ -1086,6 +1089,7 @@ export class CodexRuntime {
     return stopped;
   }
   dispose() {
+    this.controls.dispose();
     this.disposed = true;
     for (const actions of this.actions.values())
       for (const action of actions) action.abort.abort();
@@ -1789,7 +1793,14 @@ export class CodexRuntime {
       delete lane.voiceOpening;
     }
   }
-  async run(delivery: Delivery): Promise<void> {
+  run(delivery: Delivery): Promise<void> {
+    return this.admitDelivery(delivery);
+  }
+  private async admitDelivery(
+    delivery: Delivery,
+    reserved = false,
+    admittedDeferred = false,
+  ): Promise<void> {
     if (this.disposed) throw new Error("Codex runtime is disposed");
     delivery.signal.throwIfAborted();
     const { trigger, agent } = delivery;
@@ -1823,6 +1834,12 @@ export class CodexRuntime {
     const channelId = delivery.channelId;
     if (!channelId) throw new Error("The event has no unambiguous channel");
     const settings = this.resolveConfig(delivery.config);
+    if (settings.scope === "community" && !reserved)
+      return this.controls.admit(
+        `${agent.key}/${scopedKey("community", COMMUNITY_SESSION)}`,
+        delivery,
+        (accepted, deferred) => this.admitDelivery(accepted, true, deferred),
+      );
     const channel = await reads.channel(channelId);
     const solo = await reads.soloChat(agent.owner, channelId, delivery.signal);
     const huddle = isHuddleRoom(channel?.about);
@@ -1888,6 +1905,7 @@ export class CodexRuntime {
       const handoff = this.controls.deliver(
         `${agent.key}/${conversationKey}`,
         async (deferred) => {
+          deferred ||= admittedDeferred;
           const admitted = await admission(deferred);
           const runtime = await this.connection(
             agent.key,
@@ -1906,9 +1924,8 @@ export class CodexRuntime {
             signal: accepted,
           });
         },
-        settings.scope === "community",
       );
-      if (handoff.deferred) {
+      if (handoff.deferred || admittedDeferred) {
         delivery.workingUntil(handoff.done);
         return;
       }
@@ -1986,7 +2003,10 @@ export class CodexRuntime {
     const communityLane =
       settings.scope === "community"
         ? (entry.lanes.get(key) ?? {
-            tail: Promise.all([entry.after, ...[...entry.lanes.values()].map((other) => other.tail)]).then(() => {}),
+            tail: Promise.all([
+              entry.after,
+              ...[...entry.lanes.values()].map((other) => other.tail),
+            ]).then(() => {}),
             queued: 0,
           })
         : undefined;
@@ -1996,6 +2016,7 @@ export class CodexRuntime {
     const handoff = this.controls.deliver(
       `${agent.key}/${key}`,
       async (deferred) => {
+        deferred ||= admittedDeferred;
         if (deferred) entry.abort.signal.throwIfAborted();
         else delivery.signal.throwIfAborted();
         const admitted = await admission(deferred);
@@ -2129,7 +2150,7 @@ export class CodexRuntime {
       request.failActivity(message(error));
       throw error;
     });
-    if (!handoff.deferred) return handed;
+    if (!handoff.deferred && !admittedDeferred) return handed;
     delivery.workingUntil(handed);
     void handed
       .catch(async (error) => {
@@ -2142,13 +2163,20 @@ export class CodexRuntime {
   /** Runs an unaddressed wake without a default posting destination. Community
    * scope retains it in the shared session; other scopes use an ephemeral
    * thread. Asks for its prompt when admitted and logs failures without posting. */
-  async runOnce({
-    delivery,
-    key,
-    signal: turnSignal,
-    prompt,
-  }: StandaloneTurn): Promise<TurnResult> {
+  runOnce(turn: StandaloneTurn): Promise<TurnResult> {
+    return this.standalone(turn);
+  }
+  private async standalone(
+    { delivery, key, signal: turnSignal, prompt }: StandaloneTurn,
+    reserved = false,
+  ): Promise<TurnResult> {
     if (this.disposed) throw new Error("Codex runtime is disposed");
+    if (this.resolveConfig(delivery.config).scope === "community" && !reserved)
+      return this.controls.wake(
+        `${delivery.agent.key}/${scopedKey("community", COMMUNITY_SESSION)}`,
+        turnSignal,
+        (signal) => this.standalone({ delivery, key, signal, prompt }, true),
+      );
     const { agent } = delivery;
     const reads = this.reads(agent.key);
     if (!reads)
@@ -2158,33 +2186,21 @@ export class CodexRuntime {
     if (settings.scope === "community") {
       const key = scopedKey(settings.scope, COMMUNITY_SESSION);
       if (this.execution && (await this.inspect?.(agent.key))) {
-        let result!: TurnResult;
-        const handoff = this.controls.deliver(
-          `${agent.key}/${key}`,
-          async () => {
-            turnSignal.throwIfAborted();
-            const runtime = await this.connection(
-              agent.key,
-              scope,
-              key,
-              turnSignal,
-            );
-            result = await runtime.runOnce({
-              delivery,
-              key,
-              signal: turnSignal,
-              prompt,
-            });
-          },
-          true,
+        const runtime = await this.connection(
+          agent.key,
+          scope,
+          key,
+          turnSignal,
         );
-        await abortable(handoff.done, turnSignal);
-        return result;
+        return runtime.runOnce({ delivery, key, signal: turnSignal, prompt });
       }
       if (this.disposed) throw new Error("Codex runtime is disposed");
       const entry = this.entry(agent.key, scope);
       const lane = entry.lanes.get(key) ?? {
-        tail: Promise.all([entry.after, ...[...entry.lanes.values()].map((other) => other.tail)]).then(() => {}),
+        tail: Promise.all([
+          entry.after,
+          ...[...entry.lanes.values()].map((other) => other.tail),
+        ]).then(() => {}),
         queued: 0,
       };
       entry.lanes.set(key, lane);

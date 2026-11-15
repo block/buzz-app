@@ -270,6 +270,7 @@ export class GooseRuntime {
 
   private readonly retirements = new Map<string, Promise<void>>();
   async retire(pubkey: string) {
+    this.controls.interrupt(`${pubkey}/${COMMUNITY_SESSION}`);
     let retiring = this.retirements.get(pubkey);
     if (!retiring) {
       retiring = (async () => {
@@ -416,6 +417,7 @@ export class GooseRuntime {
   }
 
   dispose() {
+    this.controls.dispose();
     this.unfollow?.();
     for (const entry of this.agents.values()) {
       entry.lifetime.abort(new Error("The Goose runtime was disposed"));
@@ -426,26 +428,34 @@ export class GooseRuntime {
     this.agents.clear();
   }
 
-  async run({
-    trigger,
-    agent,
-    config: raw,
-    channelId,
-    team,
-    model,
-    effort,
-    synced,
-    workingUntil,
-    current,
-    wakeText,
-    ignored,
-    signal,
-    step,
-    acknowledged,
-    superseded,
-    interruptible,
-    named,
-  }: Delivery) {
+  run(delivery: Delivery): Promise<void> {
+    return this.admitDelivery(delivery);
+  }
+  private async admitDelivery(
+    delivery: Delivery,
+    reserved = false,
+    admittedDeferred = false,
+  ): Promise<void> {
+    const {
+      trigger,
+      agent,
+      config: raw,
+      channelId,
+      team,
+      model,
+      effort,
+      synced,
+      workingUntil,
+      current,
+      wakeText,
+      ignored,
+      signal,
+      step,
+      acknowledged,
+      superseded,
+      interruptible,
+      named,
+    } = delivery;
     // Unaddressed watches and timers come as standalone turns (`runOnce`).
     if (
       trigger.type !== "mention" &&
@@ -480,6 +490,12 @@ export class GooseRuntime {
       }
       signal.throwIfAborted();
     }
+    if (this.settings(raw).scope === "community" && !reserved)
+      return this.controls.admit(
+        `${agent.key}/${COMMUNITY_SESSION}`,
+        delivery,
+        (accepted, deferred) => this.admitDelivery(accepted, true, deferred),
+      );
     // Found only for a delivery it takes, so nothing it drops starts goose.
     await this.follow(raw);
     const entry = this.entry(agent.key, this.settings(raw));
@@ -559,6 +575,7 @@ export class GooseRuntime {
     const handoff = this.controls.deliver(
       `${agent.key}/${key}`,
       async (deferred) => {
+        deferred ||= admittedDeferred;
         // Accepted deferred work belongs to the captured agent lifetime, not
         // the short deadline for handing a message to the harness.
         if (this.agents.get(agent.key) !== entry) {
@@ -676,7 +693,7 @@ export class GooseRuntime {
       entry.policies.delete(key);
       this.notify();
     });
-    if (!wait && !handoff.deferred) await handed;
+    if (!wait && !handoff.deferred && !admittedDeferred) await handed;
     workingUntil(done);
     interruptible?.(() => {
       if (key === COMMUNITY_SESSION) interrupted = true;
@@ -700,12 +717,19 @@ export class GooseRuntime {
 
   /** Runs a standalone turn, such as a watch's or a timer's, in a one-off
    * session that joins no conversation. */
-  async runOnce({
-    delivery,
-    key,
-    signal,
-    prompt,
-  }: StandaloneTurn): Promise<TurnResult> {
+  runOnce(turn: StandaloneTurn): Promise<TurnResult> {
+    return this.standalone(turn);
+  }
+  private async standalone(
+    { delivery, key, signal, prompt }: StandaloneTurn,
+    reserved = false,
+  ): Promise<TurnResult> {
+    if (this.settings(delivery.config).scope === "community" && !reserved)
+      return this.controls.wake(
+        `${delivery.agent.key}/${COMMUNITY_SESSION}`,
+        signal,
+        (signal) => this.standalone({ delivery, key, signal, prompt }, true),
+      );
     const { agent, team } = delivery;
     await this.follow(delivery.config);
     const entry = this.entry(agent.key, this.settings(delivery.config));

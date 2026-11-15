@@ -291,6 +291,7 @@ export class PiRuntime {
   }
 
   async retire(pubkey: string) {
+    this.controls.interrupt(`${pubkey}/${COMMUNITY_SESSION}`);
     const entry = this.agents.get(pubkey);
     if (entry) {
       entry.closed = true;
@@ -536,6 +537,7 @@ export class PiRuntime {
   }
 
   dispose() {
+    this.controls.dispose();
     for (const entry of this.agents.values()) {
       entry.closed = true;
     }
@@ -543,24 +545,32 @@ export class PiRuntime {
     void this.pi.dispose();
   }
 
-  async run({
-    trigger,
-    agent,
-    config: raw,
-    channelId,
-    model,
-    effort,
-    team,
-    workingUntil,
-    current,
-    wakeText,
-    ignored,
-    signal,
-    step,
-    acknowledged,
-    superseded,
-    interruptible,
-  }: Delivery) {
+  run(delivery: Delivery): Promise<void> {
+    return this.admitDelivery(delivery);
+  }
+  private async admitDelivery(
+    delivery: Delivery,
+    reserved = false,
+    admittedDeferred = false,
+  ): Promise<void> {
+    const {
+      trigger,
+      agent,
+      config: raw,
+      channelId,
+      model,
+      effort,
+      team,
+      workingUntil,
+      current,
+      wakeText,
+      ignored,
+      signal,
+      step,
+      acknowledged,
+      superseded,
+      interruptible,
+    } = delivery;
     // Unaddressed watches and timers come as standalone turns (`runOnce`).
     if (
       trigger.type !== "mention" &&
@@ -586,6 +596,12 @@ export class PiRuntime {
     )
       return ignored?.();
     signal.throwIfAborted();
+    if (config(raw).scope === "community" && !reserved)
+      return this.controls.admit(
+        `${agent.key}/${COMMUNITY_SESSION}`,
+        delivery,
+        (accepted, deferred) => this.admitDelivery(accepted, true, deferred),
+      );
     const entry = this.entry(agent, config(raw));
     if (entry.config.scope !== "community" || !entry.handle) {
       entry.handle = agent;
@@ -793,7 +809,7 @@ export class PiRuntime {
     });
     // Deliveries keep their order: a later one waits on this handover, and
     // one with nothing to wait for is handed over before `run` returns.
-    if (!wait && !handoff.deferred) await policy.handed;
+    if (!wait && !handoff.deferred && !admittedDeferred) await policy.handed;
     // The turn outlives `run`, which the host is told so it shows it as working.
     workingUntil(settled);
     // Stop on its activity stops the run the request is in.
@@ -815,10 +831,25 @@ export class PiRuntime {
 
   /** Runs a standalone turn, such as a watch's or a timer's, in a one-off
    * Pi conversation, stopped when `signal` aborts. */
-  async runOnce(
+  runOnce(turn: StandaloneTurn): Promise<TurnResult> {
+    return this.standalone(turn);
+  }
+  private async standalone(
     { delivery, key, signal, prompt }: StandaloneTurn,
     community = false,
+    reserved = false,
   ): Promise<TurnResult> {
+    if (
+      config(delivery.config).scope === "community" &&
+      !community &&
+      !reserved
+    )
+      return this.controls.wake(
+        `${delivery.agent.key}/${COMMUNITY_SESSION}`,
+        signal,
+        (signal) =>
+          this.standalone({ delivery, key, signal, prompt }, false, true),
+      );
     const { agent, team } = delivery;
     const entry = this.entry(agent, config(delivery.config));
     if (entry.config.scope !== "community" || !entry.handle) {
@@ -831,7 +862,8 @@ export class PiRuntime {
         signal,
         this.controls,
         `${agent.key}/${COMMUNITY_SESSION}`,
-        (signal) => this.runOnce({ delivery, key, signal, prompt }, true),
+        (signal) =>
+          this.standalone({ delivery, key, signal, prompt }, true, true),
         () => this.notify(),
       );
     let stop: (() => void) | undefined;

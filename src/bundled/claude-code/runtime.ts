@@ -6,7 +6,6 @@ import {
   COMMUNITY_SESSION,
   sessionScope,
   communityTurn,
-  abortable,
   scopedSessionKey,
   scopeOfSession,
   rememberCommunitySource,
@@ -464,6 +463,7 @@ export class ClaudeRuntime {
    * agent is here. */
   private readonly retirements = new Map<string, Promise<void>>();
   async retire(pubkey: string) {
+    this.controls.interrupt(`${pubkey}/${COMMUNITY_SESSION}`);
     let retiring = this.retirements.get(pubkey);
     if (!retiring) {
       retiring = (async () => {
@@ -952,6 +952,7 @@ export class ClaudeRuntime {
   }
 
   dispose() {
+    this.controls.dispose();
     this.disposed = true;
     for (const pending of this.opening.values())
       pending.abort.abort(new Error("Claude was stopped"));
@@ -968,7 +969,14 @@ export class ClaudeRuntime {
     this.agents.clear();
   }
 
-  async run(delivery: Delivery): Promise<void> {
+  run(delivery: Delivery): Promise<void> {
+    return this.admitDelivery(delivery);
+  }
+  private async admitDelivery(
+    delivery: Delivery,
+    reserved = false,
+    admittedDeferred = false,
+  ): Promise<void> {
     const {
       trigger,
       agent,
@@ -1017,6 +1025,12 @@ export class ClaudeRuntime {
       return;
     }
     signal.throwIfAborted();
+    if (settings.scope === "community" && !reserved)
+      return this.controls.admit(
+        `${agent.key}/${COMMUNITY_SESSION}`,
+        delivery,
+        (accepted, deferred) => this.admitDelivery(accepted, true, deferred),
+      );
     const entry = this.entry(agent, settings);
     if (entry.config.scope !== "community" || !entry.handle) {
       entry.handle = agent;
@@ -1080,6 +1094,7 @@ export class ClaudeRuntime {
       const handoff = this.controls.deliver(
         `${agent.key}/${key}`,
         async (deferred) => {
+          deferred ||= admittedDeferred;
           if (this.agents.get(agent.key) !== entry) return;
           const admitted = await admission(deferred);
           session = admitted?.session ?? session;
@@ -1100,9 +1115,8 @@ export class ClaudeRuntime {
             signal: accepted,
           });
         },
-        key === COMMUNITY_SESSION,
       );
-      if (handoff.deferred) {
+      if (handoff.deferred || admittedDeferred) {
         workingUntil(handoff.done);
         return;
       }
@@ -1122,6 +1136,7 @@ export class ClaudeRuntime {
     const handoff = this.controls.deliver(
       `${agent.key}/${key}`,
       async (deferred) => {
+        deferred ||= admittedDeferred;
         // Accepted deferred work belongs to the captured agent lifetime, not
         // the short deadline for handing a message to the harness.
         if (this.agents.get(agent.key) !== entry) {
@@ -1289,7 +1304,7 @@ export class ClaudeRuntime {
     });
     // Deliveries keep their order: a later one waits on this handover, and
     // one with nothing to wait for is handed over before `run` returns.
-    if (!wait && !handoff.deferred) await handed;
+    if (!wait && !handoff.deferred && !admittedDeferred) await handed;
     // The turn outlives `run`, which the host is told so it shows it as working.
     workingUntil(done);
     interruptible?.(() => {
@@ -1347,12 +1362,19 @@ export class ClaudeRuntime {
 
   /** Runs a standalone turn, such as a watch's or a timer's, as a one-off
    * process: a new session that is not saved. */
-  async runOnce({
-    delivery,
-    key,
-    signal,
-    prompt,
-  }: StandaloneTurn): Promise<TurnResult> {
+  runOnce(turn: StandaloneTurn): Promise<TurnResult> {
+    return this.standalone(turn);
+  }
+  private async standalone(
+    { delivery, key, signal, prompt }: StandaloneTurn,
+    reserved = false,
+  ): Promise<TurnResult> {
+    if (this.resolveConfig(delivery.config).scope === "community" && !reserved)
+      return this.controls.wake(
+        `${delivery.agent.key}/${COMMUNITY_SESSION}`,
+        signal,
+        (signal) => this.standalone({ delivery, key, signal, prompt }, true),
+      );
     const { agent, team } = delivery;
     if (await this.inspect?.(agent.key)) {
       const shared = this.resolveConfig(delivery.config).scope === "community";
@@ -1361,22 +1383,9 @@ export class ClaudeRuntime {
         : `once:${crypto.randomUUID()}`;
       const record = this.executionKey(agent.key, conversation);
       try {
-        const run = async () => {
-          signal.throwIfAborted();
-          const remote = await this.connection(agent.key, conversation, signal);
-          return remote.runOnce({ delivery, key, signal, prompt });
-        };
-        if (!shared) return await run();
-        let result!: TurnResult;
-        const handoff = this.controls.deliver(
-          `${agent.key}/${conversation}`,
-          async () => {
-            result = await run();
-          },
-          true,
-        );
-        await abortable(handoff.done, signal);
-        return result;
+        signal.throwIfAborted();
+        const remote = await this.connection(agent.key, conversation, signal);
+        return await remote.runOnce({ delivery, key, signal, prompt });
       } finally {
         if (!shared) {
           const held = this.remote.get(record);

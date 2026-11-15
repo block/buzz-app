@@ -135,3 +135,36 @@ it("does not fail native delivery when navigation metadata cannot be saved", asy
     rememberCommunitySource(store, "agent", COMMUNITY_SESSION, "a"),
   ).resolves.toBeUndefined();
 });
+
+it("notifies when a cancelled wake's retained ordering policy finally drains", async () => {
+  let release!: () => void;
+  const prior = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const policies = new Map([
+    [
+      COMMUNITY_SESSION,
+      { topLevel: false, handed: prior, settled: prior, cancel() {} },
+    ],
+  ]);
+  const states: boolean[] = [];
+  const changed = () => {
+    states.push(policies.has(COMMUNITY_SESSION));
+  };
+  const abort = new AbortController();
+  const work = communityTurn(
+    policies,
+    abort.signal,
+    new SessionControls(changed),
+    "shared",
+    async () => {},
+    changed,
+  );
+  const rejected = expect(work).rejects.toThrow("expired");
+  abort.abort(new Error("expired"));
+  await rejected;
+  expect(policies.has(COMMUNITY_SESSION)).toBe(true);
+  release();
+  await vi.waitFor(() => expect(policies.has(COMMUNITY_SESSION)).toBe(false));
+  expect(states.at(-1)).toBe(false);
+});

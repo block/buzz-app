@@ -758,6 +758,7 @@ export class GooseRuntime {
                 signal.removeEventListener("abort", stop);
               }
             },
+            () => this.notify(),
           )
         : entry.sessions.runOnce(
             key,

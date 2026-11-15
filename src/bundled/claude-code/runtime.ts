@@ -1427,6 +1427,7 @@ export class ClaudeRuntime {
                 signal.removeEventListener("abort", stop);
               }
             },
+            () => this.notify(),
           )
         : entry.sessions.runOnce(key, prompt, signal);
     this.notify();

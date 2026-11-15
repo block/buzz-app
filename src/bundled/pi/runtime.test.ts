@@ -2652,6 +2652,14 @@ it("publishes unaddressed community wakes to mounted session observers", async (
   ] as unknown as Agent[]);
   f.runtime.sessions(self);
   await vi.waitFor(() => expect(f.host.requests("places")).toHaveLength(1));
+  const agent = {
+    ...f.agent,
+    config: { ...DEFAULT_CONFIG, scope: "community" },
+  } as unknown as Agent;
+  const states: string[] = [];
+  const off = f.runtime.subscribe(() =>
+    states.push(f.runtime.sessionState(agent, { channelId: channel })),
+  );
   const done = f.runtime.runOnce({
     delivery: {
       agent: f.agent,
@@ -2671,7 +2679,16 @@ it("publishes unaddressed community wakes to mounted session observers", async (
         expect.objectContaining({ community: true, status: "Working" }),
       ]),
     );
+    answered.resolve({ status: "done", answer: 1, text: "done" });
+    await done;
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, { channelId: channel })).toBe(
+        "idle",
+      ),
+    );
+    expect(states.at(-1)).toBe("idle");
   } finally {
+    off();
     answered.resolve({ status: "done", answer: 1, text: "done" });
     await done;
     f.runtime.dispose();

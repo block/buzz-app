@@ -78,6 +78,7 @@ export async function communityTurn<T>(
   controls: SessionControls,
   control: string,
   run: (signal: AbortSignal) => Promise<T>,
+  changed: () => void = () => {},
 ) {
   const prior = [...policies.values()];
   const cancel = new AbortController();
@@ -105,8 +106,9 @@ export async function communityTurn<T>(
   // Keep the ordering barrier until prior work drains, even when this caller
   // has already left because its deadline expired.
   void policy.settled.then(() => {
-    if (policies.get(COMMUNITY_SESSION) === policy)
-      policies.delete(COMMUNITY_SESSION);
+    if (policies.get(COMMUNITY_SESSION) !== policy) return;
+    policies.delete(COMMUNITY_SESSION);
+    changed();
   });
   return abortable(done, lifetime);
 }

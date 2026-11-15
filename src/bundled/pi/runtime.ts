@@ -678,7 +678,9 @@ export class PiRuntime {
           channel,
           topLevel || key === channel || (key === COMMUNITY_SESSION && dm)
             ? undefined
-            : root, key);
+            : root,
+          key,
+        );
       };
       // A conversation's tools default to its thread; a conversation shared
       // by several threads is told which to reply in instead.
@@ -830,6 +832,7 @@ export class PiRuntime {
         this.controls,
         `${agent.key}/${COMMUNITY_SESSION}`,
         (signal) => this.runOnce({ delivery, key, signal, prompt }, true),
+        () => this.notify(),
       );
     let stop: (() => void) | undefined;
     let request: string | undefined;

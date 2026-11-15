@@ -49,7 +49,7 @@ import { PanelSubview } from "../../features/panels/PanelSubview";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { Checkbox } from "../../shared/design-system/ui/Checkbox";
+import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -85,6 +85,9 @@ const STORAGE_KEY = "buzz.codex.provider-defaults.v1";
 const SIGN_IN_ERROR = "Codex needs you to sign in.";
 const NOT_INSTALLED = "The Codex integration isn't installed yet.";
 const CONVERSATION_LIMIT = 30;
+const CODEX_APPS_DOCS =
+  "https://help.openai.com/en/articles/11487775-connected-apps-in-chatgpt";
+const CODEX_PLUGINS_DOCS = "https://developers.openai.com/codex/plugins";
 /** Read-only setup/catalog discovery uses the same declared native transport. */
 async function catalog(spawn: Spawn, signal: AbortSignal) {
   const rpc = new AppServer();
@@ -1460,24 +1463,42 @@ export function createTabs(
               }
             />
             {!bound && (
-              <Field
-                label="Apps and plugins"
+              <SwitchPreferenceRow
+                label="Codex apps and plugins"
                 description={
-                  agent.protection
-                    ? "Protected agents never use Codex Apps or plugins."
-                    : "Lets Codex use the Apps (such as Gmail or Google Drive) and plugins connected to its sign-in on this computer. Applies on this computer only."
+                  agent.protection ? (
+                    "Protected agents never use Codex apps or plugins."
+                  ) : (
+                    <>
+                      The agent may use{" "}
+                      <a
+                        className="text-link underline"
+                        href={CODEX_APPS_DOCS}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        apps
+                      </a>{" "}
+                      and{" "}
+                      <a
+                        className="text-link underline"
+                        href={CODEX_PLUGINS_DOCS}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        plugins
+                      </a>{" "}
+                      that are installed in Codex.
+                    </>
+                  )
                 }
-              >
-                <Checkbox
-                  label="Allow for this agent"
-                  checked={!!draft.apps && !agent.protection}
-                  disabled={saving || !!agent.protection}
-                  onCheckedChange={(checked) => {
-                    const { apps: _apps, ...rest } = draft;
-                    setDraft(checked ? { ...rest, apps: true } : rest);
-                  }}
-                />
-              </Field>
+                checked={!!draft.apps && !agent.protection}
+                disabled={saving || !!agent.protection}
+                onCheckedChange={(checked) => {
+                  const { apps: _apps, ...rest } = draft;
+                  setDraft(checked ? { ...rest, apps: true } : rest);
+                }}
+              />
             )}
           </>
         )}

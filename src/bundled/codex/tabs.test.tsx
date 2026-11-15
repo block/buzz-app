@@ -1040,17 +1040,25 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
   );
   expect(f.processes[0]?.end).toHaveBeenCalled();
 });
-it("saves Apps and plugins on and off, and keeps them off for a protected agent", async () => {
+it("saves Codex apps and plugins on and off, and keeps them off for a protected agent", async () => {
   const f = fixture();
   const save = vi.fn(async () => {});
   const { unmount } = render(
     <f.tabs.SettingsTab {...f.props(defaults, save)} />,
   );
   const user = userEvent.setup();
-  const allow = screen.getByRole("checkbox", {
-    name: "Apps and plugins",
+  const allow = screen.getByRole("switch", {
+    name: "Codex apps and plugins",
   });
   expect(allow).not.toBeChecked();
+  expect(screen.getByRole("link", { name: "apps" })).toHaveAttribute(
+    "href",
+    "https://help.openai.com/en/articles/11487775-connected-apps-in-chatgpt",
+  );
+  expect(screen.getByRole("link", { name: "plugins" })).toHaveAttribute(
+    "href",
+    "https://developers.openai.com/codex/plugins",
+  );
   await user.click(allow);
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
@@ -1060,7 +1068,9 @@ it("saves Apps and plugins on and off, and keeps them off for a protected agent"
   render(
     <f.tabs.SettingsTab {...f.props({ ...defaults, apps: true }, save)} />,
   );
-  await user.click(screen.getByRole("checkbox", { name: "Apps and plugins" }));
+  await user.click(
+    screen.getByRole("switch", { name: "Codex apps and plugins" }),
+  );
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(save).toHaveBeenLastCalledWith(defaults));
   cleanup();
@@ -1074,13 +1084,13 @@ it("saves Apps and plugins on and off, and keeps them off for a protected agent"
       }}
     />,
   );
-  const locked = screen.getByRole("checkbox", {
-    name: "Apps and plugins",
+  const locked = screen.getByRole("switch", {
+    name: "Codex apps and plugins",
   });
   expect(locked).not.toBeChecked();
   expect(locked).toHaveAttribute("aria-disabled", "true");
   expect(
-    screen.getByText("Protected agents never use Codex Apps or plugins."),
+    screen.getByText("Protected agents never use Codex apps or plugins."),
   ).toBeInTheDocument();
 });
 it("renders provider, model, and thinking as direct settings inputs", async () => {

@@ -2631,7 +2631,7 @@ it("uses the shared community lifetime for an unaddressed wake with no tool dest
 it("publishes unaddressed community wakes to mounted session observers", async () => {
   const answered = deferred<{ status: "done"; answer: number; text: string }>();
   const f = setup({
-    places: () => [],
+    places: () => ({ places: [] }),
     deliver: (params, process) => {
       process.send({
         method: "event",

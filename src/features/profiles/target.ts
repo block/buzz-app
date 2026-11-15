@@ -102,6 +102,13 @@ export function openProfileTranscript(
   changed();
   return opened;
 }
+/** The reader's presses and key presses so far, so a transcript opened for
+ * them can tell whether they have since moved on themselves. */
+let inputs = 0;
+if (typeof window !== "undefined")
+  for (const type of ["pointerdown", "keydown"])
+    window.addEventListener(type, () => void inputs++, true);
+export const readerInputs = () => inputs;
 /** Takes the events `opening` asked its transcript to show. */
 export function claimTranscriptFocus(
   opening: number,

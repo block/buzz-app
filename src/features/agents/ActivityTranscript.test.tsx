@@ -12,6 +12,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AgentsContext } from "./react";
 import type { Agents } from "./service";
 import { ActivityTranscript, TranscriptFocus } from "./ActivityTranscript";
+import { readerInputs } from "../profiles/target";
 import type { TranscriptTurn } from "./activity-transcript";
 import { activityTranscript } from "./activity-transcript";
 import { withSessionPrompts } from "./session-prompts";
@@ -552,7 +553,7 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
   };
   const done = vi.fn();
   const show = (turns: TranscriptTurn[], events: string[]) => (
-    <TranscriptFocus.Provider value={{ events, done }}>
+    <TranscriptFocus.Provider value={{ events, inputs: readerInputs(), done }}>
       <ActivityTranscript
         transcript={{ turns }}
         agentName="Sol"
@@ -567,6 +568,10 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
     });
     expect(view.scrollTop).toBe(1000);
     expect(done).not.toHaveBeenCalled();
+    // Focus the menu put back on its trigger, outside the panel, is not the
+    // reader's own move.
+    const trigger = document.body.appendChild(document.createElement("button"));
+    trigger.focus();
     rerender(show([turn(1), turn(2), turn(3)], ["reply", id(2)]));
     expect(shown).toEqual(["item:p2"]);
     expect(done).toHaveBeenCalledOnce();
@@ -580,6 +585,7 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
     expect(
       prompt.closest("details")?.querySelector(":scope > summary"),
     ).toHaveFocus();
+    trigger.remove();
     // Once shown, the mark is gone, so the transcript shown again (a hidden
     // pane reopened) does not replay it.
     fireEvent.animationEnd(prompt);
@@ -589,12 +595,14 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
     rerender(show([turn(1), turn(2), turn(3), turn(4)], ["reply", id(2)]));
     expect(view.scrollTop).toBe(0);
     // A retried request shows its latest attempt, the one that answered.
-    // Focus the reader has moved elsewhere stays there.
+    // Focus the reader has since moved elsewhere stays there.
+    const retried = show([turn(1), turn(2), turn(5, 2)], ["retry", id(2)]);
     const elsewhere = document.body.appendChild(
       document.createElement("button"),
     );
+    fireEvent.pointerDown(elsewhere);
     elsewhere.focus();
-    rerender(show([turn(1), turn(2), turn(5, 2)], ["retry", id(2)]));
+    rerender(retried);
     expect(shown.at(-1)).toBe("item:p5");
     await act(() => new Promise(requestAnimationFrame));
     expect(elsewhere).toHaveFocus();

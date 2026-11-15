@@ -55,6 +55,7 @@ import messageStyles from "../messages/Messages.module.css";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { readerInputs } from "../profiles/target";
 import { useAvatarPreview } from "../profiles/use-avatar-preview";
 import { bundledPoster } from "./avatar-packs";
 import { AgentsContext } from "./react";
@@ -70,11 +71,11 @@ const PeopleContext = createContext<{
 
 const AgentAvatarSource = createContext<string | undefined>(undefined);
 
-/** The Buzz events a profile was opened for, most wanted first. A
- * transcript showing one of their turns shows it first, once, and then
- * reports `done`. */
+/** The Buzz events a profile was opened for, most wanted first, and the
+ * reader's input count then. A transcript showing one of their turns shows it
+ * first, once, and then reports `done`. */
 export const TranscriptFocus = createContext<
-  { events: readonly string[]; done(): void } | undefined
+  { events: readonly string[]; inputs: number; done(): void } | undefined
 >(undefined);
 
 /** The item, else the turn, that the first of `events` it has began or
@@ -259,20 +260,10 @@ function useShowFocused(
     surface.addEventListener("animationcancel", unmark, { once: true });
     following.current = false;
     element.scrollIntoView({ block: "start" });
-    // Keyboard focus arrives too, once the panel has handed it over, unless
-    // it has since left that tab or a container of the entry.
+    // Keyboard focus arrives too, after the panel's own handoff, unless the
+    // reader has pressed or typed since asking and so moved it themselves.
     requestAnimationFrame(() => {
-      const active = document.activeElement;
-      const pane = element.closest("[role=tabpanel]");
-      const tab = pane?.getAttribute("aria-labelledby");
-      if (
-        !element.isConnected ||
-        (active &&
-          active !== document.body &&
-          !active.contains(element) &&
-          !(tab && active.id === tab))
-      )
-        return;
+      if (!element.isConnected || readerInputs() !== focus.inputs) return;
       const target = own("summary") ?? element;
       if (target === element) element.tabIndex = -1;
       target.focus({ preventScroll: true });

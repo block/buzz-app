@@ -57,6 +57,7 @@ import {
   claimTranscriptFocus,
   profileActivityViewKey,
   profileTranscriptRequest,
+  readerInputs,
   subscribeProfileTranscripts,
   profileAgentHint,
   profilePanelKey,
@@ -164,6 +165,7 @@ export function ProfilePanel({
   const [focus, setFocus] = useState<{
     opening: number;
     events: readonly string[];
+    inputs: number;
   }>();
   // biome-ignore lint/correctness/useExhaustiveDependencies: each new opening is claimed.
   useEffect(() => {
@@ -171,12 +173,14 @@ export function ProfilePanel({
     if (claimed === undefined) return;
     setHeld(claimed);
     const events = claimTranscriptFocus(claimed);
-    setFocus(events && { opening: claimed, events });
+    // Claimed as it opens: presses and keys from here on are the reader's own.
+    setFocus(events && { opening: claimed, events, inputs: readerInputs() });
   }, [asked, target]);
   const shown = useMemo(
     () =>
       focus && {
         events: focus.events,
+        inputs: focus.inputs,
         done: () =>
           setFocus((current) =>
             current?.opening === focus.opening ? undefined : current,

@@ -1160,6 +1160,26 @@ it("is not settled while a check runs, more are unread, or the rollup waits", as
   }
 });
 
+it("tells a check still runs after another failed, and when none does", async () => {
+  const read = async (answer: ReturnType<typeof full>) => {
+    const states = createPullStates(ghFor(() => ({ r0: answer })));
+    return (await states.read(pull, { maxAge: 0 })).state;
+  };
+  const failedThenRunning = [
+    { name: "lint", status: "COMPLETED", conclusion: "FAILURE" },
+    { name: "e2e", status: "IN_PROGRESS", conclusion: null },
+  ];
+  expect(await read(full({ checks: failedThenRunning }))).toMatchObject({
+    checks: "failure",
+    settled: false,
+    running: true,
+  });
+  expect(await read(full({ rollupState: "EXPECTED" }))).toMatchObject({
+    running: true,
+  });
+  expect(await read(full())).toMatchObject({ settled: true, running: false });
+});
+
 it("reads how far a followed pull request is on its way to merging", async () => {
   const merging = async (fields: Record<string, unknown>) => {
     const answer = full();

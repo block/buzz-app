@@ -23,7 +23,8 @@ export type PullSnapshot = Readonly<{
   head: string;
   /** Whether every check on the head is done, and none is still expected. */
   settled: boolean;
-  /** Whether GitHub says the head's checks are still pending. */
+  /** Whether a check on the head is still running or expected, even after
+   * another failed. */
   running: boolean;
   /** The names of the head's checks that failed. */
   failed: readonly string[];
@@ -446,7 +447,7 @@ export function snapshotOf(
     viewer: feedback.viewer,
     head,
     settled: !!state.settled,
-    running: state.checks === "pending",
+    running: !!state.running,
     failed: state.failed ?? [],
     ids: seen
       ? feedback.ids.filter((id) => known.has(id) || read.has(id))

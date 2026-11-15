@@ -94,10 +94,14 @@ export type PullState = Readonly<{
   /** The head commit's combined checks, when read with `gh`. */
   checks?: "success" | "failure" | "pending" | undefined;
   conflicts?: boolean | undefined;
-  /** The head commit, when read with `gh`, as are `settled` and `failed`. */
+  /** The head commit, when read with `gh`, as are `settled`, `running` and
+   * `failed`. */
   head?: string | undefined;
   /** Whether every check on the head is done, and none is still expected. */
   settled?: boolean | undefined;
+  /** Whether a check on the head is still running or expected, even where
+   * one that failed already makes the combined checks a failure. */
+  running?: boolean | undefined;
   /** The names of the head's checks that failed. */
   failed?: readonly string[] | undefined;
   /** At `feedback`, with `gh`: the signed-in account, which agents use too,
@@ -387,6 +391,9 @@ function stateOf(pull: StateData): PullState {
         // here.
         rollup?.contexts?.totalCount === contexts.length &&
         !["PENDING", "EXPECTED"].includes(str(rollup?.state)),
+      running:
+        checks.some((check) => !check.done) ||
+        ["PENDING", "EXPECTED"].includes(str(rollup?.state)),
       failed: checks
         .filter((check) => check.failed)
         .map((check) => check.name || "unnamed check"),
@@ -666,6 +673,7 @@ const same = (a: PullState | "failed" | undefined, b: PullState | "failed") =>
     a.conflicts === b.conflicts &&
     a.head === b.head &&
     a.settled === b.settled &&
+    a.running === b.running &&
     sameList(a.failed, b.failed) &&
     JSON.stringify(a.feedback) === JSON.stringify(b.feedback) &&
     JSON.stringify(a.details) === JSON.stringify(b.details));

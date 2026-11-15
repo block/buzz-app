@@ -515,6 +515,8 @@ describe("snapshotOf", () => {
       state({
         state: "draft",
         checks: "pending",
+        settled: false,
+        running: true,
         feedback: {
           viewer: "baxen",
           ids: [],
@@ -541,6 +543,17 @@ describe("snapshotOf", () => {
       merge: "UNKNOWN",
       unresolved: undefined,
     });
+  });
+
+  it("follows a check still running after another failed, so it can tell CI is stuck", () => {
+    // A failed check makes the combined checks a failure while others run.
+    const hanging = snapshotOf(state({ settled: false, running: true }));
+    expect(hanging).toMatchObject({ settled: false, running: true });
+    if (!hanging) throw new Error("no snapshot");
+    const start = step(watch, hanging, 0);
+    expect(news(step(start.watch, hanging, STUCK_MS).wake)).toBe(
+      `CI has been pending on abc for over 3 hours on ${url}; a check may be stuck.`,
+    );
   });
 
   it("needs the head and feedback, which only gh reads", () => {

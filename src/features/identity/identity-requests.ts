@@ -45,7 +45,7 @@ export function parseIdentityRequest(raw: string): IdentityRequest | null {
       !callback.hostname ||
       callback.username ||
       callback.password ||
-      callback.hash
+      value.callback?.includes("#")
     )
       return null;
     return {
@@ -73,8 +73,13 @@ export function identityAnswerUrl(
 
 /** The one request waiting for the owner. A newer link replaces it. */
 export function createIdentityRequests() {
-  let pending: Readonly<{ request: IdentityRequest; viewer: string }> | null =
-    null;
+  let pending: Readonly<{
+    /** Each opening is its own decision, even of the same link. */
+    id: number;
+    request: IdentityRequest;
+    viewer: string;
+  }> | null = null;
+  let opened = 0;
   const listeners = new Set<() => void>();
   const set = (next: typeof pending) => {
     pending = next;
@@ -89,10 +94,10 @@ export function createIdentityRequests() {
       };
     },
     open: (request: IdentityRequest, viewer: string) =>
-      set({ request, viewer }),
-    /** Closes this request only: a newer one that replaced it stays. */
-    close(request: IdentityRequest) {
-      if (pending?.request === request) set(null);
+      set({ id: ++opened, request, viewer }),
+    /** Closes this opening only: a newer one that replaced it stays. */
+    close(id: number) {
+      if (pending?.id === id) set(null);
     },
   };
 }

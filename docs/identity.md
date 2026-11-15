@@ -628,7 +628,7 @@ A website can request the same proof without copy and paste:
     buzz://authorize-identity?version=1&pubkey=<64 lowercase hex>&callback=<https URL>&state=<state>
 
 Each parameter appears once and no others are accepted. `callback` is an
-`https` URL without credentials or a fragment; its origin is the site the owner
+`https` URL without credentials or a fragment (not even an empty `#`); its origin is the site the owner
 is shown and answers to. `state` is 32 random bytes as unpadded base64url, the
 external app protocol's form. The link binds no community: it waits until an
 identity is ready, like an invite, and never becomes a navigation visit.

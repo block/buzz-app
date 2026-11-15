@@ -68,11 +68,16 @@ it("keeps one request at a time, the newest", () => {
   let changes = 0;
   requests.subscribe(() => changes++);
   requests.open(first, "ab".repeat(32));
+  const firstId = requests.snapshot()?.id ?? 0;
+  // The same link opened again is a separate decision.
+  requests.open(first, "ab".repeat(32));
+  const againId = requests.snapshot()?.id ?? 0;
+  expect(againId).not.toBe(firstId);
+  requests.close(firstId);
+  expect(requests.snapshot()?.id).toBe(againId);
   requests.open(second, "ab".repeat(32));
-  expect(requests.snapshot()?.request.state).toBe(`${"B".repeat(42)}A`);
-  requests.close(first);
   expect(requests.snapshot()?.request).toBe(second);
-  requests.close(second);
+  requests.close(requests.snapshot()?.id ?? 0);
   expect(requests.snapshot()).toBeNull();
-  expect(changes).toBe(3);
+  expect(changes).toBe(4);
 });

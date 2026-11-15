@@ -25,11 +25,11 @@ export function IdentityRequestDialog({
   if (!pending) return null;
   return (
     <Consent
-      // A newer request is a new decision.
-      key={`${pending.request.state}:${pending.viewer}`}
+      // A newer opening is a new decision, even of the same link.
+      key={pending.id}
       request={pending.request}
       viewer={pending.viewer}
-      close={() => requests.close(pending.request)}
+      close={() => requests.close(pending.id)}
     />
   );
 }

@@ -126,11 +126,15 @@ it("lets a newer request replace one still signing, which then answers nothing",
       expect.anything(),
     ),
   );
-  const newer = request(agent, `${"B".repeat(42)}A`);
+  // Even the same link opened again is a new decision.
+  const newer = request();
   act(() => requests.open(newer, viewer));
   await act(async () => finish(tag));
   expect(requests.snapshot()?.request).toBe(newer);
   expect(opened()).toHaveLength(0);
+  expect(
+    screen.getByRole("button", { name: "Authorize this key" }),
+  ).toBeEnabled();
 });
 
 it("can try again after a failure", async () => {

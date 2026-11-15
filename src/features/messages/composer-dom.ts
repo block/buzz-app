@@ -2,7 +2,10 @@ import type { MentionDraft, MentionRecipient } from "./mention-draft";
 import type { ComposerResource } from "../conversation/contracts";
 import type { ComposerToken } from "./composer-token";
 import type { AnnotationMark } from "./composer-annotations";
-import type { AnnotationObservation } from "../conversation/contracts";
+import type {
+  AnnotationObservation,
+  SendCheckDraft,
+} from "../conversation/contracts";
 
 export const inlineFormats = [
   {
@@ -163,6 +166,18 @@ export type ComposerInputElement = HTMLDivElement & {
   /** The draft annotators may mark now, or null while the editor is unfocused,
    * not editable or composing. */
   annotationObservation(): AnnotationObservation | null;
+  /** The whole draft a send check reads, focused or not; null while
+   * composing. */
+  sendObservation(): Pick<SendCheckDraft, "revision" | "text"> | null;
+  /** Rewrite `[start, end)` of the draft at `revision` in one undo step.
+   * Returns the new revision, or false when the revision is stale or the
+   * range is refused. */
+  replaceRange(
+    revision: number,
+    start: number,
+    end: number,
+    text: string,
+  ): number | false;
   /** Underline validated marks for `revision`; an empty list clears them. */
   showAnnotations(revision: number, marks: readonly AnnotationMark[]): boolean;
   /** Replace a shown mark's text with one of its replacements, in one undo step. */

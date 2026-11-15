@@ -371,7 +371,10 @@ export function annotationAt(state: EditorState, position: number) {
 }
 
 /** The mark's text as one uniformly formatted run, or nothing. */
-function word(state: EditorState, mark: AnnotationMark) {
+function word(
+  state: EditorState,
+  mark: Readonly<{ start: number; end: number; text: string }>,
+) {
   const source = projectComposerDocument(state.doc);
   if (source.draft.text.slice(mark.start, mark.end) !== mark.text) return;
   const from = source.position(mark.start),
@@ -413,8 +416,45 @@ export function replaceAnnotation(
   )
     return;
   const range = word(state, mark);
-  if (!range) return;
-  const { from, to, marks } = range;
+  return range && replaceWord(state, range, replacement);
+}
+/** Replace UTF-16 `[start, end)` of the projected draft at `revision` as its
+ * own undo step. The range must be one uniformly formatted run of text, as an
+ * annotation's is, and not a mention's text. */
+export function replaceDraftRange(
+  state: EditorState,
+  revision: number,
+  start: number,
+  end: number,
+  replacement: string,
+): Transaction | undefined {
+  if (
+    revision !== annotationRevision(state.doc) ||
+    !Number.isInteger(start) ||
+    !Number.isInteger(end) ||
+    start < 0 ||
+    end <= start
+  )
+    return;
+  const text = projectComposerDocument(state.doc).draft.text;
+  if (end > text.length) return;
+  const range = word(state, { start, end, text: text.slice(start, end) });
+  if (
+    !range ||
+    range.marks.some((mark) => mark.type === composerSchema.marks.recipient)
+  )
+    return;
+  return replaceWord(state, range, replacement);
+}
+function replaceWord(
+  state: EditorState,
+  {
+    from,
+    to,
+    marks,
+  }: Readonly<{ from: number; to: number; marks: readonly Mark[] }>,
+  replacement: string,
+) {
   const tr = closeHistory(state.tr);
   if (replacement)
     tr.replaceWith(from, to, composerSchema.text(replacement, marks));

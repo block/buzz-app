@@ -77,6 +77,7 @@ function OwnedTool({
         | "replaceRecipientsIfEmpty"
         | "insertResource"
         | "focus"
+        | "send"
         | "capture"
       >
     >();
@@ -120,6 +121,7 @@ function OwnedTool({
       focus: () => {
         if (active()) current.current.focus();
       },
+      send: () => (active() ? (current.current.send?.() ?? false) : false),
     });
     return () => {
       live = false;

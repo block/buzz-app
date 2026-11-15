@@ -77,6 +77,10 @@ export type ComposerToolProps = Readonly<{
     component: ComponentType<ComposerCaptureProps>,
   ): (() => void) | false;
   focus(): void;
+  /** Send the draft as the Send button does, send checks included. True when a
+   * send started; it can still be held or refused with the composer's own
+   * message. Revoked like insertText. Older hosts may omit this command. */
+  send?(): boolean;
 }> &
   TargetOpener;
 export type ComposerCaptureProps = Readonly<{
@@ -303,6 +307,7 @@ export type ConversationExtensions = Readonly<{
   linkPreviews?: ContributionReader<LinkPreviewRenderer>;
   codeBlocks?: ContributionReader<CodeBlockRenderer>;
   annotators?: ContributionReader<ComposerAnnotator>;
+  sendChecks?: ContributionReader<ComposerSendCheck>;
 }>;
 
 /** One document revision of the draft an annotator may mark: the projected text
@@ -343,6 +348,39 @@ export type ComposerAnnotator = Readonly<{
   id: string;
   title: string;
   component: ComponentType<ComposerAnnotatorProps>;
+}>;
+
+/** The draft about to be sent, at one revision: `text` is the projection
+ * annotators observe, code, links, chips and mention text included, and
+ * `markdown` is exactly what would be published, link targets included. */
+export type SendCheckDraft = Pick<ComposerObservation, "revision" | "text"> &
+  Readonly<{ markdown: string }>;
+export type SendCheckProps = CompletionContext &
+  Readonly<{
+    draft: SendCheckDraft;
+    /** Rewrite UTF-16 `[start, end)` of `text` at `revision` as one undo step.
+     * The range must be non-empty and one uniformly formatted run of text: no
+     * line break, chip or mention text, and a link's target is not part of
+     * it. Returns the rewritten draft's revision for the next call (work from
+     * the end so earlier offsets hold), or false when the revision is stale,
+     * the range is refused or the check has settled. */
+    replaceRange(
+      start: number,
+      end: number,
+      text: string,
+      revision: number,
+    ): number | false;
+  }>;
+/** Runs before every send from a composer, including a tool's `send()` and an
+ * edit of a sent message. Resolve `true` to send, or a user-facing reason to
+ * hold the message; the draft stays. Checks run one after another; the host
+ * sends the draft as the last one left it. A check that throws, rejects or
+ * takes longer than `SEND_CHECK_TIMEOUT_MS` holds the send, as does a draft
+ * the person changed while it ran. */
+export type ComposerSendCheck = Readonly<{
+  id: string;
+  title: string;
+  check(props: SendCheckProps): true | string | Promise<true | string>;
 }>;
 
 /** Immutable host-issued evidence, scoped to one live editor observation. */

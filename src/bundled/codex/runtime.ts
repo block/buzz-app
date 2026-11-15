@@ -1616,10 +1616,7 @@ export class CodexRuntime {
         const memory = await this.core(agent.key, signal);
         const policy = () =>
           settings.scope === "community"
-            ? [
-                entry.project.resolve(channelId, NO_PROJECT).section,
-                turnNote(agent, channelId, undefined, true),
-              ]
+            ? [NO_PROJECT.section, turnNote(agent, channelId, undefined, true)]
                 .filter(Boolean)
                 .join("\n\n")
             : "";
@@ -1658,6 +1655,8 @@ export class CodexRuntime {
             ],
           });
         signal.throwIfAborted();
+        if (settings.scope === "community")
+          entry.project.resolve(channelId, NO_PROJECT);
         const threadId = loaded.threadId;
         lane.voice = {
           loaded,
@@ -1680,6 +1679,8 @@ export class CodexRuntime {
                   },
                 ],
               });
+              signal.throwIfAborted();
+              entry.project.resolve(channelId, NO_PROJECT);
             } catch (error) {
               void close();
               seat.ended(new Error(message(error)));

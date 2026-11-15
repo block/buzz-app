@@ -8272,3 +8272,57 @@ it("waits for community retirement before opening a returning voice seat", async
     f.runtime.dispose();
   }
 });
+
+it.each(["failed", "cancelled"])(
+  "keeps the Solo Canvas after a %s community voice handover",
+  async (mode) => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const f = fixture();
+    const d = f.delivery("first");
+    const config = { ...(d.config as object), scope: "community" };
+    f.soloChannels.add("channel");
+    f.snapshot.session.canvas.available = true;
+    f.snapshot.session.canvas.read.mockResolvedValue(
+      canvasHead("RETAINED_CANVAS\n\nFolders: `/tmp/retained`"),
+    );
+    await f.runtime.run({ ...d, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete(0);
+    f.huddleChannels.add("room");
+    const gate = deferred<void>();
+    f.held.set("thread/resume", gate.promise);
+    if (mode === "failed") f.failing.add("thread/resume");
+    const abort = new AbortController();
+    const opening = f.runtime.voice(
+      {
+        config,
+        agent: { ...d.agent, config } as unknown as Agent,
+        conversation: { channelId: "room" },
+        signal: abort.signal,
+        async output() {},
+        async transcript() {},
+        ended() {},
+      },
+      d.agent,
+    );
+    const rejected = expect(opening).rejects.toThrow();
+    try {
+      await vi.waitFor(() =>
+        expect(f.sent.map((w) => w.method)).toContain("thread/resume"),
+      );
+      if (mode === "cancelled") abort.abort(new Error("cancelled"));
+      gate.resolve();
+      await rejected;
+      f.held.delete("thread/resume");
+      f.failing.delete("thread/resume");
+      f.snapshot.session.canvas.read.mockRejectedValue(new Error("offline"));
+      await f.runtime.run({ ...f.delivery("back to Solo"), config });
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+      expect(inputText(f.starts()[1])).toContain("RETAINED_CANVAS");
+      await f.complete(1);
+    } finally {
+      gate.resolve();
+      f.runtime.dispose();
+    }
+  },
+);

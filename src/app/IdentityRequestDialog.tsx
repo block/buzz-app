@@ -52,7 +52,8 @@ function Consent({
   useEffect(() => () => operation.current?.abort(), []);
 
   function deny() {
-    operation.current?.abort();
+    // Once approval is under way its answer may already be on its way.
+    if (operation.current) return;
     close();
     void answer(identityAnswerUrl(request, "denied")).catch(() => {});
   }
@@ -93,9 +94,10 @@ function Consent({
       description={`${request.origin} asks you to authorize its own key. The holder of this key can act as your agent, including directing your Buzz coding agents to run commands as you. This permission has no time or event-kind limits.`}
       initialFocus={cancelButton}
       onClose={deny}
+      pending={pending}
       actions={
         <>
-          <Button ref={cancelButton} onClick={deny}>
+          <Button ref={cancelButton} disabled={pending} onClick={deny}>
             Deny
           </Button>
           <Button

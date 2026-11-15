@@ -640,8 +640,8 @@ through the same `prepareRemoteAgentAuthorization` path, checks the returned
 owner, and opens the callback in the default browser with the answer in its
 fragment, so it never reaches a server log:
 `#state=<state>&proof=<URL-encoded JSON auth tag>`. **Deny**, Escape and Close
-open it with `#state=<state>&error=access_denied`. A newer request replaces one
-still waiting. The site must check `state` and that the proof's agent key is
+open it with `#state=<state>&error=access_denied`. Once approval starts it cannot be denied or dismissed, since its answer may
+already be on its way. A newer request replaces one still waiting. The site must check `state` and that the proof's agent key is
 its own; the owner in the proof is the Buzz identity that approved.
 
 ## Local credential helper on macOS

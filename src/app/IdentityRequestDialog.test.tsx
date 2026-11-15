@@ -106,7 +106,7 @@ it("never authorizes the owner's own key", () => {
   expect(screen.getByText(/your own key/)).toBeInTheDocument();
 });
 
-it("lets a newer request replace one still signing, which then answers nothing", async () => {
+it("cannot be denied while approving, and a newer request replaces it without an answer", async () => {
   const user = userEvent.setup();
   let finish: (value: string[]) => void = () => {};
   vi.mocked(invoke).mockImplementation(async (command) => {
@@ -127,6 +127,9 @@ it("lets a newer request replace one still signing, which then answers nothing",
     ),
   );
   // Even the same link opened again is a new decision.
+  expect(screen.getByRole("button", { name: "Deny" })).toBeDisabled();
+  await user.keyboard("{Escape}");
+  expect(requests.snapshot()).not.toBeNull();
   const newer = request();
   act(() => requests.open(newer, viewer));
   await act(async () => finish(tag));

@@ -9,7 +9,7 @@ import { type ComponentType, createElement } from "react";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import { withProviderWords } from "../../features/agents/failure-words";
-import { refusedByBuzz } from "./auth";
+import { ClaudeAuth, refusedByBuzz } from "./auth";
 import type { PluginModule } from "../../plugins/api";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { claudeRun, TYPE_ID } from "./run";
@@ -45,7 +45,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.claude-code"}/${TYPE_ID}`;
   const spawn = host.spawn && withScript(host.spawn.bind(host));
   const readFile = host.readFile?.bind(host);
-  const setup = new ClaudeSetup(spawn, (input) => host.request(input));
+  const setup = new ClaudeSetup(
+    spawn,
+    (input) => host.request(input),
+    new ClaudeAuth(spawn, agents.storage),
+  );
   // Older replacement auth implementations need not provide key management.
   const { Settings } = setup.auth as {
     Settings?: ComponentType<{

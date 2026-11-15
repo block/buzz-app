@@ -132,7 +132,9 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
   await screen.findByRole("button", { name: "Set" });
   expect(screen.getAllByText("Anthropic API key")).toHaveLength(1);
   expect(
-    screen.getByText("Claude requires an API key to connect to your account."),
+    screen.getByText(
+      "Claude needs your Claude account or an API key to connect.",
+    ),
   ).toBeVisible();
   expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
   const add = await connectKey(user);
@@ -152,7 +154,14 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
     "aria-disabled",
     "true",
   );
-  expect(spawn).not.toHaveBeenCalled();
+  // Only the lookup for a Claude account, which needs no key.
+  expect(
+    vi
+      .mocked(spawn)
+      .mock.calls.every(
+        ([, options]) => options?.args?.join(" ") === "auth status --json",
+      ),
+  ).toBe(true);
   await user.type(add, "sk-ant-first");
   await user.click(screen.getByRole("button", { name: "Save" }));
   await savedKey();
@@ -419,12 +428,16 @@ it("treats a credential read failure as unknown and offers retry", async () => {
   native.invoke.mockImplementationOnce(() => pending);
   native.invoke.mockImplementationOnce(() => pending);
   fixture();
-  expect(screen.queryByText(/Claude requires an API key/)).toBeNull();
+  expect(
+    screen.queryByText(/Claude needs your Claude account or an API key/),
+  ).toBeNull();
   await act(async () => reject("Secure storage is unavailable"));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Secure storage is unavailable",
   );
-  expect(screen.queryByText(/Claude requires an API key/)).toBeNull();
+  expect(
+    screen.queryByText(/Claude needs your Claude account or an API key/),
+  ).toBeNull();
   expect(
     screen.queryByRole("button", { name: "API key actions" }),
   ).not.toBeInTheDocument();
@@ -665,4 +678,85 @@ it("saves a replacement with Enter after composition ends", async () => {
   expect(native.value).toBe("sk-ant-new");
   expect(input).toHaveAttribute("type", "password");
   expect(input).toHaveAttribute("readonly");
+});
+
+/** `claude` answering `auth status` as signed in to a Claude account when
+ * `signedIn()`, and failing anything else, as without a runtime. */
+function accountSpawn(signedIn: () => boolean): Spawn {
+  return vi.fn(async (_id, options) => {
+    const status = options?.args?.join(" ") === "auth status --json";
+    if (status)
+      options?.onStdout?.(
+        JSON.stringify(
+          signedIn()
+            ? {
+                loggedIn: true,
+                authMethod: "claude.ai",
+                email: "me@example.com",
+              }
+            : { loggedIn: false },
+        ),
+      );
+    return {
+      write: async () => {},
+      end: async () => {},
+      kill: async () => {},
+      exited: Promise.resolve(status && signedIn() ? 0 : status ? 1 : 127),
+    };
+  });
+}
+
+function accountFixture(signedIn: () => boolean) {
+  const spawn = accountSpawn(signedIn);
+  const setup = new ClaudeSetup(spawn);
+  const Settings = setup.auth.Settings;
+  if (!Settings) throw new Error("Missing Settings");
+  render(<Settings setup={setup} active={() => true} />);
+  return { spawn };
+}
+
+const logins = (spawn: Spawn) =>
+  vi
+    .mocked(spawn)
+    .mock.calls.filter(
+      ([, options]) => options?.args?.join(" ") === "auth login",
+    );
+
+it("switches between the key and Claude Code's account sign-in", async () => {
+  const user = userEvent.setup();
+  const { spawn } = accountFixture(() => true);
+  expect(
+    await screen.findByText("Claude runs with your Anthropic API key."),
+  ).toBeVisible();
+  await user.click(
+    await screen.findByRole("button", { name: "Use Claude account" }),
+  );
+  expect(
+    await screen.findByText(
+      "Claude runs with your Claude account (me@example.com).",
+    ),
+  ).toBeVisible();
+  // Claude Code was signed in already: no browser sign-in.
+  expect(logins(spawn)).toHaveLength(0);
+  // The key stays saved, and in charge again on request.
+  await savedKey();
+  await user.click(screen.getByRole("button", { name: "Use your API key" }));
+  expect(
+    await screen.findByText("Claude runs with your Anthropic API key."),
+  ).toBeVisible();
+});
+
+it("signs in to a Claude account from Settings without a key", async () => {
+  native.saved = false;
+  const user = userEvent.setup();
+  const { spawn } = accountFixture(() => false);
+  await screen.findByText(/instead of an API key\./);
+  const signIn = screen.getByRole("button", { name: "Sign in" });
+  await waitFor(() => expect(signIn).toBeEnabled());
+  await user.click(signIn);
+  await waitFor(() => expect(logins(spawn)).toHaveLength(1));
+  // A failed sign-in says why where it happened.
+  expect(
+    await screen.findByRole("log", { name: "Setup output" }),
+  ).toHaveTextContent("Sign-in ended (127).");
 });

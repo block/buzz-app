@@ -238,15 +238,17 @@ function useShowFocused(
         []),
     ].find((node) => node.dataset.entry === entry);
     if (!element) return;
-    const details = element.querySelector("details");
+    // Its own, not those of entries nested in it, such as a script's calls.
+    const own = <E extends HTMLElement = HTMLElement>(selector: string) =>
+      [...element.querySelectorAll<E>(selector)].find(
+        (node) => node.closest("[data-entry]") === element,
+      );
+    const details = own<HTMLDetailsElement>("details");
     if (details) details.open = true;
     // Its text, or else its title, is marked as an arriving message is,
     // once: the mark goes when its animation ends or is cut short, so showing
     // the transcript again does not replay it. A repeat arrival restarts it.
-    const surface =
-      element.querySelector<HTMLElement>("[data-arrival-surface]") ??
-      element.querySelector("summary") ??
-      element;
+    const surface = own("[data-arrival-surface]") ?? own("summary") ?? element;
     for (const marked of timeline.current?.querySelectorAll("[data-arrived]") ??
       [])
       marked.removeAttribute("data-arrived");

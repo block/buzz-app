@@ -657,6 +657,13 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
       ),
     );
     expect(shown.at(-1)).toBe("item:x7");
+    // The call itself is marked, not the reply recorded inside it.
+    const call = view.querySelector('[data-entry="item:x7"] > details');
+    expect(call).toHaveProperty("open", true);
+    expect(call?.querySelector(":scope > summary")).toHaveAttribute(
+      "data-arrived",
+    );
+    expect(view.querySelectorAll("[data-arrived]")).toHaveLength(1);
   } finally {
     // jsdom has no scrollIntoView of its own.
     Reflect.deleteProperty(Element.prototype, "scrollIntoView");

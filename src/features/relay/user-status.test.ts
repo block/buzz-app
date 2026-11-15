@@ -266,6 +266,80 @@ it("reloads an author unmounted before its initial read completed", async () => 
   expect(owner.queries.snapshot().get(bob.pubkey)?.text).toBe("Remote");
 });
 
+it("keeps recently unwatched authors loaded, current from live traffic, and bounded", async () => {
+  const carol = keypair();
+  const remote = signed(bob, {
+    kind: 30315,
+    created_at: now,
+    content: "Remote",
+    tags: [["d", "general"]],
+  });
+  const read = vi.fn<RelayReader["read"]>(async ([filter]) =>
+    filter?.authors?.includes(bob.pubkey) ? [remote] : [],
+  );
+  const owner = createUserStatuses({ read });
+  owners.push(owner);
+  // Rows scroll out of view and back: nothing is read again.
+  const first = owner.queries.watch([bob.pubkey, carol.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  first();
+  expect(read).toHaveBeenCalledOnce();
+  expect(owner.queries.snapshot().get(bob.pubkey)?.text).toBe("Remote");
+  // An author read without a status takes one set while out of view.
+  owner.accept([
+    signed(carol, {
+      kind: 30315,
+      created_at: now + 1,
+      content: "Live",
+      tags: [["d", "general"]],
+    }),
+  ]);
+  const unwatch = owner.queries.watch([bob.pubkey, carol.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledOnce();
+  expect(owner.queries.snapshot().get(carol.pubkey)?.text).toBe("Live");
+  // 499 more authors out of view keep bob, the oldest; one more evicts him.
+  unwatch();
+  const pass = (from: number, count: number) => {
+    for (let n = from; n < from + count; n++)
+      owner.queries.watch([n.toString(16).padStart(64, "0")])();
+  };
+  pass(1, 498);
+  expect(owner.queries.snapshot().has(bob.pubkey)).toBe(true);
+  pass(499, 1);
+  expect(owner.queries.snapshot().has(bob.pubkey)).toBe(false);
+  expect(owner.queries.snapshot().has(carol.pubkey)).toBe(true);
+  await vi.advanceTimersByTimeAsync(0);
+  read.mockClear();
+  owner.queries.watch([bob.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledOnce();
+});
+
+it("reads an idle author again after a reconnect, which can miss live changes", async () => {
+  const read = vi.fn<RelayReader["read"]>(async () => []);
+  const owner = createUserStatuses({ read });
+  owners.push(owner);
+  const unwatch = owner.queries.watch([bob.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  unwatch();
+  owner.accept([
+    signed(bob, {
+      kind: 30315,
+      created_at: now,
+      content: "Live",
+      tags: [["d", "general"]],
+    }),
+  ]);
+  expect(owner.queries.snapshot().get(bob.pubkey)?.text).toBe("Live");
+  owner.reconnect();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledOnce();
+  owner.queries.watch([bob.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledTimes(2);
+});
+
 it("recovers a mounted status after a transient read failure without hot-looping", async () => {
   const read = vi
     .fn<RelayReader["read"]>()

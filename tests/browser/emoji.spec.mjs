@@ -437,6 +437,21 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       .hover();
     await expect(footer).toHaveAttribute("data-buzz-previewing", "");
     expect((await footer.boundingBox()).height).toBe(footerBox.height);
+    // Crossing the space between emoji keeps the preview; leaving the grid clears it.
+    const gap = await page
+      .locator('em-emoji-picker .category button[aria-label="😀"]')
+      .first()
+      .evaluate((button) => {
+        const box = button.getBoundingClientRect();
+        const point = { x: box.right + 1, y: box.top + box.height / 2 };
+        const hit = button.getRootNode().elementFromPoint(point.x, point.y);
+        return hit?.closest("button") ? null : point;
+      });
+    expect(gap).not.toBeNull();
+    await page.mouse.move(gap.x, gap.y, { steps: 2 });
+    await expect(footer).toHaveAttribute("data-buzz-previewing", "");
+    await page.getByRole("searchbox", { name: "Search emoji" }).hover();
+    await expect(footer).not.toHaveAttribute("data-buzz-previewing", "");
     const skinToneBox = await skinTone.boundingBox();
     expect(skinToneBox.y).toBeGreaterThanOrEqual(footerBox.y);
     expect(skinToneBox.x + skinToneBox.width).toBeGreaterThan(

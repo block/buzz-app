@@ -622,6 +622,33 @@ ${[1, 2, 3, 4, 5, 6].map((tone) => `    .menu .skin-tone-${tone}::before { conte
     select(native);
     return true;
   };
+  // Mart clears the preview whenever the pointer leaves an emoji, so crossing
+  // the gaps between cells flashed the idle footer. Keep the last preview while
+  // the pointer stays in the grid; leaving the grid clears it as before.
+  let previewHeld = false;
+  const insideGrid = (node: EventTarget | null) =>
+    node instanceof Node && !!root?.querySelector(".scroll")?.contains(node);
+  root?.addEventListener(
+    "mouseleave",
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.matches(".category button"))
+        return;
+      previewHeld = insideGrid((event as MouseEvent).relatedTarget);
+      if (previewHeld) event.stopPropagation();
+    },
+    true,
+  );
+  // Mouseout bubbles from wherever the pointer was, even where an ancestor's
+  // mouseleave is not reported, so it is the dependable signal for leaving.
+  root?.addEventListener("mouseout", (event) => {
+    if (!previewHeld || insideGrid((event as MouseEvent).relatedTarget)) return;
+    previewHeld = false;
+    // Any emoji's own leave handler clears Mart's preview.
+    root
+      ?.querySelector(".scroll .category button")
+      ?.dispatchEvent(new MouseEvent("mouseleave"));
+  });
   // Arrow keys follow the menu's visual order rather than Mart's DOM order.
   root?.addEventListener(
     "keydown",

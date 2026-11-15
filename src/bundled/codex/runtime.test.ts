@@ -8162,3 +8162,40 @@ it("session Interrupt discards queued Codex community requests", async () => {
     f.runtime.dispose();
   }
 });
+
+it("session Interrupt discards queued unaddressed community wakes", async () => {
+  const f = fixture();
+  const d = f.delivery("first");
+  const config = { ...(d.config as object), scope: "community" };
+  const prompt = vi.fn(async () => "SHOULD_NOT_RUN");
+  let once: Promise<unknown> | undefined;
+  try {
+    await f.runtime.run({ ...d, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    once = f.runtime.runOnce({
+      delivery: { ...d, config },
+      key: "wake",
+      signal: new AbortController().signal,
+      prompt,
+    });
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Starting"),
+    );
+    vi.useFakeTimers();
+    await f.runtime.session(
+      { ...d.agent, config } as unknown as Agent,
+      { channelId: "channel" },
+      "interrupt",
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(prompt).not.toHaveBeenCalled();
+    expect(f.starts()).toHaveLength(1);
+    await once;
+    await f.runtime.run({ ...f.delivery("after"), config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    await f.complete(1);
+  } finally {
+    f.runtime.dispose();
+    await once?.catch(() => {});
+  }
+});

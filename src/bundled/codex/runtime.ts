@@ -2185,13 +2185,19 @@ export class CodexRuntime {
             outcome = { ok: false, error };
         },
       };
-      const handoff = this.controls.deliver(`${agent.key}/${key}`, async () => {
-        await this.start(request, "", key, lane, entry);
-      });
+      entry.waiting.add(request);
       try {
+        const handoff = this.controls.deliver(
+          `${agent.key}/${key}`,
+          async () => {
+            await this.start(request, "", key, lane, entry);
+          },
+        );
         await abortable(handoff.done, turnSignal);
       } catch (error) {
         return { ok: false, error: message(error) };
+      } finally {
+        entry.waiting.delete(request);
       }
       return outcome;
     }

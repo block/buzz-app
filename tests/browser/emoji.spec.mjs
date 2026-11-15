@@ -608,7 +608,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       1,
     );
     expect(initialSurface.height).toBeCloseTo(
-      Math.min(348, page.viewportSize().height * 0.4),
+      Math.min(416, page.viewportSize().height * 0.55),
       1,
     );
     expect(initialRegion.width).toBe(initialSurface.width + 2);

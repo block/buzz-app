@@ -1301,12 +1301,13 @@ The port retains the prepared-store implementation and its behavior tests:
   limit × 2 KiB, evicting the least recently requested profile. While a channel is
   open and active (not a retained background tab), it reserves room for its whole
   roster on top of that base, up to 10,240 entries. Leaving gives the room back
-  after the current task, so a remount or a roster count change keeps the loaded
-  profiles; the shrink cancels background profile reads asked for before
-  leaving, not the next view's, and
-  stops the verified-name syncs it emptied. Verified-name syncs (128 people
-  each) have their own pool of 80, enough for the largest cache, apart from the
-  32 artifact syncs. A background profile read of many pages publishes once,
+  30 seconds later (a smaller view closing meanwhile does not extend it), so
+  switching back soon, a remount or a roster count change keeps the loaded
+  profiles. After the current task, leaving cancels background profile reads
+  asked for before it, not the next view's; the shrink stops the verified-name
+  syncs it emptied. Verified-name syncs (128 people each) have their own pool of
+  80, enough for the largest cache, apart from the 32 artifact syncs. A
+  background profile read of many pages publishes once,
   when its pages settle (a foreground read that joins it publishes at once), so
   an open mention menu re-ranks a large roster once instead of per page. The
   channel avatar preview reads at most the first 1,024 members; only the mention

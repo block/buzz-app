@@ -1370,7 +1370,8 @@ export class ClaudeRuntime {
     { delivery, key, signal, prompt }: StandaloneTurn,
     reserved = false,
   ): Promise<TurnResult> {
-    if (this.resolveConfig(delivery.config).scope === "community" && !reserved)
+    const settings = this.resolveConfig(delivery.config);
+    if (settings.scope === "community" && !reserved)
       return this.controls.wake(
         `${delivery.agent.key}/${COMMUNITY_SESSION}`,
         signal,
@@ -1378,7 +1379,7 @@ export class ClaudeRuntime {
       );
     const { agent, team } = delivery;
     if (await this.inspect?.(agent.key)) {
-      const shared = this.resolveConfig(delivery.config).scope === "community";
+      const shared = settings.scope === "community";
       const conversation = shared
         ? COMMUNITY_SESSION
         : `once:${crypto.randomUUID()}`;
@@ -1399,8 +1400,8 @@ export class ClaudeRuntime {
         }
       }
     }
-    const entry = this.entry(agent, this.resolveConfig(delivery.config));
-    if (entry.config.scope !== "community" || !entry.handle) {
+    const entry = this.entry(agent, settings);
+    if (settings.scope !== "community" || !entry.handle) {
       entry.handle = agent;
       entry.team = team ?? "";
     }
@@ -1409,7 +1410,7 @@ export class ClaudeRuntime {
     // Its new process launches on the core memory read now.
     entry.memory = await this.core(agent.key);
     const done =
-      entry.config.scope === "community"
+      settings.scope === "community"
         ? communityTurn(
             entry.policies,
             signal,

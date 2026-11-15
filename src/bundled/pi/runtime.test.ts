@@ -3288,3 +3288,40 @@ it("keeps deferred community admission in its captured session scope after setti
     await Promise.allSettled([first.run, second?.run]);
   }
 });
+
+it.each(["community", "thread"] as const)(
+  "uses the admitted %s scope for a standalone wake despite newer settings",
+  async (scope) => {
+    const f = setup({
+      wait: () => ({ status: "done", answer: 1, text: "done" }),
+    });
+    const config = { ...DEFAULT_CONFIG, scope };
+    const newer = {
+      ...DEFAULT_CONFIG,
+      scope: scope === "community" ? "thread" : "community",
+    };
+    (
+      f.runtime as unknown as {
+        entry(agent: unknown, config: unknown): unknown;
+      }
+    ).entry(f.agent, newer);
+    try {
+      await expect(
+        f.runtime.runOnce({
+          delivery: { agent: f.agent, config, current: () => true },
+          key: "captured-scope",
+          signal: new AbortController().signal,
+          prompt: async () => "CAPTURED_STANDALONE_SCOPE",
+        } as unknown as Parameters<typeof f.runtime.runOnce>[0]),
+      ).resolves.toMatchObject({ ok: true });
+      expect(
+        f.host.requests(scope === "community" ? "deliver" : "once"),
+      ).toHaveLength(1);
+      expect(
+        f.host.requests(scope === "community" ? "once" : "deliver"),
+      ).toHaveLength(0);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);

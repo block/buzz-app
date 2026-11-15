@@ -725,7 +725,8 @@ export class GooseRuntime {
     { delivery, key, signal, prompt }: StandaloneTurn,
     reserved = false,
   ): Promise<TurnResult> {
-    if (this.settings(delivery.config).scope === "community" && !reserved)
+    const settings = this.settings(delivery.config);
+    if (settings.scope === "community" && !reserved)
       return this.controls.wake(
         `${delivery.agent.key}/${COMMUNITY_SESSION}`,
         signal,
@@ -733,13 +734,13 @@ export class GooseRuntime {
       );
     const { agent, team } = delivery;
     await this.follow(delivery.config);
-    const entry = this.entry(agent.key, this.settings(delivery.config));
-    if (entry.config.scope !== "community" || !entry.handle) {
+    const entry = this.entry(agent.key, settings);
+    if (settings.scope !== "community" || !entry.handle) {
       entry.handle = agent;
       entry.team = team ?? "";
     }
     const done =
-      entry.config.scope === "community"
+      settings.scope === "community"
         ? communityTurn(
             entry.policies,
             signal,

@@ -840,11 +840,8 @@ export class PiRuntime {
     community = false,
     reserved = false,
   ): Promise<TurnResult> {
-    if (
-      config(delivery.config).scope === "community" &&
-      !community &&
-      !reserved
-    )
+    const settings = config(delivery.config);
+    if (settings.scope === "community" && !community && !reserved)
       return this.controls.wake(
         `${delivery.agent.key}/${COMMUNITY_SESSION}`,
         signal,
@@ -852,12 +849,12 @@ export class PiRuntime {
           this.standalone({ delivery, key, signal, prompt }, false, true),
       );
     const { agent, team } = delivery;
-    const entry = this.entry(agent, config(delivery.config));
-    if (entry.config.scope !== "community" || !entry.handle) {
+    const entry = this.entry(agent, settings);
+    if (settings.scope !== "community" || !entry.handle) {
       entry.handle = agent;
       entry.team = team ?? "";
     }
-    if (entry.config.scope === "community" && !community)
+    if (settings.scope === "community" && !community)
       return communityTurn(
         entry.policies,
         signal,

@@ -11,6 +11,7 @@ export async function openVoice(
   ended: (error?: Error) => void,
   instructions: string,
   thinking?: (active: boolean) => void,
+  voice?: string,
 ) {
   signal.throwIfAborted();
   const peer = new RTCPeerConnection();
@@ -149,6 +150,7 @@ export async function openVoice(
       outputModality: "audio",
       clientManagedHandoffs: false,
       realtimeStartInstructions: instructions,
+      ...(voice ? { voice } : {}),
     });
     await wait(starting);
     await connected;

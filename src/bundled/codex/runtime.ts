@@ -1639,6 +1639,7 @@ export class CodexRuntime {
             realtimeThinking = active;
             thinking();
           },
+          settings.voice,
         );
         signal.throwIfAborted();
         this.save(request, entry, key, {

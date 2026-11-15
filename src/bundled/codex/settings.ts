@@ -9,13 +9,18 @@ import {
 import { type Config, defaults } from "./config";
 
 export const syncedSettingsSchema = {
+  voice: "string",
   model: "string",
   effort: "string",
   scope: ["thread", "channel"],
 } as const satisfies SettingsSchema;
 
-export const syncedSettings = (config: Config) =>
-  pickSettings(syncedSettingsSchema, config);
+export const syncedSettings = (config: Config) => {
+  const settings = pickSettings(syncedSettingsSchema, config);
+  // Unset voices retain the settings shape older clients already understand.
+  if (!settings.voice) delete settings.voice;
+  return settings;
+};
 
 /** Synced fields come only from `settings`, a left-out one from the default;
  * everything else stays this device's. */

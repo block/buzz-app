@@ -109,7 +109,10 @@ function fixture(resume = Promise.resolve()) {
   const abort = new AbortController();
   const ended = vi.fn();
   const output = vi.fn(async (_samples: number[]) => {});
-  const open = (send: (samples: number[]) => Promise<void> = output) =>
+  const open = (
+    send: (samples: number[]) => Promise<void> = output,
+    voice?: string,
+  ) =>
     openVoice(
       rpc as unknown as AppServer,
       "thread",
@@ -118,6 +121,7 @@ function fixture(resume = Promise.resolve()) {
       ended,
       "instructions",
       thinking,
+      voice,
     );
   return {
     open,
@@ -356,3 +360,18 @@ it("projects realtime thinking until speech, completion or interruption, and ign
   f.events.onmessage?.({ data: JSON.stringify({ type: "response.created" }) });
   expect(f.thinking).not.toHaveBeenCalled();
 });
+
+it.each(["cove", "maple", ""])(
+  "starts realtime with the assigned voice %s",
+  async (voice) => {
+    const f = fixture();
+    const connection = await f.open(f.output, voice);
+    const start = vi
+      .mocked(f.rpc.request as unknown as AppServer["request"])
+      .mock.calls.find(([method]) => method === "thread/realtime/start");
+    expect(start?.[1]).toEqual(expect.objectContaining({ threadId: "thread" }));
+    if (voice) expect(start?.[1]).toHaveProperty("voice", voice);
+    else expect(start?.[1]).not.toHaveProperty("voice");
+    await connection.close();
+  },
+);

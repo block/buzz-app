@@ -70,6 +70,7 @@ const label = ({ channelId, name, root }: SavedConversation) =>
   `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 
 type Catalog = {
+  voices?: string[];
   models: Model[];
 };
 type ProviderDefaults = Readonly<{ model: string; effort: string }>;
@@ -96,7 +97,12 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
     await rpc.open(spawn, defaults.workspace);
     signal.throwIfAborted();
     if (await needsSignIn(rpc)) throw new Error(SIGN_IN_ERROR);
-    return { models: await listModels(rpc) };
+    const models = await listModels(rpc);
+    // Older Codex releases do not publish a v3 catalog. Model selection still works.
+    const voices = await rpc
+      .request<{ voices?: { v3?: string[] } }>("thread/realtime/listVoices", {})
+      .catch(() => undefined);
+    return { models, voices: voices?.voices?.v3 ?? [] };
   } finally {
     signal.removeEventListener("abort", abort);
     await rpc.close();
@@ -1413,6 +1419,37 @@ export function createTabs(
                   {customization}
                 </>
               )}
+            </SettingsGroup>
+            <SettingsGroup>
+              <Select
+                label="Huddle voice"
+                description="Applies when this agent next joins a Huddle."
+                variant="preference"
+                value={draft.voice ?? ""}
+                groups={[
+                  {
+                    label: "",
+                    options: [
+                      { value: "", label: "Codex default" },
+                      ...(draft.voice && !data?.voices?.includes(draft.voice)
+                        ? [
+                            {
+                              value: draft.voice,
+                              label: `${effortName(draft.voice)} (unavailable)`,
+                              disabled: true,
+                            },
+                          ]
+                        : []),
+                      ...(data?.voices ?? []).map((value) => ({
+                        value,
+                        label: value.charAt(0).toUpperCase() + value.slice(1),
+                      })),
+                    ],
+                  },
+                ]}
+                disabled={saving}
+                onValueChange={(voice) => setDraft({ ...draft, voice })}
+              />
             </SettingsGroup>
             <AgentInstructions
               value={draft.instructions}

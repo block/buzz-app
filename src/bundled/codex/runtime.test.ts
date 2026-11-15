@@ -6226,6 +6226,14 @@ describe("voice seats", () => {
     });
     expect(thinking).not.toHaveBeenCalled();
   });
+  it.each(["cove", "maple"])(
+    "uses the resolved seat voice %s",
+    async (voice) => {
+      const f = await seated({ config: { workspace: "/tmp/voices", voice } });
+      expect(vi.mocked(openVoice).mock.calls.at(-1)?.[7]).toBe(voice);
+      await f.connection.close();
+    },
+  );
   it("uses resolved seat config and team instead of the local agent config", async () => {
     const f = await seated({
       config: { workspace: "/tmp/resolved-voice", model: "test-model" },

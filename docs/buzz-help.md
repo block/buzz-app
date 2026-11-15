@@ -45,6 +45,8 @@ leave and rejoin to retry.
 Final voice transcripts appear in the room with speaker credit and do not
 mention anyone. Explicit agent watches on that room can still receive them.
 
+In a Codex agent’s settings, choose **Huddle voice** and save to assign its voice. Each agent has its own choice, synced with its settings. **Codex default** follows the provider’s default. The change applies when the agent next joins a Huddle; leave and rejoin to hear it.
+
 ## Identity and getting connected
 
 - If Buzz can’t finish starting, the window says **Buzz couldn’t open**

@@ -31,7 +31,7 @@ import "../../src/shared/styles/globals.css";
 const harness = new URLSearchParams(location.search).get("harness");
 const settingsSync = new URLSearchParams(location.search).has("settingsSync");
 const thinkingHarness = settingsSync
-  ? "claude"
+  ? new URLSearchParams(location.search).get("settingsSync") || "claude"
   : new URLSearchParams(location.search).get("thinking");
 const importing = new URLSearchParams(location.search).has("import");
 const teamImport = new URLSearchParams(location.search).has("teamImport");
@@ -215,7 +215,7 @@ if (thinkingHarness === "claude") {
   const providerState = {
     readiness: "ready",
     checking: false,
-    data: { models: [model] },
+    data: { models: [model], voices: ["cove", "maple"] },
     error: "",
     defaults: { model: "", effort: "" },
   };
@@ -243,6 +243,15 @@ if (thinkingHarness === "claude") {
     id: "codex",
     title: "Codex",
     defaults: () => ({ config: { ...codexDefaults } }),
+    tabs: [
+      {
+        id: "settings",
+        title: "Settings",
+        role: "settings",
+        splitSettings: true,
+        component: tabs.SettingsTab,
+      },
+    ],
     CreateModel: tabs.CreateModel,
     CreateThinking: tabs.CreateThinking,
   };

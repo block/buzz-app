@@ -2539,7 +2539,12 @@ export class CodexRuntime {
       .finally(() => {
         if (current.tail === job && !current.active && !current.voice) {
           entry.lanes.delete(key);
-          for (const listener of this.listeners) listener();
+          if (
+            this.sessions(request.agent.key).find((view) => view.key === key)
+              ?.status === "Starting"
+          )
+            this.status(request.agent.key, key, "Idle");
+          else for (const listener of this.listeners) listener();
         }
       });
     return job;

@@ -8576,3 +8576,46 @@ it.each(["reset", "admission"])(
     }
   },
 );
+
+it.each(["withdrawn wake", "rejected admission"])(
+  "clears Starting when the last community job is skipped: %s",
+  async (reason) => {
+    const f = fixture();
+    const d = f.delivery("skipped");
+    const config = { ...(d.config as object), scope: "community" };
+    const agent = { ...d.agent, config } as unknown as Agent;
+    try {
+      if (reason === "withdrawn wake") {
+        let current = true;
+        await f.runtime.runOnce({
+          delivery: { agent: d.agent, config, current: () => current },
+          key: "skip",
+          signal: new AbortController().signal,
+          prompt: async () => {
+            current = false;
+            return undefined;
+          },
+        } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+      } else {
+        await expect(
+          f.runtime.run({
+            ...d,
+            config,
+            prepareSession: async () => {
+              throw new Error("refused admission");
+            },
+          }),
+        ).rejects.toThrow("refused admission");
+      }
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, { channelId: "channel" })).toBe(
+          "idle",
+        ),
+      );
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle");
+      expect(f.starts()).toHaveLength(0);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);

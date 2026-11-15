@@ -31,6 +31,16 @@ export const test = base.extend({
   context: async ({ context }, use) => {
     // A test may close its own context; Playwright's teardown accepts that.
     context.once("close", () => closedContexts.add(context));
+    // Journeys start with a chosen skin tone, so the first-pick tone prompt
+    // only appears where a test clears it to cover that prompt.
+    await context.addInitScript(() => {
+      try {
+        if (localStorage.getItem("emoji-mart.skin") === null)
+          localStorage.setItem("emoji-mart.skin", "1");
+      } catch {
+        /* Opaque origins have no storage. */
+      }
+    });
     await use(context);
     await stopRoutes(context);
   },

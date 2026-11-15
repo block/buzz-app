@@ -1287,3 +1287,86 @@ test("emoji picker recovers from repeated catalog timeouts in place and across r
     await server?.close();
   }
 });
+
+test("the first toned pick asks for a default skin tone", async ({ page }) => {
+  let server;
+  try {
+    server = await createServer({
+      root: fileURLToPath(new URL("../../", import.meta.url)),
+      configFile: false,
+      envFile: false,
+      plugins: [react()],
+      logLevel: "error",
+      server: { host: "127.0.0.1", port: 0, strictPort: false },
+    });
+    const errors = watchPageErrors(page);
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/emoji.html`,
+    );
+    const draft = page
+      .getByRole("textbox", { name: /Message #general/ })
+      .first();
+    const picker = page
+      .getByRole("button", { name: "Emoji and GIFS", exact: true })
+      .first();
+    const openPicker = async () => {
+      await picker.click();
+      await expect(
+        page.getByRole("searchbox", { name: "Search emoji" }),
+      ).toBeVisible();
+    };
+    const savedTone = () =>
+      page.evaluate(() => localStorage.getItem("emoji-mart.skin"));
+    const grid = (label) =>
+      page
+        .locator(`em-emoji-picker .category button[aria-label="${label}"]`)
+        .first();
+    const toneMenu = page.locator("em-emoji-picker #root > .menu");
+    // The shared fixture saves a tone; this journey starts before anyone has.
+    await page.evaluate(() => localStorage.removeItem("emoji-mart.skin"));
+    await draft.fill("");
+    await openPicker();
+    expect(await savedTone()).toBeNull();
+    // Emoji without tones insert straight away.
+    await grid("😀").click();
+    await expect(draft).toContainText("😀");
+    await draft.fill("");
+    await openPicker();
+    // The first toned pick opens the tone menu, showing that emoji's tones.
+    await grid("👍").click();
+    await expect(toneMenu).toBeVisible();
+    expect(
+      await toneMenu
+        .locator(".option .skin-tone-4")
+        .evaluate((tone) => getComputedStyle(tone, "::before").content),
+    ).toBe('"👍🏽"');
+    // Dismissing inserts nothing and saves nothing; the hand shows tones again.
+    await page.keyboard.press("Escape");
+    await expect(toneMenu).toHaveCount(0);
+    await expect(draft).not.toContainText("👍");
+    expect(await savedTone()).toBeNull();
+    await page
+      .getByRole("button", { name: "Choose default skin tone" })
+      .click();
+    expect(
+      await toneMenu
+        .locator(".option .skin-tone-4")
+        .evaluate((tone) => getComputedStyle(tone, "::before").content),
+    ).toBe('"🤙🏽"');
+    await page.keyboard.press("Escape");
+    // Choosing a tone inserts the emoji in it and makes it the default.
+    await grid("👍").click();
+    await toneMenu.locator(".option").nth(3).click();
+    await expect(draft).toContainText("👍🏽");
+    expect(await savedTone()).toBe("4");
+    await draft.fill("");
+    await openPicker();
+    await grid("👍🏽").click();
+    await expect(toneMenu).toHaveCount(0);
+    await expect(draft).toContainText("👍🏽");
+    expect(errors.unexplained()).toEqual([]);
+  } finally {
+    await server?.close();
+  }
+});

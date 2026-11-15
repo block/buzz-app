@@ -9,7 +9,12 @@ import { Data, Picker, SearchIndex } from "emoji-mart";
 import type { CustomEmoji } from "../../features/relay/emoji";
 import { rankShortcodes } from "./emoji-search";
 import { PREVIEW_ACTION_SLOT } from "./add-emoji";
-import { SKIN_TONE_SLOT, toneHand } from "./skin-tone";
+import {
+  SKIN_TONE_SLOT,
+  savedSkinTone,
+  skinToneUnchosen,
+  toneHand,
+} from "./skin-tone";
 import { rootFontSize, spaciousGrid } from "./picker-layout";
 
 const martSearch = SearchIndex.search;
@@ -166,7 +171,7 @@ export function mountEmojiMart({
     onEmojiSelect: (emoji: { native?: string; id?: string }) => {
       if (disposed) return;
       if (emoji.native) {
-        select(emoji.native);
+        if (!promptSkinTone(emoji.id)) select(emoji.native);
         return;
       }
       const custom = values.get(emoji.id ?? "");
@@ -464,7 +469,7 @@ ${TONE_ORDER.map((tone, index) => `    #root > .menu > :nth-child(${tone}) { ord
     .menu .option > .margin-small-lr {
       display: none;
     }
-${[1, 2, 3, 4, 5, 6].map((tone) => `    .menu .skin-tone-${tone}::before { content: "${toneHand(tone)}"; }`).join("\n")}
+${[1, 2, 3, 4, 5, 6].map((tone) => `    .menu .skin-tone-${tone}::before { content: var(--buzz-tone-${tone}, "${toneHand(tone)}"); }`).join("\n")}
     /* The saved tone is a fill; a ring marks keyboard focus only. */
     .menu input[type="radio"]:checked + .option {
       background: var(--affordance-selected);
@@ -574,12 +579,45 @@ ${[1, 2, 3, 4, 5, 6].map((tone) => `    .menu .skin-tone-${tone}::before { conte
       tone.element,
       (selected, open) => skinToneChange?.(selected, open),
       () =>
+        finishSkinTonePrompt() ||
         root
           ?.querySelector<HTMLSlotElement>(`slot[name="${SKIN_TONE_SLOT}"]`)
           ?.assignedElements()[0]
           ?.querySelector("button")
           ?.focus(),
     );
+  };
+  // Until a default tone is saved, the first pick of an emoji that has tones
+  // opens the tone menu showing that emoji; the choice becomes the default.
+  let promptedEmoji: string | undefined;
+  const toneOptions = [1, 2, 3, 4, 5, 6].map((tone) => `--buzz-tone-${tone}`);
+  const promptSkinTone = (id: string | undefined) => {
+    if (!preview || !skinToneUnchosen()) return false;
+    const skins = Data?.emojis[id ?? ""]?.skins;
+    const source = root?.querySelector<HTMLButtonElement>(".skin-tone-button");
+    const menuRoot = root?.querySelector<HTMLElement>("#root");
+    if (!id || !source || !menuRoot || !(skins?.length > 1)) return false;
+    for (const [index, name] of toneOptions.entries())
+      menuRoot.style.setProperty(
+        name,
+        JSON.stringify(skins[index]?.native ?? skins[0].native),
+      );
+    promptedEmoji = id;
+    source.click();
+    return true;
+  };
+  /** Insert the prompted emoji in the chosen tone; dismissing inserts nothing. */
+  const finishSkinTonePrompt = () => {
+    const id = promptedEmoji;
+    if (!id) return false;
+    promptedEmoji = undefined;
+    const menuRoot = root?.querySelector<HTMLElement>("#root");
+    for (const name of toneOptions) menuRoot?.style.removeProperty(name);
+    const tone = savedSkinTone();
+    const native = tone && Data?.emojis[id]?.skins[tone - 1]?.native;
+    if (!native || disposed) return false;
+    select(native);
+    return true;
   };
   // Arrow keys follow the menu's visual order rather than Mart's DOM order.
   root?.addEventListener(

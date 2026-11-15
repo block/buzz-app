@@ -8437,3 +8437,68 @@ it.each([
     }
   },
 );
+
+it.each([false, true])(
+  "reserves a community wake before a later addressed request (compacting: %s)",
+  async (compacting) => {
+    const f = fixture();
+    const d = f.delivery("seed");
+    const config = { ...(d.config as object), scope: "community" };
+    const agent = { ...d.agent, config } as unknown as Agent;
+    let wake: Promise<unknown> | undefined;
+    try {
+      await f.runtime.run({ ...d, config });
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      await f.complete(0);
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, { channelId: "channel" })).toBe(
+          "idle",
+        ),
+      );
+      let compacted: Promise<void> | undefined;
+      if (compacting) {
+        compacted = f.runtime.session(
+          agent,
+          { channelId: "channel" },
+          "compact",
+        );
+        await vi.waitFor(() =>
+          expect(f.sent.some((w) => w.method === "thread/compact/start")).toBe(
+            true,
+          ),
+        );
+      }
+      wake = f.runtime.runOnce({
+        delivery: { agent: d.agent, config, current: () => true },
+        key: "earlier",
+        signal: new AbortController().signal,
+        prompt: async () => "WAKE_BEFORE_ADDRESSED",
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+      await f.runtime.run({ ...f.delivery("ADDRESSED_AFTER_WAKE"), config });
+      if (compacting) {
+        f.emit({
+          method: "turn/started",
+          params: { threadId: "thread-1", turn: { id: "compact" } },
+        });
+        f.emit({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-1",
+            turn: { id: "compact", status: "completed" },
+          },
+        });
+        await compacted;
+      }
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+      expect(inputText(f.starts()[1])).toContain("WAKE_BEFORE_ADDRESSED");
+      await f.complete(1);
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+      expect(inputText(f.starts()[2])).toContain("ADDRESSED_AFTER_WAKE");
+      await f.complete(2);
+      await wake;
+    } finally {
+      f.runtime.dispose();
+      await Promise.allSettled([wake]);
+    }
+  },
+);

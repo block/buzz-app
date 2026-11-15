@@ -2209,11 +2209,17 @@ export class CodexRuntime {
       try {
         const handoff = this.controls.deliver(
           `${agent.key}/${key}`,
-          async () => {
-            await this.start(request, "", key, lane, entry);
-          },
+          async () => {},
         );
-        await abortable(handoff.done, turnSignal);
+        const job = this.start(
+          request,
+          "",
+          key,
+          lane,
+          entry,
+          handoff.done.then(() => true),
+        );
+        await abortable(Promise.all([handoff.done, job]), turnSignal);
       } catch (error) {
         return { ok: false, error: message(error) };
       } finally {

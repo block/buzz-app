@@ -1345,8 +1345,6 @@ test("the first toned pick asks for a default skin tone", async ({ page }) => {
         .locator(`em-emoji-picker .category button[aria-label="${label}"]`)
         .first();
     const toneMenu = page.locator("em-emoji-picker #root > .menu");
-    // The shared fixture saves a tone; this journey starts before anyone has.
-    await page.evaluate(() => localStorage.removeItem("emoji-mart.skin"));
     await draft.fill("");
     await openPicker();
     expect(await savedTone()).toBeNull();

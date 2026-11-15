@@ -303,3 +303,11 @@ export async function listModels(rpc: AppServer) {
   } while (cursor);
   return models;
 }
+
+/** The installed Codex's v3 voices; older releases omit this catalog. */
+export async function listVoices(rpc: AppServer) {
+  const result = await rpc.request<{ voices?: { v3?: string[] } }>(
+    "thread/realtime/listVoices",
+  );
+  return result.voices?.v3;
+}

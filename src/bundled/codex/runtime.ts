@@ -76,7 +76,10 @@ import {
   validWorkspace,
   type Config,
 } from "./config";
-import { unsupportedSynced } from "../../features/agents/agent-config";
+import {
+  unsupportedSynced,
+  unverifiedSynced,
+} from "../../features/agents/agent-config";
 import { conversationHistory } from "./history";
 import { buzzHome } from "./setup";
 import {
@@ -90,6 +93,7 @@ import {
 import {
   AppServer,
   listModels,
+  listVoices,
   Refused,
   type Spawn,
   type ToolCall,
@@ -1545,6 +1549,14 @@ export class CodexRuntime {
       .then(async () => {
         signal.throwIfAborted();
         const rpc = await server.opening;
+        const voice = seat.synced?.voice;
+        if (voice) {
+          const voices = await listVoices(rpc).catch(() => undefined);
+          if (!voices)
+            throw new Error(unverifiedSynced("voice", voice, "this Codex"));
+          if (!voices.includes(voice))
+            throw new Error(unsupportedSynced("voice", voice, "this Codex"));
+        }
         const memory = await this.core(agent.key, signal);
         const instructions =
           Object.values(

@@ -6,7 +6,7 @@ import {
   type SettingsSchema,
   withSynced,
 } from "../../features/agents/agent-config";
-import { type Config, defaults } from "./config";
+import { type Config, defaults, config as readConfig } from "./config";
 
 export const syncedSettingsSchema = {
   voice: "string",
@@ -15,16 +15,20 @@ export const syncedSettingsSchema = {
   scope: ["thread", "channel"],
 } as const satisfies SettingsSchema;
 
-export const syncedSettings = (config: Config) => {
-  const settings = pickSettings(syncedSettingsSchema, config);
-  // Unset voices retain the settings shape older clients already understand.
-  if (!settings.voice) delete settings.voice;
-  return settings;
-};
+export const syncedSettings = (config: Config) =>
+  pickSettings(syncedSettingsSchema, readConfig(config));
 
 /** Synced fields come only from `settings`, a left-out one from the default;
  * everything else stays this device's. */
 export const withSyncedSettings = (
   config: Config,
   settings: Readonly<Record<string, string>>,
-): Config => withSynced(syncedSettingsSchema, defaults, config, settings);
+): Config =>
+  readConfig(
+    withSynced(
+      syncedSettingsSchema,
+      { ...defaults, voice: "" },
+      config,
+      settings,
+    ),
+  );

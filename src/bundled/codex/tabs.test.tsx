@@ -72,6 +72,7 @@ function fixture({
   threads = [],
   configured = {},
   voices = ["cove", "maple"],
+  voicesGate,
   modelAReasoningEfforts = ["low", "high"],
   modelBReasoningEfforts = ["medium"],
   storage = localStore(),
@@ -96,6 +97,7 @@ function fixture({
   threads?: { id: string; name: string; updatedAt: number }[] | string;
   configured?: { model?: string; model_reasoning_effort?: string };
   voices?: string[] | null;
+  voicesGate?: Promise<void>;
   modelAReasoningEfforts?: string[];
   modelBReasoningEfforts?: string[];
 } = {}) {
@@ -171,10 +173,12 @@ function fixture({
               : null,
             requiresOpenaiAuth,
           };
-        if (wire.method === "thread/realtime/listVoices")
+        if (wire.method === "thread/realtime/listVoices") {
+          await voicesGate;
           result = {
             voices: { v2: ["alloy"], ...(voices ? { v3: voices } : {}) },
           };
+        }
         if (wire.method === "model/list")
           result = {
             data: [
@@ -2834,7 +2838,9 @@ it("offers only v3 voices and lets an unavailable assignment return to default",
   await user.click(screen.getByRole("option", { name: "Codex default" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
-    expect(save).toHaveBeenCalledWith(expect.objectContaining({ voice: "" })),
+    expect(save).toHaveBeenCalledWith(
+      expect.not.objectContaining({ voice: expect.anything() }),
+    ),
   );
 });
 it("keeps model settings usable when an older Codex has no v3 voice catalog", async () => {
@@ -2843,5 +2849,22 @@ it("keeps model settings usable when an older Codex has no v3 voice catalog", as
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
   expect(
     screen.getByRole("combobox", { name: "Huddle voice" }),
-  ).toHaveTextContent("Cove (unavailable)");
+  ).toHaveTextContent("Cove");
+});
+
+it("retains the saved voice label while discovery is pending", async () => {
+  const gate = deferred<void>();
+  const f = fixture({ voicesGate: gate.promise });
+  render(<f.tabs.SettingsTab {...f.props({ ...defaults, voice: "cove" })} />);
+  const voice = screen.getByRole("combobox", { name: "Huddle voice" });
+  try {
+    await waitFor(() => expect(f.provider.snapshot().checking).toBe(true));
+    expect(voice).toBeDisabled();
+    expect(voice).toHaveTextContent("Cove");
+    expect(voice).not.toHaveTextContent("unavailable");
+  } finally {
+    gate.resolve();
+  }
+  await waitFor(() => expect(voice).toBeEnabled());
+  expect(voice).toHaveTextContent("Cove");
 });

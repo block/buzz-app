@@ -61,7 +61,13 @@ import {
   type Config,
   type Model,
 } from "./config";
-import { AppServer, listModels, needsSignIn, type Spawn } from "./rpc";
+import {
+  AppServer,
+  listModels,
+  listVoices,
+  needsSignIn,
+  type Spawn,
+} from "./rpc";
 import type { CodexRuntime, SavedConversation } from "./runtime";
 import type { CodexSetup } from "./setup";
 import { readTranscript, TURN_LIMIT } from "./transcript";
@@ -70,7 +76,7 @@ const label = ({ channelId, name, root }: SavedConversation) =>
   `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 
 type Catalog = {
-  voices?: string[];
+  voices?: string[] | undefined;
   models: Model[];
 };
 type ProviderDefaults = Readonly<{ model: string; effort: string }>;
@@ -99,10 +105,7 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
     if (await needsSignIn(rpc)) throw new Error(SIGN_IN_ERROR);
     const models = await listModels(rpc);
     // Older Codex releases do not publish a v3 catalog. Model selection still works.
-    const voices = await rpc
-      .request<{ voices?: { v3?: string[] } }>("thread/realtime/listVoices", {})
-      .catch(() => undefined);
-    return { models, voices: voices?.voices?.v3 ?? [] };
+    return { models, voices: await listVoices(rpc).catch(() => undefined) };
   } finally {
     signal.removeEventListener("abort", abort);
     await rpc.close();
@@ -1435,7 +1438,10 @@ export function createTabs(
                         ? [
                             {
                               value: draft.voice,
-                              label: `${effortName(draft.voice)} (unavailable)`,
+                              label:
+                                data?.voices && !checking
+                                  ? `${effortName(draft.voice)} (unavailable)`
+                                  : effortName(draft.voice),
                               disabled: true,
                             },
                           ]
@@ -1447,7 +1453,7 @@ export function createTabs(
                     ],
                   },
                 ]}
-                disabled={saving}
+                disabled={saving || checking}
                 onValueChange={(voice) => setDraft({ ...draft, voice })}
               />
             </SettingsGroup>

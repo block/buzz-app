@@ -122,3 +122,16 @@ it("cancels prior queued policies when the shared session is interrupted", async
     await turn.catch(() => {});
   }
 });
+
+it("does not fail native delivery when navigation metadata cannot be saved", async () => {
+  const store = localStore({
+    getItem: () => null,
+    setItem: () => {
+      throw new Error("disk full");
+    },
+    removeItem: () => {},
+  } as unknown as Storage);
+  await expect(
+    rememberCommunitySource(store, "agent", COMMUNITY_SESSION, "a"),
+  ).resolves.toBeUndefined();
+});

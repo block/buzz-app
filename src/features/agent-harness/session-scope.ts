@@ -41,7 +41,12 @@ export async function rememberCommunitySource(
   key: string,
   channelId: string,
 ) {
-  if (key === COMMUNITY_SESSION) await storage.set(sourceKey(agent), channelId);
+  if (key === COMMUNITY_SESSION)
+    await storage
+      .set(sourceKey(agent), channelId)
+      .catch((error: unknown) =>
+        console.warn("Community session source could not be saved", error),
+      );
 }
 
 export function sessionSource(
@@ -103,12 +108,20 @@ export async function communityTurn<T>(
     if (policies.get(COMMUNITY_SESSION) === policy)
       policies.delete(COMMUNITY_SESSION);
   });
+  return abortable(done, lifetime);
+}
+
+/** Release the caller on cancellation; the work retains its ordering barrier. */
+export function abortable<T>(
+  work: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(lifetime.reason);
-    if (lifetime.aborted) abort();
-    else lifetime.addEventListener("abort", abort, { once: true });
-    void done
+    const abort = () => reject(signal.reason);
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+    void work
       .then(resolve, reject)
-      .finally(() => lifetime.removeEventListener("abort", abort));
+      .finally(() => signal.removeEventListener("abort", abort));
   });
 }

@@ -47,7 +47,7 @@ export type Watch = Readonly<{
   /** When feedback last arrived, in ms. */
   arrived?: number | undefined;
   wakes: number;
-  /** Polls in a row that could not read the pull request or wake the agent. */
+  /** Minutes in a row without a usable read of the pull request. */
   failures?: number | undefined;
 }>;
 
@@ -155,28 +155,54 @@ function wakeText(
   }
   if (feedback.length) {
     if (lines.length) lines.push("");
-    lines.push(
-      `${feedback.length === 1 ? "New feedback" : `${feedback.length} new comments`} on ${url}, quoted from GitHub:`,
-    );
-    for (const item of feedback.slice(0, LISTED)) {
-      const what = [
-        item.id.startsWith("review/")
-          ? `review${item.state && item.state !== "COMMENTED" ? ` (${item.state.toLowerCase().replaceAll("_", " ")})` : ""}`
-          : item.id.startsWith("inline/")
-            ? "inline comment"
-            : "comment",
-        `by ${item.author}`,
-        ...(LINK.test(item.url) ? [item.url] : []),
-      ].join(" ");
-      lines.push(`- ${what}${item.path ? ", on:" : ":"}`);
-      if (item.path) lines.push(quote(clip(item.path, NAME_CHARS), "  "));
-      if (item.body.trim())
-        lines.push(quote(clip(item.body, BODY_CHARS), "  "));
-    }
-    if (feedback.length > LISTED)
-      lines.push(`- and ${feedback.length - LISTED} more, to read with gh`);
+    lines.push(...feedbackLines(url, feedback));
   }
   return lines.join("\n");
+}
+
+/** What a watch ending for its failed reads tells its agent: when it last
+ * read the pull request, if it has, and the feedback it `held` untold, or
+ * how much it held when that cannot be checked against the rules. */
+export function stoppedText(
+  watch: Watch,
+  held: readonly Feedback[] | undefined,
+  readAt?: number,
+) {
+  const unchecked = held ? 0 : (watch.pending?.length ?? 0);
+  return [
+    `Stopped watching ${watch.url}: it could not be read with gh for ${watch.failures ?? 0} minutes.`,
+    ...(readAt
+      ? [`It was last read at ${new Date(readAt).toISOString()}.`]
+      : []),
+    ...(unchecked
+      ? [`It held ${plural(unchecked, "comment", "comments")} it had not told.`]
+      : []),
+    "Check it with gh for CI results and feedback you have not been told, and call github_watch_pr again to keep watching.",
+    ...(held?.length ? ["", ...feedbackLines(watch.url, held)] : []),
+  ].join("\n");
+}
+
+function feedbackLines(url: string, feedback: readonly Feedback[]) {
+  const lines = [
+    `${feedback.length === 1 ? "New feedback" : `${feedback.length} new comments`} on ${url}, quoted from GitHub:`,
+  ];
+  for (const item of feedback.slice(0, LISTED)) {
+    const what = [
+      item.id.startsWith("review/")
+        ? `review${item.state && item.state !== "COMMENTED" ? ` (${item.state.toLowerCase().replaceAll("_", " ")})` : ""}`
+        : item.id.startsWith("inline/")
+          ? "inline comment"
+          : "comment",
+      `by ${item.author}`,
+      ...(LINK.test(item.url) ? [item.url] : []),
+    ].join(" ");
+    lines.push(`- ${what}${item.path ? ", on:" : ":"}`);
+    if (item.path) lines.push(quote(clip(item.path, NAME_CHARS), "  "));
+    if (item.body.trim()) lines.push(quote(clip(item.body, BODY_CHARS), "  "));
+  }
+  if (feedback.length > LISTED)
+    lines.push(`- and ${feedback.length - LISTED} more, to read with gh`);
+  return lines;
 }
 
 /** owner/name#number from a pull request URL, or undefined. */

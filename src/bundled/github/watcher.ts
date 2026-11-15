@@ -11,6 +11,7 @@ import {
   QUIET_MS,
   snapshotOf,
   step,
+  stoppedText,
   WAKE_LIMIT,
   type PullSnapshot,
   type Watch,
@@ -28,8 +29,7 @@ import {
 export const POLL_MS = 60_000;
 /** Watches saved before Attention. They had no Interest to move to. */
 const RETIRED_STORAGE_KEY = "buzz.github.pull-watches.v1";
-/** Minutes in a row without a usable read, or a wake that could be sent,
- * that end a watch. */
+/** Minutes in a row without a usable read that end a watch. */
 const FAILURE_LIMIT = 30;
 /** How long an organization membership answer is kept. */
 const MEMBERSHIP_MS = 60 * 60_000;
@@ -268,10 +268,11 @@ export function watchPulls(
       // The store keeps the pull request read, with its feedback, while
       // this runs; each read it records and each minute are looked at.
       await new Promise<void>((resolve) => {
-        /** The last read looked at, and whether one came since the last
-         * minute. */
+        /** The last read looked at, whether one came since the last
+         * minute, and the signed-in account it was read as. */
         let looked = -Infinity;
         let fresh = false;
+        let viewer: string | undefined;
         let done = false;
         let timer: ReturnType<typeof setTimeout> | undefined;
         /** Looks again once new feedback has been quiet long enough. */
@@ -335,9 +336,9 @@ export function watchPulls(
           if (snapshot && read && read.readAt > looked) {
             looked = read.readAt;
             fresh = true;
+            viewer = snapshot.viewer;
           }
           let ended = false;
-          let unsent = false;
           if (snapshot) {
             const [checked, news, unread] = recheck(watch, snapshot);
             if (unread.length) readMembership(unread, news.viewer);
@@ -352,27 +353,43 @@ export function watchPulls(
               watch = next.watch;
               ended = !!next.ended;
             } catch (error) {
-              // What could not be sent stays news, to be sent next time.
+              // What could not be sent, as while the agent is too busy to
+              // take it, stays news, to be sent on a later minute.
               console.warn(`GitHub watch failed for ${pull.url}`, error);
-              unsent = true;
             }
           }
-          // Each minute counts as failed without a usable read since the
-          // last, or when the agent could not be woken.
+          // Each minute without a usable read since the last counts toward
+          // ending the watch. It ends only once the agent is told, with what
+          // it held, so nothing it had is dropped unsaid.
           if (minute) {
-            const failed = !fresh || unsent;
-            fresh = false;
             watch = {
               ...watch,
-              failures: failed ? (watch.failures ?? 0) + 1 : 0,
+              failures: fresh ? 0 : (watch.failures ?? 0) + 1,
             };
+            fresh = false;
             if ((watch.failures ?? 0) >= FAILURE_LIMIT) {
+              // Held feedback is quoted only as the rules allow it now, which
+              // needs the account it was read as, unknown since a restart.
+              const policy = loadPolicy();
+              const member = membership(organizations(policy), MEMBERSHIP_MS);
+              const as = viewer;
+              const held = as
+                ? (watch.pending ?? []).filter((item) =>
+                    admit(item, policy, as, member),
+                  )
+                : undefined;
               try {
                 emit(
-                  `Stopped watching ${pull.url}: it could not be read with gh, or you could not be woken, for ${FAILURE_LIMIT} minutes. Call github_watch_pr again to retry.`,
+                  stoppedText(
+                    watch,
+                    held,
+                    Number.isFinite(looked) ? looked : undefined,
+                  ),
                 );
-              } catch {}
-              ended = true;
+                ended = true;
+              } catch (error) {
+                console.warn(`GitHub watch failed for ${pull.url}`, error);
+              }
             }
           }
           if (ended) {

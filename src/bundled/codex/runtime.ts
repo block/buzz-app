@@ -1913,6 +1913,7 @@ export class CodexRuntime {
             conversationKey,
             deferred ? undefined : delivery.signal,
           );
+          delivery.signal.throwIfAborted();
           const accepted = deferred ? runtime.target?.signal : delivery.signal;
           if (!accepted)
             throw new Error("The remote Codex lifetime is unavailable");

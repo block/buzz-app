@@ -626,6 +626,7 @@ export class PiRuntime {
       topLevel,
     );
     await rememberCommunitySource(this.storage, agent.key, key, channel);
+    signal.throwIfAborted();
     const root = threadReference(event)?.rootId ?? event.id;
     const where = { channel, root, topLevel };
     // A turn keeps the posting policy it was admitted with: a request under
@@ -727,7 +728,8 @@ export class PiRuntime {
       const picked = await this.turnOf(entry, agent.key, model, effort);
       const text = await prompt();
       this.live(entry, agent.key);
-      if (interrupted || (wake && current && !current())) return;
+      if (interrupted || signal.aborted || (wake && current && !current()))
+        return;
       submitting = true;
       submitted = await this.deliver(
         entry,
@@ -743,7 +745,8 @@ export class PiRuntime {
           ...(attention ? { reply: where, refresh: true } : {}),
           ...picked,
         },
-        () => !interrupted && (!wake || !current || current()),
+        () =>
+          !interrupted && !signal.aborted && (!wake || !current || current()),
       );
       if (!submitted) return;
       if (submitted.session !== undefined)

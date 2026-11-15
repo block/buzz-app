@@ -3086,3 +3086,39 @@ it("reserves community work before source preparation", async () => {
     await Promise.allSettled([turn.run, wake]);
   }
 });
+
+it("does not submit a community request stopped during source metadata storage", async () => {
+  const f = setup({
+    wait: () => ({ status: "done", answer: 1, text: "done" }),
+  });
+  const storage = (
+    f.runtime as unknown as { storage: ReturnType<typeof memoryStorage> }
+  ).storage;
+  const set = storage.set;
+  const gate = deferred<void>();
+  const entered = deferred<void>();
+  vi.spyOn(storage, "set").mockImplementation(async (key, value) => {
+    if (key.startsWith("buzz.agents.community-session-source")) {
+      entered.resolve();
+      await gate.promise;
+    }
+    return set(key, value);
+  });
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  const turn = f.deliver(
+    { type: "mention", event: reply("2", "STOP_DURING_SOURCE_WRITE") },
+    { config: { ...DEFAULT_CONFIG, scope: "community" }, interruptible },
+  );
+  try {
+    await entered.promise;
+    await interruptible.mock.calls[0]?.[0]();
+    gate.resolve();
+    await turn.run;
+    await f.settled(turn);
+    expect(f.host.requests("deliver")).toHaveLength(0);
+  } finally {
+    gate.resolve();
+    await turn.run;
+    f.runtime.dispose();
+  }
+});

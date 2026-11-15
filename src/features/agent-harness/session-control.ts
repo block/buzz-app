@@ -65,6 +65,8 @@ export class SessionControls {
     run: (delivery: Delivery, deferred: boolean) => Promise<void>,
   ) {
     let interrupt: (() => Promise<void>) | undefined;
+    let stopped = false;
+    let stopping = Promise.resolve();
     const handoff = this.deliver(
       key,
       async (deferred, signal) => {
@@ -74,6 +76,10 @@ export class SessionControls {
               ...delivery,
               interruptible: (cancel) => {
                 interrupt = cancel;
+                if (stopped) {
+                  stopping = cancel();
+                  void stopping.catch(() => {});
+                }
               },
               signal: deferred
                 ? signal
@@ -83,11 +89,14 @@ export class SessionControls {
           );
         } catch (error) {
           if (!signal.aborted) throw error;
+        } finally {
+          await stopping;
         }
       },
       true,
     );
     delivery.interruptible?.(async () => {
+      stopped = true;
       handoff.cancel();
       await interrupt?.();
     });

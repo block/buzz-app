@@ -133,3 +133,45 @@ it("keeps deferred admission alive past its handover deadline", async () => {
   await workingUntil.mock.calls[0]?.[0];
   expect(admitted).toHaveBeenCalledOnce();
 });
+
+it("replays Stop when the admitted runtime registers its handler late", async () => {
+  const controls = new SessionControls(() => {});
+  let release!: () => void;
+  let entered!: () => void;
+  let stop!: () => Promise<void>;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const preparing = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let cancelled = false;
+  const run = controls.admit(
+    "shared",
+    {
+      signal: new AbortController().signal,
+      workingUntil() {},
+      interruptible: (cancel: () => Promise<void>) => {
+        stop = cancel;
+      },
+    } as unknown as import("../agents/service").Delivery,
+    async (delivery) => {
+      entered();
+      await gate;
+      delivery.interruptible?.(async () => {
+        cancelled = true;
+      });
+      expect(cancelled).toBe(true);
+    },
+  );
+  try {
+    await preparing;
+    await stop();
+    release();
+    await run;
+    expect(cancelled).toBe(true);
+  } finally {
+    release();
+    await run;
+  }
+});

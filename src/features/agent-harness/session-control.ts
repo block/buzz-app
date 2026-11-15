@@ -111,7 +111,7 @@ export class SessionControls {
     signal: AbortSignal,
     run: (signal: AbortSignal) => Promise<TurnResult>,
   ): Promise<TurnResult> {
-    let result: TurnResult = { ok: true };
+    let result: TurnResult = { ok: false, error: "Session work interrupted" };
     const handoff = this.deliver(
       key,
       async (_deferred, cancel) => {

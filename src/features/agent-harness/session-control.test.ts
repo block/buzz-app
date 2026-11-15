@@ -175,3 +175,31 @@ it("replays Stop when the admitted runtime registers its handler late", async ()
     await run;
   }
 });
+
+it("reports a queued wake interrupted before admission as unfinished", async () => {
+  const controls = new SessionControls(() => {});
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const first = controls.deliver(
+    "shared",
+    async () => {
+      await gate;
+    },
+    true,
+  );
+  const run = vi.fn(async () => ({ ok: true }));
+  const queued = controls.wake("shared", new AbortController().signal, run);
+  controls.interrupt("shared");
+  release();
+  await first.done;
+  await expect(queued).resolves.toMatchObject({
+    ok: false,
+    error: expect.stringContaining("interrupted"),
+  });
+  expect(run).not.toHaveBeenCalled();
+  await expect(
+    controls.wake("shared", new AbortController().signal, run),
+  ).resolves.toEqual({ ok: true });
+});

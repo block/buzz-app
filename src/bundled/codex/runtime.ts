@@ -1530,9 +1530,10 @@ export class CodexRuntime {
     const lane = entry.lanes.get(key) ?? {
       tail:
         settings.scope === "community"
-          ? Promise.all(
-              [...entry.lanes.values()].map((other) => other.tail),
-            ).then(() => {})
+          ? Promise.all([
+              entry.after,
+              ...[...entry.lanes.values()].map((other) => other.tail),
+            ]).then(() => {})
           : entry.after,
       queued: 0,
     };
@@ -1608,6 +1609,8 @@ export class CodexRuntime {
     const opening = lane.tail
       .catch(() => {})
       .then(async () => {
+        signal.throwIfAborted();
+        await entry.after;
         signal.throwIfAborted();
         const rpc = await server.opening;
         const memory = await this.core(agent.key, signal);

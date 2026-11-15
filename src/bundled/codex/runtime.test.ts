@@ -8226,3 +8226,49 @@ it("Stop cancels only the selected queued Codex community request", async () => 
     f.runtime.dispose();
   }
 });
+
+it("waits for community retirement before opening a returning voice seat", async () => {
+  vi.stubGlobal("RTCPeerConnection", class {});
+  const f = fixture();
+  const other = second(f);
+  const d = f.delivery("first");
+  const config = { ...(d.config as object), scope: "community" };
+  await f.runtime.run({ ...d, config });
+  await f.runtime.run(other.delivery("keep server alive"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  await f.complete(0);
+  const cleanup = deferred<void>();
+  f.held.set("thread/unsubscribe", cleanup.promise);
+  const retirement = f.runtime.retire(pubkey);
+  await vi.waitFor(() =>
+    expect(f.sent.map((w) => w.method)).toContain("thread/unsubscribe"),
+  );
+  f.huddleChannels.add("room");
+  const before = f.sent.filter((w) => w.method === "thread/resume").length;
+  const opening = f.runtime.voice(
+    {
+      config,
+      agent: { ...d.agent, config } as unknown as Agent,
+      conversation: { channelId: "room" },
+      signal: new AbortController().signal,
+      async output() {},
+      async transcript() {},
+      ended() {},
+    },
+    d.agent,
+  );
+  try {
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.sent.filter((w) => w.method === "thread/resume")).toHaveLength(
+      before,
+    );
+  } finally {
+    cleanup.resolve();
+    await retirement;
+    vi.useRealTimers();
+    await (await opening).close();
+    await f.complete(1);
+    f.runtime.dispose();
+  }
+});

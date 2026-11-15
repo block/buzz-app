@@ -3948,7 +3948,11 @@ describe("a conversation given its own folder", () => {
 });
 
 it("shares a community session across channels without steering into another destination", async () => {
-  const f = setup([], { hold: true, solo: new Set([channel]) });
+  const f = setup([], {
+    hold: true,
+    solo: new Set([channel]),
+    canvas: { content: "SOURCE_CANVAS" },
+  });
   const config = { ...DEFAULT_CONFIG, scope: "community" as const };
   const conversationInstructions = vi.fn((source: string, root?: string) =>
     source === channel && !root
@@ -3962,7 +3966,10 @@ it("shares a community session across channels without steering into another des
   vi.spyOn(f.session.channels, "list").mockImplementation(() => ({
     ...listed,
     status: "ready",
-    channels: [...listed.channels, { ...firstChannel, id: "other" }],
+    channels: [
+      ...listed.channels,
+      { ...firstChannel, id: "other", channelType: "stream" },
+    ],
   }));
 
   try {
@@ -3993,6 +4000,10 @@ it("shares a community session across channels without steering into another des
     expect(worker.prompts[1]).toContain("Session scope: community");
     expect(worker.prompts[1]).toContain("other");
     expect(worker.prompts[0]).toContain("SOURCE_ONLY");
+    expect(worker.prompts[0]).toContain("SOURCE_CANVAS");
+    expect(worker.prompts[1]).toContain(
+      "Disregard any earlier workspace Canvas",
+    );
     expect(worker.prompts[1]).toContain(
       "Disregard any earlier <owner-instructions>",
     );
@@ -4008,4 +4019,60 @@ it("shares a community session across channels without steering into another des
   } finally {
     f.runtime.dispose();
   }
+});
+
+it("withdraws the previous Solo folders when a community session moves to a channel", async () => {
+  const f = setup([], {
+    solo: new Set([channel]),
+    canvas: {
+      content: workspaceCanvas({
+        folders: ["~/old-project"],
+        canvas: "SOURCE_CANVAS",
+      }),
+    },
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockImplementation(() => ({
+    ...listed,
+    channels: [
+      ...listed.channels,
+      { ...first, id: "other", channelType: "stream" },
+    ],
+  }));
+  await f.deliver(
+    { type: "mention", event: message("1", "first") },
+    { config },
+  );
+  await vi.waitFor(() =>
+    expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+  );
+  const old = f.claudes().find((p) => p.prompts.length);
+  expect(old?.options.args).toContain("~/old-project");
+  await f.deliver(
+    {
+      type: "mention",
+      event: message("2", "second", {
+        tags: [
+          ["h", "other"],
+          ["p", self],
+        ],
+      }),
+    },
+    { config, channelId: "other" },
+  );
+  await vi.waitFor(() =>
+    expect(f.claudes().filter((p) => p.prompts.length)).toHaveLength(2),
+  );
+  const current = f
+    .claudes()
+    .filter((p) => p.prompts.length)
+    .at(-1);
+  expect(current?.options.args).not.toContain("~/old-project");
+  expect(current?.prompts[0]).toContain(
+    "Disregard any earlier workspace Canvas",
+  );
+  f.runtime.dispose();
 });

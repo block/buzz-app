@@ -7687,6 +7687,8 @@ it("shares a community session across channels and Solo chats while retaining ea
     return delivery;
   };
   f.soloChannels.add("channel");
+  f.snapshot.session.canvas.available = true;
+  f.snapshot.session.canvas.read.mockResolvedValue(canvasHead("SOURCE_CANVAS"));
   await f.runtime.run(community("first in Solo"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   await f.runtime.run(community("next in another channel", "other"));
@@ -7697,6 +7699,10 @@ it("shares a community session across channels and Solo chats while retaining ea
   const first = f.starts()[0]?.params as { threadId: string };
   expect(f.starts()[1]?.params).toMatchObject({ threadId: first.threadId });
   expect(JSON.stringify(f.starts()[1]?.params)).toContain("community");
+  expect(inputText(f.starts()[0])).toContain("SOURCE_CANVAS");
+  expect(inputText(f.starts()[1])).toContain(
+    "Disregard any earlier workspace Canvas",
+  );
   f.complete(1, "CHANNEL ANSWER");
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
@@ -7840,4 +7846,75 @@ it("reserves community mentions before later unaddressed wakes during startup", 
   expect(inputText(f.starts()[2])).toContain("third wake");
   await f.complete(2);
   await wake;
+});
+
+it("clears owner instructions on addressed and unaddressed community source changes", async () => {
+  const f = fixture();
+  const base = f.delivery("first");
+  const agent = {
+    ...base.agent,
+    conversationInstructions: () => ({
+      plugin: "acme.tasks",
+      text: "SOURCE_ONLY",
+    }),
+  };
+  const delivery = {
+    ...base,
+    agent,
+    config: { ...(base.config as object), scope: "community" },
+  };
+  await f.runtime.run(delivery);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).toContain("SOURCE_ONLY");
+  await f.complete(0);
+  agent.conversationInstructions = () => undefined as never;
+  await f.runtime.run({
+    ...f.delivery("second"),
+    agent,
+    config: delivery.config,
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(inputText(f.starts()[1])).toContain(
+    "Disregard any earlier <owner-instructions>",
+  );
+  await f.complete(1);
+  const once = f.runtime.runOnce({
+    delivery,
+    key: "check",
+    signal: new AbortController().signal,
+    prompt: async () => "check",
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(inputText(f.starts()[2])).toContain(
+    "Disregard any earlier <owner-instructions>",
+  );
+  await f.complete(2);
+  await once;
+});
+
+it("releases cancelled Codex community wakes before earlier work finishes", async () => {
+  const f = fixture();
+  const base = f.delivery("first");
+  const delivery = {
+    ...base,
+    config: { ...(base.config as object), scope: "community" },
+  };
+  await f.runtime.run(delivery);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const signal = new AbortController();
+  const prompt = vi.fn(async () => "expired");
+  const result = vi.fn();
+  const once = f.runtime
+    .runOnce({ delivery, key: "expired", signal: signal.signal, prompt })
+    .then(result);
+  signal.abort(new Error("deadline"));
+  try {
+    await vi.waitFor(() =>
+      expect(result).toHaveBeenCalledWith({ ok: false, error: "deadline" }),
+    );
+    expect(prompt).not.toHaveBeenCalled();
+  } finally {
+    await f.complete(0);
+    await once;
+  }
 });

@@ -2532,9 +2532,13 @@ it.each(["stop", "retire"])(
 );
 
 it("hands different channels to the same community conversation key", async () => {
-  const f = setup({
-    wait: () => ({ status: "done", answer: 1, text: "Done" }),
-  });
+  const f = setup(
+    {
+      wait: () => ({ status: "done", answer: 1, text: "Done" }),
+    },
+    [],
+    { content: "SOURCE_CANVAS" },
+  );
   const config = { ...DEFAULT_CONFIG, scope: "community" as const };
 
   f.solo.add(channel);
@@ -2552,7 +2556,7 @@ it("hands different channels to the same community conversation key", async () =
     status: "ready",
     channels: [
       { ...firstChannel, channelType: "solo" },
-      { ...firstChannel, id: "other" },
+      { ...firstChannel, id: "other", channelType: "stream" },
     ],
   }));
   try {
@@ -2585,6 +2589,10 @@ it("hands different channels to the same community conversation key", async () =
     expect(requests[1]?.params.context).toMatchObject({ channel: "other" });
     expect(requests[1]?.params.text).toContain("Session scope: community");
     expect(requests[0]?.params.text).toContain("SOURCE_ONLY");
+    expect(requests[0]?.params.text).toContain("SOURCE_CANVAS");
+    expect(requests[1]?.params.text).toContain(
+      "Disregard any earlier workspace Canvas",
+    );
     expect(requests[1]?.params.text).toContain(
       "Disregard any earlier <owner-instructions>",
     );
@@ -2616,6 +2624,56 @@ it("uses the shared community lifetime for an unaddressed wake with no tool dest
       text: expect.stringContaining("check"),
     });
   } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("publishes unaddressed community wakes to mounted session observers", async () => {
+  const answered = deferred<{ status: "done"; answer: number; text: string }>();
+  const f = setup({
+    places: () => [],
+    deliver: (params, process) => {
+      process.send({
+        method: "event",
+        params: {
+          agent: self,
+          conversation: CONVERSATION,
+          type: "placed",
+          request: params.request,
+          entry: 1,
+        },
+      });
+      return { submission: 1, conversation: CONVERSATION };
+    },
+    wait: () => answered.promise,
+  });
+  f.runtime.sync([
+    { ...f.agent, config: DEFAULT_CONFIG },
+  ] as unknown as Agent[]);
+  f.runtime.sessions(self);
+  await vi.waitFor(() => expect(f.host.requests("places")).toHaveLength(1));
+  const done = f.runtime.runOnce({
+    delivery: {
+      agent: f.agent,
+      config: { ...DEFAULT_CONFIG, scope: "community" },
+      current: () => true,
+    },
+    key: "check",
+    signal: new AbortController().signal,
+    prompt: async () => "check",
+  } as unknown as StandaloneTurn);
+  try {
+    await vi.waitFor(() =>
+      expect(f.runtime.working(self)).toContain(CONVERSATION),
+    );
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(self)).toEqual([
+        expect.objectContaining({ community: true, status: "Working" }),
+      ]),
+    );
+  } finally {
+    answered.resolve({ status: "done", answer: 1, text: "done" });
+    await done;
     f.runtime.dispose();
   }
 });

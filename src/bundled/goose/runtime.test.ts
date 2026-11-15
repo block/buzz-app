@@ -2613,7 +2613,12 @@ it("runs an agent on Recommended on the current candidate", () => {
 });
 
 it("uses one ordered community session across source channels", async () => {
-  const f = setup({ hold: true, scope: "community", solo: new Set([channel]) });
+  const f = setup({
+    hold: true,
+    scope: "community",
+    solo: new Set([channel]),
+    canvas: "SOURCE_CANVAS",
+  });
 
   const conversationInstructions = vi.fn((source: string, root?: string) =>
     source === channel && !root
@@ -2627,7 +2632,10 @@ it("uses one ordered community session across source channels", async () => {
   vi.spyOn(f.session.channels, "list").mockImplementation(() => ({
     ...listed,
     status: "ready",
-    channels: [...listed.channels, { ...firstChannel, id: "other" }],
+    channels: [
+      ...listed.channels,
+      { ...firstChannel, id: "other", channelType: "stream" },
+    ],
   }));
   try {
     await f.deliver(message("1", "first"));
@@ -2651,6 +2659,10 @@ it("uses one ordered community session across source channels", async () => {
     expect(process.turns[1]?.text).toContain("Session scope: community");
     expect(process.turns[1]?.text).toContain("other");
     expect(process.turns[0]?.text).toContain("SOURCE_ONLY");
+    expect(process.turns[0]?.text).toContain("SOURCE_CANVAS");
+    expect(process.turns[1]?.text).toContain(
+      "Disregard any earlier workspace Canvas",
+    );
     expect(process.turns[1]?.text).toContain(
       "Disregard any earlier <owner-instructions>",
     );

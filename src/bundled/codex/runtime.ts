@@ -1,5 +1,11 @@
 import {
+  ProjectSource,
+  NO_PROJECT,
+  type Project,
+} from "../../features/agent-harness/project";
+import {
   COMMUNITY_SESSION,
+  abortable,
   rememberCommunitySource,
   sessionSource,
 } from "../../features/agent-harness/session-scope";
@@ -131,6 +137,8 @@ type Request = {
   sessionContext?: string;
   /** The Solo chat's workspace Canvas section, if it has one. */
   project?: string;
+  canvas?: Project;
+  solo?: boolean;
   /** The model and effort the owner picked for this turn. */
   model?: string;
   effort?: string;
@@ -216,6 +224,7 @@ type Lane = {
   voiceOpening?: true;
 };
 type Entry = {
+  project: ProjectSource;
   storageKey: string;
   abort: AbortController;
   /** Settles once the same agent's previous run has let go of its threads. */
@@ -296,6 +305,7 @@ function noteOf(request: Request) {
       request.agent,
       request.conversation.channelId,
       request.conversation.root,
+      request.settings.scope === "community",
     ),
   ].filter(Boolean);
   return notes.length ? notes.join("\n\n") : undefined;
@@ -1224,6 +1234,7 @@ export class CodexRuntime {
     if (prior) return prior;
     const saved = initial ?? this.load(this.storageKey(scope, agent));
     const entry: Entry = {
+      project: new ProjectSource(),
       storageKey: this.storageKey(scope, agent),
       abort: new AbortController(),
       after:
@@ -1761,7 +1772,7 @@ export class CodexRuntime {
     ]);
     const project =
       [
-        canvasProject?.section,
+        settings.scope === "community" ? undefined : canvasProject?.section,
         folders.section,
         referencedSkills(event, agent.owner, agent.pubkey),
       ]
@@ -1876,6 +1887,8 @@ export class CodexRuntime {
       ...(delivery.sessionContext
         ? { sessionContext: delivery.sessionContext }
         : {}),
+      ...(canvasProject ? { canvas: canvasProject } : {}),
+      ...(solo ? { solo: true } : {}),
       ...(project ? { project: `${project}\n` } : {}),
       answered,
       failActivity,
@@ -2111,7 +2124,7 @@ export class CodexRuntime {
         await this.start(request, "", key, lane, entry);
       });
       try {
-        await handoff.done;
+        await abortable(handoff.done, turnSignal);
       } catch (error) {
         return { ok: false, error: message(error) };
       }
@@ -3039,6 +3052,16 @@ export class CodexRuntime {
         ready();
         return;
       }
+      if (settings.scope === "community")
+        request.project = [
+          entry.project.resolve(
+            request.unaddressed ? undefined : request.conversation.channelId,
+            request.solo ? request.canvas : NO_PROJECT,
+          ).section,
+          request.project,
+        ]
+          .filter(Boolean)
+          .join("\n\n");
       const seat = lane.voice;
       const loaded =
         seat?.loaded ??
@@ -3106,7 +3129,15 @@ export class CodexRuntime {
           .request<{ turn: { id: string } }>("turn/start", {
             threadId: active.threadId,
             input: input(
-              standaloneText ??
+              (standaloneText === undefined
+                ? undefined
+                : [
+                    request.project,
+                    standaloneText,
+                    turnNote(agent, undefined, undefined, true),
+                  ]
+                    .filter(Boolean)
+                    .join("\n\n")) ??
                 `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, false, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey))}`,
             ),
             model,

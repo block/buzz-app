@@ -1013,3 +1013,23 @@ it("discovers a community transcript from a different source channel", async () 
   );
   expect(read?.turns.map((turn) => turn.sessionId)).toEqual(["community"]);
 });
+
+it("discovers a community session whose first turn was an unaddressed wake", async () => {
+  const { spawn } = host({
+    "./-Users-me--buzz/wake.jsonl": [
+      line(
+        "user",
+        `<context>\nScope: standalone\nSession scope: community\nAgent: ${agent}\n</context>\n\ncheck`,
+      ),
+      line("assistant", [{ type: "text", text: "checked" }]),
+    ].join("\n"),
+  });
+  const read = await readTranscript(
+    spawn,
+    "~/.buzz",
+    { agent, channelId: "other", community: true },
+    false,
+    new AbortController().signal,
+  );
+  expect(read?.turns.map((t) => t.sessionId)).toEqual(["wake"]);
+});

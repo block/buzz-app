@@ -1,4 +1,8 @@
 import {
+  ProjectSource,
+  NO_PROJECT,
+} from "../../features/agent-harness/project";
+import {
   COMMUNITY_SESSION,
   sessionScope,
   communityTurn,
@@ -149,7 +153,7 @@ type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
   /** Where its activity shows: a thread, or a Solo chat's channel. */
   scope: string;
   /** Where a run's failure for it is reported. */
-  where: Where;
+  where?: Where;
   /** A recovered turn holds its posting policy until its run settles. */
   settled?: Promise<void>;
   /** An Attention prompt rebuilt when the host is ready to submit. */
@@ -157,6 +161,7 @@ type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
 };
 
 type Entry = {
+  project: ProjectSource;
   config: Config;
   /** The team sections of the latest run. */
   team: string;
@@ -632,7 +637,7 @@ export class PiRuntime {
           .filter(
             (receipt) =>
               key === COMMUNITY_SESSION ||
-              (receipt.key === key && receipt.where.topLevel !== topLevel),
+              (receipt.key === key && receipt.where?.topLevel !== topLevel),
           )
           .map((receipt) => receipt.settled),
       );
@@ -813,6 +818,7 @@ export class PiRuntime {
       );
     let stop: (() => void) | undefined;
     let request: string | undefined;
+    let release: (() => void) | undefined;
     try {
       await this.open(agent.key);
       await this.adopted(entry, agent.key);
@@ -823,6 +829,7 @@ export class PiRuntime {
       signal.throwIfAborted();
       const text = await prompt();
       if (text === undefined) return { ok: true };
+      if (community) entry.project.resolve(undefined, NO_PROJECT);
       const turn = await this.turnOf(
         entry,
         agent.key,
@@ -833,13 +840,25 @@ export class PiRuntime {
       if (delivery.current && !delivery.current()) return { ok: true };
       request = `${key}/${crypto.randomUUID()}`;
       entry.standalone.add(request);
+      if (community)
+        entry.receipts.set(request, {
+          key: COMMUNITY_SESSION,
+          scope: COMMUNITY_SESSION,
+          settled: new Promise<void>((resolve) => {
+            release = resolve;
+          }),
+        });
       const { submission, conversation } = await this.pi.request<{
         submission: number;
         conversation: number;
       }>(community ? "deliver" : "once", {
         agent: agent.key,
         text: community
-          ? [text, turnNote(entry.handle, undefined, undefined, true)]
+          ? [
+              NO_PROJECT.section,
+              text,
+              turnNote(entry.handle, undefined, undefined, true),
+            ]
               .filter(Boolean)
               .join("\n\n")
           : text,
@@ -849,6 +868,15 @@ export class PiRuntime {
           ? { key: COMMUNITY_SESSION, at: Date.now() / 1000, context: {} }
           : {}),
       });
+      if (community) {
+        this.remember(
+          agent.key,
+          COMMUNITY_SESSION,
+          conversation,
+          Date.now() / 1000,
+        );
+        this.notify();
+      }
       // A removed agent's storage is closed, and stays so.
       stop = () => {
         if (!entry.closed)
@@ -868,7 +896,11 @@ export class PiRuntime {
       return { ok: false, error: errorText(error) };
     } finally {
       if (stop) signal.removeEventListener("abort", stop);
-      if (request) entry.standalone.delete(request);
+      release?.();
+      if (request) {
+        entry.standalone.delete(request);
+        if (community) this.forget(entry, request);
+      }
     }
   }
 
@@ -1401,14 +1433,19 @@ export class PiRuntime {
         (item.created_at > seen && (!seen || item.pubkey !== agent.pubkey)),
     );
     const signingAuthority = reads?.workflowAuthority();
-    const [names, project] = await Promise.all([
+    const [names, loadedProject] = await Promise.all([
       readAuthorNames(
         reads,
         [event, ...unseen.slice(-CONTEXT_LIMIT)],
         signingAuthority,
       ),
-      reading.then((read) => read?.section),
+      reading,
     ]);
+    const entry = this.agents.get(agent.key);
+    const project =
+      scope === "community" && entry
+        ? entry.project.resolve(channelId, solo ? loadedProject : NO_PROJECT)
+        : loadedProject;
     return {
       event,
       scope,
@@ -1423,7 +1460,7 @@ export class PiRuntime {
       total: earlier.length + 1,
       names,
       ...(signingAuthority ? { signingAuthority } : {}),
-      ...(project ? { project } : {}),
+      ...(project ? { project: project.section } : {}),
     };
   }
 
@@ -1431,6 +1468,7 @@ export class PiRuntime {
     const existing = this.agents.get(agent.key);
     if (existing) return existing;
     const entry: Entry = {
+      project: new ProjectSource(),
       config: initial,
       team: "",
       name: agent.name,

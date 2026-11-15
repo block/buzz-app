@@ -1,4 +1,8 @@
 import {
+  ProjectSource,
+  NO_PROJECT,
+} from "../../features/agent-harness/project";
+import {
   COMMUNITY_SESSION,
   sessionScope,
   communityTurn,
@@ -146,6 +150,7 @@ export function sessionTitle(
 }
 
 type Entry = {
+  project: ProjectSource;
   lifetime: AbortController;
   protected?: boolean;
   /** Its own goose, stopped once the agent goes. */
@@ -696,6 +701,7 @@ export class GooseRuntime {
               const text = await prompt();
               if (text === undefined || !delivery.current())
                 return { ok: true };
+              entry.project.resolve(undefined, NO_PROJECT);
               entry.contexts.set(COMMUNITY_SESSION, {});
               signal.throwIfAborted();
               const stop = () => {
@@ -707,6 +713,7 @@ export class GooseRuntime {
                   COMMUNITY_SESSION,
                   [
                     standalonePrompt(agent.key, text),
+                    NO_PROJECT.section,
                     turnNote(entry.handle, undefined, undefined, true),
                   ]
                     .filter(Boolean)
@@ -900,14 +907,18 @@ export class GooseRuntime {
     );
     const reads = ownerReads(this.relay(agent.key), agent.pubkey);
     const signingAuthority = reads?.workflowAuthority();
-    const [names, project] = await Promise.all([
+    const [names, loadedProject] = await Promise.all([
       readAuthorNames(
         reads,
         [event, ...unseen.slice(-CONTEXT_LIMIT)],
         signingAuthority,
       ),
-      reading.then((read) => read?.section),
+      reading,
     ]);
+    const project =
+      scope === "community"
+        ? entry.project.resolve(channelId, solo ? loadedProject : NO_PROJECT)
+        : loadedProject;
     return {
       key,
       event,
@@ -932,7 +943,7 @@ export class GooseRuntime {
       total: earlier.length + 1,
       ...(signingAuthority ? { signingAuthority } : {}),
       names,
-      ...(project ? { project } : {}),
+      ...(project ? { project: project.section } : {}),
     };
   }
 
@@ -942,6 +953,7 @@ export class GooseRuntime {
     const existing = this.agents.get(agent);
     if (existing) return existing;
     const entry: Entry = {
+      project: new ProjectSource(),
       lifetime: new AbortController(),
       config: initial,
       team: "",

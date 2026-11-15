@@ -1,4 +1,8 @@
 import {
+  ProjectSource,
+  NO_PROJECT,
+} from "../../features/agent-harness/project";
+import {
   COMMUNITY_SESSION,
   sessionScope,
   communityTurn,
@@ -154,6 +158,7 @@ const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 const CHAT = [9, 40002];
 
 type Entry = {
+  project: ProjectSource;
   protected?: boolean;
   sessions: AgentSessions;
   config: Config;
@@ -1373,6 +1378,8 @@ export class ClaudeRuntime {
               const text = await prompt();
               if (text === undefined || !delivery.current())
                 return { ok: true };
+              entry.project.resolve(undefined, NO_PROJECT);
+              entry.directories.delete(COMMUNITY_SESSION);
               entry.contexts.set(COMMUNITY_SESSION, {});
               const stop = () => {
                 void entry.sessions.interrupt(COMMUNITY_SESSION);
@@ -1381,7 +1388,10 @@ export class ClaudeRuntime {
               try {
                 return await entry.sessions.deliver(
                   COMMUNITY_SESSION,
-                  [text, turnNote(entry.handle, undefined, undefined, true)]
+                  [
+                    `<context>\nScope: standalone\nSession scope: community\nAgent: ${agent.key}\n</context>\n\n${NO_PROJECT.section}\n\n${text}`,
+                    turnNote(entry.handle, undefined, undefined, true),
+                  ]
                     .filter(Boolean)
                     .join("\n\n"),
                   0,
@@ -1570,7 +1580,7 @@ export class ClaudeRuntime {
         item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
     );
     const signingAuthority = reads?.workflowAuthority();
-    const [names, project, folders] = await Promise.all([
+    const [names, loadedProject, folders] = await Promise.all([
       readAuthorNames(
         reads,
         [event, ...unseen.slice(-CONTEXT_LIMIT)],
@@ -1579,6 +1589,10 @@ export class ClaudeRuntime {
       reading,
       referencedFolders(event, owner, reads?.scope),
     ]);
+    const project =
+      scope === "community"
+        ? entry.project.resolve(channelId, solo ? loadedProject : NO_PROJECT)
+        : loadedProject;
     const referenced = [
       ...new Set([
         ...(entry.referenced.get(key) ?? []),
@@ -1637,6 +1651,7 @@ export class ClaudeRuntime {
     const existing = this.agents.get(agent);
     if (existing) return existing;
     const entry: Entry = {
+      project: new ProjectSource(),
       protected: !!protection,
       ...(name ? { name } : {}),
       config: initial,

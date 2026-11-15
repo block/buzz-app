@@ -82,6 +82,16 @@ export function createAgentExecutions(root: Context, storage: AgentStore) {
     AgentKey,
     { text: string | null; binding: AgentExecutionBinding | undefined }
   >();
+  /** Changes with each binding save and each storage change another window
+   * reports, so callers can skip rereading every binding until it does. */
+  let bindingChanges = 0;
+  root.effect(() => {
+    const changed = (event: StorageEvent) => {
+      if (event.key === null || event.key.startsWith(PREFIX)) bindingChanges++;
+    };
+    globalThis.addEventListener?.("storage", changed);
+    return () => globalThis.removeEventListener?.("storage", changed);
+  });
   const read = (agent: AgentKey): AgentExecutionBinding | undefined => {
     const last = parsed.get(agent);
     if (!last && !AGENT_KEY.test(agent))
@@ -140,6 +150,7 @@ export function createAgentExecutions(root: Context, storage: AgentStore) {
   });
   return {
     read,
+    bindingChanges: () => bindingChanges,
     inspect,
     register(ctx: Context, provider: AgentExecutionProvider) {
       if (
@@ -186,6 +197,7 @@ export function createAgentExecutions(root: Context, storage: AgentStore) {
           throw new Error("The agent already has another execution binding");
       } finally {
         bindingInFlight.delete(agent);
+        bindingChanges++;
       }
     },
     async check(agent: AgentKey, harness: string) {

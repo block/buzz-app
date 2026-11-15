@@ -3773,6 +3773,7 @@ export class AgentsService extends Service implements Agents {
     | {
         identities: readonly AgentIdentity[];
         state: Pick<AgentsSnapshot, "status" | "error">;
+        bindings: number;
         remote: ReadonlySet<AgentKey>;
         hosted: readonly Agent[];
         value: LocalAgentsSnapshot;
@@ -3785,6 +3786,17 @@ export class AgentsService extends Service implements Agents {
     const hosted = state.agents.filter(
       (agent) => agent.place === "hosted" && !agent.unfinished,
     );
+    const cached = this.localCache;
+    const unchanged =
+      cached?.identities === identities &&
+      cached.hosted.length === hosted.length &&
+      hosted.every((agent, index) => agent === cached.hosted[index]) &&
+      cached.state.status === state.status &&
+      cached.state.error === state.error;
+    // Every name lookup asks for this snapshot: reread each agent's binding
+    // only after one may have changed.
+    const bindings = this.executions.bindingChanges();
+    if (unchanged && cached.bindings === bindings) return cached.value;
     const remote = new Set(
       identities
         .filter(
@@ -3792,17 +3804,14 @@ export class AgentsService extends Service implements Agents {
         )
         .map((identity) => identity.key),
     );
-    const cached = this.localCache;
     if (
-      cached?.identities === identities &&
+      unchanged &&
       cached.remote.size === remote.size &&
-      [...remote].every((key) => cached.remote.has(key)) &&
-      cached.hosted.length === hosted.length &&
-      hosted.every((agent, index) => agent === cached.hosted[index]) &&
-      cached.state.status === state.status &&
-      cached.state.error === state.error
-    )
+      [...remote].every((key) => cached.remote.has(key))
+    ) {
+      this.localCache = { ...cached, bindings };
       return cached.value;
+    }
     const value: LocalAgentsSnapshot = Object.freeze({
       status: state.status,
       agents: Object.freeze(
@@ -3839,7 +3848,7 @@ export class AgentsService extends Service implements Agents {
         : {}),
       ...(state.error ? { error: state.error } : {}),
     });
-    this.localCache = { identities, state, remote, hosted, value };
+    this.localCache = { identities, state, bindings, remote, hosted, value };
     return value;
   };
 

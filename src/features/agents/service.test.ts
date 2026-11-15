@@ -44,6 +44,7 @@ import {
   describe,
   expect,
   it,
+  onTestFinished,
   vi,
 } from "vitest";
 import {
@@ -6583,6 +6584,42 @@ it("reads the list again on refresh and clears the error a failed read left", as
     ],
   });
   expect(service.snapshot().error).toBeUndefined();
+});
+
+it("rereads agent execution bindings only after one may have changed", async () => {
+  const storage = memoryStorage();
+  const get = vi.spyOn(storage, "get");
+  const page = new EventTarget();
+  vi.stubGlobal("addEventListener", page.addEventListener.bind(page));
+  vi.stubGlobal("removeEventListener", page.removeEventListener.bind(page));
+  onTestFinished(() => {
+    vi.unstubAllGlobals();
+  });
+  const { service } = await setup({ storage });
+  const agent = await service.create({ type: "example/echo", name: "Echo" });
+  const reads = () =>
+    get.mock.calls.filter(([key]) => key.startsWith("buzz.agent.execution.v1:"))
+      .length;
+  const stored = (key: string) =>
+    page.dispatchEvent(Object.assign(new Event("storage"), { key }));
+  const local = service.local();
+  const before = reads();
+  // Each name lookup asks again; nothing changed, so no binding is read.
+  for (let lookup = 0; lookup < 5; lookup++)
+    expect(service.local()).toBe(local);
+  stored("buzz.agent.other");
+  expect(service.local()).toBe(local);
+  expect(reads()).toBe(before);
+  // Another window saved this agent's binding: the next snapshot shows it.
+  storage.setItem(
+    `buzz.agent.execution.v1:${agent.key}`,
+    JSON.stringify({ provider: "example/remote" }),
+  );
+  stored(`buzz.agent.execution.v1:${agent.key}`);
+  expect(
+    service.local().agents.find((item) => item.pubkey === agent.pubkey)
+      ?.execution,
+  ).toBe("remote");
 });
 
 it("keeps local selection evidence stable across unrelated agent attention changes", async () => {

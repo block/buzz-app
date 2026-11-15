@@ -586,7 +586,8 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
     // A retried request shows its latest attempt, the one that answered.
     rerender(show([turn(1), turn(2), turn(5, 2)], ["retry", id(2)]));
     expect(shown.at(-1)).toBe("item:p5");
-    // A reply lands on itself, its bubble marked.
+    // A reply lands on itself before the prompt it answered, its bubble
+    // marked.
     const replied = turn(6);
     rerender(
       show(
@@ -606,7 +607,7 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
             ],
           },
         ],
-        ["reply"],
+        ["reply", id(6)],
       ),
     );
     expect(shown.at(-1)).toBe("item:m6");
@@ -616,6 +617,49 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
         .closest("[data-arrival-surface]"),
     ).toHaveAttribute("data-arrived");
     expect(view.querySelectorAll("[data-arrived]")).toHaveLength(1);
+    // A reply a script sent lands on the call that ran it.
+    const scripted = turn(7);
+    const tool = {
+      type: "tool" as const,
+      kind: "execute",
+      status: "completed",
+      input: "",
+      output: "",
+      diffs: [],
+      paths: [],
+      truncated: false,
+    };
+    rerender(
+      show(
+        [
+          {
+            ...scripted,
+            items: [
+              ...scripted.items,
+              {
+                ...tool,
+                id: "x7",
+                at: 8,
+                toolCallId: "x7",
+                title: "exec",
+                children: [
+                  {
+                    ...tool,
+                    id: "s7",
+                    at: 9,
+                    toolCallId: "s7",
+                    title: "buzz__send",
+                    output: `sent ${id(8)}`,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        [id(8), id(7)],
+      ),
+    );
+    expect(shown.at(-1)).toBe("item:x7");
   } finally {
     // jsdom has no scrollIntoView of its own.
     Reflect.deleteProperty(Element.prototype, "scrollIntoView");

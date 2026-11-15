@@ -221,6 +221,13 @@ export function promptMessage(
   };
 }
 
+/** The ids of the Buzz events a tool result reports sending, as Buzz's
+ * message tools answer, `sent <event-id>`. */
+export const sentEventIds = (output: string) =>
+  [...output.matchAll(/\bsent ([0-9a-f]{64})\b/g)].flatMap(
+    (match) => match[1] ?? [],
+  );
+
 /** The ids of the Buzz events a prompt was for: an exact record's first line,
  * or an older turn's escaped event. */
 export function promptEventIds(sections: readonly PromptSection[]) {
@@ -716,12 +723,24 @@ function buildTranscript(
       // stays a tool, with its error.
       turn.items = turn.items.map((item) => {
         const text = item.type === "tool" && sent.get(item.toolCallId);
-        return text &&
-          item.status === "completed" &&
-          !errored.has(item.toolCallId) &&
-          postsMessage(item.title)
-          ? { id: item.id, at: item.at, type: "message", text, posted: true }
-          : item;
+        if (
+          !text ||
+          item.type !== "tool" ||
+          item.status !== "completed" ||
+          errored.has(item.toolCallId) ||
+          !postsMessage(item.title)
+        )
+          return item;
+        // Its result names the event, so the reply can be found by its id.
+        const [messageId] = sentEventIds(item.output);
+        return {
+          id: item.id,
+          at: item.at,
+          type: "message",
+          text,
+          posted: true,
+          ...(messageId ? { messageId } : {}),
+        };
       });
       // Older harnesses omit threadRootEventId; the prompt context still names it.
       turn.threadRootId = payloadThread ?? prompt;

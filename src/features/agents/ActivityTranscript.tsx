@@ -12,6 +12,7 @@ import {
 import remarkGfm from "remark-gfm";
 import {
   promptEventIds,
+  sentEventIds,
   sectionTitle,
   type PromptSection,
   type ToolDiff,
@@ -69,29 +70,42 @@ const PeopleContext = createContext<{
 
 const AgentAvatarSource = createContext<string | undefined>(undefined);
 
-/** The Buzz events a profile was opened for. A transcript showing one of
- * their turns shows it first, once, and then reports `done`. */
+/** The Buzz events a profile was opened for, most wanted first. A
+ * transcript showing one of their turns shows it first, once, and then
+ * reports `done`. */
 export const TranscriptFocus = createContext<
   { events: readonly string[]; done(): void } | undefined
 >(undefined);
 
-/** The item, else the turn, that one of `events` began or posted. */
+/** The item, else the turn, that the first of `events` it has began or
+ * posted, so a reply shows itself before the prompt it answered. */
 function focusedEntry(transcript: Transcript, events: readonly string[]) {
-  const wanted = new Set(events);
   // Newest first: a retried request's latest attempt is the one that answered.
-  for (const turn of [...transcript.turns].reverse()) {
-    const item = turn.items.find((entry) =>
-      entry.type === "prompt"
-        ? promptEventIds(entry.sections).some((id) => wanted.has(id))
-        : entry.type === "message" &&
-          !!entry.messageId &&
-          wanted.has(entry.messageId),
-    );
-    if (item) return `item:${item.id}`;
-    if (turn.triggeringEventIds.some((id) => wanted.has(id)))
-      return `turn:${turn.turnId}`;
-  }
+  const turns = [...transcript.turns].reverse();
+  for (const event of events)
+    for (const turn of turns) {
+      const item = turn.items.find((entry) => shows(entry, event));
+      if (item) return `item:${item.id}`;
+      if (turn.triggeringEventIds.includes(event)) return `turn:${turn.turnId}`;
+    }
   return undefined;
+}
+/** Whether `item` began or posted `event`: a prompt for it, the reply it
+ * is, or a call whose result, or a call its script made, names it as sent. */
+function shows(item: TranscriptItem, event: string): boolean {
+  switch (item.type) {
+    case "prompt":
+      return promptEventIds(item.sections).includes(event);
+    case "message":
+      return item.messageId === event;
+    case "tool":
+      return (
+        sentEventIds(item.output).includes(event) ||
+        !!item.children?.some((child) => shows(child, event))
+      );
+    default:
+      return false;
+  }
 }
 
 type TurnState = "working" | "unknown" | "ended";

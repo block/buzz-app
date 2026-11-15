@@ -723,10 +723,23 @@ it("shows a Buzz message a remote tool posted as the agent's reply", () => {
             status: "in_progress",
           }),
         ),
+        // Its result names the posted event.
         event(
           "remote",
           "acp_read",
-          call("send", "buzz__send", "completed", "Done"),
+          update("tool_call_update", {
+            toolCallId: "send",
+            title: "buzz__send",
+            kind: "other",
+            status: "completed",
+            rawInput: { text: "Done", audience: "everyone" },
+            content: [
+              {
+                type: "content",
+                content: { type: "text", text: `sent ${"d".repeat(64)}` },
+              },
+            ],
+          }),
         ),
       ]),
       record([
@@ -778,12 +791,12 @@ it("shows a Buzz message a remote tool posted as the agent's reply", () => {
   expect(
     turn?.items.map((item) =>
       item.type === "message"
-        ? [item.type, item.text, item.posted]
+        ? [item.type, item.text, item.posted, item.messageId]
         : [item.type, item.type === "tool" ? item.title : ""],
     ),
   ).toEqual([
-    ["message", "Done", true],
-    ["message", "Nested", true],
+    ["message", "Done", true, "d".repeat(64)],
+    ["message", "Nested", true, undefined],
     ["tool", "buzz__send"],
     ["tool", "buzz__read"],
     ["tool", "buzz__send"],

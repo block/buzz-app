@@ -8029,3 +8029,56 @@ it("ignores retained conversation folders for remote community admission", async
     guest.runtime.dispose();
   }
 });
+
+it("refuses spoken adoption while a typed community source still owns the seat", async () => {
+  vi.stubGlobal("RTCPeerConnection", class {});
+  const f = fixture();
+  const d = f.delivery("typed");
+  const config = { ...(d.config as object), scope: "community" };
+  f.huddleChannels.add("room");
+  const ended = vi.fn();
+  const connection = await f.runtime.voice(
+    {
+      config,
+      agent: { ...d.agent, config } as unknown as Agent,
+      conversation: { channelId: "room" },
+      signal: new AbortController().signal,
+      async output() {},
+      async transcript() {},
+      ended,
+    },
+    d.agent,
+  );
+  let release!: () => void;
+  try {
+    await f.runtime.run({ ...f.delivery("intervening typed"), config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    f.held.set(
+      "thread/inject_items",
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    await f.complete(0);
+    f.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: "racing-spoken" } },
+    });
+    await vi.waitFor(() =>
+      expect(ended).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining("Rejoin") }),
+      ),
+    );
+    expect(
+      f.sent.some(
+        (w) =>
+          w.method === "turn/interrupt" &&
+          (w.params as { turnId?: string }).turnId === "racing-spoken",
+      ),
+    ).toBe(true);
+  } finally {
+    release?.();
+    await connection.close();
+    f.runtime.dispose();
+  }
+});

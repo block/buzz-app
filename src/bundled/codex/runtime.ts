@@ -1695,6 +1695,24 @@ export class CodexRuntime {
           if (
             method === "turn/started" &&
             p.turn &&
+            settings.scope === "community" &&
+            lane.active?.finished &&
+            !Object.hasOwn(lane.active.reply, "adopted")
+          ) {
+            void rpc
+              .request("turn/interrupt", { threadId, turnId: p.turn.id })
+              .catch(() => {});
+            void close();
+            seat.ended(
+              new Error(
+                "Room instructions are still being restored. Rejoin the Huddle and repeat your request.",
+              ),
+            );
+            return;
+          }
+          if (
+            method === "turn/started" &&
+            p.turn &&
             (!lane.active || lane.active.finished)
           ) {
             // execute installs the normal Request synchronously, before the next RPC tool call.

@@ -109,17 +109,58 @@ describe("createLoader", () => {
     const loader = createLoader({ readPage });
     const url = (i: number) => `https://p${i}.example.com/`;
     const leases = Array.from({ length: 10 }, (_, i) => loader.page(url(i)));
-    expect(readPage.mock.calls.map(([asked]) => asked)).toEqual(
-      [0, 1, 2, 3].map(url),
-    );
+    expect(readPage.mock.calls.map(([asked]) => asked)).toEqual([url(0)]);
     for (const i of [4, 5, 6, 7, 8]) leases[i]?.release();
-    held.get(url(0))?.();
-    await leases[0]?.value;
-    await vi.waitFor(() => expect(readPage).toHaveBeenCalledTimes(5));
-    expect(readPage).toHaveBeenLastCalledWith(url(9), expect.anything());
-    for (const i of [1, 2, 3, 9]) held.get(url(i))?.();
-    await Promise.all([1, 2, 3, 9].map((i) => leases[i]?.value));
+    for (const [i, next] of [
+      [0, 9],
+      [9, 3],
+      [3, 2],
+      [2, 1],
+    ] as const) {
+      held.get(url(i))?.();
+      await leases[i]?.value;
+      await vi.waitFor(() =>
+        expect(readPage).toHaveBeenLastCalledWith(url(next), expect.anything()),
+      );
+    }
+    held.get(url(1))?.();
+    await leases[1]?.value;
     expect(readPage).toHaveBeenCalledTimes(5);
+  });
+
+  it("reads every page within a host deadline that includes waiting for admission", async () => {
+    vi.useFakeTimers();
+    try {
+      let queue = Promise.resolve();
+      const readPage = vi.fn((url: string) => {
+        const deadline = Date.now() + 10_000;
+        const turn = queue.then(() => {
+          if (Date.now() >= deadline)
+            throw new Error("Byte operation timed out in admission");
+          return new Promise<{ status: number; preview: { title: string } }>(
+            (resolve) =>
+              setTimeout(
+                () => resolve({ status: 200, preview: { title: url } }),
+                4_000,
+              ),
+          );
+        });
+        queue = turn.then(
+          () => {},
+          () => {},
+        );
+        return turn;
+      });
+      const loader = createLoader({ readPage });
+      const urls = [0, 1, 2, 3].map((i) => `https://p${i}.example.com/`);
+      const pages = urls.map((url) => loader.page(url).value);
+      await vi.advanceTimersByTimeAsync(4 * 4_000);
+      expect((await Promise.all(pages)).map((page) => page?.title)).toEqual(
+        urls,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps one read per page however many pages are waiting", async () => {

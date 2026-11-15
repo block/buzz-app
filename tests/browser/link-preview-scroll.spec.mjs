@@ -74,7 +74,7 @@ test("link previews never move the reader in the real timeline", async ({
     await releaseAndHold(page);
 
     // A fling through unread history: cards scrolled past are withdrawn, so
-    // apart from the reads already under way when it began, every read that
+    // apart from the read already under way when it began, every read that
     // goes out is for a card still on screen.
     const sent = await page.evaluate(
       () => window.linkPreviewScroll.asked.length,
@@ -97,7 +97,7 @@ test("link previews never move the reader in the real timeline", async ({
     const shown = await feed
       .locator("[data-link-previews] a")
       .evaluateAll((cards) => cards.map((card) => card.href));
-    expect(fling.slice(4).filter((url) => !shown.includes(url))).toEqual([]);
+    expect(fling.slice(1).filter((url) => !shown.includes(url))).toEqual([]);
 
     // Away and back: remounted cards draw from the cache on their first frame.
     const reader = await anchor(page);

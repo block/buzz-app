@@ -39,36 +39,51 @@ async function png() {
   const blob = await canvas.convertToBlob({ type: "image/png" });
   return new Uint8Array(await blob.arrayBuffer());
 }
+// The host admits one read at a time, in arrival order, as native byte
+// admission does.
+let admitted = Promise.resolve();
+function admit<T>(work: () => Promise<T>) {
+  const turn = admitted.then(work);
+  admitted = turn.then(
+    () => {},
+    () => {},
+  );
+  return turn;
+}
 const host = {
-  readPage: async (url: string): Promise<HostPage> => {
+  readPage: (url: string): Promise<HostPage> => {
     asked.push(url);
-    await pass();
-    const n = Number(new URL(url).hostname.match(/\d+/)?.[0] ?? 0);
-    if (n % 10 === 4) return { status: 404 };
-    return {
-      status: 200,
-      preview: {
-        title: `Story ${n}`,
-        siteName: "Example",
-        ...(n % 3 === 0
-          ? {
-              description:
-                "A longer description that runs to a second line so the card shows every part it can.",
-            }
-          : {}),
-        ...(n % 4 === 0 ? { image: `https://img${n}.example.com/a.png` } : {}),
-      },
-    };
+    return admit(() => readPage(url));
   },
-  requestBytes: async () => {
-    await pass();
-    return {
-      status: 200,
-      headers: { "content-type": "image/png" },
-      body: await png(),
-    };
-  },
+  requestBytes: () => admit(readImage),
 };
+async function readPage(url: string): Promise<HostPage> {
+  await pass();
+  const n = Number(new URL(url).hostname.match(/\d+/)?.[0] ?? 0);
+  if (n % 10 === 4) return { status: 404 };
+  return {
+    status: 200,
+    preview: {
+      title: `Story ${n}`,
+      siteName: "Example",
+      ...(n % 3 === 0
+        ? {
+            description:
+              "A longer description that runs to a second line so the card shows every part it can.",
+          }
+        : {}),
+      ...(n % 4 === 0 ? { image: `https://img${n}.example.com/a.png` } : {}),
+    },
+  };
+}
+async function readImage() {
+  await pass();
+  return {
+    status: 200,
+    headers: { "content-type": "image/png" },
+    body: await png(),
+  };
+}
 const previews: PluginModule = {
   inject: ["conversation"],
   apply(ctx) {

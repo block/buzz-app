@@ -11,7 +11,9 @@ export type Page = Readonly<{
 }>;
 
 const MAX_REDIRECTS = 5;
-const PARALLEL = 4;
+// The host admits one byte operation at a time, and its deadline includes the
+// wait, so a second call in flight only queues where it can no longer be withdrawn.
+const PARALLEL = 1;
 const KEEP_PAGES = 200;
 const KEEP_FAILURES = 200;
 const FAILURE_COOLDOWN_MS = 5 * 60_000;
@@ -42,8 +44,8 @@ export type ImageLease = Readonly<{
   release(): void;
 }>;
 
-/** Reads previews and their images through the host, at most `PARALLEL` at
- * once and newest request first, checking every redirect hop with
+/** Reads previews and their images through the host one at a time, newest
+ * request first, checking every redirect hop with
  * `previewable` before asking again. A request whose last lease is released
  * while it waits never reaches the host; one already under way finishes, so a
  * card that remounts joins it. Pages are kept for the session and

@@ -436,6 +436,7 @@ export type TurnInstructions = Readonly<{ plugin: string; text: string }>;
 export type AgentSession = Readonly<{
   channelId: string;
   root?: string;
+  community?: true;
   at?: number;
   status?: string;
 }>;
@@ -4918,6 +4919,7 @@ export class AgentsService extends Service implements Agents {
         ?.list(key)
         .some(
           (session) =>
+            !session.community &&
             conversationKey(session.channelId, session.root) === conversation,
         )
     )

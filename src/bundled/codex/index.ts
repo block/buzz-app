@@ -261,10 +261,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         );
         return runtime
           .conversations(key)
-          .map(({ key, channelId, root, at }) => {
+          .map(({ key, channelId, root, community, at }) => {
             const status = views.get(key);
             return {
               channelId,
+              ...(community ? { community } : {}),
               ...(root && { root }),
               ...(at !== undefined && { at }),
               ...(status && { status }),

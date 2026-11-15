@@ -266,10 +266,12 @@ it("observes each saved conversation as a session, read-only", () => {
       at: 2000,
     },
     { key: JSON.stringify(["dm", "channel"]), channelId: "dm", threadId: "t2" },
+    { key: "shared", channelId: "dm", threadId: "shared", community: true },
   ]);
   expect(applied()?.sessions?.list("a".repeat(64))).toEqual([
     { channelId: "room", root: "r".repeat(64), at: 2000 },
     { channelId: "dm" },
+    { channelId: "dm", community: true },
   ]);
 });
 

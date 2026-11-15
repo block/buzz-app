@@ -671,7 +671,14 @@ export class GooseRuntime {
     );
     const handed = handoff.done;
     const done = handed
-      .then(() => delivered)
+      .then(async () => {
+        const result = await delivered;
+        return key === COMMUNITY_SESSION &&
+          interrupted &&
+          (!submitted || result.undelivered)
+          ? { ...result, ok: false, stopped: true as const }
+          : result;
+      })
       .catch((error) => ({
         ok: false,
         error: String(error),

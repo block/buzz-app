@@ -1280,7 +1280,14 @@ export class ClaudeRuntime {
     );
     const handed = handoff.done;
     const done = handed.then(
-      () => delivered,
+      async () => {
+        const result = await delivered;
+        return key === COMMUNITY_SESSION &&
+          interrupted &&
+          (!submitted || result.undelivered)
+          ? { ...result, ok: false, stopped: true as const }
+          : result;
+      },
       (error: unknown): Settled => ({ ok: false, error: String(error) }),
     );
     const policy = {

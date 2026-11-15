@@ -4746,46 +4746,66 @@ it.each(["community", "thread"] as const)(
   },
 );
 
-it("keeps active community tool publication ownership after scope sync and queued Stop", async () => {
-  const f = setup([], { hold: true });
-  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
-  const queuedPublish = vi.fn((...args: Parameters<typeof f.agent.publish>) =>
-    f.agent.publish(...args),
-  );
-  const agent = {
-    ...f.agent,
-    publish: queuedPublish,
-  } as unknown as Delivery["agent"];
-  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
-  await f.deliver(
-    { type: "mention", event: message("1", "held first") },
-    { config },
-  );
-  await vi.waitFor(() =>
-    expect(f.claudes().find((process) => process.prompts.length)).toBeDefined(),
-  );
-  const worker = f.claudes().find((process) => process.prompts.length);
-  if (!worker) throw new Error("Missing active native worker");
-  try {
-    f.runtime.sync([
-      {
-        ...f.agent,
-        config: { ...config, scope: "thread" },
-      } as unknown as Agent,
-    ]);
-    await f.deliver(
-      { type: "mention", event: message("2", "queued second") },
-      { config, agent, interruptible },
+it.each(["mention", "attention"] as const)(
+  "keeps active community ownership and unsuccessful queued %s completion after scope sync and Stop",
+  async (kind) => {
+    const f = setup([], { hold: true });
+    const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+    const queuedPublish = vi.fn((...args: Parameters<typeof f.agent.publish>) =>
+      f.agent.publish(...args),
     );
-    await interruptible.mock.calls[0]?.[0]();
-    await mcp(worker, 1, "tools/call", {
-      name: "send",
-      arguments: { text: "active owner reply", audience: "everyone" },
-    });
-    expect(queuedPublish).not.toHaveBeenCalled();
-    expect(f.agent.publish).toHaveBeenCalled();
-  } finally {
-    worker?.finish();
-    f.runtime.dispose();
-  }
-});
+    const agent = {
+      ...f.agent,
+      publish: queuedPublish,
+    } as unknown as Delivery["agent"];
+    const held: PromiseLike<unknown>[] = [];
+    const workingUntil: Delivery["workingUntil"] = (done) => held.push(done);
+    const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+    await f.deliver(
+      { type: "mention", event: message("1", "held first") },
+      { config },
+    );
+    await vi.waitFor(() =>
+      expect(
+        f.claudes().find((process) => process.prompts.length),
+      ).toBeDefined(),
+    );
+    const worker = f.claudes().find((process) => process.prompts.length);
+    if (!worker) throw new Error("Missing active native worker");
+    try {
+      f.runtime.sync([
+        {
+          ...f.agent,
+          config: { ...config, scope: "thread" },
+        } as unknown as Agent,
+      ]);
+      await f.deliver(
+        kind === "mention"
+          ? { type: "mention", event: message("2", "queued second") }
+          : {
+              type: "attention",
+              channel,
+              root: message("2", "").id,
+              id: "f".repeat(64),
+              at: 200_000,
+              text: "queued second",
+            },
+        { config, agent, interruptible, workingUntil },
+      );
+      await interruptible.mock.calls[0]?.[0]();
+      await mcp(worker, 1, "tools/call", {
+        name: "send",
+        arguments: { text: "active owner reply", audience: "everyone" },
+      });
+      expect(queuedPublish).not.toHaveBeenCalled();
+      expect(f.agent.publish).toHaveBeenCalled();
+      worker.finish();
+      const results = await Promise.all(held);
+      expect(results).toContainEqual(expect.objectContaining({ ok: false }));
+      expect(worker.prompts).toHaveLength(1);
+    } finally {
+      worker?.finish();
+      f.runtime.dispose();
+    }
+  },
+);

@@ -764,7 +764,10 @@ export class PiRuntime {
     const settled = handed
       .then(async (): Promise<TurnResult & { stopped?: true }> => {
         // Interrupted before Pi had it, it says nothing.
-        if (!submitted) return { ok: true };
+        if (!submitted)
+          return key === COMMUNITY_SESSION && interrupted
+            ? { ok: false, stopped: true }
+            : { ok: true };
         const waited = await this.settle(
           entry,
           agent.key,

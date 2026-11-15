@@ -2861,7 +2861,8 @@ it.each(["waiting", "submitting", "scope changed"] as const)(
       }
       firstDone.resolve({ status: "done", answer: 1, text: "done" });
       await f.settled(a);
-      await f.settled(b);
+      const result = await f.settled(b);
+      if (phase !== "submitting") expect(result).toMatchObject({ ok: false });
       if (phase !== "submitting")
         expect(f.host.requests("deliver")).toHaveLength(1);
     } finally {

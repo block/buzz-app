@@ -3111,16 +3111,6 @@ export class CodexRuntime {
         ready();
         return;
       }
-      if (settings.scope === "community")
-        request.project = [
-          entry.project.resolve(
-            request.unaddressed ? undefined : request.conversation.channelId,
-            request.solo ? request.canvas : NO_PROJECT,
-          ).section,
-          request.project,
-        ]
-          .filter(Boolean)
-          .join("\n\n");
       const seat = lane.voice;
       const loaded =
         seat?.loaded ??
@@ -3160,15 +3150,6 @@ export class CodexRuntime {
           ...request.wake,
           text: (await request.wakeText?.()) ?? request.wake.text,
         };
-        signal.throwIfAborted();
-        if (request.current && !request.current()) {
-          restoreNotes(request);
-          request.answered();
-          this.status(agent.key, key, "Idle");
-          active.finished = true;
-          ready();
-          return;
-        }
         const additionalContext = turnContext(
           agent,
           settings,
@@ -3184,6 +3165,25 @@ export class CodexRuntime {
             at: Date.now(),
             ...(tools ? { tools } : {}),
           });
+        signal.throwIfAborted();
+        if (request.current && !request.current()) {
+          restoreNotes(request);
+          request.answered();
+          this.status(agent.key, key, "Idle");
+          active.finished = true;
+          ready();
+          return;
+        }
+        if (settings.scope === "community")
+          request.project = [
+            entry.project.resolve(
+              request.unaddressed ? undefined : request.conversation.channelId,
+              request.solo ? request.canvas : NO_PROJECT,
+            ).section,
+            request.project,
+          ]
+            .filter(Boolean)
+            .join("\n\n");
         const turn = await rpc
           .request<{ turn: { id: string } }>("turn/start", {
             threadId: active.threadId,

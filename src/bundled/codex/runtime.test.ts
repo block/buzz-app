@@ -7741,8 +7741,7 @@ it("keeps community sessions apart for memberships of the same identity", async 
   ).not.toBe(
     (f.starts()[1]?.params as { threadId: string } | undefined)?.threadId,
   );
-  f.complete(0, "here");
-  f.complete(1, "there");
+  await Promise.all([f.complete(0, "here"), f.complete(1, "there")]);
 });
 
 it("runs an unaddressed wake in the community session without inheriting a posting destination", async () => {
@@ -8082,3 +8081,57 @@ it("refuses spoken adoption while a typed community source still owns the seat",
     f.runtime.dispose();
   }
 });
+
+it("keeps the retained Solo Canvas when a community wake expires during preparation", async () => {
+  const f = fixture();
+  const d = f.delivery("first");
+  const config = { ...(d.config as object), scope: "community" };
+  f.soloChannels.add("channel");
+  f.snapshot.session.canvas.available = true;
+  f.snapshot.session.canvas.read.mockResolvedValue(
+    canvasHead("RETAINED_CANVAS"),
+  );
+  await f.runtime.run({ ...d, config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0);
+  let current = true;
+  let release!: () => void;
+  const reading = vi.fn();
+  try {
+    await f.runtime.run({
+      ...f.delivery("wake"),
+      config,
+      channelId: "other",
+      trigger: {
+        type: "plugin",
+        plugin: "example",
+        channel: "other",
+        topLevel: true,
+        id: "a".repeat(64),
+        at: Date.now(),
+        text: "check",
+      },
+      current: () => current,
+      wakeText: () =>
+        new Promise((resolve) => {
+          reading();
+          release = () => resolve("check");
+        }),
+    });
+    await vi.waitFor(() => expect(reading).toHaveBeenCalled());
+    current = false;
+    release();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+    );
+    f.snapshot.session.canvas.read.mockRejectedValue(new Error("offline"));
+    await f.runtime.run({ ...f.delivery("back to Solo"), config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(inputText(f.starts()[1])).toContain("RETAINED_CANVAS");
+    await f.complete(1);
+  } finally {
+    release?.();
+    f.runtime.dispose();
+  }
+});
+

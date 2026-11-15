@@ -10,6 +10,7 @@ import type { CustomEmoji } from "../../features/relay/emoji";
 import { rankShortcodes } from "./emoji-search";
 import { PREVIEW_ACTION_SLOT } from "./add-emoji";
 import { SKIN_TONE_SLOT, toneHand } from "./skin-tone";
+import { rootFontSize, spaciousGrid } from "./picker-layout";
 
 const martSearch = SearchIndex.search;
 const resolvedTheme = (value: unknown): "light" | "dark" =>
@@ -31,6 +32,8 @@ const resultKey = (button: HTMLButtonElement | undefined) =>
   button?.getAttribute("aria-label") ??
   button?.querySelector("img")?.getAttribute("alt") ??
   "";
+// Mart's skin indexes in menu order: Default, then dark to light.
+const TONE_ORDER = [1, 6, 5, 4, 3, 2];
 const categoryIcons = {
   frequent: { svg: pickerIcons.clock },
   people: { svg: pickerIcons.smiley },
@@ -139,7 +142,12 @@ export function mountEmojiMart({
     dynamicWidth: false,
     maxFrequentRows: 2,
     // Ten category tabs overlap in narrow thread panes; search/scroll still work.
-    navPosition: perLine < 6 ? "none" : "bottom",
+    navPosition: spaciousGrid(
+      perLine * emojiButtonSize,
+      rootFontSize(host.ownerDocument),
+    )
+      ? "bottom"
+      : "none",
     perLine,
     ...(preview
       ? {
@@ -444,9 +452,27 @@ export function mountEmojiMart({
     .menu .skin-tone::after {
       display: none;
     }
+    /* One row of hands, Default then dark to light; screen readers keep
+       each radio's tone name. */
+    #root > .menu {
+      display: flex;
+    }
+${TONE_ORDER.map((tone, index) => `    #root > .menu > :nth-child(${tone}) { order: ${index}; }`).join("\n")}
+    .menu .option {
+      justify-content: center;
+    }
+    .menu .option > .margin-small-lr {
+      display: none;
+    }
 ${[1, 2, 3, 4, 5, 6].map((tone) => `    .menu .skin-tone-${tone}::before { content: "${toneHand(tone)}"; }`).join("\n")}
+    /* The saved tone is a fill; a ring marks keyboard focus only. */
     .menu input[type="radio"]:checked + .option {
-      box-shadow: 0 0 0 2px var(--text-standard);
+      background: var(--affordance-selected);
+      box-shadow: none;
+    }
+    :host([data-keyboard-navigation]) .menu input[type="radio"]:focus + .option {
+      outline: 2px solid var(--border-focus);
+      outline-offset: 2px;
     }
     @media (prefers-reduced-motion: reduce) {
       #nav button::before {
@@ -555,6 +581,30 @@ ${[1, 2, 3, 4, 5, 6].map((tone) => `    .menu .skin-tone-${tone}::before { conte
           ?.focus(),
     );
   };
+  // Arrow keys follow the menu's visual order rather than Mart's DOM order.
+  root?.addEventListener(
+    "keydown",
+    (event) => {
+      const radio = event.target;
+      const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[
+        (event as KeyboardEvent).key
+      ];
+      if (!step || !(radio instanceof HTMLInputElement)) return;
+      if (!radio.matches('.menu input[type="radio"]')) return;
+      const position = TONE_ORDER.indexOf(Number(radio.value));
+      const tone =
+        TONE_ORDER[(position + step + TONE_ORDER.length) % TONE_ORDER.length];
+      const next = radio
+        .closest(".menu")
+        ?.querySelector<HTMLInputElement>(`input[value="${tone}"]`);
+      if (!next) return;
+      event.preventDefault();
+      next.checked = true;
+      next.focus();
+      next.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    true,
+  );
   const placeSkinTone = () => {
     const source = root?.querySelector<HTMLButtonElement>(".skin-tone-button");
     if (!source) return;

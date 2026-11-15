@@ -475,6 +475,25 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         return !!top && menu.contains(top);
       }),
     ).toBe(true);
+    // Default leads, then dark to light, and the arrow keys follow that order.
+    const visualTones = await toneMenu
+      .locator("input[type=radio]")
+      .evaluateAll((radios) =>
+        radios
+          .map((radio) => ({
+            tone: radio.value,
+            x: radio.nextElementSibling.getBoundingClientRect().x,
+          }))
+          .sort((a, b) => a.x - b.x)
+          .map(({ tone }) => tone),
+      );
+    expect(visualTones).toEqual(["1", "6", "5", "4", "3", "2"]);
+    await page.keyboard.press("ArrowRight");
+    await expect(toneMenu.locator('input[value="6"]')).toBeFocused();
+    await page.keyboard.press("ArrowLeft");
+    await expect(toneMenu.locator('input[value="1"]')).toBeFocused();
+    await page.keyboard.press("ArrowLeft");
+    await expect(toneMenu.locator('input[value="2"]')).toBeFocused();
     // Escape closes only the menu, returning to the hand.
     await page.keyboard.press("Escape");
     await expect(toneMenu).toHaveCount(0);
@@ -641,9 +660,10 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       exact: true,
     });
     await expect(insert).toBeVisible();
-    await expect(insert).toHaveCSS("width", "48px");
-    await expect(insert).toHaveCSS("height", "48px");
-    await expect(insert).toHaveCSS("font-size", "36px");
+    // Slack-sized cells: the small-control cell around an inline-emoji glyph.
+    await expect(insert).toHaveCSS("width", "32px");
+    await expect(insert).toHaveCSS("height", "32px");
+    await expect(insert).toHaveCSS("font-size", "22px");
     await expect(insert.locator("img")).toHaveCSS("max-width", "32px");
     await expect(insert.locator("img")).toHaveCSS("max-height", "32px");
     const searchNode = await search.elementHandle();

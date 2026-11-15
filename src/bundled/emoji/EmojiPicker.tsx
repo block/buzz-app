@@ -38,16 +38,28 @@ import { GifPicker } from "./GifPicker";
 import type { EmojiSearchSelection } from "./emoji-mart";
 import { PREVIEW_ACTION_SLOT, type AddEmoji } from "./add-emoji";
 import { SKIN_TONE_SLOT, defaultSkinTone, toneHand } from "./skin-tone";
+import { rootFontSize, spaciousGrid } from "./picker-layout";
 const NO_ADD_EMOJI = {
   snapshot: () => undefined,
   subscribe: () => () => {},
 };
 
-const EMOJI_SIZE = 36;
-const EMOJI_SLOT = 48;
+// Slack-sized: inline-emoji glyphs in small-control cells, resolved from the
+// tokens so text-size preferences scale them. Fallbacks are their 1rem values.
+const EMOJI_SIZE = "--size-emoji-inline";
+const EMOJI_SLOT = "--size-control-sm";
+const MAX_PER_LINE = 9;
 const PICKER_COLUMN_CHROME = 44;
-// Two balanced scrollbar lanes plus five gaps between six fixed-size slots.
+// Two balanced scrollbar lanes plus the gaps between fixed-size slots.
 const PICKER_CHROME = 72;
+function tokenPx(document: Document, token: string, fallback: number) {
+  const probe = document.createElement("div");
+  probe.style.cssText = `position:absolute;visibility:hidden;width:var(${token})`;
+  document.body.appendChild(probe);
+  const width = probe.getBoundingClientRect().width;
+  probe.remove();
+  return width || fallback;
+}
 const NO_ENTRIES: readonly CustomEmoji[] = [];
 
 /** Reusable composer picker; data/signing remain owned by the community session. */
@@ -87,11 +99,14 @@ export function EmojiPicker({
     error?: string;
   }>();
   const [gifDiscoveryRequested, setGifDiscoveryRequested] = useState(false);
-  const [{ perLine, availableWidth, scale }, setLayout] = useState({
-    perLine: 0,
-    availableWidth: 0,
-    scale: 1,
-  });
+  const [{ perLine, availableWidth, scale, emojiSize, slot }, setLayout] =
+    useState({
+      perLine: 0,
+      availableWidth: 0,
+      scale: 1,
+      emojiSize: 22,
+      slot: 32,
+    });
   const [error, setError] = useState<string>();
   const [attempt, retry] = useState(0);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -149,18 +164,20 @@ export function EmojiPicker({
     if (!open || disabled || !(container instanceof HTMLElement)) return;
     const root = document.documentElement;
     const resize = () => {
-      const scale =
-        (Number.parseFloat(getComputedStyle(root).fontSize) || 16) / 16;
+      const scale = rootFontSize(document) / 16;
+      const emojiSize = tokenPx(document, EMOJI_SIZE, 22 * scale);
+      const slot = tokenPx(document, EMOJI_SLOT, 32 * scale);
       setLayout({
         scale,
+        emojiSize,
+        slot,
         availableWidth: container.clientWidth,
         perLine: Math.max(
           1,
           Math.min(
-            6,
+            MAX_PER_LINE,
             Math.floor(
-              (container.clientWidth - PICKER_COLUMN_CHROME * scale) /
-                (EMOJI_SLOT * scale),
+              (container.clientWidth - PICKER_COLUMN_CHROME * scale) / slot,
             ),
           ),
         ),
@@ -171,7 +188,10 @@ export function EmojiPicker({
     observer.observe(container);
     // Reaction pickers can keep the same viewport width while the root scale changes.
     const appearance = new MutationObserver(resize);
-    appearance.observe(root, { attributes: true, attributeFilter: ["style"] });
+    appearance.observe(root, {
+      attributes: true,
+      attributeFilter: ["style", "data-font-size"],
+    });
     return () => {
       observer.disconnect();
       appearance.disconnect();
@@ -261,8 +281,8 @@ export function EmojiPicker({
           preview: true,
           scope,
           perLine,
-          emojiSize: EMOJI_SIZE * scale,
-          emojiButtonSize: EMOJI_SLOT * scale,
+          emojiSize,
+          emojiButtonSize: slot,
           search: search.current,
           searchSelection,
           searchChange: (value) => {
@@ -311,7 +331,8 @@ export function EmojiPicker({
     entries,
     attempt,
     perLine,
-    scale,
+    emojiSize,
+    slot,
     tab,
     host,
     colorMode,
@@ -321,7 +342,7 @@ export function EmojiPicker({
     openAddEmoji &&
     createPortal(
       <span slot={PREVIEW_ACTION_SLOT}>
-        {perLine < 6 ? (
+        {!spaciousGrid(perLine * slot, scale * 16) ? (
           <IconButton
             size="sm"
             variant="ghost"
@@ -514,7 +535,7 @@ export function EmojiPicker({
         style={{
           width: Math.min(
             availableWidth,
-            (perLine * EMOJI_SLOT + PICKER_CHROME) * scale + 2,
+            perLine * slot + PICKER_CHROME * scale + 2,
           ),
           overflow: "hidden",
         }}

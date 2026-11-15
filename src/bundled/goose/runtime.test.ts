@@ -2702,12 +2702,22 @@ it("stops only the queued community request selected by the user", async () => {
   const f = setup({ hold: true, scope: "community" });
   const interruptible = vi.fn();
   const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  const queuedPublish = vi.fn((...args: Parameters<typeof f.agent.publish>) =>
+    f.agent.publish(...args),
+  );
   try {
     await f.deliver(message("1", "first"), { workingUntil });
     await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
     const worker = f.goose();
     if (!worker) throw new Error("No Goose process");
-    await f.deliver(message("2", "queued"), { interruptible, workingUntil });
+    await f.deliver(message("2", "queued"), {
+      interruptible,
+      workingUntil,
+      agent: {
+        ...f.agent,
+        publish: queuedPublish,
+      } as unknown as Delivery["agent"],
+    });
     const before = worker.received.filter(
       (i) => i.method === "session/cancel",
     ).length;
@@ -2715,6 +2725,14 @@ it("stops only the queued community request selected by the user", async () => {
     expect(
       worker.received.filter((i) => i.method === "session/cancel"),
     ).toHaveLength(before);
+    const sessionId = worker.turns[0]?.sessionId;
+    if (!sessionId) throw new Error("missing session");
+    await worker.mcp(sessionId, "tools/call", {
+      name: "send",
+      arguments: { text: "active reply", audience: "everyone" },
+    });
+    expect(queuedPublish).not.toHaveBeenCalled();
+    expect(f.agent.publish).toHaveBeenCalled();
     worker.turns[0]?.finish();
     await Promise.all(workingUntil.mock.calls.map(([done]) => done));
     expect(worker.turns).toHaveLength(1);

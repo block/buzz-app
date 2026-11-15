@@ -2769,6 +2769,9 @@ it.each(["waiting", "submitting"] as const)(
     });
     const config = { ...DEFAULT_CONFIG, scope: "community" as const };
     const interruptible = vi.fn();
+    const queuedPublish = vi.fn((...args: Parameters<typeof f.agent.publish>) =>
+      f.agent.publish(...args),
+    );
     let stop: Promise<unknown> | undefined;
     try {
       const a = f.deliver(
@@ -2789,7 +2792,15 @@ it.each(["waiting", "submitting"] as const)(
             ],
           }),
         },
-        { config, channelId: "other", interruptible },
+        {
+          config,
+          channelId: "other",
+          interruptible,
+          agent: {
+            ...f.agent,
+            publish: queuedPublish,
+          } as unknown as Delivery["agent"],
+        },
       );
       await b.run;
       expect(interruptible).toHaveBeenCalledOnce();
@@ -2802,6 +2813,15 @@ it.each(["waiting", "submitting"] as const)(
       stop = interruptible.mock.calls[0]?.[0]().then(stopped);
       if (phase === "waiting") {
         await vi.waitFor(() => expect(stopped).toHaveBeenCalledOnce());
+        await f.runtime.tool({
+          agent: self,
+          conversation: CONVERSATION,
+          context: { channel },
+          name: "send",
+          arguments: { text: "active reply", audience: "everyone" },
+        });
+        expect(queuedPublish).not.toHaveBeenCalled();
+        expect(f.agent.publish).toHaveBeenCalled();
         expect(f.host.requests("abort")).toHaveLength(0);
         expect(f.host.requests("deliver")).toHaveLength(1);
       } else {

@@ -169,7 +169,7 @@ type Entry = {
   team: string;
   /** The agent's name, for its prompt; a rename reopens idle sessions. */
   name?: string;
-  /** The agent's handle from its latest delivery, for the tools to act with. */
+  /** The latest admitted delivery's handle, used by its running tools. */
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
@@ -483,8 +483,10 @@ export class GooseRuntime {
     // Found only for a delivery it takes, so nothing it drops starts goose.
     await this.follow(raw);
     const entry = this.entry(agent.key, this.settings(raw));
-    entry.handle = agent;
-    entry.team = team ?? "";
+    if (entry.config.scope !== "community" || !entry.handle) {
+      entry.handle = agent;
+      entry.team = team ?? "";
+    }
     const event =
       trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const channel =
@@ -567,6 +569,8 @@ export class GooseRuntime {
             delivered = Promise.resolve({ ok: true, undelivered: true });
             return;
           }
+          entry.handle = agent;
+          entry.team = team ?? "";
           // Plugins' notes wait until the turn is handed over, so one that
           // fails or is cancelled before then leaves them for the next.
           noteRoot =
@@ -702,8 +706,10 @@ export class GooseRuntime {
     const { agent, team } = delivery;
     await this.follow(delivery.config);
     const entry = this.entry(agent.key, this.settings(delivery.config));
-    entry.handle = agent;
-    entry.team = team ?? "";
+    if (entry.config.scope !== "community" || !entry.handle) {
+      entry.handle = agent;
+      entry.team = team ?? "";
+    }
     const done =
       entry.config.scope === "community"
         ? communityTurn(
@@ -716,6 +722,8 @@ export class GooseRuntime {
               if (text === undefined || !delivery.current())
                 return { ok: true };
               signal.throwIfAborted();
+              entry.handle = agent;
+              entry.team = team ?? "";
               entry.project.resolve(undefined, NO_PROJECT);
               entry.contexts.set(COMMUNITY_SESSION, {});
               const stop = () => {

@@ -4080,6 +4080,9 @@ it("withdraws the previous Solo folders when a community session moves to a chan
 it("stops only the queued community request selected by the user", async () => {
   const f = setup([], { hold: true });
   const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const queuedPublish = vi.fn((...args: Parameters<typeof f.agent.publish>) =>
+    f.agent.publish(...args),
+  );
   try {
     await f.deliver(
       { type: "mention", event: message("1", "first") },
@@ -4090,7 +4093,13 @@ it("stops only the queued community request selected by the user", async () => {
     );
     await f.deliver(
       { type: "mention", event: message("2", "queued") },
-      { config },
+      {
+        config,
+        agent: {
+          ...f.agent,
+          publish: queuedPublish,
+        } as unknown as Delivery["agent"],
+      },
     );
     const worker = f.claudes().find((p) => p.prompts.length);
     if (!worker) throw new Error("No Claude process");
@@ -4107,6 +4116,12 @@ it("stops only the queued community request selected by the user", async () => {
           (i.request as { subtype?: string }).subtype === "interrupt",
       ),
     ).toHaveLength(before);
+    await mcp(worker, 201, "tools/call", {
+      name: "send",
+      arguments: { text: "active reply", audience: "everyone" },
+    });
+    expect(queuedPublish).not.toHaveBeenCalled();
+    expect(f.agent.publish).toHaveBeenCalled();
     worker.finish();
     await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
     expect(worker.prompts).toHaveLength(1);

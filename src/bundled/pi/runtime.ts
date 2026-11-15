@@ -166,7 +166,7 @@ type Entry = {
   /** The team sections of the latest run. */
   team: string;
   name?: string;
-  /** The agent's handle from its latest delivery, for the tools to act with. */
+  /** The latest admitted delivery's handle, used by its running tools. */
   handle?: AgentHandle;
   /** Each conversation's latest posting policy, as in Claude: when its turns
    * were handed over, and when all of them settled. Interrupt cancels the
@@ -587,8 +587,10 @@ export class PiRuntime {
       return ignored?.();
     signal.throwIfAborted();
     const entry = this.entry(agent, config(raw));
-    entry.handle = agent;
-    entry.team = team ?? "";
+    if (entry.config.scope !== "community" || !entry.handle) {
+      entry.handle = agent;
+      entry.team = team ?? "";
+    }
     const event =
       trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const channel = channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
@@ -644,6 +646,8 @@ export class PiRuntime {
       );
       this.live(entry, agent.key);
       if (interrupted || (wake && current && !current())) return;
+      entry.handle = agent;
+      entry.team = team ?? "";
       const { seen } = await this.pi.request<{ seen: number }>("place", {
         agent: agent.key,
         key,
@@ -814,8 +818,10 @@ export class PiRuntime {
   ): Promise<TurnResult> {
     const { agent, team } = delivery;
     const entry = this.entry(agent, config(delivery.config));
-    entry.handle = agent;
-    entry.team = team ?? "";
+    if (entry.config.scope !== "community" || !entry.handle) {
+      entry.handle = agent;
+      entry.team = team ?? "";
+    }
     if (entry.config.scope === "community" && !community)
       return communityTurn(
         entry.policies,
@@ -835,6 +841,8 @@ export class PiRuntime {
           [...entry.receipts.values()].map((receipt) => receipt.settled),
         );
       signal.throwIfAborted();
+      entry.handle = agent;
+      entry.team = team ?? "";
       const text = await prompt();
       if (text === undefined) return { ok: true };
       const turn = await this.turnOf(

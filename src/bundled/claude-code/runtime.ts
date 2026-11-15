@@ -169,7 +169,7 @@ type Entry = {
   /** Its `core` memory as its latest turn read it; a change restarts idle
    * sessions, which resume with their history. */
   memory?: string | null | undefined;
-  /** The agent's handle from its latest delivery, for the tools to act with. */
+  /** The latest admitted delivery's handle, used by its running tools. */
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
@@ -1017,8 +1017,10 @@ export class ClaudeRuntime {
     }
     signal.throwIfAborted();
     const entry = this.entry(agent, settings);
-    entry.handle = agent;
-    entry.team = team ?? "";
+    if (entry.config.scope !== "community" || !entry.handle) {
+      entry.handle = agent;
+      entry.team = team ?? "";
+    }
     // A pick is the owner's for this turn; otherwise a synced effort holds.
     const kept = !model && !effort ? synced?.effort : undefined;
     const admit = async () => {
@@ -1171,6 +1173,8 @@ export class ClaudeRuntime {
             delivered = Promise.resolve({ ok: true });
             return;
           }
+          entry.handle = agent;
+          entry.team = team ?? "";
           // Plugins' notes wait until the turn is handed over, so one that
           // fails or is cancelled before then leaves them for the next.
           const noteRoot =
@@ -1371,8 +1375,10 @@ export class ClaudeRuntime {
       }
     }
     const entry = this.entry(agent, this.resolveConfig(delivery.config));
-    entry.handle = agent;
-    entry.team = team ?? "";
+    if (entry.config.scope !== "community" || !entry.handle) {
+      entry.handle = agent;
+      entry.team = team ?? "";
+    }
     const refused = await this.refusal(agent.key, delivery.synced?.effort);
     if (refused) return { ok: false, error: refused };
     // Its new process launches on the core memory read now.
@@ -1389,6 +1395,8 @@ export class ClaudeRuntime {
               if (text === undefined || !delivery.current())
                 return { ok: true };
               signal.throwIfAborted();
+              entry.handle = agent;
+              entry.team = team ?? "";
               entry.project.resolve(undefined, NO_PROJECT);
               entry.directories.delete(COMMUNITY_SESSION);
               entry.contexts.set(COMMUNITY_SESSION, {});

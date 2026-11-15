@@ -7321,7 +7321,7 @@ it("uses the default local flow without opening or claiming execution", async ()
   await f.complete();
 });
 
-it.each(["conversation", "standalone", "preview"])(
+it.each(["conversation", "standalone", "community wake", "preview"])(
   "does not revive disposed local work after %s inspection",
   async (mode) => {
     const inspected = deferred<undefined>();
@@ -7341,7 +7341,14 @@ it.each(["conversation", "standalone", "preview"])(
         return inspected.promise;
       },
     );
-    const delivery = f.delivery("local work");
+    const base = f.delivery("local work");
+    const delivery =
+      mode === "community wake"
+        ? {
+            ...base,
+            config: { ...(base.config as object), scope: "community" },
+          }
+        : base;
     const result =
       mode === "preview"
         ? f.runtime.preview({

@@ -2152,6 +2152,7 @@ export class CodexRuntime {
         );
         return runtime.runOnce({ delivery, key, signal: turnSignal, prompt });
       }
+      if (this.disposed) throw new Error("Codex runtime is disposed");
       const entry = this.entry(agent.key, scope);
       const lane = entry.lanes.get(key) ?? {
         tail: Promise.all(

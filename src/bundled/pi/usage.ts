@@ -18,6 +18,7 @@ type Json = Record<string, unknown>;
 type Place = Readonly<{
   conversation: number;
   channelId: string;
+  community?: true;
   root?: string;
   at: number;
 }>;
@@ -125,10 +126,20 @@ export function conversationUsage(
     });
   }
   const asked = title(entries);
+  const first = entries.find((entry) => entry.kind === "pi.user")?.model?.[0];
+  const context = promptSections(text(first?.content)).find(
+    (section) => section.tag === "context",
+  )?.body;
+  const community =
+    place.community || /^Session scope: community$/m.test(context ?? "");
+  const channel = context?.match(/^Channel: (.*)$/m)?.[1]?.trim();
+  const origin = community
+    ? (channel?.match(/\(#([^)]+)\)$/)?.[1] ?? channel)
+    : place.channelId;
   return {
     id: String(place.conversation),
-    channelId: place.channelId,
-    ...(place.root ? { root: place.root } : {}),
+    ...(origin ? { channelId: origin } : {}),
+    ...(!community && place.root ? { root: place.root } : {}),
     ...(asked ? { title: asked } : {}),
     startedAt: Math.min(...times),
     lastAt,

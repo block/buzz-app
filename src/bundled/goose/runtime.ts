@@ -499,7 +499,7 @@ export class GooseRuntime {
     // Found only for a delivery it takes, so nothing it drops starts goose.
     await this.follow(raw);
     const entry = this.entry(agent.key, this.settings(raw));
-    if (entry.config.scope !== "community" || !entry.handle) {
+    if (this.settings(raw).scope !== "community" || !entry.handle) {
       entry.handle = agent;
       entry.team = team ?? "";
     }

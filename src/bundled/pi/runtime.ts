@@ -603,7 +603,7 @@ export class PiRuntime {
         (accepted, deferred) => this.admitDelivery(accepted, true, deferred),
       );
     const entry = this.entry(agent, config(raw));
-    if (entry.config.scope !== "community" || !entry.handle) {
+    if (config(raw).scope !== "community" || !entry.handle) {
       entry.handle = agent;
       entry.team = team ?? "";
     }

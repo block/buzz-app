@@ -1032,7 +1032,7 @@ export class ClaudeRuntime {
         (accepted, deferred) => this.admitDelivery(accepted, true, deferred),
       );
     const entry = this.entry(agent, settings);
-    if (entry.config.scope !== "community" || !entry.handle) {
+    if (settings.scope !== "community" || !entry.handle) {
       entry.handle = agent;
       entry.team = team ?? "";
     }

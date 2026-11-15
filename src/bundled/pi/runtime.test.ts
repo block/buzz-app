@@ -2763,7 +2763,7 @@ it("retains the Solo Canvas when a source is invalidated during preparation", as
   }
 });
 
-it.each(["waiting", "submitting"] as const)(
+it.each(["waiting", "submitting", "scope changed"] as const)(
   "cancels a community Pi request while %s without losing native ownership",
   async (phase) => {
     const firstDone = deferred<unknown>();
@@ -2802,6 +2802,13 @@ it.each(["waiting", "submitting"] as const)(
       await vi.waitFor(() =>
         expect(f.host.requests("deliver")).toHaveLength(1),
       );
+      if (phase === "scope changed")
+        f.runtime.sync([
+          {
+            ...f.agent,
+            config: { ...config, scope: "thread" },
+          } as unknown as Agent,
+        ]);
       const b = f.deliver(
         {
           type: "mention",
@@ -2831,7 +2838,7 @@ it.each(["waiting", "submitting"] as const)(
       }
       const stopped = vi.fn();
       stop = interruptible.mock.calls[0]?.[0]().then(stopped);
-      if (phase === "waiting") {
+      if (phase !== "submitting") {
         await vi.waitFor(() => expect(stopped).toHaveBeenCalledOnce());
         await f.runtime.tool({
           agent: self,
@@ -2855,7 +2862,7 @@ it.each(["waiting", "submitting"] as const)(
       firstDone.resolve({ status: "done", answer: 1, text: "done" });
       await f.settled(a);
       await f.settled(b);
-      if (phase === "waiting")
+      if (phase !== "submitting")
         expect(f.host.requests("deliver")).toHaveLength(1);
     } finally {
       firstDone.resolve({ status: "done", answer: 1, text: "done" });

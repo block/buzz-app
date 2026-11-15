@@ -2522,7 +2522,8 @@ export class CodexRuntime {
     text: string,
     stopped: AbortSignal,
     // The conversation's thread settings: its workspace, model, and Codex
-    // config with MCP servers, plugins, apps and web search off.
+    // config. The title thread turns MCP servers, plugins and apps off
+    // whatever the conversation allows.
     {
       cwd,
       model,
@@ -2569,6 +2570,8 @@ export class CodexRuntime {
                 >,
               ).map(([name, server]) => [name, { ...server, enabled: false }]),
             ),
+            "features.plugins": false,
+            "features.apps": false,
             ...(this.server?.rpc === rpc && this.hooks
               ? { "hooks.state": await nativeHookState(rpc, cwd, false) }
               : {}),

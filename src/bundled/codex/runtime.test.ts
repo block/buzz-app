@@ -5385,13 +5385,20 @@ it("titles a new Solo chat once, from its first message on an ephemeral read-onl
         wire.method === "thread/start" &&
         (wire.params as { ephemeral?: boolean }).ephemeral,
     );
-  await f.runtime.run({ ...f.delivery("@Codex fix the login bug"), named });
+  const delivery = f.delivery("@Codex fix the login bug");
+  // Even when the conversation allows Codex apps and plugins.
+  await f.runtime.run({
+    ...delivery,
+    config: { ...(delivery.config as object), apps: true },
+    named,
+  });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   // Without Codex's title model in the catalog, the chat's own model titles it.
   expect(titling()[0]?.params).toMatchObject({
     model: "test-model",
     approvalPolicy: "never",
     sandbox: "read-only",
+    config: { "features.apps": false, "features.plugins": false },
   });
   expect(f.starts()[1]?.params).toMatchObject({
     threadId: "thread-2",

@@ -288,6 +288,13 @@ export function mountEmojiMart({
       margin-inline-start: 0;
     }
     /* Native glyphs match the 2rem custom image cap (the title type size). */
+    /* A glyph keeps the inherited body line height (about 1.4x its size),
+       which pushes it below center in the 2rem box. */
+    #preview .emoji-mart-emoji,
+    #preview .emoji-mart-emoji > span {
+      display: block;
+      line-height: 1;
+    }
     #preview .emoji-mart-emoji > span {
       font-size: var(--text-title) !important;
     }

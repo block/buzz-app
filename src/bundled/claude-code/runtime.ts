@@ -1105,7 +1105,7 @@ export class ClaudeRuntime {
             key,
             deferred ? undefined : signal,
           );
-          delivery.signal.throwIfAborted();
+          if (reserved || !deferred) delivery.signal.throwIfAborted();
           const accepted = deferred ? runtime.target?.signal : signal;
           if (!accepted)
             throw new Error("The remote Claude lifetime is unavailable");

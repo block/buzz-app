@@ -93,6 +93,8 @@ export function App({ services }: { services: AppServices }) {
         value={isTauri() ? modalWindowDragHandlers : undefined}
       >
         <LaunchWindowControls />
+        {/* Identity-only: it shows before any community is joined too. */}
+        <IdentityRequestDialog requests={services.identityRequests} />
         {services.identity ? (
           <Welcome
             identity={services.identity}
@@ -121,8 +123,6 @@ function ConnectedApp({ services }: { services: AppServices }) {
       portalContainer={document.getElementById("buzz-toast-root") ?? undefined}
     >
       <AgentCompletionNotifications services={services} />
-      {/* Identity-only, so it shows during community onboarding too. */}
-      <IdentityRequestDialog requests={services.identityRequests} />
       <AgentsContext.Provider value={services.agents}>
         <PluginUpdates
           plugins={services.plugins}

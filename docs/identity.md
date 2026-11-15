@@ -631,7 +631,8 @@ Each parameter appears once and no others are accepted. `callback` is an
 `https` URL without credentials or a fragment (not even an empty `#`); its origin is the site the owner
 is shown and answers to. `state` is 32 random bytes as unpadded base64url, the
 external app protocol's form. The link binds no community: it waits until an
-identity is ready, like an invite, and never becomes a navigation visit.
+identity is ready and shows even before any community is joined, outside
+first-run setup. It never becomes a navigation visit.
 
 Nothing is signed on arrival. **Authorize {host}?** names the callback's origin
 and shows the key's npub with the same warning as the settings form. A request

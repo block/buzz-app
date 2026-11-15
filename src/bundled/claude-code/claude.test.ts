@@ -1166,3 +1166,45 @@ it("holds idle across task removal until the notified continuation finishes", as
   expect(claude.active).toBe(false);
   await claude.kill();
 });
+
+it.each(["foreground", "continuation"] as const)(
+  "settles task notifications consumed during %s work",
+  async (work) => {
+    const { spawn, processes } = fakeSpawn();
+    const claude = await ClaudeProcess.start(spawn, {
+      ...launch,
+      sessionId: "overlap",
+    });
+    await claude.send("start background");
+    const fake = processes[0];
+    if (!fake) throw new Error("missing process");
+    try {
+      fake.emit({
+        type: "system",
+        subtype: "background_tasks_changed",
+        tasks: [{ task_id: "first" }, { task_id: "second" }],
+      });
+      if (work === "continuation")
+        fake.emit({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "first",
+        });
+      sessionState(fake, "running");
+      fake.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "second",
+      });
+      backgroundTasks(fake);
+      const settled = vi.fn();
+      const idle = claude.idle().then(settled);
+      sessionState(fake, "idle");
+      await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce());
+      await idle;
+      expect(claude.active).toBe(false);
+    } finally {
+      await claude.kill();
+    }
+  },
+);

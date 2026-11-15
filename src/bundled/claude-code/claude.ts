@@ -836,7 +836,7 @@ export class ClaudeProcess {
       message.subtype === "task_notification" &&
       this.taskIds.has(String(message.task_id))
     ) {
-      this.continuation = "waiting";
+      this.continuation = this.working ? "running" : "waiting";
       return;
     }
     // The whole set each time; ambient tasks, such as watchers, are not activity.

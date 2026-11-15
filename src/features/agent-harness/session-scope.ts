@@ -70,6 +70,38 @@ type Policy = {
   cancel(): void;
 };
 
+/** Independent wakes keep their cancellation owner but join the ownership drain. */
+export function standaloneTurn<T>(
+  policies: Map<string, Policy>,
+  signal: AbortSignal,
+  run: (signal: AbortSignal) => Promise<T>,
+  changed: () => void = () => {},
+) {
+  const shared = policies.get(COMMUNITY_SESSION);
+  const key = `once:${crypto.randomUUID()}`;
+  const cancel = new AbortController();
+  const lifetime = AbortSignal.any([signal, cancel.signal]);
+  const done = Promise.resolve().then(async () => {
+    await shared?.settled;
+    if (shared) lifetime.throwIfAborted();
+    return run(lifetime);
+  });
+  const policy = {
+    topLevel: false,
+    handed: done,
+    settled: done.catch(() => undefined),
+    cancel: () => cancel.abort(),
+  };
+  policies.set(key, policy);
+  void policy.settled.then(() => {
+    policies.delete(key);
+    changed();
+  });
+  return (
+    shared ? abortable(shared.settled, lifetime) : Promise.resolve()
+  ).then(() => done);
+}
+
 /** An unaddressed wake joins the shared lifetime with no tool destination.
  * Its tools cannot replace a conversation's defaults until that turn ends. */
 export async function communityTurn<T>(

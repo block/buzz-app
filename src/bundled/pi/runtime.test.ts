@@ -3413,3 +3413,63 @@ it.each(["thread", "channel"] as const)(
     }
   },
 );
+
+it.each(["thread", "channel"] as const)(
+  "drains an active %s standalone wake before community ownership changes",
+  async (scope) => {
+    const finished = deferred<unknown>();
+    const f = setup({ wait: () => finished.promise });
+    const wake = f.runtime.runOnce({
+      delivery: {
+        agent: f.agent,
+        config: { ...DEFAULT_CONFIG, scope },
+        current: () => true,
+      },
+      key: "old-scope-wake",
+      signal: new AbortController().signal,
+      prompt: async () => "held standalone wake",
+    } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+    await vi.waitFor(() => expect(f.host.requests("once")).toHaveLength(1));
+    const queuedPublish = vi.fn((...args: Parameters<typeof f.agent.publish>) =>
+      f.agent.publish(...args),
+    );
+    const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+    try {
+      f.runtime.sync([{ ...f.agent, config } as unknown as Agent]);
+      const second = f.deliver(
+        { type: "mention", event: reply("2", "community second") },
+        {
+          config,
+          agent: {
+            ...f.agent,
+            publish: queuedPublish,
+          } as unknown as Delivery["agent"],
+        },
+      );
+      await second.run;
+      // Finish the fake protocol's queued microtasks before the late tool call.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await f.runtime.tool({
+        agent: self,
+        conversation: 99,
+        context: {},
+        name: "send",
+        arguments: {
+          text: "standalone owner output",
+          channel,
+          audience: "everyone",
+        },
+      });
+      expect(queuedPublish).not.toHaveBeenCalled();
+      expect(f.agent.publish).toHaveBeenCalled();
+      finished.resolve({ status: "done", answer: 1, text: "done" });
+      await expect(wake).resolves.toMatchObject({ ok: true });
+      await f.settled(second);
+      expect(f.host.requests("deliver")).toHaveLength(1);
+    } finally {
+      finished.resolve({ status: "done", answer: 1, text: "done" });
+      f.runtime.dispose();
+      await wake.catch(() => {});
+    }
+  },
+);

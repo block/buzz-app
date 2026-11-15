@@ -4,6 +4,7 @@ import { localStore } from "../agents/store";
 import {
   COMMUNITY_SESSION,
   communityTurn,
+  standaloneTurn,
   scopedSessionKey,
   sessionScope,
   rememberCommunitySource,
@@ -175,4 +176,79 @@ it("notifies when a cancelled wake's retained ordering policy finally drains", a
   release();
   await vi.waitFor(() => expect(policies.has(COMMUNITY_SESSION)).toBe(false));
   expect(states.at(-1)).toBe(false);
+});
+
+it.each([false, true])(
+  "drains an independent wake before community work, including failure=%s",
+  async (fails) => {
+    const policies = new Map();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const once = standaloneTurn(
+      policies,
+      new AbortController().signal,
+      async () => {
+        await gate;
+        if (fails) throw new Error("wake failed");
+        return "independent";
+      },
+    );
+    const outcome = fails
+      ? expect(once).rejects.toThrow("wake failed")
+      : expect(once).resolves.toBe("independent");
+    const run = vi.fn(async () => "community");
+    const shared = communityTurn(
+      policies,
+      new AbortController().signal,
+      new SessionControls(() => {}),
+      "shared",
+      run,
+    );
+    expect(policies.size).toBe(2);
+    expect(run).not.toHaveBeenCalled();
+    release();
+    await outcome;
+    await expect(shared).resolves.toBe("community");
+    await vi.waitFor(() => expect(policies.size).toBe(0));
+  },
+);
+
+it("retains an aborted independent wake in the drain until native work settles", async () => {
+  const policies = new Map();
+  let release!: () => void;
+  let started!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const signal = new AbortController();
+  const once = standaloneTurn(policies, signal.signal, async () => {
+    started();
+    await gate;
+  });
+  await entered;
+  const stopped = vi.fn();
+  void once.then(stopped);
+  signal.abort(new Error("stop"));
+  expect(stopped).not.toHaveBeenCalled();
+  expect(policies.size).toBe(1);
+  const run = vi.fn(async () => {});
+  const shared = communityTurn(
+    policies,
+    new AbortController().signal,
+    new SessionControls(() => {}),
+    "shared",
+    run,
+  );
+  expect(run).not.toHaveBeenCalled();
+  release();
+  await once;
+  await shared;
+  expect(stopped).toHaveBeenCalledOnce();
+  expect(run).toHaveBeenCalledOnce();
+  await vi.waitFor(() => expect(policies.size).toBe(0));
 });

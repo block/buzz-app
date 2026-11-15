@@ -3226,3 +3226,54 @@ it.each(["thread", "channel"] as const)(
     }
   },
 );
+
+it.each(["thread", "channel"] as const)(
+  "drains an active %s standalone wake before community ownership changes",
+  async (scope) => {
+    const f = setup({ hold: true });
+    const wake = f.runtime.runOnce({
+      delivery: {
+        agent: f.agent,
+        config: { ...DEFAULT_CONFIG, scope },
+        current: () => true,
+      },
+      key: "old-scope-wake",
+      signal: new AbortController().signal,
+      prompt: async () => "held standalone wake",
+    } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+    await vi.waitFor(() => expect(f.goose()).toBeDefined());
+    const worker = f.goose();
+    if (!worker) throw new Error("Missing standalone native worker");
+    const queuedPublish = vi.fn((...args: Parameters<typeof f.agent.publish>) =>
+      f.agent.publish(...args),
+    );
+    const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+    try {
+      f.runtime.sync([{ ...f.agent, config } as unknown as Agent]);
+      await f.deliver(message("2", "community second"), {
+        config,
+        agent: {
+          ...f.agent,
+          publish: queuedPublish,
+        } as unknown as Delivery["agent"],
+      });
+      await worker.mcp(worker.turns[0]?.sessionId ?? "", "tools/call", {
+        name: "send",
+        arguments: {
+          text: "standalone owner output",
+          channel,
+          audience: "everyone",
+        },
+      });
+      expect(queuedPublish).not.toHaveBeenCalled();
+      expect(f.agent.publish).toHaveBeenCalled();
+      worker.turns[0]?.finish();
+      await expect(wake).resolves.toMatchObject({ ok: true });
+      await vi.waitFor(() => expect(worker.turns).toHaveLength(2));
+    } finally {
+      for (const turn of worker.turns) turn.finish();
+      f.runtime.dispose();
+      await wake.catch(() => {});
+    }
+  },
+);

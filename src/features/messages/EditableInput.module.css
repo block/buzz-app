@@ -174,7 +174,7 @@ html[data-keyboard-navigation] .input:focus-visible:not([aria-disabled]) {
   margin-block: var(--space-1);
   overflow: auto;
   border: 1px solid var(--border-standard);
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-chip);
   scrollbar-width: thin;
 }
 .input [data-composer-table] table {

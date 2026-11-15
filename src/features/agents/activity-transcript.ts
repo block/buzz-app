@@ -227,6 +227,12 @@ export const sentEventIds = (output: string) =>
   [...output.matchAll(/\bsent ([0-9a-f]{64})\b/g)].flatMap(
     (match) => match[1] ?? [],
   );
+/** A sent message once its result reports success: posted, as the event the
+ * result names, so a reply can be found by its id. */
+export const postedAs = (output: string) => {
+  const [messageId] = sentEventIds(output);
+  return { posted: true, ...(messageId ? { messageId } : {}) };
+};
 
 /** The ids of the Buzz events a prompt was for: an exact record's first line,
  * or an older turn's escaped event. */
@@ -731,15 +737,12 @@ function buildTranscript(
           !postsMessage(item.title)
         )
           return item;
-        // Its result names the event, so the reply can be found by its id.
-        const [messageId] = sentEventIds(item.output);
         return {
           id: item.id,
           at: item.at,
           type: "message",
           text,
-          posted: true,
-          ...(messageId ? { messageId } : {}),
+          ...postedAs(item.output),
         };
       });
       // Older harnesses omit threadRootEventId; the prompt context still names it.

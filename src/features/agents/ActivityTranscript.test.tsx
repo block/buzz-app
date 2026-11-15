@@ -619,16 +619,6 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
     expect(view.querySelectorAll("[data-arrived]")).toHaveLength(1);
     // A reply a script sent lands on the call that ran it.
     const scripted = turn(7);
-    const tool = {
-      type: "tool" as const,
-      kind: "execute",
-      status: "completed",
-      input: "",
-      output: "",
-      diffs: [],
-      paths: [],
-      truncated: false,
-    };
     rerender(
       show(
         [
@@ -637,19 +627,26 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
             items: [
               ...scripted.items,
               {
-                ...tool,
                 id: "x7",
                 at: 8,
+                type: "tool",
                 toolCallId: "x7",
                 title: "exec",
+                kind: "execute",
+                status: "completed",
+                input: "",
+                output: "",
+                diffs: [],
+                paths: [],
+                truncated: false,
                 children: [
                   {
-                    ...tool,
                     id: "s7",
                     at: 9,
-                    toolCallId: "s7",
-                    title: "buzz__send",
-                    output: `sent ${id(8)}`,
+                    type: "message",
+                    text: "Reply 7",
+                    posted: true,
+                    messageId: id(8),
                   },
                 ],
               },

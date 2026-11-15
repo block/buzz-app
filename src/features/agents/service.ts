@@ -3779,13 +3779,23 @@ export class AgentsService extends Service implements Agents {
         value: LocalAgentsSnapshot;
       }
     | undefined;
+  private hostedCache:
+    | { agents: readonly Agent[]; hosted: readonly Agent[] }
+    | undefined;
   /** Local identities in every community, plus completed hosted choices in the
    * selected community. Hosted choices grant no local custody. */
   local = (): LocalAgentsSnapshot => {
     const { identities, state } = this;
-    const hosted = state.agents.filter(
-      (agent) => agent.place === "hosted" && !agent.unfinished,
-    );
+    // Every name lookup asks for this snapshot: filter the agents again only
+    // when the list changes.
+    if (this.hostedCache?.agents !== state.agents)
+      this.hostedCache = {
+        agents: state.agents,
+        hosted: state.agents.filter(
+          (agent) => agent.place === "hosted" && !agent.unfinished,
+        ),
+      };
+    const { hosted } = this.hostedCache;
     const cached = this.localCache;
     const unchanged =
       cached?.identities === identities &&
@@ -3793,8 +3803,7 @@ export class AgentsService extends Service implements Agents {
       hosted.every((agent, index) => agent === cached.hosted[index]) &&
       cached.state.status === state.status &&
       cached.state.error === state.error;
-    // Every name lookup asks for this snapshot: reread each agent's binding
-    // only after one may have changed.
+    // Reread each agent's binding only after one may have changed.
     const bindings = this.executions.bindingChanges();
     if (unchanged && cached.bindings === bindings) return cached.value;
     const remote = new Set(

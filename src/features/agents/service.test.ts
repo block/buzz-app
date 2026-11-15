@@ -6622,6 +6622,23 @@ it("rereads agent execution bindings only after one may have changed", async () 
   ).toBe("remote");
 });
 
+it("filters the agent list for hosted choices only when the list changes", async () => {
+  const { service } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const filter = vi.spyOn(Array.prototype, "filter");
+  onTestFinished(() => {
+    filter.mockRestore();
+  });
+  const agents = service.snapshot().agents;
+  const filtered = () =>
+    filter.mock.contexts.filter((list) => list === agents).length;
+  service.local();
+  const first = filtered();
+  // Each name lookup asks again; the same list is not filtered again.
+  for (let lookup = 0; lookup < 5; lookup++) service.local();
+  expect(filtered()).toBe(first);
+});
+
 it("keeps local selection evidence stable across unrelated agent attention changes", async () => {
   const { service, plugin } = await setup();
   plugin.agents.register(cloud().type);

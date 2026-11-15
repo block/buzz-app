@@ -76,9 +76,21 @@ export function createAgentExecutions(root: Context, storage: AgentStore) {
       execution: AgentExecution | undefined;
     }
   >();
+  /** Each validated agent's last parsed binding with its text: name lookups
+   * read every agent's binding per label, so unchanged text skips the parse. */
+  const parsed = new Map<
+    AgentKey,
+    { text: string | null; binding: AgentExecutionBinding | undefined }
+  >();
   const read = (agent: AgentKey): AgentExecutionBinding | undefined => {
-    if (!AGENT_KEY.test(agent)) throw new Error("Invalid agent membership key");
-    return parse(storage.get(PREFIX + agent));
+    const last = parsed.get(agent);
+    if (!last && !AGENT_KEY.test(agent))
+      throw new Error("Invalid agent membership key");
+    const text = storage.get(PREFIX + agent);
+    if (last?.text === text) return last.binding;
+    const binding = parse(text);
+    parsed.set(agent, { text, binding });
+    return binding;
   };
   const parse = (text: string | null): AgentExecutionBinding | undefined => {
     if (text === null || text === LOCAL) return;

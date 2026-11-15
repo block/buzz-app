@@ -55,6 +55,7 @@ export class SessionControls {
     return {
       deferred,
       done,
+      signal: controller.signal,
       cancel: () => controller.abort(new Error("Session work interrupted")),
     };
   }
@@ -100,11 +101,19 @@ export class SessionControls {
       handoff.cancel();
       await interrupt?.();
     });
-    if (handoff.deferred) {
-      delivery.workingUntil(handoff.done);
-      return Promise.resolve();
-    }
-    return handoff.done;
+    delivery.workingUntil(
+      handoff.done.then(
+        (): TurnResult =>
+          handoff.signal.aborted
+            ? { ok: false, error: "Session work interrupted" }
+            : { ok: true },
+        (error: unknown): TurnResult => ({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      ),
+    );
+    return handoff.deferred ? Promise.resolve() : handoff.done;
   }
   async wake(
     key: string,

@@ -190,13 +190,16 @@ function setup(
     return { run, ...receipt };
   };
   /** What the turn `workingUntil` was given settled with. */
-  const settled = (receipt: {
+  const settled = async (receipt: {
     workingUntil: { mock: { calls: unknown[][] } };
-  }) =>
-    receipt.workingUntil.mock.calls[0]?.[0] as Promise<{
-      ok: boolean;
-      error?: string;
-    }>;
+  }) => {
+    let outcome: { ok: boolean; error?: string } = { ok: true };
+    for (const [pending] of receipt.workingUntil.mock.calls) {
+      const result = await (pending as Promise<typeof outcome | undefined>);
+      if (result && outcome.ok) outcome = result;
+    }
+    return outcome;
+  };
   const runOnce = (
     key: string,
     text: string | undefined,

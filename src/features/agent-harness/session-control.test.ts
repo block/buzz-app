@@ -203,3 +203,53 @@ it("reports a queued wake interrupted before admission as unfinished", async () 
     controls.wake("shared", new AbortController().signal, run),
   ).resolves.toEqual({ ok: true });
 });
+
+it.each(["queued", "preparing"])(
+  "retains an unsuccessful result for addressed work interrupted while %s",
+  async (boundary) => {
+    const controls = new SessionControls(() => {});
+    let release!: () => void;
+    let mark!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      mark = resolve;
+    });
+    const prior =
+      boundary === "queued"
+        ? controls.deliver(
+            "shared",
+            async () => {
+              await gate;
+            },
+            true,
+          )
+        : undefined;
+    const workingUntil = vi.fn();
+    const run = vi.fn(async () => {
+      mark();
+      if (boundary === "preparing") await gate;
+    });
+    const admitted = controls.admit(
+      "shared",
+      {
+        signal: new AbortController().signal,
+        workingUntil,
+      } as unknown as import("../agents/service").Delivery,
+      run,
+    );
+    if (boundary === "queued") await admitted;
+    else await entered;
+    controls.interrupt("shared");
+    release();
+    await prior?.done;
+    await admitted;
+    expect(workingUntil).toHaveBeenCalledOnce();
+    await expect(workingUntil.mock.calls[0]?.[0]).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("interrupted"),
+    });
+    if (boundary === "queued") expect(run).not.toHaveBeenCalled();
+  },
+);

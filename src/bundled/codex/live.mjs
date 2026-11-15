@@ -357,12 +357,13 @@ try {
       );
       return published.at(-1);
     };
-    await answered(
+    const stored = await answered(
       runtime,
       shared(
         `Remember the private verification token ${token} for this session. Reply exactly STORED. Do not write it to disk or memory. Use only buzz.send.`,
       ),
     );
+    assert.match(stored.content, /STORED/);
     const initial = runtime.conversations(pubkey)[0].threadId;
     const across = await answered(
       runtime,
@@ -371,7 +372,7 @@ try {
         "other-channel",
       ),
     );
-    assert(across.content.includes(token));
+    assert(across.content.includes(token), across.content);
     assert(
       across.tags.some(
         ([name, value]) => name === "h" && value === "other-channel",
@@ -393,7 +394,7 @@ try {
         "solo",
       ),
     );
-    assert(restored.content.includes(token));
+    assert(restored.content.includes(token), restored.content);
     assert(!restored.tags.some(([name]) => name === "e"));
     assert.equal(communityRuntime.conversations(pubkey)[0].threadId, initial);
     const isolated = shared(

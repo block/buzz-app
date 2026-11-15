@@ -26,6 +26,7 @@ import { UpdateNotice } from "../features/updates/UpdateNotice";
 import { PluginUpdates } from "./PluginUpdates";
 import { RejectedLinkNotice } from "../features/navigation/RejectedLinkNotice";
 import { ExternalAuthorizationDialog } from "../features/agents/ExternalAuthorizationDialog";
+import { IdentityRequestDialog } from "./IdentityRequestDialog";
 import { MediaMenuDownloadNotice } from "../features/messages/MediaDownloadAction";
 import { CreationReview } from "../bundled/agents/CreationReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
@@ -742,6 +743,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             communities={services.communities}
             relay={services.relay}
           />
+          <IdentityRequestDialog requests={services.identityRequests} />
           <InterruptedNotice agents={services.agents} />
           <MediaMenuDownloadNotice />
           <CreationReview agents={services.agents} />

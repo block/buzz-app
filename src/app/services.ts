@@ -70,6 +70,7 @@ import {
 } from "../plugins/installer";
 import { withTimeout } from "../plugins/timeout";
 import { createExternalApps } from "../features/agents/external-connection";
+import { createIdentityRequests } from "../features/identity/identity-requests";
 
 export function createServices() {
   const appearance = createAppearance();
@@ -234,10 +235,12 @@ export function createServices() {
   // OS deep links; a no-op in the browser build. Invite admission remains in
   // the join dialog, never in navigation or the native queue.
   const rejectedLinks = createRejectedLinks();
+  const identityRequests = createIdentityRequests();
   const deepLinks = {
     ...navigationHost,
     invite: invites.open,
     authorize: externalApps.open,
+    authorizeIdentity: identityRequests.open,
     rejected: rejectedLinks.reject,
     accepted: () => rejectedLinks.clear(),
     // As the router decides: Inbox waits on startup and its own activation.
@@ -322,6 +325,7 @@ export function createServices() {
     rejectedLinks,
     deepLinks,
     externalApps,
+    identityRequests,
     appearance,
     updates,
     dispose() {

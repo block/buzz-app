@@ -154,20 +154,22 @@ export function attachmentDraft(
     for (const task of active.values()) task.controller.abort();
     active.clear();
     pending.clear();
-    items = items.map((item) =>
-      item.status === "queued" ||
-      item.status === "preparing" ||
-      item.status === "uploading"
-        ? {
-            ...item,
-            status: retryRequired ? "error" : "queued",
-            error: retryRequired
-              ? "Upload paused. Retry to continue."
-              : undefined,
-            transfer: undefined,
-          }
-        : item,
-    );
+    items = items.map((item): DraftAttachment => {
+      if (
+        item.status !== "queued" &&
+        item.status !== "preparing" &&
+        item.status !== "uploading"
+      )
+        return item;
+      // Held files only upload on Send, so the next Send is their retry.
+      const retry = retryRequired && !item.onSend;
+      return {
+        ...item,
+        status: retry ? "error" : "queued",
+        error: retry ? "Upload paused. Retry to continue." : undefined,
+        transfer: undefined,
+      };
+    });
     emit();
   }
   function abortReason(signal: AbortSignal) {

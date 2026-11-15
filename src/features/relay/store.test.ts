@@ -74,6 +74,30 @@ describe("channel store", () => {
     failing.queries.ensureList();
     expect(failing.queries.list().status).toBe("loading");
   });
+  it("does not republish the list when a channel lookup changes nothing", async () => {
+    let clock = 0;
+    const { queries, next } = setup(2, () => ++clock);
+    queries.ensureList();
+    next().respond([
+      roster(relay, "b", [viewer.pubkey]),
+      metadata(relay, "b", "Beta"),
+    ]);
+    await flush();
+    // An open channel the viewer has not joined is looked up again on every
+    // search or catch-up page that mentions it.
+    const lookUp = async () => {
+      const resolving = queries.resolve?.(["open"]);
+      next().respond([metadata(relay, "open", "Open")]);
+      await resolving;
+    };
+    await lookUp();
+    const listener = vi.fn();
+    queries.subscribeList(listener);
+    const before = queries.list();
+    await lookUp();
+    expect(listener).not.toHaveBeenCalled();
+    expect(queries.list()).toBe(before);
+  });
   it("replaces a channel summary when only its private visibility changes", async () => {
     const { store, queries, next } = setup();
     queries.ensureList();

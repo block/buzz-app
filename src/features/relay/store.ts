@@ -493,7 +493,6 @@ export function createChannelStore(
       next.status === list.status &&
       next.coverage === list.coverage &&
       next.error === list.error &&
-      next.asOf === list.asOf &&
       next.rosterAsOf === list.rosterAsOf
     )
       return;
@@ -1890,7 +1889,10 @@ export function createChannelStore(
           asOf,
           ...(rosterAsOf !== undefined ? { rosterAsOf } : {}),
         },
-        discoveryChanged,
+        // Subscribers take a new `asOf` as a discovery revision. A lookup that
+        // changed nothing, as searches and catch-up repeat for open channels
+        // the viewer has not joined, publishes nothing.
+        discoveryChanged || !!complete || cached || revoked,
       );
     };
     // Commit the final channel list before any projection subscriber runs.

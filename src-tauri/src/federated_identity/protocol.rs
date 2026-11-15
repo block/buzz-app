@@ -45,8 +45,9 @@ pub(crate) fn clock_offset(date: Option<&str>) -> Option<i64> {
     (offset.abs() > CLOCK_HINT_SECS).then_some(offset)
 }
 /// A JWT NumericDate claim (RFC 7519 §2): any finite, non-negative JSON
-/// number, so fractional seconds are valid. Callers round `iat` up and `exp`
-/// down, which keeps a lifetime at `floor(exp − iat)` whole seconds or less.
+/// number, so fractional seconds are valid. Callers round `iat` up, so a
+/// lifetime against an `exp` that matches the issued expiry exactly is
+/// `floor(exp − iat)` whole seconds.
 pub(crate) fn numeric_date(claims: &serde_json::Value, name: &str) -> Option<f64> {
     claims
         .get(name)

@@ -2220,7 +2220,10 @@ fn an_agent_assertion_may_be_minted_120_s_ahead_but_not_121() {
     assert_eq!(check(121).unwrap_err().code, "invalid-assertion");
     // A fractional NumericDate `iat` is valid; it rounds up, so the lifetime
     // against the integer `exp` floors to whole seconds (299, not 299.5).
-    let token = jwt(&f.agent, serde_json::json!({ "iat": now as f64 + 0.5 }));
+    let token = jwt(
+        &f.agent,
+        serde_json::json!({ "iat": now as f64 + 0.5, "exp": now + 300 }),
+    );
     let minted = validate(
         &token,
         &f.agent,
@@ -2230,6 +2233,20 @@ fn an_agent_assertion_may_be_minted_120_s_ahead_but_not_121() {
         now,
     );
     assert_eq!(minted.map_err(|e| e.code), Ok(now + 1));
+    // A fractional `exp` past the issued expiry is not rounded to match.
+    let late = jwt(
+        &f.agent,
+        serde_json::json!({ "iat": now, "exp": now as f64 + 300.5 }),
+    );
+    assert!(validate(
+        &late,
+        &f.agent,
+        &grant,
+        "wss://relay.example",
+        now + 300,
+        now
+    )
+    .is_err());
 }
 
 #[tokio::test]

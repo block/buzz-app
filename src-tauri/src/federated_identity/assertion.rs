@@ -949,14 +949,16 @@ fn validate_jwt(
     let minted = numeric_date(&claims, "iat")
         .map(|iat| iat.ceil() as u64)
         .ok_or("invalid-assertion")?;
-    let expiry = numeric_date(&claims, "exp")
-        .map(|exp| exp.floor() as u64)
-        .ok_or("invalid-assertion")?;
+    // The raw `exp` must equal the returned expiry exactly, so a fractional
+    // `exp` past it is refused rather than rounded into agreement.
+    if numeric_date(&claims, "exp") != Some(returned_expiry as f64) {
+        return Err("invalid-assertion".into());
+    }
+    let expiry = returned_expiry;
     if header.get("typ").and_then(|v| v.as_str()) != Some("nip-fi+jwt")
         || claims.get("aud").and_then(|v| v.as_str())
             != Some(format!("https://{}", &relay[6..]).as_str())
         || claims.get("nostr_pubkey").and_then(|v| v.as_str()) != Some(viewer)
-        || expiry != returned_expiry
         || expiry <= now
         || expiry > session_expiry
         || minted > expiry
@@ -998,6 +1000,11 @@ mod tests {
         );
         let minted = validate_jwt(&token, &viewer, now + 600, &viewer, relay, now + 3600, now);
         assert_eq!(minted, Ok(now + 1)); // lifetime 599 s, floor(599.5)
+
+        // A fractional `exp` past the returned expiry is not rounded to match.
+        let token = format!("{}.{}.eA", URL_SAFE_NO_PAD.encode(br#"{"typ":"nip-fi+jwt"}"#), URL_SAFE_NO_PAD.encode(serde_json::json!({"nostr_pubkey":viewer,"aud":"https://relay.example","iat":now,"exp":now as f64 + 600.5}).to_string()));
+        let late = validate_jwt(&token, &viewer, now + 600, &viewer, relay, now + 600, now);
+        assert_eq!(late.unwrap_err().code, "invalid-assertion");
     }
 
     #[test]

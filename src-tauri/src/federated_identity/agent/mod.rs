@@ -1244,8 +1244,7 @@ fn validate(
         || text("nostr_owner_pubkey") != Some(&agent.owner)
         || text("iss") != Some(&grant.issuer)
         || text("aud") != Some(&audience)
-        || super::protocol::numeric_date(&claims, "exp").map(|exp| exp.floor() as u64)
-            != Some(expires_at)
+        || super::protocol::numeric_date(&claims, "exp") != Some(expires_at as f64)
         || !minted.is_some_and(|minted| {
             minted <= now + super::protocol::CLOCK_SKEW_SECS && minted <= expires_at
         })

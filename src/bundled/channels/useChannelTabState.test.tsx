@@ -44,7 +44,7 @@ test("a detail visit retains the exact source thread in the main pane", () => {
   const source = h.result.current.tabs.find((tab) => tab.kind === "thread");
   if (!source) throw new Error("The source thread is missing.");
   const id = source.id;
-  act(() => h.result.current.resolveThreadRoot(id, "root"));
+  act(() => h.result.current.resolveThreadRoot(id, "root", "reply"));
   act(() => {
     h.result.current.enterVisit(
       "source:detail",
@@ -1415,7 +1415,11 @@ test("a provisional tab's saved name moves to its verified root", () => {
   act(() => first.page.result.current.openThreadTab("alpha", "r2", "hint"));
   first.rename("thread:alpha:hint", "Launch plan");
   act(() =>
-    first.page.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+    first.page.result.current.resolveThreadRoot(
+      "thread:alpha:hint",
+      "r1",
+      "r2",
+    ),
   );
   first.page.unmount();
   const second = launch(scope, "page");
@@ -1439,7 +1443,11 @@ test.each(["renamed", "cleared"] as const)(
     act(() => first.page.result.current.openThreadTab("alpha", "r2", "hint"));
     first.rename("thread:alpha:hint", "Draft");
     act(() =>
-      first.page.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+      first.page.result.current.resolveThreadRoot(
+        "thread:alpha:hint",
+        "r1",
+        "r2",
+      ),
     );
     expect(first.page.result.current.tabs).toMatchObject([
       { id: "thread:alpha:r1", name: "Launch plan" },
@@ -1453,7 +1461,11 @@ test.each(["renamed", "cleared"] as const)(
       name: undefined,
     });
     act(() =>
-      second.page.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+      second.page.result.current.resolveThreadRoot(
+        "thread:alpha:hint",
+        "r1",
+        "r2",
+      ),
     );
     second.page.unmount();
     const third = launch(scope, "page");
@@ -1482,7 +1494,11 @@ test.each(["named", "cleared"] as const)(
     act(() => second.page.result.current.openThreadTab("alpha", "r2", "hint"));
     expect(second.page.result.current.tabs[0]).toMatchObject({ name: "Draft" });
     act(() =>
-      second.page.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+      second.page.result.current.resolveThreadRoot(
+        "thread:alpha:hint",
+        "r1",
+        "r2",
+      ),
     );
     expect(second.page.result.current.tabs[0]).toMatchObject({ name });
     second.page.unmount();
@@ -1505,7 +1521,11 @@ test.each(["foreground", "background"] as const)(
     if (branch === "background")
       act(() => first.page.result.current.select("thread:alpha:r1"));
     act(() =>
-      first.page.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+      first.page.result.current.resolveThreadRoot(
+        "thread:alpha:hint",
+        "r1",
+        "r2",
+      ),
     );
     expect(first.page.result.current.tabs).toMatchObject([
       { id: "thread:alpha:r1", name: undefined },
@@ -1535,7 +1555,11 @@ test("a provisional tab merging into an open root keeps the root's clear across 
   act(() => second.tabs.open("alpha", "r1"));
   act(() => second.page.result.current.openThreadTab("alpha", "r2", "hint"));
   act(() =>
-    second.page.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+    second.page.result.current.resolveThreadRoot(
+      "thread:alpha:hint",
+      "r1",
+      "r2",
+    ),
   );
   expect(second.page.result.current.tabs).toMatchObject([
     { id: "thread:alpha:r1", name: undefined },
@@ -1646,7 +1670,9 @@ test("a provisional copy's root change keeps a name another workspace shows", ()
     useChannelTabState(first.session, undefined, "page:inbox"),
   );
   act(() => inbox.result.current.openThreadTab("alpha", "reply", "hint"));
-  act(() => inbox.result.current.resolveThreadRoot("thread:alpha:hint", "r1"));
+  act(() =>
+    inbox.result.current.resolveThreadRoot("thread:alpha:hint", "r1", "reply"),
+  );
   expect(readView(scope, "tab-names", {})).toEqual({
     "alpha:hint": "Launch plan",
     "alpha:r1": "Launch plan",
@@ -1668,7 +1694,7 @@ test.each(["retarget", "merge"] as const)(
     act(() => inbox.result.current.openThreadTab("alpha", "r2", "hint"));
     first.rename("thread:alpha:hint", "  ");
     act(() =>
-      inbox.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+      inbox.result.current.resolveThreadRoot("thread:alpha:hint", "r1", "r2"),
     );
     expect(inbox.result.current.tabs).toMatchObject([{ name: undefined }]);
     expect(readView(scope, "tab-names", {})).toEqual(

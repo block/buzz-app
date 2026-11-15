@@ -93,6 +93,8 @@ export type {
   LinkRenderer,
   MessageRenderer,
   MessageAction,
+  ThreadTabAction,
+  ThreadTabTarget,
   IdentityMark,
   TargetOpener,
 } from "../features/conversation/contracts";

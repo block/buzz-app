@@ -6245,14 +6245,18 @@ describe("voice seats", () => {
       await f.connection.close();
     },
   );
-  it.each(["unsupported", "missing", "failed"])(
-    "refuses an unchecked synced voice when discovery is %s",
-    async (state) => {
+  it.each(
+    ["unsupported", "missing", "failed"].flatMap((state) =>
+      [true, false].map((synced) => ({ state, synced })),
+    ),
+  )(
+    "refuses an unchecked saved voice: $state, synced=$synced",
+    async ({ state, synced }) => {
       const before = vi.mocked(openVoice).mock.calls.length;
       const started = seated(
         {
           config: { workspace: "/tmp/voices", voice: "maple" },
-          synced: { voice: "maple" },
+          ...(synced ? { synced: { voice: "maple" } } : {}),
         },
         (f) => {
           if (state === "unsupported") f.voiceCatalog.v3 = ["cove"];
@@ -6263,8 +6267,8 @@ describe("voice seats", () => {
       try {
         await expect(started).rejects.toThrow(
           state === "unsupported"
-            ? /synced voice "maple".*Change it in Settings/
-            : /Couldn't check.*synced voice "maple".*Try again/,
+            ? /voice "maple".*Settings/
+            : /Couldn't check.*voice "maple".*Try again/,
         );
         expect(vi.mocked(openVoice).mock.calls.length).toBe(before);
       } finally {

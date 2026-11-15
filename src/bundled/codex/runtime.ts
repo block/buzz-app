@@ -1549,13 +1549,21 @@ export class CodexRuntime {
       .then(async () => {
         signal.throwIfAborted();
         const rpc = await server.opening;
-        const voice = seat.synced?.voice;
+        const voice = settings.voice;
         if (voice) {
           const voices = await listVoices(rpc).catch(() => undefined);
           if (!voices)
-            throw new Error(unverifiedSynced("voice", voice, "this Codex"));
+            throw new Error(
+              seat.synced?.voice
+                ? unverifiedSynced("voice", voice, "this Codex")
+                : `Couldn't check the selected Codex voice "${voice}". Try again, or change it in Settings.`,
+            );
           if (!voices.includes(voice))
-            throw new Error(unsupportedSynced("voice", voice, "this Codex"));
+            throw new Error(
+              seat.synced?.voice
+                ? unsupportedSynced("voice", voice, "this Codex")
+                : `The selected Codex voice "${voice}" is unavailable. Choose an available voice in Settings.`,
+            );
         }
         const memory = await this.core(agent.key, signal);
         const instructions =

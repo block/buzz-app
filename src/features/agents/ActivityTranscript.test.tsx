@@ -503,7 +503,7 @@ it("opens at the latest turn and follows new ones until the reader scrolls up", 
   shared.remove();
 });
 
-it("shows the turn a message began, its prompt open, instead of the latest, once", () => {
+it("shows the turn a message began, its prompt open, instead of the latest, once", async () => {
   const id = (n: number) => String(n).repeat(64);
   // A retry asks the same message again, so `event` can repeat.
   const turn = (n: number, event = n): TranscriptTurn => ({
@@ -575,6 +575,11 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
     // Its text is marked, not its title.
     expect(prompt).toHaveAttribute("data-arrived");
     expect(view.querySelectorAll("[data-arrived]")).toHaveLength(1);
+    // Keyboard focus follows it, after the panel's own handoff.
+    await act(() => new Promise(requestAnimationFrame));
+    expect(
+      prompt.closest("details")?.querySelector(":scope > summary"),
+    ).toHaveFocus();
     // Once shown, the mark is gone, so the transcript shown again (a hidden
     // pane reopened) does not replay it.
     fireEvent.animationEnd(prompt);
@@ -584,8 +589,16 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
     rerender(show([turn(1), turn(2), turn(3), turn(4)], ["reply", id(2)]));
     expect(view.scrollTop).toBe(0);
     // A retried request shows its latest attempt, the one that answered.
+    // Focus the reader has moved elsewhere stays there.
+    const elsewhere = document.body.appendChild(
+      document.createElement("button"),
+    );
+    elsewhere.focus();
     rerender(show([turn(1), turn(2), turn(5, 2)], ["retry", id(2)]));
     expect(shown.at(-1)).toBe("item:p5");
+    await act(() => new Promise(requestAnimationFrame));
+    expect(elsewhere).toHaveFocus();
+    elsewhere.remove();
     // A reply lands on itself before the prompt it answered, its bubble
     // marked.
     const replied = turn(6);

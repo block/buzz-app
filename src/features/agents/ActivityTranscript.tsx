@@ -259,6 +259,24 @@ function useShowFocused(
     surface.addEventListener("animationcancel", unmark, { once: true });
     following.current = false;
     element.scrollIntoView({ block: "start" });
+    // Keyboard focus arrives too, once the panel has handed it over, unless
+    // it has since left that tab or a container of the entry.
+    requestAnimationFrame(() => {
+      const active = document.activeElement;
+      const pane = element.closest("[role=tabpanel]");
+      const tab = pane?.getAttribute("aria-labelledby");
+      if (
+        !element.isConnected ||
+        (active &&
+          active !== document.body &&
+          !active.contains(element) &&
+          !(tab && active.id === tab))
+      )
+        return;
+      const target = own("summary") ?? element;
+      if (target === element) element.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    });
     focus.done();
   }, [focus, entry, timeline, following]);
 }

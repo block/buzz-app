@@ -8619,3 +8619,55 @@ it.each(["withdrawn wake", "rejected admission"])(
     }
   },
 );
+
+it.each(["stop", "interrupt"])(
+  "keeps community work cancellable through retirement: %s",
+  async (action) => {
+    const f = fixture();
+    const other = second(f);
+    const d = f.delivery("first");
+    const config = { ...(d.config as object), scope: "community" };
+    await f.runtime.run({ ...d, config });
+    await f.runtime.run(other.delivery("keep server alive"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    await f.complete(0);
+    const cleanup = deferred<void>();
+    f.held.set("thread/unsubscribe", cleanup.promise);
+    const retirement = f.runtime.retire(pubkey);
+    await vi.waitFor(() =>
+      expect(f.sent.map((w) => w.method)).toContain("thread/unsubscribe"),
+    );
+    let stop: (() => Promise<void>) | undefined;
+    try {
+      await f.runtime.run({
+        ...f.delivery("RETURNING_SHOULD_STOP"),
+        config,
+        interruptible: (cancel) => {
+          stop = cancel;
+        },
+      });
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(0);
+      vi.useRealTimers();
+      if (action === "stop") await stop?.();
+      else
+        await f.runtime.session(
+          { ...d.agent, config } as unknown as Agent,
+          { channelId: "channel" },
+          "interrupt",
+        );
+      cleanup.resolve();
+      await retirement;
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(0);
+      vi.useRealTimers();
+      expect(f.starts()).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+      cleanup.resolve();
+      await retirement;
+      await f.complete(1);
+      f.runtime.dispose();
+    }
+  },
+);

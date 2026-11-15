@@ -1986,9 +1986,7 @@ export class CodexRuntime {
     const communityLane =
       settings.scope === "community"
         ? (entry.lanes.get(key) ?? {
-            tail: Promise.all(
-              [...entry.lanes.values()].map((other) => other.tail),
-            ).then(() => {}),
+            tail: Promise.all([entry.after, ...[...entry.lanes.values()].map((other) => other.tail)]).then(() => {}),
             queued: 0,
           })
         : undefined;
@@ -2186,9 +2184,7 @@ export class CodexRuntime {
       if (this.disposed) throw new Error("Codex runtime is disposed");
       const entry = this.entry(agent.key, scope);
       const lane = entry.lanes.get(key) ?? {
-        tail: Promise.all(
-          [...entry.lanes.values()].map((other) => other.tail),
-        ).then(() => {}),
+        tail: Promise.all([entry.after, ...[...entry.lanes.values()].map((other) => other.tail)]).then(() => {}),
         queued: 0,
       };
       entry.lanes.set(key, lane);

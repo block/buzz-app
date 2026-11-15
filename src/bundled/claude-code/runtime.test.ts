@@ -4187,6 +4187,12 @@ it("keeps a background continuation on its source until native work drains", asy
       { ...first, id: "other", channelType: "stream" },
     ],
   });
+  const states: string[] = [];
+  const watching = { ...f.agent, config } as unknown as Agent;
+  const place = { channelId: channel };
+  const off = f.runtime.subscribe(() =>
+    states.push(f.runtime.sessionState(watching, place)),
+  );
   try {
     await f.deliver(
       { type: "mention", event: message("1", "start background") },
@@ -4255,7 +4261,12 @@ it("keeps a background continuation on its source until native work drains", asy
       state: "idle",
     });
     await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(watching, place)).toBe("idle"),
+    );
+    expect(states.at(-1)).toBe("idle");
   } finally {
+    off();
     f.runtime.dispose();
   }
 });

@@ -1275,7 +1275,9 @@ export class ClaudeRuntime {
         };
         entry.policies.set(key, policy);
         void policy.settled.then(() => {
-          if (entry.policies.get(key) === policy) entry.policies.delete(key);
+          if (entry.policies.get(key) !== policy) return;
+          entry.policies.delete(key);
+          this.notify();
         });
         // Deliveries keep their order: a later one waits on this handover, and
         // one with nothing to wait for is handed over before `run` returns.

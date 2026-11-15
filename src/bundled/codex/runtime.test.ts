@@ -8502,3 +8502,77 @@ it.each([false, true])(
     }
   },
 );
+
+it.each(["reset", "admission"])(
+  "orders remote community wakes across %s",
+  async (boundary) => {
+    const f = fixture();
+    const d = f.delivery("earlier addressed");
+    const config = { ...(d.config as object), scope: "community" };
+    const agent = { ...d.agent, config } as unknown as Agent;
+    const gate = deferred<void>();
+    const entered = deferred<void>();
+    const order: string[] = [];
+    const remote = {
+      run: vi.fn(async () => {
+        order.push("addressed");
+      }),
+      runOnce: vi.fn(async () => {
+        order.push("wake");
+        return { ok: true };
+      }),
+    };
+    const connection = vi.fn(async () => remote);
+    Object.assign(f.runtime, {
+      inspect: async () => ({}),
+      execution: async () => ({}),
+      connection,
+    });
+    let preceding: Promise<unknown> | undefined;
+    let wake: Promise<unknown> | undefined;
+    try {
+      preceding =
+        boundary === "reset"
+          ? f.runtime.session(
+              agent,
+              { channelId: "channel" },
+              "new",
+              async (change) => {
+                entered.resolve();
+                await gate.promise;
+                await change();
+              },
+            )
+          : f.runtime.run({
+              ...d,
+              config,
+              prepareSession: async () => {
+                entered.resolve();
+                await gate.promise;
+              },
+            });
+      await entered.promise;
+      wake = f.runtime.runOnce({
+        delivery: { agent: d.agent, config, current: () => true },
+        key: "remote",
+        signal: new AbortController().signal,
+        prompt: async () => "wake",
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(0);
+      vi.useRealTimers();
+      expect(connection).not.toHaveBeenCalled();
+      gate.resolve();
+      await preceding;
+      await wake;
+      expect(order).toEqual(
+        boundary === "reset" ? ["wake"] : ["addressed", "wake"],
+      );
+    } finally {
+      vi.useRealTimers();
+      gate.resolve();
+      await Promise.allSettled([preceding, wake]);
+      f.runtime.dispose();
+    }
+  },
+);

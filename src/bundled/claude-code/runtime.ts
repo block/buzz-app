@@ -6,6 +6,7 @@ import {
   COMMUNITY_SESSION,
   sessionScope,
   communityTurn,
+  abortable,
   scopedSessionKey,
   scopeOfSession,
   rememberCommunitySource,
@@ -1099,6 +1100,7 @@ export class ClaudeRuntime {
             signal: accepted,
           });
         },
+        key === COMMUNITY_SESSION,
       );
       if (handoff.deferred) {
         workingUntil(handoff.done);
@@ -1359,8 +1361,22 @@ export class ClaudeRuntime {
         : `once:${crypto.randomUUID()}`;
       const record = this.executionKey(agent.key, conversation);
       try {
-        const remote = await this.connection(agent.key, conversation, signal);
-        return await remote.runOnce({ delivery, key, signal, prompt });
+        const run = async () => {
+          signal.throwIfAborted();
+          const remote = await this.connection(agent.key, conversation, signal);
+          return remote.runOnce({ delivery, key, signal, prompt });
+        };
+        if (!shared) return await run();
+        let result!: TurnResult;
+        const handoff = this.controls.deliver(
+          `${agent.key}/${conversation}`,
+          async () => {
+            result = await run();
+          },
+          true,
+        );
+        await abortable(handoff.done, signal);
+        return result;
       } finally {
         if (!shared) {
           const held = this.remote.get(record);

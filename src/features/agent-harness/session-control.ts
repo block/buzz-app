@@ -7,6 +7,7 @@ export class SessionControls {
     string,
     { action: SessionAction; controller: AbortController; done: Promise<void> }
   >();
+  private readonly ordered = new Map<string, Promise<void>>();
   private readonly handoffs = new Map<string, number>();
   constructor(private readonly changed: () => void) {}
   active(key: string) {
@@ -15,13 +16,19 @@ export class SessionControls {
   compacting(key: string) {
     return this.changes.get(key)?.action === "compact";
   }
-  deliver(key: string, handoff: (deferred: boolean) => Promise<void>) {
+  deliver(
+    key: string,
+    handoff: (deferred: boolean) => Promise<void>,
+    ordered = false,
+  ) {
+    const prior = ordered ? this.ordered.get(key) : undefined;
     const deferred = this.changes.has(key);
     // Reserve admission before waiting, so another action cannot slip between
     // compaction and these messages. Ordinary steering handoffs may overlap.
     this.handoffs.set(key, (this.handoffs.get(key) ?? 0) + 1);
     this.changed();
     const done = (async () => {
+      if (prior) await prior.catch(() => undefined);
       while (this.changes.has(key))
         await this.changes.get(key)?.done.catch(() => undefined);
       await handoff(deferred);
@@ -29,8 +36,10 @@ export class SessionControls {
       const count = (this.handoffs.get(key) ?? 1) - 1;
       if (count) this.handoffs.set(key, count);
       else this.handoffs.delete(key);
+      if (this.ordered.get(key) === done) this.ordered.delete(key);
       this.changed();
     });
+    if (ordered) this.ordered.set(key, done);
     return { deferred, done };
   }
   interrupt(key: string) {

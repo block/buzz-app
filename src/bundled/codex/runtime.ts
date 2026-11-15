@@ -1906,6 +1906,7 @@ export class CodexRuntime {
             signal: accepted,
           });
         },
+        settings.scope === "community",
       );
       if (handoff.deferred) {
         delivery.workingUntil(handoff.done);
@@ -2159,13 +2160,28 @@ export class CodexRuntime {
     if (settings.scope === "community") {
       const key = scopedKey(settings.scope, COMMUNITY_SESSION);
       if (this.execution && (await this.inspect?.(agent.key))) {
-        const runtime = await this.connection(
-          agent.key,
-          scope,
-          key,
-          turnSignal,
+        let result!: TurnResult;
+        const handoff = this.controls.deliver(
+          `${agent.key}/${key}`,
+          async () => {
+            turnSignal.throwIfAborted();
+            const runtime = await this.connection(
+              agent.key,
+              scope,
+              key,
+              turnSignal,
+            );
+            result = await runtime.runOnce({
+              delivery,
+              key,
+              signal: turnSignal,
+              prompt,
+            });
+          },
+          true,
         );
-        return runtime.runOnce({ delivery, key, signal: turnSignal, prompt });
+        await abortable(handoff.done, turnSignal);
+        return result;
       }
       if (this.disposed) throw new Error("Codex runtime is disposed");
       const entry = this.entry(agent.key, scope);

@@ -8135,3 +8135,30 @@ it("keeps the retained Solo Canvas when a community wake expires during preparat
   }
 });
 
+it("session Interrupt discards queued Codex community requests", async () => {
+  const f = fixture();
+  const d = f.delivery("first");
+  const config = { ...(d.config as object), scope: "community" };
+  try {
+    await f.runtime.run({ ...d, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.run({
+      ...f.delivery("QUEUED_SHOULD_STOP"),
+      config,
+      channelId: "other",
+    });
+    vi.useFakeTimers();
+    await f.runtime.session(
+      { ...d.agent, config } as unknown as Agent,
+      { channelId: "channel" },
+      "interrupt",
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    await f.runtime.run({ ...f.delivery("AFTER_INTERRUPT"), config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(inputText(f.starts()[1])).toContain("AFTER_INTERRUPT");
+    await f.complete(1);
+  } finally {
+    f.runtime.dispose();
+  }
+});

@@ -693,6 +693,12 @@ export class CodexRuntime {
     const control = `${agent.key}/${key}`;
     const entry = this.entry(agent.key, reads.scope);
     if (action === "interrupt") {
+      if (key === scopedKey("community", ""))
+        for (const request of entry.waiting)
+          if (request.settings.scope === "community") {
+            request.current = () => false;
+            request.answered(true);
+          }
       if (this.controls.interrupt(control)) return;
       const active = entry.lanes.get(key)?.active;
       if (active) await this.interrupt(entry, key, active.reply);

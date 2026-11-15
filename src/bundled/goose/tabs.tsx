@@ -965,7 +965,10 @@ export function createTabs({
     const match = (channelId: string, root?: string) =>
       conversations.find(
         (row) =>
-          row.sessionId && row.channelId === channelId && row.root === root,
+          !row.community &&
+          row.sessionId &&
+          row.channelId === channelId &&
+          row.root === root,
       );
     const here =
       conversation &&

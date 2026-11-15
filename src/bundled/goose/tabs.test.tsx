@@ -2019,3 +2019,30 @@ describe("Recommended", () => {
     ).toBeInTheDocument();
   });
 });
+
+it("keeps an old community transcript out of ordinary Activity selection", async () => {
+  const fake = gooseHistory();
+  activity(
+    fake,
+    {
+      saved: [
+        { key: "@community", at: 2, sessions: ["community"] },
+        { key: "chan", at: 1, sessions: ["s1"] },
+      ],
+      runtime: {
+        source: (_agent: string, key: string) =>
+          key === "@community"
+            ? { channelId: "chan", community: true }
+            : { channelId: key },
+      },
+    },
+    undefined,
+    {
+      conversation: { channelId: "chan", rootId: ROOT },
+      initialTranscript: { opening: 1, done: vi.fn() },
+    },
+  );
+  expect(
+    await screen.findByText("Hi from goose", { selector: "summary span" }),
+  ).toBeInTheDocument();
+});

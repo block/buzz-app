@@ -3763,6 +3763,30 @@ it("pages a large roster without waiting for optional names or exceeding the pro
   }
 });
 
+it("labels a large roster again only when a name input changes, not on every keystroke", async () => {
+  const t = await setup("stream", false, false, undefined, undefined, {
+    extraMembers: 120,
+  });
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("data-refreshing", "false"),
+  );
+  const search = screen.getByRole("searchbox");
+  // One letter is too short to search the relay, so no name input changes.
+  fireEvent.change(search, { target: { value: "z" } });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+  const resolve = vi.spyOn(t.session.names, "resolve");
+  fireEvent.change(search, { target: { value: "y" } });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+  expect(search).toHaveValue("y");
+  // Labelling the roster again would resolve each of its 120 members; the
+  // dialog header and choices resolve a few names of their own.
+  expect(resolve.mock.calls.length).toBeLessThan(120);
+});
+
 it("keeps the current member page through live removals and clamps a shortened roster", async () => {
   const t = await setup("stream", false, false, undefined, undefined, {
     extraMembers: 125,

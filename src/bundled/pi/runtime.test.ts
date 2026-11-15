@@ -3122,3 +3122,107 @@ it("does not submit a community request stopped during source metadata storage",
     f.runtime.dispose();
   }
 });
+
+it.each(["community", "channel", "thread"] as const)(
+  "retains accepted %s work past its handover deadline during Compact",
+  async (scope) => {
+    const gate = deferred<void>();
+    const f = setup({
+      wait: () => ({ status: "done", answer: 1, text: "done" }),
+      session: ({ action }) => (action === "compact" ? gate.promise : {}),
+    });
+    const config = { ...DEFAULT_CONFIG, scope };
+    const agent = { ...f.agent, config } as unknown as Agent;
+    const source = { channelId: channel, root: root.id };
+    const initial = f.deliver(
+      { type: "mention", event: reply("2", "before Compact") },
+      { config },
+    );
+    await initial.run;
+    await f.settled(initial);
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, source)).toBe("idle"),
+    );
+    const compact = f.runtime.session(agent, source, "compact");
+    await vi.waitFor(() => expect(f.host.requests("session")).toHaveLength(1));
+    const deadline = new AbortController();
+    const turn = f.deliver(
+      { type: "mention", event: reply("3", "AFTER_HANDOVER_DEADLINE") },
+      { config, signal: deadline.signal },
+    );
+    try {
+      await turn.run;
+      deadline.abort(new Error("handover deadline"));
+      gate.resolve();
+      await compact;
+      await vi.waitFor(() =>
+        expect(f.host.requests("deliver")).toHaveLength(2),
+      );
+      await f.settled(turn);
+      expect(f.published).toEqual([]);
+    } finally {
+      gate.resolve();
+      await compact;
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("retains a community mention accepted behind a running turn past its handover deadline", async () => {
+  const gate = deferred<object>();
+  const f = setup({
+    wait: ({ submission }) =>
+      submission === 1
+        ? gate.promise
+        : { status: "done", answer: 1, text: "done" },
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const first = f.deliver(
+    { type: "mention", event: reply("2", "held prior turn") },
+    { config },
+  );
+  await first.run;
+  const deadline = new AbortController();
+  const turn = f.deliver(
+    { type: "mention", event: reply("3", "QUEUED_PAST_DEADLINE") },
+    { config, signal: deadline.signal },
+  );
+  try {
+    await turn.run;
+    deadline.abort(new Error("handover deadline"));
+    gate.resolve({ status: "done", answer: 1, text: "done" });
+    await f.settled(first);
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(2));
+    await f.settled(turn);
+    expect(f.published).toEqual([]);
+  } finally {
+    gate.resolve({ status: "done", answer: 1, text: "done" });
+    f.runtime.dispose();
+  }
+});
+
+it.each(["community", "channel", "thread"] as const)(
+  "stops %s work while Pi prepares its first submission",
+  async (scope) => {
+    const gate = deferred<{ seen: number }>();
+    const f = setup({ place: () => gate.promise });
+    const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+    const turn = f.deliver(
+      { type: "mention", event: reply("2", "STOP_BEFORE_SUBMISSION") },
+      { config: { ...DEFAULT_CONFIG, scope }, interruptible },
+    );
+    try {
+      await vi.waitFor(() => expect(f.host.requests("place")).toHaveLength(1));
+      expect(interruptible).toHaveBeenCalledOnce();
+      await interruptible.mock.calls[0]?.[0]();
+      gate.resolve({ seen: 0 });
+      await turn.run;
+      await f.settled(turn);
+      expect(f.host.requests("deliver")).toHaveLength(0);
+    } finally {
+      gate.resolve({ seen: 0 });
+      await turn.run;
+      f.runtime.dispose();
+    }
+  },
+);

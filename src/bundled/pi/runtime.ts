@@ -728,8 +728,7 @@ export class PiRuntime {
       const picked = await this.turnOf(entry, agent.key, model, effort);
       const text = await prompt();
       this.live(entry, agent.key);
-      if (interrupted || signal.aborted || (wake && current && !current()))
-        return;
+      if (interrupted || (wake && current && !current())) return;
       submitting = true;
       submitted = await this.deliver(
         entry,
@@ -745,8 +744,7 @@ export class PiRuntime {
           ...(attention ? { reply: where, refresh: true } : {}),
           ...picked,
         },
-        () =>
-          !interrupted && !signal.aborted && (!wake || !current || current()),
+        () => !interrupted && (!wake || !current || current()),
       );
       if (!submitted) return;
       if (submitted.session !== undefined)
@@ -810,11 +808,6 @@ export class PiRuntime {
       entry.policies.delete(key);
       this.notify();
     });
-    // Deliveries keep their order: a later one waits on this handover, and
-    // one with nothing to wait for is handed over before `run` returns.
-    if (!wait && !handoff.deferred && !admittedDeferred) await policy.handed;
-    // The turn outlives `run`, which the host is told so it shows it as working.
-    workingUntil(settled);
     // Stop on its activity stops the run the request is in.
     interruptible?.(async () => {
       interrupted = true;
@@ -826,6 +819,11 @@ export class PiRuntime {
         conversation: submitted.conversation,
       });
     });
+    // Deliveries keep their order: a later one waits on this handover, and
+    // one with nothing to wait for is handed over before `run` returns.
+    if (!wait && !handoff.deferred && !admittedDeferred) await policy.handed;
+    // The turn outlives `run`, which the host is told so it shows it as working.
+    workingUntil(settled);
     void settled.then(async (result) => {
       if (!result.ok && !interrupted && !entry.closed)
         await this.report(agent, where, result.error ?? "");

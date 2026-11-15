@@ -2746,7 +2746,7 @@ export function ChannelMembersDialog({
       {dmChoice && (
         <AlertDialog
           title={`Add ${label(dmChoice)}?`}
-          description="Include history to add them to this DM with its earlier messages, or start a new DM with everyone and no history."
+          description="Include history to add them to this DM with its earlier messages."
           onClose={() => setDmChoice(undefined)}
           finalFocus={input}
           actions={
@@ -2758,7 +2758,7 @@ export function ChannelMembersDialog({
                   void add(dmChoice, false);
                 }}
               >
-                Start new DM
+                Start a new DM
               </Button>
               <Button
                 variant="prominent"

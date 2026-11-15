@@ -408,11 +408,12 @@ joins in place with the DM's history and never changes which DM it is; the
 dialog sends it with `["history", "include"]`, without which the relay starts a
 new DM of everyone, and someone the relay counts as a person still joins in
 place. Only whether to ask depends on the app's agent
-classification. Adding a person first asks **Include history** or **Start new DM**. Include history
+classification. Adding a person first asks **Include history** or **Start a new DM**. Include history
 adds them in place with `["history", "include"]`; the DM is then identified by
 the grown set of people, so messaging only the original people later starts a
-new DM. Start new DM, the default without the tag, creates a DM of everyone
-without the history. Either way, if a DM of the grown set of people already
+new DM. Start a new DM, the default without the tag, creates a DM of the
+people plus whoever is added, without the history; agents already in the DM
+stay behind. Either way, if a DM of the grown set of people already
 exists, the relay returns it and the dialog opens it. A DM of at most one
 person and their agents never gains a person in place: adding one opens the DM
 of everyone without asking, and the relay starts that DM even with the tag. A DM holds at most nine

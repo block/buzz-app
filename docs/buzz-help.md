@@ -622,8 +622,8 @@ and are asked to sign in again in Buzz.
 - **Adding to a DM**: open the DM's access dialog and search for someone to
   add. An agent joins right away and can read the DM's earlier messages. For a
   person, choose **Include history** to add them to this DM with its earlier
-  messages, or **Start new DM** to message everyone in a new DM without the
-  earlier messages.
+  messages, or **Start a new DM** to message the people in a new DM without the
+  earlier messages. Agents stay in the original DM and can be added later.
   After Include history, messaging only the original people starts a new DM.
   If the people you'd end up with already have a DM, Buzz opens that one
   instead. A DM can include up to nine people; agents don't count. Removing

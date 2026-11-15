@@ -1649,7 +1649,7 @@ it("a person added without history opens a new DM of everyone", async () => {
   await t.user.click(
     within(
       await screen.findByRole("alertdialog", { name: "Add Morgan?" }),
-    ).getByRole("button", { name: "Start new DM" }),
+    ).getByRole("button", { name: "Start a new DM" }),
   );
   await vi.waitFor(() =>
     expect(onOpenConversation).toHaveBeenCalledWith(t.forkId),

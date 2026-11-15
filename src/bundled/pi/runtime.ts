@@ -623,6 +623,7 @@ export class PiRuntime {
         : prior && (same ? prior.handed : prior.settled);
     const request = wake?.type === "plugin" ? `${WAKE}${wake.id}` : event.id;
     let submitted: Delivered | false | undefined;
+    let submitting = false;
     // A delivery during a session action waits for it, past its handover.
     const control = `${agent.key}/${key}`;
     let interrupted = false;
@@ -706,6 +707,7 @@ export class PiRuntime {
       const text = await prompt();
       this.live(entry, agent.key);
       if (interrupted || (wake && current && !current())) return;
+      submitting = true;
       submitted = await this.deliver(
         entry,
         agent.key,
@@ -790,6 +792,7 @@ export class PiRuntime {
     // Stop on its activity stops the run the request is in.
     interruptible?.(async () => {
       interrupted = true;
+      if (!submitting) return;
       await handed;
       if (!submitted) return;
       await this.pi.request("abort", {

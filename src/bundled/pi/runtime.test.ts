@@ -2742,3 +2742,86 @@ it("retains the Solo Canvas when a source is invalidated during preparation", as
     f.runtime.dispose();
   }
 });
+
+it.each(["waiting", "submitting"] as const)(
+  "cancels a community Pi request while %s without losing native ownership",
+  async (phase) => {
+    const firstDone = deferred<unknown>();
+    const admitted = deferred<unknown>();
+    const submitting = vi.fn();
+    let deliveries = 0;
+    const f = setup({
+      wait: () => firstDone.promise,
+      deliver: async () => {
+        if (++deliveries === 2) {
+          submitting();
+          return admitted.promise;
+        }
+        return { submission: 1, conversation: CONVERSATION };
+      },
+    });
+    const listed = f.session.channels.list();
+    const first = listed.channels[0];
+    if (!first) throw new Error("missing channel");
+    vi.spyOn(f.session.channels, "list").mockReturnValue({
+      ...listed,
+      channels: [...listed.channels, { ...first, id: "other" }],
+    });
+    const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+    const interruptible = vi.fn();
+    let stop: Promise<unknown> | undefined;
+    try {
+      const a = f.deliver(
+        { type: "mention", event: reply("2", "first") },
+        { config },
+      );
+      await a.run;
+      await vi.waitFor(() =>
+        expect(f.host.requests("deliver")).toHaveLength(1),
+      );
+      const b = f.deliver(
+        {
+          type: "mention",
+          event: message("3", "second", {
+            tags: [
+              ["h", "other"],
+              ["p", self],
+            ],
+          }),
+        },
+        { config, channelId: "other", interruptible },
+      );
+      await b.run;
+      expect(interruptible).toHaveBeenCalledOnce();
+      if (phase === "submitting") {
+        firstDone.resolve({ status: "done", answer: 1, text: "done" });
+        await f.settled(a);
+        await vi.waitFor(() => expect(submitting).toHaveBeenCalled());
+      }
+      const stopped = vi.fn();
+      stop = interruptible.mock.calls[0]?.[0]().then(stopped);
+      if (phase === "waiting") {
+        await vi.waitFor(() => expect(stopped).toHaveBeenCalledOnce());
+        expect(f.host.requests("abort")).toHaveLength(0);
+        expect(f.host.requests("deliver")).toHaveLength(1);
+      } else {
+        await Promise.resolve();
+        expect(stopped).not.toHaveBeenCalled();
+        expect(f.host.requests("abort")).toHaveLength(0);
+        admitted.resolve({ submission: 2, conversation: CONVERSATION });
+        await stop;
+        expect(f.host.requests("abort")).toHaveLength(1);
+      }
+      firstDone.resolve({ status: "done", answer: 1, text: "done" });
+      await f.settled(a);
+      await f.settled(b);
+      if (phase === "waiting")
+        expect(f.host.requests("deliver")).toHaveLength(1);
+    } finally {
+      firstDone.resolve({ status: "done", answer: 1, text: "done" });
+      admitted.resolve(false);
+      await stop;
+      f.runtime.dispose();
+    }
+  },
+);

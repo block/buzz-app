@@ -6639,6 +6639,73 @@ it("filters the agent list for hosted choices only when the list changes", async
   expect(filtered()).toBe(first);
 });
 
+it("classifies an agent as remote after an update overlaps its held binding save", async () => {
+  let entered = () => {};
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const saving = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const storage = fileStore(
+    new Map(),
+    async () => {},
+    async (key) => {
+      if (key.startsWith("buzz.agent.execution.v1:")) {
+        entered();
+        await held;
+      }
+      return null;
+    },
+  );
+  const { ctx, plugin, service } = await setup({ storage });
+  plugin.agents.register({
+    id: "native",
+    title: "Native",
+    execution: true,
+    retire: async () => {},
+    defaults: () => ({ config: {} }),
+    run: vi.fn(),
+  });
+  const adapter = ctx.extend({
+    pluginOwner: {
+      id: "internal",
+      revision: "one",
+      agentExecution: ["example/native"],
+    },
+  });
+  adapter.agents.registerExecution({
+    id: "remote",
+    harnesses: ["example/native"],
+    connect: vi.fn(),
+  });
+  const agent = await service.create({
+    type: "example/native",
+    name: "Dedicated",
+  });
+  const execution = () =>
+    service.local().agents.find((item) => item.pubkey === agent.pubkey)
+      ?.execution;
+  // What a subscriber, such as a Remote badge, last saw.
+  let seen = execution();
+  const off = service.subscribe(() => {
+    seen = execution();
+  });
+  onTestFinished(off);
+  expect(seen).toBeUndefined();
+  const binding = adapter.agents.bindExecution(agent.key, { id: "remote" });
+  await saving;
+  try {
+    // An update while the binding is saved.
+    await service.save(agent.pubkey, { attentionEnabled: true });
+  } finally {
+    release();
+  }
+  await binding;
+  expect(seen).toBe("remote");
+});
+
 it("keeps local selection evidence stable across unrelated agent attention changes", async () => {
   const { service, plugin } = await setup();
   plugin.agents.register(cloud().type);

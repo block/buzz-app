@@ -82,8 +82,9 @@ export function createAgentExecutions(root: Context, storage: AgentStore) {
     AgentKey,
     { text: string | null; binding: AgentExecutionBinding | undefined }
   >();
-  /** Changes with each binding save and each storage change another window
-   * reports, so callers can skip rereading every binding until it does. */
+  /** Changes when a binding save starts and when it settles, and with each
+   * storage change another window reports, so callers can skip rereading
+   * every binding until it does. */
   let bindingChanges = 0;
   root.effect(() => {
     const changed = (event: StorageEvent) => {
@@ -192,6 +193,8 @@ export function createAgentExecutions(root: Context, storage: AgentStore) {
       try {
         if ((await storage.read(PREFIX + agent)) === LOCAL)
           await storage.set(PREFIX + agent, null);
+        // The copy holds the binding as soon as the save starts.
+        bindingChanges++;
         const saved = await storage.add(PREFIX + agent, text);
         if (saved !== text)
           throw new Error("The agent already has another execution binding");

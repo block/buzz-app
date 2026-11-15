@@ -45,6 +45,7 @@ import type {
   Agent,
   AgentHandle,
   AgentVoiceSeat,
+  AgentVoiceConnection,
   Agents,
   Delivery,
   Models,
@@ -1508,7 +1509,17 @@ export class CodexRuntime {
 
     for (const listener of this.listeners) listener();
   }
-  async voice(seat: AgentVoiceSeat, agent: AgentHandle) {
+  voice(
+    seat: AgentVoiceSeat,
+    agent: AgentHandle,
+  ): Promise<AgentVoiceConnection> {
+    return this.openVoice(seat, agent);
+  }
+  private async openVoice(
+    seat: AgentVoiceSeat,
+    agent: AgentHandle,
+    reserved = false,
+  ): Promise<AgentVoiceConnection> {
     if (this.disposed) throw new Error("Codex runtime is disposed");
     seat.signal.throwIfAborted();
     // Protection is not known to review realtime input, so voice refuses it.
@@ -1524,6 +1535,23 @@ export class CodexRuntime {
       throw new Error("Choose an absolute Codex workspace first");
     const { channelId } = seat.conversation;
     const key = scopedKey(settings.scope, channelId);
+    if (settings.scope === "community" && !reserved) {
+      let connection: AgentVoiceConnection | undefined;
+      const handoff = this.controls.deliver(
+        `${agent.key}/${key}`,
+        async (_deferred, signal) => {
+          connection = await this.openVoice(
+            { ...seat, signal: AbortSignal.any([seat.signal, signal]) },
+            agent,
+            true,
+          );
+        },
+        true,
+      );
+      await abortable(handoff.done, seat.signal);
+      if (!connection) throw new Error("Voice startup was interrupted");
+      return connection;
+    }
     await rememberCommunitySource(
       this.storage,
       agent.key,

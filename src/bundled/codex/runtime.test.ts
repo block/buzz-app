@@ -8781,3 +8781,65 @@ it("retains a deferred remote community handoff until admission finishes", async
     f.runtime.dispose();
   }
 });
+
+it("waits for community compaction before opening voice", async () => {
+  vi.stubGlobal("RTCPeerConnection", class {});
+  const f = fixture();
+  const d = f.delivery("seed");
+  const config = { ...(d.config as object), scope: "community" };
+  const agent = { ...d.agent, config } as unknown as Agent;
+  let opening: ReturnType<typeof f.runtime.voice> | undefined;
+  let compacted: Promise<void> | undefined;
+  try {
+    await f.runtime.run({ ...d, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete(0);
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, { channelId: "channel" })).toBe(
+        "idle",
+      ),
+    );
+    compacted = f.runtime.session(agent, { channelId: "channel" }, "compact");
+    await vi.waitFor(() =>
+      expect(f.sent.some((w) => w.method === "thread/compact/start")).toBe(
+        true,
+      ),
+    );
+    const resumed = f.sent.filter((w) => w.method === "thread/resume").length;
+    f.huddleChannels.add("room");
+    opening = f.runtime.voice(
+      {
+        config,
+        agent,
+        conversation: { channelId: "room" },
+        signal: new AbortController().signal,
+        async output() {},
+        async transcript() {},
+        ended() {},
+      },
+      d.agent,
+    );
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+    expect(f.sent.filter((w) => w.method === "thread/resume")).toHaveLength(
+      resumed,
+    );
+  } finally {
+    vi.useRealTimers();
+    f.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: "compact" } },
+    });
+    f.emit({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: { id: "compact", status: "completed" },
+      },
+    });
+    await compacted;
+    await (await opening)?.close();
+    f.runtime.dispose();
+  }
+});

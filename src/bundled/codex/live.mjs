@@ -360,7 +360,7 @@ try {
     const stored = await answered(
       runtime,
       shared(
-        `Remember the private verification token ${token} for this session. Reply exactly STORED. Do not write it to disk or memory. Use only buzz.send.`,
+        `Remember the synthetic shared recall marker ${token} for this acceptance test. It is intended to be recalled across this agent's community conversations. Reply exactly STORED. Do not write it to disk or memory. Use only buzz.send.`,
       ),
     );
     assert.match(stored.content, /STORED/);
@@ -368,7 +368,7 @@ try {
     const across = await answered(
       runtime,
       shared(
-        "Reply with the verification token I gave you. Use only buzz.send; do not read files, memory or previous relay messages.",
+        "Reply with the shared acceptance marker I gave you. Use only buzz.send; do not read files, memory or previous relay messages.",
         "other-channel",
       ),
     );
@@ -390,7 +390,7 @@ try {
     const restored = await answered(
       communityRuntime,
       shared(
-        "Reply with the verification token from this session. Use only buzz.send and do not read files, memory or relay history.",
+        "Reply with the shared acceptance marker from this session. Use only buzz.send and do not read files, memory or relay history.",
         "solo",
       ),
     );

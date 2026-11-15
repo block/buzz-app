@@ -953,7 +953,7 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send or subth
     request_id: "r1",
     request: { subtype: "mcp_message", server_name: "buzz", message: call },
   });
-  const hook = (final: boolean, tool = "send") => ({
+  const hook = (final?: boolean, tool = "send") => ({
     type: "control_request",
     request_id: `final-${tool}-${final}`,
     request: {
@@ -961,11 +961,12 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send or subth
       callback_id: "final",
       input: {
         tool_name: `mcp__buzz__${tool}`,
-        tool_input: { text: "done", final },
+        tool_input: { text: "done", ...(final === undefined ? {} : { final }) },
         tool_response: [{ type: "text", text: "sent" }],
       },
     },
   });
+  fake.emit(hook());
   fake.emit(hook(false));
   fake.emit(hook(true));
   fake.emit(hook(true, "reply_in_subthread"));
@@ -980,16 +981,25 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send or subth
     .filter((message) => message.type === "control_response")
     .map((message) => message.response);
   expect(responses).toEqual([
+    { subtype: "success", request_id: "final-send-undefined", response: {} },
     { subtype: "success", request_id: "final-send-false", response: {} },
     {
       subtype: "success",
       request_id: "final-send-true",
-      response: { continue: false },
+      response: {
+        continue: false,
+        stopReason:
+          "Message sent successfully. Buzz ended this turn because you set final: true. Omit final or use false when more work remains.",
+      },
     },
     {
       subtype: "success",
       request_id: "final-reply_in_subthread-true",
-      response: { continue: false },
+      response: {
+        continue: false,
+        stopReason:
+          "Message sent successfully. Buzz ended this turn because you set final: true. Omit final or use false when more work remains.",
+      },
     },
     {
       subtype: "success",

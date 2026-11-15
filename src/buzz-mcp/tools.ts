@@ -73,7 +73,8 @@ const request = {
 } as const;
 const final = {
   type: "boolean",
-  description: "Your last message this turn; ends the turn.",
+  description:
+    "Ends your entire turn after sending. Set true only when all work is complete; omit when more work remains.",
 } as const;
 /** The channel types a channel list can ask for, as NIP-CL names them. */
 const CHANNEL_TYPES = ["stream", "forum", "dm", "workflow", "system"];

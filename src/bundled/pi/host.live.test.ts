@@ -39,6 +39,13 @@ const originalOpen = Harness.open;
 let openedHarness;
 Harness.open = async (...args) => {
   openedHarness = await originalOpen(...args);
+  const conversation = openedHarness.conversation.bind(openedHarness);
+  openedHarness.conversation = async (...args) => {
+    const found = await conversation(...args);
+    return found && new Proxy(found, { get: (target, key) => key === "submit"
+      ? async (...rest) => { const accepted = await target.submit(...rest); if (rest[0]?.requestId === "SOURCE_B") throw new Error("Host stopped after acceptance"); return accepted; }
+      : typeof target[key] === "function" ? target[key].bind(target) : target[key] });
+  };
   // While \`statusGate\` is set, reads of a request's status wait for it;
   // while \`failRead\` is, the next one fails.
   const submission = openedHarness.submission.bind(openedHarness);
@@ -537,6 +544,24 @@ await new Promise((resolve) => setTimeout(resolve, 100));
 await writeFile(data + "/auth.json", JSON.stringify({ p: signIn }));
 await writing();
 out.whileWritten = await reading;
+// A failure after native acceptance precedes the history-watermark commit.
+pi = start();
+await pi.rpc("open", { agent, tools });
+faux.setResponses([fauxAssistantMessage("Source A")]);
+const sourceA = await pi.rpc("deliver", { ...turn("SOURCE_A", "source A"), key: "@community", at: 100, context: { channel: "source-a" } });
+await pi.rpc("wait", { agent, submission: sourceA.submission });
+const sourceGate = held();
+faux.setResponses([async (_context, options) => { await abortable(sourceGate.gate, options?.signal); return fauxAssistantMessage("Source B"); }]);
+out.sourceFailure = await pi.rpc("deliver", { ...turn("SOURCE_B", "source B"), key: "@community", at: 200, context: { channel: "source-b", root: "private-root" } }).catch(error => error.message);
+await pi.stop();
+sourceGate.release();
+pi = start();
+await pi.rpc("open", { agent, tools });
+out.sourceRecovery = (await pi.rpc("unfinished", { agent })).submissions.find(item => item.request === "SOURCE_B");
+out.sourceSeen = (await pi.rpc("place", { agent, key: "@community" })).seen;
+await pi.rpc("drop", { agent, submissions: [out.sourceRecovery] });
+await pi.rpc("abort", { agent, conversation: sourceA.conversation });
+await pi.stop();
 console.log(JSON.stringify(out));
 `;
 
@@ -720,6 +745,12 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       { cwd: folder, timeout: 60_000 },
     );
     const out = JSON.parse(stdout.trim().split("\n").at(-1) ?? "{}");
+    expect(out.sourceFailure).toContain("Host stopped after acceptance");
+    expect(out.sourceRecovery).toMatchObject({
+      key: "@community",
+      context: { channel: "source-b", root: "private-root" },
+    });
+    expect(out.sourceSeen).toBe(100);
     if (process.platform !== "win32") {
       const mode = async (path: string) => (await stat(path)).mode & 0o777;
       expect(await mode(agents)).toBe(0o700);

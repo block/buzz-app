@@ -1590,18 +1590,20 @@ export function serve({
             { ownership: { kind: "ownerless" } },
             context,
           );
-          // Recorded before it has the turn, so a host that stops before it
-          // answers leaves the next one the conversation to find the turn in,
-          // by its request, when it is asked again.
-          await harness.commit(async (tx) => {
-            const places = await tx.doc(Places);
-            places[key] = {
-              conversation: conversation.id,
-              context: tools,
-              seen: 0,
-            };
-          }, context);
         }
+        // Tools must recover at this source even if the host stops after
+        // acceptance, before the history watermark can advance.
+        await harness.commit(async (tx) => {
+          const places = await tx.doc(Places);
+          places[key] = {
+            conversation: conversation.id,
+            context: tools,
+            seen:
+              places[key]?.conversation === conversation.id
+                ? places[key].seen
+                : 0,
+          };
+        }, context);
         opened.conversations.add(conversation.id);
         opened.contexts.set(conversation.id, tools);
         const { busy } = await watch(opened, conversation.id);

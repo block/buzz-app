@@ -28,9 +28,11 @@
 .emojiContent[data-tabs] {
   --picker-search-top: 0px;
 }
+/* The tab list's own ring inset already clears the popover's top edge; a
+   top margin would leave the labels lower than they are inset from the side. */
 .emojiContent [role="tablist"] {
   flex-shrink: 0;
-  margin: var(--space-3) var(--space-3) 0;
+  margin: 0 var(--space-3);
 }
 .emojiContent > :first-child,
 .emojiContent [role="tabpanel"] {

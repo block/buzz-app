@@ -37,6 +37,7 @@ import styles from "./Emoji.module.css";
 import { GifPicker } from "./GifPicker";
 import type { EmojiSearchSelection } from "./emoji-mart";
 import { PREVIEW_ACTION_SLOT, type AddEmoji } from "./add-emoji";
+import { SKIN_TONE_SLOT, defaultSkinTone, toneHand } from "./skin-tone";
 const NO_ADD_EMOJI = {
   snapshot: () => undefined,
   subscribe: () => () => {},
@@ -98,6 +99,10 @@ export function EmojiPicker({
   const [host, setHost] = useState<HTMLDivElement | null>(null);
   // Mart's element; its light-DOM children render through the preview slot.
   const [mart, setMart] = useState<HTMLElement | null>(null);
+  const [skinTone, setSkinTone] = useState(() => ({
+    tone: defaultSkinTone(),
+    open: false,
+  }));
   const openAddEmoji = useSyncExternalStore(
     addEmoji.subscribe,
     addEmoji.snapshot,
@@ -271,6 +276,12 @@ export function EmojiPicker({
             setOpen(false);
           },
           close: () => setOpen(false),
+          skinToneChange: (tone, menuOpen) =>
+            setSkinTone((current) =>
+              current.tone === tone && current.open === menuOpen
+                ? current
+                : { tone, open: menuOpen },
+            ),
         });
         setMart(container.querySelector<HTMLElement>("em-emoji-picker"));
       })
@@ -287,6 +298,10 @@ export function EmojiPicker({
           ?.value ?? search.current;
       dispose?.();
       setMart(null);
+      // A menu open at unmount is gone with its picker.
+      setSkinTone((current) =>
+        current.open ? { ...current, open: false } : current,
+      );
     };
   }, [
     open,
@@ -326,6 +341,23 @@ export function EmojiPicker({
       </span>,
       mart,
     );
+  const skinToneAction =
+    mart &&
+    createPortal(
+      <span slot={SKIN_TONE_SLOT}>
+        <IconButton
+          size="sm"
+          variant="ghost"
+          type="button"
+          aria-label="Choose default skin tone"
+          title="Choose default skin tone"
+          hint="familiar"
+          aria-expanded={skinTone.open}
+          emoji={toneHand(skinTone.tone)}
+        />
+      </span>,
+      mart,
+    );
   function addCustomEmoji() {
     // Settings takes focus; do not return it to the composer behind it.
     accepted.current = true;
@@ -336,6 +368,7 @@ export function EmojiPicker({
     <div className={styles.emojiMart}>
       <div ref={setHost} tabIndex={-1} />
       {addEmojiAction}
+      {skinToneAction}
     </div>
   );
   const gifContent = community && (
@@ -442,7 +475,8 @@ export function EmojiPicker({
       className={styles.emojiPicker}
       onKeyDownCapture={(event) => {
         // Mart stops search key events before they bubble out of its shadow root.
-        if (event.key === "Escape" && open) {
+        // An open skin-tone menu takes Escape first, closing only itself.
+        if (event.key === "Escape" && open && !skinTone.open) {
           event.preventDefault();
           event.stopPropagation();
           setOpen(false);

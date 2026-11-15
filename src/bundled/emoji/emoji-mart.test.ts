@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { mountEmojiMart } from "./emoji-mart";
 import { PREVIEW_ACTION_SLOT } from "./add-emoji";
+import { SKIN_TONE_SLOT } from "./skin-tone";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -95,6 +96,7 @@ it("previews the hovered emoji by name and shortcode instead of a title hint", a
       },
     );
   const host = document.body.appendChild(document.createElement("div"));
+  const skinToneChange = vi.fn();
   const dispose = mountEmojiMart({
     host,
     autoFocus: false,
@@ -110,6 +112,7 @@ it("previews the hovered emoji by name and shortcode instead of a title hint", a
     media: (url) => url,
     select() {},
     close() {},
+    skinToneChange,
   });
   try {
     const root = () => host.querySelector("em-emoji-picker")?.shadowRoot;
@@ -129,6 +132,12 @@ it("previews the hovered emoji by name and shortcode instead of a title hint", a
     expect(
       preview()?.querySelector(`slot[name="${PREVIEW_ACTION_SLOT}"]`),
     ).not.toBeNull();
+    // The footer, not the category bar, offers the saved default tone.
+    expect(
+      preview()?.querySelector(`slot[name="${SKIN_TONE_SLOT}"]`),
+    ).not.toBeNull();
+    expect(root()?.querySelector("#nav .skin-tone")).toBeNull();
+    expect(skinToneChange).toHaveBeenLastCalledWith(1, false);
     const search = (query: string) => {
       input.value = query;
       input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -152,9 +161,7 @@ it("previews the hovered emoji by name and shortcode instead of a title hint", a
       "https://a.test/shipit.png",
     );
     search("zzzzqqqq");
-    await vi.waitFor(() =>
-      expect(text()).toEqual(["No emoji found", "", null]),
-    );
+    await vi.waitFor(() => expect(text()).toEqual(["", "", null]));
     expect(preview()?.querySelector(".emoji-mart-emoji")).toBeNull();
   } finally {
     dispose();

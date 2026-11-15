@@ -417,38 +417,52 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     });
     await expect(search).toBeFocused();
     await expect(search).toHaveAttribute("placeholder", "Search emoji");
+    // The default tone lives in the footer as a hand, not in the category bar.
     const categoryNavigation = page.locator("em-emoji-picker #nav");
-    const skinTone = categoryNavigation.locator(".buzz-skin-tone-nav-button");
-    await expect(skinTone).toHaveAttribute("aria-label", /skin tone/i);
-    await expect(categoryNavigation.locator("button").last()).toHaveClass(
-      /buzz-skin-tone-nav-button/,
-    );
+    await expect(categoryNavigation.locator(".skin-tone")).toHaveCount(0);
     await expect(
       page.locator("em-emoji-picker .search .skin-tone-button"),
     ).toHaveCount(0);
-    await skinTone.hover();
-    await expect
-      .poll(() =>
-        skinTone.evaluate(
-          (button) => getComputedStyle(button, "::before").backgroundColor,
-        ),
-      )
-      .toBe("rgb(241, 241, 242)");
+    const footer = page.locator("em-emoji-picker #preview");
+    const skinTone = page.getByRole("button", {
+      name: "Choose default skin tone",
+    });
+    await expect(skinTone).toHaveText("🤙");
+    await expect(skinTone).toHaveAttribute("aria-expanded", "false");
+    const footerBox = await footer.boundingBox();
+    const skinToneBox = await skinTone.boundingBox();
+    expect(skinToneBox.y).toBeGreaterThanOrEqual(footerBox.y);
+    expect(skinToneBox.x + skinToneBox.width).toBeGreaterThan(
+      footerBox.x + footerBox.width - 24,
+    );
     await skinTone.click();
-    await expect(skinTone).toHaveAttribute("aria-selected", "");
+    await expect(skinTone).toHaveAttribute("aria-expanded", "true");
     const toneMenu = page.locator("em-emoji-picker #root > .menu");
     await expect(toneMenu).toBeVisible();
     await expect(toneMenu).toHaveCSS("z-index", "100");
+    // Each choice is the hand in that tone.
+    expect(
+      await toneMenu
+        .locator(".option .skin-tone")
+        .evaluateAll((tones) =>
+          tones.map((tone) => getComputedStyle(tone, "::before").content),
+        ),
+    ).toEqual(
+      ["", "🏻", "🏼", "🏽", "🏾", "🏿"].map((modifier) => `"🤙${modifier}"`),
+    );
     // Mart's opening transform temporarily lifts the menu above its final edge.
-    // Measure the settled menu: its control-size offset meets the nav flush,
-    // which is non-overlapping but does not leave a strictly positive gap.
+    // Measure the settled menu: it opens above the footer, ending at the hand.
     await expect(toneMenu).toHaveCSS("transform", "none");
     await expect(toneMenu).toHaveCSS("opacity", "1");
     const toneMenuBox = await toneMenu.boundingBox();
-    const categoryNavigationBox = await categoryNavigation.boundingBox();
     expect(toneMenuBox.y + toneMenuBox.height).toBeLessThanOrEqual(
-      categoryNavigationBox.y,
+      footerBox.y + 1,
     );
+    expect(
+      Math.abs(
+        toneMenuBox.x + toneMenuBox.width - (skinToneBox.x + skinToneBox.width),
+      ),
+    ).toBeLessThanOrEqual(1);
     expect(
       await toneMenu.evaluate((menu) => {
         const bounds = menu.getBoundingClientRect();
@@ -461,9 +475,23 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         return !!top && menu.contains(top);
       }),
     ).toBe(true);
-    await toneMenu.locator(".option").nth(1).click();
+    // Escape closes only the menu, returning to the hand.
+    await page.keyboard.press("Escape");
     await expect(toneMenu).toHaveCount(0);
     await expect(skinTone).toBeFocused();
+    await expect(search).toBeVisible();
+    await skinTone.click();
+    await toneMenu.locator(".option").nth(3).click();
+    await expect(toneMenu).toHaveCount(0);
+    await expect(skinTone).toBeFocused();
+    await expect(skinTone).toHaveText("🤙🏽");
+    await expect(
+      page.locator('em-emoji-picker .category button[aria-label="👍🏽"]'),
+    ).not.toHaveCount(0);
+    // Restore the default tone for the rest of this flow.
+    await skinTone.click();
+    await toneMenu.locator(".option").first().click();
+    await expect(skinTone).toHaveText("🤙");
     await search.focus();
     const searchIcon = page.locator("em-emoji-picker .search .loupe svg");
     await expectTabler(searchIcon, "search");

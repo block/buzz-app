@@ -9,18 +9,19 @@ import { Data, Picker, SearchIndex } from "emoji-mart";
 import type { CustomEmoji } from "../../features/relay/emoji";
 import { rankShortcodes } from "./emoji-search";
 import { PREVIEW_ACTION_SLOT } from "./add-emoji";
+import { SKIN_TONE_SLOT, toneHand } from "./skin-tone";
 
 const martSearch = SearchIndex.search;
 const resolvedTheme = (value: unknown): "light" | "dark" =>
   value === "dark" ? "dark" : "light";
 
 const prefix = "buzz-custom/";
-// Idle, the preview row stays empty at its usual height; a search with no
-// matches says so beside the Add emoji action.
+// Idle and with no matches, the footer shows only its actions; the empty grid
+// under the query already says nothing matched.
 const previewStrings = {
   ...english,
   pick: "",
-  search_no_results_1: "No emoji found",
+  search_no_results_1: "",
   search_no_results_2: "",
 };
 // Unknown IDs render nothing in place of Mart's pointing and crying emoji.
@@ -69,6 +70,7 @@ export function mountEmojiMart({
   media,
   select,
   close,
+  skinToneChange,
 }: {
   host: HTMLDivElement;
   colorMode?: "light" | "dark" | undefined;
@@ -86,6 +88,8 @@ export function mountEmojiMart({
   media(url: string): string | undefined;
   select(value: string, customEmoji?: string): void;
   close(): void;
+  /** With `preview`, the footer's skin-tone action renders the saved tone (1–6). */
+  skinToneChange?(tone: number, open: boolean): void;
 }) {
   active?.();
   let disposed = false;
@@ -210,7 +214,7 @@ export function mountEmojiMart({
       font-family: var(--font-sans);
     }
     #root {
-      ${preview ? "--buzz-preview-height: calc(var(--size-control) + 2 * var(--space-2));" : ""}
+      ${preview ? "--buzz-preview-height: calc(var(--size-control) + 2 * var(--space-2)); --buzz-skin-menu-end: var(--picker-grid-gutter, var(--space-3));" : ""}
       --padding: var(--space-2);
       position: relative;
       width: 100% !important;
@@ -316,6 +320,14 @@ export function mountEmojiMart({
     #preview slot {
       flex-shrink: 0;
     }
+    /* Slack's footer: Add emoji leads until an emoji is hovered or selected,
+       then its preview takes that place; the skin tone stays at the end. */
+    #preview slot[name="${PREVIEW_ACTION_SLOT}"]::slotted(*) {
+      order: -1;
+    }
+    #preview:has(.emoji-mart-emoji) slot[name="${PREVIEW_ACTION_SLOT}"] {
+      display: none;
+    }
 
     .spacer {
       height: 0;
@@ -408,9 +420,9 @@ export function mountEmojiMart({
       box-shadow: var(--shadow-sm);
       backdrop-filter: none;
       top: auto !important;
-      right: 0.5rem !important;
-      /* Open above the category bar, and the preview row beneath it. */
-      bottom: calc(var(--size-control) + var(--buzz-preview-height, 0px)) !important;
+      /* Open above the footer's skin-tone action, or else the category bar. */
+      right: var(--buzz-skin-menu-end, 0.5rem) !important;
+      bottom: var(--buzz-preview-height, var(--size-control)) !important;
       left: auto !important;
       z-index: 100 !important;
       transform-origin: 100% 100%;
@@ -423,6 +435,21 @@ export function mountEmojiMart({
       background: var(--affordance-subtle-hover);
       color: var(--text-standard);
     }
+    /* Each tone shows as the footer's hand in that tone, not a colour dot. */
+    .menu .skin-tone {
+      width: auto;
+      height: auto;
+      overflow: visible;
+      border-radius: 0;
+      background: none;
+      font-family: var(--font-emoji);
+      font-size: var(--size-emoji-inline);
+      line-height: 1;
+    }
+    .menu .skin-tone::after {
+      display: none;
+    }
+${[1, 2, 3, 4, 5, 6].map((tone) => `    .menu .skin-tone-${tone}::before { content: "${toneHand(tone)}"; }`).join("\n")}
     .menu input[type="radio"]:checked + .option {
       box-shadow: 0 0 0 2px var(--text-standard);
     }
@@ -436,15 +463,46 @@ export function mountEmojiMart({
   `;
   root?.appendChild(navigationStyle);
   let skinToneObserver: MutationObserver | undefined;
-  const placeSkinToneInNavigation = () => {
-    const source = root?.querySelector<HTMLButtonElement>(".skin-tone-button");
+  /** Hide Mart's skin-tone button behind our own trigger, mirroring its state. */
+  const proxySkinTone = (
+    source: HTMLButtonElement,
+    trigger: EventTarget,
+    render: (tone: number, open: boolean) => void,
+    focus: () => void,
+  ) => {
+    source.parentElement?.classList.add("buzz-skin-tone-source");
+    let menuOpen = source.hasAttribute("aria-selected");
+    const sync = () => {
+      const open = source.hasAttribute("aria-selected");
+      const dot = source.querySelector(".skin-tone")?.className ?? "";
+      render(Number(/skin-tone-(\d)/.exec(dot)?.[1] ?? 1), open);
+      if (menuOpen && !open) focus();
+      menuOpen = open;
+    };
+    // An open menu closes through Mart's own click handling. Opening stops
+    // here: Mart's document listener reads a slotted (light-DOM) trigger as
+    // an outside click and would close the menu it just opened.
+    trigger.addEventListener("click", (event) => {
+      if (source.hasAttribute("aria-selected")) return;
+      event.stopPropagation();
+      source.click();
+    });
+    sync();
+    skinToneObserver?.disconnect();
+    skinToneObserver = new MutationObserver(sync);
+    skinToneObserver.observe(source, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+  };
+  const placeSkinToneInNavigation = (source: HTMLButtonElement) => {
     const navigation = root?.querySelector<HTMLElement>(
       "#nav > .flex.relative",
     );
     const bar = navigation?.querySelector<HTMLElement>(":scope > .bar");
-    if (!source || !navigation || !bar) return false;
-    if (navigation.querySelector(".buzz-skin-tone-nav-button")) return true;
-    source.parentElement?.classList.add("buzz-skin-tone-source");
+    if (!navigation || !bar) return;
+    if (navigation.querySelector(".buzz-skin-tone-nav-button")) return;
     const button = host.ownerDocument.createElement("button");
     button.type = "button";
     button.className = "buzz-skin-tone-nav-button flex flex-center flex-middle";
@@ -455,35 +513,52 @@ export function mountEmojiMart({
     button.title = source.title;
     const tone = host.ownerDocument.createElement("span");
     button.appendChild(tone);
-    let menuOpen = source.hasAttribute("aria-selected");
-    const sync = () => {
-      const selected = source.hasAttribute("aria-selected");
-      button.toggleAttribute("aria-selected", selected);
-      tone.className =
-        source.querySelector(".skin-tone")?.className ?? "skin-tone";
-      if (menuOpen && !selected) button.focus();
-      menuOpen = selected;
-    };
     button.addEventListener("mousedown", (event) => event.preventDefault());
-    button.addEventListener("click", () => source.click());
-    sync();
     navigation.insertBefore(button, bar);
-    skinToneObserver?.disconnect();
-    skinToneObserver = new MutationObserver(sync);
-    skinToneObserver.observe(source, {
-      attributes: true,
-      childList: true,
-      subtree: true,
-    });
-    return true;
+    proxySkinTone(
+      source,
+      button,
+      (selected, open) => {
+        button.toggleAttribute("aria-selected", open);
+        tone.className = `skin-tone skin-tone-${selected}`;
+      },
+      () => button.focus(),
+    );
   };
-  const placePreviewAction = () => {
-    const row = preview ? root?.querySelector("#preview") : undefined;
-    if (!row || row.querySelector(`slot[name="${PREVIEW_ACTION_SLOT}"]`))
-      return;
-    const slot = host.ownerDocument.createElement("slot");
-    slot.name = PREVIEW_ACTION_SLOT;
-    row.appendChild(slot);
+  /** The footer: Add emoji, Mart's preview, then the skin-tone action. */
+  const placeFooter = (source: HTMLButtonElement) => {
+    const row = root?.querySelector("#preview");
+    if (!row) return;
+    const slot = (name: string) => {
+      const existing = row.querySelector<HTMLSlotElement>(
+        `slot[name="${name}"]`,
+      );
+      if (existing) return { element: existing, created: false };
+      const element = host.ownerDocument.createElement("slot");
+      element.name = name;
+      row.appendChild(element);
+      return { element, created: true };
+    };
+    slot(PREVIEW_ACTION_SLOT);
+    const tone = slot(SKIN_TONE_SLOT);
+    if (!tone.created) return;
+    proxySkinTone(
+      source,
+      tone.element,
+      (selected, open) => skinToneChange?.(selected, open),
+      () =>
+        root
+          ?.querySelector<HTMLSlotElement>(`slot[name="${SKIN_TONE_SLOT}"]`)
+          ?.assignedElements()[0]
+          ?.querySelector("button")
+          ?.focus(),
+    );
+  };
+  const placeSkinTone = () => {
+    const source = root?.querySelector<HTMLButtonElement>(".skin-tone-button");
+    if (!source) return;
+    if (preview) placeFooter(source);
+    else placeSkinToneInNavigation(source);
   };
   const installSearchIcon = (
     selector: string,
@@ -544,8 +619,7 @@ export function mountEmojiMart({
   const focusSearch = () => {
     const input = root?.querySelector<HTMLInputElement>('input[type="search"]');
     if (!root || !input || disposed) return;
-    placeSkinToneInNavigation();
-    placePreviewAction();
+    placeSkinTone();
     root.querySelector(".scroll")?.classList.add("buzz-thin-scrollbar");
     input.parentElement?.classList.add("search-field");
     root

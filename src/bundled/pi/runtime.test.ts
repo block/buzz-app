@@ -2677,3 +2677,68 @@ it("publishes unaddressed community wakes to mounted session observers", async (
     f.runtime.dispose();
   }
 });
+
+it("retains the Solo Canvas when a source is invalidated during preparation", async () => {
+  const f = setup(
+    { wait: () => ({ status: "done", answer: 1, text: "Done" }) },
+    [],
+    { content: "RETAINED_CANVAS" },
+  );
+  f.solo.add(channel);
+  f.solo.add("other");
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [
+      { ...first, channelType: "solo" },
+      { ...first, id: "other", channelType: "solo" },
+    ],
+  });
+  let current = true;
+  let release!: () => void;
+  try {
+    const a = f.deliver(
+      { type: "mention", event: reply("2", "first") },
+      { config },
+    );
+    await a.run;
+    await f.settled(a);
+    expect(f.host.requests("deliver")[0]?.params.text).toContain(
+      "RETAINED_CANVAS",
+    );
+    const started = vi.fn();
+    f.session.canvas.read.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          started();
+          release = () => resolve(undefined);
+        }),
+    );
+    const b = f.deliver(
+      { ...pluginWake(undefined, "other"), topLevel: true },
+      { config, channelId: "other", current: () => current },
+    );
+    await vi.waitFor(() => expect(started).toHaveBeenCalled());
+    current = false;
+    release();
+    await b.run;
+    await f.settled(b);
+    expect(f.host.requests("deliver")).toHaveLength(1);
+    f.session.canvas.read.mockRejectedValue(new Error("offline"));
+    const a2 = f.deliver(
+      { type: "mention", event: reply("4", "same Solo") },
+      { config },
+    );
+    await a2.run;
+    await f.settled(a2);
+    expect(f.host.requests("deliver").at(-1)?.params.text).toContain(
+      "RETAINED_CANVAS",
+    );
+  } finally {
+    release?.();
+    f.runtime.dispose();
+  }
+});

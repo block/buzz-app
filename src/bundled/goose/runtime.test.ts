@@ -2819,3 +2819,62 @@ it("retains a community wake deadline after final publication until native idle"
     f.runtime.dispose();
   }
 });
+
+it("retains the Solo Canvas when a stopped admitted source finishes preparation", async () => {
+  const f = setup({
+    scope: "community",
+    solo: new Set([channel, "other"]),
+    canvas: "RETAINED_CANVAS",
+  });
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  const interruptible = vi.fn();
+
+  const listed = f.session.channels.list();
+  const firstChannel = listed.channels[0];
+  if (!firstChannel) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [
+      ...listed.channels,
+      { ...firstChannel, id: "other", channelType: "solo" },
+    ],
+  });
+
+  let release!: () => void;
+  try {
+    await f.deliver(message("1", "first"), { workingUntil });
+    await Promise.all(workingUntil.mock.calls.map(([done]) => done));
+    const read = f.session.canvas.read.getMockImplementation();
+    let reads = 0;
+    const started = vi.fn();
+    f.session.canvas.read.mockImplementation((...args) => {
+      if (++reads === 2)
+        return new Promise((resolve) => {
+          started();
+          release = () => resolve(null);
+        });
+      return read!(...args);
+    });
+    const pending = f.deliver(
+      message("2", "cancel", {
+        tags: [
+          ["h", "other"],
+          ["p", self],
+        ],
+      }),
+      { channelId: "other", interruptible, workingUntil },
+    );
+    await vi.waitFor(() => expect(started).toHaveBeenCalled());
+    await interruptible.mock.calls[0]?.[0]();
+    release();
+    await pending;
+    await Promise.all(workingUntil.mock.calls.map(([done]) => done));
+    f.session.canvas.read.mockRejectedValue(new Error("offline"));
+    await f.deliver(message("3", "same Solo"), { workingUntil });
+    await Promise.all(workingUntil.mock.calls.map(([done]) => done));
+    expect(f.goose()?.turns.at(-1)?.text).toContain("RETAINED_CANVAS");
+  } finally {
+    release?.();
+    f.runtime.dispose();
+  }
+});

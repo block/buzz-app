@@ -1116,6 +1116,9 @@ export class ClaudeRuntime {
         sessionContext = admitted?.context ?? sessionContext;
         // `fresh` is for a session that has been shown nothing yet.
         const prompt = async (fresh: boolean) => {
+          const wakePrompt = wake
+            ? ((await wakeText?.()) ?? wake.text)
+            : undefined;
           const turn = await this.turn(
             entry,
             agent,
@@ -1125,13 +1128,14 @@ export class ClaudeRuntime {
             topLevel,
             fresh,
             solo,
+            () => !interrupted && (!current || current()),
           );
           const text = turnPrompt({
             ...turn,
             agent: agent.key,
             channelLevel: topLevel && !solo,
             ...(wake
-              ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
+              ? { wake: { ...wake, text: wakePrompt ?? wake.text } }
               : {}),
           });
           return {
@@ -1384,6 +1388,7 @@ export class ClaudeRuntime {
               const text = await prompt();
               if (text === undefined || !delivery.current())
                 return { ok: true };
+              signal.throwIfAborted();
               entry.project.resolve(undefined, NO_PROJECT);
               entry.directories.delete(COMMUNITY_SESSION);
               entry.contexts.set(COMMUNITY_SESSION, {});
@@ -1525,6 +1530,7 @@ export class ClaudeRuntime {
     topLevel: boolean,
     fresh = false,
     solo = topLevel,
+    current = () => true,
   ) {
     const reads = this.reads(agent.key);
     const [summary, memory] = await Promise.all([
@@ -1597,8 +1603,9 @@ export class ClaudeRuntime {
       reading,
       referencedFolders(event, owner, reads?.scope),
     ]);
+    const commit = current();
     const project =
-      scope === "community"
+      scope === "community" && commit
         ? entry.project.resolve(channelId, solo ? loadedProject : NO_PROJECT)
         : loadedProject;
     const referenced = [
@@ -1607,7 +1614,7 @@ export class ClaudeRuntime {
         ...folders.directories,
       ]),
     ];
-    if (referenced.length) entry.referenced.set(key, referenced);
+    if (commit && referenced.length) entry.referenced.set(key, referenced);
     // An unread Canvas keeps the folders the chat had, not restarting it.
     const directories = [
       ...new Set([
@@ -1615,8 +1622,10 @@ export class ClaudeRuntime {
         ...referenced,
       ]),
     ];
-    if (directories.length) entry.directories.set(key, directories);
-    else if (project) entry.directories.delete(key);
+    if (commit) {
+      if (directories.length) entry.directories.set(key, directories);
+      else if (project) entry.directories.delete(key);
+    }
     const section = [
       project?.section,
       folders.section,

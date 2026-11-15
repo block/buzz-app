@@ -4244,3 +4244,71 @@ it("keeps a background continuation on its source until native work drains", asy
     f.runtime.dispose();
   }
 });
+
+it("retains the Solo Canvas when a stopped source finishes preparation", async () => {
+  const f = setup([], {
+    solo: new Set([channel, "other"]),
+    canvas: { content: "RETAINED_CANVAS" },
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+
+  const listed = f.session.channels.list();
+  const firstChannel = listed.channels[0];
+  if (!firstChannel) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [
+      ...listed.channels,
+      { ...firstChannel, id: "other", channelType: "solo" },
+    ],
+  });
+
+  let release!: () => void;
+  try {
+    await f.deliver(
+      { type: "mention", event: message("1", "first") },
+      { config },
+    );
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    const started = vi.fn();
+    f.session.canvas.read.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          started();
+          release = () => resolve(undefined);
+        }),
+    );
+    const pending = f.deliver(
+      {
+        type: "mention",
+        event: message("2", "cancel", {
+          tags: [
+            ["h", "other"],
+            ["p", self],
+          ],
+        }),
+      },
+      { config, channelId: "other" },
+    );
+    await vi.waitFor(() => expect(started).toHaveBeenCalled());
+    await f.interruptible.mock.calls[1]?.[0]();
+    release();
+    await pending;
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    f.session.canvas.read.mockRejectedValue(new Error("offline"));
+    await f.deliver(
+      { type: "mention", event: message("3", "same Solo") },
+      { config },
+    );
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(
+      f
+        .claudes()
+        .flatMap((p) => p.prompts)
+        .at(-1),
+    ).toContain("RETAINED_CANVAS");
+  } finally {
+    release?.();
+    f.runtime.dispose();
+  }
+});

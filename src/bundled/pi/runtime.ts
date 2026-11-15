@@ -647,8 +647,11 @@ export class PiRuntime {
         agent: agent.key,
         key,
       });
-      const prompt = async () =>
-        this.review(
+      const prompt = async () => {
+        const wakePrompt = wake
+          ? ((await wakeText?.()) ?? wake.text)
+          : undefined;
+        return this.review(
           entry,
           turnPrompt({
             ...(await this.turn(
@@ -659,11 +662,12 @@ export class PiRuntime {
               topLevel,
               seen,
               solo,
+              () => !interrupted && (!current || current()),
             )),
             agent: agent.key,
             channelLevel: topLevel && !solo,
             ...(wake
-              ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
+              ? { wake: { ...wake, text: wakePrompt ?? wake.text } }
               : {}),
           }),
           channel,
@@ -671,6 +675,7 @@ export class PiRuntime {
             ? undefined
             : root,
         );
+      };
       // A conversation's tools default to its thread; a conversation shared
       // by several threads is told which to reply in instead.
       const context: Context = topLevel
@@ -829,7 +834,6 @@ export class PiRuntime {
       signal.throwIfAborted();
       const text = await prompt();
       if (text === undefined) return { ok: true };
-      if (community) entry.project.resolve(undefined, NO_PROJECT);
       const turn = await this.turnOf(
         entry,
         agent.key,
@@ -838,6 +842,7 @@ export class PiRuntime {
       );
       signal.throwIfAborted();
       if (delivery.current && !delivery.current()) return { ok: true };
+      if (community) entry.project.resolve(undefined, NO_PROJECT);
       request = `${key}/${crypto.randomUUID()}`;
       entry.standalone.add(request);
       if (community)
@@ -1383,6 +1388,7 @@ export class PiRuntime {
     topLevel: boolean,
     seen: number,
     solo = topLevel,
+    current = () => true,
   ) {
     const reads = this.reads(agent.key);
     const summary = await reads?.channel(channelId);
@@ -1443,7 +1449,7 @@ export class PiRuntime {
     ]);
     const entry = this.agents.get(agent.key);
     const project =
-      scope === "community" && entry
+      scope === "community" && entry && current()
         ? entry.project.resolve(channelId, solo ? loadedProject : NO_PROJECT)
         : loadedProject;
     return {

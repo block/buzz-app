@@ -500,7 +500,12 @@ export class GooseRuntime {
     const topLevel = solo || wake?.topLevel === true;
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // `fresh` is for a session that has been shown nothing yet.
-    const prompt = async (fresh: boolean, admitted?: string) => {
+    const prompt = async (
+      fresh: boolean,
+      admitted?: string,
+      current = () => true,
+    ) => {
+      const wakePrompt = wake ? ((await wakeText?.()) ?? wake.text) : undefined;
       const turn = await this.turn(
         entry,
         agent,
@@ -511,15 +516,14 @@ export class GooseRuntime {
         resumed,
         solo,
         admitted,
+        current,
       );
       const { channel: where } = turn;
       const text = turnPrompt({
         ...turn,
         agent: agent.key,
         channelLevel: topLevel && !solo,
-        ...(wake
-          ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
-          : {}),
+        ...(wake ? { wake: { ...wake, text: wakePrompt ?? wake.text } } : {}),
       });
       return {
         key: turn.key,
@@ -555,6 +559,7 @@ export class GooseRuntime {
             : prior && (same ? prior.handed : prior.settled);
         let delivered!: ReturnType<AgentSessions["deliver"]>;
         let interrupted = false;
+        const valid = () => !interrupted && (!current || current());
         let submitted = false;
         const handed = (async () => {
           await wait;
@@ -571,7 +576,7 @@ export class GooseRuntime {
           notes = agent.notes?.(channel, noteRoot) ?? [];
           const text = this.review(
             entry,
-            wait ? (await prompt(false, key)).text : prepared,
+            wait ? (await prompt(false, key, valid)).text : prepared,
             notes,
             channel,
             noteRoot,
@@ -596,7 +601,7 @@ export class GooseRuntime {
                   refresh: async (fresh = false) => {
                     const text = this.review(
                       entry,
-                      (await prompt(fresh, key)).text,
+                      (await prompt(fresh, key, valid)).text,
                       notes,
                       channel,
                       noteRoot,
@@ -609,7 +614,7 @@ export class GooseRuntime {
             fresh: async () =>
               this.review(
                 entry,
-                (await prompt(true, key)).text,
+                (await prompt(true, key, valid)).text,
                 notes,
                 channel,
                 noteRoot,
@@ -710,9 +715,9 @@ export class GooseRuntime {
               const text = await prompt();
               if (text === undefined || !delivery.current())
                 return { ok: true };
+              signal.throwIfAborted();
               entry.project.resolve(undefined, NO_PROJECT);
               entry.contexts.set(COMMUNITY_SESSION, {});
-              signal.throwIfAborted();
               const stop = () => {
                 void entry.sessions.interrupt(COMMUNITY_SESSION);
               };
@@ -843,6 +848,7 @@ export class GooseRuntime {
     resumed = false,
     solo = topLevel,
     admitted?: string,
+    current = () => true,
   ) {
     const snapshot = this.relay(agent.key)?.snapshot();
     const session = snapshot?.status === "ready" ? snapshot.session : undefined;
@@ -927,7 +933,7 @@ export class GooseRuntime {
       reading,
     ]);
     const project =
-      scope === "community" && admitted
+      scope === "community" && admitted && current()
         ? entry.project.resolve(channelId, solo ? loadedProject : NO_PROJECT)
         : loadedProject;
     return {

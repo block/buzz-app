@@ -1,6 +1,7 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import {
+  HELD_RETRY_REFUSED,
   PublishNotSent,
   PublishRejected,
   createOutbox,
@@ -1486,4 +1487,65 @@ it("fails a send whose hold never settles at its delivery deadline", async () =>
     error: "Delivery timed out; check or retry this message",
   });
   expect(h.publish).not.toHaveBeenCalled();
+});
+async function restoredHeld() {
+  const storage = memoryStorage();
+  const first = setup(storage);
+  await first.open();
+  const id = heldSend(first, () => Promise.reject(new Error("Not ready")));
+  await first.signNext();
+  await flush();
+  expect(first.outbox.snapshot()[0]?.delivery).toBe("failed");
+  first.dispose();
+  const second = setup(storage);
+  await second.open();
+  expect(second.outbox.snapshot()[0]).toMatchObject({
+    event: { id },
+    held: true,
+  });
+  return { id, second };
+}
+it("refuses a plain retry of a held entry restored after reload", async () => {
+  const { id, second } = await restoredHeld();
+  expect(() => second.outbox.retry(id)).toThrow(HELD_RETRY_REFUSED);
+  await flush();
+  expect(second.outbox.snapshot()[0]?.delivery).toBe("failed");
+  expect(second.sign).not.toHaveBeenCalled();
+  expect(second.publish).not.toHaveBeenCalled();
+});
+it("publishes a restored held entry only after the hold its retry passes", async () => {
+  const { id, second } = await restoredHeld();
+  let release = () => {};
+  const hold = vi.fn(
+    (_id: string) =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  second.outbox.retry(id, undefined, hold);
+  await flush();
+  expect(hold).toHaveBeenCalledExactlyOnceWith(id);
+  expect(second.publish).not.toHaveBeenCalled();
+  release();
+  await flush();
+  // The retry reuses the saved signed event.
+  expect(second.sign).not.toHaveBeenCalled();
+  expect(second.publications.map(({ event }) => event.id)).toEqual([id]);
+});
+it("restores an entry saved before held sends existed and retries it as before", async () => {
+  const event = signed(viewer, {
+    kind: 9,
+    content: "saved earlier",
+    tags: [["h", "c"]],
+  });
+  const h = setup({
+    load: () => [{ event, signed: event, delivery: "failed" }],
+    save: () => {},
+  });
+  await h.open();
+  expect(h.outbox.snapshot()[0]).toMatchObject({ event: { id: event.id } });
+  expect(h.outbox.snapshot()[0]).not.toHaveProperty("held");
+  h.outbox.retry(event.id);
+  await flush();
+  expect(h.publications.map(({ event }) => event.id)).toEqual([event.id]);
 });

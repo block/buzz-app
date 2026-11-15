@@ -42,6 +42,9 @@ export type OutgoingEvent = Readonly<{
   acknowledged?: true;
   /** A caller-scoped admission requires renewed live eligibility for retry. */
   guarded?: boolean;
+  /** Sent with a caller hold. Once restored, only a retry that passes a new
+   * hold can publish it. */
+  held?: true;
   delivery: Delivery;
   error?: string | undefined;
   /** The relay refused the last attempt, rather than it failing on this
@@ -76,7 +79,8 @@ export interface Outbox {
    * event's id after signing and publishes only once it resolves. Only this
    * event waits, and it uses no delivery slot meanwhile. The wait counts toward
    * the attempt's deadline; a rejected or expired hold fails the delivery,
-   * which Retry may attempt again. An entry restored after reload has no hold.
+   * which Retry may attempt again. Restored after reload, the entry has no
+   * hold, so only `retry` with a new `hold` publishes it.
    * Older hosts may omit this method. */
   sendHeld?(
     input: OutboxInput,
@@ -97,7 +101,13 @@ export interface Outbox {
     verifyRetirement?: (event: EventData) => Promise<"recorded" | undefined>,
     replacement?: Replacement,
   ): Promise<void>;
-  retry(id: string, active?: () => boolean): void;
+  /** `hold` replaces the event's hold in this window. A held entry restored
+   * after reload is refused without one. */
+  retry(
+    id: string,
+    active?: () => boolean,
+    hold?: (id: string) => Promise<void>,
+  ): void;
   /** owner: the recovery its caller owns and releases with an unconfirmed send. */
   dismiss(id: string, owner?: OutboxRecovery): Promise<void>;
   /** Durable explicit dismissal, with delivery evidence at removal. */
@@ -138,6 +148,8 @@ export class PublishRejected extends Error {
 export class PublishNotSent extends PublishRejected {}
 
 export { browserOutboxStorage } from "./outbox-storage";
+/** Why a held entry restored after reload cannot take a plain retry. */
+export const HELD_RETRY_REFUSED = "Retry this from the plugin that sent it.";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
 const MAX_PENDING = 256;
 const MAX_CONFIRMED = 2048;
@@ -209,7 +221,7 @@ export function createOutbox(
     if (find(id)?.guarded && admissionGates.get(id)?.() !== true)
       throw new DOMException("Channel addition cancelled", "AbortError");
   };
-  // Transient, like admission gates: a restored write has no caller hold.
+  // In memory, like admission gates; a restored `held` entry has none.
   const sendHolds = new Map<string, (id: string) => Promise<void>>();
   let snapshot: readonly OutgoingEvent[] = Object.freeze([]);
   // Hydrated receipts are observations, not delivery owned by this window.
@@ -461,6 +473,7 @@ export function createOutbox(
       ...(item.recovery ? { recovery: recoveryValue(item.recovery) } : {}),
       ...(item.acknowledged === true ? { acknowledged: true as const } : {}),
       ...(item.guarded ? { guarded: true } : {}),
+      ...(item.held ? { held: true as const } : {}),
       delivery:
         item.delivery === "seen" && signed
           ? "seen"
@@ -755,6 +768,7 @@ export function createOutbox(
     recovery?: OutboxRecovery,
     active?: () => boolean,
     replacing?: string,
+    hold?: (id: string) => Promise<void>,
   ) {
     if (active && !active())
       throw new DOMException("Channel addition cancelled", "AbortError");
@@ -867,9 +881,11 @@ export function createOutbox(
       delivery: "sending" as const,
       ...(savedRecovery ? { recovery: savedRecovery } : {}),
       ...(active ? { guarded: true } : {}),
+      ...(hold ? { held: true as const } : {}),
     });
     admit([...snapshot, operation], event.kind);
     if (active) admissionGates.set(event.id, active);
+    if (hold) sendHolds.set(event.id, hold);
     captureSend(event);
     if (!replacing)
       profiling.measure("send.local", event.id, () => {
@@ -1075,21 +1091,22 @@ export function createOutbox(
       recovery?: OutboxRecovery,
       active?: () => boolean,
     ) => enqueue(input, recovery, active).id,
-    sendHeld(
+    sendHeld: (
       input: OutboxInput,
       hold: (id: string) => Promise<void>,
       recovery?: OutboxRecovery,
       active?: () => boolean,
+    ) => enqueue(input, recovery, active, undefined, hold).id,
+    retry(
+      id: string,
+      active?: () => boolean,
+      hold?: (id: string) => Promise<void>,
     ) {
-      const { id } = enqueue(input, recovery, active);
-      // Delivery reaches the hold only after async signing, so it is set first.
-      sendHolds.set(id, hold);
-      return id;
-    },
-    retry(id: string, active?: () => boolean) {
       const item = find(id);
       if (item?.guarded && (active ?? admissionGates.get(id))?.() !== true)
         throw new DOMException("Channel addition cancelled", "AbortError");
+      if (item?.held && !hold && !sendHolds.has(id))
+        throw new Error(HELD_RETRY_REFUSED);
       // Workflow recovery is inspect/dismiss only, including restored intents.
       if (
         !closed &&
@@ -1104,6 +1121,7 @@ export function createOutbox(
         // Promote that intent before scheduling so signing and publication honor
         // the renewed caller policy, including after the next hydration.
         if (active) admissionGates.set(id, active);
+        if (hold) sendHolds.set(id, hold);
         if (item.delivery === "failed" || item.delivery === "unknown")
           captureSend(item.event);
         replace({

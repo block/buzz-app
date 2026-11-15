@@ -52,9 +52,12 @@ Only that event waits, and it takes no delivery slot while it waits. In a chat
 this device is starting, local agents also get the message only after the hold.
 The hold counts toward the attempt's delivery deadline (10 seconds by default).
 A rejected hold, or one still pending at the deadline, fails the delivery
-without publishing; Retry calls the hold again. An entry restored after a reload
-has no hold, so a later Retry publishes it directly. Older hosts omit the
-method: check `outbox.sendHeld` before calling it.
+without publishing; Retry calls the hold again. The entry is saved as `held`.
+After a reload its hold is gone, so a plain `retry(id)` throws and the app's
+Retry controls say to retry from the plugin that sent it. The plugin retries
+with `outbox.retry(id, active, hold)`, which publishes only after the new hold
+resolves. Older hosts omit the method: check `outbox.sendHeld` before calling
+it.
 
 `session.read(filters, { signal })` is a finite read merged with matching local
 operations at completion. `session.observe(filters)` additionally subscribes to

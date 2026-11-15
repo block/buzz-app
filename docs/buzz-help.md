@@ -706,6 +706,8 @@ and are asked to sign in again in Buzz.
   ⌘/Ctrl+Enter sends. It starts off.
 - If a message can't be sent, **Retry** appears under it right away. If its
   delivery is only unconfirmed, Buzz waits about ten seconds before saying so.
+  Some plugins prepare before a message sends. After a restart, Buzz can't
+  retry such a message by itself and says to retry it from the plugin.
   To give up on it, choose **Delete message** in its "..." menu for a message
   that wasn't sent, or **Remove from this device** for an unconfirmed one. Both
   only stop this device from sending it; an unconfirmed message that did reach

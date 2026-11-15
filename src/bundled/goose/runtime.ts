@@ -925,7 +925,7 @@ export class GooseRuntime {
       reading,
     ]);
     const project =
-      scope === "community"
+      scope === "community" && admitted
         ? entry.project.resolve(channelId, solo ? loadedProject : NO_PROJECT)
         : loadedProject;
     return {

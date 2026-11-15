@@ -2722,3 +2722,49 @@ it("stops only the queued community request selected by the user", async () => {
     f.runtime.dispose();
   }
 });
+
+it("keeps the active Solo Canvas when a speculative community request is stopped", async () => {
+  const f = setup({
+    scope: "community",
+    hold: true,
+    solo: new Set([channel]),
+    canvas: "SOURCE_CANVAS",
+  });
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  const interruptible = vi.fn();
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [
+      ...listed.channels,
+      { ...first, id: "other", channelType: "stream" },
+    ],
+  });
+  try {
+    await f.deliver(message("1", "first"), { workingUntil });
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const worker = f.goose();
+    if (!worker) throw new Error("missing worker");
+    await f.deliver(
+      message("2", "cancelled", {
+        tags: [
+          ["h", "other"],
+          ["p", self],
+        ],
+      }),
+      { channelId: "other", interruptible, workingUntil },
+    );
+    await interruptible.mock.calls[0]?.[0]();
+    worker.turns[0]?.finish();
+    await Promise.all(workingUntil.mock.calls.map(([done]) => done));
+    f.session.canvas.read.mockRejectedValue(new Error("offline"));
+    await f.deliver(message("3", "same Solo"), { workingUntil });
+    await vi.waitFor(() => expect(worker.turns).toHaveLength(2));
+    expect(worker.turns[1]?.text).toContain("SOURCE_CANVAS");
+    worker.turns[1]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});

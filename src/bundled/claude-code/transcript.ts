@@ -288,10 +288,13 @@ export function startedFor(file: string, conversation: Conversation) {
  * the first prompt once the file is read. */
 const indexedFor = (start: Start, conversation: Conversation) =>
   (start.agent === undefined || start.agent === conversation.agent) &&
-  start.channelId === conversation.channelId &&
-  (conversation.root
-    ? start.scope === "thread" && start.root === conversation.root
-    : start.scope !== "thread");
+  (conversation.community
+    ? start.scope === "community"
+    : start.scope !== "community" &&
+      start.channelId === conversation.channelId &&
+      (conversation.root
+        ? start.scope === "thread" && start.root === conversation.root
+        : start.scope !== "thread"));
 
 /** How long finding the agent's workspace may take. */
 const WORKSPACE_TIMEOUT_MS = 10_000;

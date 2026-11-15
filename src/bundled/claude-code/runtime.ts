@@ -696,7 +696,9 @@ export class ClaudeRuntime {
       this.spawn,
       this.place(
         conversation.agent,
-        conversationKey(conversation.channelId, conversation.root),
+        conversation.community
+          ? COMMUNITY_SESSION
+          : conversationKey(conversation.channelId, conversation.root),
         workspace,
       ),
       conversation,
@@ -723,7 +725,9 @@ export class ClaudeRuntime {
       this.spawn,
       this.place(
         conversation.agent,
-        conversationKey(conversation.channelId, conversation.root),
+        conversation.community
+          ? COMMUNITY_SESSION
+          : conversationKey(conversation.channelId, conversation.root),
         workspace,
       ),
       conversation,

@@ -4,15 +4,32 @@ import searchFieldStyles from "../../shared/design-system/styles/search-field.cs
 import { pickerIcons } from "../../shared/design-system/icons/svg";
 // Emoji Mart config adapted from block/buzz's shared picker; see NOTICE.md.
 import data from "@emoji-mart/data";
+import english from "@emoji-mart/data/i18n/en.json";
 import { Data, Picker, SearchIndex } from "emoji-mart";
 import type { CustomEmoji } from "../../features/relay/emoji";
 import { rankShortcodes } from "./emoji-search";
+import { PREVIEW_ACTION_SLOT } from "./add-emoji";
 
 const martSearch = SearchIndex.search;
 const resolvedTheme = (value: unknown): "light" | "dark" =>
   value === "dark" ? "dark" : "light";
 
 const prefix = "buzz-custom/";
+// Idle, the preview row stays empty at its usual height; a search with no
+// matches says so beside the Add emoji action.
+const previewStrings = {
+  ...english,
+  pick: "",
+  search_no_results_1: "No emoji found",
+  search_no_results_2: "",
+};
+// Unknown IDs render nothing in place of Mart's pointing and crying emoji.
+const NO_PREVIEW_EMOJI = "buzz-none";
+/** Mart sets `title` only without a preview; identify results by their glyph. */
+const resultKey = (button: HTMLButtonElement | undefined) =>
+  button?.getAttribute("aria-label") ??
+  button?.querySelector("img")?.getAttribute("alt") ??
+  "";
 const categoryIcons = {
   frequent: { svg: pickerIcons.clock },
   people: { svg: pickerIcons.smiley },
@@ -40,6 +57,7 @@ export function mountEmojiMart({
   host,
   colorMode,
   autoFocus = true,
+  preview = false,
   scope,
   perLine,
   emojiSize,
@@ -55,6 +73,8 @@ export function mountEmojiMart({
   host: HTMLDivElement;
   colorMode?: "light" | "dark" | undefined;
   autoFocus?: boolean;
+  /** Show the hovered or keyboard-selected emoji, its name and shortcode. */
+  preview?: boolean;
   scope: string;
   perLine: number;
   emojiSize: number;
@@ -85,7 +105,8 @@ export function mountEmojiMart({
     return [
       {
         id,
-        name: literal,
+        // The preview prints the name over the shortcode; avoid `:x:` twice.
+        name: preview ? shortcode : literal,
         keywords: [shortcode],
         // Supplying search/shortcodes prevents Mart from exposing its scoped ID.
         search: `,${terms.join(",")}`,
@@ -116,7 +137,14 @@ export function mountEmojiMart({
     // Ten category tabs overlap in narrow thread panes; search/scroll still work.
     navPosition: perLine < 6 ? "none" : "bottom",
     perLine,
-    previewPosition: "none",
+    ...(preview
+      ? {
+          previewPosition: "bottom",
+          previewEmoji: NO_PREVIEW_EMOJI,
+          noResultsEmoji: NO_PREVIEW_EMOJI,
+          i18n: previewStrings,
+        }
+      : { previewPosition: "none" }),
     set: "native",
     skinTonePosition: "search",
     // Widget mode follows the host, never the OS independently.
@@ -182,6 +210,7 @@ export function mountEmojiMart({
       font-family: var(--font-sans);
     }
     #root {
+      ${preview ? "--buzz-preview-height: calc(var(--size-control) + 2 * var(--space-2));" : ""}
       --padding: var(--space-2);
       position: relative;
       width: 100% !important;
@@ -229,6 +258,56 @@ export function mountEmojiMart({
       width: 1rem;
       height: 1rem;
       color: inherit;
+    }
+
+    #preview {
+      box-sizing: border-box;
+      height: var(--buzz-preview-height);
+      gap: var(--space-2);
+      padding: var(--space-2) var(--picker-grid-gutter, var(--space-3));
+      border-top: 1px solid var(--border-standard);
+    }
+    #preview::before {
+      display: none;
+    }
+    #preview > .flex-grow {
+      min-width: 0;
+    }
+    #preview > .flex-grow > .flex-auto {
+      width: 2rem;
+      height: 2rem !important;
+    }
+    #preview > .flex-grow > .flex-auto + div {
+      margin-inline-start: var(--space-2);
+    }
+    /* Idle or no results: keep the row height but start text at the edge. */
+    #preview > .flex-grow > .flex-auto:not(:has(.emoji-mart-emoji)) {
+      width: 0;
+    }
+    #preview > .flex-grow > .flex-auto:not(:has(.emoji-mart-emoji)) + div {
+      margin-inline-start: 0;
+    }
+    /* Native glyphs match the 2rem custom image cap (the title type size). */
+    #preview .emoji-mart-emoji > span {
+      font-size: var(--text-title) !important;
+    }
+    #preview .emoji-mart-emoji img {
+      max-width: 2rem !important;
+      max-height: 2rem !important;
+    }
+    #preview .preview-title {
+      color: var(--text-standard);
+      font-size: var(--text-body-sm);
+      font-weight: var(--type-weight-medium);
+      line-height: var(--text-body-sm--line-height);
+    }
+    #preview .preview-subtitle {
+      color: var(--text-metadata);
+      font-size: var(--text-caption);
+      line-height: var(--text-caption--line-height);
+    }
+    #preview slot {
+      flex-shrink: 0;
     }
 
     .spacer {
@@ -323,7 +402,8 @@ export function mountEmojiMart({
       backdrop-filter: none;
       top: auto !important;
       right: 0.5rem !important;
-      bottom: var(--size-control) !important;
+      /* Open above the category bar, and the preview row beneath it. */
+      bottom: calc(var(--size-control) + var(--buzz-preview-height, 0px)) !important;
       left: auto !important;
       z-index: 100 !important;
       transform-origin: 100% 100%;
@@ -390,6 +470,14 @@ export function mountEmojiMart({
     });
     return true;
   };
+  const placePreviewAction = () => {
+    const row = preview ? root?.querySelector("#preview") : undefined;
+    if (!row || row.querySelector(`slot[name="${PREVIEW_ACTION_SLOT}"]`))
+      return;
+    const slot = host.ownerDocument.createElement("slot");
+    slot.name = PREVIEW_ACTION_SLOT;
+    row.appendChild(slot);
+  };
   const installSearchIcon = (
     selector: string,
     name: "x" | "magnifying-glass",
@@ -429,14 +517,14 @@ export function mountEmojiMart({
     const selected = selectedResult();
     if (!selected) return; // Wait for the async search result render.
     if (
-      selected.title === pendingSelection ||
-      !results.some((button) => button.title === pendingSelection) ||
-      visited.has(selected.title)
+      resultKey(selected) === pendingSelection ||
+      !results.some((button) => resultKey(button) === pendingSelection) ||
+      visited.has(resultKey(selected))
     ) {
       pendingSelection = undefined;
       return;
     }
-    visited.add(selected.title);
+    visited.add(resultKey(selected));
     input.dispatchEvent(
       new KeyboardEvent("keydown", {
         key: "ArrowRight",
@@ -450,6 +538,7 @@ export function mountEmojiMart({
     const input = root?.querySelector<HTMLInputElement>('input[type="search"]');
     if (!root || !input || disposed) return;
     placeSkinToneInNavigation();
+    placePreviewAction();
     root.querySelector(".scroll")?.classList.add("buzz-thin-scrollbar");
     input.parentElement?.classList.add("search-field");
     root
@@ -530,7 +619,7 @@ export function mountEmojiMart({
     if (input) searchChange(input.value);
     if (input)
       searchSelection.current = {
-        emoji: pendingSelection ?? selectedResult()?.title,
+        emoji: pendingSelection ?? (resultKey(selectedResult()) || undefined),
         start: input.selectionStart,
         end: input.selectionEnd,
         direction: input.selectionDirection,

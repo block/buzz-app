@@ -14,7 +14,9 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { createPortal } from "react-dom";
 import {
+  PlusIcon,
   SmileyIcon,
   SmileyPlusIcon,
 } from "../../shared/design-system/icons/index";
@@ -34,6 +36,11 @@ import {
 import styles from "./Emoji.module.css";
 import { GifPicker } from "./GifPicker";
 import type { EmojiSearchSelection } from "./emoji-mart";
+import { PREVIEW_ACTION_SLOT, type AddEmoji } from "./add-emoji";
+const NO_ADD_EMOJI = {
+  snapshot: () => undefined,
+  subscribe: () => () => {},
+};
 
 const EMOJI_SIZE = 36;
 const EMOJI_SLOT = 48;
@@ -52,9 +59,11 @@ export function EmojiPicker({
   gifRequests = relayGifRequests,
   externalTrigger,
   gifShortcut,
+  addEmoji = NO_ADD_EMOJI,
 }: {
   session: ComposerSession;
   gifShortcut?: GifShortcut;
+  addEmoji?: Pick<AddEmoji, "snapshot" | "subscribe"> | undefined;
   scope: string;
   disabled: boolean;
   insert(value: string): void;
@@ -87,6 +96,13 @@ export function EmojiPicker({
   const trigger = useRef<HTMLButtonElement>(null);
   const controls = useRef<HTMLFieldSetElement>(null);
   const [host, setHost] = useState<HTMLDivElement | null>(null);
+  // Mart's element; its light-DOM children render through the preview slot.
+  const [mart, setMart] = useState<HTMLElement | null>(null);
+  const openAddEmoji = useSyncExternalStore(
+    addEmoji.subscribe,
+    addEmoji.snapshot,
+    addEmoji.snapshot,
+  );
   const search = useRef("");
   const searchSelection = useRef<EmojiSearchSelection | undefined>(undefined);
   const onInsert = useRef(insert);
@@ -237,6 +253,7 @@ export function EmojiPicker({
         dispose = mountEmojiMart({
           host: container,
           colorMode,
+          preview: true,
           scope,
           perLine,
           emojiSize: EMOJI_SIZE * scale,
@@ -255,6 +272,7 @@ export function EmojiPicker({
           },
           close: () => setOpen(false),
         });
+        setMart(container.querySelector<HTMLElement>("em-emoji-picker"));
       })
       .catch((reason: unknown) => {
         if (!cancelled)
@@ -268,6 +286,7 @@ export function EmojiPicker({
           ?.shadowRoot?.querySelector<HTMLInputElement>('input[type="search"]')
           ?.value ?? search.current;
       dispose?.();
+      setMart(null);
     };
   }, [
     open,
@@ -282,9 +301,41 @@ export function EmojiPicker({
     host,
     colorMode,
   ]);
+  const addEmojiAction =
+    mart &&
+    openAddEmoji &&
+    createPortal(
+      <span slot={PREVIEW_ACTION_SLOT}>
+        {perLine < 6 ? (
+          <IconButton
+            size="sm"
+            variant="ghost"
+            type="button"
+            aria-label="Add emoji"
+            title="Add emoji"
+            hint="familiar"
+            icon={<PlusIcon size="1rem" aria-hidden="true" />}
+            onClick={addCustomEmoji}
+          />
+        ) : (
+          <Button size="sm" variant="ghost" onClick={addCustomEmoji}>
+            <PlusIcon size="1rem" aria-hidden="true" />
+            Add emoji
+          </Button>
+        )}
+      </span>,
+      mart,
+    );
+  function addCustomEmoji() {
+    // Settings takes focus; do not return it to the composer behind it.
+    accepted.current = true;
+    setOpen(false);
+    openAddEmoji?.();
+  }
   const emojiContent = (
     <div className={styles.emojiMart}>
       <div ref={setHost} tabIndex={-1} />
+      {addEmojiAction}
     </div>
   );
   const gifContent = community && (

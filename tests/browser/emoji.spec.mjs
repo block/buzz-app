@@ -682,11 +682,12 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       expect(
         await button.evaluate((el) => {
           const r = el.getBoundingClientRect();
-          return el.contains(
-            el
-              .getRootNode()
-              .elementFromPoint(r.right - 2, r.top + r.height / 2),
-          );
+          const y = r.top + r.height / 2;
+          // A row scrolled partly under the preview strip is not yet reachable.
+          const viewport = el.closest(".scroll")?.getBoundingClientRect();
+          if (viewport && (y < viewport.top || y > viewport.bottom))
+            return true;
+          return el.contains(el.getRootNode().elementFromPoint(r.right - 2, y));
         }),
       ).toBe(true);
     }

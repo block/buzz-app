@@ -1,7 +1,7 @@
 //! NIP-FA issuance and local JWT misuse checks; the relay verifies JWT signatures.
 use super::{
     config::canonical_relay,
-    protocol::{self, expiry, now, Failure, CLOCK_SKEW_SECS},
+    protocol::{self, expiry, now, numeric_date, Failure, CLOCK_SKEW_SECS},
     FederatedIdentity, Status,
 };
 use crate::identity::{EventTemplate, IdentityHost};
@@ -946,13 +946,11 @@ fn validate_jwt(
     };
     let header = decode(parts[0])?;
     let claims = decode(parts[1])?;
-    let minted = claims
-        .get("iat")
-        .and_then(|v| v.as_u64())
+    let minted = numeric_date(&claims, "iat")
+        .map(|iat| iat.ceil() as u64)
         .ok_or("invalid-assertion")?;
-    let expiry = claims
-        .get("exp")
-        .and_then(|v| v.as_u64())
+    let expiry = numeric_date(&claims, "exp")
+        .map(|exp| exp.floor() as u64)
         .ok_or("invalid-assertion")?;
     if header.get("typ").and_then(|v| v.as_str()) != Some("nip-fi+jwt")
         || claims.get("aud").and_then(|v| v.as_str())
@@ -990,6 +988,16 @@ mod tests {
         };
         assert_eq!(check(now + 120), Ok(now + 120));
         assert_eq!(check(now + 121).unwrap_err().code, "clock-skew");
+        // A fractional NumericDate `iat` is valid; it rounds up, so the
+        // lifetime against the integer `exp` floors to whole seconds.
+        let token = jwt_claims(
+            &viewer,
+            relay,
+            serde_json::json!(now as f64 + 0.5),
+            now + 600,
+        );
+        let minted = validate_jwt(&token, &viewer, now + 600, &viewer, relay, now + 3600, now);
+        assert_eq!(minted, Ok(now + 1)); // lifetime 599 s, floor(599.5)
     }
 
     #[test]
@@ -1436,6 +1444,9 @@ mod tests {
         assert!(next.stop.is_cancelled());
     }
     fn jwt(viewer: &str, relay: &str, minted: u64, expires: u64) -> String {
+        jwt_claims(viewer, relay, minted.into(), expires)
+    }
+    fn jwt_claims(viewer: &str, relay: &str, minted: serde_json::Value, expires: u64) -> String {
         format!("{}.{}.eA", URL_SAFE_NO_PAD.encode(br#"{"typ":"nip-fi+jwt","alg":"ES256"}"#), URL_SAFE_NO_PAD.encode(serde_json::json!({"nostr_pubkey":viewer,"aud":format!("https://{}",&relay[6..]),"iat":minted,"exp":expires}).to_string()))
     }
     #[test]

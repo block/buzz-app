@@ -1237,14 +1237,15 @@ fn validate(
     };
     let (header, claims) = (decode(parts[0])?, decode(parts[1])?);
     let text = |name: &str| claims.get(name).and_then(serde_json::Value::as_str);
-    let minted = claims.get("iat").and_then(serde_json::Value::as_u64);
+    let minted = super::protocol::numeric_date(&claims, "iat").map(|iat| iat.ceil() as u64);
     let audience = format!("https://{}", &relay["wss://".len()..]);
     if header.get("typ").and_then(serde_json::Value::as_str) != Some("nip-fi-agent+jwt")
         || text("nostr_pubkey") != Some(&agent.pubkey)
         || text("nostr_owner_pubkey") != Some(&agent.owner)
         || text("iss") != Some(&grant.issuer)
         || text("aud") != Some(&audience)
-        || claims.get("exp").and_then(serde_json::Value::as_u64) != Some(expires_at)
+        || super::protocol::numeric_date(&claims, "exp").map(|exp| exp.floor() as u64)
+            != Some(expires_at)
         || !minted.is_some_and(|minted| {
             minted <= now + super::protocol::CLOCK_SKEW_SECS && minted <= expires_at
         })

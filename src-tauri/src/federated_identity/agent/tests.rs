@@ -2218,6 +2218,18 @@ fn an_agent_assertion_may_be_minted_120_s_ahead_but_not_121() {
     };
     assert!(check(120).is_ok());
     assert_eq!(check(121).unwrap_err().code, "invalid-assertion");
+    // A fractional NumericDate `iat` is valid; it rounds up, so the lifetime
+    // against the integer `exp` floors to whole seconds (299, not 299.5).
+    let token = jwt(&f.agent, serde_json::json!({ "iat": now as f64 + 0.5 }));
+    let minted = validate(
+        &token,
+        &f.agent,
+        &grant,
+        "wss://relay.example",
+        now + 300,
+        now,
+    );
+    assert_eq!(minted.map_err(|e| e.code), Ok(now + 1));
 }
 
 #[tokio::test]

@@ -1981,6 +1981,17 @@ export class CodexRuntime {
     }
     const key = conversationKey;
     const entry = this.entry(agent.key, request.scope);
+    // Reserve the shared position before asynchronous admission can yield.
+    const communityLane =
+      settings.scope === "community"
+        ? (entry.lanes.get(key) ?? {
+            tail: Promise.all(
+              [...entry.lanes.values()].map((other) => other.tail),
+            ).then(() => {}),
+            queued: 0,
+          })
+        : undefined;
+    if (communityLane) entry.lanes.set(key, communityLane);
     entry.waiting.add(request);
     delivery.interruptible?.(() => this.interrupt(entry, key, request));
     const handoff = this.controls.deliver(
@@ -1995,23 +2006,15 @@ export class CodexRuntime {
             request.sessionContext = admitted.context;
           else delete request.sessionContext;
         }
+        if (communityLane) return;
         const text = textOf(request.event, agent.name);
         let lane = entry.lanes.get(key);
         if (!lane) {
           lane = {
-            tail:
-              settings.scope === "community"
-                ? Promise.all(
-                    [...entry.lanes.values()].map((other) => other.tail),
-                  ).then(() => {})
-                : entry.after,
+            tail: entry.after,
             queued: 0,
           };
           entry.lanes.set(key, lane);
-        }
-        if (settings.scope === "community") {
-          this.start(request, text, key, lane, entry);
-          return;
         }
         if (lane.active) {
           const active = lane.active;
@@ -2110,6 +2113,18 @@ export class CodexRuntime {
         this.start(request, text, key, lane, entry);
       },
     );
+    if (communityLane)
+      this.start(
+        request,
+        textOf(request.event, agent.name),
+        key,
+        communityLane,
+        entry,
+        handoff.done.then(
+          () => true,
+          () => false,
+        ),
+      );
     const handed = handoff.done.catch((error) => {
       entry.waiting.delete(request);
       request.failActivity(message(error));
@@ -2458,16 +2473,19 @@ export class CodexRuntime {
     key: string,
     lane: Lane,
     entry: Entry,
+    admitted?: Promise<boolean>,
   ) {
     const current = lane;
     current.queued++;
     const job = lane.tail
       .catch(() => undefined)
       .then(async () => {
+        const ready = admitted ? await admitted : true;
         // A server-started voice turn can arrive after this job was queued.
         while (current.active) await current.active.released;
         current.queued--;
         entry.waiting.delete(request);
+        if (!ready) return;
         if (entry.abort.signal.aborted) {
           request.failActivity("Codex was stopped");
           return;

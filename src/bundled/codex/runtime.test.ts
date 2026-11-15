@@ -8333,3 +8333,107 @@ it.each(["failed", "cancelled"])(
     }
   },
 );
+
+it.each([
+  { compacting: false, reject: false },
+  { compacting: true, reject: false },
+  { compacting: false, reject: true },
+  { compacting: true, reject: true },
+])(
+  "reserves community admission before a later wake (%j)",
+  async ({ compacting, reject }) => {
+    const f = fixture();
+    const d = f.delivery("seed");
+    const config = { ...(d.config as object), scope: "community" };
+    const agent = { ...d.agent, config } as unknown as Agent;
+    const admission = deferred<void>();
+    const entered = deferred<void>();
+    let addressed: Promise<unknown> | undefined;
+    let wake: Promise<unknown> | undefined;
+    try {
+      await f.runtime.run({ ...d, config });
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      await f.complete(0);
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, { channelId: "channel" })).toBe(
+          "idle",
+        ),
+      );
+      let compacted: Promise<void> | undefined;
+      if (compacting) {
+        compacted = f.runtime.session(
+          agent,
+          { channelId: "channel" },
+          "compact",
+        );
+        await vi.waitFor(() =>
+          expect(f.sent.some((w) => w.method === "thread/compact/start")).toBe(
+            true,
+          ),
+        );
+      }
+      addressed = f.runtime
+        .run({
+          ...f.delivery("ADDRESSED_BEFORE_WAKE"),
+          config,
+          prepareSession: async () => {
+            entered.resolve();
+            await admission.promise;
+            if (reject) throw new Error("admission failed");
+            return {
+              session: {
+                sessionKey: "admitted",
+                router: "example/tasks",
+                association: {},
+              },
+            };
+          },
+        })
+        .catch((error) => error);
+      if (compacting) await addressed;
+      else await entered.promise;
+      wake = f.runtime.runOnce({
+        delivery: { agent: d.agent, config, current: () => true },
+        key: "later",
+        signal: new AbortController().signal,
+        prompt: async () => "WAKE_AFTER_ADDRESSED",
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+      if (compacting) {
+        f.emit({
+          method: "turn/started",
+          params: { threadId: "thread-1", turn: { id: "compact" } },
+        });
+        f.emit({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-1",
+            turn: { id: "compact", status: "completed" },
+          },
+        });
+        await compacted;
+        await entered.promise;
+      }
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(0);
+      vi.useRealTimers();
+      admission.resolve();
+      await addressed;
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+      expect(inputText(f.starts()[1])).toContain(
+        reject ? "WAKE_AFTER_ADDRESSED" : "ADDRESSED_BEFORE_WAKE",
+      );
+      await f.complete(1);
+      if (!reject) {
+        await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+        expect(inputText(f.starts()[2])).toContain("WAKE_AFTER_ADDRESSED");
+        await f.complete(2);
+      }
+      await wake;
+    } finally {
+      vi.useRealTimers();
+      admission.resolve();
+      f.runtime.dispose();
+      await Promise.allSettled([addressed, wake]);
+    }
+  },
+);

@@ -220,7 +220,7 @@ type Lane = {
   /** Turns waiting on `tail` to start; steering past them would reorder. */
   queued: number;
   active?: Active;
-  voice?: { loaded: Loaded; signal: AbortSignal };
+  voice?: { loaded: Loaded; signal: AbortSignal; restore(): Promise<void> };
   voiceOpening?: true;
 };
 type Entry = {
@@ -1554,8 +1554,10 @@ export class CodexRuntime {
         topLevel: true,
       },
       answered() {},
-      failActivity: (reason) =>
-        this.status(agent.key, key, "Needs attention", reason),
+      failActivity: (reason) => {
+        if (reason !== "Codex ended without a final reply")
+          this.status(agent.key, key, "Needs attention", reason);
+      },
     };
     const server = this.open(agent);
     let loaded: Loaded | undefined;
@@ -1603,6 +1605,15 @@ export class CodexRuntime {
         signal.throwIfAborted();
         const rpc = await server.opening;
         const memory = await this.core(agent.key, signal);
+        const policy = () =>
+          settings.scope === "community"
+            ? [
+                entry.project.resolve(channelId, NO_PROJECT).section,
+                turnNote(agent, channelId, undefined, true),
+              ]
+                .filter(Boolean)
+                .join("\n\n")
+            : "";
         const instructions =
           Object.values(
             turnContext(
@@ -1615,7 +1626,7 @@ export class CodexRuntime {
           )
             .map((item) => item.value)
             .join("\n") +
-          `\nVoice work acts for owner ${agent.owner}. Buzz tools default to room ${channelId} at top level. This is the room's existing conversation. A turn that starts with <realtime_delegation> is a spoken request: the voice model speaks only your final answer, so put the result there in a few plain spoken sentences, not in a send. When you delegate, say only a short acknowledgement, then wait: never state a fact the delegated work has not returned yet.`;
+          `\nFor every spoken request, apply the room's current source policy below, replacing policies retained from other conversations.\n${policy()}\nVoice work acts for owner ${agent.owner}. Buzz tools default to room ${channelId} at top level. This is the room's existing conversation. A turn that starts with <realtime_delegation> is a spoken request: the voice model speaks only your final answer, so put the result there in a few plain spoken sentences, not in a send. When you delegate, say only a short acknowledgement, then wait: never state a fact the delegated work has not returned yet.`;
         loaded = await this.loadThread(
           request,
           entry,
@@ -1638,8 +1649,35 @@ export class CodexRuntime {
             ],
           });
         signal.throwIfAborted();
-        lane.voice = { loaded, signal };
         const threadId = loaded.threadId;
+        lane.voice = {
+          loaded,
+          signal,
+          restore: async () => {
+            if (settings.scope !== "community") return;
+            try {
+              await rpc.request("thread/inject_items", {
+                threadId,
+                items: [
+                  {
+                    type: "message",
+                    role: "developer",
+                    content: [
+                      {
+                        type: "input_text",
+                        text: `For the next spoken request in this room, replace the previous source policy:\n${policy()}`,
+                      },
+                    ],
+                  },
+                ],
+              });
+            } catch (error) {
+              void close();
+              seat.ended(new Error(message(error)));
+              throw error;
+            }
+          },
+        };
         off = rpc.onMessage(({ method, params }) => {
           const p = params as
             | {
@@ -3201,7 +3239,8 @@ export class CodexRuntime {
       }
       const status = await followed.completed;
       await active.steering;
-      signal.throwIfAborted();
+      // Closing the seat after Codex completed does not undo its spoken reply.
+      if (adopted === undefined || !active.finished) signal.throwIfAborted();
       if (status === "interrupted" && active.stopped) {
         for (const taken of active.requests) taken.answered(true);
         await this.terminals(rpc, active.threadId, STOP_LINGER_MS);
@@ -3267,6 +3306,13 @@ export class CodexRuntime {
       // A turn Codex took in has ended, however it ended.
       if (active.turnId && !entry.abort.signal.aborted)
         this.touch(request, entry, key);
+      if (
+        adopted === undefined &&
+        settings.scope === "community" &&
+        lane.voice &&
+        !lane.voice.signal.aborted
+      )
+        await lane.voice.restore().catch(() => {});
       turnAbort.abort(new Error("The Codex turn has ended"));
       // Release the subscription before the next resume: loaded-thread rejoin
       // ignores instruction/config overrides while a client is subscribed.

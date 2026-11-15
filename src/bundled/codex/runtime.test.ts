@@ -7918,3 +7918,85 @@ it("releases cancelled Codex community wakes before earlier work finishes", asyn
     await once;
   }
 });
+
+it("replaces community source policies on voice startup and adopted speech", async () => {
+  vi.stubGlobal("RTCPeerConnection", class {});
+  const f = fixture();
+  f.soloChannels.add("channel");
+  f.snapshot.session.canvas.available = true;
+  f.snapshot.session.canvas.read.mockResolvedValue(canvasHead("SOURCE_CANVAS"));
+  const d = f.delivery("typed Solo");
+  const config = { ...(d.config as object), scope: "community" };
+  await f.runtime.run({ ...d, config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0);
+  f.huddleChannels.add("room");
+  const connection = await f.runtime.voice(
+    {
+      config,
+      agent: { ...d.agent, config } as unknown as Agent,
+      conversation: { channelId: "room" },
+      signal: new AbortController().signal,
+      async output() {},
+      async transcript() {},
+      ended() {},
+    },
+    d.agent,
+  );
+  try {
+    const injected = () =>
+      f.sent.filter((w) => w.method === "thread/inject_items");
+    expect(JSON.stringify(injected())).toContain(
+      "Disregard any earlier workspace Canvas",
+    );
+    const before = injected().length;
+    f.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: "spoken" } },
+    });
+    expect(JSON.stringify(injected().at(-1))).toContain(
+      "Disregard any earlier <owner-instructions>",
+    );
+    f.emit({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: { id: "spoken", status: "completed" },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+    );
+    expect(injected()).toHaveLength(before);
+    await f.runtime.run({ ...f.delivery("intervening typed turn"), config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    const beforeTypedEnd = injected().length;
+    await f.complete(1);
+    await vi.waitFor(() =>
+      expect(injected().length).toBeGreaterThan(beforeTypedEnd),
+    );
+    expect(JSON.stringify(injected().at(-1))).toContain(
+      "Disregard any earlier workspace Canvas",
+    );
+    f.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: "spoken-again" } },
+    });
+    await f.tool("send", { text: "spoken", audience: "everyone" }, 1, {
+      threadId: "thread-1",
+      turnId: "spoken-again",
+    });
+    f.emit({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: { id: "spoken-again", status: "completed" },
+      },
+    });
+    await connection.close();
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle");
+  } finally {
+    await connection.close();
+    f.runtime.dispose();
+  }
+});

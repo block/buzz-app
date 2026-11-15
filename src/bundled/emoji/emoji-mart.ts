@@ -282,14 +282,7 @@ export function mountEmojiMart({
       height: 2rem !important;
     }
     #preview > .flex-grow > .flex-auto + div {
-      margin-inline-start: var(--space-2);
-    }
-    /* Idle or no results: keep the row height but start text at the edge. */
-    #preview > .flex-grow > .flex-auto:not(:has(.emoji-mart-emoji)) {
-      width: 0;
-    }
-    #preview > .flex-grow > .flex-auto:not(:has(.emoji-mart-emoji)) + div {
-      margin-inline-start: 0;
+      margin-inline-start: var(--space-3);
     }
     /* Native glyphs match the 2rem custom image cap (the title type size). */
     /* A glyph keeps the inherited body line height (about 1.4x its size),
@@ -299,7 +292,9 @@ export function mountEmojiMart({
       display: block;
       line-height: 1;
     }
+    /* Exactly the 2rem slot, so a wide glyph cannot crowd the name. */
     #preview .emoji-mart-emoji > span {
+      width: 1em;
       font-size: var(--text-title) !important;
     }
     #preview .emoji-mart-emoji img {
@@ -325,7 +320,7 @@ export function mountEmojiMart({
     #preview slot[name="${PREVIEW_ACTION_SLOT}"]::slotted(*) {
       order: -1;
     }
-    #preview:has(.emoji-mart-emoji) slot[name="${PREVIEW_ACTION_SLOT}"] {
+    #preview[data-buzz-previewing] slot[name="${PREVIEW_ACTION_SLOT}"] {
       display: none;
     }
 
@@ -540,6 +535,12 @@ ${[1, 2, 3, 4, 5, 6].map((tone) => `    .menu .skin-tone-${tone}::before { conte
       return { element, created: true };
     };
     slot(PREVIEW_ACTION_SLOT);
+    // Mark the hovered state from this render observer rather than relying on
+    // `:has()` style invalidation inside Mart's shadow root.
+    row.toggleAttribute(
+      "data-buzz-previewing",
+      !!row.querySelector(".emoji-mart-emoji"),
+    );
     const tone = slot(SKIN_TONE_SLOT);
     if (!tone.created) return;
     proxySkinTone(

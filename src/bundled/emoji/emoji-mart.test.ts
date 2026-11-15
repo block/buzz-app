@@ -160,8 +160,13 @@ it("previews the hovered emoji by name and shortcode instead of a title hint", a
       "src",
       "https://a.test/shipit.png",
     );
+    // The preview takes Add emoji's place only while an emoji is shown.
+    expect(preview()).toHaveAttribute("data-buzz-previewing");
     search("zzzzqqqq");
     await vi.waitFor(() => expect(text()).toEqual(["", "", null]));
+    await vi.waitFor(() =>
+      expect(preview()).not.toHaveAttribute("data-buzz-previewing"),
+    );
     expect(preview()?.querySelector(".emoji-mart-emoji")).toBeNull();
   } finally {
     dispose();

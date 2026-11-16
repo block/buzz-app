@@ -533,6 +533,11 @@ and are asked to sign in again in Buzz.
   New reactions from updated clients appear; older unaddressed reactions are not backfilled.
   While Buzz is visible, a live reaction briefly replaces the Activity bell with its emoji for three seconds.
   Further reactions during that hold do not change the icon; history loading does not trigger it.
+- **Thread titles** are shared, channel-visible names for threads. A titled thread shows its title under
+  its first message in the channel (choose it to open the thread) and on its thread tab. Renaming a thread
+  tab sets the shared title; if that can't be saved, the name stays on that tab on this device only.
+  Agents and the `buzz threads title` CLI also set titles, and Buzz 0.x shows the same titles; they are not
+  searchable. Provided by the optional Named threads plugin, on by default.
 - **New messages** marks the first known unread incoming channel message when
   you enter. Once established, the divider stays in place for that visit as you
   read, reveal another message, or receive new messages. In a channel with more

@@ -1,0 +1,7 @@
+{
+  "id": "buzz.threads",
+  "name": "Named threads",
+  "apiVersion": 1,
+  "description": "Show and rename shared thread titles in channels and on thread tabs. Titles are shared with everyone in the channel, including agents.",
+  "discovery": { "category": "communication", "tags": ["messaging"] }
+}

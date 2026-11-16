@@ -190,8 +190,10 @@ uncertain-write recovery behavior. Switching to Private also warns that people
 who already joined keep access until removed, without naming a host screen. Pass
 `mayHaveGuestMembers: false` only when signed roles verify there are no Guests;
 this suppresses the View only reader warning, never the Public member warning.
-Copy link uses `shareLink` and grants no access. Omitted overrides preserve chat/channel
-behavior. Hosts predating this extension lack the two UI entries; check their
+Copy link uses `shareLink` and grants no access. With `memberActions`, it is hidden
+unless the plugin supplies a nonempty `shareLink`; it never falls back to the backing
+channel. Without plugin-managed actions, the channel/chat link remains the default.
+Other omitted overrides preserve chat/channel behavior. Hosts predating this extension lack the two UI entries; check their
 presence before offering sharing when supporting those hosts.
 
 ## Host access (`manifest.host`)

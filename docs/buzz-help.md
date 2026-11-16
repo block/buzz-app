@@ -1586,7 +1586,8 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   GitHub plugin off and on forgets all of this.
 - Some desktop plugins can upload images you provide to services they declare.
 - Plugin sharing search groups people who have not been added under **Not yet
-  added**, or a heading chosen by the plugin.
+  added**, or a heading chosen by the plugin. Its **Copy link** action appears
+  when the plugin supplies a link to the record.
 - In plugins that use Buzz's sharing controls, switching a record to **Private**
   keeps existing members' access. The confirmation warns about people who joined
   while it was open; remove them from the record to end their access.

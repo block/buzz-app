@@ -2553,6 +2553,21 @@ it.each([
   },
 );
 
+it.each([undefined, ""])(
+  "hides Copy link for a plugin without a record destination: %s",
+  async (shareLink) => {
+    const t = await setup("owner", "absent");
+    pluginPicker(t, {
+      memberActions: { canAdd: true, pending: false, change: vi.fn() },
+      ...(shareLink === undefined ? {} : { shareLink }),
+    });
+    expect(
+      screen.queryByRole("button", { name: "Copy link" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Done" })).toBeEnabled();
+  },
+);
+
 it("routes plugin additions, retains failed input, locks pending work, and copies the plugin link", async () => {
   const t = await setup("owner", "absent");
   let reject!: (reason: Error) => void;

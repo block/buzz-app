@@ -596,7 +596,7 @@ export type ChannelMembersDialogProps = {
   };
   /** Replaces host General access; null hides it. */
   accessSettings?: React.ReactNode;
-  /** The plugin destination copied by Copy link; defaults to the channel link. */
+  /** Copy destination. Plugin-managed pickers hide Copy link when omitted. */
   shareLink?: string;
 };
 
@@ -1887,9 +1887,12 @@ export function ChannelMembersDialog({
     (person) => person.pubkey === highlight.active,
   );
 
+  const copyLink =
+    shareLink ?? (memberActions ? undefined : soloChatLink(channelId));
   const copy = async () => {
+    if (!copyLink) return;
     try {
-      await writeClipboardText(shareLink ?? soloChatLink(channelId));
+      await writeClipboardText(copyLink);
       setCopyStatus("Link copied");
     } catch {
       setCopyStatus("Couldn’t copy the link.");
@@ -2106,7 +2109,7 @@ export function ChannelMembersDialog({
   );
   const shareAction = useRef<HTMLButtonElement>(null);
   const cancelShare = useRef<HTMLButtonElement>(null);
-  const copyAction = (
+  const copyAction = copyLink ? (
     <Tooltip
       content="Copying a link does not grant access."
       disableHoverablePopup
@@ -2117,7 +2120,7 @@ export function ChannelMembersDialog({
         </span>
       </Button>
     </Tooltip>
-  );
+  ) : null;
   const searchField = (
     <div className={styles.memberSearch}>
       <SearchField

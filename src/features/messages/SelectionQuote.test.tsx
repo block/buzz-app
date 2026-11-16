@@ -118,6 +118,31 @@ it("hides behind a modal and returns once it closes", async () => {
   await screen.findByRole("button", { name: "Quote" });
 });
 
+it("yields to an open menu and restores the selected quote on dismissal", async () => {
+  const { controller } = setup();
+  await screen.findByRole("button", { name: "Quote" });
+  // overlayLayer tests exercise the shared menu's DOM contract with Base UI.
+  const portal = document.createElement("div");
+  portal.setAttribute("data-base-ui-portal", "");
+  const menu = document.createElement("div");
+  menu.setAttribute("role", "menu");
+  menu.setAttribute("data-open", "");
+  portal.append(menu);
+  act(() => document.body.append(portal));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Quote" })).toBeNull(),
+  );
+  expect(document.getSelection()?.toString()).toBe("Quote me");
+  act(() => {
+    menu.removeAttribute("data-open");
+    menu.setAttribute("data-closed", "");
+  });
+  const button = await screen.findByRole("button", { name: "Quote" });
+  fireEvent.click(button);
+  expect(controller.quote).toHaveBeenCalledOnce();
+  expect(vi.mocked(controller.quote).mock.calls[0]?.[0]).toContain("Quote me");
+});
+
 it("hides once the selection scrolls out of its list", async () => {
   const { list } = setup();
   await screen.findByRole("button", { name: "Quote" });

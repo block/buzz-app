@@ -9,6 +9,7 @@ import { createPortal } from "react-dom";
 import { QuotesIcon } from "../../shared/design-system/icons";
 import {
   activeModal,
+  behindActiveOverlay,
   observeOverlays,
 } from "../../shared/design-system/overlayLayer";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -71,9 +72,12 @@ export function SelectionQuote({
     const read = () => {
       frame = 0;
       const element = list.current;
-      // A modal owns the page: the shortcut is blocked there, so is this.
+      // Interactive overlays own the page; Quote must not cover their actions.
       const target =
-        pressed || !element || activeModal(document)
+        pressed ||
+        !element ||
+        activeModal(document) ||
+        behindActiveOverlay(element)
           ? undefined
           : quotableSelection();
       const next =

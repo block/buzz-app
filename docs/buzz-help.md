@@ -401,7 +401,8 @@ and are asked to sign in again in Buzz.
   **Quote** (or press Q) to add it to the end of that conversation's draft as a
   quote, ready for your reply below it. A selection in a thread quotes into the
   thread's reply box. Quoting keeps formatting and links but does not notify
-  anyone mentioned in the quoted text.
+  anyone mentioned in the quoted text. The floating Quote button hides while
+  a menu, picker, or dialog is open.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.

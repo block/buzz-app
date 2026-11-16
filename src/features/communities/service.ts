@@ -189,6 +189,9 @@ export function createCommunities(
   const closed = new Set<string>();
   const acquire = (id: string, viewer = state.viewer, badge = false) => {
     if (!connect) return disconnected;
+    // The selected community is always its own work, whichever caller asks
+    // first, so it is never badge-only and never closed for another.
+    badge &&= id !== state.selected;
     let session = sessions.get(id);
     if (!badge) {
       badgeOnly.delete(id);
@@ -573,8 +576,10 @@ export function createCommunities(
         true,
         !!nativeConnect && !live,
       );
-      if (sessions.has(membership.id)) sessions.get(membership.id)?.retry();
-      else acquire(membership.id);
+      // A session a badge already opened is promoted, then retried.
+      const existing = sessions.has(membership.id);
+      acquire(membership.id);
+      if (existing) sessions.get(membership.id)?.retry();
       emitRelay();
       refreshPresentation();
     },

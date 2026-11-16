@@ -351,6 +351,53 @@ it("with the real unread projection, a native selection at the full limit gets o
   );
   unreads.dispose();
 });
+it("with the real unread projection, a joined community is never badge-only and is never evicted", async () => {
+  const { client, id, held, refused } = await nativeAtLimit();
+  const unreads = createCommunityUnreads(client);
+  await flush();
+  // Room for one more: the join's notice opens it for a badge before the join
+  // acquires it.
+  await client.leave(id(9), { purge: false });
+  const joined = "https://joined.example.test";
+  client.joined({ id: joined, name: joined }, { name: "Native", picture: "" });
+  await flush();
+  expect(held.has(joined)).toBe(true);
+  // Every other badge-only session gives up its socket first; past them,
+  // nothing is closed and the host refuses.
+  const work = Array.from(
+    { length: 10 },
+    (_, i) => `https://w${i}.example.test`,
+  );
+  await client.applySync(client.snapshot().sync, work);
+  for (const each of work) {
+    client.open(each);
+    await flush();
+    await flush();
+  }
+  for (const each of [1, 2, 3, 4, 5, 6, 7, 8])
+    expect(held.has(id(each))).toBe(false);
+  expect(held.has(joined)).toBe(true);
+  expect(client.snapshot().selected).toBe(joined);
+  expect(refused).toEqual([work[9]]);
+  unreads.dispose();
+});
+it("with the real unread projection, rejoining a badge-only community promotes it", async () => {
+  const { client, id, held, refused } = await nativeAtLimit();
+  const unreads = createCommunityUnreads(client);
+  await flush();
+  // c1 is the oldest badge-only session.
+  client.joined({ id: id(1), name: id(1) }, { name: "Native", picture: "" });
+  await flush();
+  client.open(id(SESSION_LIMIT - 1));
+  await flush();
+  client.open(id(SESSION_LIMIT));
+  await flush();
+  await flush();
+  expect(refused).toEqual([]);
+  expect(held.has(id(1))).toBe(true);
+  expect(held.has(id(2))).toBe(false);
+  unreads.dispose();
+});
 it("keeps badge-only sessions within the broker's session limit", async () => {
   const ids = Array.from(
     { length: BROKER_SESSION_LIMIT + 1 },

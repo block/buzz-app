@@ -740,8 +740,9 @@ and are asked to sign in again in Buzz.
   by a space, unless one already follows, so you can keep typing.
 - **Reminders**, in the desktop app when the plugin is on: choose **Remind me**
   in a sent message's ⋯ menu. A confirmation names the due time, and the message
-  shows an alarm mark while the reminder is pending. A reminder's note can't be
-  edited once set.
+  shows an alarm mark while the reminder is pending. In **Reminders**, a
+  reminder's due time snoozes it to a preset or **Custom…** date and time. A
+  reminder's note can't be edited once set.
 - **Reminder counts** show how many reminders are due in a small capsule on the
   app tile's corner. It shows `99+` above 99; its accessible label keeps the
   exact count.

@@ -7,9 +7,10 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import type { RelayEvent } from "../../features/relay/events";
 import {
   createReminders,
@@ -218,6 +219,247 @@ it("marks done, snoozes and cancels a pending reminder from its row", async () =
     await screen.findByRole("menuitem", { name: "Cancel reminder" }),
   );
   expect(reminders.cancel).toHaveBeenCalledWith("due soon");
+});
+
+it("snoozes to a custom future time, keeping the entry when the save fails", async () => {
+  const user = userEvent.setup();
+  let state = {
+    status: "ready" as const,
+    reminders: [reminder("due soon", "pending", 1, now + 600)],
+  };
+  const listeners = new Set<() => void>();
+  const publish = (notBefore: number) => {
+    state = {
+      ...state,
+      reminders: [reminder("due soon", "pending", 1, notBefore)],
+    };
+    for (const listener of listeners) listener();
+  };
+  // Like the store, a write publishes its snapshot before it resolves.
+  const snooze = vi
+    .fn<Reminders["snooze"]>()
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockImplementation(async (_id, notBefore) => publish(notBefore));
+  page({
+    snapshot: () => state,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    snooze,
+  } as unknown as Reminders);
+  const trigger = within(
+    screen.getByRole("region", { name: "Today" }),
+  ).getByRole("button", { name: "Snooze: Ada" });
+  await user.click(trigger);
+  const items = await screen.findAllByRole("menuitem");
+  expect(items.at(-1)).toHaveTextContent("Custom…");
+  await user.click(screen.getByRole("menuitem", { name: "Custom…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Snooze reminder" });
+  const save = within(dialog).getByRole("button", { name: "Save" });
+  fireEvent.change(within(dialog).getByLabelText("Reminder date"), {
+    target: { value: "2000-01-01" },
+  });
+  expect(within(dialog).getByRole("status")).toHaveTextContent(
+    "Choose a date and time in the future.",
+  );
+  expect(save).toBeDisabled();
+  fireEvent.change(within(dialog).getByLabelText("Reminder date"), {
+    target: { value: "2099-06-20" },
+  });
+  fireEvent.change(within(dialog).getByLabelText("Reminder time"), {
+    target: { value: "16:15" },
+  });
+  // Another device moves the reminder to Overdue, remounting its row.
+  act(() => publish(now - 60));
+  // The open dialog hides the page from the accessibility tree.
+  expect(
+    screen.getByRole("region", { name: "Overdue", hidden: true }),
+  ).toBeInTheDocument();
+  expect(dialog).toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Reminder date")).toHaveValue(
+    "2099-06-20",
+  );
+  expect(within(dialog).getByLabelText("Reminder time")).toHaveValue("16:15");
+  const at = new Date("2099-06-20T16:15").getTime() / 1000;
+  await user.click(save);
+  expect(snooze).toHaveBeenLastCalledWith("due soon", at);
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "The reminder could not be updated. Try again.",
+  );
+  expect(within(dialog).getByLabelText("Reminder time")).toHaveValue("16:15");
+  await user.click(save);
+  expect(snooze).toHaveBeenCalledTimes(2);
+  expect(snooze).toHaveBeenLastCalledWith("due soon", at);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  // Focus returns to the trigger in the row Upcoming mounted for it.
+  const moved = within(
+    screen.getByRole("region", { name: "Upcoming" }),
+  ).getByRole("button", { name: "Snooze: Ada" });
+  expect(moved).not.toBe(trigger);
+  await waitFor(() => expect(moved).toHaveFocus());
+});
+
+it("keeps focus in the list when a custom snooze's reminder leaves the page", async () => {
+  const user = userEvent.setup();
+  const kept = reminder("kept", "pending", 2, now + 900);
+  let state = {
+    status: "ready" as const,
+    reminders: [reminder("due soon", "pending", 1, now + 600), kept],
+  };
+  const listeners = new Set<() => void>();
+  page({
+    snapshot: () => state,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    snooze: vi.fn(),
+  } as unknown as Reminders);
+  const [trigger] = screen.getAllByRole("button", { name: "Snooze: Ada" });
+  assert(trigger);
+  await user.click(trigger);
+  await user.click(await screen.findByRole("menuitem", { name: "Custom…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Snooze reminder" });
+  // Another device cancels the reminder while its dialog is open.
+  act(() => {
+    state = {
+      ...state,
+      reminders: [reminder("due soon", "cancelled", 1, now + 600), kept],
+    };
+    for (const listener of listeners) listener();
+  });
+  await waitFor(() => expect(trigger).not.toBeInTheDocument());
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() =>
+    expect(screen.getByRole("listitem")).toContainElement(
+      document.activeElement as HTMLElement,
+    ),
+  );
+});
+
+it("focuses the page when a custom snooze's reminder was the last one left", async () => {
+  const user = userEvent.setup();
+  let state = {
+    status: "ready" as const,
+    reminders: [reminder("due soon", "pending", 1, now + 600)],
+  };
+  const listeners = new Set<() => void>();
+  page({
+    snapshot: () => state,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    snooze: vi.fn(),
+  } as unknown as Reminders);
+  const trigger = screen.getByRole("button", { name: "Snooze: Ada" });
+  await user.click(trigger);
+  await user.click(await screen.findByRole("menuitem", { name: "Custom…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Snooze reminder" });
+  // Another device cancels the only reminder while its dialog is open.
+  act(() => {
+    state = {
+      ...state,
+      reminders: [reminder("due soon", "cancelled", 1, now + 600)],
+    };
+    for (const listener of listeners) listener();
+  });
+  await waitFor(() => expect(trigger).not.toBeInTheDocument());
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  // The empty list has nothing to focus, so the page takes focus, not <body>.
+  expect(
+    screen.getByRole("heading", { name: "No reminders yet" }),
+  ).toBeInTheDocument();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("region", { name: "Reminders" }).firstElementChild,
+    ).toHaveFocus(),
+  );
+  expect(document.activeElement).not.toBe(document.body);
+});
+
+it("won't let a custom snooze restore a reminder another device cancelled", async () => {
+  const user = userEvent.setup();
+  let state = {
+    status: "ready" as const,
+    reminders: [reminder("due soon", "pending", 1, now + 600)],
+  };
+  const listeners = new Set<() => void>();
+  const snooze = vi.fn<Reminders["snooze"]>(() => Promise.resolve());
+  page({
+    snapshot: () => state,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    snooze,
+  } as unknown as Reminders);
+  await user.click(screen.getByRole("button", { name: "Snooze: Ada" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Custom…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Snooze reminder" });
+  const save = within(dialog).getByRole("button", { name: "Save" });
+  expect(save).toBeEnabled();
+  // The store keeps the cancelled reminder, and a snooze would write it back
+  // as pending.
+  act(() => {
+    state = {
+      ...state,
+      reminders: [reminder("due soon", "cancelled", 1, now + 600)],
+    };
+    for (const listener of listeners) listener();
+  });
+  expect(within(dialog).getByRole("status")).toHaveTextContent(
+    "This reminder was cancelled.",
+  );
+  expect(save).toBeDisabled();
+  fireEvent.click(save);
+  expect(snooze).not.toHaveBeenCalled();
+  expect(dialog).toBeInTheDocument();
+});
+
+it("checks the store again at Save, and still brings back a Done reminder", async () => {
+  const user = userEvent.setup();
+  const finished = reminder("finished", "done", 2);
+  let state = {
+    status: "ready" as const,
+    reminders: [reminder("due soon", "pending", 1, now + 600), finished],
+  };
+  const snooze = vi.fn<Reminders["snooze"]>(() => Promise.resolve());
+  page({
+    snapshot: () => state,
+    subscribe: () => () => {},
+    snooze,
+  } as unknown as Reminders);
+  await user.click(screen.getByRole("button", { name: "Snooze: Ada" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Custom…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Snooze reminder" });
+  // Cancelled in the store before the page renders it, so Save is enabled.
+  state = {
+    ...state,
+    reminders: [reminder("due soon", "cancelled", 1, now + 600), finished],
+  };
+  await user.click(within(dialog).getByRole("button", { name: "Save" }));
+  expect(snooze).not.toHaveBeenCalled();
+  expect(await within(dialog).findByRole("alert")).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  // Only cancelled reminders are refused: a Done one can be reminded again.
+  fireEvent.click(screen.getByRole("button", { name: "Done 1" }));
+  await user.click(
+    screen.getByRole("button", { name: "Remind me again: Ada" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Custom…" }));
+  const again = await screen.findByRole("dialog", { name: "Remind me again" });
+  expect(within(again).queryByRole("status")).toBeNull();
+  await user.click(within(again).getByRole("button", { name: "Save" }));
+  expect(snooze).toHaveBeenCalledExactlyOnceWith(
+    "finished",
+    expect.any(Number),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
 it("shows a note-only reminder without an open action", () => {

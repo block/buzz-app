@@ -9,6 +9,7 @@ import {
   useSyncExternalStore,
   type ReactElement,
   type Ref,
+  type RefObject,
 } from "react";
 import {
   AnimatePresence,
@@ -73,6 +74,7 @@ import {
   presetHint,
 } from "./model";
 import { scopeOf, useReminders } from "./react";
+import { SnoozeDialog } from "./RemindDialog";
 import styles from "./Reminders.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 import { channelText } from "../../features/channels/channel-icon";
@@ -206,6 +208,7 @@ export function RemindersPage({
               now={now}
               open={scope ? open : undefined}
               run={run}
+              page={page}
             />
           )}
         </div>
@@ -213,6 +216,16 @@ export function RemindersPage({
     </div>
   );
 }
+
+/**
+ * Whether Custom… may still save. Snooze writes the reminder back as pending,
+ * so saving one cancelled meanwhile, here or on another device, would restore
+ * it.
+ */
+const snoozable = (reminders: readonly Reminder[], id: string) =>
+  reminders.some(
+    (reminder) => reminder.id === id && reminder.status !== "cancelled",
+  );
 
 function ReminderSections({
   session,
@@ -222,6 +235,7 @@ function ReminderSections({
   now,
   open,
   run,
+  page,
 }: {
   session: RelaySession;
   reminders: Reminders;
@@ -230,6 +244,7 @@ function ReminderSections({
   now: number;
   open: ((reminder: Reminder, conversation?: boolean) => void) | undefined;
   run(action: Promise<unknown>): void;
+  page: RefObject<HTMLDivElement | null>;
 }) {
   const reducedMotion = useReducedMotion();
   const [pointerMotion, setPointerMotion] = useState(false);
@@ -293,6 +308,10 @@ function ReminderSections({
   const { channels } = useChannelList(session.channels);
   const profiles = useProfiles(session, authorIds);
   const name = useIdentityNames(session.names);
+  // Custom… outlives its row: a save, the clock or another device can move
+  // the reminder to another group, which mounts a new row. This is the
+  // reminder as it was when Custom… opened; the live one is looked up by id.
+  const [snoozing, setSnoozing] = useState<Reminder>();
   const row = (reminder: Reminder) => {
     const target = reminder.target;
     const channel = target?.channelId
@@ -346,6 +365,7 @@ function ReminderSections({
         openConversation={
           open && target?.channelId ? () => open(reminder, true) : undefined
         }
+        chooseTime={() => setSnoozing(reminder)}
         run={run}
       />
     );
@@ -448,6 +468,38 @@ function ReminderSections({
           </AnimatePresence>
         </LayoutGroup>
       </motion.div>
+      {snoozing && (
+        <SnoozeDialog
+          title={
+            snoozing.status === "pending"
+              ? "Snooze reminder"
+              : "Remind me again"
+          }
+          due={snoozing.notBefore}
+          cancelled={!snoozable(all, snoozing.id)}
+          // Checked again at Save: the store may have moved on since this
+          // render.
+          save={(notBefore) =>
+            snoozable(reminders.snapshot().reminders, snoozing.id)
+              ? reminders.snooze(snoozing.id, notBefore)
+              : Promise.reject(new Error("The reminder was cancelled."))
+          }
+          close={() => setSnoozing(undefined)}
+          // The reminder's trigger in whichever row shows it now, not one
+          // leaving its old group. If the reminder left the page meanwhile,
+          // the list, whose first tabbable control Base UI focuses. With no
+          // reminders left the list has none, so the page takes focus, as it
+          // does after Retry.
+          finalFocus={() =>
+            Array.from(
+              sections.current?.querySelectorAll<HTMLElement>(
+                "li:not([inert]) [data-snooze]",
+              ) ?? [],
+            ).find((trigger) => trigger.dataset.snooze === snoozing.id) ??
+            (active.length || done ? sections.current : page.current)
+          }
+        />
+      )}
     </MotionConfig>
   );
 }
@@ -481,6 +533,7 @@ function ReminderRow({
   avatar,
   open,
   openConversation,
+  chooseTime,
   run,
 }: {
   ref?: Ref<HTMLLIElement>;
@@ -492,6 +545,7 @@ function ReminderRow({
   avatar: ReactElement;
   open: (() => void) | undefined;
   openConversation: (() => void) | undefined;
+  chooseTime(): void;
   run(action: Promise<unknown>): void;
 }) {
   const id = useId();
@@ -627,6 +681,7 @@ function ReminderRow({
             <MenuTrigger
               render={
                 <Button
+                  data-snooze={reminder.id}
                   size="sm"
                   variant={overdue ? "attention" : "ghost"}
                   disabled={busy}
@@ -644,6 +699,9 @@ function ReminderRow({
                   <MenuNote>{dueDateLabel(reminder.notBefore, now)}</MenuNote>
                 )}
               {snoozeItems}
+              <MenuItem disabled={busy} onClick={chooseTime}>
+                Custom…
+              </MenuItem>
             </MenuPopup>
           </MenuRoot>
           {openConversation ? (

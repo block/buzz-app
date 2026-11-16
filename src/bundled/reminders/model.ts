@@ -139,6 +139,31 @@ export function customInputs(at: number) {
   return { date: dateString(due), time: due.toTimeString().slice(0, 5) };
 }
 
+/** A due time as custom date and time values, while that minute is still ahead. */
+export function dueInputs(at: number | undefined) {
+  if (at === undefined || !isDisplayable(at)) return undefined;
+  const inputs = customInputs(at);
+  return parseCustomDateTime(inputs.date, inputs.time) === null
+    ? undefined
+    : inputs;
+}
+
+/**
+ * Custom values that may still be the ones `due` was shown as. Local values
+ * can't say which pass through an hour repeated by daylight saving they mean,
+ * and parse as the first, so values still showing `due` keep its time.
+ */
+export function parseCustomOrDue(
+  date: string,
+  time: string,
+  due: number | undefined,
+) {
+  const at = parseCustomDateTime(date, time);
+  if (at === null || due === undefined) return at;
+  const shown = customInputs(due);
+  return shown.date === date && shown.time === time ? due : at;
+}
+
 /** A strictly future local date and time in unix seconds, or null. */
 export function parseCustomDateTime(date: string, time: string) {
   if (!date || !time) return null;

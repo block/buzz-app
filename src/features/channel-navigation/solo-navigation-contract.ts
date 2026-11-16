@@ -48,6 +48,17 @@ export type SoloRegionSource = Readonly<{
   actions?: (binding: SoloRegionBinding) => readonly SoloRegionAction[];
   /** Agents a draft from `openDraft` may address. Without it, any available agent. */
   draftAgent?(binding: SoloRegionBinding, pubkey: string): boolean;
+  /** On draft Send, after the start record is saved and before chat creation or
+   * its first message. The host waits up to 3 seconds; rejection or timeout warns
+   * and continues. Timed-out work is not canceled. Not called by createChat. */
+  prepareStart?(
+    binding: SoloRegionBinding,
+    input: Readonly<{
+      channelId: string;
+      members: readonly string[];
+      start: SoloDraftStart;
+    }>,
+  ): void | Promise<void>;
   /** Show and change this chat's workspace in its composer. Read from local
    * state; a change shows through `read`'s next revision. */
   workspace?(

@@ -715,6 +715,8 @@ and are asked to sign in again in Buzz.
   ⌘/Ctrl+Enter sends. It starts off.
 - If a message can't be sent, **Retry** appears under it right away. If its
   delivery is only unconfirmed, Buzz waits about ten seconds before saying so.
+  Some plugins prepare before a message sends. After a restart, Buzz can't
+  retry such a message by itself and says to retry it from the plugin.
   To give up on it, choose **Delete message** in its "..." menu for a message
   that wasn't sent, or **Remove from this device** for an unconfirmed one. Both
   only stop this device from sending it; an unconfirmed message that did reach
@@ -1013,6 +1015,12 @@ available rather than silently discarding it.
   uses. Available types and models depend on the platform, active plugins, and
   provider setup. Tools and connections depend on that agent's configuration;
   naming a service or adding instructions does not connect it.
+- Codex agents don't use Codex apps (ChatGPT connectors such as Gmail or
+  Google Drive) or Codex plugins unless **Codex apps and plugins** is turned
+  on in that agent's settings on this computer. They then get the apps
+  connected to Codex's ChatGPT sign-in here. Codex's `/plugins` can list an
+  app before it is connected; connect it in ChatGPT first. Protected agents
+  never get them.
 - On desktop, Buzz starts every agent with `BUZZ_VERSION` set to the app's
   version, and agents usually pass it on to the shell commands they run. A
   script or shell config can check for it to tell it is running under Buzz.
@@ -1306,8 +1314,12 @@ available rather than silently discarding it.
   Builderlab permissions are re-read at most once a minute while the app uses
   them, so a newly granted or removed permission applies without signing in
   again; a failed check keeps the previous permissions.
-  Claude runs with an Anthropic API key pasted under **Anthropic API key**
-  there, once for every local Claude agent. With the Claude plugin enabled,
+  Claude uses your own Claude setup when one already works on this computer,
+  such as Amazon Bedrock or Google Vertex AI, configured with the Claude CLI. Buzz never changes that setup or adds its
+  key to it. Without one, Claude runs with an Anthropic API key pasted under
+  **Anthropic API key** there, once for every local Claude agent. Key setup
+  offers **Refresh**, which looks again for a setup you made with the Claude
+  CLI meanwhile. With the Claude plugin enabled,
   **Settings → Claude → Set** opens **Connect Claude** to add a key. Back hides
   setup and Forward restores its draft while the Claude page remains open.
   The input keeps focus but is read-only while secure storage is checked. If the
@@ -1340,7 +1352,8 @@ available rather than silently discarding it.
   (Keychain on macOS) and
   gives it to every Claude process, security reviews included. Commands a
   Claude agent runs inherit it, so they can read the key. Until a key is
-  saved, Claude agents don't answer and Claude reviews fail closed.
+  saved or Claude has a setup of its own, Claude agents don't answer. Claude
+  security reviews always use the saved key, and fail closed without one.
   Codex security reviews for protected agents need a ChatGPT sign-in made
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace. Codex's harness defaults offer that sign-in while Codex is signed

@@ -1,7 +1,9 @@
 import { useState } from "react";
 import type { InboxReaction } from "../../features/relay/inbox-reactions";
 import { groupReactions } from "../../features/relay/fold";
-import { reactionName } from "../../features/messages/reaction-name";
+import { useReactionEmoji } from "../../features/messages/reaction-emoji";
+import { useReactionName } from "../../features/messages/use-reaction-name";
+import { isReactionShortcode } from "../../features/relay/emoji";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { ComponentProps, ReactNode } from "react";
 import { channelText } from "../../features/channels/channel-icon";
@@ -11,13 +13,16 @@ import type { InboxFeedSnapshot } from "../../features/relay/inbox-feed";
 import type { RelaySession } from "../../features/relay/session";
 import { workflowLabel } from "../../features/relay/workflow-attribution";
 import { messagePreview } from "../../features/notifications/content";
+import { ByteLru } from "../../features/relay/budget";
 import { avatarMedia } from "../../shared/avatar-source";
-import { LightningIcon } from "../../shared/design-system/icons";
+import { LightningIcon, SmileyIcon } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { dmLabel } from "./dm-label";
 import styles from "./Inbox.module.css";
+import rowStyles from "../../features/messages/MessageListRow.module.css";
+import { MessageListRow } from "../../features/messages/MessageListRow";
 
 type ResolveName = (
   key: string,
@@ -25,8 +30,34 @@ type ResolveName = (
   candidates?: readonly string[],
 ) => string;
 
+/** Row previews by message text, least recently used dropped first. Each
+ * preview parses Markdown, and every filter change or live event renders all
+ * rows again, remounting rows a filter hid. The budget counts the source
+ * text, which is the key. */
+const previews = new ByteLru<string>(500, 1024 * 1024);
+const rowPreview = (content: string) => {
+  let text = previews.get(content);
+  if (text === undefined) {
+    text = messagePreview(content);
+    previews.set(content, text, content.length);
+  }
+  return text;
+};
+
 export const hasUnread = (item: InboxItem) =>
   item.unreadCount > 0 || item.manual;
+
+/** What a preview shows instead of a body whose stored edits or deletions are
+ * not settled yet, or undefined when none of `ids` is incomplete. */
+export const incompletePreview = (
+  feed: InboxFeedSnapshot,
+  ids: readonly (string | undefined)[],
+) =>
+  ids.some((id) => id !== undefined && feed.incomplete.includes(id))
+    ? feed.status === "error"
+      ? "Preview unavailable. Retry activity."
+      : "Preview updating…"
+    : undefined;
 
 /** Who sent a row and where, as the Inbox page and its sidebar preview name it. */
 export function rowIdentity(
@@ -85,75 +116,40 @@ export function InboxRowButton({
 >) {
   const unread = hasUnread(item);
   return (
-    <NavigationItem
+    <MessageListRow
       {...props}
       aria-label={`Open ${sender} in ${context}`}
       aria-describedby={previewId}
-      icon={
-        <span className={styles.rowAvatar}>
-          <Avatar
-            size="fill"
-            alt=""
-            fallback={sender}
-            fallbackContent={
-              item.workflowOwnerId ? <LightningIcon size={20} /> : undefined
-            }
-            src={
-              item.workflowOwnerId
-                ? undefined
-                : avatarMedia(profile?.picture, media)
-            }
-            shape={
-              item.workflowOwnerId || profile?.isAgent ? "squircle" : "circle"
-            }
-          />
-        </span>
+      avatar={
+        <Avatar
+          size="fill"
+          alt=""
+          fallback={sender}
+          fallbackContent={
+            item.workflowOwnerId ? <LightningIcon size={20} /> : undefined
+          }
+          src={
+            item.workflowOwnerId
+              ? undefined
+              : avatarMedia(profile?.picture, media)
+          }
+          shape={
+            item.workflowOwnerId || profile?.isAgent ? "squircle" : "circle"
+          }
+        />
       }
-      label={
-        <span className={styles.content}>
-          <span className={styles.heading}>
-            <span className={styles.identity}>
-              <strong
-                className={`text-label-sm text-standard ${styles.sender}`}
-              >
-                {sender}
-              </strong>
-              <span
-                className={`text-caption ${styles.source}`}
-                data-inbox-source=""
-              >
-                {context}
-              </span>
-            </span>
-            <time
-              className={`text-caption text-subtle ${styles.rowDate}`}
-              dateTime={new Date(item.createdAt * 1000).toISOString()}
-            >
-              {time}
-            </time>
-          </span>
-          <span
-            id={previewId}
-            className={`text-body ${unread ? "text-standard" : "text-subtle"} ${styles.preview}`}
-          >
-            {[item.previewMessageId, ...item.messageIds].some(
-              (id) => id !== undefined && feed.incomplete.includes(id),
-            )
-              ? feed.status === "error"
-                ? "Preview unavailable. Retry activity."
-                : "Preview updating…"
-              : messagePreview(item.preview)}
-          </span>
-        </span>
+      sender={sender}
+      source={context}
+      time={
+        <time dateTime={new Date(item.createdAt * 1000).toISOString()}>
+          {time}
+        </time>
       }
-      trailing={
-        unread ? (
-          <span className={styles.unreadSlot} role="img" aria-label="Unread">
-            <span className={styles.unreadDot} />
-          </span>
-        ) : (
-          <span className={styles.unreadSlot} aria-hidden="true" />
-        )
+      unread={unread}
+      previewId={previewId}
+      preview={
+        incompletePreview(feed, [item.previewMessageId, ...item.messageIds]) ??
+        rowPreview(item.preview)
       }
     />
   );
@@ -176,6 +172,7 @@ export function ReactionRowButton({
   name: ResolveName;
   channel: ChannelSummary | undefined;
 } & Pick<ComponentProps<typeof NavigationItem>, "selected" | "onClick">) {
+  const reactionName = useReactionName();
   const authors = [...new Set(item.events.map((event) => event.pubkey))];
   const names = authors
     .slice(0, authors.length === 3 ? 3 : 2)
@@ -200,12 +197,12 @@ export function ReactionRowButton({
         ? channelText(channel)
         : "Conversation";
   const reactions = groupReactions(item.events);
-  const preview = messagePreview(item.message.content);
+  const preview = rowPreview(item.message.content);
   const emojiNames = reactions
     .map((reaction) =>
       reaction.emoji
         ? `:${reaction.emoji.shortcode}:`
-        : reactionName(reaction.content)
+        : (reactionName?.(reaction.content) ?? reaction.content)
             .replaceAll(":", "")
             .replaceAll("_", " "),
     )
@@ -223,14 +220,14 @@ export function ReactionRowButton({
           shape={profile?.isAgent ? "squircle" : "circle"}
         />
       }
-      trailing={<span className={styles.unreadSlot} aria-hidden="true" />}
+      trailing={<span className={rowStyles.unreadSlot} aria-hidden="true" />}
       label={
-        <span className={styles.content}>
-          <span className={styles.heading}>
-            <span className={styles.identity}>
+        <span className={rowStyles.content}>
+          <span className={rowStyles.heading}>
+            <span className={rowStyles.identity}>
               <span className={styles.reactionHeading}>
                 <strong
-                  className={`text-label-sm text-standard ${styles.sender}`}
+                  className={`text-label-sm text-standard ${rowStyles.sender}`}
                 >
                   {sender}
                 </strong>
@@ -252,7 +249,8 @@ export function ReactionRowButton({
               </span>
             </span>
             <time
-              className={`text-caption text-subtle ${styles.rowDate}`}
+              data-inbox-date=""
+              className={`text-caption text-subtle ${rowStyles.rowDate}`}
               dateTime={new Date(item.createdAt * 1000).toISOString()}
             >
               {time}
@@ -261,7 +259,9 @@ export function ReactionRowButton({
           <span className={`text-body text-subtle ${styles.reactionPreview}`}>
             {preview}
           </span>
-          <span className={`text-caption ${styles.source}`}>in {context}</span>
+          <span className={`text-caption ${rowStyles.source}`}>
+            in {context}
+          </span>
         </span>
       }
     />
@@ -274,18 +274,25 @@ function ActivityReactionGlyph({
   reaction: ReturnType<typeof groupReactions>[number];
   session: RelaySession;
 }) {
-  const source = reaction.emoji ? session.media(reaction.emoji.url) : undefined;
+  const emoji = useReactionEmoji(reaction, session);
+  const source = emoji ? session.media(emoji.url) : undefined;
   const [failed, setFailed] = useState<string>();
-  return source && source !== failed ? (
-    <img
-      src={source}
-      className={styles.reactionEmoji}
-      alt=""
-      aria-hidden="true"
-      draggable={false}
-      onError={() => setFailed(source)}
-    />
-  ) : (
-    <span aria-hidden="true">{reaction.content} </span>
-  );
+  if (source && source !== failed)
+    return (
+      <img
+        src={source}
+        className={styles.reactionEmoji}
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        onError={() => setFailed(source)}
+      />
+    );
+  if (isReactionShortcode(reaction.content))
+    return (
+      <SmileyIcon
+        className={`${styles.reactionEmoji} ${styles.reactionPlaceholder}`}
+      />
+    );
+  return <span aria-hidden="true">{reaction.content} </span>;
 }

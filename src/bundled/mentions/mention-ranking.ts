@@ -1,11 +1,12 @@
 import {
   exactName,
   extendsName,
-  matchPerson,
+  matchTier,
   nameStarts,
   normalizeName,
   startKey,
 } from "../../features/search/person-match";
+import { typedPublicKey } from "../../shared/identity/public-key";
 import type { mentionCandidates } from "./mention-candidates";
 export type MentionChoice = ReturnType<typeof mentionCandidates>[number] & {
   label: string;
@@ -14,12 +15,40 @@ export type MentionChoice = ReturnType<typeof mentionCandidates>[number] & {
 };
 const normalized = normalizeName;
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+// `needle` is already normalized, so its code points are the folded query.
 const nameMatch = (text: string, needle: string) =>
-  needle ? (matchPerson(text, needle)?.tier ?? Infinity) : 0;
+  needle ? (matchTier(text, [...needle]) ?? Infinity) : 0;
 const aliasMatch = (choice: MentionChoice, needle: string) =>
   Math.min(...choice.aliases.map((name) => nameMatch(name, needle)));
-/** `mentionMatch` for an already normalized, non-empty needle. */
-function labelMatch(choice: MentionChoice, needle: string) {
+/**
+ * README section 4 rule 3: a choice whose shown label matches the query leads
+ * when one of its names (aliases, never generated label parts) is the query,
+ * or, for the viewer's own agent, continues it with a new word (`Sol 6` for
+ * `sol`, not `Solana`). `needle` is normalized and non-empty.
+ */
+function leads(choice: MentionChoice, needle: string) {
+  if (
+    (choice.agent && !choice.owned) ||
+    !Number.isFinite(nameMatch(choice.label, needle))
+  )
+    return false;
+  return choice.aliases.some(
+    (name) =>
+      normalized(name) === needle ||
+      (choice.agent && extendsName(name, needle)),
+  );
+}
+/**
+ * `mentionMatch` for an already normalized, non-empty needle and the query's
+ * `typedPublicKey`.
+ */
+function labelMatch(
+  choice: MentionChoice,
+  needle: string,
+  key: string | undefined,
+) {
+  // An exact public key is not a name: it matches only its owner.
+  if (key !== undefined) return choice.recipient.pubkey === key ? 0 : Infinity;
   // No known name means the displayed label is only an identity fallback.
   if (!choice.aliases.length) return Infinity;
   // Rank what the user sees before other real names for the same identity.
@@ -29,21 +58,28 @@ function labelMatch(choice: MentionChoice, needle: string) {
 }
 export function mentionMatch(choice: MentionChoice, query: string) {
   const needle = normalized(query);
-  return needle ? labelMatch(choice, needle) : 0;
+  return needle ? labelMatch(choice, needle, typedPublicKey(query)) : 0;
 }
 // One sorted index of name starts per immutable choice list. Choices with a
 // name too long to index are always kept for ranking to match directly.
 const indexes = new WeakMap<
   readonly MentionChoice[],
-  { starts: string[]; owners: number[]; unindexed: number[] }
+  {
+    starts: string[];
+    owners: number[];
+    unindexed: number[];
+    /** The last query and its matches: one keystroke asks several times. */
+    last?: { needle: string; matches: readonly MentionChoice[] };
+  }
 >();
 /**
  * The choices, in their given order, with a label or alias that the query can
- * match: a superset of every choice that `rankMentions` or `exactMention` keeps
- * for this query, and every choice with a name that starts with the query,
- * which the Space check for longer names relies on. A binary search of the
- * list's name index finds them, so a keystroke costs O(log n + matches)
- * instead of a scan of every choice.
+ * match, or, for an exact public key, the choice with that key: a superset of
+ * every choice that `rankMentions` or `exactMention` keeps for this query, and
+ * every choice with a name that starts with the query, which the Space check
+ * for longer names relies on. A binary search of the list's name index finds
+ * them, so a keystroke costs O(log n + matches) instead of a scan of every
+ * choice.
  */
 export function matchingMentions(
   choices: readonly MentionChoice[],
@@ -51,6 +87,10 @@ export function matchingMentions(
 ): readonly MentionChoice[] {
   const needle = startKey(normalized(query));
   if (!needle) return choices;
+  const key = typedPublicKey(query);
+  // The name index holds no keys.
+  if (key !== undefined)
+    return choices.filter((c) => c.recipient.pubkey === key);
   let index = indexes.get(choices);
   if (!index) {
     const entries: { start: string; owner: number }[] = [];
@@ -72,6 +112,7 @@ export function matchingMentions(
     };
     indexes.set(choices, index);
   }
+  if (index.last?.needle === needle) return index.last.matches;
   let low = 0;
   let high = index.starts.length;
   while (low < high) {
@@ -82,9 +123,11 @@ export function matchingMentions(
   const found = new Set<number>(index.unindexed);
   for (let i = low; index.starts[i]?.startsWith(needle); i += 1)
     found.add(index.owners[i] ?? 0);
-  return [...found]
+  const matches = [...found]
     .sort((a, b) => a - b)
     .flatMap((owner) => choices[owner] ?? []);
+  index.last = { needle, matches };
+  return matches;
 }
 type Ranked = {
   c: MentionChoice;
@@ -137,7 +180,9 @@ function first<T>(items: T[], order: (a: T, b: T) => number, limit: number) {
 }
 /**
  * Sorts by per-choice keys, so the order is transitive for any mix of people
- * and agents. Another community's agents follow everyone here. After match quality, your own agents come first. Agents that
+ * and agents. Another community's agents follow everyone here. An exact
+ * person and your own agents that start with the query's words lead; after
+ * match quality, your own agents come first. Agents that
  * share a name form one block at its first visible label; recency, managed,
  * and presence order only that block. With `limit` (a whole number, 0 or
  * more), only the first `limit` choices of that order are returned.
@@ -150,13 +195,15 @@ export function rankMentions(
   limit = Infinity,
 ) {
   const needle = normalized(query);
+  const key = typedPublicKey(query);
   const keyed: Ranked[] = [];
   for (const c of choices) {
-    const match = needle ? labelMatch(c, needle) : 0;
+    const match = needle ? labelMatch(c, needle, key) : 0;
     if (!Number.isFinite(match)) continue;
     const tier = [
       c.member ? 0 : 1,
       c.elsewhere ? 1 : 0,
+      needle && leads(c, needle) ? 0 : 1,
       match,
       aliasMatch(c, needle),
       c.agent && c.owned ? 0 : 1,
@@ -185,18 +232,18 @@ export function rankMentions(
 }
 const choiceNames = (c: MentionChoice) => [...c.aliases, c.label];
 /**
- * The known names that continue the query (README section 5), each once,
- * so no exact name can be selected while any exists. A key qualifier or
- * generated `(agent)` suffix only tells namesakes apart, so it never
- * continues the name. Nor does a choice's own longer name when that same
- * choice also has the exact name: one identity is not its own namesake.
- * Choices only arrive, never leave, so once a name continues the query
- * nothing that loads later can lift it: Space is declined, not pending.
+ * The known names that continue the query (README section 5), each once.
+ * A key qualifier or generated `(agent)` suffix only tells namesakes apart,
+ * so it never continues the name. Nor does a choice's own longer name when
+ * that same choice also has the exact name: one identity is not its own
+ * namesake.
  */
 export function continuingNames(
   choices: readonly MentionChoice[],
   query: string,
 ) {
+  // No name continues an exact public key.
+  if (typedPublicKey(query) !== undefined) return [];
   const needle = normalized(query);
   const names = new Map<string, string>();
   // No name continues an empty query; skip folding every name at a bare `@`.
@@ -220,21 +267,49 @@ export function continuingNames(
   }
   return [...names.values()];
 }
-export const continuedMention = (
+/**
+ * In the channel's own member list. A saved chat's roster marks every choice
+ * it offers a `member`; the ones from outside the chat are `offered`.
+ */
+export const channelMember = (c: MentionChoice) => c.member && !c.offered;
+/**
+ * Whether a known longer name keeps the query's exact name from selecting
+ * (README section 5). Once a member has the exact name, only another
+ * member's longer name does; a choice outside the channel never makes a
+ * member's name ambiguous. So a member's name that loads later can lift an
+ * outside name's block.
+ */
+export function continuedMention(
   choices: readonly MentionChoice[],
   query: string,
-) => continuingNames(choices, query).length > 0;
+) {
+  const needle = normalized(query);
+  const member = choices.some(
+    (c) =>
+      channelMember(c) &&
+      c.aliases.length > 0 &&
+      choiceNames(c).some((name) => normalized(name) === needle),
+  );
+  return (
+    continuingNames(member ? choices.filter(channelMember) : choices, query)
+      .length > 0
+  );
+}
 /**
  * Space is intent only for one exact key across the full, uncapped choice set.
- * Every choice can continue the name (`continuedMention`); only choices
- * `among` can equal it.
+ * A longer name blocks it as `continuedMention` says; only choices `among`
+ * can equal it. An exact public key names only its owner.
  */
 export const exactMention = (
   choices: readonly MentionChoice[],
   query: string,
   among: (choice: MentionChoice) => boolean = () => true,
-) =>
-  continuedMention(choices, query)
+) => {
+  const key = typedPublicKey(query);
+  if (key !== undefined)
+    return choices.find((c) => c.recipient.pubkey === key && among(c))
+      ?.recipient.pubkey;
+  return continuedMention(choices, query)
     ? undefined
     : exactName(
         choices,
@@ -243,3 +318,4 @@ export const exactMention = (
         (c) => c.aliases.length > 0 && among(c),
         () => [],
       )?.recipient.pubkey;
+};

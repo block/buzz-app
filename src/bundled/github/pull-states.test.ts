@@ -114,6 +114,26 @@ it("keeps the state object, and tells no one, when a poll reads the same state",
   expect(changed).toHaveBeenCalledTimes(2);
 });
 
+it("keeps one reader that throws from failing the read, or keeping it from the rest", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const gh = mockGh(async () => ({
+    r0: rollup("OPEN", {}, "SUCCESS"),
+    r1: rollup("OPEN", {}, "SUCCESS"),
+  }));
+  const states = createPullStates(gh);
+  const broken = vi.fn(() => {
+    throw new DOMException("The quota has been exceeded.");
+  });
+  const changed = vi.fn();
+  states.watch(pull, broken);
+  states.watch(second, changed);
+  await vi.waitFor(() => expect(broken).toHaveBeenCalledOnce());
+  expect(changed).toHaveBeenCalledOnce();
+  expect(states.readAt(pull)?.error).toBeUndefined();
+  expect(states.readAt(second)?.error).toBeUndefined();
+});
+
 it("reads the title with the state, so a poll renames a renamed pull request in the read it already makes", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   let title = "Fix the lab";
@@ -1138,6 +1158,77 @@ it("is not settled while a check runs, more are unread, or the rollup waits", as
     const { state } = await states.read(pull, { maxAge: 0 });
     expect(state).toMatchObject({ settled: false });
   }
+});
+
+it("tells a check still runs after another failed, and when none does", async () => {
+  const read = async (answer: ReturnType<typeof full>) => {
+    const states = createPullStates(ghFor(() => ({ r0: answer })));
+    return (await states.read(pull, { maxAge: 0 })).state;
+  };
+  const failedThenRunning = [
+    { name: "lint", status: "COMPLETED", conclusion: "FAILURE" },
+    { name: "e2e", status: "IN_PROGRESS", conclusion: null },
+  ];
+  expect(await read(full({ checks: failedThenRunning }))).toMatchObject({
+    checks: "failure",
+    settled: false,
+    running: true,
+  });
+  expect(await read(full({ rollupState: "EXPECTED" }))).toMatchObject({
+    running: true,
+  });
+  expect(await read(full())).toMatchObject({ settled: true, running: false });
+});
+
+it("reads how far a followed pull request is on its way to merging", async () => {
+  const merging = async (fields: Record<string, unknown>) => {
+    const answer = full();
+    const r0 = { ...answer, pullRequest: { ...answer.pullRequest, ...fields } };
+    const states = createPullStates(ghFor(() => ({ r0 })));
+    const { state } = await states.read(pull, { maxAge: 0, level: "feedback" });
+    return typeof state === "object" ? state.feedback : undefined;
+  };
+  const threads = (totalCount: number, open: number, resolved: number) => ({
+    reviewThreads: {
+      totalCount,
+      nodes: [
+        ...Array.from({ length: open }, () => ({ isResolved: false })),
+        ...Array.from({ length: resolved }, () => ({ isResolved: true })),
+      ],
+    },
+  });
+
+  expect(
+    await merging({
+      reviewDecision: "APPROVED",
+      isInMergeQueue: true,
+      autoMergeRequest: { mergeMethod: "SQUASH" },
+      ...threads(3, 1, 2),
+    }),
+  ).toMatchObject({
+    merge: "CLEAN",
+    decision: "APPROVED",
+    autoMerge: true,
+    queued: true,
+    unresolved: 1,
+  });
+  const none = await merging({
+    reviewDecision: null,
+    isInMergeQueue: false,
+    autoMergeRequest: null,
+    ...threads(2, 0, 2),
+  });
+  expect(none).toMatchObject({ unresolved: 0 });
+  expect(none?.decision).toBeUndefined();
+  expect(none).not.toHaveProperty("autoMerge");
+  expect(none).not.toHaveProperty("queued");
+  // Older threads past those listed may be open when none listed is.
+  expect(await merging(threads(150, 0, 100))).not.toHaveProperty("unresolved");
+  expect(await merging(threads(150, 1, 99))).toMatchObject({ unresolved: 1 });
+  // GitHub answering without them, as with an error on that field.
+  expect(await merging({ reviewThreads: null })).not.toHaveProperty(
+    "unresolved",
+  );
 });
 
 it("reads the text of feedback it does not hold, newest first, and keeps it while listed", async () => {

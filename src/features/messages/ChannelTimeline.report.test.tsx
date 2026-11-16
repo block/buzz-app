@@ -651,6 +651,6 @@ it.each([
     } else {
       await user.click(screen.getByRole("button", { name: "Cancel" }));
     }
-    await waitFor(() => expect(h.row()).toBeNull());
+    expect(h.row()).toBeInTheDocument();
   },
 );

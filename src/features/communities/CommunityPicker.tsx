@@ -1,4 +1,5 @@
 import {
+  createContext,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -29,7 +30,7 @@ import {
 } from "./departure";
 import { CommunityDialog } from "./CommunityDialog";
 import type { FederatedIdentity } from "../federated-identity/service";
-import type { InviteLink } from "./invite-link";
+import type { JoinRequest } from "./invite-intent";
 import { CommunityPickerItem, MEMBERSHIP_SECTION } from "./CommunityPickerItem";
 import { communityDestination } from "./destination";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -49,6 +50,18 @@ import { useCommunityRole } from "./useCommunityRole";
 
 const noSubscription = () => () => {};
 
+/** Opens the shell's community switcher from a page. Absent where the shell
+ * doesn't mount the switcher. */
+export const OpenCommunitySwitcher = createContext<(() => void) | undefined>(
+  undefined,
+);
+
+/** A host that opens the switcher from elsewhere owns its open state, so it
+ * passes both props; otherwise the picker keeps the state itself. */
+type SwitcherState =
+  | { open: boolean; onOpenChange: (open: boolean) => void }
+  | { open?: undefined; onOpenChange?: undefined };
+
 /** Shell navigation only: selecting a community remains owned by Communities. */
 export function CommunityPicker({
   communities,
@@ -58,20 +71,29 @@ export function CommunityPicker({
   onSelect,
   onOpenTarget,
   settingsCards,
+  open,
+  onOpenChange,
 }: {
   communities: Communities;
   federatedIdentity?: FederatedIdentity | undefined;
-  invite?: (InviteLink & { requestId: number }) | undefined;
+  invite?: (JoinRequest & { requestId: number }) | undefined;
   onInviteClose?: ((requestId: number) => void) | undefined;
   settingsCards?: Pick<SettingsCards, "subscribe" | "has"> | undefined;
   onSelect?: ((id: string | null) => void) | undefined;
   /** Menu destinations (Invites, hosting) open through the host's navigation. */
   onOpenTarget?: ((target: OpenTarget) => void) | undefined;
-}) {
-  const [switcherOpen, setSwitcherOpen] = useState(false);
+} & SwitcherState) {
+  const [localOpen, setLocalOpen] = useState(false);
+  const switcherOpen = open ?? localOpen;
+  const setSwitcherOpen = onOpenChange ?? setLocalOpen;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [joining, setJoining] = useState(false);
   const navigated = useRef(false);
+  // However it opened, a fresh switcher returns focus to its trigger until a
+  // choice navigates.
+  useLayoutEffect(() => {
+    if (switcherOpen) navigated.current = false;
+  }, [switcherOpen]);
   const wasJoining = useRef(false);
   useEffect(() => {
     if (wasJoining.current && !joining) triggerRef.current?.focus();
@@ -186,13 +208,7 @@ export function CommunityPicker({
   return (
     <>
       <nav aria-label="Communities" className={styles.picker}>
-        <PopoverRoot
-          open={switcherOpen}
-          onOpenChange={(open) => {
-            if (open) navigated.current = false;
-            setSwitcherOpen(open);
-          }}
-        >
+        <PopoverRoot open={switcherOpen} onOpenChange={setSwitcherOpen}>
           <PopoverTrigger
             render={
               <IconButton
@@ -324,6 +340,7 @@ export function CommunityPicker({
                     version: 1,
                     kind: "settings",
                     section: "block.builderlab/login",
+                    route: { version: 1, params: "create-community" },
                   });
                 }}
               />
@@ -338,6 +355,7 @@ export function CommunityPicker({
           federatedIdentity={federatedIdentity}
           mode="join"
           invite={invite}
+          submittedDestination={invite?.submitted === true}
           onJoined={(id) => select(id)}
           close={() => {
             setJoining(false);
@@ -371,7 +389,9 @@ export function CommunityPicker({
                 Cancel
               </Button>
               <Button
-                variant={leaving.intent === "leave" ? "destructive" : "primary"}
+                variant={
+                  leaving.intent === "leave" ? "destructive" : "prominent"
+                }
                 loading={leaving.pending}
                 onClick={() => void depart()}
               >

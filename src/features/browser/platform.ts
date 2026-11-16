@@ -58,9 +58,11 @@ export type BrowserStatus = Readonly<{
   error: string | null;
   /** A step to take elsewhere, such as approving an app in the web browser. */
   notice?: string | null;
+  /** The page asked to open a page in the web browser, which `open` opens. */
+  held?: boolean;
 }>;
 
-export type BrowserAction = "back" | "forward" | "reload";
+export type BrowserAction = "back" | "forward" | "reload" | "open";
 
 export interface BrowserPlatform {
   readonly available: boolean;
@@ -75,6 +77,9 @@ export interface BrowserPlatform {
     bounds: BrowserBounds,
     visible: boolean,
   ): Promise<void>;
+  /** Holds the page's media, Web Audio included, until resumed. A hidden page
+   * keeps running, so a page no view shows would otherwise stay audible. */
+  setMediaSuspended(sessionId: string, suspended: boolean): Promise<void>;
   /** With `fallbackToHttp`, an https load that fails to connect retries over http. */
   navigate(
     sessionId: string,
@@ -89,7 +94,7 @@ export interface BrowserPlatform {
 }
 
 /** A page the browser view shows in place of the website when attach fails. */
-export type BrowserViewerPage = "denied" | "unavailable";
+export type BrowserViewerPage = "denied" | "unavailable" | "sign-in";
 
 /** An attach failure. `page` names a panel page to show instead of the error bar. */
 export class BrowserAttachError extends Error {
@@ -102,7 +107,7 @@ export class BrowserAttachError extends Error {
   }
 }
 
-const VIEWER_PAGES: readonly string[] = ["denied", "unavailable"];
+const VIEWER_PAGES: readonly string[] = ["denied", "unavailable", "sign-in"];
 
 // Native attach rejects with `{ message, page? }`; older paths reject with a string.
 function attachError(error: unknown): unknown {
@@ -172,6 +177,8 @@ export function createBrowserPlatform(): BrowserPlatform {
     },
     setBounds: (sessionId, bounds, visible) =>
       invoke("browser_set_bounds", { sessionId, bounds, visible }),
+    setMediaSuspended: (sessionId, suspended) =>
+      invoke("browser_set_media_suspended", { sessionId, suspended }),
     navigate: async (sessionId, url, fallbackToHttp = false) =>
       invoke("browser_navigate", {
         sessionId,

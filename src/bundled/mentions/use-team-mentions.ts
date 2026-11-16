@@ -18,18 +18,23 @@ import { mentionCandidates } from "./mention-candidates";
 import { extendsName, normalizeName } from "../../features/search/person-match";
 import type { RelaySession } from "../../features/relay/session";
 import { mentionMatch } from "./mention-ranking";
+import { typedPublicKey } from "../../shared/identity/public-key";
 
 const empty = { status: "unavailable", entries: [] } as const;
 type Catalog = Pick<
   ReturnType<NonNullable<RelaySession["channelKit"]>["snapshot"]>,
   "entries"
 >;
-/** A saved team with the same or a longer name must not auto-select a person on Space. */
+/**
+ * A saved team with the same or a longer name must not auto-select a person on
+ * Space. An exact public key is not a name: no team name equals or continues it.
+ */
 export function teamBlocksSpace(
   catalog: Catalog,
   query: string,
   names: readonly string[] = [],
 ) {
+  if (typedPublicKey(query) !== undefined) return false;
   const needle = normalizeName(query);
   const blocks = (name: string) =>
     normalizeName(name) === needle || extendsName(name, needle);
@@ -195,7 +200,11 @@ export function useTeamMentions(
         channelId,
         inviteAgents,
         roster,
-        session.agentChoices.snapshot().identities,
+        // A Solo chat already offers the agents it can add; any other agent
+        // would only be a reference, and a team addresses its agents.
+        model.channel?.channelType === "solo"
+          ? []
+          : session.agentChoices.snapshot().identities,
         owner?.joinable(),
       );
     // Only shown team rows read eligibility; a closed chooser builds none.

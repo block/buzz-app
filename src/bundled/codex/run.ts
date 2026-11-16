@@ -20,19 +20,23 @@ export const codexRun = (
   AgentType<Config>,
   | "models"
   | "retire"
+  | "sessionAdmission"
   | "sessionControls"
   | "run"
   | "runOnce"
   | "timeoutMs"
   | "syncedSettings"
   | "resumes"
+  | "readFile"
 > => ({
+  sessionAdmission: true,
   models: (agent) => runtime.preview(agent),
   retire: (agent) => runtime.retire(agent),
   sessionControls: {
     scope: (agent) => config(agent.config).scope,
     state: (agent, place) => runtime.sessionState(agent, place),
-    run: (agent, place, action) => runtime.session(agent, place, action),
+    run: (agent, place, action, reset) =>
+      runtime.session(agent, place, action, reset),
     subscribe: (listener) => runtime.subscribe(listener),
   },
   run: async (delivery) => {
@@ -43,6 +47,7 @@ export const codexRun = (
     await ready?.(turn.signal, turn.delivery.agent.key);
     return runtime.runOnce(turn);
   },
+  readFile: (agent, path, signal) => runtime.workspaceFile(agent, path, signal),
   timeoutMs: HANDOVER_MS,
   syncedSettings: {
     schema: syncedSettingsSchema,

@@ -58,7 +58,7 @@ export function RemoteAgentIntroduction({
     animate: { opacity: 1, filter: "blur(0px)", scale: 1 },
     transition: {
       duration: 0.18,
-      delay: 0.56 + at * 0.016,
+      delay: 0.56 + at * 0.0107,
       ease: "easeOut" as const,
     },
   });
@@ -150,6 +150,7 @@ export function RemoteAgentIntroduction({
       >
         {avatar.kind === "emoji" ? (
           <div
+            data-avatar-shape="squircle"
             className={styles.remoteEmoji}
             style={{ backgroundColor: avatar.color }}
           >

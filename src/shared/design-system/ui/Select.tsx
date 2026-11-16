@@ -1,5 +1,11 @@
 import { PreferenceRow } from "./PreferenceRow";
-import { Fragment, useId, type ReactNode } from "react";
+import {
+  Fragment,
+  useId,
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+} from "react";
 import { Field } from "./Field";
 import { Select as BaseSelect } from "@base-ui/react/select";
 import { CheckIcon, CaretDownIcon } from "../icons/index";
@@ -40,6 +46,7 @@ export function Select({
   align = "start",
   size,
   appearance = "outlined",
+  describedBy,
 }: {
   label: string;
   description?: ReactNode;
@@ -52,7 +59,7 @@ export function Select({
   valueLabel?: string | undefined;
   valueTitle?: string;
   /** Compact metadata stays visible while the selected value truncates. */
-  valueSuffix?: string | undefined;
+  valueSuffix?: ReactNode;
   /** Decorative 20px icon, avatar, or custom accessory shown before the selected value. */
   leading?: ReactNode;
   /** Anchor the popup to the corresponding trigger edge. */
@@ -61,6 +68,8 @@ export function Select({
   /** Match adjacent controls without changing the selection treatment. */
   size?: "xs" | "sm" | "md";
   appearance?: "outlined" | "glass-ghost" | "inverted" | "link";
+  /** Text the trigger is described by, such as its row's subtitle. */
+  describedBy?: string | undefined;
   disabled?: boolean;
   value: string;
   groups: readonly SelectGroup[];
@@ -72,6 +81,11 @@ export function Select({
   const items = groups.flatMap((group) => group.options);
   const selectedValue =
     value === "" && !items.some((option) => option.value === "") ? null : value;
+  const choices = JSON.stringify(items.map((item) => item.value));
+  const committedChoices = useRef(choices);
+  useLayoutEffect(() => {
+    committedChoices.current = choices;
+  }, [choices]);
   const control = (
     <div
       data-buzz-ui=""
@@ -86,7 +100,18 @@ export function Select({
         readOnly={readOnly}
         value={selectedValue}
         items={items}
-        onValueChange={(next) => {
+        onValueChange={(next, details) => {
+          // Base UI's item-removal callback can still see the old selection
+          // while registering a new list. Keep a valid controlled replacement.
+          // Closed-trigger typeahead also uses "none", after this commit.
+          if (
+            details.reason === "none" &&
+            committedChoices.current !== choices &&
+            items.some((item) => item.value === value)
+          ) {
+            details.cancel();
+            return;
+          }
           if (next !== null) onValueChange(next);
         }}
       >
@@ -129,6 +154,7 @@ export function Select({
             // Base UI adds aria-labelledby after the commit that inserts the
             // trigger, so it can be unnamed until a later task. Name it now.
             aria-label={label}
+            {...(describedBy ? { "aria-describedby": describedBy } : {})}
             render={(props) => (
               <Button
                 {...props}

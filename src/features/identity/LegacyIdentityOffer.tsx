@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { Identity } from "./service";
@@ -19,6 +19,7 @@ export function useLegacyIdentityOffer(identity: Identity, open: boolean) {
   const [offered, setOffered] = useState(false);
   // An identity error before the click belongs to setup's own pages.
   const [tried, setTried] = useState(false);
+  const proceed = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!missing) return;
     let active = true;
@@ -38,6 +39,7 @@ export function useLegacyIdentityOffer(identity: Identity, open: boolean) {
       description="Old Buzz was used on this device. Continue with the identity it saved instead of setting up a new one. Your computer may ask you to allow access."
       onClose={dismiss}
       pending={state.busy}
+      initialFocus={proceed}
       // Launch focuses nothing, so the landing's heading takes focus back.
       finalFocus={() => document.getElementById("welcome-title")}
       actions={
@@ -46,6 +48,7 @@ export function useLegacyIdentityOffer(identity: Identity, open: boolean) {
             Not now
           </Button>
           <Button
+            ref={proceed}
             type="button"
             variant="prominent"
             loading={state.busy}

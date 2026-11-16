@@ -244,6 +244,12 @@ impl AppAgent {
             last.name == self.name && last.picture == self.picture && last.about == self.about
         })
     }
+    /// Whether to publish its profile: when it changed, or when `force` asks
+    /// to republish the same one, for example so the relay's latest profile
+    /// carries the saved owner proof again before an owner archives it.
+    pub fn profile_due(&self, force: bool) -> bool {
+        force || !self.profile_is_current()
+    }
     /// Its profile as this row describes it, replacing the last one accepted.
     pub fn profile_event(&self, key: &Secret) -> Result<serde_json::Value> {
         valid_name(&self.name)?;
@@ -332,6 +338,22 @@ impl AppAgent {
             ],
         )?;
         Ok((url, key.signed(27235, String::new(), tags)?))
+    }
+    /// NIP-42 authentication (22242) of a Huddle audio socket in its own
+    /// community: it answers only the relay's `challenge`, with the owner
+    /// attestation the relay links the agent to its owner by.
+    pub fn audio_auth(&self, key: &Secret, challenge: &str) -> Result<serde_json::Value> {
+        if challenge.is_empty() || challenge.len() > 4096 {
+            return Err("Invalid Huddle challenge".into());
+        }
+        let tags = self.attested(
+            key,
+            vec![
+                vec!["relay".into(), self.relay.clone()],
+                vec!["challenge".into(), challenge.into()],
+            ],
+        )?;
+        key.signed(22242, String::new(), tags)
     }
     /// Blossom authorization (24242) to upload the blob with this SHA-256 to
     /// its community, valid for a minute.

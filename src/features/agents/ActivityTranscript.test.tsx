@@ -1,15 +1,29 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { ActivityTranscript } from "./ActivityTranscript";
+import { AgentsContext } from "./react";
+import type { Agents } from "./service";
+import { ActivityTranscript, TranscriptFocus } from "./ActivityTranscript";
+import { readerInputs } from "../profiles/target";
 import type { TranscriptTurn } from "./activity-transcript";
 import { activityTranscript } from "./activity-transcript";
 import { withSessionPrompts } from "./session-prompts";
+import { eventBody } from "../agent-harness/turn-records";
 import { codexTurns } from "../../bundled/codex/transcript";
 import { restoreRecordedTools } from "../../bundled/codex/recorded-tools";
-import { formatItemTimestamp } from "../../shared/datetime";
+import {
+  clockPreference,
+  setClockPreference,
+} from "../../shared/clock-preference";
+import { formatTime } from "../../shared/datetime";
 
 afterEach(cleanup);
 
@@ -46,7 +60,10 @@ it.each([
   );
   expect(screen.getByText(label, { exact: true })).toBeVisible();
   if (label === "Failed")
-    expect(screen.getByText(label)).toHaveAttribute("data-state", "error");
+    expect(screen.getByText(label).closest("header")).toHaveAttribute(
+      "data-status",
+      "failed",
+    );
 });
 
 it.each([
@@ -208,7 +225,7 @@ it("shows a failed nested call on the collapsed script while preserving the scri
   expect(script).not.toHaveAttribute("open");
   expect(script).toHaveAttribute("data-status", "completed");
   // The script and its nested call each carry their own time.
-  expect(script?.querySelectorAll("time")).toHaveLength(1);
+  expect(script?.querySelectorAll("time")).toHaveLength(2);
   expect(script?.parentElement?.querySelectorAll("time")).toHaveLength(2);
 });
 
@@ -261,11 +278,11 @@ it("discloses tool arguments and results without raw details, including a posted
   expect(tool).toHaveAttribute("open");
   expect(screen.getByText('{ "limit": 2 }')).toBeVisible();
   expect(screen.getByText("two messages")).toBeVisible();
-  expect(screen.getByText("Done")).toBeVisible();
+  expect(screen.getByText("Done", { selector: "summary span" })).toBeVisible();
   expect(screen.queryByText("Raw details")).not.toBeInTheDocument();
 });
 
-it("shows each entry's time under it, with the full date on hover, except the prompt", () => {
+it("renders thought formatting and keeps entry times available, except the prompt", () => {
   const at = Date.UTC(2026, 9, 20, 20, 1, 28);
   const { container } = render(
     <ActivityTranscript
@@ -279,7 +296,12 @@ it("shows each entry's time under it, with the full date on hover, except the pr
             config: [],
             items: [
               { id: "prompt", at, type: "prompt", text: "hi", sections: [] },
-              { id: "thought", at: at + 3000, type: "thought", text: "hmm" },
+              {
+                id: "thought",
+                at: at + 3000,
+                type: "thought",
+                text: "**Inspecting the bootstrap script**\n\nChecking **formatting**.",
+              },
               { id: "reply", at: at + 70_000, type: "message", text: "done" },
             ],
           } as never,
@@ -289,16 +311,71 @@ it("shows each entry's time under it, with the full date on hover, except the pr
       state={() => "ended"}
     />,
   );
-  const stamps = [
-    ...container.querySelectorAll<HTMLTimeElement>("article > div time"),
-  ];
-  expect(stamps.map((stamp) => stamp.getAttribute("datetime"))).toEqual([
-    new Date(at + 3000).toISOString(),
-    new Date(at + 70_000).toISOString(),
-  ]);
-  for (const stamp of stamps) {
-    expect(stamp.previousElementSibling).not.toBeNull();
-    expect(stamp.title).toContain("2026");
+  expect(screen.getByText("formatting", { selector: "strong" }).tagName).toBe(
+    "STRONG",
+  );
+  expect(container.querySelectorAll("time")).toHaveLength(3);
+  for (const text of ["Inspecting the bootstrap script", "done"]) {
+    expect(
+      screen
+        .getByText(text, { selector: "summary span" })
+        .closest("details")
+        ?.querySelector("time")
+        ?.getAttribute("title"),
+    ).toContain("2026");
+  }
+});
+
+it("updates mounted transcript clocks while keeping elapsed time and navigation", () => {
+  const previous = { ...clockPreference() };
+  const at = new Date(2026, 9, 20, 14, 1, 28).getTime();
+  const openConversation = vi.fn();
+  setClockPreference({ hourCycle: "h12", seconds: false });
+  try {
+    const { container } = render(
+      <ActivityTranscript
+        transcript={{
+          turns: [
+            {
+              turnId: "clock",
+              triggeringEventIds: [],
+              newSession: false,
+              partial: false,
+              startedAt: at,
+              endedAt: at + 9000,
+              channelId: "channel",
+              threadRootId: null,
+              config: [],
+              items: [
+                {
+                  id: "thought",
+                  at: at + 3000,
+                  type: "thought",
+                  text: "Checking the clock",
+                },
+              ],
+            },
+          ],
+        }}
+        agentName="Sol"
+        state={() => "ended"}
+        openConversation={openConversation}
+      />,
+    );
+    const clocks = Array.from(container.querySelectorAll("time"));
+    expect(clocks).toHaveLength(2);
+    const before = clocks.map((clock) => clock.textContent);
+    act(() => setClockPreference({ hourCycle: "h23", seconds: true }));
+    expect(clocks.map((clock) => clock.textContent)).toEqual([
+      formatTime((at + 9000) / 1000),
+      formatTime((at + 3000) / 1000),
+    ]);
+    expect(clocks.map((clock) => clock.textContent)).not.toEqual(before);
+    expect(container.querySelector("header")).toHaveTextContent("9.0s");
+    fireEvent.click(screen.getByRole("button", { name: "Channel" }));
+    expect(openConversation).toHaveBeenCalledWith("channel", undefined);
+  } finally {
+    act(() => setClockPreference(previous));
   }
 });
 
@@ -340,123 +417,42 @@ it("shows no time for an entry with a zero, non-finite or invalid time", () => {
   expect(container.querySelectorAll("time")).toHaveLength(0);
 });
 
-it("dates the turn heading in the shared format, and omits an unknown start", () => {
-  const at = Date.UTC(2026, 9, 20, 20, 1, 28);
-  const turn = (startedAt: number) =>
-    ({
-      turnId: `t${startedAt}`,
-      startedAt,
-      endedAt: startedAt,
-      threadRootId: null,
-      config: ["gpt-6"],
-      items: [],
-    }) as never;
-  render(
-    <ActivityTranscript
-      transcript={{ turns: [turn(at), turn(0), turn(NaN)] }}
-      agentName="Sol"
-      state={() => "ended"}
-    />,
-  );
-  const expected = formatItemTimestamp(at / 1000, { withTime: true });
-  expect(screen.getByText(expected, { selector: "time" })).toBeInTheDocument();
-  expect(
-    screen
-      .getAllByRole("article")
-      .map((article) => article.querySelector("header")?.textContent),
-  ).toEqual([
-    `${expected} · Completed · 0.0s · gpt-6`,
-    "Status unknown · gpt-6",
-    "Status unknown · gpt-6",
-  ]);
-});
-
-it("keeps different threads distinguishable when showing all conversations", () => {
-  const turns: TranscriptTurn[] = ["a".repeat(64), "b".repeat(64)].map(
-    (threadRootId, index) => ({
-      turnId: `turn-${index}`,
+it.each([
+  ["ended", 2000, undefined, "Completed"],
+  ["working", undefined, undefined, "Working"],
+  ["ended", 2000, "Command failed", "Failed"],
+  ["unknown", undefined, undefined, "Status unknown"],
+] as const)(
+  "shows only the turn status for %s/%s/%s",
+  (state, endedAt, error, label) => {
+    const turn = {
+      turnId: "status",
+      startedAt: 1000,
+      endedAt,
+      error,
       channelId: "channel",
-      threadRootId,
-      triggeringEventIds: [],
-      newSession: false,
+      threadRootId: "a".repeat(64),
       config: ["gpt-6"],
-      startedAt: Date.parse("2026-10-20T12:00:00Z"),
-      endedAt: Date.parse("2026-10-20T12:01:00Z"),
-      partial: false,
+      source: "heartbeat",
+      stopReason: "stop",
       items: [],
-    }),
-  );
-  render(
-    <ActivityTranscript
-      transcript={{ turns }}
-      agentName="Agent"
-      state={() => "ended"}
-    />,
-  );
-  expect(screen.getByText("· Thread aaaaaaaa")).toBeVisible();
-  expect(screen.getByText("· Thread bbbbbbbb")).toBeVisible();
-  // The place follows the duration and leads the remaining facts.
-  expect(
-    screen.getAllByRole("article")[0]?.querySelector("header")?.textContent,
-  ).toMatch(/Completed · 1m 0s · Thread aaaaaaaa · gpt-6$/);
-});
-
-it("opens a turn's thread or channel from its label, keeping thread labels it can't open as text", () => {
-  const turn = (
-    turnId: string,
-    channelId: string | null,
-    threadRootId: string | null | undefined,
-  ): TranscriptTurn => ({
-    turnId,
-    channelId,
-    threadRootId,
-    triggeringEventIds: [],
-    newSession: false,
-    config: [],
-    startedAt: Date.parse("2026-10-20T12:00:00Z"),
-    endedAt: Date.parse("2026-10-20T12:01:00Z"),
-    partial: false,
-    items: [],
-  });
-  const transcript = {
-    turns: [
-      turn("thread", "channel", "a".repeat(64)),
-      turn("channel", "channel", null),
-      // Neither an unknown thread nor a turn without a channel can be opened.
-      turn("unknown", "channel", undefined),
-      turn("nowhere", null, "b".repeat(64)),
-    ],
-  };
-  const openConversation = vi.fn();
-  const view = render(
-    <ActivityTranscript
-      transcript={transcript}
-      agentName="Agent"
-      state={() => "ended"}
-      openConversation={openConversation}
-    />,
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Thread aaaaaaaa" }));
-  expect(openConversation).toHaveBeenLastCalledWith("channel", "a".repeat(64));
-  fireEvent.click(screen.getByRole("button", { name: "Channel" }));
-  expect(openConversation).toHaveBeenLastCalledWith("channel", undefined);
-  expect(screen.getAllByRole("button")).toHaveLength(2);
-  expect(screen.getByText("· Thread unknown")).toBeInTheDocument();
-  expect(screen.getByText("· Thread bbbbbbbb")).toBeInTheDocument();
-  // A host that can't open conversations shows thread labels as text and
-  // leaves channel turns unlabelled.
-  view.rerender(
-    <ActivityTranscript
-      transcript={transcript}
-      agentName="Agent"
-      state={() => "ended"}
-    />,
-  );
-  expect(screen.queryAllByRole("button")).toEqual([]);
-  expect(screen.getByText("· Thread aaaaaaaa")).toBeInTheDocument();
-  expect(screen.queryByText(/Channel/)).toBeNull();
-  expect(openConversation).toHaveBeenCalledTimes(2);
-});
+    } as unknown as TranscriptTurn;
+    const { container } = render(
+      <ActivityTranscript
+        transcript={{ turns: [turn] }}
+        agentName="Agent"
+        state={() => state}
+      />,
+    );
+    if (state === "working") {
+      expect(container.querySelector("header")).toBeNull();
+      expect(screen.getAllByText("Working")).toHaveLength(1);
+    } else {
+      expect(container.querySelector("header")).toHaveTextContent(label);
+      expect(container.querySelector("header time") !== null).toBe(!!endedAt);
+    }
+  },
+);
 
 it("opens at the latest turn and follows new ones until the reader scrolls up", () => {
   const turn = (id: string, at: number): TranscriptTurn => ({
@@ -508,6 +504,210 @@ it("opens at the latest turn and follows new ones until the reader scrolls up", 
   shared.remove();
 });
 
+it("shows the turn a message began, its prompt open, instead of the latest, once", async () => {
+  const id = (n: number) => String(n).repeat(64);
+  // A retry asks the same message again, so `event` can repeat.
+  const turn = (n: number, event = n): TranscriptTurn => ({
+    turnId: `t${n}`,
+    channelId: "channel",
+    threadRootId: null,
+    triggeringEventIds: [],
+    newSession: false,
+    config: [],
+    startedAt: n,
+    endedAt: n + 1000,
+    partial: false,
+    items: [
+      {
+        id: `p${n}`,
+        at: n,
+        type: "prompt",
+        text: `Prompt ${n}`,
+        sections: [
+          {
+            tag: "buzz-event",
+            body: eventBody(
+              {
+                id: id(event),
+                pubkey: "a".repeat(64),
+                kind: 9,
+                created_at: event,
+                content: `Prompt ${n}`,
+                tags: [],
+              },
+              `Prompt ${n}`,
+            ),
+          },
+        ],
+        steer: false,
+      },
+    ],
+  });
+  const view = document.createElement("div");
+  view.style.overflowY = "auto";
+  Object.defineProperty(view, "scrollHeight", { get: () => 1000 });
+  document.body.appendChild(view);
+  const shown: string[] = [];
+  const margins: string[] = [];
+  Element.prototype.scrollIntoView = function (this: HTMLElement) {
+    shown.push(this.dataset.entry ?? "");
+    margins.push(this.style.scrollMarginBlockStart);
+  };
+  const done = vi.fn();
+  // The panel's sticky header, 40px tall.
+  const header = (node: HTMLDivElement | null) => {
+    if (node) Object.defineProperty(node, "offsetHeight", { value: 40 });
+  };
+  const show = (turns: TranscriptTurn[], events: string[]) => (
+    <TranscriptFocus.Provider value={{ events, inputs: readerInputs(), done }}>
+      <div data-transcript>
+        <div data-transcript-header ref={header} />
+        <ActivityTranscript
+          transcript={{ turns }}
+          agentName="Sol"
+          state={() => "ended"}
+        />
+      </div>
+    </TranscriptFocus.Provider>
+  );
+  try {
+    // Not loaded yet: it opens at the latest and waits.
+    const { rerender } = render(show([turn(1)], ["reply", id(2)]), {
+      container: view,
+    });
+    expect(view.scrollTop).toBe(1000);
+    expect(done).not.toHaveBeenCalled();
+    // Focus the menu put back on its trigger, outside the panel, is not the
+    // reader's own move.
+    const trigger = document.body.appendChild(document.createElement("button"));
+    trigger.focus();
+    rerender(show([turn(1), turn(2), turn(3)], ["reply", id(2)]));
+    expect(shown).toEqual(["item:p2"]);
+    // It starts below the sticky header, with room for its focus ring, and
+    // keeps no margin afterwards.
+    expect(margins).toEqual(["calc(40px + var(--space-2))"]);
+    expect(
+      view.querySelector<HTMLElement>('[data-entry="item:p2"]')?.style
+        .scrollMarginBlockStart,
+    ).toBe("");
+    expect(done).toHaveBeenCalledOnce();
+    const prompt = screen.getByText("Prompt 2", { selector: "p" });
+    expect(prompt.closest("details")).toHaveAttribute("open");
+    // Its text is marked, not its title.
+    expect(prompt).toHaveAttribute("data-arrived");
+    expect(view.querySelectorAll("[data-arrived]")).toHaveLength(1);
+    // Keyboard focus follows it, after the panel's own handoff.
+    await act(() => new Promise(requestAnimationFrame));
+    expect(
+      prompt.closest("details")?.querySelector(":scope > summary"),
+    ).toHaveFocus();
+    trigger.remove();
+    // Once shown, the mark is gone, so the transcript shown again (a hidden
+    // pane reopened) does not replay it.
+    fireEvent.animationEnd(prompt);
+    expect(view.querySelectorAll("[data-arrived]")).toHaveLength(0);
+    // New turns no longer pull it to the latest.
+    view.scrollTop = 0;
+    rerender(show([turn(1), turn(2), turn(3), turn(4)], ["reply", id(2)]));
+    expect(view.scrollTop).toBe(0);
+    // A retried request shows its latest attempt, the one that answered.
+    // Focus the reader has since moved elsewhere stays there.
+    const retried = show([turn(1), turn(2), turn(5, 2)], ["retry", id(2)]);
+    const elsewhere = document.body.appendChild(
+      document.createElement("button"),
+    );
+    fireEvent.pointerDown(elsewhere);
+    elsewhere.focus();
+    rerender(retried);
+    expect(shown.at(-1)).toBe("item:p5");
+    await act(() => new Promise(requestAnimationFrame));
+    expect(elsewhere).toHaveFocus();
+    elsewhere.remove();
+    // A reply lands on itself before the prompt it answered, its bubble
+    // marked.
+    const replied = turn(6);
+    rerender(
+      show(
+        [
+          turn(1),
+          {
+            ...replied,
+            items: [
+              ...replied.items,
+              {
+                id: "m6",
+                at: 7,
+                type: "message",
+                text: "Reply 6",
+                messageId: "reply",
+              },
+            ],
+          },
+        ],
+        ["reply", id(6)],
+      ),
+    );
+    expect(shown.at(-1)).toBe("item:m6");
+    expect(
+      screen
+        .getByText("Reply 6", { selector: "p" })
+        .closest("[data-arrival-surface]"),
+    ).toHaveAttribute("data-arrived");
+    expect(view.querySelectorAll("[data-arrived]")).toHaveLength(1);
+    // A reply a script sent lands on the call that ran it.
+    const scripted = turn(7);
+    rerender(
+      show(
+        [
+          {
+            ...scripted,
+            items: [
+              ...scripted.items,
+              {
+                id: "x7",
+                at: 8,
+                type: "tool",
+                toolCallId: "x7",
+                title: "exec",
+                kind: "execute",
+                status: "completed",
+                input: "",
+                output: "",
+                diffs: [],
+                paths: [],
+                truncated: false,
+                children: [
+                  {
+                    id: "s7",
+                    at: 9,
+                    type: "message",
+                    text: "Reply 7",
+                    posted: true,
+                    messageId: id(8),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        [id(8), id(7)],
+      ),
+    );
+    expect(shown.at(-1)).toBe("item:x7");
+    // The call itself is marked, not the reply recorded inside it.
+    const call = view.querySelector('[data-entry="item:x7"] > details');
+    expect(call).toHaveProperty("open", true);
+    expect(call?.querySelector(":scope > summary")).toHaveAttribute(
+      "data-arrived",
+    );
+    expect(view.querySelectorAll("[data-arrived]")).toHaveLength(1);
+  } finally {
+    // jsdom has no scrollIntoView of its own.
+    Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+    view.remove();
+  }
+});
+
 it("divides sessions, and shows each one's prompt once at its top", () => {
   const turn = (
     turnId: string,
@@ -552,4 +752,193 @@ it("divides sessions, and shows each one's prompt once at its top", () => {
   ).toEqual(["Session continued; earlier turns not shown", "New session"]);
   expect(screen.getAllByText(/System prompt/)).toHaveLength(1);
   expect(screen.getByText("Agent instructions")).toBeInTheDocument();
+});
+
+it("keeps the conversation readable while disclosing work and showing the current step", async () => {
+  const at = Date.UTC(2026, 10, 2, 17);
+  const turn: TranscriptTurn = {
+    turnId: "turn",
+    channelId: null,
+    threadRootId: null,
+    triggeringEventIds: [],
+    newSession: false,
+    config: [],
+    startedAt: at,
+    partial: false,
+    items: [
+      {
+        id: "prompt",
+        at,
+        type: "prompt",
+        text: "Fix the preview",
+        sections: [],
+        steer: false,
+      },
+      { id: "thought", at, type: "thought", text: "Inspecting the renderer" },
+      {
+        id: "tool",
+        at,
+        type: "tool",
+        toolCallId: "tool",
+        title: "Read renderer",
+        kind: "read",
+        status: "completed",
+        input: "renderer.tsx",
+        output: "source",
+        paths: [],
+        diffs: [],
+        truncated: false,
+      },
+      { id: "reply", at, type: "message", text: "Found the layout problem" },
+      { id: "latest", at, type: "thought", text: "Applying the fix" },
+    ],
+  };
+  const user = userEvent.setup();
+  render(
+    <ActivityTranscript
+      transcript={{ turns: [turn] }}
+      agentName="Sol"
+      state={() => "working"}
+    />,
+  );
+  expect(
+    screen.getByText("Fix the preview", { selector: "summary span" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Found the layout problem", { selector: "summary span" }),
+  ).toBeVisible();
+  expect(
+    screen
+      .getAllByText("Applying the fix")
+      .some((element) => !element.closest("[hidden]")),
+  ).toBe(true);
+  expect(
+    screen.getByText("Inspecting the renderer", { selector: "summary span" }),
+  ).toBeVisible();
+  expect(screen.getByText("renderer")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "2 activity steps" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("source")).not.toBeVisible();
+  await user.click(screen.getByText("renderer"));
+  expect(screen.getByText("source")).toBeVisible();
+  await user.click(screen.getByText("renderer"));
+  expect(screen.getByText("source")).not.toBeVisible();
+});
+
+it("keeps thought details collapsed until requested and preserves them across updates", async () => {
+  const turn: TranscriptTurn = {
+    turnId: "thought-turn",
+    channelId: null,
+    threadRootId: null,
+    triggeringEventIds: [],
+    newSession: false,
+    config: [],
+    startedAt: 1,
+    partial: false,
+    items: [
+      {
+        id: "thought",
+        at: 1,
+        type: "thought",
+        text: "**Checking the view**\n\nDetails with **formatting**.",
+      },
+    ],
+  };
+  const user = userEvent.setup();
+  const { rerender } = render(
+    <ActivityTranscript
+      transcript={{ turns: [turn] }}
+      agentName="Agent"
+      state={() => "working"}
+    />,
+  );
+  expect(screen.getByText("formatting")).not.toBeVisible();
+  const disclosure = screen
+    .getByText("Checking the view", { selector: "summary span" })
+    .closest("summary");
+  if (!disclosure) throw new Error("Missing thought disclosure");
+  await user.click(disclosure);
+  expect(screen.getByText("formatting")).toBeVisible();
+  expect(screen.getAllByText("Checking the view")).toHaveLength(1);
+  rerender(
+    <ActivityTranscript
+      transcript={{ turns: [{ ...turn, endedAt: 2 }] }}
+      agentName="Agent"
+      state={() => "ended"}
+    />,
+  );
+  expect(screen.getByText("formatting")).toBeVisible();
+  await user.click(disclosure);
+  expect(screen.getByText("formatting")).not.toBeVisible();
+});
+
+it("resolves author avatars by identity and falls back when that identity is absent", () => {
+  const key = "a".repeat(64);
+  const listeners = new Set<() => void>();
+  let profiles = new Map([
+    [key, { name: "Alex", picture: "https://example.com/alex.png" }],
+  ]);
+  const ensure = vi.fn(async () => {});
+  const directory = {
+    snapshot: () => profiles,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    ensure,
+  };
+  const connection = { status: "ready", session: { profiles: directory } };
+  const relay = { subscribe: () => () => {}, snapshot: () => connection };
+  const agents = {
+    subscribe: () => () => {},
+    relay: () => relay,
+  } as unknown as Agents;
+  const turn = {
+    turnId: "avatar",
+    startedAt: 1,
+    config: [],
+    items: [
+      {
+        id: "prompt",
+        at: 1,
+        type: "prompt",
+        author: "Alex",
+        authorPubkey: key,
+        text: "Hello",
+        sections: [],
+      },
+      {
+        id: "unknown",
+        at: 1,
+        type: "prompt",
+        author: "Alex",
+        text: "Another person",
+        sections: [],
+      },
+    ],
+  } as unknown as TranscriptTurn;
+  const { container } = render(
+    <AgentsContext.Provider value={agents}>
+      <ActivityTranscript
+        agentKey="agent"
+        agentName="Agent"
+        transcript={{ turns: [turn] }}
+        state={() => "ended"}
+      />
+    </AgentsContext.Provider>,
+  );
+  expect(ensure).toHaveBeenCalledWith([key], "background");
+  expect(container.querySelectorAll("img")).toHaveLength(1);
+  expect(container.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://example.com/alex.png",
+  );
+  act(() => {
+    profiles = new Map();
+    for (const listener of listeners) listener();
+  });
+  expect(container.querySelector("img")).toBeNull();
 });

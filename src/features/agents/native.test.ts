@@ -3,6 +3,9 @@ import { expect, it, vi } from "vitest";
 import { hasEventProof } from "../relay/events";
 import { keypair, signed } from "../relay/testing";
 import { nativeAgents, unconfirmedAgentEvent } from "./native";
+import { importedEmojiPicture } from "./import-picture";
+
+vi.mock("./import-picture", () => ({ importedEmojiPicture: vi.fn() }));
 
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => true,
@@ -18,6 +21,75 @@ const query = (response: unknown) => {
   vi.mocked(invoke).mockResolvedValueOnce(response);
   return native.query(member, [{ kinds: [9] }]);
 };
+
+it("prepares the selected source's emoji before importing and passes back native upload notes", async () => {
+  const converted = {
+    source: "legacy-svg",
+    png: "data:image/png;base64,iVBORw0KGgo=",
+  };
+  vi.mocked(invoke)
+    .mockResolvedValueOnce({
+      agents: [
+        { source: "development", pubkey: agent.pubkey, picture: "other" },
+        { source: "installed", pubkey: agent.pubkey, picture: "legacy-svg" },
+      ],
+    })
+    .mockResolvedValueOnce({
+      agent: { pubkey: agent.pubkey },
+      carry: {},
+      notes: [],
+    });
+  vi.mocked(importedEmojiPicture).mockResolvedValueOnce(converted);
+  expect(
+    await native.port("installed", agent.pubkey, member.relay, "owner", "type"),
+  ).toMatchObject({ agent: { pubkey: agent.pubkey }, notes: [] });
+  expect(importedEmojiPicture).toHaveBeenLastCalledWith("legacy-svg");
+  expect(invoke).toHaveBeenLastCalledWith("app_agent_port", {
+    source: "installed",
+    pubkey: agent.pubkey,
+    destination: member.relay,
+    owner: "owner",
+    agentType: "type",
+    convertedPicture: converted,
+  });
+});
+
+it.each(["read", "render"])(
+  "still imports with native's warning after a %s failure",
+  async (failure) => {
+    if (failure === "read")
+      vi.mocked(invoke).mockRejectedValueOnce(new Error("Unreadable"));
+    else {
+      vi.mocked(invoke).mockResolvedValueOnce({
+        agents: [
+          { source: "installed", pubkey: agent.pubkey, picture: "legacy-svg" },
+        ],
+      });
+      vi.mocked(importedEmojiPicture).mockRejectedValueOnce(
+        new Error("No canvas"),
+      );
+    }
+    const result = {
+      agent: { pubkey: agent.pubkey },
+      carry: {},
+      notes: ["Picture was skipped"],
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(result);
+    expect(
+      await native.port(
+        "installed",
+        agent.pubkey,
+        member.relay,
+        "owner",
+        "type",
+      ),
+    ).toEqual(result);
+    expect(invoke).toHaveBeenLastCalledWith(
+      "app_agent_port",
+      expect.objectContaining({ convertedPicture: undefined }),
+    );
+  },
+);
 
 it("reads the signed id from an uncertain native publish outcome", () => {
   const id = "a".repeat(64);
@@ -39,6 +111,60 @@ it("admits the community's events through the relay verifier", async () => {
     ...member,
     filters: [{ kinds: [9] }],
   });
+});
+
+it("reads effective edit state through the agent-authenticated native query", async () => {
+  const edit = signed(agent, {
+    kind: 40003,
+    content: "no files",
+    tags: [
+      ["h", "c"],
+      ["e", message.id.toUpperCase()],
+    ],
+  });
+  vi.mocked(invoke).mockResolvedValueOnce({
+    effective_edit: 1,
+    original: message,
+    edit,
+  });
+  const current = await native.effectiveEdit(member, message.id, "c");
+  expect(current.id).toBe(edit.id);
+  expect(hasEventProof(current)).toBe(true);
+  expect(current.tags.filter((t) => t[0] === "imeta")).toEqual([]);
+  expect(invoke).toHaveBeenLastCalledWith("app_agent_query", {
+    ...member,
+    filters: [
+      {
+        kinds: [9, 40002, 40008, 45001, 45003],
+        ids: [message.id],
+        "#h": ["c"],
+        effective_edit: 1,
+        consistency: "strong",
+      },
+    ],
+  });
+});
+
+it.each([
+  ["old relay", [message]],
+  [
+    "unsigned original",
+    {
+      effective_edit: 1,
+      original: { ...message, sig: "0".repeat(128) },
+      edit: null,
+    },
+  ],
+  ["wrong channel", { effective_edit: 1, original: message, edit: null }],
+])("rejects effective state from %s", async (fault, response) => {
+  vi.mocked(invoke).mockResolvedValueOnce(response);
+  await expect(
+    native.effectiveEdit(
+      member,
+      message.id,
+      fault === "wrong channel" ? "other" : "c",
+    ),
+  ).rejects.toThrow();
 });
 
 it.each([

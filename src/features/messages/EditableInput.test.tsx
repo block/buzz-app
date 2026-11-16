@@ -1312,7 +1312,13 @@ describe("Mod+Shift+V pastes plain text verbatim", () => {
       fireEvent.keyDown(h.input, chord);
       fireEvent.paste(h.input, {
         clipboardData: {
-          items: [{ kind: "file" }],
+          items: [
+            {
+              kind: "file",
+              getAsFile: () =>
+                new File(["png"], "name.png", { type: "image/png" }),
+            },
+          ],
           getData: (type: string) => (type === "text/plain" ? "name.png" : ""),
         },
       });
@@ -3023,6 +3029,8 @@ const controlKey = (key: "a" | "e" | "k", shiftKey = false) => ({
 const optionKey = (key: "ArrowUp" | "ArrowDown") => ({
   key,
   code: key,
+  // A browser's keyCode, so ProseMirror's own arrow handling runs as well.
+  keyCode: key === "ArrowUp" ? 38 : 40,
   altKey: true,
 });
 const linked = `first\nbefore https://github.com/block/buzz/pull/117/changes after\nlast`;
@@ -3067,6 +3075,15 @@ it("moves Option-Up and Option-Down across a link chip, then on to the neighbour
     handledAt(linked.length),
   );
   expect(snapshot(h)).toEqual(before);
+});
+
+it("leaves Option-Up and Option-Down to the conversation shortcuts in an empty draft", () => {
+  setPlatform("MacIntel");
+  const h = mount("");
+  // An unprevented key reaches the window's shortcut dispatcher, which steps
+  // to the previous or next conversation while the composer has focus.
+  expect(chord(h.input, optionKey("ArrowUp"))).toEqual([0, 0, false]);
+  expect(chord(h.input, optionKey("ArrowDown"))).toEqual([0, 0, false]);
 });
 
 it("deletes through a link chip for Control-K, leaving plain text to the browser", () => {
@@ -3613,14 +3630,40 @@ it("returns a pending chip to its typed query when a name character is typed rig
   expect(h.draft().recipients).toEqual([]);
   act(() => h.input.undo(false));
   expect(h.draft().pending?.map((item) => item.id)).toEqual([id]);
-  // Punctuation is a name boundary and keeps the chip, as for a recipient.
-  const p = mount("@mira");
-  act(() => {
-    p.input.insertPendingMention("mira", { start: 0, end: 5 });
-  });
-  await p.user.keyboard("{Backspace},");
-  expect(p.input).toHaveValue("@mira,");
-  expect(p.draft().pending).toHaveLength(1);
+  // Punctuation and quotes are name boundaries and keep the chip, as for a
+  // recipient.
+  for (const character of [",", "'", "’"]) {
+    const p = mount("@mira");
+    act(() => {
+      p.input.insertPendingMention("mira", { start: 0, end: 5 });
+    });
+    await p.user.keyboard(`{Backspace}${character}`);
+    expect(p.input).toHaveValue(`@mira${character}`);
+    expect(p.draft().pending).toHaveLength(1);
+  }
+});
+it("keeps a recipient when a quote or apostrophe follows its chip, however the character arrives", async () => {
+  for (const character of ["'", "’", '"', "”"]) {
+    const h = mount();
+    act(() => h.input.insertText("", miraExample));
+    await h.user.keyboard(`{Backspace}${character}s`);
+    expect(h.input).toHaveValue(`@Mira Example${character}s`);
+    expect(h.draft().recipients).toEqual([
+      { ...miraExample, start: 0, end: 13 },
+    ]);
+  }
+  // macOS smart quotes after a picked chip: with no chooser open, the `'`
+  // keystroke is typed natively, then the system substitutes `’` for it with
+  // no keydown of its own.
+  const h = mount();
+  act(() => h.input.insertText("", honey));
+  await h.user.keyboard("{Backspace}'");
+  expect(h.input).toHaveValue("@Honey'");
+  const after = h.input.querySelector("[data-source]")?.nextSibling;
+  if (!(after instanceof Text)) throw new Error("No text after the chip");
+  await act(async () => after.replaceData(0, 1, "’"));
+  expect(h.input).toHaveValue("@Honey’");
+  expect(h.draft().recipients).toEqual([{ ...honey, start: 0, end: 6 }]);
 });
 it("leaves a pending chip to the identity link that adopts it, without restoring its typed query", async () => {
   const h = mount("[@honey", { links: true });
@@ -4877,5 +4920,55 @@ describe("oversized paste feedback", () => {
     paste(h.input, "Docs", '<a href="https://example.com/docs">Docs</a>');
     expect(h.markdown()).toBe("");
     expect(onPasteTooLong).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("quoting timeline content", () => {
+  it("replaces an empty draft's line and continues below the quote", async () => {
+    const h = mount();
+    act(() =>
+      expect(
+        h.input.insertQuote(timelineHtml("Hello <strong>world</strong>")),
+      ).toBe(true),
+    );
+    await h.user.keyboard("reply");
+    expect(h.markdown()).toBe("> Hello **world**\n\nreply");
+  });
+
+  it("appends after the draft wherever its caret is", async () => {
+    const h = mount("Draft");
+    act(() => h.input.setSelectionRange(0, 0));
+    act(() => expect(h.input.insertQuote(timelineHtml("quoted"))).toBe(true));
+    await h.user.keyboard("reply");
+    expect(h.markdown()).toBe("Draft\n\n> quoted\n\nreply");
+    // The reply typed straight after quoting is its own undo step.
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe("Draft\n\n> quoted\n\n");
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe("Draft");
+  });
+
+  it("keeps quoted mentions as references without notifying them", () => {
+    const h = mount();
+    act(() =>
+      h.input.insertQuote(
+        timelineHtml(
+          `<a href="${profileTarget(honey.pubkey)}">@Honey</a> said hi`,
+        ),
+      ),
+    );
+    expect(h.markdown()).toBe(`> ${honeyLink} said hi\n\n`);
+    expect(h.draft().recipients).toEqual([]);
+  });
+
+  it("refuses blank content and quotes over the length limit", () => {
+    const onPasteTooLong = vi.fn();
+    const h = mount("keep", { maxLength: 12, onPasteTooLong });
+    act(() => {
+      expect(h.input.insertQuote(timelineHtml("  "))).toBe(false);
+      expect(h.input.insertQuote(timelineHtml("far too long"))).toBe(false);
+    });
+    expect(onPasteTooLong).toHaveBeenCalledOnce();
+    expect(h.markdown()).toBe("keep");
   });
 });

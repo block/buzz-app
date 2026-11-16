@@ -10,6 +10,7 @@ import {
   DEFAULT_FONT_SIZE,
   type TerminalFontPreference,
 } from "./font-preference";
+import { optionMetaPreference } from "./option-meta-preference";
 import { createSplash } from "./splash";
 import styles from "./Terminal.module.css";
 
@@ -31,6 +32,10 @@ export function createScreen(
     cursorBlink: true,
     scrollback: 5000,
     minimumContrastRatio: 4.5,
+    macOptionIsMeta: optionMetaPreference.read(),
+  });
+  const unsubscribeOptionMeta = optionMetaPreference.subscribe(() => {
+    terminal.options.macOptionIsMeta = optionMetaPreference.read();
   });
   const splash = createSplash(element, () => terminal.focus());
   const fit = new FitAddon();
@@ -197,6 +202,7 @@ export function createScreen(
     },
     dispose() {
       disposed = true;
+      unsubscribeOptionMeta();
       detach?.();
       splash.dismiss();
       inputSource.dispose();

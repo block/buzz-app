@@ -103,6 +103,47 @@ test("chat row menus open Share with the chat's people and restore focus", async
 
 test.describe("Berd-style Solo project organization", () => {
   test.use({ soloAgentNames: ["Owned Honey"] });
+  // Native editor identity and focus after menu dismissal require the real app.
+  test("New focuses its open draft and the saved row returns after leaving", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await newChat(page);
+    const editor = page.locator('#new-chat-prompt [role="textbox"]');
+    await editor.fill("Keep this unsent idea");
+    const original = await editor.elementHandle();
+    await page.getByRole("button", { name: "New", exact: true }).click();
+    await page.getByRole("menuitem", { name: "New chat", exact: true }).click();
+    await expect(editor).toBeFocused();
+    expect(
+      await editor.evaluate((node, before) => node === before, original),
+    ).toBe(true);
+    await expect(editor).toHaveText("Keep this unsent idea");
+    const sidebar = page.getByRole("navigation", {
+      name: "Solo conversations",
+    });
+    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+    const saved = sidebar.getByRole("button", {
+      name: "New chat",
+      exact: true,
+    });
+    await expect(saved).toBeVisible();
+    await expect(saved).not.toHaveAttribute("aria-current");
+    await saved.click();
+    await expect(editor).toHaveText("Keep this unsent idea");
+    await expect(editor).toBeFocused();
+    await expect(saved).toHaveAttribute("aria-current", "page");
+    await editor.fill("");
+    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+    await expect(editor).toHaveCount(0);
+    await expect(
+      sidebar.getByRole("button", { name: "Alpha", exact: true }),
+    ).toHaveAttribute("aria-current", "page");
+    await expect(saved).toHaveCount(0);
+    await original.dispose();
+  });
+
   test("a project retains two chats and their exact tagged drafts", async ({
     page,
     app,
@@ -395,6 +436,17 @@ test("Share opens View only and posts a link without promoting or moving the Sol
   await expect(
     dialog.getByText("Existing members keep their access.", { exact: true }),
   ).toBeVisible();
+  // Count the page's scrollTo and scrollBy calls; see the wait before focus.
+  await page.evaluate(() => {
+    window.__scrollCalls = 0;
+    for (const name of ["scrollTo", "scrollBy"]) {
+      const native = Element.prototype[name];
+      Element.prototype[name] = function (...args) {
+        window.__scrollCalls += 1;
+        return native.apply(this, args);
+      };
+    }
+  });
   await page.setViewportSize({ width: 390, height: 850 });
   await page.evaluate(() =>
     document.documentElement.style.setProperty("--buzz-text-scale", "2"),
@@ -402,12 +454,53 @@ test("Share opens View only and posts a link without promoting or moving the Sol
   await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(390);
   await expect(page.locator("html")).toHaveCSS("font-size", "32px");
   // Let the resized, enlarged-text layout finish before testing focus reveal.
-  await page.evaluate(
-    () =>
-      new Promise((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(resolve)),
-      ),
+  // At this size the shell header wraps Search onto its own row. That shortens
+  // the chat behind the dialog, and Virtua scrolls the chat back to its newest
+  // message with scrollTo, again on each size update for 150 ms. WebKit
+  // reveals a newly focused element on a 0 ms timer, and a scrollTo or
+  // scrollBy on any element before that timer fires cancels the reveal, even
+  // one that does not move, so Share would stay hidden. On loaded Linux WebKit
+  // this chain can end hundreds of milliseconds after the text change. Wait
+  // for the header to wrap and the chat to rest at its newest message, with no
+  // scrollTo or scrollBy for longer than Virtua's 150 ms. page.clock fakes
+  // requestAnimationFrame, so each reading first waits for two real rendering
+  // updates: a new ResizeObserver reports only in one, after the app's own
+  // observers have received the layout before it.
+  await expect(page.locator(".shell-header")).toHaveAttribute(
+    "data-search-wrapped",
+    "true",
   );
+  const timeline = page.locator(
+    "section[aria-label='Channel message history']",
+  );
+  let previous;
+  let stable = 0;
+  await expect
+    .poll(
+      async () => {
+        const value = await timeline.evaluate(async (element) => {
+          for (let update = 0; update < 2; update++)
+            await new Promise((resolve) => {
+              const observer = new ResizeObserver(() => {
+                observer.disconnect();
+                resolve();
+              });
+              observer.observe(element);
+            });
+          return element.scrollHeight -
+            element.clientHeight -
+            element.scrollTop <=
+            1
+            ? `${window.__scrollCalls},${element.scrollTop},${element.clientHeight}`
+            : "moving";
+        });
+        stable = value !== "moving" && value === previous ? stable + 1 : 0;
+        previous = value;
+        return stable;
+      },
+      { intervals: [200], message: "chat rests at its newest message" },
+    )
+    .toBeGreaterThanOrEqual(2);
   await share.focus();
   await expect(share).toBeInViewport({ ratio: 1 });
   await expect

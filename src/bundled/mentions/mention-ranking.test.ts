@@ -52,24 +52,44 @@ it("sorts equal matches by case-insensitive displayed labels and only then keys"
   expect(rankMentions([c, a, b], "")).toEqual([b, c, a]);
 });
 
-it("never matches hex or npub keys, including short substrings", () => {
+it("matches a complete key only to its owner, never partial keys or key text in a name", () => {
   const key =
     "150b20bdf6130418df9239dd1bd082c71612c8d653b47c277200365b9be215dc";
   const row = choice("a", "Bad Janet", {
     recipient: { pubkey: key, name: "Bad Janet" },
   });
   const npub = npubEncode(key);
+  const namesake = choice("b", "Bad Janet");
+  const impostor = choice("c", npub);
   for (const query of [
     "h",
-    key,
     key.slice(0, 12),
     key.slice(-8),
-    npub,
     npub.slice(0, 15),
     npub.slice(-6),
+    // Mixed case is not bech32, and a 20-byte payload is not a public key.
+    `NPUB1${npub.slice(5)}`,
+    "npub1qurswpc8qurswpc8qurswpc8qurswpc86nz8sw",
   ]) {
     expect(rankMentions([row], query), query).toEqual([]);
     expect(exactMention([row], query), query).toBeUndefined();
+  }
+  const unnamed = { ...row, label: "npub…15dc", aliases: [] };
+  for (const query of [
+    key,
+    key.toUpperCase(),
+    npub,
+    `nostr:${npub}`,
+    npub.toUpperCase(),
+    ` ${npub} `,
+  ]) {
+    expect(rankMentions([row, impostor], query), query).toEqual([row]);
+    expect(exactMention([row, namesake, impostor], query), query).toBe(key);
+    expect(matchingMentions([row, namesake, impostor], query), query).toEqual([
+      row,
+    ]);
+    expect(rankMentions([unnamed], query), query).toEqual([unnamed]);
+    expect(exactMention([unnamed], query), query).toBe(key);
   }
   expect(rankMentions([row], "jan")).toEqual([row]);
 });
@@ -196,9 +216,48 @@ it("a known longer name continues the query, except an identity's own beside its
       "mira",
     ),
   ).toBe(false);
+  // A literal name `Mira (agent)` is.
+  expect(
+    continuedMention([choice("5", "Mira (agent)", { agent: true })], "mira"),
+  ).toBe(true);
+});
+it("only another member's longer name keeps a member's exact name from selecting", () => {
+  const mira = choice("1", "Mira");
+  const outside = choice("2", "Mira-Example", { member: false });
+  const member = choice("3", "Mira Example");
+  const key = mira.recipient.pubkey;
+  const local = (c: MentionChoice) => c.member;
+  // Alone, the exact name selects, ignoring case.
+  expect(exactMention([mira], "mira")).toBe(key);
+  // A longer name outside the channel does not make it ambiguous, over the
+  // full choice set or only the local choices.
+  expect(continuedMention([mira, outside], "mira")).toBe(false);
+  expect(exactMention([mira, outside], "mira")).toBe(key);
+  expect(exactMention([mira, outside], "mira", local)).toBe(key);
+  // Another member's longer name still blocks it, beside an outside one too.
+  expect(continuedMention([mira, member], "mira")).toBe(true);
+  expect(exactMention([mira, member], "mira")).toBeUndefined();
+  expect(exactMention([mira, outside, member], "mira", local)).toBeUndefined();
+  // A saved chat's roster offers agents from outside it as members; such a
+  // name is outside the channel here: it never blocks a member's exact name,
+  // and its own exact name is blocked by any longer name.
+  const offered = choice("4", "Mira Example", { offered: true });
+  expect(continuedMention([mira, offered], "mira")).toBe(false);
+  expect(exactMention([mira, offered], "mira", local)).toBe(key);
+  expect(
+    exactMention([choice("1", "Mira", { offered: true }), member], "mira"),
+  ).toBeUndefined();
+  // An outside exact name is still blocked by any longer name.
+  const outsideMira = choice("1", "Mira", { member: false });
+  expect(exactMention([outsideMira, outside], "mira")).toBeUndefined();
+  // The outside name still continues the query and selects when typed in full.
+  expect(continuingNames([mira, outside], "mira")).toEqual(["Mira-Example"]);
+  expect(exactMention([mira, outside], "mira-example")).toBe(
+    outside.recipient.pubkey,
+  );
 });
 it("validates the portable mention fixture version and case lists", () => {
-  expect(mentionConformance.version).toBe(2);
+  expect(mentionConformance.version).toBe(4);
   expect(mentionConformance.matching.length).toBeGreaterThan(0);
   expect(mentionConformance.ranking.length).toBeGreaterThan(0);
   expect(mentionConformance.space.length).toBeGreaterThan(0);
@@ -262,6 +321,11 @@ it("returns index matches in list order and skips names that cannot match", () =
   expect(matchingMentions(rows, "oney")).toEqual([]);
   expect(matchingMentions(rows, "jane d")).toEqual([rows[2]]);
   expect(matchingMentions(rows, "")).toBe(rows);
+  // A repeated query reuses its matches; another query is matched afresh.
+  const jane = matchingMentions(rows, "Jane");
+  expect(matchingMentions(rows, "jane")).toBe(jane);
+  expect(matchingMentions(rows, "hon")).toEqual([rows[1]]);
+  expect(matchingMentions(rows, "jane")).toEqual(jane);
 });
 
 it("bounds index work for long profile names and still matches them", () => {

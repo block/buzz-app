@@ -40,6 +40,7 @@ function fakePlatform(): BrowserPlatform {
     available: true,
     attach: vi.fn(async () => "session-1"),
     setBounds: vi.fn(async () => {}),
+    setMediaSuspended: vi.fn(async () => {}),
     navigate: vi.fn(async () => {}),
     action: vi.fn(async () => {}),
     status: vi.fn(async () => ({
@@ -790,6 +791,79 @@ it("offers Try again and the system browser when Builderlab can't be reached", a
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
+const refusedSignIn = () =>
+  new BrowserAttachError(
+    "Sign in again in Settings → Identity → Organization sign-in, then reopen this app",
+    "sign-in",
+  );
+
+it("asks to sign in again when Builderlab refuses the sign-in, with a route to it", async () => {
+  const platform = fakePlatform();
+  const user = userEvent.setup();
+  const openSignIn = vi.fn();
+  vi.mocked(platform.attach)
+    .mockRejectedValueOnce(refusedSignIn())
+    .mockResolvedValueOnce("session-1");
+  render(
+    <BrowserHostView
+      url="https://example.com/app"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={50_000}
+      openSignIn={openSignIn}
+    />,
+  );
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Sign in again to open this app");
+  expect(alert).toHaveTextContent(
+    "Builderlab didn’t accept your sign-in. Try again. If that doesn’t work, sign out and back in, then try again.",
+  );
+  expect(alert).not.toHaveTextContent("reopen this app");
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
+  // In the website viewport, not the error bar's toolbar space.
+  expect(alert.parentElement).not.toHaveAttribute("aria-label", "Browser");
+  // The primary action sits last in the row, per the design guide.
+  const settings = within(alert).getByRole("button", { name: "Open settings" });
+  const retry = within(alert).getByRole("button", { name: "Try again" });
+  const buttons = within(alert).getAllByRole("button");
+  expect(buttons).toHaveLength(2);
+  expect(buttons[0]).toBe(settings);
+  expect(buttons.at(-1)).toBe(retry);
+
+  await user.click(settings);
+  expect(openSignIn).toHaveBeenCalledOnce();
+  expect(platform.attach).toHaveBeenCalledTimes(1);
+
+  await user.click(retry);
+  await waitFor(() =>
+    expect(platform.status).toHaveBeenCalledWith("session-1"),
+  );
+  expect(platform.attach).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(openSignIn).toHaveBeenCalledOnce();
+});
+
+it("offers only Try again on the sign-in page when nothing can open sign-in", async () => {
+  const platform = fakePlatform();
+  vi.mocked(platform.attach).mockRejectedValue(refusedSignIn());
+  render(
+    <BrowserHostView
+      url="https://example.com/app"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={50_000}
+    />,
+  );
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Sign in again to open this app");
+  expect(
+    within(alert).getByRole("button", { name: "Try again" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Open settings" }),
+  ).not.toBeInTheDocument();
+});
+
 it("keeps Try again focused while a refused app retries", async () => {
   const platform = fakePlatform();
   const user = userEvent.setup();
@@ -896,6 +970,66 @@ it("keeps Try again focused while an unreachable Builderlab retries", async () =
 
   await user.keyboard("{Enter}");
   await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(3));
+  await act(async () => settle.resolve("session-1"));
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+});
+
+it("keeps Try again focused when a retry lands on another page", async () => {
+  const platform = fakePlatform();
+  const user = userEvent.setup();
+  const openSignIn = vi.fn();
+  const unreachable = () =>
+    new BrowserAttachError("Builderlab sign-in request failed", "unavailable");
+  let settle: { resolve(id: string): void; reject(error: unknown): void } = {
+    resolve: () => {},
+    reject: () => {},
+  };
+  const deferred = () =>
+    new Promise<string>((resolve, reject) => {
+      settle = { resolve, reject };
+    });
+  vi.mocked(platform.attach)
+    .mockRejectedValueOnce(refusedSignIn())
+    .mockImplementation(deferred);
+  render(
+    <BrowserHostView
+      url="https://example.com/app"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={50_000}
+      openSignIn={openSignIn}
+    />,
+  );
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  retry.focus();
+
+  // Sign-in → unavailable: the retry button, second on the sign-in page and
+  // first on the unavailable one, keeps its identity and focus.
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(2));
+  await act(async () => settle.reject(unreachable()));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Buzz couldn’t load this app",
+  );
+  expect(screen.getByRole("button", { name: "Try again" })).toBe(retry);
+  expect(retry).toHaveFocus();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(3));
+  expect(platform.openExternal).not.toHaveBeenCalled();
+
+  // Unavailable → sign-in: the same the other way round.
+  await act(async () => settle.reject(refusedSignIn()));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Sign in again to open this app",
+  );
+  expect(screen.getByRole("button", { name: "Try again" })).toBe(retry);
+  expect(retry).toHaveFocus();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(4));
+  expect(openSignIn).not.toHaveBeenCalled();
+  expect(platform.openExternal).not.toHaveBeenCalled();
   await act(async () => settle.resolve("session-1"));
   await waitFor(() =>
     expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
@@ -1116,6 +1250,32 @@ it("shows a step to take elsewhere as a status, not an error", async () => {
     "Approve this app in your web browser, then select Reload",
   );
   expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Open in browser" })).toBeNull();
+});
+
+it("opens a page the website asked for from its notice", async () => {
+  const user = userEvent.setup();
+  const platform = fakePlatform();
+  vi.mocked(platform.status).mockResolvedValue({
+    url: "https://example.com/",
+    title: "",
+    loading: false,
+    error: null,
+    notice: "This app wants to open a Builderlab page in your web browser",
+    held: true,
+  });
+  render(
+    <BrowserHostView
+      url="https://example.com"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={5}
+    />,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Open in browser" }),
+  );
+  expect(platform.action).toHaveBeenCalledWith(expect.any(String), "open");
 });
 
 it("ignores status from a replaced session", async () => {

@@ -27,6 +27,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
+import { WorkspaceNameConflict } from "../relay/solo-preferences";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { readWorkspace, projectTemplateId, workspaceCanvas } from "./workspace";
 
@@ -961,7 +962,9 @@ it.each([
     );
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
-    expect(h.rename.mock.calls).toEqual(renamed ? [["work", "Projects"]] : []);
+    expect(h.rename.mock.calls).toEqual(
+      renamed ? [["work", "Projects", "Work"]] : [],
+    );
     expect(h.save).toHaveBeenLastCalledWith(
       expect.objectContaining({
         name: `${currentName} chats`,
@@ -1021,6 +1024,70 @@ it.each([true, false])(
     expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
   },
 );
+
+it("keeps an open form's conflicting name and instructions until explicit reload", async () => {
+  const h = project();
+  fireEvent.change(await instructions(), {
+    target: { value: "Keep the open-dialog instructions" },
+  });
+  fireEvent.change(screen.getByRole("textbox", { name: "Workspace name" }), {
+    target: { value: "Projects" },
+  });
+  h.group.name = "Renamed elsewhere";
+  h.rename.mockRejectedValueOnce(new WorkspaceNameConflict());
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(/name.*review/i);
+  expect(screen.getByRole("textbox", { name: "Workspace name" })).toHaveValue(
+    "Projects",
+  );
+  expect(await instructions()).toHaveValue("Keep the open-dialog instructions");
+  expect(
+    readView("test", "solo:workspace-draft:project:work", null),
+  ).toMatchObject({
+    name: "Projects",
+    nameBase: "Work",
+    canvas: "Keep the open-dialog instructions",
+  });
+  expect(h.group.name).toBe("Renamed elsewhere");
+  expect(h.rename).toHaveBeenNthCalledWith(1, "work", "Projects", "Work");
+  expect(h.save).not.toHaveBeenCalled();
+  expect(h.close).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review saved settings" }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Discard draft and reload saved settings",
+    }),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "Workspace name" })).toHaveValue(
+      "Renamed elsewhere",
+    ),
+  );
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+  fireEvent.change(screen.getByRole("textbox", { name: "Workspace name" }), {
+    target: { value: "Projects" },
+  });
+  fireEvent.change(await instructions(), {
+    target: { value: "Keep the open-dialog instructions" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.rename).toHaveBeenLastCalledWith(
+    "work",
+    "Projects",
+    "Renamed elsewhere",
+  );
+  expect(h.save).toHaveBeenCalledWith(
+    expect.objectContaining({
+      name: "Projects chats",
+      canvas: "Keep the open-dialog instructions",
+    }),
+    undefined,
+  );
+});
 
 it("validates workspace names and retains failed edits across remount and partial-save recovery", async () => {
   const user = userEvent.setup();
@@ -1085,9 +1152,9 @@ it("validates workspace names and retains failed edits across remount and partia
   await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
   expect(h.rename).toHaveBeenCalledTimes(3);
   expect(h.rename.mock.calls).toEqual([
-    ["work", "Projects"],
-    ["work", "Projects"],
-    ["work", "Another name"],
+    ["work", "Projects", "Work"],
+    ["work", "Projects", "Work"],
+    ["work", "Another name", "Projects"],
   ]);
   expect(h.save).toHaveBeenCalledTimes(2);
   expect(h.save).toHaveBeenLastCalledWith(

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import type { RelaySession } from "../relay/session";
-import { soloGroups } from "../relay/solo-preferences";
+import { soloGroups, WorkspaceNameConflict } from "../relay/solo-preferences";
 import type { KitEntry, Lineup } from "../channel-templates/model";
 import { emptyLineup, parseLineup } from "../channel-templates/model";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -186,9 +186,7 @@ export function WorkspaceSettings({
               nameBase !== confirmedName.current
             ) {
               setNameConflict(true);
-              setError(
-                "The saved workspace name needs review. Your draft is kept; copy it before reloading saved settings.",
-              );
+              setError(new WorkspaceNameConflict().message);
               setCanvasError(true);
             }
           }
@@ -299,7 +297,11 @@ export function WorkspaceSettings({
         if (canvas !== undefined) kept.current = snapshot(canvas, lineup);
         if (target.kind === "project") keptName.current = projectName;
         if (nameChanged) {
-          await session.soloPreferences.renameSection(target.id, nextName);
+          await session.soloPreferences.renameSection(
+            target.id,
+            nextName,
+            confirmedName.current,
+          );
           confirmedName.current = nextName;
           renamedName.current = nextName;
           nameConfirmed = true;
@@ -369,7 +371,9 @@ export function WorkspaceSettings({
         setError(
           `${nameConfirmed ? "Workspace name saved. " : ""}${canvasConfirmed ? "Workspace and Canvas saved. " : ""}${reason instanceof Error ? reason.message : String(reason)}`,
         );
-        setCanvasError(reason instanceof CanvasSettingsError);
+        const conflictedName = reason instanceof WorkspaceNameConflict;
+        if (conflictedName) setNameConflict(true);
+        setCanvasError(reason instanceof CanvasSettingsError || conflictedName);
       }
     } finally {
       inFlight.current = false;

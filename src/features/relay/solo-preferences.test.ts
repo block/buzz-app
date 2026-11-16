@@ -419,7 +419,11 @@ it("retries a workspace rename against fresh defaults and filing without redunda
     const fresh: Groups = {
       ...groups,
       groups: [
-        { id: "work", name: "Solo work", defaultTemplateId: "new-default" },
+        {
+          id: "work",
+          name: "Renamed elsewhere",
+          defaultTemplateId: "new-default",
+        },
         { id: "other", name: "Keep", defaultTemplateId: "" },
       ],
       assignments: { [channel]: "work", [other]: "other" },
@@ -431,7 +435,11 @@ it("retries a workspace rename against fresh defaults and filing without redunda
     ).rejects.toThrow();
     expect(f.publish).not.toHaveBeenCalled();
     expect(preferences.snapshot().data?.sections[0]?.name).toBe("Solo work");
-    await preferences.renameSection("work", " Projects ");
+    await expect(
+      preferences.renameSection("work", "Projects", "Solo work"),
+    ).rejects.toThrow("workspace name needs review");
+    expect(f.publish).not.toHaveBeenCalled();
+    await preferences.renameSection("work", " Projects ", "Renamed elsewhere");
     expect(preferences.snapshot().data?.sections[0]?.name).toBe("Projects");
     expect(written(f).map((record) => record.value)).toEqual([
       {
@@ -439,7 +447,8 @@ it("retries a workspace rename against fresh defaults and filing without redunda
         groups: [{ ...fresh.groups[0], name: "Projects" }, fresh.groups[1]],
       },
     ]);
-    await preferences.renameSection("work", "Projects");
+    // A lost confirmation may retry against its old name once the desired name is live.
+    await preferences.renameSection("work", "Projects", "Solo work");
     expect(f.publish).toHaveBeenCalledOnce();
     for (const name of [" ", "x".repeat(121)])
       await expect(preferences.renameSection("work", name)).rejects.toThrow();

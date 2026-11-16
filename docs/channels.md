@@ -392,14 +392,13 @@ exact command receipt, and returns the canonical channel ID. A unique client tag
 allows reissuing this participant-set command after a lost response without
 receiving a generic duplicate-event receipt. No private key or arbitrary signing
 capability is exposed to the page. Other host adapters report this capability as
-unavailable until they implement it. An open never carries a history tag: the
-relay finds or makes the DM of exactly the named members, agents included, and
-may pick another DM of the same people than one on screen. So while New message
-shows an existing DM, it sends to that DM by its ID. Named agents it lacks join
-it through an addition that asks the relay (below), so its history reaches only
-the DM on screen, as the page says; if the relay counts one of them as a person,
-the page opens the DM of exactly the named members instead, without history.
-When nobody joins, it still opens first, which restores a hidden DM.
+unavailable until they implement it. Without `["history", "include"]` the
+relay finds or makes the DM of exactly the named members, agents included. New
+message always sends the tag, because only the relay knows who is an agent: it
+returns the DM the named people already share, which named agents join with
+its history, rather than making another. The page's preview is only a
+hint. The message goes to the DM the relay returns, and the page then opens it,
+even when that is not the DM it showed. Every other open omits the tag.
 
 Before sending, the session requires signed DM metadata and a signed roster
 containing the viewer and selected people, plus only agents they did not name.

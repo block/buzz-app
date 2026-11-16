@@ -846,7 +846,7 @@ it("loads matching DM history inline and keeps the draft while recipients change
   expect(screen.getByRole("textbox")).toHaveTextContent("Keep this draft");
 });
 
-it("sends to the DM it shows with that DM's history, and otherwise opens the exact DM", async () => {
+it("opens the DM of these people with its history, whether or not it shows one", async () => {
   const t = setup();
   const owner = t.create();
   t.mount(owner);
@@ -854,8 +854,10 @@ it("sends to the DM it shows with that DM's history, and otherwise opens the exa
   await screen.findByRole("region", { name: "Channel message history" });
   await t.user.click(send());
   await waitFor(() => expect(t.openDirectMessage).toHaveBeenCalledOnce());
-  // The open restores the DM if it is hidden, and shares no history.
-  expect(t.openDirectMessage.mock.calls[0]?.[2]).toBeUndefined();
+  // The relay picks the DM by its people, and restores it if it is hidden.
+  expect(t.openDirectMessage.mock.calls[0]?.[2]).toEqual({
+    includeHistory: true,
+  });
   cleanup();
 
   const fresh = setup();
@@ -867,17 +869,57 @@ it("sends to the DM it shows with that DM's history, and otherwise opens the exa
   await fresh.user.type(screen.getByRole("textbox"), "Hello Zoe");
   await fresh.user.click(send());
   await waitFor(() => expect(fresh.openDirectMessage).toHaveBeenCalledOnce());
-  expect(fresh.openDirectMessage.mock.calls[0]?.[2]).toBeUndefined();
+  expect(fresh.openDirectMessage.mock.calls[0]?.[2]).toEqual({
+    includeHistory: true,
+  });
 });
 
-describe("two DMs of the same people", () => {
-  /** Zoe is the viewer's agent; `channel` holds the viewer and Avery, and
-   * `agentDm` holds them and Zoe. With no activity known, the page shows the
-   * DM whose id sorts first. */
-  function sharedPeople(t: ReturnType<typeof setup>, agentDmShown: boolean) {
-    const agentDm = agentDmShown
-      ? "00000000-0000-4000-8000-000000000000"
-      : "44444444-4444-4444-8444-444444444444";
+describe("the relay picks the DM, and the preview is only a hint", () => {
+  const sentTo = (t: ReturnType<typeof setup>) =>
+    t.publish.mock.calls.map(
+      ([event]) => event.tags.find(([name]) => name === "h")?.[1],
+    );
+
+  it("sends a 1:1 to the people's DM when the preview shows a group whose other member claims to be an agent", async () => {
+    const t = setup();
+    // Mallory is a person to the relay, but her own profile says agent, so
+    // the page counts the group as Avery's DM and, sorting first, shows it.
+    const mallorys = "00000000-0000-4000-8000-000000000000";
+    t.events.unshift(
+      profile(third, { name: "Mallory", is_agent: true }),
+      signed(relay, {
+        kind: 39000,
+        tags: [
+          ["d", mallorys],
+          ["hidden", ""],
+          ["t", "dm"],
+          ["private", ""],
+        ],
+        content: JSON.stringify({ name: "Avery, Mallory", channel_type: "dm" }),
+      }),
+      roster(relay, mallorys, [viewer.pubkey, other.pubkey, third.pubkey]),
+      message(other, mallorys, "Mallory is here", 1_700_000_002),
+    );
+    const owner = t.create();
+    t.mount(owner);
+    await owner.session.profiles.ensure([third.pubkey]);
+    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await showsHistory(owner, mallorys, "Mallory is here");
+    await t.user.type(screen.getByRole("textbox"), "Just us");
+    await t.user.click(send());
+    await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+    // The relay returns Avery's 1:1, and the message and page go there.
+    expect(t.openDirectMessage.mock.calls).toEqual([
+      [[other.pubkey], expect.any(AbortSignal), { includeHistory: true }],
+    ]);
+    expect(sentTo(t)).toEqual([channel]);
+    expect(t.onStarted).toHaveBeenCalledWith(channel, expect.any(String));
+  });
+
+  it("sends to a DM an agent joined in place, by the people it still has", async () => {
+    const t = setup();
+    // Avery's DM, which the viewer's agent Zoe joined later: the relay still
+    // knows it by its people, not by all its members.
     const at = t.events.findIndex(
       (event) => event.kind === 0 && event.pubkey === another.pubkey,
     );
@@ -887,93 +929,31 @@ describe("two DMs of the same people", () => {
       tags: [],
     });
     t.agents.push({ pubkey: another.pubkey, name: "Zoe" });
-    t.events.unshift(
-      signed(relay, {
-        kind: 39000,
-        tags: [
-          ["d", agentDm],
-          ["hidden", ""],
-          ["t", "dm"],
-          ["private", ""],
-        ],
-        content: JSON.stringify({ name: "Avery, Zoe", channel_type: "dm" }),
-      }),
-      roster(relay, agentDm, [viewer.pubkey, other.pubkey, another.pubkey]),
-      message(other, channel, "Without Zoe", 1_700_000_001),
-      message(other, agentDm, "With Zoe", 1_700_000_002),
-    );
-    return agentDm;
-  }
-  const sentTo = (t: ReturnType<typeof setup>) =>
-    t.publish.mock.calls.map(
-      ([event]) => event.tags.find(([name]) => name === "h")?.[1],
-    );
-
-  it("sends to the shown DM that already holds the agent, sharing no history", async () => {
-    const t = setup();
-    const agentDm = sharedPeople(t, true);
+    t.events[t.events.length - 1] = roster(relay, channel, [
+      viewer.pubkey,
+      other.pubkey,
+      another.pubkey,
+    ]);
+    t.events.unshift(message(other, channel, "Zoe joined", 1_700_000_001));
     const owner = t.create();
     t.mount(owner);
     await t.user.click(await screen.findByRole("option", { name: "Avery" }));
     await addRecipient(t, "Zoe, Agent");
-    await showsHistory(owner, agentDm, "With Zoe");
+    await showsHistory(owner, channel, "Zoe joined");
     expect(screen.queryByText(/Sending adds/)).toBeNull();
     await t.user.type(screen.getByRole("textbox"), "Hello");
     await t.user.click(send());
     await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-    // The relay picks the DM of these people as `channel`; the send stays
-    // with the DM shown, and the open shares no history.
-    expect(t.openDirectMessage.mock.calls).toEqual([
-      [[other.pubkey, another.pubkey], expect.any(AbortSignal)],
-    ]);
-    expect(sentTo(t)).toEqual([agentDm]);
-  });
-
-  it("adds the agent to the shown DM by its id, asking the relay", async () => {
-    const t = setup();
-    sharedPeople(t, false);
-    const owner = t.create();
-    t.mount(owner);
-    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
-    await addRecipient(t, "Zoe, Agent");
-    await showsHistory(owner, channel, "Without Zoe");
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Sending adds Zoe to this DM.",
-    );
-    await t.user.type(screen.getByRole("textbox"), "Hello");
-    await t.user.click(send());
-    await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+    // Tagged, the relay finds this DM by its people instead of making an
+    // empty one of exactly these members.
     expect(t.openDirectMessage.mock.calls).toEqual([
       [
-        [another.pubkey],
+        [other.pubkey, another.pubkey],
         expect.any(AbortSignal),
-        { channelId: channel, includeHistory: "ask" },
+        { includeHistory: true },
       ],
     ]);
     expect(sentTo(t)).toEqual([channel]);
-  });
-
-  it("opens the DM of exactly these people, without history, when the relay counts the agent as a person", async () => {
-    const t = setup();
-    sharedPeople(t, false);
-    const open = t.openDirectMessage.getMockImplementation();
-    assert.exists(open);
-    t.openDirectMessage.mockImplementation(async (pubkeys, ...rest) => {
-      if (rest[1]) throw new Error("needs-choice: history");
-      return open(pubkeys, ...rest);
-    });
-    const owner = t.create();
-    t.mount(owner);
-    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
-    await addRecipient(t, "Zoe, Agent");
-    await showsHistory(owner, channel, "Without Zoe");
-    await t.user.type(screen.getByRole("textbox"), "Hello");
-    await t.user.click(send());
-    await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-    expect(t.openDirectMessage.mock.calls.map((call) => call[2])).toEqual([
-      { channelId: channel, includeHistory: "ask" },
-      undefined,
-    ]);
   });
 });
 

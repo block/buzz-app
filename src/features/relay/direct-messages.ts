@@ -189,16 +189,25 @@ export function createDirectMessages(
     searched(pubkey: string, authority: VerifiedProfileAuthority) {
       return searchProfiles.answered(pubkey, authority);
     },
-    /** Open the DM of `pubkeys`. It never shares a DM's history: the relay
-     * picks the DM by its people, so it could be another than one shown. */
-    async open(pubkeys: readonly string[], signal: AbortSignal) {
+    /** Open the DM of `pubkeys`. With `includeHistory`, the relay picks the
+     * DM of these people, so the caller sends to the id returned, and named
+     * agents it lacks join it and can read it. */
+    async open(
+      pubkeys: readonly string[],
+      signal: AbortSignal,
+      includeHistory = false,
+    ) {
       if (!available || !transport?.openDirectMessage)
         throw new Error("This connection cannot start direct messages.");
       if (!validDirectMessageParticipants(pubkeys, transport.viewer))
         throw new Error("Choose between one and eight other people.");
       const active = AbortSignal.any([lifetime, signal]);
       active.throwIfAborted();
-      const id = await transport.openDirectMessage(pubkeys, active);
+      const id = await transport.openDirectMessage(
+        pubkeys,
+        active,
+        includeHistory ? { includeHistory } : undefined,
+      );
       active.throwIfAborted();
       // The relay may return the DM of these people with agents they did
       // not name: it decides who is an agent, so only who is named is checked.

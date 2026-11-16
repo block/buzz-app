@@ -4,7 +4,6 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { useChannelWindow } from "../relay/react";
 import type { ChannelSummary } from "../relay/contracts";
 import { sameDirectMessage } from "../relay/direct-message-policy";
-import { NeedsHistoryChoice } from "../relay/direct-messages";
 import {
   ConversationChannel,
   ConversationTimeline,
@@ -330,32 +329,6 @@ export function NewMessage({
     setError("");
     setUploadFailed(false);
   }
-  /** The DM a send goes to: the one shown here, by its id, so its history
-   * reaches only who the page says. Named agents it lacks join it, as the
-   * page says; the relay decides who is an agent. Without one, or when it
-   * says someone named is a person, the DM of exactly these people. */
-  async function destination(signal: AbortSignal) {
-    const pubkeys = recipients.map((person) => person.pubkey);
-    if (!existing) return session.directMessages.open(pubkeys, signal);
-    const joining = pubkeys.filter((key) => !existing.members?.includes(key));
-    if (!joining.length) {
-      // Opening restores a hidden DM. The relay picks it by its people, so it
-      // can be another DM of them; the send still goes to the one shown.
-      await session.directMessages.open(pubkeys, signal);
-      return existing.id;
-    }
-    try {
-      return await session.directMessages.add(
-        existing.id,
-        joining,
-        "ask",
-        signal,
-      );
-    } catch (error) {
-      if (!(error instanceof NeedsHistoryChoice)) throw error;
-      return session.directMessages.open(pubkeys, signal);
-    }
-  }
   async function send(draft: MentionDraft, files?: AttachmentDraft) {
     const content = composerMarkdown(draft);
     if (
@@ -421,7 +394,14 @@ export function NewMessage({
         const id =
           prepared.current?.key === key
             ? prepared.current.id
-            : await destination(controller.signal);
+            : // The relay picks the DM of these people, which can differ
+              // from the one shown, and named agents join it with its
+              // history. The message goes where the relay says.
+              await session.directMessages.open(
+                recipients.map((person) => person.pubkey),
+                controller.signal,
+                true,
+              );
         controller.signal.throwIfAborted();
         prepared.current = { key, id };
         validateAgents();

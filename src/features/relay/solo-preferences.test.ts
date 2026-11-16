@@ -640,6 +640,67 @@ it("does not overwrite project filing when a refresh fails, and reconciles retri
   }
 });
 
+it("retries a workspace rename against fresh defaults and filing without redundant writes or recreating deleted workspaces", async () => {
+  const f = fixture();
+  try {
+    f.install(groups);
+    const preferences = f.session.soloPreferences;
+    await preferences.ensure();
+    const fresh: Groups = {
+      ...groups,
+      groups: [
+        {
+          id: "work",
+          name: "Renamed elsewhere",
+          defaultTemplateId: "new-default",
+        },
+        { id: "other", name: "Keep", defaultTemplateId: "" },
+      ],
+      assignments: { [channel]: "work", [other]: "other" },
+    };
+    f.install(fresh);
+    f.query.mockRejectedValueOnce(new Error("offline"));
+    await expect(
+      preferences.renameSection("work", "Projects"),
+    ).rejects.toThrow();
+    expect(f.publish).not.toHaveBeenCalled();
+    expect(preferences.snapshot().data?.sections[0]?.name).toBe("Solo work");
+    await expect(
+      preferences.renameSection("work", "Projects", "Solo work"),
+    ).rejects.toThrow("workspace name needs review");
+    expect(f.publish).not.toHaveBeenCalled();
+    await preferences.renameSection("work", " Projects ", "Renamed elsewhere");
+    expect(preferences.snapshot().data?.sections[0]?.name).toBe("Projects");
+    expect(written(f).map((record) => record.value)).toEqual([
+      {
+        ...fresh,
+        groups: [{ ...fresh.groups[0], name: "Projects" }, fresh.groups[1]],
+      },
+    ]);
+    // A lost confirmation may retry against its old name once the desired name is live.
+    await preferences.renameSection("work", "Projects", "Solo work");
+    expect(f.publish).toHaveBeenCalledOnce();
+    for (const name of [" ", "x".repeat(121)])
+      await expect(preferences.renameSection("work", name)).rejects.toThrow();
+    await expect(preferences.renameSection("gone", "Name")).rejects.toThrow(
+      "no longer exists",
+    );
+    expect(f.publish).toHaveBeenCalledOnce();
+    expect(f.assignment).not.toHaveBeenCalled();
+    f.install(
+      { ...groups, groups: [], assignments: {} },
+      false,
+      (f.publish.mock.calls[0]?.[0].created_at ?? 0) + 1,
+    );
+    await expect(preferences.renameSection("work", "Restore")).rejects.toThrow(
+      "no longer exists",
+    );
+    expect(f.publish).toHaveBeenCalledOnce();
+  } finally {
+    f.dispose();
+  }
+});
+
 it("confirms native-shaped reordered assignment maps without losing group order", async () => {
   const f = fixture();
   try {

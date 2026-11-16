@@ -56,7 +56,16 @@ behavior on the label, so a rename touches copy only.
   sections. **Move up** and **Move down** in the workspace menu provide the
   keyboard and single-pointer path. Chats stays fixed below workspaces.
   Order saves in the existing `groups:me` array, preserving defaults, filing
-  and collapsed state. Failed saves restore the previous order and offer Retry.
+  and collapsed state. Failed saves show the previous order with **Retry move**
+  and **Dismiss**. After a failed refresh, use **Retry workspaces** before
+  retrying the move.
+- **Workspace settings** in the heading’s actions or right-click menu offers
+  **Workspace name**, saved with **Save changes**. It changes the name in that
+  encrypted record, preserving filing and order. Names are trimmed, nonempty
+  and at most 120 characters.
+  Its name draft uses the existing unsaved-edit guard and local settings draft.
+  Name and defaults save separately; if defaults fail after renaming, the error
+  says the name saved and retry does not repeat that confirmed rename.
 - Deleting a workspace tombstones its `me-section-<sha256(id)>` defaults record,
   emptied and renamed, best effort after the groups write. If that write fails,
   the record stays live but unreachable. A delete retried after a groups write

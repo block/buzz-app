@@ -467,7 +467,8 @@ and are asked to sign in again in Buzz.
   channels. Reduced motion applies the new order immediately.
   Deleting or archiving the open chat keeps you in Solo and opens another chat
   or a new draft.
-- **Team** contains community channels and their threads. Use the **@** picker
+- **Team** contains community channels and their threads. Choose **Reply** on a
+  message to open or continue its thread. Use the **@** picker
   to address a channel member. A full name typed after **@** and followed by
   Space or closing punctuation, such as `,`, `.` or `'`, selects that person or
   agent unless a namesake or a longer name that begins the same way could be
@@ -490,6 +491,12 @@ and are asked to sign in again in Buzz.
   Plugins can also group tasks under joined channels. On supported hosts, each
   channel group keeps the native channel actions and details. New task appears
   only when the channel permits starting a chat.
+  To rename one, open **Workspace settings** from its heading’s **…** or right-click
+  menu, edit **Workspace name**, and choose **Save changes**. Chats, tasks and
+  starting settings stay in place.
+  Retrying an instructions-only draft keeps the current workspace name. If a
+  workspace name edit conflicts, copy your draft before using
+  **Review saved settings** to discard it and reload.
   Plugins can show ordinary chats in a plain list without workspace headings.
   Their saved workspace assignments stay in place.
   With Nexus enabled, each workspace also contains its tasks and can have a Lead

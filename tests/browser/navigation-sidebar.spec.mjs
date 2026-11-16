@@ -841,7 +841,7 @@ test("invalid saved sidebar fields fall back", async ({ page, app }) => {
   ).toBeVisible();
 });
 
-test("rail loads relay-owned image icons for inactive communities without acquiring sessions", async ({
+test("rail loads relay-owned image icons for inactive communities", async ({
   page,
   app,
 }) => {

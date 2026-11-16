@@ -253,8 +253,9 @@ mention anyone. Explicit agent watches on that room can still receive them.
   link there; a code on its own is refused.
 - In the community switcher, other communities show a number for mentions, DMs
   and followed-thread replies waiting for you, or a dot for other unread. A dot on
-  the closed switcher means another community has unread. Muted channels never
-  count. A blank row means its unread is unknown, for example because that
+  the closed switcher means another community has unread. Muted channels count
+  only as their sidebar rows do: a mention there, or a muted DM. A blank row
+  means nothing is unread, or its unread isn't known yet, for example because that
   community isn't connected or was closed to make room for one you opened. Only
   the first 24 communities get badges at startup; others show one once opened.
 - Community owners and admins manage access in the community's **Membership**

@@ -121,16 +121,16 @@ switcher can show their unread, the app connects in the background to the first 
 saved communities, plus any selected this launch. When a community opened for its
 own work needs a connection and none is free, the least recently opened community
 connected only for its badge is closed, and its badge stays blank until you open
-it again. The browser development broker connects fewer for badges: at most three
-sessions are connected only for a badge, with one of those kept for a community
-you open, so its streams leave the origin's connections free for ordinary
-requests. Communities you visit and agents' communities can still add sessions
-beyond three.
+it again. The browser development broker's limit of three counts every session,
+so its streams leave the origin's connections free for ordinary requests. Badges
+stop one short of it, keeping the last for a community you open; communities you
+visit and agents' communities can still go beyond it.
 A community other than the selected one shows a count of items that need you
 (mentions, DMs and replies in threads you follow) at the end of its row, or a dot
-for other unread, and the closed switcher shows a dot while any does. Muted
-channels and conversations your notification settings exclude are left out, and a
-community whose unread is not known yet shows nothing.
+for other unread, and the closed switcher shows a dot while any does. A muted
+channel counts as its sidebar row does, only for a mention there or a muted DM.
+Conversations your notification settings exclude are left out, and a community
+whose unread is not known yet shows nothing.
 Right-click a saved community (or press the ContextMenu key or Shift+F10 on it)
 for Mark all as read, Copy community URL, Invite to community, Community
 settings and, last, Leave community. Only the selected community can be marked

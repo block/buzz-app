@@ -331,11 +331,19 @@
   .buzz-button[data-disabled] .buzz-button-attention rect {
     animation: none;
   }
-  .buzz-button[data-variant="attention"][data-disabled]:not([data-loading])
+  .buzz-button[data-variant="attention"][data-disabled]:is(
+      :not([data-loading]),
+      [data-loading-appearance="disabled"]
+    )
     .buzz-button-attention {
     opacity: 1;
   }
-  .buzz-button[data-disabled]:not([data-loading]) .buzz-button-attention rect {
+  .buzz-button[data-disabled]:is(
+      :not([data-loading]),
+      [data-loading-appearance="disabled"]
+    )
+    .buzz-button-attention
+    rect {
     stroke: var(--border-standard);
   }
   @media (prefers-reduced-motion: reduce) {
@@ -716,8 +724,11 @@
     background: var(--affordance-accent-hover);
   }
 
-  /* Disabled keeps variant geometry; loading keeps its available colors. */
-  .buzz-button[data-disabled]:not([data-loading]) {
+  /* Loading keeps its colors unless the caller requests disabled appearance. */
+  .buzz-button[data-disabled]:is(
+    :not([data-loading]),
+    [data-loading-appearance="disabled"]
+  ) {
     color: var(--text-unavailable);
     background: var(--affordance-disabled);
     cursor: not-allowed;
@@ -728,15 +739,20 @@
     [data-variant="outline"],
     [data-variant="attention"],
     [data-variant="link"]
-  )[data-disabled]:not(
-    [data-loading],
-    [data-icon-variant="tint"],
-    [data-icon-variant="chrome"]
-  ) {
+  )[data-disabled]:is(
+    :not([data-loading]),
+    [data-loading-appearance="disabled"]
+  ):not([data-icon-variant="tint"], [data-icon-variant="chrome"]) {
     background: transparent;
   }
-  .buzz-button[data-variant="prominent"][data-disabled]:not([data-loading]),
-  .buzz-button[data-variant="outline"][data-disabled]:not([data-loading]) {
+  .buzz-button[data-variant="prominent"][data-disabled]:is(
+    :not([data-loading]),
+    [data-loading-appearance="disabled"]
+  ),
+  .buzz-button[data-variant="outline"][data-disabled]:is(
+    :not([data-loading]),
+    [data-loading-appearance="disabled"]
+  ) {
     box-shadow: inset 0 0 0 1px var(--border-standard);
   }
 
@@ -1263,10 +1279,17 @@
     position: absolute;
     inset-block-start: 0;
     inset-inline-end: 0;
-    max-width: var(--space-8);
-    max-height: var(--space-4);
+    max-width: var(--size-control);
+    max-height: var(--size-control);
     pointer-events: none;
     overflow: hidden;
+  }
+
+  /* Count labels straddle the corner; other contributed marks keep their slot. */
+  .buzz-tabs[data-variant="dock"] .buzz-tabs-badge:has(.buzz-count-badge) {
+    inset-inline-end: calc(-1 * var(--space-1));
+    transform: translateY(-50%);
+    overflow: visible;
   }
 
   .buzz-tabs[data-variant="dock"]:where([data-orientation="vertical"])
@@ -2123,6 +2146,11 @@
     background: var(--affordance-subtle);
     color: var(--text-subtle);
     font-variant-numeric: tabular-nums;
+  }
+  .buzz-tabs[data-variant="dock"] .buzz-count-badge {
+    background: var(--surface-dock-count);
+    color: var(--text-dock-count);
+    box-shadow: 0 0 0 1px var(--bg-app);
   }
   .navigation-item[data-selected] .buzz-count-badge {
     background: var(--surface-row-selected-detail);

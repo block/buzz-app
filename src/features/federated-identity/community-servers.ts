@@ -5,12 +5,12 @@ import type { Membership } from "../communities/service";
 import { coversCommunity } from "./community-hosts";
 import type { FederatedIdentity } from "./service";
 
-/** The joined communities whose access a server's session decides, by name,
+/** The joined memberships whose access a server's session decides,
  * in order: those its hosts cover that require NIP-FI. Until discovery says a
  * community doesn't, it counts: still being discovered or failed, it may, and
  * a quick switch must not skip the warning. Outside native, discovery
  * rejects, so every covered community counts, as it does without discovery. */
-export function useSignInCommunities(
+export function useSignInMemberships(
   identity: FederatedIdentity | undefined,
   hosts: readonly string[],
   memberships: readonly Membership[],
@@ -45,7 +45,16 @@ export function useSignInCommunities(
   }, [identity, key]);
   return covered
     .filter(({ url }) => requires.get(url) !== false)
-    .map(({ membership }) => communityName(membership));
+    .map(({ membership }) => membership);
+}
+
+/** Names for recovery copy; account cards use the same memberships for artwork. */
+export function useSignInCommunities(
+  identity: FederatedIdentity | undefined,
+  hosts: readonly string[],
+  memberships: readonly Membership[],
+) {
+  return useSignInMemberships(identity, hosts, memberships).map(communityName);
 }
 
 /** A sign-in server as copy names it: its organization, or its host. */

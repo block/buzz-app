@@ -84,7 +84,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       assert.equal(
         plugin.enabledByDefault,
         ![
-          "buzz.bestie",
           "buzz.pi",
           "buzz.todos",
           "buzz.usage",
@@ -93,7 +92,10 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
           "buzz.workflows",
           "buzz.mesh-compute",
           "buzz.focus",
+          "buzz.charts",
+          "buzz.file-viewer",
           "buzz.drafts-and-sent",
+          "buzz.changesets",
         ].includes(plugin.manifest.id),
         plugin.manifest.id,
       );

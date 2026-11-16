@@ -5,10 +5,12 @@ import type { ProtectionAction } from "../features/agent-protection/service";
 import type { GitAuth } from "../features/agents/native";
 import type {
   AgentAttention,
+  SoloPlacement,
   AgentReadout,
   TeamReadout,
   TeamUpdateInput,
 } from "../features/agents/service";
+import type { DefaultAgentControl } from "../features/solo/default-agent";
 import type { AgentPlugins } from "../plugins/requests";
 import type { SettingState } from "../shared/device-settings";
 
@@ -85,6 +87,10 @@ export type Memory = Readonly<{
 }>;
 
 export interface BuzzClient {
+  /** The host's cancellation signal for this call. Keep this signal across
+   * waits; a later turn cannot restore a canceled call. Hosts without request
+   * cancellation omit it. */
+  readonly signal?: AbortSignal;
   protect?(action: ProtectionAction): Promise<void>;
   /** The runtime reviews each tool call itself before Buzz dispatches it. */
   readonly nativeToolGate?: true;
@@ -137,6 +143,8 @@ export interface BuzzClient {
   readonly signingAuthority?: string | undefined;
   /** Reads the community as the agent. Every filter names its kinds. */
   query(filters: readonly Filter[]): Promise<readonly BuzzEvent[]>;
+  /** Latest live attachment state, read as this agent from a primary snapshot. */
+  effectiveEdit?(id: string, channel: string): Promise<BuzzEvent>;
   /** Finds profiles whose `name` or `display_name` matches `query`, best
    * match first. `undefined` when the community has no profile name search;
    * NIP-50 search, which matches the whole profile, is the fallback. */
@@ -165,6 +173,15 @@ export interface BuzzClient {
   /** Writes entry `slug`, newer than the one it replaces (`after`, or 0);
    * a `null` body deletes it. */
   remember(slug: string, body: string | null, after: number): Promise<void>;
+  /** Local run-only discovery and one-use placement of a newly published Solo. */
+  soloWorkspaces?: Readonly<{
+    list(): Promise<readonly Readonly<{ id: string; name: string }>[]>;
+    prepare(
+      workspace: string,
+      members: readonly string[],
+      channelId: string,
+    ): Promise<(id: string) => Promise<SoloPlacement>>;
+  }>;
   /** The owner's channel templates, where the host has them. */
   templates?(): Promise<readonly ChannelTemplate[]>;
   /** The agent's attention, where its host keeps one. Without it the
@@ -179,12 +196,15 @@ export interface BuzzClient {
     get(key: unknown): SettingState;
     set(key: unknown, value: unknown): SettingState;
   }>;
+  /** The owner's Bestie in the agent's community, in an agent's own run. */
+  bestie?: DefaultAgentControl;
 }
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps
  * this channel's messages out of threads. With no `root`, or with
  * `wholeChannel`, its session is the whole channel. */
 export type Context = Readonly<{
+  session?: import("../features/agents/session-admission").AgentSessionAssociation;
   channel?: string;
   root?: string;
   topLevel?: boolean;

@@ -1,4 +1,5 @@
 import { revealCreatedChannel } from "./created-channel";
+import { openEmptyChannels } from "./routes";
 import {
   useCallback,
   useEffect,
@@ -151,6 +152,7 @@ export function ChannelInventory({
   queries,
   cached,
   layoutReady = true,
+  preserveSidebar = false,
   connectionError,
   scope,
   viewer,
@@ -166,6 +168,7 @@ export function ChannelInventory({
   cached: boolean;
   /** Other inventories sharing this viewport must settle before restoring it. */
   layoutReady?: boolean;
+  preserveSidebar?: boolean;
   connectionError?: string | undefined;
   scope: string;
   viewer?: string | undefined;
@@ -210,6 +213,10 @@ export function ChannelInventory({
     if (list.activityStatus !== "error") setActivityErrorDismissed(false);
   }, [list.activityStatus]);
   const handoff = useChannelNavigation();
+  // Stable refs: the whole handoff changes with every navigation state, and
+  // row callbacks that depend on it would rerender every sidebar row.
+  const activityThread = handoff?.activityThread;
+  const activityAgent = handoff?.activityAgent;
   const mute = handoff?.session === queries ? handoff.mute : undefined;
   const readAction = useChannelReadAction();
   const readWrite = readAction.state;
@@ -242,11 +249,27 @@ export function ChannelInventory({
     visibilityRequest.current = request;
     return () => request.abort();
   }, [lifecycle]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a completed roster refresh also refreshes per-viewer visibility.
+  // A completed roster refresh also refreshes per-viewer visibility. One new
+  // chat commits the roster several times; a recent read answers the repeats.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each roster commit is a trigger.
   useEffect(() => {
     if (list.status === "ready")
-      void lifecycle.refreshVisibility(visibilityRequest.current?.signal);
+      void lifecycle.refreshVisibility(visibilityRequest.current?.signal, {
+        ifStale: true,
+      });
   }, [lifecycle, list.asOf, list.status]);
+  // A confirmed open asks the relay to unhide its DM, so a recent read is out
+  // of date.
+  useEffect(
+    () =>
+      queries.directMessages.subscribeOpened(
+        () =>
+          void lifecycle.refreshVisibility(visibilityRequest.current?.signal, {
+            trailing: true,
+          }),
+      ),
+    [queries, lifecycle],
+  );
   const lifecycleFocus = useRef<string | undefined>(undefined);
   const lifecycleTrigger = useRef<HTMLElement | undefined>(undefined);
   const sidebar = useSidebarView(
@@ -263,6 +286,7 @@ export function ChannelInventory({
         target.scope.communityOrigin !== scope.slice(0, -(viewer.length + 1)))
       ? undefined
       : sidebarEntryLocation(target),
+    preserveSidebar,
   );
   const { channels, profiles: dmProfiles } = useChannelLabels(
     list.channels,
@@ -445,7 +469,7 @@ export function ChannelInventory({
       const { attempt } = navigator.snapshot();
       const target = attempt.entry.target;
       if (
-        handoff &&
+        activityThread &&
         messageId &&
         target.kind === "conversation" &&
         target.channelId === channelId &&
@@ -458,14 +482,14 @@ export function ChannelInventory({
           entryId: attempt.entry.id,
           signal: attempt.signal,
         };
-        handoff.activityThread.current = intent;
+        activityThread.current = intent;
         void result.then(() => {
-          if (handoff.activityThread.current === intent)
-            handoff.activityThread.current = undefined;
+          if (activityThread.current === intent)
+            activityThread.current = undefined;
         });
       }
     },
-    [viewer, relay, queries, handoff, sidebar.list, navigator, scope],
+    [viewer, relay, queries, activityThread, sidebar.list, navigator, scope],
   );
   const openActivityThread = useCallback(
     (channelId: string, rootId: string) =>
@@ -504,7 +528,7 @@ export function ChannelInventory({
           ) ?? null,
         ...(transcript && { transcript }),
       };
-      if (handoff) handoff.activityAgent.current = intent;
+      if (activityAgent) activityAgent.current = intent;
       void navigator
         .open({
           version: 1,
@@ -516,14 +540,11 @@ export function ChannelInventory({
           },
         })
         .then((result) => {
-          if (
-            result.status !== "opened" &&
-            handoff?.activityAgent.current === intent
-          )
-            handoff.activityAgent.current = undefined;
+          if (result.status !== "opened" && activityAgent?.current === intent)
+            activityAgent.current = undefined;
         });
     },
-    [viewer, relay, queries, handoff, sidebar.list, navigator, scope],
+    [viewer, relay, queries, activityAgent, sidebar.list, navigator, scope],
   );
   const createChannel = async (input: CreateChannelInput) => {
     const id = await queries.channelCreation.create(input);
@@ -1137,32 +1158,39 @@ export function ChannelInventory({
   });
   useLayoutEffect(() => () => menuActions?.publish(undefined), [menuActions]);
   const lifecycleCallbacks = handoff?.lifecycleCallbacks;
-  // The shown rows nearest the confirmed channel: its own section's, then the
-  // nearest expanded sections'. Captured while it is still listed: completion
-  // can arrive after the roster has dropped it.
-  const lifecycleNeighbors = useRef<{ id: string; ids: string[] }>(undefined);
+  const openSuccessor = handoff?.openSuccessor;
+  // The shown rows nearest the confirmed channel and the open one: its own
+  // section's, then the nearest expanded sections'. Captured while each is
+  // still listed: completion, or removal while it is open, can drop it first.
+  // Kept apart, so a confirmation for another channel keeps the open one's.
+  const lifecycleNeighbors = useRef<
+    Partial<Record<"dialog" | "open", { id: string; ids: string[] }>>
+  >({});
   useLayoutEffect(() => {
-    if (!lifecycleCallbacks) return;
-    const dialogId = lifecycleDialog?.channel.id;
-    if (!dialogId) lifecycleNeighbors.current = undefined;
-    const at = filteredSections.findIndex((section) =>
-      section.rows.some((row) => row.id === dialogId),
-    );
-    const placement = filteredSections[at];
-    if (dialogId && placement) {
+    if (!lifecycleCallbacks || !openSuccessor) return;
+    const capture = (key: "dialog" | "open", anchor: string | undefined) => {
+      if (!anchor) {
+        delete lifecycleNeighbors.current[key];
+        return;
+      }
+      const at = filteredSections.findIndex((section) =>
+        section.rows.some((row) => row.id === anchor),
+      );
+      const placement = filteredSections[at];
+      if (!placement) return;
       const shown = (section: typeof placement) =>
         sidebar.collapsed.includes(section.key)
           ? []
           : section.rows
               .filter(
                 (row) =>
-                  row.id === dialogId || !pluginHiddenRows.current.has(row.id),
+                  row.id === anchor || !pluginHiddenRows.current.has(row.id),
               )
               .map((row) => row.id);
       const own = shown(placement);
-      const index = Math.max(own.indexOf(dialogId), 0);
-      lifecycleNeighbors.current = {
-        id: dialogId,
+      const index = Math.max(own.indexOf(anchor), 0);
+      lifecycleNeighbors.current[key] = {
+        id: anchor,
         ids: [
           ...own.slice(index + 1),
           ...own.slice(0, index).reverse(),
@@ -1170,7 +1198,32 @@ export function ChannelInventory({
           ...filteredSections.slice(0, at).flatMap(shown).reverse(),
         ],
       };
-    }
+    };
+    capture("dialog", lifecycleDialog?.channel.id);
+    capture(
+      "open",
+      target.kind === "conversation" ? target.channelId : undefined,
+    );
+    // Its neighbor takes its place, so the sidebar stays where it is.
+    const successor = (id: string) => {
+      const listed = filteredSections
+        .flatMap((section) => section.rows)
+        .filter((row) => !pluginHiddenRows.current.has(row.id));
+      return (
+        (
+          [
+            lifecycleNeighbors.current.dialog,
+            lifecycleNeighbors.current.open,
+          ].find((captured) => captured?.id === id)?.ids ?? []
+        ).find((neighbor) => listed.some((row) => row.id === neighbor)) ??
+        listed.find((channel) => channel.id !== id)?.id
+      );
+    };
+    const land = (next: string | undefined) => {
+      if (next) select(next);
+      else openEmptyChannels(navigator, scope);
+    };
+    openSuccessor.current = (id) => land(successor(id));
     lifecycleCallbacks.current = lifecycleDialog
       ? {
           close: () => {
@@ -1179,7 +1232,7 @@ export function ChannelInventory({
               ? lifecycleDialog.trigger
               : lifecycleDialog.focusFallback;
           },
-          completed: () => {
+          depart: () => {
             const id = lifecycleDialog.channel.id;
             lifecycleFocus.current = id;
             // Archive changes visibility, not access or the current destination.
@@ -1192,35 +1245,15 @@ export function ChannelInventory({
                 : lifecycleDialog.focusFallback;
               return;
             }
-            // Its neighbor takes its place, so the sidebar stays where it is.
-            const listed = filteredSections
-              .flatMap((section) => section.rows)
-              .filter((row) => !pluginHiddenRows.current.has(row.id));
-            const next =
-              (lifecycleNeighbors.current?.id === id
-                ? lifecycleNeighbors.current.ids
-                : []
-              ).find((neighbor) => listed.some((row) => row.id === neighbor)) ??
-              listed.find((channel) => channel.id !== id)?.id;
+            const next = successor(id);
             if (next) lifecycleFocus.current = next;
             // Confirmed access loss can already have removed current from the roster.
             if (
               (target.kind === "conversation"
                 ? target.channelId
                 : undefined) === id
-            ) {
-              if (next) select(next);
-              else {
-                writeView(scope, "selected-channel", undefined);
-                void navigator.open({
-                  version: 1,
-                  kind: "page",
-                  pluginId: "buzz.channels",
-                  pageId: "channels",
-                  route: { version: 1, params: "empty" },
-                });
-              }
-            }
+            )
+              land(next);
           },
         }
       : undefined;
@@ -1228,8 +1261,9 @@ export function ChannelInventory({
   useLayoutEffect(
     () => () => {
       if (lifecycleCallbacks) lifecycleCallbacks.current = undefined;
+      if (openSuccessor) openSuccessor.current = undefined;
     },
-    [lifecycleCallbacks],
+    [lifecycleCallbacks, openSuccessor],
   );
   return render({
     sidebar,
@@ -1427,7 +1461,7 @@ export function ChannelInventory({
               }
               channels={{
                 rows: section.hiddenRows,
-                selected: current?.id,
+                selected: preserveSidebar ? undefined : current?.id,
                 select,
               }}
               onRemove={
@@ -1521,7 +1555,9 @@ export function ChannelInventory({
               >
                 {section.rows.map((channel) => {
                   const selected =
-                    current?.id === channel.id ? current.id : undefined;
+                    !preserveSidebar && current?.id === channel.id
+                      ? current.id
+                      : undefined;
                   // Every row offers Copy link; build items only for the open
                   // menu. useChannelRowMenu closes a menu left with none.
                   const menuOpen =
@@ -1643,7 +1679,7 @@ export function ChannelInventory({
         {cached && connectionError && (
           <p className={styles.preferenceNotice} role="status">
             Offline · Showing saved conversations.
-            <Button onClick={relay.retry}>Retry connection</Button>
+            <Button onClick={relay.tryAgain}>Retry connection</Button>
           </p>
         )}
         {preferences.sortErrors?.map(({ group, mode, error }) => (

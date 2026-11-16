@@ -4,7 +4,7 @@ import { channelQuery } from "./channel-query";
 import { isChannelRoute } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
-import { PageTabs } from "./PageTabs";
+import { ConversationWorkspace, PageTabs } from "./PageTabs";
 import { registerCanvas } from "./canvas-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
 import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
@@ -12,6 +12,7 @@ import { isApplePlatform } from "../../features/shortcuts/format";
 import type { ArchiveShortcut, ReadShortcut } from "./ChannelsPage";
 import {
   conversationRows,
+  inFieldOutsideComposer,
   inTerminal,
   stepConversation,
 } from "./conversation-rows";
@@ -38,6 +39,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const extensions = ctx.conversation;
   extensions.registerTabs((props) => (
     <PageTabs {...props} host={ctx} extensions={extensions} />
+  ));
+  extensions.registerWorkspace((props) => (
+    <ConversationWorkspace {...props} host={ctx} extensions={extensions} />
   ));
   const relay = ctx.relay;
   const navigator = ctx.navigation;
@@ -72,8 +76,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
     when: () => !!archive.current?.available(),
     run: () => archive.current?.run(),
   });
-  // Slack's sidebar stepping. Terminals keep Option+Arrow, and stepping is
-  // unavailable (the key is left alone) while the sidebar renders no rows.
+  // Slack's sidebar stepping. Terminals and text fields outside the composer
+  // keep Option+Arrow, and stepping is unavailable (the key is left alone)
+  // while the sidebar renders no rows.
   const stepping = [
     ["previous-conversation", "Previous conversation", "ArrowUp", false, 30],
     ["next-conversation", "Next conversation", "ArrowDown", false, 31],
@@ -99,7 +104,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       binding: { key, alt: true, shift: unreadOnly },
       order,
       allowInEditable: true,
-      when: () => !inTerminal() && conversationRows().length > 0,
+      when: () =>
+        !inTerminal() &&
+        !inFieldOutsideComposer() &&
+        conversationRows().length > 0,
       run: () =>
         stepConversation(key === "ArrowUp" ? "previous" : "next", unreadOnly),
     });

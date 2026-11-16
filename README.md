@@ -5,27 +5,15 @@ app for team chat and AI agents: join a community, talk in channels and direct
 messages, and run agents such as Claude, Codex, Goose or Pi on your own
 computer that answer you right in the conversation.
 
-![A Buzz chat with an agent replying](docs/assets/readme/solo-chat.png)
-
-> [!IMPORTANT]
-> **Buzz 1.0 is in beta.** Buzz 0.X is still available and supported in
-> [block/buzz](https://github.com/block/buzz).
+[![A 38-second demo of Buzz: an agent answers a question in a team channel, then a chat with two agents is shared with that channel](docs/assets/readme/demo.webp)](https://buzz.xyz/#demo)
 
 ## Get started
 
 ### 1. Download
 
-Get the newest build from the [releases page](https://github.com/block/buzz-app/releases).
-
-| Platform | Download | Notes |
-| --- | --- | --- |
-| macOS (Apple Silicon) | `Buzz_…_aarch64.dmg` | Signed and notarized. |
-| macOS (Intel) | `Buzz_…_x64.dmg` | Signed and notarized. |
-| Windows (x64) | `Buzz_…_x64_unsigned.exe` | Not code-signed, so Windows SmartScreen warns you before it runs. |
-| Linux (x64) | `Buzz_…_amd64.deb` or `Buzz_…_x86_64.AppImage` | Built on Ubuntu 24.04. |
-
-Once installed, Buzz updates itself. You can also check from
-**Settings → Software updates**.
+Download the latest release from [buzz.xyz](https://buzz.xyz) or view
+[all releases](https://github.com/block/buzz-app/releases). Available for
+macOS, Windows and Linux.
 
 ### 2. Set up your identity
 
@@ -74,8 +62,8 @@ and write instructions. Then click **Create agent**.
 
 | Harness | Platforms | What you need |
 | --- | --- | --- |
-| Claude | macOS, Linux | A Claude account. Click **Install Claude** to download Buzz's own copy (about 250 MB), then **Sign in** in your browser. It shares settings with the `claude` in your terminal but doesn't change it. |
-| Codex | macOS, Linux | A ChatGPT or OpenAI account. Click **Install Codex** (about 130 MB), then **Sign in** in your browser. |
+| Claude | macOS, Linux | A Claude account. Click **Install integration** to download Buzz's own copy (about 250 MB), then **Sign in** in your browser. It shares settings with the `claude` in your terminal but doesn't change it. |
+| Codex | macOS, Linux | A ChatGPT or OpenAI account. Click **Install integration** (about 130 MB), then **Sign in** in your browser. |
 | Goose | macOS, Linux, Windows | Included with Buzz. Choose a model provider and enter its key in **Settings → Agent setup → Harness defaults → Goose**. Providers that sign in through goose instead need `goose configure` from the separate goose CLI. |
 | Pi | macOS, Linux, Windows | Node.js 22.19 or later. Turn on **Pi** in **Settings → Plugins** first. Click the model, choose a provider, paste its **API key**, and click **Save to Pi**. Providers that sign in another way need `pi`, then `/login`, in your terminal. |
 
@@ -95,14 +83,17 @@ edit files there.
 
 ### 6. Use the command line (optional)
 
-Buzz includes the `buzz` command line client at
-`/Applications/Buzz.app/Contents/Resources/bin/buzz`, so scripts and agents need
-no separate install. To run it as `buzz`, link it into your `PATH`:
+Buzz includes the `buzz` command line client, so scripts and agents need no
+separate install. On macOS and Linux (except the AppImage), Buzz links it to
+`~/.local/bin/buzz` each time it starts. If your shell doesn't find `buzz`, add
+that folder to your `PATH` in `~/.zshrc` or `~/.bashrc`:
 
 ```sh
-mkdir -p ~/.local/bin
-ln -sf /Applications/Buzz.app/Contents/Resources/bin/buzz ~/.local/bin/buzz
+export PATH="$HOME/.local/bin:$PATH"
 ```
+
+On Windows, the installer adds it to your `PATH`; open a new terminal after
+installing.
 
 ## Preview limitations
 

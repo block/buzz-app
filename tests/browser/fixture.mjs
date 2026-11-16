@@ -42,6 +42,9 @@ export const test = base.extend({
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
   profilePicture: ["", { option: true }],
+  // The viewer profile's `tz`. The empty opt-out keeps launch from sharing the
+  // browser's zone into it; null leaves the key out so launch shares one.
+  profileTimeZone: ["", { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
   presenceThreadAuthors: [0, { option: true }],
@@ -133,6 +136,7 @@ export const test = base.extend({
       actionProfile,
       agentMessageDeletion,
       profilePicture,
+      profileTimeZone,
       readState,
       threadUnread,
       presenceThreadAuthors,
@@ -257,7 +261,11 @@ export const test = base.extend({
         sign(
           0,
           [],
-          JSON.stringify({ name: "Fixture Reader", picture: profilePicture }),
+          JSON.stringify({
+            name: "Fixture Reader",
+            picture: profilePicture,
+            ...(profileTimeZone === null ? {} : { tz: profileTimeZone }),
+          }),
           userKey,
         ),
       ]),
@@ -464,6 +472,8 @@ export const test = base.extend({
       }
     }
     const hiddenChannels = new Set();
+    // Channels an admin removed the viewer from: metadata stays, membership goes.
+    const removedIds = new Set();
     const soloDetails = new Map();
     const servedMembers = new Map(Object.entries(sessionMembers));
     const streams = new Map();
@@ -1194,6 +1204,7 @@ export const test = base.extend({
                 ["d", id],
                 ...((lifecycleRows.some((row) => row.id === id) ||
                   ownSoloChannels.includes(id)) &&
+                !removedIds.has(id) &&
                 ["owner", "admin"].includes(lifecycleRole)
                   ? [["p", viewer, lifecycleRole]]
                   : []),
@@ -1237,24 +1248,32 @@ export const test = base.extend({
         ];
       if (filter.kinds?.includes(39002))
         return rosterIds
-          .filter((id) => !filter["#d"] || filter["#d"].includes(id))
+          .filter(
+            (id) =>
+              (!filter["#d"] || filter["#d"].includes(id)) &&
+              !(removedIds.has(id) && filter["#p"]?.includes(viewer)),
+          )
           .map((id) =>
             sign(
               39002,
               [
                 ["d", id],
-                [
-                  "p",
-                  viewer,
-                  "",
-                  joinedRoles.get(id) ??
-                    (lifecycleRows.some((row) => row.id === id) ||
-                    ownSoloChannels.includes(id)
-                      ? lifecycleRole === "nonmember"
-                        ? "member"
-                        : lifecycleRole
-                      : "member"),
-                ],
+                ...(removedIds.has(id)
+                  ? []
+                  : [
+                      [
+                        "p",
+                        viewer,
+                        "",
+                        joinedRoles.get(id) ??
+                          (lifecycleRows.some((row) => row.id === id) ||
+                          ownSoloChannels.includes(id)
+                            ? lifecycleRole === "nonmember"
+                              ? "member"
+                              : lifecycleRole
+                            : "member"),
+                      ],
+                    ]),
                 ...(ownSoloChannels.includes(id)
                   ? soloAgents.map(({ pubkey }) => ["p", pubkey, "", "member"])
                   : []),
@@ -2533,7 +2552,9 @@ export const test = base.extend({
             status: String(response.status()),
           });
         if (
-          response.url().endsWith("/stream-observer") &&
+          /\/stream-(observer|priority|retry|interests|artifact-sync|artifact-sync-close)$/.test(
+            response.url(),
+          ) &&
           response.status() === 404
         ) {
           const { streamId } = response.request().postDataJSON();
@@ -2628,6 +2649,8 @@ export const test = base.extend({
         },
         origin,
         report,
+        /** The viewer's current kind 0 content in `community`. */
+        ownProfile: (community) => JSON.parse(profiles.get(community).content),
         watchPageErrors(other) {
           const watched = watchPageErrors(other);
           watchedPages.push(watched);
@@ -2800,6 +2823,16 @@ export const test = base.extend({
           expect(rosterIds).toContain(id);
           rosterIds.splice(rosterIds.indexOf(id), 1);
         },
+        // An admin removes the viewer: the relay republishes the roster live
+        // without them, and later reads agree. Channel metadata remains.
+        removeViewer(id) {
+          expect(rosterIds).toContain(id);
+          removedIds.add(id);
+          lifecycleTime++;
+          const roster = answer("primary", { kinds: [39002], "#d": [id] })[0];
+          relay.publish("primary", roster);
+          return roster;
+        },
         // Hold the join's OK; its live roster still arrives first.
         holdJoin() {
           let release;
@@ -2961,7 +2994,9 @@ export const test = base.extend({
         },
       });
       expect(report.unexpected).toEqual([]);
-      // Aborted startup streams can race an already-dispatched observer control.
+      // Retired streams can race already-dispatched live controls. Observer,
+      // priority, retry, interests and artifact-sync controls all answer 404
+      // once the broker has closed the stream (presence controls answer 200).
       // Permit only 404s whose exact stream was already closed by the real host;
       // a current/unknown stream failure still fails, and all errors stay recorded.
       report.retiredObserverControls = [...observerFailures];

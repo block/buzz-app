@@ -1,4 +1,8 @@
-import type { LocalAgentSource, LocalWork } from "./local-activity";
+import type {
+  LocalAgentSource,
+  LocalDecline,
+  LocalWork,
+} from "./local-activity";
 import { activityPromptThread } from "./activity-transcript";
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
@@ -61,6 +65,8 @@ type Snapshot = Readonly<{
   records: readonly RawRecord[];
   turns: readonly ActivityTurn[];
   local?: readonly LocalWork[];
+  /** This device's agents' mentions declined for who sent them. */
+  declined?: readonly LocalDecline[];
   typing: readonly TypingEntry[];
   trimmed: number;
   /** Unlike raw-record trimming, losing a turn can lose request completeness. */
@@ -184,6 +190,12 @@ export function createAgentActivity(
               (row) => row.scope === local.scope && canAccess(row.channelId),
             )
         : [];
+    const declined =
+      local && !closed
+        ? (local.source.declined?.() ?? []).filter(
+            (row) => row.scope === local.scope && canAccess(row.channelId),
+          )
+        : [];
     const now = Date.now();
     const fresh = records.filter(
       (record) => now - record.receivedAt < ACTIVITY_HISTORY_AGE_MS,
@@ -259,6 +271,10 @@ export function createAgentActivity(
       snapshot.status === status &&
       (snapshot.local ?? []).length === localWork.length &&
       (snapshot.local ?? []).every((row, index) => row === localWork[index]) &&
+      (snapshot.declined ?? []).length === declined.length &&
+      (snapshot.declined ?? []).every(
+        (row, index) => row === declined[index],
+      ) &&
       snapshot.records === records &&
       snapshot.trimmed === trimmed &&
       JSON.stringify(snapshot.turns) === JSON.stringify(visible) &&
@@ -271,6 +287,7 @@ export function createAgentActivity(
       records: Object.freeze(records),
       turns: Object.freeze(visible),
       local: Object.freeze(localWork),
+      declined: Object.freeze(declined),
       typing: Object.freeze(typers),
       trimmed,
       turnsTrimmed,
@@ -609,34 +626,43 @@ export function createAgentActivity(
         // Malformed thread tags must not become channel-wide working evidence.
         if (event.tags.some(([name]) => name === "e") && !reference) continue;
         const threadRootId = reference?.rootId;
-        const key = JSON.stringify([event.pubkey, channelId, threadRootId]);
-        const previous = typing.get(key);
-        if (
-          previous &&
-          (timestamp < previous.timestamp ||
-            (event.kind === 20002 &&
-              !previous.working &&
-              timestamp <= previous.timestamp + 2000))
-        )
-          continue;
-        changed = true;
-        typing.delete(key);
-        typing.set(
-          key,
-          Object.freeze({
-            agent: event.pubkey,
-            channelId,
-            threadRootId,
-            timestamp,
-            startedAt:
-              previous?.working && now < previous.expiresAt
-                ? previous.startedAt
-                : timestamp,
-            working: event.kind === 20002,
-            expiresAt: Math.min(timestamp, now) + TYPING_FRESH_MS,
-          }),
-        );
-        if (typing.size > ACTIVITY_TURN_LIMIT) {
+        // A reply in a thread also ends the agent's channel-level typing: its
+        // pulses and replies can be filed apart for the same turn. Other
+        // threads keep theirs.
+        const scopes =
+          event.kind === 9 && threadRootId
+            ? [threadRootId, undefined]
+            : [threadRootId];
+        for (const threadRootId of scopes) {
+          const key = JSON.stringify([event.pubkey, channelId, threadRootId]);
+          const previous = typing.get(key);
+          if (
+            previous &&
+            (timestamp < previous.timestamp ||
+              (event.kind === 20002 &&
+                !previous.working &&
+                timestamp <= previous.timestamp + 2000))
+          )
+            continue;
+          changed = true;
+          typing.delete(key);
+          typing.set(
+            key,
+            Object.freeze({
+              agent: event.pubkey,
+              channelId,
+              threadRootId,
+              timestamp,
+              startedAt:
+                previous?.working && now < previous.expiresAt
+                  ? previous.startedAt
+                  : timestamp,
+              working: event.kind === 20002,
+              expiresAt: Math.min(timestamp, now) + TYPING_FRESH_MS,
+            }),
+          );
+        }
+        while (typing.size > ACTIVITY_TURN_LIMIT) {
           const oldest = typing.keys().next().value;
           if (oldest) typing.delete(oldest);
         }

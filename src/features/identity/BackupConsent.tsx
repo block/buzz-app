@@ -167,8 +167,8 @@ export function BackupConsent({
 }
 
 /**
- * Asks whether to sync this device's identity with Builderlab. Sync with
- * Builderlab and I will manage my own key save the answer for `pubkey` and
+ * Asks whether to back up this device's key. Back up key and I will manage
+ * my own key save the answer for `pubkey` and
  * close with it; Close and Escape save nothing. A refused save stays in the
  * dialog. Once `ended`, it closes as Close does unless its own answer is
  * still being saved or was refused.
@@ -216,8 +216,8 @@ export function BackupPrompt({
   };
   return (
     <AlertDialog
-      title="Sync your identity with Builderlab?"
-      description="Buzz will save an encrypted copy of your identity key with your Builderlab account. That copy can restore your identity, including in other apps where you use the same key."
+      title="Back up your key?"
+      description="Buzz will save an encrypted copy of your identity key with your Builderlab account. That copy can restore your identity, including in other apps where you use the same key. If you manage your own key, keep a copy of your private key: you need it to use this account on another device or if you lose access to this one."
       onClose={onClose}
       initialFocus={sync}
       finalFocus={finalFocus}
@@ -240,7 +240,7 @@ export function BackupPrompt({
             loading={saving === true}
             onClick={() => answer(true)}
           >
-            Sync with Builderlab
+            Back up key
           </Button>
         </>
       }

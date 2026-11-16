@@ -3,6 +3,7 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import type { ComponentType } from "react";
 import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
+import { usePanelTabTitle } from "./PanelWorkspace";
 import {
   createContributions,
   resolveMatch,
@@ -80,6 +81,8 @@ export type Panel = Readonly<{
   /** Tabs opened from links stay until closed, like a channel tool's, instead
    * of giving way to the next link or thread. */
   keepOpen?: boolean;
+  /** Opt into conversation detail addresses and Back/Forward/Close behavior. */
+  addressable?: true;
   /** Mount tab content on first selection, then retain it for the workspace visit.
    * Component-provided titles and local detail tabs are also deferred. */
   deferUntilShown?: boolean;
@@ -124,6 +127,10 @@ export type Panels = {
   handleOpenRequests(
     handler: (request: PanelOpenRequest) => boolean,
   ): () => void;
+  /** React hook for a panel component: names its tab, in place of the static
+   * `title`, while mounted. Does nothing outside a panel tab. Absent on hosts
+   * that predate it, so feature-detect before calling. */
+  useTabTitle?(label: string): void;
 };
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -139,6 +146,7 @@ export class PanelsService extends Service implements Panels {
   private readonly openHandlers = new Set<
     (request: PanelOpenRequest) => boolean
   >();
+  useTabTitle = (label: string) => usePanelTabTitle(label);
   snapshot = () => this.panels.snapshot();
   subscribe = (listener: () => void) => this.panels.subscribe(listener);
   requestOpen = (request: PanelOpenRequest) => {
@@ -206,6 +214,8 @@ export class PanelsService extends Service implements Panels {
       throw new Error("A channel placement must be bottom, side or tab");
     if (panel.keepOpen !== undefined && typeof panel.keepOpen !== "boolean")
       throw new Error("A panel's keepOpen must be a boolean");
+    if (panel.addressable !== undefined && panel.addressable !== true)
+      throw new Error("A panel's addressable must be true when set");
     if (
       panel.deferUntilShown !== undefined &&
       typeof panel.deferUntilShown !== "boolean"

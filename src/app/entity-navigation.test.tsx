@@ -71,6 +71,21 @@ vi.mock("../plugins/modules", async (original) => {
     },
   };
 });
+// Counts the sidebar inventory's renders.
+const soloRenders = vi.hoisted(() => ({ count: 0 }));
+vi.mock("../features/channel-navigation/SoloInventory", async (original) => {
+  const actual =
+    await original<
+      typeof import("../features/channel-navigation/SoloInventory")
+    >();
+  return {
+    ...actual,
+    SoloInventory: (props: Parameters<typeof actual.SoloInventory>[0]) => {
+      soloRenders.count++;
+      return <actual.SoloInventory {...props} />;
+    },
+  };
+});
 vi.mock("../bundled", async () => ({
   bundledPlugins: [
     {
@@ -804,6 +819,104 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
   expect(current.relay.snapshot().generation).toBe(generation);
   expect(screen.queryByText(pageFailure)).toBeNull();
 });
+it("opens and closes a thread without rendering the sidebar", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  vi.stubEnv("VITE_BUZZ_LIVE", "1");
+  localStorage.setItem(
+    `buzz-client.v1:${viewer}`,
+    JSON.stringify({
+      profile: { name: "Fixture", picture: "" },
+      memberships: [{ id: origin, name: "Fixture community" }],
+      selected: origin,
+    }),
+  );
+  const author = { secret: key, pubkey: viewer };
+  const root = message(author, "alpha", "Thread root", 1_700_000_100);
+  const channels = [
+    roster(author, "alpha", [viewer]),
+    metadata(author, "alpha", "Alpha"),
+    roster(author, "beta", [viewer]),
+    metadata(author, "beta", "Beta"),
+  ];
+  const history = [
+    root,
+    bounds(author, "alpha", "head", { has_more: false, next_cursor: null }),
+  ];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, options?: RequestInit) => {
+      if (url.endsWith("/identity")) return Response.json({ viewer });
+      if (url.endsWith("/session"))
+        return Response.json({ viewer, relayAuthor: viewer, relayUrl: origin });
+      if (url.endsWith("/query")) {
+        const filters = JSON.parse(String(options?.body)) as ReadFilter[];
+        if (filters.some((filter) => filter.kinds?.includes(9)))
+          return Response.json(history);
+        return Response.json(
+          channels.filter((event) =>
+            filters.some((filter) => matchesEvent(event, filter)),
+          ),
+        );
+      }
+      return Response.json({});
+    }),
+  );
+  const alpha = {
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: origin },
+    channelId: "alpha",
+  } as const;
+  window.history.replaceState(
+    null,
+    "",
+    `/#buzz=${encodeURIComponent(JSON.stringify(alpha))}`,
+  );
+  services = createServices();
+  const current = services;
+  render(<App services={current} />);
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  await waitFor(() => expect(soloRenders.count).toBeGreaterThan(0));
+  const opened = (entry: string) =>
+    waitFor(() =>
+      expect(current.navigation.snapshot()).toMatchObject({
+        status: "opened",
+        entry: { id: entry },
+      }),
+    );
+  // Let the sidebar settle before counting.
+  await act(async () => {});
+  const settled = soloRenders.count;
+  const start = current.navigation.snapshot().entry.id;
+  act(() => {
+    void current.navigation.open({
+      ...alpha,
+      messageId: root.id,
+      threadRootId: root.id,
+    });
+  });
+  const thread = current.navigation.snapshot().entry.id;
+  expect(thread).not.toBe(start);
+  // The page, not the shell, completes the thread's visit.
+  await opened(thread);
+  act(() => current.navigation.back());
+  await opened(start);
+  expect(soloRenders.count).toBe(settled);
+  // Another conversation is a destination, which the sidebar shows.
+  act(() => {
+    void current.navigation.open({ ...alpha, channelId: "beta" });
+  });
+  await waitFor(() => expect(soloRenders.count).toBeGreaterThan(settled));
+});
 it("offers to join a code-less link's community, or opens it once joined", async () => {
   const queue = [
     "buzz://add-community?relay=wss%3A%2F%2Fother.example%2F&name=other",
@@ -880,7 +993,11 @@ it("lists active primary pages in the app dock", async () => {
     value: () => {},
   });
   vi.stubEnv("VITE_BUZZ_LIVE", "1");
-  // Personal space with a saved community, not the first-run join screen.
+  // An existing install with Bestie explicitly enabled, not first-run setup.
+  localStorage.setItem(
+    "buzzodz.plugins.v1",
+    JSON.stringify({ version: 3, enabled: { "buzz.bestie": true } }),
+  );
   localStorage.setItem(
     `buzz-client.v1:${viewer}`,
     JSON.stringify({
@@ -1047,6 +1164,11 @@ it.each(
 )(
   "normalizes old $name links in the same visit and caller, retaining $scope scope",
   async ({ name, scope }) => {
+    if (name === "Bestie")
+      localStorage.setItem(
+        "buzzodz.plugins.v1",
+        JSON.stringify({ version: 3, enabled: { "buzz.bestie": true } }),
+      );
     const current = legacyPageFixture();
     await findActivityRow();
     const pageId = name.toLowerCase();
@@ -1124,7 +1246,11 @@ it("opens a community-scoped page from another community, but not after leaving 
     ],
     other,
   );
-  await screen.findByRole("tab", { name: "Bestie" });
+  await waitFor(() =>
+    expect(member.plugins.snapshot().activation["fixture.notes"]?.status).toBe(
+      "active",
+    ),
+  );
   let result!: ReturnType<typeof member.navigation.open>;
   act(() => {
     result = member.navigation.open(target);
@@ -1140,7 +1266,11 @@ it("opens a community-scoped page from another community, but not after leaving 
     [{ id: other, name: "Other community" }],
     other,
   );
-  await screen.findByRole("tab", { name: "Bestie" });
+  await waitFor(() =>
+    expect(left.plugins.snapshot().activation["fixture.notes"]?.status).toBe(
+      "active",
+    ),
+  );
   act(() => {
     result = left.navigation.open(target);
   });
@@ -1440,4 +1570,77 @@ it("keeps the unavailable card for a turned-off external plugin while external p
     status: "failed",
     reason: "unavailable",
   });
+});
+
+// Inside Settings, the dialog's own sections and Close are the way out, so
+// its cards never leave for Messages as the page cards above do.
+it("a Settings section that isn’t available offers Try again, not Go to Messages", async () => {
+  const current = legacyPageFixture();
+  await findActivityRow();
+  act(() => {
+    void current.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "fixture.missing/options",
+    });
+  });
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  const card = (
+    await within(settings).findByRole("heading", {
+      name: "This page isn’t available",
+    })
+  ).closest<HTMLElement>('[role="alert"]');
+  if (!card) throw new Error("Expected the failure alert");
+  expect(
+    within(card).getByText(
+      "It may have been removed, or you may need to update Buzz.",
+    ),
+  ).toBeVisible();
+  expect(current.navigation.snapshot()).toMatchObject({
+    status: "failed",
+    reason: "unavailable",
+  });
+  expect(
+    within(card)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Try again"]);
+  expect(
+    within(card).getByRole("button", { name: "Try again" }).dataset.variant,
+  ).toBe("prominent");
+  expect(screen.queryByRole("button", { name: "Go to Messages" })).toBeNull();
+  expect(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  ).toBeVisible();
+});
+
+it("a turned-off plugin's Settings section offers Manage plugins, not Go to Messages", async () => {
+  const current = legacyPageFixture();
+  await findActivityRow();
+  await act(() => current.plugins.change("disable", "buzz.agents"));
+  act(() => {
+    void current.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "buzz.agents/external-apps",
+    });
+  });
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  const card = (
+    await within(settings).findByRole("heading", {
+      name: "Agents is turned off",
+    })
+  ).closest<HTMLElement>('[role="alert"]');
+  if (!card) throw new Error("Expected the failure alert");
+  expect(
+    within(card).getByText(
+      "Turn it on in Manage plugins to open this section.",
+    ),
+  ).toBeVisible();
+  expect(
+    within(card)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Manage plugins"]);
+  expect(screen.queryByRole("button", { name: "Go to Messages" })).toBeNull();
 });

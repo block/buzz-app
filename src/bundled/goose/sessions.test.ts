@@ -35,10 +35,15 @@ const setup = (
     onChange,
     store,
     started,
+    tags,
     wrap,
+    delay,
+    fingerprint = (settings: Launch) =>
+      JSON.stringify([settings.workspace, settings.systemPrompt]),
   }: Readonly<{
     pool?: ServerPool;
     started?: SessionsOptions["started"];
+    tags?: SessionsOptions["tags"];
     onChange?: () => void;
     store?: Map<string, SavedConversation>;
     /** Wraps the fake's `serve`. */
@@ -46,6 +51,9 @@ const setup = (
     silent?: readonly string[];
     /** Wraps the fake's `spawn`, as `gated(…).wrap` does. */
     wrap?: (spawn: ReturnType<typeof fakeSpawn>["spawn"]) => Spawn;
+    fingerprint?: (settings: Launch) => string;
+    /** Holds each launch, which reads the settings when asked. */
+    delay?: () => Promise<void>;
   }> = {},
 ) => {
   const fake = fakeSpawn({
@@ -80,10 +88,14 @@ const setup = (
         store,
       }),
       ...(started && { started }),
-      launch: async () => settings,
+      ...(tags && { tags }),
+      launch: async () => {
+        const asked = settings;
+        await delay?.();
+        return asked;
+      },
       choice: () => choice,
-      fingerprint: () =>
-        JSON.stringify([settings.workspace, settings.systemPrompt]),
+      fingerprint: () => fingerprint(settings),
     });
     return {
       sessions,
@@ -204,11 +216,11 @@ describe("AgentSessions", () => {
     ]);
     await goose?.mcp("session-2", "tools/list");
     expect(ada).not.toHaveBeenCalled();
-    expect(bo).toHaveBeenCalledWith("chan/root", {
-      id: expect.anything(),
-      method: "tools/list",
-      params: {},
-    });
+    expect(bo).toHaveBeenCalledWith(
+      "chan/root",
+      { id: expect.anything(), method: "tools/list", params: {} },
+      expect.objectContaining({ aborted: true }),
+    );
     await goose?.mcp("session-1", "tools/list");
     expect(ada).toHaveBeenCalledOnce();
     expect(bo).toHaveBeenCalledOnce();
@@ -245,11 +257,9 @@ describe("AgentSessions", () => {
     const delivered = sessions.deliver("a", "one", 1);
     // Asked while the session still opens.
     await sessions.interrupt("a");
-    await flush();
-    expect(fake.geese[0]?.turns).toHaveLength(1);
-    expect(fake.geese[0]?.cancelled).toEqual([
-      fake.geese[0]?.turns[0]?.sessionId,
-    ]);
+    await flush(30);
+    // Stopped while its prompt was brought up to date: never sent.
+    expect(fake.geese[0]?.turns).toHaveLength(0);
     await expect(delivered).resolves.toMatchObject({ ok: true });
   });
 
@@ -268,6 +278,98 @@ describe("AgentSessions", () => {
     await flush(30);
     expect(fake.geese[0]?.closed).toEqual(["session-1"]);
     expect(sessions.seen("a")).toBe(0);
+  });
+
+  it("gives an idle session a changed system prompt in place, keeping its conversation", async () => {
+    const { fake, sessions, change } = setup({}, false, {
+      fingerprint: (settings) => settings.workspace,
+    });
+    const fresh = vi.fn(async () => "everything so far");
+    await sessions.deliver("a", "one", 1, { fresh });
+    change({ systemPrompt: "newer" });
+    await sessions.deliver("a", "two", 2, { fresh });
+    const [goose] = fake.geese;
+    expect(goose?.closed).toEqual([]);
+    expect(goose?.opened).toHaveLength(1);
+    expect(goose?.prompts.get("session-1")).toBe("newer");
+    expect(goose?.turns.at(-1)?.text).toBe("two");
+    expect(fresh).not.toHaveBeenCalled();
+  });
+
+  it("gives a turn queued during a busy one the prompt changed meanwhile", async () => {
+    const { fake, sessions, change } = setup({}, true, {
+      fingerprint: (settings) => settings.workspace,
+    });
+    const first = sessions.deliver("a", "one", 1);
+    await flush(30);
+    change({ systemPrompt: "newer" });
+    // Another model cannot steer: it queues behind the running turn.
+    const second = sessions.deliver("a", "two", 2, { model: "other" });
+    await flush(30);
+    const [goose] = fake.geese;
+    expect(goose?.prompts.get("session-1")).toBe("prompt");
+    if (goose) goose.hold = false;
+    goose?.turns[0]?.finish();
+    await Promise.all([first, second]);
+    expect(goose?.closed).toEqual([]);
+    expect(goose?.turns.map((turn) => turn.text)).toEqual(["one", "two"]);
+    expect(goose?.prompts.get("session-1")).toBe("newer");
+  });
+
+  it.each(["prompt update", "launch"])(
+    "never lets a delayed %s roll back a newer prompt",
+    async (held) => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let delayed = false;
+      const { fake, sessions, change } = setup({}, false, {
+        fingerprint: (settings) => settings.workspace,
+        delay: () => (delayed ? gate : Promise.resolve()),
+      });
+      await sessions.deliver("a", "one", 1);
+      const [goose] = fake.geese;
+      if (held === "launch") delayed = true;
+      else if (goose) goose.promptGate = gate;
+      change({ systemPrompt: "first" });
+      const second = sessions.deliver("a", "two", 2);
+      await flush(30);
+      delayed = false;
+      change({ systemPrompt: "latest" });
+      const third = sessions.deliver("a", "three", 3, { model: "other" });
+      await flush(30);
+      release();
+      await Promise.all([second, third]);
+      expect(goose?.turns.map((turn) => turn.text)).toEqual([
+        "one",
+        "two",
+        "three",
+      ]);
+      expect(goose?.prompts.get("session-1")).toBe("latest");
+      expect(goose?.closed).toEqual([]);
+    },
+  );
+
+  it("keeps the session when a prompt update fails, and updates it at the next turn", async () => {
+    const { fake, sessions, change } = setup({}, false, {
+      fingerprint: (settings) => settings.workspace,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await sessions.deliver("a", "one", 1);
+    const [goose] = fake.geese;
+    if (goose) goose.promptError = "database is locked";
+    change({ systemPrompt: "newer" });
+    await sessions.deliver("a", "two", 2);
+    expect(warn).toHaveBeenCalled();
+    expect(goose?.prompts.get("session-1")).toBe("prompt");
+    await sessions.deliver("a", "three", 3);
+    expect(goose?.opened).toHaveLength(1);
+    expect(goose?.closed).toEqual([]);
+    expect(goose?.prompts.get("session-1")).toBe("newer");
+    expect(goose?.turns.map((turn) => turn.text)).toEqual([
+      "one",
+      "two",
+      "three",
+    ]);
   });
 
   it("shows a reopened conversation everything again", async () => {
@@ -559,6 +661,20 @@ describe("AgentSessions", () => {
       "chan/root",
       undefined,
     ]);
+  });
+
+  it("opens each session with the tags for its conversation, and a one-off turn's with none", async () => {
+    vi.useFakeTimers();
+    const { sessions, fake } = setup({}, false, {
+      tags: (conversation) => ({ for: conversation ?? "none" }),
+    });
+    await sessions.deliver("chan/root", "one", 1);
+    await sessions.runOnce("watch/x", () => "look");
+    expect(
+      fake.geese[0]?.opened.map(
+        (params) => (params._meta as { tags?: unknown }).tags,
+      ),
+    ).toEqual([{ for: "chan/root" }, { for: "none" }]);
   });
 
   it("keeps delivering past a damaged saved conversation, saving it afresh", async () => {

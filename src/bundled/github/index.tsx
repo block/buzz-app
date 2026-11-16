@@ -47,7 +47,7 @@ import {
 import { addPullStateTool } from "./pull-state-tool";
 import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
 import { stateIcons } from "./pull-state-view";
-import { PullLink } from "./PullLink";
+import { GitHubLink } from "./GitHubLink";
 import {
   SoloPullIcon,
   SoloPullLink,
@@ -131,18 +131,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   ctx.conversation.registerLink({
     id: "pull",
-    title: "Pull request and issue state",
-    matches: (url) => {
-      const kind = parseGitHubReference(url, { pullSubtargets: true })?.kind;
-      return kind === "pull" || kind === "issue";
-    },
+    title: "GitHub links",
+    matches: (url) => !!parseGitHubReference(url, { pullSubtargets: true }),
     // Links claims GitHub at the default band, 0, and a tie falls to the
-    // contribution key; only a lower order makes this the pull request and
-    // issue renderer whichever plugin registered first. Repositories and
-    // commits stay with Links.
+    // contribution key; only a lower order makes this the GitHub renderer
+    // whichever plugin registered first. Other GitHub pages stay with Links.
     order: -1,
     className: inlineStyles.link,
-    component: ({ url }) => <PullLink url={url} states={states} />,
+    component: ({ url }) => <GitHubLink url={url} states={states} />,
   });
   ctx.conversation.registerChatMenu(({ session, channelId }) => (
     <SoloPullMenu
@@ -245,8 +241,15 @@ function useGitHubObject(
       );
       if (!controller.signal.aborted) setLoaded(next);
     } catch (error) {
+      // A failed read again keeps what is shown.
       if (!controller.signal.aborted)
-        setLoaded(error instanceof Error ? error.message : String(error));
+        setLoaded((shown) =>
+          typeof shown === "object"
+            ? shown
+            : error instanceof Error
+              ? error.message
+              : String(error),
+        );
     }
   }, [reference, gh]);
   useEffect(() => {
@@ -749,6 +752,7 @@ function ObjectPanel({
                         body={result.body}
                         bodyHtml={result.bodyHtml}
                         url={reference.url}
+                        refresh={load}
                       />
                     </div>
                   )}
@@ -759,6 +763,7 @@ function ObjectPanel({
                     body={result.body}
                     bodyHtml={result.bodyHtml}
                     url={reference.url}
+                    refresh={load}
                   />
                 )
               )}

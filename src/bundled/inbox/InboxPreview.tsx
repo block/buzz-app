@@ -92,7 +92,7 @@ export function InboxPreview({
       </p>
       {connection.status === "error" && !connection.denied && (
         <div className={styles.notice}>
-          <Button size="sm" onClick={relay.retry}>
+          <Button size="sm" onClick={relay.tryAgain}>
             Retry connection
           </Button>
         </div>

@@ -57,6 +57,13 @@ export type ReadMutationResult = Readonly<{
   operationId: string;
   durability: "saved";
   sync: "pending" | "local-only";
+  /** Conditional device-local inverse; coverage depends on `undoScope`.
+   * Untagged handles may restore saved reminders only. Later intent or lost
+   * operation validity can expire the handle. */
+  undo?: () => Promise<ReadMutationResult>;
+  /** With `undo`, identifies exact captured-action receipt, reminder and
+   * visit-overlay restoration. Absent on legacy saved-marker-only handles. */
+  undoScope?: "captured-action";
 }>;
 export type ReadPublisherLock = (
   signal: AbortSignal,
@@ -84,6 +91,18 @@ const errorText = (error: unknown) =>
 class ObservationExpired extends Error {
   constructor() {
     super("Reading observation expired");
+  }
+}
+export class CapturedReadWouldWidenError extends Error {
+  constructor() {
+    super("Exact captured read would widen the retained read set");
+    this.name = "CapturedReadWouldWidenError";
+  }
+}
+export class CapturedReadNotRetainedError extends Error {
+  constructor() {
+    super("Exact captured read could not retain every selected message");
+    this.name = "CapturedReadNotRetainedError";
   }
 }
 const same = (a: unknown, b: unknown): boolean => {
@@ -238,6 +257,66 @@ export function createReadState({
    * so a fence on local intent sees other windows' saves, not this cache.
    */
   type Validity = (current: ReadJournal) => boolean;
+  type LocalUnreadUndo = {
+    keys: ReadonlySet<string>;
+    valid: () => boolean;
+  };
+  type CapturedReadUndo = {
+    token: string;
+    before: Pick<
+      ReadJournal,
+      "state" | "recent" | "reserve" | "homes" | "floor"
+    >;
+  };
+  type LocalUnreadAttempt = {
+    key: string;
+    saved?: { revision: number; previous: number };
+  };
+  const pendingLocalUnread = new Set<LocalUnreadAttempt>();
+  type LocalUnreadFence = Promise<{ valid: Validity } | { error: unknown }>;
+  function captureLocalUnreadRevision() {
+    return new Promise<ReadJournal | undefined>((resolve) =>
+      resolve(storage.capture()),
+    ).then(
+      (captured) => ({ revision: captured?.revision ?? 0 }),
+      (error: unknown) => ({ error }),
+    );
+  }
+  function captureLocalUnread(
+    keys: readonly string[],
+    cut?: ReturnType<typeof captureLocalUnreadRevision>,
+  ): LocalUnreadFence {
+    // Reserve at the click, not when a channel's queue eventually runs. Older
+    // queued local actions are allowed only after their save actually succeeds.
+    const older = [...pendingLocalUnread].filter(({ key }) =>
+      keys.includes(key),
+    );
+    return (cut ?? captureLocalUnreadRevision()).then((captured) => {
+      if ("error" in captured) return captured;
+      return {
+        valid: (current: ReadJournal) =>
+          keys.every((key) => {
+            let revision = current.localUnread[key] ?? 0;
+            // An older queued save may overwrite a newer window's mark. Only
+            // follow successful older saves back to the captured journal cut.
+            while (revision > captured.revision) {
+              const saved = older.find(
+                (attempt) =>
+                  attempt.key === key && attempt.saved?.revision === revision,
+              )?.saved;
+              if (!saved) return false;
+              revision = saved.previous;
+            }
+            return true;
+          }),
+      };
+    });
+  }
+  async function capturedValidity(valid: Validity, fence: LocalUnreadFence) {
+    const captured = await fence;
+    if ("error" in captured) throw captured.error;
+    return (current: ReadJournal) => valid(current) && captured.valid(current);
+  }
   function queue<T>(job: () => Promise<T>): Promise<T> {
     const next = work.then(job);
     work = next.catch(() => {});
@@ -304,7 +383,18 @@ export function createReadState({
     if (closed) throw new Error("Read-state session closed");
     const saved = await storage.update((current) => {
       if (closed) throw new Error("Read-state session closed");
-      return change(current ?? newReadJournal());
+      const before = current ?? newReadJournal();
+      const next = change(before);
+      // Ingest and publication bookkeeping need not advance revision. Even an
+      // equal-valued later save must prevent rolling back a newer receipt.
+      if (
+        before.capturedReadUndo &&
+        next.capturedReadUndo === before.capturedReadUndo
+      ) {
+        const { capturedReadUndo, ...retired } = next;
+        return retired;
+      }
+      return next;
     });
     if (closed) return saved;
     journal = saved;
@@ -355,6 +445,81 @@ export function createReadState({
       });
     }
   });
+  function undoLocalRead(
+    actionSlot: string,
+    actionRevision: number,
+    cleared: readonly string[],
+    valid: Validity,
+    options?: LocalUnreadUndo,
+    captured?: CapturedReadUndo,
+  ): (() => Promise<ReadMutationResult>) | undefined {
+    if (
+      !options ||
+      (!cleared.length && !captured) ||
+      !cleared.every((key) => options.keys.has(key))
+    )
+      return;
+    return () => {
+      const attempts: LocalUnreadAttempt[] = cleared.map((key) => ({ key }));
+      for (const attempt of attempts) pendingLocalUnread.add(attempt);
+      return queue(async () => {
+        await ready;
+        if (!journal)
+          throw new Error("Saved read state unavailable; retry storage first");
+        try {
+          const saved = await save((current) => {
+            // Revision catches newer mark-then-clear intent; slot also catches a
+            // replacement journal whose counter has reached the same revision.
+            if (
+              !valid(current) ||
+              !options.valid() ||
+              current.slot !== actionSlot ||
+              current.revision !== actionRevision ||
+              (captured !== undefined &&
+                current.capturedReadUndo !== captured.token) ||
+              cleared.some((key) => current.localUnread[key] !== undefined)
+            )
+              throw new ObservationExpired();
+            const revision = current.revision + 1;
+            const localUnread = { ...current.localUnread };
+            for (const key of cleared) localUnread[key] = revision;
+            return {
+              ...current,
+              // Only device-local receipt/retention effects are reverted. The
+              // action never advances synced prefixes; own/publication state stays.
+              ...(captured?.before ?? {}),
+              revision,
+              localUnread,
+              acceptedRevision:
+                current.acceptedRevision === current.revision
+                  ? revision
+                  : current.acceptedRevision,
+            };
+          });
+          for (const attempt of attempts)
+            attempt.saved = { revision: saved.revision, previous: 0 };
+          health({
+            status:
+              saved.pending || saved.revision > saved.acceptedRevision
+                ? "pending"
+                : "local",
+            error: undefined,
+          });
+          return {
+            operationId: `${saved.slot}:${saved.revision}`,
+            durability: "saved" as const,
+            sync: "local-only" as const,
+          };
+        } catch (error) {
+          if (!(error instanceof ObservationExpired))
+            health({ status: "error", error: errorText(error) });
+          throw error;
+        }
+      }).finally(() => {
+        for (const attempt of attempts) pendingLocalUnread.delete(attempt);
+      });
+    };
+  }
   if (broadcast)
     broadcast.onmessage = () => {
       void queue(async () => {
@@ -817,6 +982,9 @@ export function createReadState({
     valid: Validity,
     clearLocalKeys: readonly string[] = [key],
     observedFrontier?: (state: ReadState) => number | undefined,
+    fence?: LocalUnreadFence,
+    localUnreadAttempt?: LocalUnreadAttempt,
+    undoOptions?: LocalUnreadUndo,
   ): Promise<ReadMutationResult> {
     const automatic =
       key.startsWith("msg:") && timestamp !== undefined && unread === undefined;
@@ -867,8 +1035,13 @@ export function createReadState({
             ),
           );
         }
+        const currentValid = fence
+          ? await capturedValidity(valid, fence)
+          : valid;
+        let previousLocalUnread = 0;
+        const clearedLocalUnread: string[] = [];
         const saved = await save((current) => {
-          if (!valid(current)) throw new ObservationExpired();
+          if (!currentValid(current)) throw new ObservationExpired();
           if (
             !contextId(key) ||
             (timestamp !== undefined && !uint32(timestamp))
@@ -903,9 +1076,15 @@ export function createReadState({
                   recent,
                 );
           const localUnread = { ...current.localUnread };
+          previousLocalUnread = localUnread[key] ?? 0;
           // Automatic observations do not clear explicit local manual-unread intent.
           if (unread === false)
-            for (const clearKey of clearLocalKeys) delete localUnread[clearKey];
+            for (const clearKey of new Set(clearLocalKeys)) {
+              const previous = localUnread[clearKey];
+              if (undoOptions && previous !== undefined)
+                clearedLocalUnread.push(clearKey);
+              delete localUnread[clearKey];
+            }
           if (unread === true) localUnread[key] = revision;
           const own = advanceOwn(
             current.own,
@@ -976,12 +1155,24 @@ export function createReadState({
                 : current.acceptedRevision,
           };
         });
+        if (localUnreadAttempt)
+          localUnreadAttempt.saved = {
+            revision: saved.revision,
+            previous: previousLocalUnread,
+          };
         if (automaticRead) automaticRead.status = "saved";
         health({
           status: capability === "frontier-sync" ? "pending" : "local",
           error: undefined,
         });
         if (timestamp !== undefined) schedule();
+        const undo = undoLocalRead(
+          saved.slot,
+          saved.revision,
+          clearedLocalUnread,
+          currentValid,
+          undoOptions,
+        );
         return {
           operationId: `${saved.slot}:${saved.revision}`,
           durability: "saved",
@@ -989,6 +1180,7 @@ export function createReadState({
             capability === "frontier-sync" && timestamp !== undefined
               ? "pending"
               : "local-only",
+          ...(undo && { undo }),
         };
       } catch (error) {
         if (automaticRead) automaticRead.status = "failed";
@@ -1275,6 +1467,8 @@ export function createReadState({
   }
   return {
     ready,
+    captureLocalUnread,
+    captureLocalUnreadRevision,
     snapshot: () => snapshot,
     /** Markers may be missing: a snapshot read is still owed. */
     owed: () => observationOwed,
@@ -1324,6 +1518,8 @@ export function createReadState({
       clearLocalKeys?: readonly string[],
       /** Verified observation ancestry, evaluated only inside the fenced transaction. */
       observedFrontier?: (state: ReadState) => number | undefined,
+      fence?: LocalUnreadFence,
+      undoOptions?: LocalUnreadUndo,
     ) =>
       mutate(
         key,
@@ -1332,9 +1528,28 @@ export function createReadState({
         valid,
         clearLocalKeys,
         observedFrontier,
+        fence,
+        undefined,
+        undoOptions,
       ),
-    clearLocalUnread: (key: string, keys: readonly string[], valid: Validity) =>
-      mutate(key, undefined, false, valid, keys),
+    clearLocalUnread: (
+      key: string,
+      keys: readonly string[],
+      valid: Validity,
+      fence?: LocalUnreadFence,
+      undoOptions?: LocalUnreadUndo,
+    ) =>
+      mutate(
+        key,
+        undefined,
+        false,
+        valid,
+        keys,
+        undefined,
+        fence,
+        undefined,
+        undoOptions,
+      ),
     /** Atomic explicit subtree read; local-only hosts clear intent without
      * fabricating frontiers. A `quiet` save (a row's `seen:` marks) reads
      * nothing, so it is counted apart from unread intent (`intentRevision`). */
@@ -1348,20 +1563,51 @@ export function createReadState({
       clearForce: string | undefined,
       valid: Validity,
       quiet = false,
+      fence?: LocalUnreadFence,
+      clearLocalKeys: readonly string[] = [],
+      options: { preserveCapturedSet?: boolean; undo?: LocalUnreadUndo } = {},
     ) =>
       queue(async () => {
         await ready;
         if (!journal)
           throw new Error("Saved read state unavailable; retry storage first");
         try {
+          const currentValid = fence
+            ? await capturedValidity(valid, fence)
+            : valid;
+          const clearedLocalUnread = new Set<string>();
+          const token =
+            options.preserveCapturedSet && options.undo
+              ? newSlotId()
+              : undefined;
+          let captured: CapturedReadUndo | undefined;
           const saved = await save((current) => {
-            if (!valid(current)) throw new ObservationExpired();
+            if (!currentValid(current)) throw new ObservationExpired();
             if (
               messages.some(
                 ({ key, timestamp }) => !contextId(key) || !uint32(timestamp),
               )
             )
               throw new Error("Invalid read frontier");
+            if (token) {
+              if (
+                messages.some(({ key }) => !key.startsWith("msg:")) ||
+                clearForce
+              )
+                throw new Error(
+                  "Captured Undo requires exact message receipts",
+                );
+              captured = {
+                token,
+                before: {
+                  state: current.state,
+                  recent: current.recent ?? {},
+                  reserve: current.reserve ?? {},
+                  homes: current.homes ?? {},
+                  floor: current.floor ?? 0,
+                },
+              };
+            }
             const currentState = localState(current);
             if (
               capability !== "frontier-sync" &&
@@ -1381,9 +1627,16 @@ export function createReadState({
                 recent[key] = revision;
                 frontiers[key] = Math.max(frontiers[key] ?? 0, timestamp);
               }
-              delete localUnread[key];
             }
-            if (clearForce) delete localUnread[clearForce];
+            const clearLocalUnread = (key: string) => {
+              const previous = localUnread[key];
+              if (options.undo && previous !== undefined)
+                clearedLocalUnread.add(key);
+              delete localUnread[key];
+            };
+            for (const { key } of messages) clearLocalUnread(key);
+            if (clearForce) clearLocalUnread(clearForce);
+            for (const key of clearLocalKeys) clearLocalUnread(key);
             const kept = Object.keys(frontiers).length
               ? retainMarks(
                   current,
@@ -1397,6 +1650,43 @@ export function createReadState({
                   homes: current.homes ?? {},
                   floor: current.floor ?? 0,
                 };
+            if (
+              options.preserveCapturedSet &&
+              kept.floor > (current.floor ?? 0)
+            ) {
+              // The local floor reads every older message, beyond the captured set.
+              throw new CapturedReadWouldWidenError();
+            }
+            if (options.preserveCapturedSet) {
+              const retainedFrontiers = {
+                ...kept.reserve,
+                ...kept.state.frontiers,
+              };
+              const retainedState = {
+                frontiers: retainedFrontiers,
+                overrides: kept.state.overrides,
+              };
+              const home = homeLookup({ ...current.homes, ...kept.homes });
+              const covered = coveredWith(home);
+              if (
+                messages.some(({ key, timestamp, channelId }) => {
+                  if (
+                    timestamp <= kept.floor ||
+                    (effectiveFrontier(retainedState, key, channelId) ?? -1) >=
+                      timestamp
+                  )
+                    return false;
+                  const cover = covered?.(key, (other) =>
+                    other === key ? timestamp : retainedFrontiers[other],
+                  );
+                  return (
+                    cover === undefined ||
+                    (retainedFrontiers[cover] ?? -1) < timestamp
+                  );
+                })
+              )
+                throw new CapturedReadNotRetainedError();
+            }
             return {
               ...current,
               revision,
@@ -1407,29 +1697,40 @@ export function createReadState({
               floor: kept.floor,
               own: advanceOwn(current.own, frontiers),
               localUnread,
+              ...(token && { capturedReadUndo: token }),
               ...(quiet && { quiet: (current.quiet ?? 0) + 1 }),
-              acceptedRevision: Object.keys(frontiers).length
-                ? current.acceptedRevision
-                : current.acceptedRevision === current.revision
-                  ? revision
-                  : current.acceptedRevision,
+              acceptedRevision:
+                Object.keys(frontiers).length && !token
+                  ? current.acceptedRevision
+                  : current.acceptedRevision === current.revision
+                    ? revision
+                    : current.acceptedRevision,
             };
           });
+          const publishable =
+            capability === "frontier-sync" && messages.length > 0 && !token;
           health({
             status:
-              capability === "frontier-sync" && messages.length
+              saved.pending || saved.revision > saved.acceptedRevision
                 ? "pending"
                 : "local",
             error: undefined,
           });
-          if (capability === "frontier-sync" && messages.length) schedule();
+          if (publishable) schedule();
+          const clearedKeys = [...clearedLocalUnread];
+          const undo = undoLocalRead(
+            saved.slot,
+            saved.revision,
+            clearedKeys,
+            currentValid,
+            options.undo,
+            captured,
+          );
           return {
             operationId: `${saved.slot}:${saved.revision}`,
             durability: "saved" as const,
-            sync:
-              capability === "frontier-sync" && messages.length
-                ? ("pending" as const)
-                : ("local-only" as const),
+            sync: publishable ? ("pending" as const) : ("local-only" as const),
+            ...(undo && { undo }),
           };
         } catch (error) {
           if (!(error instanceof ObservationExpired))
@@ -1437,8 +1738,32 @@ export function createReadState({
           throw error;
         }
       }),
-    markLocalUnread: (key: string, valid: () => boolean) =>
-      mutate(key, undefined, true, valid),
+    async markLocalUnread(
+      key: string,
+      valid: () => boolean,
+      enqueue: (
+        save: () => Promise<ReadMutationResult>,
+      ) => Promise<ReadMutationResult> = (save) => save(),
+    ) {
+      const attempt: LocalUnreadAttempt = { key };
+      pendingLocalUnread.add(attempt);
+      try {
+        return await enqueue(() =>
+          mutate(
+            key,
+            undefined,
+            true,
+            valid,
+            undefined,
+            undefined,
+            undefined,
+            attempt,
+          ),
+        );
+      } finally {
+        pendingLocalUnread.delete(attempt);
+      }
+    },
     accept(events: readonly RelayEvent[]) {
       if (
         closed ||

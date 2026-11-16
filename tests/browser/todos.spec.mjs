@@ -3,6 +3,8 @@ import {
   activate,
   closeSettings,
   openPage,
+  pageChoice,
+  pageChoices,
   openSettings,
   selectSettingsSection,
 } from "./navigation.mjs";
@@ -255,7 +257,13 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     exact: true,
   });
   for (const destination of ["Activity", "Bestie"]) {
-    await openPage(page, destination);
+    if (destination === "Bestie") {
+      const choices = await pageChoices(page, "Bestie");
+      await pageChoice(choices, "Create an agent — Bestie").click();
+      await expect(
+        page.getByRole("dialog", { name: "Search Buzz" }),
+      ).toBeHidden();
+    } else await openPage(page, destination);
     await expect(
       page.getByRole("region", { name: destination, exact: true }),
     ).toBeVisible();

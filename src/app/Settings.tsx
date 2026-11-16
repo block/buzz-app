@@ -37,7 +37,6 @@ import {
   type ReactNode,
   forwardRef,
   type RefObject,
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -57,6 +56,7 @@ import { canRetryPlugin, type PluginManager } from "../plugins/manager";
 import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
+import { PluginUpdateFailure } from "./PluginUpdates";
 import { AgentPluginRequests } from "./AgentPluginRequests";
 import {
   ManagedPluginUpdate,
@@ -76,7 +76,7 @@ import { bundledReadmes } from "../bundled/readmes";
 import { bundledIcons } from "../bundled/icons";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
-import { IdentitySettings, keyActivity } from "./IdentitySettings";
+import { IdentitySettings } from "./IdentitySettings";
 import { SecuritySettings } from "./SecuritySettings";
 import type { FederatedIdentity } from "../features/federated-identity/service";
 import { CommunityLocalSettings } from "./CommunityLocalSettings";
@@ -103,6 +103,7 @@ import {
 import { SettingsSectionLink } from "../features/navigation/SettingsSectionLink";
 
 import { pluginCategoryDefinitions } from "./plugin-categories";
+import { scrollport } from "./scrollport";
 
 // Exit animations retain DOM briefly; retired results must stop accepting focus.
 const PluginListEntry = forwardRef<HTMLDivElement, HTMLMotionProps<"div">>(
@@ -289,12 +290,6 @@ function accessMessage(plugin: PluginInfo, state: AdminAccessState) {
 /** Narrow containers cover the catalog with details (Settings.module.css). */
 function covered(element: Element | null) {
   return !!element && getComputedStyle(element).visibility === "hidden";
-}
-
-function scrollport(element: Element) {
-  for (let node = element.parentElement; node; node = node.parentElement)
-    if (/auto|scroll/.test(getComputedStyle(node).overflowY)) return node;
-  return null;
 }
 
 /** Whether any scrollport around `element` has scrolled past its start. */
@@ -756,6 +751,7 @@ export function Settings({
     decisions?.subscribe ?? noAccessSubscription,
     decisions?.providers ?? noDecisionProviders,
   );
+  const identityCards = contributed.filter((card) => card.identityRow);
   const client = useSyncExternalStore(
     communities.subscribe,
     communities.snapshot,
@@ -782,9 +778,67 @@ export function Settings({
   // first visit rather than with every Settings open, then kept like the rest.
   const [shortcutsVisited, setShortcutsVisited] = useState(false);
   if (selected === "shortcuts" && !shortcutsVisited) setShortcutsVisited(true);
-  // A switch made from inside the content hides or removes the control that
-  // made it, so focus moves into the section it opened.
+  // Sections share one scrollport, so each would open at the last one's
+  // offset. Side by side, keep each section's place while Settings is open, and
+  // start one not yet shown at its start. Stacked navigation scrolls with the
+  // content, and the sidebar starts sections there (Dialog).
+  const detailElement = useRef<HTMLDivElement>(null);
+  const sectionPlaces = useRef(new Map<string, number>());
+  const placedSection = useRef(selected);
+  // The section a switch made from inside the content opened (effect below).
   const contentFocus = useRef<string>(undefined);
+  useLayoutEffect(() => {
+    const content = detailElement.current;
+    // Standalone Settings scrolls its own detail; App mounts only the pane.
+    if (!navigationPane || !content) return;
+    // The layout can change at any time; stacked, the port leads with the nav.
+    const stacked = (port: Element) => !!port.querySelector(":scope > nav");
+    // Side by side, the plugin catalog scrolls in the detail instead, which the
+    // pane holds to the port's height (Settings.module.css).
+    const detailScrolls = selected === "plugins";
+    // A restore waits for content that renders late, until the user scrolls.
+    // A link starts its section at the top (contentFocus, below).
+    const shown = placedSection.current;
+    placedSection.current = selected;
+    let pending =
+      shown === selected || contentFocus.current === selected
+        ? undefined
+        : sectionPlaces.current.get(selected);
+    const restore = () => {
+      const port = scrollport(content);
+      if (port && !stacked(port))
+        (detailScrolls ? content : port).scrollTop = pending ?? 0;
+    };
+    if (shown !== selected) restore();
+    const keep = ({ target }: Event) => {
+      if (!(target instanceof Node) || !target.contains(content)) return;
+      const port = scrollport(content);
+      if (!port) return;
+      const side = !stacked(port);
+      const at = side && detailScrolls ? content : port;
+      if (target !== at) return;
+      // A clamped restore rests at the bottom edge, where the only way out is
+      // up, so the user's first scroll there clears it.
+      const clamped = at.scrollTop >= at.scrollHeight - at.clientHeight - 1;
+      if (side && pending !== undefined && at.scrollTop < pending && clamped)
+        return;
+      pending = undefined;
+      if (side) sectionPlaces.current.set(selected, at.scrollTop);
+    };
+    const grown = new ResizeObserver(() => pending !== undefined && restore());
+    grown.observe(content);
+    // The held detail keeps its size while the catalog grows inside it.
+    if (detailScrolls && pluginSection.current)
+      grown.observe(pluginSection.current);
+    document.addEventListener("scroll", keep, { capture: true, passive: true });
+    return () => {
+      grown.disconnect();
+      document.removeEventListener("scroll", keep, { capture: true });
+    };
+  }, [selected, navigationPane]);
+  // A switch made from inside the content hides or removes the control that
+  // made it, so focus moves into the section it opened. This effect must stay
+  // after the scroll-place one, so a link starts its section at the top.
   useLayoutEffect(() => {
     if (selected !== contentFocus.current) return;
     contentFocus.current = undefined;
@@ -819,6 +873,13 @@ export function Settings({
   const requestedSection =
     navigation?.target.kind === "settings"
       ? (navigation.target.section ?? defaultSection)
+      : undefined;
+  // A visit naming a part lands on it as its section mounts. That wins over
+  // any scroll place Settings restores for the section, so a restore must
+  // skip such a visit.
+  const landing =
+    navigation?.target.kind === "settings" && navigation.target.part
+      ? navigation.entryId
       : undefined;
   useEffect(() => {
     if (
@@ -1018,6 +1079,27 @@ export function Settings({
       navigation?.savePosition(PLUGIN_DETAILS, null);
     }
   }, [catalog, navigation, selectedPlugin, selectedPluginId]);
+  const closePluginImport = () => {
+    // "Open in Buzz" and "Open plugin" show their plugin before this dismissal
+    // lands. An install finishing after Back closes nothing.
+    if (
+      navigation?.target.kind === "settings" &&
+      navigation.target.pluginImport &&
+      navigation.entryId === currentNavigation.current?.entryId
+    )
+      closingVisit.current = true;
+    onPluginImportClosed?.();
+  };
+  const openInstalledPlugin = (id: string) => {
+    pluginTrigger.current =
+      [
+        ...(pluginSection.current?.querySelectorAll<HTMLButtonElement>(
+          "button[data-plugin-id]",
+        ) ?? []),
+      ].find((button) => button.dataset.pluginId === id) ?? null;
+    setActivationAttempt(undefined);
+    showPluginDetails(id);
+  };
   const closePluginDetails = () => {
     holdPluginRow(pluginTrigger.current);
     restorePluginFocus.current = true;
@@ -1334,6 +1416,17 @@ export function Settings({
                       {failure}
                     </p>
                   )}
+                  <PluginUpdateFailure
+                    pluginId={id}
+                    className={styles.pluginRowStatus}
+                    returnFocus={() =>
+                      Array.from(
+                        pluginSection.current?.querySelectorAll<HTMLElement>(
+                          "[data-plugin-id]",
+                        ) ?? [],
+                      ).find((row) => row.dataset.pluginId === id)
+                    }
+                  />
                 </PluginListEntry>
               );
             })}
@@ -1342,15 +1435,10 @@ export function Settings({
       </PluginListEntry>
     );
   };
-  // A new connection's session reads activity again.
+  // The current community supplies the profile shown on the identity card.
   const relay = useSyncExternalStore(
     communities.relay.subscribe,
     communities.relay.snapshot,
-  );
-  const relaySession = relay.status === "ready" ? relay.session : undefined;
-  const lastActive = useCallback(
-    (pubkey: string) => keyActivity(relaySession, pubkey),
-    [relaySession],
   );
   const authorizePluginGit = async (repository: string) => {
     const connection = communities.relay.snapshot();
@@ -1374,6 +1462,7 @@ export function Settings({
   const detail = (
     <>
       <div
+        ref={detailElement}
         className={`${styles.detail} buzz-settings-page`}
         data-integrated={navigationPane || undefined}
       >
@@ -1484,13 +1573,39 @@ export function Settings({
             federatedIdentity={federatedIdentity}
             memberships={client.memberships}
             builderlabIdentity={builderlabIdentity}
-            lastActive={lastActive}
             openBuilderlab={
               openSection &&
               contributed.some((card) => card.key === "block.builderlab/login")
                 ? () => openSection("block.builderlab/login")
                 : undefined
             }
+            profileSession={
+              relay.viewer === client.viewer &&
+              (relay.status === "ready" || relay.cached)
+                ? relay.session
+                : undefined
+            }
+            community={selectedCommunity}
+            accountRows={
+              identityCards.length
+                ? identityCards.map(
+                    (card) =>
+                      card.identityRow && (
+                        <OwnedContribution
+                          key={card.key}
+                          entry={card}
+                          registry={cards}
+                        >
+                          {(entry, active) => {
+                            const Row = entry.identityRow;
+                            return Row ? <Row active={active} /> : null;
+                          }}
+                        </OwnedContribution>
+                      ),
+                  )
+                : undefined
+            }
+            landing={landing}
           />
         )}
         {selected === "security" && (
@@ -1583,6 +1698,7 @@ export function Settings({
                 catalog={catalog}
                 busy={busy}
                 returnFocus={() => pluginSection.current}
+                onOpenInstalled={openInstalledPlugin}
               />
             )}
             {catalog && linkedPlugin && "url" in linkedPlugin && (
@@ -1595,7 +1711,8 @@ export function Settings({
                 requester="A link"
                 holdReview={installRequests?.holdReview}
                 returnFocus={() => pluginSection.current}
-                onClose={() => onPluginImportClosed?.()}
+                onOpenInstalled={openInstalledPlugin}
+                onClose={closePluginImport}
               />
             )}
             {catalog ? (
@@ -1611,17 +1728,7 @@ export function Settings({
                     : undefined
                 }
                 requestSignal={navigation?.signal}
-                onClosed={() => {
-                  // "Open in Buzz" shows its plugin before this dismissal
-                  // lands. An install finishing after Back closes nothing.
-                  if (
-                    navigation?.target.kind === "settings" &&
-                    navigation.target.pluginImport &&
-                    navigation.entryId === currentNavigation.current?.entryId
-                  )
-                    closingVisit.current = true;
-                  onPluginImportClosed?.();
-                }}
+                onClosed={closePluginImport}
                 actionTarget={pluginImportActions}
                 request={
                   installRequest && !isUrlInstallSource(installRequest.source)
@@ -1637,16 +1744,7 @@ export function Settings({
                 catalog={catalog}
                 busy={busy}
                 authorizeGit={authorizePluginGit}
-                onOpenInstalled={(id) => {
-                  pluginTrigger.current =
-                    [
-                      ...(pluginSection.current?.querySelectorAll<HTMLButtonElement>(
-                        "button[data-plugin-id]",
-                      ) ?? []),
-                    ].find((button) => button.dataset.pluginId === id) ?? null;
-                  setActivationAttempt(undefined);
-                  showPluginDetails(id);
-                }}
+                onOpenInstalled={openInstalledPlugin}
                 returnFocus={() => detailsClose.current ?? visibleReturn(null)}
               />
             ) : configuration.status === "recovery" ? (

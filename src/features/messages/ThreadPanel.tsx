@@ -16,6 +16,7 @@ import { moveMessageSelection } from "./message-selection";
 import { MessageSelection } from "./use-message-selection";
 import { MessageEditScope } from "./MessageEditScope";
 import { useMessageSelectionCopy } from "./selection-copy";
+import { SelectionQuote } from "./SelectionQuote";
 import { ReplySummary } from "./ReplySummary";
 import { ReplyBranch } from "./ReplyBranch";
 import { replyTree } from "./reply-tree";
@@ -48,6 +49,7 @@ import {
 import { useProfileGeneration, useRowProfiles } from "../relay/react";
 import { rowProfileIds } from "../relay/membership";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
+import { MessageContextMenus } from "./MessageActionBar";
 import {
   continuesMessageGroup,
   publicMessageNeighbor,
@@ -67,6 +69,7 @@ import { JumpToLatestButton } from "./JumpToLatestButton";
 import { correctScrollTop } from "./scroll-correction";
 
 export type ThreadPanelProps = {
+  intro?: ReactNode;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -406,6 +409,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
   );
 }
 function OwnedThreadPanel({
+  intro,
   session,
   extensions,
   scope,
@@ -482,6 +486,7 @@ function OwnedThreadPanel({
     </div>
   ) : view ? (
     <ThreadMessages
+      intro={intro}
       soloConversation={soloConversation}
       disabled={disabled}
       extensions={extensions}
@@ -510,6 +515,7 @@ function OwnedThreadPanel({
   );
 }
 function ThreadMessages({
+  intro,
   session,
   extensions,
   scope,
@@ -537,6 +543,7 @@ function ThreadMessages({
   onResolvedRoot,
   routePending,
 }: {
+  intro?: ReactNode;
   onResolvedRoot?: ThreadPanelProps["onResolvedRoot"];
   /** A route to this reader is on its way: until it lands, a reader not yet
    * shown stays hidden and unread rather than showing a place the route
@@ -1057,6 +1064,13 @@ function ThreadMessages({
   const rootActivity = rootId ? rootPresentation.byRow.get(rootId) : undefined;
   // A stopped note may follow only a reply that is always shown: collapsed
   // branches do not mount their rows.
+  // Each displayed level is projected alone, but a signed claim may name a
+  // request loaded at another level.
+  const loadedRows = useMemo(
+    () =>
+      snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
+    [snapshot.root, snapshot.replies],
+  );
   const rootReplies = useMemo(
     () =>
       activityPresentation(
@@ -1064,8 +1078,10 @@ function ThreadMessages({
         activitySnapshot,
         agentPubkeys,
         rootId,
+        undefined,
+        loadedRows,
       ),
-    [tree, activitySnapshot, agentPubkeys, rootId],
+    [tree, activitySnapshot, agentPubkeys, rootId, loadedRows],
   );
   const liveAgents = useLiveConversationAgents(session, channelId, rootId);
   const lastMessage = publicMessageNeighbor(rows, rows.length, -1);
@@ -1483,6 +1499,7 @@ function ThreadMessages({
       parent ?? rootId,
       // A failure with replies needs its own visible branch controls.
       (failure) => !tree.children.get(failure.id)?.length,
+      loadedRows,
     );
     const groups = presentation.groups.filter((group) =>
       group.ids.every((id) => !tree.children.get(id)?.length),
@@ -1860,100 +1877,103 @@ function ThreadMessages({
           newMessageCount={newMessageCount}
           onClick={jumpToLatest}
         />
-        <div
-          data-thread-rows=""
-          data-activity-history-scope=""
-          inert={positioning}
-        >
-          {snapshot.root ? (
-            <MessageRow
-              viewer={session.viewer}
-              extensions={extensions}
-              session={session}
-              scope={scope}
-              onReply={soloConversation ? undefined : focusReply}
-              stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
-              row={snapshot.root}
-              representedAgents={stableActivity.agents(
-                snapshot.root.id,
-                rootPresentation.representedAgents.get(snapshot.root.id),
-              )}
-              repliedAgents={stableActivity.agents(
-                `replied:${snapshot.root.id}`,
-                rootReplies.repliedAgents.get(snapshot.root.id),
-              )}
-              recordedActivity={stableActivity.activity(
-                snapshot.root.id,
-                rootActivity,
-                "history",
-              )}
-              profile={profiles.get(snapshot.root.authorId)}
-              participantProfiles={profiles}
-              agentPubkeys={agentPubkeys}
-              media={session.media}
-              onOpenLink={onOpenLink}
-              canOpenLink={canOpenLink}
-              day={false}
-              layout="thread"
-              retry={session.messages.retry}
-              mediaMode="thread"
-              {...(mediaSeek
-                ? {
-                    mediaSeekTo: mediaSeek.seconds,
-                    mediaSeekRequest: mediaSeek.request,
-                  }
-                : {})}
-              {...(onOpenMediaReview
-                ? { onOpenMediaReview: openRootMedia }
-                : {})}
-            />
-          ) : snapshot.status !== "loading" ? (
-            targetUnavailable ? (
-              // One notice, with its recovery beside it, when nothing loaded.
-              <div className={styles.threadNotice}>
-                <p role="status">This message isn’t available.</p>
-                {!historyError && (
-                  <Button type="button" onClick={() => void view.refresh()}>
+        <MessageContextMenus>
+          <div
+            data-thread-rows=""
+            data-activity-history-scope=""
+            inert={positioning}
+          >
+            {snapshot.root && intro}
+            {snapshot.root ? (
+              <MessageRow
+                viewer={session.viewer}
+                extensions={extensions}
+                session={session}
+                scope={scope}
+                onReply={soloConversation ? undefined : focusReply}
+                stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
+                row={snapshot.root}
+                representedAgents={stableActivity.agents(
+                  snapshot.root.id,
+                  rootPresentation.representedAgents.get(snapshot.root.id),
+                )}
+                repliedAgents={stableActivity.agents(
+                  `replied:${snapshot.root.id}`,
+                  rootReplies.repliedAgents.get(snapshot.root.id),
+                )}
+                recordedActivity={stableActivity.activity(
+                  snapshot.root.id,
+                  rootActivity,
+                  "history",
+                )}
+                profile={profiles.get(snapshot.root.authorId)}
+                participantProfiles={profiles}
+                agentPubkeys={agentPubkeys}
+                media={session.media}
+                onOpenLink={onOpenLink}
+                canOpenLink={canOpenLink}
+                day={false}
+                layout="thread"
+                retry={session.messages.retry}
+                mediaMode="thread"
+                {...(mediaSeek
+                  ? {
+                      mediaSeekTo: mediaSeek.seconds,
+                      mediaSeekRequest: mediaSeek.request,
+                    }
+                  : {})}
+                {...(onOpenMediaReview
+                  ? { onOpenMediaReview: openRootMedia }
+                  : {})}
+              />
+            ) : snapshot.status !== "loading" ? (
+              targetUnavailable ? (
+                // One notice, with its recovery beside it, when nothing loaded.
+                <div className={styles.threadNotice}>
+                  <p role="status">This message isn’t available.</p>
+                  {!historyError && (
+                    <Button type="button" onClick={() => void view.refresh()}>
+                      Try again
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <p className={styles.empty}>Original message unavailable.</p>
+              )
+            ) : null}
+            <ol>
+              {showOlderPageStatus && snapshot.error && (
+                <li className={styles.threadHistoryPageStatus}>
+                  <p role="alert">{snapshot.error}</p>
+                  <Button type="button" onClick={retryThread}>
                     Try again
                   </Button>
-                )}
-              </div>
-            ) : (
-              <p className={styles.empty}>Original message unavailable.</p>
-            )
-          ) : null}
-          <ol>
-            {showOlderPageStatus && snapshot.error && (
-              <li className={styles.threadHistoryPageStatus}>
-                <p role="alert">{snapshot.error}</p>
-                <Button type="button" onClick={retryThread}>
-                  Try again
-                </Button>
-              </li>
+                </li>
+              )}
+              {renderReplies(undefined)}
+            </ol>
+            {!preview && !positioning && composerRoot && (
+              <AgentConnectionSetup
+                key={`${channelId}:${rootId}`}
+                session={session}
+                channel={session.channels?.get?.(channelId)}
+                rows={rows}
+              />
             )}
-            {renderReplies(undefined)}
-          </ol>
-          {!preview && !positioning && composerRoot && (
-            <AgentConnectionSetup
-              key={`${channelId}:${rootId}`}
-              session={session}
-              channel={session.channels?.get?.(channelId)}
-              rows={rows}
-            />
-          )}
-          {!positioning && rootId && (
-            <TypingIndicator
-              audience="agents"
-              inFlow
-              session={session}
-              channelId={channelId}
-              threadRootId={rootId}
-              previousAuthor={joinsLive ? lastMessage?.authorId : undefined}
-              openActivity={onOpenLink}
-              canOpenActivity={canOpenLink}
-            />
-          )}
-        </div>
+            {!positioning && rootId && (
+              <TypingIndicator
+                audience="agents"
+                inFlow
+                session={session}
+                channelId={channelId}
+                threadRootId={rootId}
+                previousAuthor={joinsLive ? lastMessage?.authorId : undefined}
+                openActivity={onOpenLink}
+                canOpenActivity={canOpenLink}
+              />
+            )}
+          </div>
+        </MessageContextMenus>
         {requireReadyRoot &&
           snapshot.root &&
           snapshot.root.id !== messageId && (
@@ -2005,6 +2025,7 @@ function ThreadMessages({
       </section>
       {/* After the scroller, so its ref is attached when this registers. */}
       <MessageSelection list={scroller} rows={rows} session={session} />
+      <SelectionQuote list={scroller} />
       {preview && (
         <ChannelJoinNotice
           ready={
@@ -2088,6 +2109,8 @@ function ThreadMessages({
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;
+            // Never count this composer's own send as a new arrival.
+            previousReplies.current.ids.add(id);
             if (selectedParent)
               setExpanded(
                 (current) =>

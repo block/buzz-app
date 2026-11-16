@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { appClient } from "../../buzz-mcp/app-client";
-import { callSessionTool } from "../../buzz-mcp/session-tools";
+import { callSessionTool, type AddedTool } from "../../buzz-mcp/session-tools";
 import type { AgentHandle } from "../../features/agents/service";
 import { ClaudeProcess, stepLabel } from "./claude";
 import {
@@ -31,6 +31,8 @@ it("starts Claude as the SDK does and initializes it with the system prompt", as
     "stream-json",
     "--verbose",
     "--replay-user-messages",
+    "--system-prompt-snapshot",
+    "off",
     "--thinking-display",
     "summarized",
     "--permission-mode",
@@ -57,6 +59,14 @@ it("starts Claude as the SDK does and initializes it with the system prompt", as
   });
   expect(claude.sessionId).toBe("new-session");
   expect(claude.started).toBe(false);
+});
+
+it("resumes a session on the system prompt it is launched with, not the one it saved", async () => {
+  const { spawn, processes } = fakeSpawn();
+  await ClaudeProcess.start(spawn, { ...launch, resume: "old-session" });
+  const args = processes[0]?.options.args ?? [];
+  expect(args).toContain("--resume");
+  expect(args[args.indexOf("--system-prompt-snapshot") + 1]).toBe("off");
 });
 
 it("lets its Buzz credential act as its agent before it initializes", async () => {
@@ -257,6 +267,7 @@ it("moves activity only when the exact follow-up is acknowledged, without ending
   });
   emit({ ...a, isReplay: true });
   expect(first.acknowledged).toHaveBeenCalledOnce();
+  expect(first.acknowledged).toHaveBeenCalledWith(undefined);
   const steered = claude.send("same text", second);
   const b = fake.received.filter((m) => m.type === "user").at(-1);
   if (!b) throw new Error("Expected follow-up");
@@ -270,6 +281,7 @@ it("moves activity only when the exact follow-up is acknowledged, without ending
   emit({ ...b, isReplay: true });
   expect(first.superseded).toHaveBeenCalledOnce();
   expect(second.acknowledged).toHaveBeenCalledOnce();
+  expect(second.acknowledged).toHaveBeenCalledWith({ steering: true });
   emit({ ...b, isReplay: true });
   const watched = claude.send("watched event");
   const watch = fake.received.filter((m) => m.type === "user").at(-1);
@@ -401,7 +413,10 @@ it("settles a stopped turn that Claude ends as aborted tools as stopped, not fai
 /** A Claude whose Buzz tools run through the real app client: its first
  * `mem_get` of `later` holds until `release`, and other reads answer at once.
  * With `holdStops`, Claude answers a Stop only when the test does. */
-async function heldTurns(env?: Record<string, string>) {
+async function heldTurns(
+  env?: Record<string, string>,
+  added: AddedTool[] = [],
+) {
   const { spawn, processes } = fakeSpawn();
   const stops: string[] = [];
   let holdStops = false;
@@ -433,9 +448,15 @@ async function heldTurns(env?: Record<string, string>) {
       };
       const client = appClient(
         { pubkey: "agent", key: "agent" } as unknown as AgentHandle,
-        { read: vi.fn(), memories, signal },
+        { read: vi.fn(), memories, signal, callSignal: signal },
       );
-      return callSessionTool(client, {}, params.name, params.arguments).then(
+      return callSessionTool(
+        client,
+        {},
+        params.name,
+        params.arguments,
+        added,
+      ).then(
         (text) => ({ jsonrpc: "2.0", id, result: { content: [{ text }] } }),
         (error: Error) => ({
           jsonrpc: "2.0",
@@ -469,7 +490,7 @@ async function heldTurns(env?: Record<string, string>) {
     await vi.waitFor(() => expect(fake.received.some(of)).toBe(true));
     return JSON.stringify(fake.received.find(of));
   };
-  const ask = (requestId: string, slug = "later") =>
+  const ask = (requestId: string, slug = "later", name = "mem_get") =>
     fake.emit({
       type: "control_request",
       request_id: requestId,
@@ -480,7 +501,7 @@ async function heldTurns(env?: Record<string, string>) {
           jsonrpc: "2.0",
           id: requestId,
           method: "tools/call",
-          params: { name: "mem_get", arguments: { slug } },
+          params: { name, arguments: { slug } },
         },
       },
     });
@@ -505,6 +526,61 @@ async function heldTurns(env?: Record<string, string>) {
     release: () => release?.(),
   };
 }
+
+it("keeps an added tool canceled after Stop while a new turn can write", async () => {
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const signals: AbortSignal[] = [];
+  const publish = vi.fn();
+  let calls = 0;
+  const t = await heldTurns(undefined, [
+    {
+      name: "notes_write",
+      description: "Write a note.",
+      inputSchema: { type: "object" },
+      async call(client) {
+        const first = ++calls === 1;
+        if (first) entered();
+        if (!client.signal) throw new Error("No request cancellation signal");
+        const signal = client.signal;
+        signals.push(signal);
+        if (first) await waiting;
+        signal.throwIfAborted();
+        publish();
+        return "saved";
+      },
+    },
+  ]);
+  try {
+    t.fake.hold = true;
+    const stopped = t.claude.send("write");
+    await flush();
+    t.ask("r1", "later", "notes_write");
+    await started;
+    expect(signals[0]?.aborted).toBe(false);
+    await t.claude.interrupt();
+    expect(signals[0]?.aborted).toBe(true);
+    abortTools(t.fake);
+    await expect(stopped).resolves.toEqual({ ok: true, stopped: true });
+    void t.claude.send("write again");
+    await flush();
+    t.ask("r2", "later", "notes_write");
+    expect(await t.answer("r2")).toContain("saved");
+    expect(signals[1]?.aborted).toBe(false);
+    release();
+    expect(await t.answer("r1")).toContain('"isError":true');
+    expect(publish).toHaveBeenCalledOnce();
+  } finally {
+    release();
+    t.fake.finish();
+  }
+});
 
 it("withholds a read an unprotected Stop overtook, which later work cannot revive", async () => {
   const t = await heldTurns();
@@ -898,6 +974,7 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send or subth
     "chan/root",
     call,
     expect.any(AbortSignal),
+    expect.any(Function),
   );
   const responses = fake.received
     .filter((message) => message.type === "control_response")

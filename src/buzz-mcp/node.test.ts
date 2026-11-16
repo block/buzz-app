@@ -246,6 +246,26 @@ it("searches profile names, signed, and reports a community without the search",
   );
 });
 
+it.each([
+  [
+    "advertises it",
+    async () => Response.json({ supported_extensions: ["buzz-search-sort"] }),
+    true,
+  ],
+  [
+    "does not",
+    async () => Response.json({ supported_extensions: ["nip-cl"] }),
+    false,
+  ],
+  ["cannot be read", async () => new Response("no", { status: 503 }), false],
+])(
+  "sorts a search by newest only when the relay's NIP-11 %s",
+  async (_, answer, sortable) => {
+    vi.stubGlobal("fetch", vi.fn(answer));
+    expect(await client().searchSort?.()).toBe(sortable);
+  },
+);
+
 describe("relayAuthority", () => {
   const key = "a".repeat(64);
   const relay = (answer: () => Promise<Response>) => {

@@ -229,31 +229,36 @@ export const TOOLS: readonly Tool[] = [
     { id: str, emoji: str, off: { type: "boolean" } },
     ["id", "emoji"],
   ),
-  tool("read", "Read a thread (default: current) or a channel's latest.", {
-    channel: str,
-    thread: str,
-    message_url: {
-      type: "string",
-      description: "Buzz message link; replaces channel and thread.",
+  tool(
+    "read",
+    "Read a thread (default: current), a channel's latest, or search with q.",
+    {
+      channel: str,
+      thread: str,
+      message_url: {
+        type: "string",
+        description: "Buzz message link; replaces channel and thread.",
+      },
+      q: str,
+      author: {
+        type: "string",
+        description: "With q or channel: only this hex pubkey or npub.",
+      },
+      since: {
+        type: "integer",
+        description: "With q or channel: Unix seconds, at or after.",
+      },
+      before: { type: "integer", description: "Unix seconds, at or before." },
+      before_id: {
+        type: "string",
+        description: "For paginating: with before, from a continue line.",
+      },
+      limit: {
+        type: "integer",
+        description: "Search 20 (max 100), thread 100 (500), channel 30 (200).",
+      },
     },
-    author: {
-      type: "string",
-      description: "With channel: only this hex pubkey or npub.",
-    },
-    since: {
-      type: "integer",
-      description: "With channel: Unix seconds, at or after.",
-    },
-    before: { type: "integer", description: "Unix seconds, at or before." },
-    before_id: {
-      type: "string",
-      description: "For paginating: with before, from a continue line.",
-    },
-    limit: {
-      type: "integer",
-      description: "Thread 100 (max 500), channel 30 (200).",
-    },
-  }),
+  ),
   tool(
     "search",
     'Search messages you can read, best match first. The query q matches whole words only, not other forms of a word, and supports "exact phrase", -word and a or b. Without q, the newest messages matching the other fields. Each result has a link to cite it or open it with read.',
@@ -268,12 +273,12 @@ export const TOOLS: readonly Tool[] = [
       after: {
         type: "string",
         description:
-          "Only messages at or after this time: a date YYYY-MM-DD (from its start, UTC) or a time back from now: 7d, 2w, 3m, 1y.",
+          "Only messages at or after this time: a date YYYY-MM-DD (from its start, UTC), a UTC time YYYY-MM-DDTHH:MM:SSZ, or a time back from now: 7d, 2w, 3m, 1y.",
       },
       before: {
         type: "string",
         description:
-          "Only messages before this time, not at it: a date YYYY-MM-DD (from its start, UTC, so that day is left out) or a time back from now: 7d, 2w, 3m, 1y.",
+          "Only messages before this time, not at it: a date YYYY-MM-DD (from its start, UTC, so that day is left out), a UTC time YYYY-MM-DDTHH:MM:SSZ, or a time back from now: 7d, 2w, 3m, 1y.",
       },
       sort: { type: "string", enum: ["relevance", "newest"] },
       limit: { type: "integer", description: "Default 30, max 100." },
@@ -772,11 +777,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       "message_url",
       "author",
       "before_id",
-      "q",
     ]);
-    // Earlier versions searched here; a stale prompt must not get a thread.
-    if (args.q !== undefined)
-      throw new Error("read does not search; use search.");
     if (args.message_url !== undefined) {
       if (args.channel !== undefined || args.thread !== undefined)
         throw new Error(
@@ -821,7 +822,32 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       ...(before !== undefined ? { until: before } : {}),
       ...(beforeId ? { before_id: beforeId } : {}),
     };
+    const q = text(args.q);
     let channel = text(args.channel) ?? context.channel;
+    if (q) {
+      if (beforeId)
+        throw new Error(
+          "before_id pages thread and channel reads; narrow a search with before or since.",
+        );
+      const max = bound(limit, 20, 100);
+      const found = await client.query([
+        {
+          kinds: SEARCH,
+          search: q,
+          limit: max,
+          ...(args.channel ? { "#h": [channel] } : {}),
+          ...cursor,
+          ...filters,
+        },
+      ]);
+      const lines = await tools.messages(found, {});
+      if (!lines.length) return "No messages.";
+      if (found.length >= max)
+        lines.push(
+          "Result limit reached; more matches may exist. Narrow with channel, author, since or before.",
+        );
+      return lines.join("\n");
+    }
     let scope: { channel?: string; root?: string };
     let max: number;
     let more: Args;
@@ -830,7 +856,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (text(args.thread) || (args.channel === undefined && context.root)) {
       if (author || since !== undefined)
         throw new Error(
-          "author and since filter a channel read, not a thread; add channel, or use search.",
+          "author and since filter a search (q) or a channel read, not a thread; add q or channel.",
         );
       const id = text(args.thread) ?? (context.root as string);
       let root = id;
@@ -930,7 +956,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       args.in === undefined ? undefined : await tools.place(String(args.in));
     if (!q && !from && !place && since === undefined && until === undefined)
       throw new Error("Give q, or from, in, after or before.");
-    const newest = !q || sort === "newest";
+    // A community that can't sort a search by newest ranks it by relevance.
+    const sortable =
+      q && sort === "newest"
+        ? await client.searchSort?.().catch(() => false)
+        : false;
+    const newest = !q || sortable === true;
     const found = await client.query([
       {
         kinds: q ? SEARCH : MESSAGES,
@@ -953,28 +984,25 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       : [];
     const latest = new Map(edited([...found, ...edits]).map((e) => [e.id, e]));
     const hits = found.flatMap((event) => latest.get(event.id) ?? []);
-    // A relay without newest-first search ranks by relevance instead.
-    const unsorted =
-      q &&
-      newest &&
-      hits.some(
-        (event, i) =>
-          i > 0 && event.created_at > (hits[i - 1] as BuzzEvent).created_at,
-      );
-    const order = !newest
-      ? "best match first"
-      : unsorted
+    const order = newest
+      ? "newest first"
+      : sort === "newest"
         ? "best match first (this community can't sort a search by newest)"
-        : "newest first";
+        : "best match first";
     const owners = hits.flatMap((event) => tag(event, "auth") ?? []);
     const names = await tools.names([
       ...(from ? [from] : []),
       ...hits.map((e) => e.pubkey),
       ...owners,
     ]);
+    // Always the key: anyone can take another person's display name.
+    const who = (key: string) => {
+      const name = names.get(key);
+      return name ? `${key} ${JSON.stringify(name)}` : key;
+    };
     const asked = [
       q && JSON.stringify(q),
-      from && `from ${names.get(from) ?? from}`,
+      from && `from ${who(from)}`,
       place && `in ${place.label}`,
       text(args.after) && `after ${text(args.after)}`,
       text(args.before) && `before ${text(args.before)}`,
@@ -986,19 +1014,6 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!hits.length)
       return `No messages${page > 1 ? ` on page ${page}` : ""} for ${asked}.\n${scope}`;
     const places = await tools.places(hits.flatMap((e) => tag(e, "h") ?? []));
-    const shared = new Map<string, Set<string>>();
-    for (const { pubkey } of hits) {
-      const name = names.get(pubkey);
-      if (name) shared.set(name, (shared.get(name) ?? new Set()).add(pubkey));
-    }
-    const who = (key: string) => {
-      const name = names.get(key);
-      return !name
-        ? key
-        : (shared.get(name)?.size ?? 0) > 1
-          ? `${name} (${key})`
-          : name;
-    };
     const words = q?.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
     const lines = hits.map((event, i) => {
       const channel = tag(event, "h");
@@ -1010,8 +1025,8 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       const meta = [
         link,
         channel && (places.get(channel) ?? channel),
-        who(event.pubkey),
-        owner && `agent, claimed owner ${who(owner)}`,
+        `from ${who(event.pubkey)}`,
+        owner && `claimed owner ${who(owner)}`,
         time(event.created_at),
         thread && "in a thread",
       ].filter(Boolean);
@@ -1026,9 +1041,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       ...(q ? { q } : {}),
       ...(from ? { from } : {}),
       ...(place ? { in: place.id } : {}),
-      ...(text(args.after) ? { after: text(args.after) } : {}),
-      ...(text(args.before) ? { before: text(args.before) } : {}),
-      ...(q && newest ? { sort } : {}),
+      // Resolved, so a span like 7d does not move between pages.
+      ...(since !== undefined ? { after: utc(since) } : {}),
+      ...(before !== undefined ? { before: utc(before) } : {}),
+      ...(q && sort === "newest" ? { sort } : {}),
       limit,
       page: page + 1,
     };
@@ -3042,8 +3058,13 @@ function unixTime(args: Args, key: string) {
 
 const AGO: Record<string, number> = { d: 1, w: 7, m: 30, y: 365 };
 
-/** `args[key]` as Unix seconds: the start of a UTC date (YYYY-MM-DD), or a
- * span back from now (7d, 2w, 3m, 1y; a month is 30 days). */
+/** Unix `seconds` as a UTC time searchTime reads back. */
+const utc = (seconds: number) =>
+  new Date(seconds * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+
+/** `args[key]` as Unix seconds: the start of a UTC date (YYYY-MM-DD), a UTC
+ * time (YYYY-MM-DDTHH:MM:SSZ), or a span back from now (7d, 2w, 3m, 1y; a
+ * month is 30 days). */
 function searchTime(args: Args, key: string) {
   const value = text(args[key]);
   if (value === undefined) return undefined;
@@ -3053,13 +3074,16 @@ function searchTime(args: Args, key: string) {
       Math.floor(Date.now() / 1000) -
       Number(ago[1]) * (AGO[(ago[2] as string).toLowerCase()] as number) * 86400
     );
-  const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  const ms = date
-    ? Date.UTC(Number(date[1]), Number(date[2]) - 1, Number(date[3]))
-    : NaN;
-  if (!date || new Date(ms).toISOString().slice(0, 10) !== value)
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const ms = Date.parse(day ? `${value}T00:00:00Z` : value);
+  // The round trip rejects other forms and impossible dates such as 02-30.
+  if (
+    !(day || /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)) ||
+    Number.isNaN(ms) ||
+    utc(ms / 1000) !== (day ? `${value}T00:00:00Z` : value)
+  )
     throw new Error(
-      `${key} must be a date (YYYY-MM-DD) or a span back from now (7d, 2w, 3m, 1y).`,
+      `${key} must be a date (YYYY-MM-DD), a UTC time (YYYY-MM-DDTHH:MM:SSZ) or a span back from now (7d, 2w, 3m, 1y).`,
     );
   return ms / 1000;
 }

@@ -888,9 +888,14 @@ it("reads the current thread when optional fields are blank or 0", async () => {
 
 it.each([
   ["channel", { channel: "chan" }],
+  ["search", { q: "hello" }],
   ["current thread", {}],
   ["explicit thread", { thread: nested }],
   ["message link", { message_url: `buzz://message?channel=chan&id=${nested}` }],
+  [
+    "message search",
+    { message_url: `buzz://message?channel=chan&id=${nested}`, q: "hello" },
+  ],
 ] as const)(
   "keeps agent ownership and nested reply context in a %s read",
   async (_, args) => {
@@ -936,7 +941,7 @@ it.each([
     expect(line).toContain(`from ${alice} "Alice Smith" claimed owner ${bob}`);
     expect(line).toContain(`reply_to ${nested}`);
     expect(line).toContain("hello, edited");
-    if ("channel" in args) expect(line).toContain(`re ${root}`);
+    if ("channel" in args || "q" in args) expect(line).toContain(`re ${root}`);
     else expect(text.split("\n")[0]).toBe(`thread ${root} in chan`);
     // Human authors and direct replies keep their compact, unambiguous form.
     expect(
@@ -969,7 +974,47 @@ const next = (answer: string) => {
   return found ? (JSON.parse(found) as Record<string, unknown>) : undefined;
 };
 
-it("names a channel once in a channel read, and each reply's thread", async () => {
+it("searches one author's messages since a time across channels, before the limit", async () => {
+  const { client } = fake([
+    profile(alice, "Alice Smith"),
+    event({ id: "3".repeat(64), created_at: 50, content: "too old" }),
+    event({
+      id: "4".repeat(64),
+      created_at: 200,
+      content: "rollout done",
+      tags: [["h", "other"]],
+    }),
+    // Newer messages from someone else that a limit applied first would keep.
+    ...["5", "6", "7"].map((n) =>
+      event({ id: n.repeat(64), pubkey: bob, created_at: 300 }),
+    ),
+  ]);
+  const answer = await read(client, {
+    q: "rollout",
+    author: npubEncode(alice),
+    since: 100,
+    limit: 2,
+  });
+  expect(answer).toBe(
+    `${"4".repeat(64)} from ${alice} "Alice Smith" in other at 1970-01-01T00:03Z: rollout done`,
+  );
+  // Without a channel, search still spans every channel it can read.
+  expect(client.query).toHaveBeenCalledWith([
+    {
+      kinds: [9, 40002, 45001, 45003],
+      search: "rollout",
+      limit: 2,
+      authors: [alice],
+      since: 100,
+    },
+  ]);
+  // A full page says more may match.
+  expect(await read(client, { q: "x", limit: 1 })).toMatch(
+    /\nResult limit reached; more matches may exist\. Narrow with channel, author, since or before\.$/,
+  );
+});
+
+it("tells apart people with the same name, and where each message is", async () => {
   const { client } = fake([
     profile(alice, "Sam"),
     profile(bob, "Sam"),
@@ -985,6 +1030,11 @@ it("names a channel once in a channel read, and each reply's thread", async () =
       ],
     }),
   ]);
+  expect((await read(client, { q: "ship" })).split("\n")).toEqual([
+    `${"3".repeat(64)} from ${alice} "Sam" in chan at 1970-01-01T00:01Z: ship it`,
+    `${"4".repeat(64)} from ${bob} "Sam" in other re ${root} at 1970-01-01T00:02Z: ship it too`,
+  ]);
+  // A channel read names the channel once, and each reply's thread.
   expect(
     (await read(client, { channel: "other", author: bob, since: 110 })).split(
       "\n",
@@ -1045,30 +1095,26 @@ it("pages a thread to its start, each reply once, through timestamp ties", async
 it("refuses read arguments it cannot apply, saying how to fix them", async () => {
   const { client } = fake(community);
   for (const [args, error] of [
-    // A prompt written for earlier versions must not get a thread instead.
-    [{ q: "x" }, "read does not search; use search."],
-    [
-      { channel: "chan", author: "alice" },
-      "author must be a hex pubkey or npub",
-    ],
-    [{ channel: "chan", author: 7 }, "author must be a hex pubkey or npub"],
-    [{ channel: "chan", since: "friday" }, "since must be Unix seconds"],
-    [{ channel: "chan", since: -1 }, "since must be Unix seconds"],
-    [{ channel: "chan", since: 1.5 }, "since must be Unix seconds"],
-    [
-      { channel: "chan", since: 1_760_000_000_000 },
-      "since must be Unix seconds",
-    ],
-    [
-      { channel: "chan", since: 200, before: 100 },
-      "since must not be after before",
-    ],
+    [{ q: "x", author: "alice" }, "author must be a hex pubkey or npub"],
+    [{ q: "x", author: 7 }, "author must be a hex pubkey or npub"],
+    [{ q: "x", since: "friday" }, "since must be Unix seconds"],
+    [{ q: "x", since: -1 }, "since must be Unix seconds"],
+    [{ q: "x", since: 1.5 }, "since must be Unix seconds"],
+    [{ q: "x", since: 1_760_000_000_000 }, "since must be Unix seconds"],
+    [{ q: "x", since: 200, before: 100 }, "since must not be after before"],
     [{ channel: "chan", before_id: root }, "before_id needs before"],
     [{ channel: "chan", before: 1, before_id: "x" }, "before_id must be"],
-    [{ author: alice }, "author and since filter a channel read, not a thread"],
+    [
+      { q: "x", before: 1, before_id: root },
+      "before_id pages thread and channel reads",
+    ],
+    [
+      { author: alice },
+      "author and since filter a search (q) or a channel read",
+    ],
     [
       { thread: root, since: 1 },
-      "author and since filter a channel read, not a thread",
+      "author and since filter a search (q) or a channel read",
     ],
   ] as const)
     await expect(read(client, args), JSON.stringify(args)).rejects.toThrow(
@@ -1158,11 +1204,11 @@ it("searches by name, channel and date, best match first, citing each hit", asyn
     },
   ]);
   expect(answer.split("\n")).toEqual([
-    '2 results for "deploy" from Alice Smith in #ops after 1970-01-02 before 1970-01-04, best match first.',
+    `2 results for "deploy" from ${alice} "Alice Smith" in #ops after 1970-01-02 before 1970-01-04, best match first.`,
     SCOPE,
-    `[1] buzz://message?channel=other&id=${best.id} · #ops · Alice Smith · agent, claimed owner Bob · 1970-01-03T00:00Z`,
+    `[1] buzz://message?channel=other&id=${best.id} · #ops · from ${alice} "Alice Smith" · claimed owner ${bob} "Bob" · 1970-01-03T00:00Z`,
     "    relay deploy done; deploy verified",
-    `[2] buzz://message?channel=other&id=${reply.id}&thread=${root} · #ops · Alice Smith · 1970-01-03T00:01Z · in a thread`,
+    `[2] buzz://message?channel=other&id=${reply.id}&thread=${root} · #ops · from ${alice} "Alice Smith" · 1970-01-03T00:01Z · in a thread`,
     "    the deploy, edited",
     "No more matches.",
   ]);
@@ -1214,9 +1260,9 @@ it("reads newest history without q, in a DM named by its person, a page at a tim
     },
   ]);
   expect(first.split("\n")).toEqual([
-    "1 result for from Helper in DM with Bob, newest first.",
+    `1 result for from ${me} "Helper" in DM with Bob, newest first.`,
     SCOPE,
-    `[1] buzz://message?channel=dm1&id=${"3".repeat(64)} · DM with Bob · Helper · 1970-01-01T00:03Z`,
+    `[1] buzz://message?channel=dm1&id=${"3".repeat(64)} · DM with Bob · from ${me} "Helper" · 1970-01-01T00:03Z`,
     "    hi bob",
     `More may match; continue with {"from":"${me}","in":"dm1","limit":1,"page":2}`,
   ]);
@@ -1230,39 +1276,72 @@ it("reads newest history without q, in a DM named by its person, a page at a tim
   expect(second).toContain("\n[2] buzz://message?channel=dm1&id=");
 });
 
-it("asks for newest first from a span back, and says when the community ranked anyway", async () => {
+it("sorts newest first only where the community says it can", async () => {
+  const older = event({ id: "3".repeat(64), created_at: 100, content: "x" });
+  const newer = event({ id: "4".repeat(64), created_at: 200, content: "x" });
+  const { client } = fake([older, newer]);
+  // A relevance page in date order proves nothing about the sort.
+  ranking(client, () => [newer, older]);
+  const header = async () =>
+    (await search(client, { q: "x", sort: "newest" })).split("\n")[0];
+  // A host that can't say, or a community that doesn't advertise it.
+  for (const searchSort of [
+    undefined,
+    async () => false,
+    async () => {
+      throw new Error("offline");
+    },
+  ]) {
+    if (searchSort) client.searchSort = searchSort;
+    else delete client.searchSort;
+    expect(await header()).toBe(
+      `2 results for "x", best match first (this community can't sort a search by newest).`,
+    );
+    expect(client.query).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        expect.not.objectContaining({ search_sort: "newest" }),
+      ]),
+    );
+  }
+  client.searchSort = async () => true;
+  expect(await header()).toBe(`2 results for "x", newest first.`);
+  expect(client.query).toHaveBeenCalledWith([
+    { kinds: SEARCH_KINDS, limit: 30, search: "x", search_sort: "newest" },
+  ]);
+});
+
+it("keeps a span back from now fixed across pages", async () => {
   vi.useFakeTimers();
   try {
     vi.setSystemTime(30 * DAY * 1000);
-    const older = event({ id: "3".repeat(64), created_at: 100, content: "x" });
-    const newer = event({ id: "4".repeat(64), created_at: 200, content: "x" });
-    const { client } = fake([older, newer]);
-    let ranked = [older, newer];
-    ranking(client, () => ranked);
-    const header = async () =>
-      (await search(client, { q: "x", sort: "newest", after: "7d" })).split(
-        "\n",
-      )[0];
-    expect(await header()).toBe(
-      `2 results for "x" after 7d, best match first (this community can't sort a search by newest).`,
-    );
+    const { client } = fake([event({ created_at: 25 * DAY, content: "x" })]);
+    const first = await search(client, { q: "x", after: "7d", limit: 1 });
     expect(client.query).toHaveBeenCalledWith([
-      {
-        kinds: SEARCH_KINDS,
-        limit: 30,
-        search: "x",
-        search_sort: "newest",
-        since: 23 * DAY,
-      },
+      expect.objectContaining({ search: "x", since: 23 * DAY }),
     ]);
-    ranked = [newer, older];
-    expect(await header()).toBe(`2 results for "x" after 7d, newest first.`);
+    expect(next(first)).toEqual({
+      q: "x",
+      after: "1970-01-24T00:00:00Z",
+      limit: 1,
+      page: 2,
+    });
+    // An hour later, page 2 still starts where page 1 did.
+    vi.setSystemTime(30 * DAY * 1000 + 3_600_000);
+    await search(client, next(first) as Record<string, unknown>);
+    expect(client.query).toHaveBeenCalledWith([
+      expect.objectContaining({ page: 2, since: 23 * DAY }),
+    ]);
+    // A UTC time is read to the second; before excludes it.
+    await search(client, { q: "x", before: "1970-01-24T00:00:05Z" });
+    expect(client.query).toHaveBeenCalledWith([
+      expect.objectContaining({ until: 23 * DAY + 4 }),
+    ]);
   } finally {
     vi.useRealTimers();
   }
 });
 
-it("tells apart people with the same name, and cuts long messages around the match", async () => {
+it("gives every author's key, whatever name they chose, and cuts long messages around the match", async () => {
   const long = `${"a ".repeat(300)}needle${" b".repeat(300)}`;
   const { client } = fake([
     profile(alice, "Sam"),
@@ -1272,8 +1351,8 @@ it("tells apart people with the same name, and cuts long messages around the mat
     event({ id: "4".repeat(64), pubkey: bob, created_at: 120, content: "x" }),
   ]);
   const lines = (await search(client, { q: "needle" })).split("\n");
-  expect(lines[2]).toContain(` · #general · Sam (${bob}) · `);
-  expect(lines[4]).toContain(` · #general · Sam (${alice}) · `);
+  expect(lines[2]).toContain(` · #general · from ${bob} "Sam" · `);
+  expect(lines[4]).toContain(` · #general · from ${alice} "Sam" · `);
   const cut = lines[5] as string;
   expect(cut).toMatch(/^ {4}…a a .*needle b b .*…$/);
   expect(cut.length).toBeLessThanOrEqual(4 + 402);
@@ -1297,6 +1376,14 @@ it("refuses search arguments it cannot apply, saying how to fix them", async () 
     [{ q: "x", page: 1.5 }, "page must be a whole number, 1 or more."],
     [{ q: "x", after: "friday" }, "after must be a date (YYYY-MM-DD)"],
     [{ q: "x", before: "2026-02-30" }, "before must be a date (YYYY-MM-DD)"],
+    [
+      { q: "x", after: "2026-01-02T25:00:00Z" },
+      "after must be a date (YYYY-MM-DD)",
+    ],
+    [
+      { q: "x", after: "2026-01-02T10:00:00+01:00" },
+      "after must be a date (YYYY-MM-DD)",
+    ],
     [
       { q: "x", after: "2026-01-02", before: "2026-01-02" },
       "after must be earlier than before.",

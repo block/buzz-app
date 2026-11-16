@@ -47,6 +47,14 @@ const SHOWN_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
  * such as channel rosters, are checked against.
  * `undefined` when it cannot be learned; the tools that need it then refuse. */
 export async function relayAuthority(relay: string) {
+  const author = (await relayInfo(relay))?.self;
+  return typeof author === "string" && /^[0-9a-f]{64}$/.test(author)
+    ? author
+    : undefined;
+}
+
+/** The relay's NIP-11 document at `relay`; `undefined` when it cannot be read. */
+async function relayInfo(relay: string) {
   try {
     const response = await fetch(httpBase(relay), {
       headers: { Accept: "application/nostr+json" },
@@ -54,10 +62,9 @@ export async function relayAuthority(relay: string) {
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) return undefined;
-    const nip11 = (await response.json()) as { self?: unknown } | null;
-    const author = nip11?.self;
-    return typeof author === "string" && /^[0-9a-f]{64}$/.test(author)
-      ? author
+    const info: unknown = await response.json();
+    return info && typeof info === "object" && !Array.isArray(info)
+      ? (info as Record<string, unknown>)
       : undefined;
   } catch {
     return undefined;
@@ -188,6 +195,12 @@ export function nodeClient(
       // A community without profile name search.
       if (response.status === 404 || response.status === 405) return undefined;
       return eventsDto(await json(response));
+    },
+    async searchSort() {
+      const extensions = (await relayInfo(options.relay))?.supported_extensions;
+      return (
+        Array.isArray(extensions) && extensions.includes("buzz-search-sort")
+      );
     },
     publish(event) {
       const tags = event.tags.filter(

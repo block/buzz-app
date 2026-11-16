@@ -555,6 +555,9 @@ export type AgentHandle = Readonly<{
     query: string,
     limit: number,
   ): Promise<RelayEvent[] | undefined>;
+  /** Whether its community advertises `buzz-search-sort`, so a search can
+   * ask for newest first. */
+  searchSort?(): Promise<boolean>;
   /** Uploads base64 `data`, a file of any type its community accepts, as
    * the agent. `mime` is a hint; the community decides the type. */
   upload(data: string, mime: string): Promise<AgentUpload>;

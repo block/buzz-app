@@ -770,6 +770,23 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
    // The key's next turn runs through the gateway as before.
    assert.equal((await runAs(pi,who,'b10',{key})).status,'done');
    assert.deepEqual(sent(from).map(msg),['b10']);}
+  // The same with the modes swapped: an ordinary turn waiting for a gateway
+  // run is withdrawn by an Interrupt, and once that run ends Pi's own
+  // provider is never asked for it.
+  {const holding=Promise.withResolvers(),asked=Promise.withResolvers();
+   replies.push(async(init,url)=>{asked.resolve();await holding.promise;return say('gateway interrupted')(init,url);});
+   const own=[];faux.setResponses([c=>{own.push(JSON.stringify(c));return fauxAssistantMessage('ordinary interrupted');}]);
+   const g=await pi.rpc('deliver',turn('b8g',{agent:who,key}));
+   await asked.promise;
+   parked=parking();
+   const late=pi.rpc('deliver',turn('b9o',{agent:who,...ordinary,text:'ordinary interrupted work',steer:'ordinary interrupted work'}));
+   await parked;
+   const interrupting=pi.rpc('session',{agent:who,key,action:'interrupt'});
+   assert.equal(await within(late,'an ordinary turn interrupted while it waits'),false);
+   holding.resolve();await interrupting;
+   assert.equal((await pi.rpc('wait',{agent:who,submission:g.submission,request:'b8g'})).status,'unanswered');
+   assert.deepEqual(own,[]);
+   assert.ok(!(await pi.rpc('unfinished',{agent:who})).submissions.some(s=>s.request==='b9o'));}
   // Access revoked while a gateway turn waits for the other mode's run: it
   // starts once that run ends, and its request is refused visibly, sent
   // nowhere.

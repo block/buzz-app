@@ -1293,13 +1293,17 @@ available rather than silently discarding it.
   **Load older** fetches more history. Reverting one track saves
   a new revision without changing the other track.
 - Some builds run a Pi agent in certain communities through a model gateway.
-  Its Settings, providers and models stay Pi's own: Buzz sends the agent's
-  chosen Anthropic or OpenAI model through the gateway in the background.
-  When Buzz can't use the gateway for a turn (for example readiness or
-  network), the turn runs on the agent's own configured provider and model,
-  and its prompt notes "Ran without the agent gateway" with the reason. A
-  sign-in the gateway refuses fails the turn instead. Buzz never resends work
-  already sent through the gateway without it.
+  Its Settings, providers and models stay Pi's own, with no gateway entry:
+  Buzz sends the agent's chosen Anthropic or OpenAI model through the gateway
+  in the background. A gateway turn on another provider's model fails with a
+  note to choose an Anthropic or OpenAI model in its Identity tab, and a model
+  the gateway doesn't serve fails with the gateway's answer; neither runs
+  without the gateway. When Buzz can't use the gateway for a turn (for example
+  readiness or network), the turn runs on the agent's own configured provider
+  and model, and only then does its prompt note "Ran without the agent
+  gateway" with the reason. A sign-in the gateway refuses fails the turn
+  instead. Buzz never resends work already sent through the gateway without
+  it.
 - **Agents → Your teams → Previous versions**, in a team's editor, lists the
   saved versions of a team that syncs to a community, the same way. Reverting
   restores its instructions and keeps its current name; members are not

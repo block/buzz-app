@@ -694,6 +694,15 @@ and are asked to sign in again in Buzz.
   available when the pause ends; it checks your permission again before deleting.
   For an open Solo chat, the confirmation reappears over the new destination.
   **Cancel** keeps the chat; you can reopen it from the sidebar.
+- **Archived channels** show **Archived · view only** above their messages.
+  You can still read them, but they're hidden from the sidebar; find them in
+  search. If you own or administer the channel, choose **Unarchive** there to
+  restore it for everyone.
+- **No longer a member**: if you're removed from the channel you're reading,
+  or it's deleted, or you leave it on another device, it says **You’re no
+  longer a member of** that channel. Choose **Back to channels** to move on. A
+  public channel stays readable below, with **Join** where the channel allows
+  it.
 - **Pasted web links** keep their labels when the clipboard's HTML and plain
   text agree, including image alt text. Use ordinary paste; plain-text paste
   uses only the clipboard's plain text.
@@ -706,6 +715,8 @@ and are asked to sign in again in Buzz.
   ⌘/Ctrl+Enter sends. It starts off.
 - If a message can't be sent, **Retry** appears under it right away. If its
   delivery is only unconfirmed, Buzz waits about ten seconds before saying so.
+  Some plugins prepare before a message sends. After a restart, Buzz can't
+  retry such a message by itself and says to retry it from the plugin.
   To give up on it, choose **Delete message** in its "..." menu for a message
   that wasn't sent, or **Remove from this device** for an unconfirmed one. Both
   only stop this device from sending it; an unconfirmed message that did reach
@@ -1004,6 +1015,12 @@ available rather than silently discarding it.
   uses. Available types and models depend on the platform, active plugins, and
   provider setup. Tools and connections depend on that agent's configuration;
   naming a service or adding instructions does not connect it.
+- Codex agents don't use Codex apps (ChatGPT connectors such as Gmail or
+  Google Drive) or Codex plugins unless **Codex apps and plugins** is turned
+  on in that agent's settings on this computer. They then get the apps
+  connected to Codex's ChatGPT sign-in here. Codex's `/plugins` can list an
+  app before it is connected; connect it in ChatGPT first. Protected agents
+  never get them.
 - On desktop, Buzz starts every agent with `BUZZ_VERSION` set to the app's
   version, and agents usually pass it on to the shell commands they run. A
   script or shell config can check for it to tell it is running under Buzz.
@@ -1079,6 +1096,11 @@ available rather than silently discarding it.
   that Builderlab server's site, where the account's usage and billing are.
   The **Remote agent** hint in a signed-in Builderlab agent's **Identity** tab
   also links to **See usage and billing** on that site.
+- Remote agents use the Builderlab server of the community you're viewing when
+  your build signs in to more than one, such as a staging server; elsewhere they
+  use the build's own Builderlab. **Settings → Plugins → Builderlab** names
+  that server beside **Remote agents** when it isn't the build's own. Manage
+  such an agent from one of its server's communities.
 - Builderlab sign-in is needed to create or delete a hosted agent and to edit its
   model or instructions. Sign in to the same Builderlab account that created the
   agent; another account cannot manage it. Chat, Memory, and Activity use the
@@ -1297,8 +1319,12 @@ available rather than silently discarding it.
   Builderlab permissions are re-read at most once a minute while the app uses
   them, so a newly granted or removed permission applies without signing in
   again; a failed check keeps the previous permissions.
-  Claude runs with an Anthropic API key pasted under **Anthropic API key**
-  there, once for every local Claude agent. With the Claude plugin enabled,
+  Claude uses your own Claude setup when one already works on this computer,
+  such as Amazon Bedrock or Google Vertex AI, configured with the Claude CLI. Buzz never changes that setup or adds its
+  key to it. Without one, Claude runs with an Anthropic API key pasted under
+  **Anthropic API key** there, once for every local Claude agent. Key setup
+  offers **Refresh**, which looks again for a setup you made with the Claude
+  CLI meanwhile. With the Claude plugin enabled,
   **Settings → Claude → Set** opens **Connect Claude** to add a key. Back hides
   setup and Forward restores its draft while the Claude page remains open.
   The input keeps focus but is read-only while secure storage is checked. If the
@@ -1331,7 +1357,8 @@ available rather than silently discarding it.
   (Keychain on macOS) and
   gives it to every Claude process, security reviews included. Commands a
   Claude agent runs inherit it, so they can read the key. Until a key is
-  saved, Claude agents don't answer and Claude reviews fail closed.
+  saved or Claude has a setup of its own, Claude agents don't answer. Claude
+  security reviews always use the saved key, and fail closed without one.
   Codex security reviews for protected agents need a ChatGPT sign-in made
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace. Codex's harness defaults offer that sign-in while Codex is signed
@@ -1379,7 +1406,13 @@ available rather than silently discarding it.
   A turn's **Thread** or **Channel** label
   opens that conversation. Choosing an agent in the activity under a message,
   or a Working now agent whose conversation is known, opens that
-  conversation's transcript. Working indicators describe current work,
+  conversation's transcript. **View activity** in an agent message's menu
+  opens that conversation's transcript at the reply, expanded, or at the
+  prompt it answered when the transcript does not record the reply. In the
+  menu of your own message, **View *agent*'s activity** opens at the prompt
+  that message began, for an agent it names or the agent in a one-to-one DM.
+  When it names several agents, **View activity** lists them. Either opens
+  once that turn is loaded. Working indicators describe current work,
   not a guarantee that an agent is available or that a message was delivered.
   Local work includes conversation wakes from plugins, watches, and timers.
   These wakes have no message link of their own.
@@ -1458,8 +1491,8 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   release, even when its code has not changed. Supplied signatures are always
   verified. Plugins built into Buzz are exempt.
   Do not assume a particular optional plugin is on.
-  A page whose plugin is turned off says so, and its **Manage plugins** opens
-  that plugin, where **Enable** turns it back on.
+  A page or Settings section whose plugin is turned off says so, and its
+  **Manage plugins** opens that plugin, where **Enable** turns it back on.
   If a plugin hides the focused Team sidebar row, keyboard focus moves to a
   remaining row in its section, or the section heading when none remains.
   A saved plugin sort can briefly wait for its plugin at startup, within the
@@ -1692,6 +1725,29 @@ Code blocks draw the same way, through plugins such as Charts and Mermaid, in
 Canvas, shared notes and repository pages. Those, plus the memory panel, agent
 transcript replies and plugin READMEs, offer **Copy code block** on each code
 block.
+
+### Reading shared files beside a conversation
+
+The optional **File viewer** plugin, off until turned on in Settings → Plugins,
+opens PDFs, Markdown, code, text, CSV and TSV files shared in a conversation in a
+tab beside it. Choose the file's card to open it; the card's download button
+still saves the file. PDFs show every page in one scrolling column: turn pages
+with ‹ and › or the arrow keys, and zoom with **−**, **+** or **Fit to width**.
+**Copy text** copies a file's text; for a PDF it reads the pages when pressed,
+and says when a scanned PDF has none.
+
+- Only files shared in the current community open. Text files open up to 20 MB
+  and PDFs up to 100 MB, laid out to the first 1,000 pages.
+- Markdown, code and text files of any length read in parts, loaded as you
+  scroll. In a Markdown file with three or more headings, **Outline** goes to
+  any section, and `#` links do too. Code is highlighted, with line numbers.
+- The header shows when the file was shared, and a Markdown file's reading time
+  and words, or a code or text file's lines.
+- CSV and TSV files show as a table of the first 5,000 rows and 200 columns,
+  up to 50,000 cells.
+- Markdown follows the Notes rules: no raw HTML. Images shared in the current
+  community are drawn; other images show as their alt text.
+- Office files, images, video and audio are not opened by the viewer.
 
 ### Saved External apps approval
 

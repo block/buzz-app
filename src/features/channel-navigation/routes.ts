@@ -1,3 +1,5 @@
+import { writeView } from "../../shared/view-state";
+import type { Navigation } from "../navigation/controller";
 import type { JsonValue, OpenTarget } from "../navigation/targets";
 import { splitPartition } from "../relay/partition";
 import { regionLabels } from "../solo/region-labels";
@@ -158,4 +160,17 @@ export function matchesConversation(
     target.scope.communityOrigin === parts?.communityOrigin &&
     target.scope.viewer === parts?.viewer
   );
+}
+
+/** Where leaving the open channel lands without a sidebar neighbor: the empty
+ * Channels page, with its saved selection forgotten so it is not reopened. */
+export function openEmptyChannels(navigator: Navigation, scope: string) {
+  writeView(scope, "selected-channel", undefined);
+  void navigator.open({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.channels",
+    pageId: "channels",
+    route: { version: 1, params: "empty" },
+  });
 }

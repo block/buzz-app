@@ -32,10 +32,12 @@ const labels: Record<string, ChannelLabel> = {
 
 function setup({
   listed = [dm, thread],
+  more = false,
   conversation,
   lookup = [],
 }: {
   listed?: AgentSession[];
+  more?: boolean;
   conversation?: { channelId: string; rootId?: string };
   lookup?: AgentSession[];
 }) {
@@ -60,7 +62,7 @@ function setup({
           status: "loaded",
           agentId: "agent-1",
           sessions: listed,
-          more: false,
+          more,
         })}
         activity={undefined}
         channelLabel={(id) => labels[id]}
@@ -146,4 +148,14 @@ it("says older conversations aren't shown when the list is cut", async () => {
     recent.getAllByRole("button", { name: /View transcript/ }),
   ).toHaveLength(30);
   expect(recent.getByText("Older conversations aren't shown.")).toBeVisible();
+});
+
+it("says older conversations exist when the first page has none", async () => {
+  setup({ listed: [], more: true });
+  const recent = await section("Recent conversations");
+  expect(
+    recent.getByText("No recent conversations found. Older ones aren't shown."),
+  ).toBeVisible();
+  expect(recent.queryByText("No other conversations stored yet.")).toBeNull();
+  expect(recent.queryByText("Older conversations aren't shown.")).toBeNull();
 });

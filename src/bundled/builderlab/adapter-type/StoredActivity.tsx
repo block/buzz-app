@@ -224,12 +224,16 @@ export function StoredActivity({
                 </li>
               ))}
             </ul>
+          ) : older ? (
+            <p className="m-0 text-body-sm text-subtle">
+              No recent conversations found. Older ones aren't shown.
+            </p>
           ) : (
             <p className="m-0 text-body-sm text-subtle">
               No other conversations stored yet.
             </p>
           )}
-          {older && (
+          {older && recent.length > 0 && (
             <p className="m-0 text-body-sm text-subtle">
               Older conversations aren't shown.
             </p>

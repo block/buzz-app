@@ -625,8 +625,6 @@ it("counts unread conversations on the sidebar Activity row until they are read"
   const Badge = pages.register.mock.calls[0]?.[0].badge;
   expect(Badge).toBeTypeOf("function");
   render(<Badge />);
-  // The sidebar's channel list loads the unread evidence the badge reads.
-  await act(() => h.session.unread.ensure());
   // The same three conversations the hover card's header totals.
   expect(
     await screen.findByRole("img", { name: "3 unread" }),

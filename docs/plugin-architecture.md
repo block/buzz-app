@@ -2737,6 +2737,27 @@ mounted page; see [sidebar ownership](channels.md#ownership).
 
 ## Conversation contributions
 
+### Channel content views
+
+`conversation.registerChannelView({ id, title, matches, component })` replaces the message workspace for matching channel-only destinations. The host keeps the organizer row, sections, access resolution, channel identity and navigation history. The component receives `{ session, channel, active, companion?, companionOpening? }`. It supplies the interior layout and local actions. If you use the supplied companion, place it in every state.
+
+Check `typeof ctx.conversation.registerChannelView === "function"` on older hosts. Registrations belong to the plugin and disappear on disable, replacement or failed activation. `conversation.channelViews` exposes the active registry. Among matching contributions, the lowest contribution key wins. The host skips a matcher that throws. A failed component shows an isolated unavailable state with Retry. Disabling its plugin restores the ordinary channel workspace.
+
+The host resolves channel access before matching. A match does not grant access or signing authority. `active()` becomes false when the contribution, channel visit or session retires. Check the session's current write capabilities before each mutation too. Opening a view does not mount a hidden timeline or mark its messages read. Exact message/thread links and native channel detail destinations continue through the ordinary conversation workspace.
+
+```tsx
+if (typeof ctx.conversation.registerChannelView === "function") {
+  ctx.conversation.registerChannelView({
+    id: "board",
+    title: "Board",
+    matches: (channel) => channel.labels?.includes("example.board") === true,
+    component: Board,
+  });
+}
+```
+
+The existing `sidebarRows` API can decorate these same native rows. A channel view does not insert another row or change its organizer placement.
+
 `registerMessage({ id, title, matches, ownsAttachment?, component })` contributes an optional whole
 message body. Components receive `{ message: ChannelMessage, canOpen, open }`; the first active
 match wins, throwing matchers are skipped, and render failure/removal restores the

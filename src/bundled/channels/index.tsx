@@ -142,7 +142,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     companion: true,
     handlesNavigation: true,
     route: { version: 1, validate: isChannelRoute },
-    component: ({ companion, navigation }) => (
+    component: ({ companion, companionOpening, navigation }) => (
       <ChannelsPage
         chatMenus={ctx.conversation.chatMenus}
         navigation={navigation}
@@ -153,6 +153,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         archive={archive}
         read={read}
         companion={companion}
+        companionOpening={companionOpening}
         agents={agents}
         communities={ctx.communityReader}
         membership={membership}

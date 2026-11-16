@@ -1,4 +1,5 @@
 import { useChannelHistoryFocus } from "./useChannelHistoryFocus";
+import { SelectedChannelView, useChannelView } from "./ChannelView";
 import type { Conversation } from "../../features/conversation/service";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
 import {
@@ -155,6 +156,7 @@ export function ChannelsPage({
   relay,
   panels,
   companion,
+  companionOpening,
   navigation,
   navigator,
   agents,
@@ -179,6 +181,7 @@ export function ChannelsPage({
   /** The open conversation's Mark as read, for the Escape shortcut. */
   read?: ReadShortcut | undefined;
   companion?: ReactNode;
+  companionOpening?: object | undefined;
 }) {
   const session = useRelayConnection(relay);
   const openSwitcher = useContext(OpenCommunitySwitcher);
@@ -329,6 +332,7 @@ export function ChannelsPage({
           archive={archive}
           read={read}
           companion={companion}
+          companionOpening={companionOpening}
           agents={agents}
           communities={communities}
           membership={membership}
@@ -355,6 +359,7 @@ function ChannelWorkspace({
   panels,
   scope,
   companion,
+  companionOpening,
   navigation,
   navigator,
   viewer,
@@ -369,6 +374,7 @@ function ChannelWorkspace({
   agents?: Agents | undefined;
   membership?: CommunityMembership | undefined;
   companion?: ReactNode;
+  companionOpening?: object | undefined;
   communities?: CommunityReader | undefined;
   scope: string;
   navigation?: PageNavigation | undefined;
@@ -770,6 +776,22 @@ function ChannelWorkspace({
     navigation?.target.kind === "conversation"
       ? navigation.target.threadRootId
       : undefined;
+  const channelView = useChannelView(
+    extensions?.channelViews,
+    current &&
+      !requestedMessage &&
+      !requestedThread &&
+      !composingMessage &&
+      !draft &&
+      !removed &&
+      !ownLoss &&
+      !(
+        navigation?.target.kind === "conversation" &&
+        (navigation.target.panel || navigation.target.detail)
+      )
+      ? current
+      : undefined,
+  );
   const membersRequested =
     navigation?.target.kind === "conversation" &&
     navigation.target.panel === "members";
@@ -976,7 +998,7 @@ function ChannelWorkspace({
   });
   // Mail's Archive chord opens the same confirmation as the chat actions menu.
   const archivable =
-    solo && !current?.readOnly && !current?.cached
+    !channelView && solo && !current?.readOnly && !current?.cached
       ? current?.archived
         ? undefined
         : current
@@ -1022,7 +1044,11 @@ function ChannelWorkspace({
     notifyLatest.current = notify;
   });
   const readableId =
-    !composingMessage && current && !current.readOnly && !current.cached
+    !channelView &&
+    !composingMessage &&
+    current &&
+    !current.readOnly &&
+    !current.cached
       ? current.id
       : undefined;
   useLayoutEffect(() => {
@@ -2896,6 +2922,21 @@ function ChannelWorkspace({
       </PanelDock>
     </div>
   );
+  if (channelView && current && extensions?.channelViews)
+    return (
+      <SelectedChannelView
+        key={`${current.id}:${channelView.key}`}
+        entry={channelView}
+        registry={extensions.channelViews}
+        channel={current}
+        session={queries}
+        relay={relay}
+        navigation={navigation}
+        navigator={navigator}
+        companion={companion}
+        companionOpening={companionOpening}
+      />
+    );
   return (
     // The review reads thread-tab links like the workspace.
     <LinkThreadTabContext value={openLinkedThread}>

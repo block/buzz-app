@@ -2,7 +2,11 @@
 import type { ComponentType, ReactElement, ReactNode, Ref } from "react";
 import type { Contribution, MatchOrder } from "../../plugins/contributions";
 import type { VoiceRecording } from "../relay/voice-media";
-import type { Attachment, ChannelMessage } from "../relay/contracts";
+import type {
+  Attachment,
+  ChannelMessage,
+  ChannelSummary,
+} from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ComposerSession } from "../messages/composer-session";
 
@@ -186,6 +190,22 @@ export type ContributionReader<T> = Readonly<{
   snapshot(): readonly Contribution<T>[];
   subscribe(listener: () => void): () => void;
 }>;
+/** A channel's content; navigation, access and organizer placement stay host-owned. */
+export type ChannelViewProps = Readonly<{
+  session: RelaySession;
+  channel: ChannelSummary;
+  /** False after this view, visit, plugin or session retires. Not write authority. */
+  active(): boolean;
+  companion?: ReactNode;
+  companionOpening?: object | undefined;
+}>;
+export type ChannelView = Readonly<{
+  id: string;
+  title: string;
+  /** Synchronous and side-effect-free; receives an access-resolved channel. */
+  matches(channel: ChannelSummary): boolean;
+  component: ComponentType<ChannelViewProps>;
+}>;
 /** Optional presentation supplied to the host-owned thread button. */
 export type MessageSummaryActivity = Readonly<{
   participants: readonly string[];
@@ -291,6 +311,7 @@ export type IdentityMarkProps = Readonly<{
   profiles: RelaySession["profiles"];
 }>;
 export type ConversationExtensions = Readonly<{
+  channelViews?: ContributionReader<ChannelView>;
   attachments?: ContributionReader<AttachmentRenderer>;
   messages?: ContributionReader<MessageRenderer>;
   actions?: ContributionReader<MessageAction>;

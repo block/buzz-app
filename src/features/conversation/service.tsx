@@ -37,6 +37,7 @@ import type {
   ContributionReader,
   PageTabsProps,
   ConversationWorkspaceProps,
+  ChannelView,
 } from "./contracts";
 import type { RelaySession } from "../relay/session";
 
@@ -62,6 +63,8 @@ export type ChatMenu = Readonly<{
 }>;
 
 export type Conversation = {
+  channelViews: ContributionReader<ChannelView>;
+  registerChannelView(view: ChannelView): void;
   chatMenus: ContributionReader<ChatMenu>;
   registerChatMenu(component: ComponentType<ChatMenuProps>): void;
   attachments: ContributionReader<AttachmentRenderer>;
@@ -150,7 +153,8 @@ function validate(
     | CodeBlockRenderer
     | MessageRenderer
     | MessageAction
-    | IdentityMark,
+    | IdentityMark
+    | ChannelView,
 ) {
   if (
     !value ||
@@ -164,6 +168,8 @@ function validate(
     );
 }
 export class ConversationService extends Service implements Conversation {
+  readonly channelViews;
+  private readonly channelViewEntries;
   readonly attachments;
   private readonly attachmentEntries;
   readonly messages;
@@ -197,6 +203,12 @@ export class ConversationService extends Service implements Conversation {
   readonly ui: Conversation["ui"];
   constructor(ctx: Context) {
     super(ctx, "conversation");
+    const channelViews = createContributions<ChannelView>(ctx);
+    this.channelViewEntries = channelViews;
+    this.channelViews = {
+      snapshot: channelViews.snapshot,
+      subscribe: channelViews.subscribe,
+    };
     const attachments = createContributions<AttachmentRenderer>(ctx);
     this.attachmentEntries = attachments;
     this.attachments = {
@@ -309,6 +321,12 @@ export class ConversationService extends Service implements Conversation {
         return workspaces.snapshot().length ? Workspace : undefined;
       },
     };
+  }
+  registerChannelView(value: ChannelView) {
+    validate(value);
+    if (typeof value.matches !== "function")
+      throw new Error("A channel view needs a matcher");
+    this.channelViewEntries.register(this.ctx, value);
   }
   registerTabs(component: ComponentType<PageTabsProps>) {
     if (typeof component !== "function")

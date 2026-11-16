@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import type {
+  ChannelView,
+  ConversationExtensions,
+} from "../../features/conversation/contracts";
+import type { Contribution } from "../../plugins/contributions";
 import type { ComponentProps, ReactElement } from "react";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
@@ -137,7 +142,11 @@ function page(filter: ReadFilter, history: readonly RelayEvent[]) {
  * `root: false`, absent from its history. Alpha's older pages wait for
  * `release()`. A `cached` session has only alpha's saved head until
  * `connect()`. */
-async function channelsPage({ root = true, cached = false } = {}) {
+async function channelsPage({
+  root = true,
+  cached = false,
+  extensions = undefined as ConversationExtensions | undefined,
+} = {}) {
   const { viewer, authority, reply, newer, channels } = fixture;
   const alpha = [...(root ? [fixture.root] : []), reply, ...newer];
   const held: ((error?: Error) => void)[] = [];
@@ -264,6 +273,7 @@ async function channelsPage({ root = true, cached = false } = {}) {
   const view = (navigation: PageNavigation) => (
     <ToastProvider>
       <ChannelsPage
+        extensions={extensions}
         relay={relay}
         panels={panels}
         navigator={navigator}
@@ -328,6 +338,52 @@ const renders = (channelId: string) =>
 const latest = (channelId: string) => renders(channelId).at(-1);
 const timeline = (channelId: string) =>
   document.querySelector(`[data-channel-timeline="${channelId}"]`);
+
+it("replaces a resolved channel's reader with its plugin view, restores native content on disable, and preserves exact message routes", async () => {
+  let entries: readonly Contribution<ChannelView>[] = [
+    {
+      key: "example.board/main",
+      pluginId: "example.board",
+      revision: "one",
+      id: "main",
+      title: "Board",
+      matches: (channel) => channel.id === "alpha",
+      component: ({ channel }) => <p>Board for {channel.name}</p>,
+    },
+  ];
+  const listeners = new Set<() => void>();
+  const empty: readonly never[] = [];
+  const newest = fixture.newer[0];
+  if (!newest) throw new Error("Missing top-level message fixture");
+  const h = await channelsPage({
+    extensions: {
+      tools: { snapshot: () => empty, subscribe: () => () => {} },
+      inline: { snapshot: () => empty, subscribe: () => () => {} },
+      channelViews: {
+        snapshot: () => entries,
+        subscribe(listener) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+    },
+  });
+  h.go(h.visit(h.target("alpha"), "board"));
+  await screen.findByText("Board for alpha");
+  expect(renders("alpha")).toHaveLength(0);
+  expect(h.session.channels.window("alpha").status).toBe("idle");
+  h.go(h.visit(h.target("alpha", { messageId: newest.id }), "message"));
+  await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
+  expect(screen.queryByText("Board for alpha")).toBeNull();
+  h.go(h.visit(h.target("alpha"), "board-return"));
+  await screen.findByText("Board for alpha");
+  act(() => {
+    entries = [];
+    for (const listener of listeners) listener();
+  });
+  await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
+  expect(screen.queryByText("Board for alpha")).toBeNull();
+});
 
 it("holds the list from the visit's start, then reveals the root beside the thread", async () => {
   const h = await channelsPage();

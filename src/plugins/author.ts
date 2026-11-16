@@ -63,6 +63,8 @@ export type {
 export type { Conversation } from "../features/conversation/service";
 export type {
   ConversationWorkspaceProps,
+  ChannelView,
+  ChannelViewProps,
   PageTabTarget,
   PageTabOptions,
   PageTabsProps,

@@ -214,6 +214,13 @@ it("moves workspaces with the section menu, keeps collapse and filing, and retri
   await user.click(screen.getByRole("button", { name: "Retry workspaces" }));
   await waitFor(() => expect(retry).toBeEnabled());
   expect(error).not.toHaveTextContent("Refresh saved workspace preferences");
+  const leaving = document.createElement("div");
+  leaving.setAttribute("inert", "");
+  leaving.setAttribute("aria-hidden", "true");
+  const header = heading.closest(PROJECT_HEADER);
+  if (!header) throw new Error("Missing workspace header");
+  leaving.append(header.cloneNode(true));
+  mounted.container.prepend(leaving);
   await user.click(retry);
   await waitFor(() =>
     expect(screen.queryByRole("alert")).not.toBeInTheDocument(),

@@ -265,7 +265,7 @@ export function SoloWorkspaces({
     if (!orderFocus) return;
     document
       .querySelector<HTMLElement>(
-        `[data-solo-menu-id="project-${CSS.escape(orderFocus)}"] button`,
+        `[data-solo-menu-id="project-${CSS.escape(orderFocus)}"]:not([inert] *) button`,
       )
       ?.focus({ preventScroll: true });
     setOrderFocus(undefined);

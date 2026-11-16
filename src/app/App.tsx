@@ -477,8 +477,10 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
   );
   // The way out must lead elsewhere: Messages itself may be what failed. A
   // link or access failure, or a conversation, still leaves for Messages'
-  // own default. Without one, the app's navigation remains the way out.
+  // own default. Without one, the app's navigation remains the way out, as
+  // the Settings dialog's own sections and Close are for a section.
   const leaveForMessages =
+    !settings &&
     (failureKind === "link" ||
       failureKind === "denied" ||
       route.target.kind === "conversation" ||
@@ -556,7 +558,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
         <EmptyState
           icon={<WarningCircleIcon />}
           title={`${route.turnedOff.name} is turned off`}
-          description="Turn it on in Manage plugins to open this page."
+          description={`Turn it on in Manage plugins to open this ${settings ? "section" : "page"}.`}
           action={
             <>
               <Button

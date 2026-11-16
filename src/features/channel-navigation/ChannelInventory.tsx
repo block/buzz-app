@@ -1,4 +1,5 @@
 import { revealCreatedChannel } from "./created-channel";
+import { openEmptyChannels } from "./routes";
 import {
   useCallback,
   useEffect,
@@ -1156,32 +1157,39 @@ export function ChannelInventory({
   });
   useLayoutEffect(() => () => menuActions?.publish(undefined), [menuActions]);
   const lifecycleCallbacks = handoff?.lifecycleCallbacks;
-  // The shown rows nearest the confirmed channel: its own section's, then the
-  // nearest expanded sections'. Captured while it is still listed: completion
-  // can arrive after the roster has dropped it.
-  const lifecycleNeighbors = useRef<{ id: string; ids: string[] }>(undefined);
+  const openSuccessor = handoff?.openSuccessor;
+  // The shown rows nearest the confirmed channel and the open one: its own
+  // section's, then the nearest expanded sections'. Captured while each is
+  // still listed: completion, or removal while it is open, can drop it first.
+  // Kept apart, so a confirmation for another channel keeps the open one's.
+  const lifecycleNeighbors = useRef<
+    Partial<Record<"dialog" | "open", { id: string; ids: string[] }>>
+  >({});
   useLayoutEffect(() => {
-    if (!lifecycleCallbacks) return;
-    const dialogId = lifecycleDialog?.channel.id;
-    if (!dialogId) lifecycleNeighbors.current = undefined;
-    const at = filteredSections.findIndex((section) =>
-      section.rows.some((row) => row.id === dialogId),
-    );
-    const placement = filteredSections[at];
-    if (dialogId && placement) {
+    if (!lifecycleCallbacks || !openSuccessor) return;
+    const capture = (key: "dialog" | "open", anchor: string | undefined) => {
+      if (!anchor) {
+        delete lifecycleNeighbors.current[key];
+        return;
+      }
+      const at = filteredSections.findIndex((section) =>
+        section.rows.some((row) => row.id === anchor),
+      );
+      const placement = filteredSections[at];
+      if (!placement) return;
       const shown = (section: typeof placement) =>
         sidebar.collapsed.includes(section.key)
           ? []
           : section.rows
               .filter(
                 (row) =>
-                  row.id === dialogId || !pluginHiddenRows.current.has(row.id),
+                  row.id === anchor || !pluginHiddenRows.current.has(row.id),
               )
               .map((row) => row.id);
       const own = shown(placement);
-      const index = Math.max(own.indexOf(dialogId), 0);
-      lifecycleNeighbors.current = {
-        id: dialogId,
+      const index = Math.max(own.indexOf(anchor), 0);
+      lifecycleNeighbors.current[key] = {
+        id: anchor,
         ids: [
           ...own.slice(index + 1),
           ...own.slice(0, index).reverse(),
@@ -1189,7 +1197,32 @@ export function ChannelInventory({
           ...filteredSections.slice(0, at).flatMap(shown).reverse(),
         ],
       };
-    }
+    };
+    capture("dialog", lifecycleDialog?.channel.id);
+    capture(
+      "open",
+      target.kind === "conversation" ? target.channelId : undefined,
+    );
+    // Its neighbor takes its place, so the sidebar stays where it is.
+    const successor = (id: string) => {
+      const listed = filteredSections
+        .flatMap((section) => section.rows)
+        .filter((row) => !pluginHiddenRows.current.has(row.id));
+      return (
+        (
+          [
+            lifecycleNeighbors.current.dialog,
+            lifecycleNeighbors.current.open,
+          ].find((captured) => captured?.id === id)?.ids ?? []
+        ).find((neighbor) => listed.some((row) => row.id === neighbor)) ??
+        listed.find((channel) => channel.id !== id)?.id
+      );
+    };
+    const land = (next: string | undefined) => {
+      if (next) select(next);
+      else openEmptyChannels(navigator, scope);
+    };
+    openSuccessor.current = (id) => land(successor(id));
     lifecycleCallbacks.current = lifecycleDialog
       ? {
           close: () => {
@@ -1211,35 +1244,15 @@ export function ChannelInventory({
                 : lifecycleDialog.focusFallback;
               return;
             }
-            // Its neighbor takes its place, so the sidebar stays where it is.
-            const listed = filteredSections
-              .flatMap((section) => section.rows)
-              .filter((row) => !pluginHiddenRows.current.has(row.id));
-            const next =
-              (lifecycleNeighbors.current?.id === id
-                ? lifecycleNeighbors.current.ids
-                : []
-              ).find((neighbor) => listed.some((row) => row.id === neighbor)) ??
-              listed.find((channel) => channel.id !== id)?.id;
+            const next = successor(id);
             if (next) lifecycleFocus.current = next;
             // Confirmed access loss can already have removed current from the roster.
             if (
               (target.kind === "conversation"
                 ? target.channelId
                 : undefined) === id
-            ) {
-              if (next) select(next);
-              else {
-                writeView(scope, "selected-channel", undefined);
-                void navigator.open({
-                  version: 1,
-                  kind: "page",
-                  pluginId: "buzz.channels",
-                  pageId: "channels",
-                  route: { version: 1, params: "empty" },
-                });
-              }
-            }
+            )
+              land(next);
           },
         }
       : undefined;
@@ -1247,8 +1260,9 @@ export function ChannelInventory({
   useLayoutEffect(
     () => () => {
       if (lifecycleCallbacks) lifecycleCallbacks.current = undefined;
+      if (openSuccessor) openSuccessor.current = undefined;
     },
-    [lifecycleCallbacks],
+    [lifecycleCallbacks, openSuccessor],
   );
   return render({
     sidebar,

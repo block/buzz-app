@@ -205,7 +205,12 @@ export type ChannelList = Readonly<{
   status: ListStatus;
   /** Set when the viewer's roster read hit its cap; omitted channels are then not evidence of removal. */
   coverage?: "partial";
+  /** When discovery last committed: live roster and metadata events, exact
+   * reads and complete roster reads all move it. */
   asOf?: number;
+  /** When a complete viewer-scoped roster read last committed, the only read
+   * whose omissions prove absence; `asOf` of that commit. */
+  rosterAsOf?: number;
   /** Initial Recent ordering observation, independent of roster/access readiness. */
   activityStatus?: "idle" | "loading" | "ready" | "error" | "unavailable";
   channels: readonly ChannelSummary[];

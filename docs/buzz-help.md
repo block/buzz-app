@@ -703,6 +703,15 @@ and are asked to sign in again in Buzz.
   available when the pause ends; it checks your permission again before deleting.
   For an open Solo chat, the confirmation reappears over the new destination.
   **Cancel** keeps the chat; you can reopen it from the sidebar.
+- **Archived channels** show **Archived · view only** above their messages.
+  You can still read them, but they're hidden from the sidebar; find them in
+  search. If you own or administer the channel, choose **Unarchive** there to
+  restore it for everyone.
+- **No longer a member**: if you're removed from the channel you're reading,
+  or it's deleted, or you leave it on another device, it says **You’re no
+  longer a member of** that channel. Choose **Back to channels** to move on. A
+  public channel stays readable below, with **Join** where the channel allows
+  it.
 - **Pasted web links** keep their labels when the clipboard's HTML and plain
   text agree, including image alt text. Use ordinary paste; plain-text paste
   uses only the clipboard's plain text.
@@ -1480,8 +1489,8 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   release, even when its code has not changed. Supplied signatures are always
   verified. Plugins built into Buzz are exempt.
   Do not assume a particular optional plugin is on.
-  A page whose plugin is turned off says so, and its **Manage plugins** opens
-  that plugin, where **Enable** turns it back on.
+  A page or Settings section whose plugin is turned off says so, and its
+  **Manage plugins** opens that plugin, where **Enable** turns it back on.
   If a plugin hides the focused Team sidebar row, keyboard focus moves to a
   remaining row in its section, or the section heading when none remains.
   A saved plugin sort can briefly wait for its plugin at startup, within the

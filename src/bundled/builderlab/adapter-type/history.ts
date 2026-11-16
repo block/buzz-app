@@ -12,6 +12,7 @@ import {
 } from "../../../features/agents/activity-transcript";
 import { terminalOutcome } from "../../../features/agents/observer";
 import type { AgentClient, AgentSession } from "../agents/client";
+import { managementTimestamp as millis } from "../management-date";
 import type { BuilderlabSession, LoginSnapshot } from "../session";
 
 type Json = Record<string, unknown>;
@@ -27,12 +28,6 @@ const list = (value: unknown) =>
     return item ? [item] : [];
   });
 const str = (value: unknown) => (typeof value === "string" ? value : "");
-const millis = (value: unknown) => {
-  const number = typeof value === "string" ? Number(value) : value;
-  return typeof number === "number" && Number.isFinite(number)
-    ? number
-    : undefined;
-};
 /** Protobuf JSON names an enum, or may send its number. */
 const enumName = (value: unknown, names: readonly string[]) =>
   typeof value === "number" ? (names[value] ?? "") : str(value);
@@ -50,11 +45,18 @@ const STATUSES = [
   "TASK_STATUS_WAITING_FOR_PERMISSION_LEASE",
 ];
 const SUMMARY = 5;
+const REMOVAL_STATES = [
+  "SESSION_REMOVAL_STATE_UNSPECIFIED",
+  "SESSION_REMOVAL_STATE_REMOVED",
+];
 /** The prompt composer escapes these in every value it writes. */
 const decodeEntities = (text: string) =>
   text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
-/** The composer follows a sender with whether they are the owner. */
-const OWNER_NOTE = /\. This sender .*$/;
+/** The composer writes a sender as its label, then its keys, then whether
+ * they are the owner: `Name (username: …, npub: …, hex: …). This sender …`. */
+const SENDER =
+  /^From: (.+?)(?: \((?:username: [^,()]*, )?(?:npub: [^,()]*, )?hex: ([0-9a-f]{64})\))?\. This sender is (?:your owner|not verified as your owner)\.$/gm;
+const EVENT_ID = /^Event ID: (\S+)$/gm;
 /** Tool results are text, or other content shown as JSON. */
 const resultText = (results: unknown) =>
   list(results)
@@ -67,15 +69,22 @@ const resultText = (results: unknown) =>
 
 function prompt(id: string, at: number, raw: string, name?: Names) {
   const sections = promptSections(raw);
-  const { text, author, authorPubkey } = promptMessage(sections, name);
+  // Each sender is read as its name alone, so a batch lists every author.
+  const senders = raw.replace(
+    SENDER,
+    (_, label: string, pubkey?: string) =>
+      `From: ${(pubkey && name?.(pubkey)) || label}`,
+  );
+  const { text, author, authorPubkey } = promptMessage(
+    promptSections(senders),
+    name,
+  );
   const item: TranscriptItem = {
     id,
     at,
     type: "prompt",
     text: text ? decodeEntities(text) : raw,
-    ...(author
-      ? { author: decodeEntities(author).replace(OWNER_NOTE, "") }
-      : {}),
+    ...(author ? { author: decodeEntities(author) } : {}),
     ...(authorPubkey ? { authorPubkey } : {}),
     sections,
     steer: sections.some((section) => section.tag === STEER),
@@ -83,8 +92,10 @@ function prompt(id: string, at: number, raw: string, name?: Names) {
   return item;
 }
 
-/** A stored session's turns, oldest first. Messages carry no turn, so each
- * belongs to the latest turn started at or before it. */
+/** A stored session's turns, oldest first. Messages carry no turn: a prompt
+ * joins the turn its mention started, and any other message the latest turn
+ * started at or before it, never one before the last prompt's. A message
+ * older than every turn joins the first. */
 export function sessionTurns(
   session: AgentSession,
   response: Json,
@@ -122,15 +133,43 @@ export function sessionTurns(
   if (turns[0]) turns[0].newSession = true;
   const tools = new Map<string, ToolItem>();
   const sends = new Map<string, { posted?: boolean }>();
-  for (const message of list(response.messages)) {
-    const at = millis(message.created);
+  const mentioned = new Map(
+    turns.flatMap((turn) =>
+      turn.triggeringEventIds.map((event) => [event, turn] as const),
+    ),
+  );
+  // In time order, so a tool's result never arrives before its request.
+  const messages = list(response.messages)
+    .map((message) => ({ message, at: millis(message.created) }))
+    .sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
+  let floor = 0;
+  for (const { message, at } of messages) {
     const id = str(message.id);
     if (message.deleted === true || at === undefined || !id) continue;
-    const turn =
-      [...turns].reverse().find((candidate) => candidate.startedAt <= at) ??
-      turns[0];
-    if (!turn) break;
     const role = enumName(message.role, ROLES);
+    // A prompt is stamped apart from its turn, so the mention it carries
+    // places it before its time does.
+    const prompted =
+      role === "ROLE_USER"
+        ? list(message.content)
+            .flatMap((content) => [
+              ...str(object(content.text)?.text).matchAll(EVENT_ID),
+            ])
+            .map((match) => mentioned.get(match[1] ?? ""))
+            .find((turn) => turn !== undefined)
+        : undefined;
+    const index = prompted
+      ? turns.indexOf(prompted)
+      : Math.max(
+          turns.reduce(
+            (last, turn, position) => (turn.startedAt <= at ? position : last),
+            -1,
+          ),
+          floor,
+        );
+    if (prompted) floor = index;
+    const turn = turns[index];
+    if (!turn) break;
     const error = object(message.llm_call_error_info);
     if (error?.is_error === true)
       turn.error = str(error.cause) || "The model call failed.";
@@ -141,6 +180,7 @@ export function sessionTurns(
       const response = object(content.tool_response);
       if (response) {
         const callId = str(response.id);
+        if (!callId) return;
         const failed = str(response.status) === "error";
         const sent = sends.get(callId);
         if (sent && !failed) sent.posted = true;
@@ -153,7 +193,8 @@ export function sessionTurns(
         const call = object(request.value);
         const title = str(call?.name);
         const input = str(call?.arguments);
-        const callId = str(request.id);
+        // A call without an id has no result to pair with, so it keeps its own key.
+        const callId = str(request.id) || key;
         let args: Json | undefined;
         try {
           args = object(JSON.parse(input));
@@ -273,7 +314,12 @@ export async function readSession(
     if (notFound(error)) return undefined;
     throw error;
   }
-  if (!response || response.removal_state) return undefined;
+  if (
+    !response ||
+    enumName(response.removal_state, REMOVAL_STATES) ===
+      "SESSION_REMOVAL_STATE_REMOVED"
+  )
+    return undefined;
   const turns = sessionTurns(session, response, name);
   return {
     turns: turns.slice(-TURN_LIMIT),

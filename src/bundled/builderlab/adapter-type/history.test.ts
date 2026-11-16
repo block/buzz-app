@@ -40,6 +40,9 @@ const result = (id: string, output: string, status = "success") => ({
   tool_response: { id, status, results: [{ text: { text: output } }] },
 });
 
+// Milliseconds after a fixed time, as the server stamps them.
+const at = (offset: number) => Date.UTC(2026, 0, 1) + offset;
+
 it("groups stored messages into the turns that started before them", () => {
   const turns = sessionTurns(session, {
     turns: [
@@ -47,23 +50,28 @@ it("groups stored messages into the turns that started before them", () => {
         turn_id: "t2",
         mention_event_id: "f".repeat(64),
         status: "TASK_STATUS_IN_PROGRESS",
-        created_at: "2000",
-        updated_at: "2000",
+        created_at: String(at(2000)),
+        updated_at: String(at(2000)),
       },
       {
         turn_id: "t1",
         mention_event_id: mention,
         status: "TASK_STATUS_COMPLETED",
-        created_at: 1000,
-        updated_at: 1900,
+        created_at: at(1000),
+        updated_at: at(1900),
       },
     ],
     messages: [
-      { id: "m1", role: "ROLE_USER", created: 1001, content: [text(prompt)] },
+      {
+        id: "m1",
+        role: "ROLE_USER",
+        created: at(1001),
+        content: [text(prompt)],
+      },
       {
         id: "m2",
         role: "ROLE_ASSISTANT",
-        created: 1100,
+        created: at(1100),
         content: [
           { type: "MESSAGE_TYPE_THINKING", thinking: { thinking: "Plan" } },
           request("c1", "developer__shell", { command: "ls" }),
@@ -73,11 +81,16 @@ it("groups stored messages into the turns that started before them", () => {
       {
         id: "m3",
         role: "ROLE_USER",
-        created: 1200,
+        created: at(1200),
         content: [result("c1", "README.md"), result("c2", "sent")],
       },
-      { id: "gone", role: 2, created: 1300, deleted: true, content: [] },
-      { id: "m4", role: 2, created: 2100, content: [text("Working on it")] },
+      { id: "gone", role: 2, created: at(1300), deleted: true, content: [] },
+      {
+        id: "m4",
+        role: 2,
+        created: at(2100),
+        content: [text("Working on it")],
+      },
     ],
   });
   expect(turns.map((turn) => [turn.turnId, turn.outcome])).toEqual([
@@ -91,8 +104,8 @@ it("groups stored messages into the turns that started before them", () => {
     sessionId: "s1",
     triggeringEventIds: [mention],
     newSession: true,
-    startedAt: 1000,
-    endedAt: 1900,
+    startedAt: at(1000),
+    endedAt: at(1900),
     partial: false,
   });
   expect(first.items).toMatchObject([
@@ -103,7 +116,7 @@ it("groups stored messages into the turns that started before them", () => {
       title: "developer__shell",
       status: "completed",
       output: "README.md",
-      completedAt: 1200,
+      completedAt: at(1200),
     },
     { type: "message", text: "Shipped", posted: true },
   ]);
@@ -271,4 +284,150 @@ it("reads no transcript for a session Builderlab no longer has", async () => {
     sessionMessages: vi.fn(async () => ({ removal_state: 1 })),
   });
   expect(await readSession(removed, session, signal)).toBeUndefined();
+});
+
+it("reads ISO, second and millisecond times alike, and drops an empty one", () => {
+  const turns = sessionTurns(session, {
+    turns: [
+      { turn_id: "iso", created_at: "2026-01-01T00:00:00Z" },
+      { turn_id: "seconds", created_at: at(60_000) / 1000 },
+      { turn_id: "empty", created_at: "" },
+    ],
+    messages: [
+      { id: "a", role: 2, created: at(1000), content: [text("first")] },
+      { id: "b", role: 2, created: at(61_000), content: [text("second")] },
+    ],
+  });
+  expect(
+    turns.map((turn) => [turn.turnId, turn.startedAt, turn.items.length]),
+  ).toEqual([
+    ["iso", at(0), 1],
+    ["seconds", at(60_000), 1],
+  ]);
+});
+
+it("pairs a tool's result that arrives before its request", () => {
+  const [turn] = sessionTurns(session, {
+    turns: [{ turn_id: "t", created_at: at(0) }],
+    messages: [
+      { id: "b", role: 1, created: at(20), content: [result("c", "done")] },
+      {
+        id: "a",
+        role: 2,
+        created: at(10),
+        content: [request("c", "developer__shell", {})],
+      },
+    ],
+  });
+  expect(turn?.items).toMatchObject([
+    { type: "tool", status: "completed", output: "done" },
+  ]);
+});
+
+it("keeps tool calls without an id apart", () => {
+  const [turn] = sessionTurns(session, {
+    turns: [{ turn_id: "t", created_at: at(0) }],
+    messages: [
+      {
+        id: "a",
+        role: 2,
+        created: at(10),
+        content: [
+          request("", "developer__shell", { command: "ls" }),
+          request("", "developer__shell", { command: "pwd" }),
+        ],
+      },
+      { id: "b", role: 1, created: at(20), content: [result("", "out")] },
+    ],
+  });
+  expect(turn?.items).toMatchObject([
+    { type: "tool", status: "in_progress", output: "" },
+    { type: "tool", status: "in_progress", output: "" },
+  ]);
+});
+
+it("joins a prompt to the turn its mention started, even stamped before it", () => {
+  const next = "9".repeat(64);
+  const turns = sessionTurns(session, {
+    turns: [
+      { turn_id: "t1", mention_event_id: mention, created_at: at(0) },
+      { turn_id: "t2", mention_event_id: next, created_at: at(10_000) },
+    ],
+    messages: [
+      { id: "a", role: 2, created: at(1000), content: [text("one")] },
+      {
+        id: "p",
+        role: 1,
+        created: at(9_500),
+        content: [text(prompt.replace(mention, next))],
+      },
+      { id: "b", role: 2, created: at(9_800), content: [text("two")] },
+    ],
+  });
+  expect(
+    turns.map((turn) => [turn.turnId, turn.items.map((item) => item.type)]),
+  ).toEqual([
+    ["t1", ["message"]],
+    ["t2", ["prompt", "message"]],
+  ]);
+});
+
+it("names every sender of a batched prompt, without their keys", () => {
+  const ada = "a".repeat(64);
+  const bob = "b".repeat(64);
+  const event = (id: string, from: string, content: string) =>
+    [
+      '<buzz-event type="@mention">',
+      `Event ID: ${id}`,
+      "Channel: alpha",
+      `From: ${from}`,
+      `Content: ${content}`,
+      "</buzz-event>",
+    ].join("\n");
+  const batched = [
+    event(
+      "1".repeat(64),
+      `Ada (npub: npub1ada, hex: ${ada}). This sender is your owner.`,
+      "first",
+    ),
+    event(
+      mention,
+      `Bob (username: bob, npub: npub1bob, hex: ${bob}). This sender is not verified as your owner.`,
+      "second",
+    ),
+  ].join("\n\n");
+  const read = (name?: (pubkey: string) => string | undefined) =>
+    sessionTurns(
+      session,
+      {
+        turns: [{ turn_id: "t", mention_event_id: mention, created_at: at(0) }],
+        messages: [
+          { id: "p", role: 1, created: at(1), content: [text(batched)] },
+        ],
+      },
+      name,
+    )[0]?.items[0];
+  expect(read()).toMatchObject({ author: "Ada, Bob" });
+  expect(
+    read((pubkey) => (pubkey === bob ? "Bob B." : undefined)),
+  ).toMatchObject({ author: "Ada, Bob B." });
+});
+
+it("reads a session whose removal state is unspecified", async () => {
+  const read = async (removal_state: unknown) =>
+    readSession(
+      client({
+        sessionMessages: vi.fn(async () => ({
+          removal_state,
+          turns: [{ turn_id: "t", created_at: at(0) }],
+        })),
+      }),
+      session,
+      signal,
+    );
+  expect(await read("SESSION_REMOVAL_STATE_UNSPECIFIED")).toMatchObject({
+    turns: [{ turnId: "t" }],
+  });
+  expect(await read(0)).toMatchObject({ turns: [{ turnId: "t" }] });
+  expect(await read("SESSION_REMOVAL_STATE_REMOVED")).toBeUndefined();
 });

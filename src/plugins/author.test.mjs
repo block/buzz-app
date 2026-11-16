@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-test("generated author package in a path with spaces exposes shared message facts, host, identity names, agent sessions, decisions, and page navigation metadata", async () => {
+test("generated author package exposes shared messages, captured-read Undo, host, identity names, agent sessions, decisions, and page navigation metadata", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   const dir = await mkdtemp(join(tmpdir(), "buzz-author-consumer-"));
   const env = {
@@ -33,13 +33,15 @@ test("generated author package in a path with spaces exposes shared message fact
       join(dir, "consumer.ts"),
       `
 import { createElement } from "react";
-import type { Context, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, UnreadCapability, Backdrops } from "@buzz/author";
+import type { Context, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, ReadMutationResult, UnreadCapability, Backdrops } from "@buzz/author";
 export const manifest: PluginManifest = {
   id: "example.plugin", name: "Example", apiVersion: 1,
   host: {
     commands: [{ id: "status", program: "example-cli", args: ["status"], maxOutputBytes: 65536 }],
     networkOrigins: ["https://api.example.com"],
     managedFiles: true,
+    publicImages: true,
+    publicPages: true,
   },
 };
 const ExampleSidebar = ({ target, children }: PageSidebarProps) => {
@@ -52,6 +54,11 @@ export const inject = ["agents", "decisions", "host", "identityNames", "pages", 
 export function apply(ctx: Context) {
   const unread: UnreadCapability = ctx.relay.snapshot().session.unread;
   const conversations: ReturnType<UnreadCapability["inbox"]> = unread.inbox();
+  if (unread.markCapturedMessagesRead) {
+    const capturedRead: Promise<ReadMutationResult> =
+      unread.markCapturedMessagesRead(["example-message-id"]);
+    void capturedRead.then(({ undo }) => undo?.());
+  }
   for (const item of conversations.items) {
     for (const message of item.messages) {
       const id: string = message.id;
@@ -203,7 +210,7 @@ export function apply(ctx: Context) {
     // @ts-expect-error A page icon is a data URL string.
     icon: 1,
   });
-  for (const placement of ["sidebar", "topbar", "toolbar"] as const)
+  for (const placement of ["sidebar", "dock", "topbar", "toolbar"] as const)
     ctx.pages.register({ id: placement, title: placement, component: () => null, primary: true, placement });
   ctx.pages.register({
     id: "bad-placement", title: "Bad placement", component: () => null,
@@ -234,6 +241,7 @@ export function apply(ctx: Context) {
     questions: { bad: { type: "freeform", instructions: "x" } },
   });
   void ctx.decisions.backend();
+  ctx.decisions.retireProvider("retired");
   // @ts-expect-error Only Settings chooses the backend.
   ctx.decisions.setBackend("typesafe");
 }

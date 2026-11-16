@@ -67,6 +67,28 @@ export function verifiedProfileDiscovery(
   });
 }
 
+/** An authority this device saved from an earlier discovery, or undefined. */
+export function savedVerifiedProfileAuthority(
+  value: unknown,
+): VerifiedProfileAuthority | undefined {
+  if (!value || typeof value !== "object") return;
+  const { pubkey, multipleIssuers, searchable } = value as Record<
+    string,
+    unknown
+  >;
+  if (
+    typeof pubkey !== "string" ||
+    !key.test(pubkey) ||
+    typeof multipleIssuers !== "boolean"
+  )
+    return;
+  return Object.freeze({
+    pubkey,
+    multipleIssuers,
+    ...(searchable === true ? { searchable: true as const } : {}),
+  });
+}
+
 export function validVerifiedName(value: string): boolean {
   return (
     [...value].length >= 1 &&
@@ -152,23 +174,29 @@ export type VerifiedProfileFilter = Readonly<{
   authors: readonly [string];
   "#d": readonly string[];
   limit: number;
+  /** A resume: only heads changed since a cursor. Absence means unchanged. */
+  since?: number;
 }>;
 export type VerifiedProfileSink = {
   event(event: RelayEvent): void;
   eose(): void;
-  closed(reason: string): void;
+  /** `resume` comes only with `disconnected:` for a sync that reached EOSE:
+   * a replacement from `since` misses no head this sync would have sent. */
+  closed(reason: string, resume?: Readonly<{ since: number }>): void;
 };
 
 export function verifiedProfileFilter(
   authority: string,
   subjects: readonly string[],
+  since?: number,
 ): VerifiedProfileFilter {
   const unique = [...new Set(subjects)];
   if (
     !key.test(authority) ||
     !unique.length ||
     unique.length > VERIFIED_PROFILE_BATCH ||
-    unique.some((id) => !key.test(id))
+    unique.some((id) => !key.test(id)) ||
+    (since !== undefined && !(Number.isSafeInteger(since) && since >= 0))
   )
     throw new Error("Invalid verified-profile subscription");
   return {
@@ -176,5 +204,6 @@ export function verifiedProfileFilter(
     authors: [authority],
     "#d": unique,
     limit: unique.length,
+    ...(since !== undefined ? { since } : {}),
   };
 }

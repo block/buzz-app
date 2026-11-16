@@ -32,7 +32,7 @@ export function useSidebarFilters(
         : [],
     ),
   );
-  const unreadSet = useUnreadChannelIds(unread, ids);
+  const unreadSet = useUnreadChannelIds(unread, ids, true);
   const [clock, tick] = useState(0);
   const now = Date.now();
   let nextExpiry = Infinity;
@@ -77,18 +77,30 @@ export function useSidebarFilters(
   return visible;
 }
 
-/** Whether a channel shows unread messages, a manual mark or unread threads. */
-export function channelHasUnread(unread: UnreadCapability, channelId: string) {
+/** Whether a channel has unread messages, a manual mark or unread threads.
+ * `shown` asks what its row shows instead, which opening the channel quiets. */
+export function channelHasUnread(
+  unread: UnreadCapability,
+  channelId: string,
+  shown = false,
+) {
   const state = unread.snapshot({ kind: "channel", channelId });
+  if (state.manual !== "none") return true;
+  if (shown && state.row) return state.row.observedCount > 0;
   return (
-    state.manual !== "none" ||
     (state.observedCount ?? 0) > 0 ||
     (unread.activity(channelId).items?.length ?? 0) > 0
   );
 }
 
-/** Channels among `ids` (a JSON id array) with unread messages or threads. */
-export function useUnreadChannelIds(unread: UnreadCapability, ids: string) {
+/** Channels among `ids` (a JSON id array) with unread messages or threads.
+ * `shown` asks what their rows show instead: the sidebar's Unreads filter
+ * follows the rows, while search still leads with every unread conversation. */
+export function useUnreadChannelIds(
+  unread: UnreadCapability,
+  ids: string,
+  shown = false,
+) {
   const targets = useMemo(
     () =>
       (JSON.parse(ids) as string[]).map((channelId) => ({
@@ -113,10 +125,10 @@ export function useUnreadChannelIds(unread: UnreadCapability, ids: string) {
     () =>
       JSON.stringify(
         targets
-          .filter((target) => channelHasUnread(unread, target.channelId))
+          .filter((target) => channelHasUnread(unread, target.channelId, shown))
           .map((target) => target.channelId),
       ),
-    [targets, unread],
+    [targets, unread, shown],
   );
   const unreadIds = useSyncExternalStore(subscribe, snapshot, snapshot);
   return useMemo(() => new Set<string>(JSON.parse(unreadIds)), [unreadIds]);

@@ -328,8 +328,11 @@ it("selects alternate URL spellings through the canonical retained session", asy
   const original = client.relay.snapshot();
   const connections = requests.filter((url) => url.endsWith("/session")).length;
   client.select(null);
+  expect(client.relay.selected?.()).toBeUndefined();
   client.select(" WSS://THIRD.example:443/ ");
   expect(client.snapshot().selected).toBe("https://third.example");
+  // Plugins follow the selection by the origin its connection names.
+  expect(client.relay.selected?.()).toBe(original.origin);
   expect(client.relay.snapshot()).toBe(original);
   expect(requests.filter((url) => url.endsWith("/session"))).toHaveLength(
     connections,

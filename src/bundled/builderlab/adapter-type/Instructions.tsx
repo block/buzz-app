@@ -11,7 +11,7 @@ import { PreferenceRow } from "../../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import inlineStyles from "../../../shared/InlineReference.module.css";
 import type { AgentClient, RemoteAgent } from "../agents/client";
-import type { BuilderlabSession } from "../session";
+import { sessionSite, type BuilderlabSession } from "../session";
 import { ModelSettings } from "./ModelSettings";
 
 /** Hosted settings belong to Builderlab, rather than Agents' local config. */
@@ -100,7 +100,23 @@ export function createSettingsTab(
     return (
       <div className="grid gap-4">
         {settingsSection !== "runtime" && signedIn && (
-          <AgentExecutionNote runtime={agent.type} />
+          <AgentExecutionNote
+            runtime={agent.type}
+            description={
+              <>
+                Runs on a Builderlab machine.{" "}
+                <a
+                  className={inlineStyles.link}
+                  href={sessionSite(session)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  See usage and billing
+                </a>
+                .
+              </>
+            }
+          />
         )}
         {settingsSection !== "runtime" && (
           <Editor
@@ -122,7 +138,7 @@ export function createSettingsTab(
                     Hosted and managed by{" "}
                     <a
                       className={inlineStyles.link}
-                      href={import.meta.env.VITE_BUZZ_BUILDERLAB_URL}
+                      href={sessionSite(session)}
                       target="_blank"
                       rel="noopener noreferrer"
                     >

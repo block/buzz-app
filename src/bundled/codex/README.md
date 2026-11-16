@@ -76,8 +76,7 @@ instructions, skills and memories, so no Codex settings, instructions, skills or
 memories reach a review.
 
 Signing in through Buzz runs `codex login` in the review home, records the
-ChatGPT workspace there, and then hands the sign-in to the shared one. Once
-Codex is ready, **Sign in again** in its harness defaults does the same. It
+ChatGPT workspace there, and then hands the sign-in to the shared one. It
 first removes the review home's link, so Codex's sign-out before a sign-in
 revokes nothing and a cancelled sign-in leaves the shared one working; the
 replaced sign-in is left to expire. With
@@ -102,7 +101,7 @@ published checksum and tests the release before switching. A failed update
 leaves the previous copy in use.
 
 Buzz checks for updates when agents load and every six hours. The first download
-(about 130 MB) waits until a Codex agent is running or **Install Codex** is clicked.
+(about 130 MB) waits until a Codex agent is running or **Install integration** is clicked.
 Mentions wait for installation; a failed first download is retried on the next mention.
 
 ## Checks
@@ -131,7 +130,11 @@ no Buzz messages. Set `BUZZ_CODEX_TEST_MODEL` to override its model.
   developer instructions, preserving Codex's native coding prompt.
 - Codex runs with sandbox `danger-full-access` and approval policy `never`: it
   can write outside its workspace, access the network and use git and `gh`.
-  Web search, inherited MCP servers, Apps and plugins are disabled.
+  Web search and inherited MCP servers are disabled. Apps and plugins are
+  disabled unless the agent's **Codex apps and plugins** setting is on for
+  this device; then Codex's own configuration decides, and the agent gets the Apps
+  connected to its ChatGPT sign-in. Protected agents and security reviews never
+  get them.
 - The Activity tab shows conversation status and the latest command/output;
   shared Agent Activity integration is deferred. Assistant text is not posted
   automatically. Final Buzz sends finish normally, consume pending steering and

@@ -16,11 +16,29 @@ export const agent = "c".repeat(64);
 const workflowRelay = keypair();
 const workflowOwner = keypair();
 const missingWorkflowOwner = keypair();
+const reviewers = [
+  "Jordan Lee",
+  "Priya Shah",
+  "Chen Wei",
+  "Maya Ortiz",
+  "Noah Kim",
+  "Ines Duarte",
+  "Tariq Haddad",
+  "Lena Fischer",
+  "Omar Farouk",
+  "Ruth Okafor",
+  "Diego Alvarez",
+  "Hana Sato",
+].map((name, index) => ({
+  name,
+  pubkey: "123456789def".charAt(index).repeat(64),
+}));
 export const profiles = new Map<string, Profile>([
   [workflowOwner.pubkey, { name: "Wes" }],
   [reader, { name: "Alex Morgan", picture: "https://fixture.test/avatar" }],
   [teammate, { name: "Sam Rivera" }],
   [agent, { name: "Studio assistant", isAgent: true }],
+  ...reviewers.map(({ name, pubkey }) => [pubkey, { name }] as const),
 ]);
 export const artwork = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#e9e8e4"/><circle cx="460" cy="100" r="48" fill="#cda97c"/><path d="M0 360L180 120L390 360M210 360L425 180L640 360" fill="#859e89"/></svg>')}`;
 export const media = (url: string) => {
@@ -193,6 +211,16 @@ export const groups: Group[] = [
         "Colored bubbles preserve contrast for links, mentions, and revealed spoilers.",
         references,
         { mentions: [teammate, agent] },
+      ),
+      single(
+        "wrapped-mentions",
+        "Wrapped mentions",
+        "Mentions that start a line, wrap or follow a line break all meet the prose edge.",
+        `Tagging everyone who reviews message styling. Please check the narrow layout before Friday.\n@Studio assistant can collect the notes.\n\n${reviewers.map(({ name }) => `@${name}`).join(" ")}`,
+        {
+          authorId: teammate,
+          mentions: [agent, ...reviewers.map(({ pubkey }) => pubkey)],
+        },
       ),
       single(
         "long-links",
@@ -578,6 +606,37 @@ export const groups: Group[] = [
       ),
     ],
   },
+
+  {
+    id: "charts",
+    title: "Charts",
+    description:
+      "Fenced buzz-chart JSON drawn by the bundled plugin inside the host code frame.",
+    examples: [
+      single(
+        "chart-line",
+        "Series chart",
+        "Two series follow the first chart colors; a data table sits below.",
+        '```buzz-chart\n{"version":1,"type":"line","title":"Weekly reviews","x":"week","y":"reviews","series":"team","data":[{"week":1,"reviews":8,"team":"Web"},{"week":2,"reviews":11,"team":"Web"},{"week":3,"reviews":9,"team":"Web"},{"week":1,"reviews":5,"team":"Relay"},{"week":2,"reviews":6,"team":"Relay"},{"week":3,"reviews":10,"team":"Relay"}],"source":{"name":"Example data"}}\n```',
+        { authorId: agent },
+      ),
+      single(
+        "chart-pie",
+        "ECharts option",
+        "Slices cycle through the four series colors.",
+        '```buzz-chart\n{"version":2,"title":"Review time","height":280,"option":{"series":[{"type":"pie","radius":["40%","70%"],"data":[{"name":"Waiting","value":45},{"name":"Reviewing","value":30},{"name":"Fixing","value":15},{"name":"Merging","value":10}]}]}}\n```',
+        { authorId: agent },
+      ),
+      single(
+        "chart-invalid",
+        "Invalid chart",
+        "The validation error and the source replace the chart.",
+        '```buzz-chart\n{"version":1,"type":"bar"}\n```',
+        { authorId: agent },
+      ),
+    ],
+  },
+
   {
     id: "conversation",
     title: "Conversation context",

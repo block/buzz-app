@@ -435,31 +435,50 @@ test("message activity opens a grouped preview and the agent's profile without l
     .click();
   publish(human, 9, "Unread reply while agents work", typingTags, resumedAt);
   await expect(summary).toHaveAccessibleName(/Observed unread replies/);
-  // Mixed freshness is shown in activity, separate from reply navigation. Control expiry explicitly
-  // so narrow-layout coverage does not depend on the runner crossing 30s.
+  // Passive uncertainty stays quiet while the other agent keeps working.
+  // Control expiry so this transition does not depend on runner speed.
   await page.clock.fastForward(31_000);
   telemetryTime = await page.evaluate(() => new Date().toISOString());
   send(1, "turn_liveness", ++livenessSeq);
   const channelActivity = row.getByRole("region", {
     name: "Agent activity on this message",
   });
-  await channelActivity.getByRole("button").click();
+  const remainingActivity = channelActivity.getByRole("button", {
+    name: /^View agent activity: Agent 2/,
+  });
+  await expect(remainingActivity).toBeVisible();
+  await expect(remainingActivity).not.toHaveAttribute("aria-haspopup");
   const mixedActivity = page.getByRole("dialog", {
     name: "Agent activity",
     exact: true,
   });
-  await expect(
-    mixedActivity.getByRole("button", {
-      name: "View activity for Agent 1",
-      exact: true,
-    }),
-  ).toContainText("Activity interrupted or out of date");
-  await expect(
-    mixedActivity.getByRole("button", {
-      name: "View activity for Agent 2",
-      exact: true,
-    }),
-  ).not.toContainText("Activity interrupted or out of date");
+  const firstActivity = mixedActivity.getByRole("button", {
+    name: "View activity for Agent 1",
+    exact: true,
+  });
+  const secondActivity = mixedActivity.getByRole("button", {
+    name: "View activity for Agent 2",
+    exact: true,
+  });
+  await expect(mixedActivity).toHaveCount(0);
+  await expect(remainingActivity).not.toContainText(
+    "Activity interrupted or out of date",
+  );
+  await expect(firstActivity).toHaveCount(0);
+  await expect(channelActivity.locator(".buzz-avatar")).toHaveCount(1);
+  await expect(channelActivity).not.toContainText("Couldn’t finish");
+  // Uncertainty is retained internally: fresh evidence restores the same agent.
+  telemetryTime = await page.evaluate(() => new Date().toISOString());
+  send(0, "turn_liveness", ++livenessSeq);
+  await channelActivity
+    .getByRole("button", { name: /^View agent activity:/ })
+    .click();
+  await expect(secondActivity).toBeVisible();
+  await expect(firstActivity).toBeVisible();
+  await expect(firstActivity).not.toContainText(
+    "Activity interrupted or out of date",
+  );
+  await expect(channelActivity.locator(".buzz-avatar")).toHaveCount(2);
   await page.keyboard.press("Escape");
   for (const colorScheme of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme });

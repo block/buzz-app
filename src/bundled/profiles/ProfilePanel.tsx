@@ -27,6 +27,7 @@ import { StatusEditor } from "../../features/user-status/StatusEditor";
 import { useStatusEditor } from "../../features/user-status/useStatusEditor";
 import { useUserStatus } from "../../features/user-status/useUserStatus";
 import { ProfilePublicMetadata } from "./ProfilePublicMetadata";
+import { ProfileLocalTime } from "../../features/profiles/ProfileLocalTime";
 import { relayOrigin } from "../../features/communities/destination";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
@@ -38,6 +39,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import {
   CheckCircleIcon,
@@ -45,14 +47,17 @@ import {
 } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AgentAvatar } from "../../features/agents/AgentAvatar";
+import { TranscriptFocus } from "../../features/agents/ActivityTranscript";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import type { PanelProps } from "../../features/panels/service";
 import {
   claimProfileTranscript,
+  claimTranscriptFocus,
   profileActivityViewKey,
   profileTranscriptRequest,
+  readerInputs,
   subscribeProfileTranscripts,
   profileAgentHint,
   profilePanelKey,
@@ -81,8 +86,11 @@ import type {
 } from "../../features/agents/service";
 import type { CommunityReader } from "../../features/communities/service";
 import { agentSections } from "../../features/agents/tabs";
+import type { ConversationExtensions } from "../../features/conversation/contracts";
 import { useAgentSettingsHost } from "../agents/AgentSettingsHost";
 import { conversationOpener } from "../agents/routes";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
+import type { NavigationScope } from "../../features/navigation/targets";
 import { avatarMedia } from "../../shared/avatar-source";
 import { writeClipboardText } from "../../shared/clipboard";
 
@@ -116,6 +124,12 @@ function openedFrom(session: RelaySession, context: PanelProps["context"]) {
   };
 }
 
+/** Optional Info composition for a panel specializing canonical person profiles. */
+export type PersonProfileInfoContent = {
+  renderPersonInfo?: ((content: ReactNode) => ReactNode) | undefined;
+};
+const plainInfo = (content: ReactNode) => content;
+
 export function ProfilePanel({
   relay,
   target,
@@ -123,14 +137,18 @@ export function ProfilePanel({
   navigation,
   agents,
   communities,
+  linkRenderers,
   close,
-}: PanelProps & {
-  relay: RelayData;
-  navigation?: Navigation;
-  /** Agents show their type's tabs. */
-  agents?: Agents;
-  communities?: CommunityReader | undefined;
-}) {
+  renderPersonInfo,
+}: PanelProps &
+  PersonProfileInfoContent & {
+    relay: RelayData;
+    navigation?: Navigation;
+    /** Agents show their type's tabs. */
+    agents?: Agents;
+    communities?: CommunityReader | undefined;
+    linkRenderers?: ConversationExtensions["links"] | undefined;
+  }) {
   const connection = useRelayConnection(relay);
   const activityKey = profileActivityViewKey(target);
   const opening = activityKey ? "activity" : "info";
@@ -143,11 +161,33 @@ export function ProfilePanel({
   );
   const [held, setHeld] = useState<number>();
   const [offered, setOffered] = useState(0);
+  // The latest opening's message, until its transcript has shown it.
+  const [focus, setFocus] = useState<{
+    opening: number;
+    events: readonly string[];
+    inputs: number;
+  }>();
   // biome-ignore lint/correctness/useExhaustiveDependencies: each new opening is claimed.
   useEffect(() => {
     const claimed = claimProfileTranscript(target);
-    if (claimed !== undefined) setHeld(claimed);
+    if (claimed === undefined) return;
+    setHeld(claimed);
+    const events = claimTranscriptFocus(claimed);
+    // Claimed as it opens: presses and keys from here on are the reader's own.
+    setFocus(events && { opening: claimed, events, inputs: readerInputs() });
   }, [asked, target]);
+  const shown = useMemo(
+    () =>
+      focus && {
+        events: focus.events,
+        inputs: focus.inputs,
+        done: () =>
+          setFocus((current) =>
+            current?.opening === focus.opening ? undefined : current,
+          ),
+      },
+    [focus],
+  );
   const pending = asked ?? held;
   const request =
     pending !== undefined && pending > offered ? pending : undefined;
@@ -171,50 +211,57 @@ export function ProfilePanel({
     navigation,
     panelCommunity(connection.scope, connection.viewer),
   );
-  if (
+  const owner =
     agents &&
     owned &&
     owned.agent.owner === connection.viewer &&
     !owned.agent.unfinished &&
-    owned.agent.place !== "elsewhere"
-  )
-    return (
-      <OwnedAgentProfile
-        target={target}
-        key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
-        agents={agents}
-        communities={communities}
-        initialActivity={!!activityKey}
-        initialTranscript={initialTranscript}
-        pubkey={pubkey}
-        relay={relay}
-        session={connection.session}
-        navigation={navigation}
-        context={context}
-        openConversation={openConversation}
-        close={close}
-      />
-    );
+    owned.agent.place !== "elsewhere";
   return (
-    <ProfileDetails
-      key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
-      initialTab={activityKey ? "activity" : "info"}
-      initialTranscript={initialTranscript}
-      session={connection.session}
-      pubkey={pubkey}
-      agentHint={profileAgentHint(target) || !!activityKey}
-      context={context}
-      navigation={navigation}
-      agents={agents}
-      communities={communities}
-      scope={connection.scope}
-      viewer={connection.viewer}
-      openConversation={openConversation}
-      close={close}
-    />
+    <TranscriptFocus.Provider value={shown}>
+      {owner ? (
+        <OwnedAgentProfile
+          linkRenderers={linkRenderers}
+          target={target}
+          key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
+          agents={agents}
+          communities={communities}
+          initialActivity={!!activityKey}
+          initialTranscript={initialTranscript}
+          pubkey={pubkey}
+          relay={relay}
+          session={connection.session}
+          scope={panelCommunity(connection.scope, connection.viewer)}
+          navigation={navigation}
+          context={context}
+          openConversation={openConversation}
+          close={close}
+        />
+      ) : (
+        <ProfileDetails
+          renderPersonInfo={renderPersonInfo}
+          linkRenderers={linkRenderers}
+          key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
+          initialTab={activityKey ? "activity" : "info"}
+          initialTranscript={initialTranscript}
+          session={connection.session}
+          pubkey={pubkey}
+          agentHint={profileAgentHint(target) || !!activityKey}
+          context={context}
+          navigation={navigation}
+          agents={agents}
+          communities={communities}
+          scope={connection.scope}
+          viewer={connection.viewer}
+          openConversation={openConversation}
+          close={close}
+        />
+      )}
+    </TranscriptFocus.Provider>
   );
 }
 function OwnedAgentProfile({
+  linkRenderers,
   target,
   agents,
   communities,
@@ -223,12 +270,14 @@ function OwnedAgentProfile({
   pubkey,
   relay,
   session,
+  scope,
   navigation,
   context,
   openConversation,
   close,
 }: {
   target: string;
+  linkRenderers: ConversationExtensions["links"] | undefined;
   agents: Agents;
   communities: CommunityReader | undefined;
   initialActivity: boolean;
@@ -236,6 +285,7 @@ function OwnedAgentProfile({
   pubkey: string;
   relay: RelayData;
   session: RelaySession;
+  scope: NavigationScope | undefined;
   navigation: Navigation | undefined;
   context: PanelProps["context"];
   openConversation: AgentViewProps["openConversation"];
@@ -250,7 +300,25 @@ function OwnedAgentProfile({
   if (leaving && !unsaved.dirty) setLeaving(undefined);
   if (!owned) return null;
   const address = navigation?.snapshot().entry.target;
-  const go = (link: string) => (context?.push ?? context?.open)?.(link);
+  const conversationTarget = (link: string) => {
+    const target = scope && buzzLinkTarget(link, scope);
+    return target?.kind === "conversation" ? target : undefined;
+  };
+  const go = (link: string) => {
+    const target = conversationTarget(link);
+    if (target && navigation) {
+      void navigation.open(target);
+      return true;
+    }
+    return (context?.push ?? context?.open)?.(link);
+  };
+  const openLink = (link: string) => {
+    if (!context?.canOpen(link) && !(navigation && conversationTarget(link)))
+      return false;
+    if (!unsaved.saving && !unsaved.dirty) return !!go(link);
+    if (!unsaved.saving) setLeaving(link);
+    return false;
+  };
   return (
     <AgentSaveState value={reportUnsaved}>
       <AgentDetails
@@ -279,20 +347,13 @@ function OwnedAgentProfile({
         types={types}
         channels={channels}
         memories={session.agentMemories}
+        memoryLinks={{ session, registry: linkRenderers, open: openLink }}
         onRemoved={close}
         initialActivity={initialActivity}
         initialTranscript={initialTranscript}
         close={close}
         openConversation={openConversation}
-        openLink={
-          context &&
-          ((link) => {
-            if (!context.canOpen(link)) return false;
-            if (!unsaved.saving && !unsaved.dirty) return !!go(link);
-            if (!unsaved.saving) setLeaving(link);
-            return false;
-          })
-        }
+        openLink={context && openLink}
         canOpenLink={context && ((link) => context.canOpen(link))}
         conversation={openedFrom(session, context)}
         messageAction={(variant) => (
@@ -325,6 +386,7 @@ function OwnedAgentProfile({
 }
 
 function ProfileDetails({
+  linkRenderers,
   initialTab,
   initialTranscript,
   agentHint,
@@ -338,8 +400,10 @@ function ProfileDetails({
   viewer,
   openConversation,
   close,
-}: {
+  renderPersonInfo = plainInfo,
+}: PersonProfileInfoContent & {
   agents: Agents | undefined;
+  linkRenderers: ConversationExtensions["links"] | undefined;
   communities: CommunityReader | undefined;
   initialTab: "info" | "activity";
   initialTranscript: TranscriptRequest | undefined;
@@ -408,6 +472,11 @@ function ProfileDetails({
           agent: settings.agent,
           type: settings.type,
           memories: session.agentMemories,
+          memoryLinks: {
+            session,
+            registry: linkRenderers,
+            open: (url) => !!context?.open(url),
+          },
           communities,
           conversation: openedFrom(session, context),
           initialTranscript,
@@ -598,6 +667,10 @@ function ProfileDetails({
                 }
               </p>
             )}
+            <ProfileLocalTime
+              timeZone={profile?.tz}
+              className="text-body-sm text-secondary"
+            />
             <StatusDisplay session={session} status={userStatus} />
           </div>
           {(canSetStatus || canMessage || canEdit) && (
@@ -655,118 +728,120 @@ function ProfileDetails({
               {selected.startsWith("agent:") ? (
                 sections.find((item) => item.value === selected)?.render()
               ) : selected === "info" ? (
-                <>
-                  {profile?.verified && (
-                    <SettingsGroup>
-                      <PreferenceRow
-                        title={`Name verified by ${profile.verified.issuerLabel}`}
-                        subtitle={
-                          <>
-                            Last verified{" "}
-                            <time dateTime={verificationIso}>
-                              {verificationIso
-                                ? verificationDate?.toLocaleString()
-                                : `Unix time ${profile.verified.verifiedAt}`}
-                            </time>
-                            .{" "}
-                            {profile.verified.status === "cached"
-                              ? "Cached evidence; reconnect to check for updates. "
-                              : ""}
-                            This verifies the name and public key at that time,
-                            and does not confirm current account access or
-                            current issuer endorsement.
-                          </>
-                        }
-                      />
-                    </SettingsGroup>
-                  )}
-                  {profile?.about && (
-                    <SettingsGroup layout="form">
-                      <p className={styles.about}>{profile.about}</p>
-                    </SettingsGroup>
-                  )}
-                  {plugin && agents && plugin.agent.place !== "elsewhere" && (
-                    <div>
-                      <AgentDelete
-                        agents={agents}
-                        agent={plugin.agent}
-                        onRemoved={close}
-                      />
+                (displayAgent ? plainInfo : renderPersonInfo)(
+                  <>
+                    {profile?.verified && (
+                      <SettingsGroup>
+                        <PreferenceRow
+                          title={`Name verified by ${profile.verified.issuerLabel}`}
+                          subtitle={
+                            <>
+                              Last verified{" "}
+                              <time dateTime={verificationIso}>
+                                {verificationIso
+                                  ? verificationDate?.toLocaleString()
+                                  : `Unix time ${profile.verified.verifiedAt}`}
+                              </time>
+                              .{" "}
+                              {profile.verified.status === "cached"
+                                ? "Cached evidence; reconnect to check for updates. "
+                                : ""}
+                              This verifies the name and public key at that
+                              time, and does not confirm current account access
+                              or current issuer endorsement.
+                            </>
+                          }
+                        />
+                      </SettingsGroup>
+                    )}
+                    {profile?.about && (
+                      <SettingsGroup layout="form">
+                        <p className={styles.about}>{profile.about}</p>
+                      </SettingsGroup>
+                    )}
+                    {plugin && agents && plugin.agent.place !== "elsewhere" && (
+                      <div>
+                        <AgentDelete
+                          agents={agents}
+                          agent={plugin.agent}
+                          onRemoved={close}
+                        />
+                      </div>
+                    )}
+                    <div className={styles.publicKey}>
+                      <SettingsGroup>
+                        <PreferenceRow
+                          title="Public key"
+                          subtitle={
+                            <code className={styles.keyValue}>{npub}</code>
+                          }
+                          trailing={
+                            <Button
+                              size="compact"
+                              variant="ghost"
+                              aria-label="Copy npub"
+                              onClick={() => {
+                                setCopyStatus("");
+                                void Promise.resolve()
+                                  .then(() => writeClipboardText(npub))
+                                  .then(
+                                    () => setCopyStatus("Public key copied."),
+                                    () =>
+                                      setCopyStatus(
+                                        "Could not copy. Select the public key above to copy it.",
+                                      ),
+                                  );
+                              }}
+                            >
+                              <CopyIcon size={16} aria-hidden="true" />
+                              Copy
+                            </Button>
+                          }
+                        />
+                      </SettingsGroup>
+                      <span role="status" className={styles.feedback}>
+                        {copyStatus}
+                      </span>
                     </div>
-                  )}
-                  <div className={styles.publicKey}>
-                    <SettingsGroup>
-                      <PreferenceRow
-                        title="Public key"
-                        subtitle={
-                          <code className={styles.keyValue}>{npub}</code>
-                        }
-                        trailing={
-                          <Button
-                            size="compact"
-                            variant="ghost"
-                            aria-label="Copy npub"
-                            onClick={() => {
-                              setCopyStatus("");
-                              void Promise.resolve()
-                                .then(() => writeClipboardText(npub))
-                                .then(
-                                  () => setCopyStatus("Public key copied."),
-                                  () =>
-                                    setCopyStatus(
-                                      "Could not copy. Select the public key above to copy it.",
-                                    ),
-                                );
-                            }}
-                          >
-                            <CopyIcon size={16} aria-hidden="true" />
-                            Copy
-                          </Button>
-                        }
+                    {knownAgent && verifiedOwner && (
+                      <ProfileAgentIdentity
+                        session={session}
+                        owner={verifiedOwner}
+                        viewer={viewer}
+                        context={context}
                       />
-                    </SettingsGroup>
-                    <span role="status" className={styles.feedback}>
-                      {copyStatus}
-                    </span>
-                  </div>
-                  {knownAgent && verifiedOwner && (
-                    <ProfileAgentIdentity
-                      session={session}
-                      owner={verifiedOwner}
-                      viewer={viewer}
-                      context={context}
-                    />
-                  )}
-                  <ProfilePublicMetadata nip05={profile?.nip05} />
-                  {/* A verified overlay can exist while its kind-0 read failed. */}
-                  {(!profile ||
-                    (profile.verified && (status === "error" || retrying))) &&
-                    (status === "loading" ? (
-                      <p role="status">Loading profile…</p>
-                    ) : (
-                      <p role={status === "error" ? "alert" : undefined}>
-                        {status === "error"
-                          ? "Could not load this profile."
-                          : "No profile metadata is available in this community."}
-                      </p>
-                    ))}
-                  {((!profile && status !== "loading") ||
-                    (profile?.verified && status === "error") ||
-                    retrying ||
-                    ownership.failed) && (
-                    <Button
-                      ref={retryButton}
-                      size="compact"
-                      loading={retrying}
-                      onClick={() => {
-                        setRetrying(true);
-                        retry((value) => value + 1);
-                      }}
-                    >
-                      Retry profile
-                    </Button>
-                  )}
-                </>
+                    )}
+                    <ProfilePublicMetadata nip05={profile?.nip05} />
+                    {/* A verified overlay can exist while its kind-0 read failed. */}
+                    {(!profile ||
+                      (profile.verified && (status === "error" || retrying))) &&
+                      (status === "loading" ? (
+                        <p role="status">Loading profile…</p>
+                      ) : (
+                        <p role={status === "error" ? "alert" : undefined}>
+                          {status === "error"
+                            ? "Could not load this profile."
+                            : "No profile metadata is available in this community."}
+                        </p>
+                      ))}
+                    {((!profile && status !== "loading") ||
+                      (profile?.verified && status === "error") ||
+                      retrying ||
+                      ownership.failed) && (
+                      <Button
+                        ref={retryButton}
+                        size="compact"
+                        loading={retrying}
+                        onClick={() => {
+                          setRetrying(true);
+                          retry((value) => value + 1);
+                        }}
+                      >
+                        Retry profile
+                      </Button>
+                    )}
+                  </>,
+                )
               ) : (
                 <ProfileChannels
                   session={session}

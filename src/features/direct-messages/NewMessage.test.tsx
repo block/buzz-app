@@ -103,7 +103,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-function setup() {
+function setup({ archived = [] as string[] } = {}) {
   const empty: never[] = [];
   const emoji = { status: "ready", entries: empty };
   const profiles = new Map();
@@ -214,11 +214,32 @@ function setup() {
     },
     refresh: async () => {},
   };
+  // Archive evidence, read once, as the relay keeps it.
+  let archiveSnapshot = Object.freeze({
+    status: "ready" as const,
+    archived: Object.freeze([...archived]),
+  });
+  const archiveListeners = new Set<() => void>();
+  const archives = {
+    snapshot: () => archiveSnapshot,
+    subscribe: (listener: () => void) => {
+      archiveListeners.add(listener);
+      return () => archiveListeners.delete(listener);
+    },
+    state: (key: string) =>
+      archiveSnapshot.archived.includes(key)
+        ? ("archived" as const)
+        : ("not-archived" as const),
+    ensure: async () => {},
+    refresh: async () => {},
+  };
   Object.assign(session, {
+    archives,
     agentChoices: createAgentChoices({
       scope,
       library: session.agentLibrary,
       native: control,
+      archives,
       signal: new AbortController().signal,
     }),
   });
@@ -256,6 +277,15 @@ function setup() {
     onStarted,
     mount,
     control,
+    setArchived(keys: readonly string[]) {
+      archiveSnapshot = Object.freeze({
+        status: "ready" as const,
+        archived: Object.freeze([...keys]),
+      });
+      act(() => {
+        for (const listener of archiveListeners) listener();
+      });
+    },
     updateControl(next: LocalAgentsSnapshot) {
       controlState = next;
       act(() => {
@@ -308,6 +338,73 @@ it("revalidates a hosted recipient when its owned evidence disappears", async ()
   );
   expect(t.directMessages.open).not.toHaveBeenCalled();
   expect(t.messages.send).not.toHaveBeenCalled();
+});
+
+it("neither offers nor sends to an agent whose Delete started", async () => {
+  const t = setup();
+  const [owned] = t.control.snapshot().agents;
+  assert(owned);
+  t.mount();
+  await t.user.click(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  );
+  await t.user.type(screen.getByRole("textbox"), "Private draft");
+  // Chosen before its Delete started; Send checks again.
+  t.updateControl({
+    status: "ready",
+    agents: [{ ...owned, deleting: true }],
+  });
+  await t.user.click(send());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "no longer available",
+  );
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+  await t.user.type(recipient(), owned.name);
+  expect(
+    screen.queryByRole("option", { name: "Person 2, Agent" }),
+  ).not.toBeInTheDocument();
+});
+
+it("neither offers nor sends to an archived agent", async () => {
+  const pubkey = people[1]?.pubkey ?? "";
+  const t = setup({ archived: [pubkey] });
+  t.mount();
+  await t.user.type(recipient(), people[1]?.name ?? "");
+  expect(
+    screen.queryByRole("option", { name: "Person 2, Agent" }),
+  ).not.toBeInTheDocument();
+});
+
+it("holds the archive rule by key, without agent flags, for a selected and a restored recipient", async () => {
+  // Person 1's profile carries neither auth nor is_agent.
+  const pubkey = people[0]?.pubkey ?? "";
+  const t = setup();
+  const view = t.mount();
+  await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
+  await t.user.type(screen.getByRole("textbox"), "Private draft");
+  t.setArchived([pubkey]);
+  expect(screen.getByText("Unavailable")).toBeVisible();
+  await t.user.click(send());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "no longer available",
+  );
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+  view.unmount();
+  // Restored with the draft: still refused.
+  t.mount();
+  expect(screen.getByRole("button", { name: "Remove Person 1" })).toBeVisible();
+  expect(screen.getByText("Unavailable")).toBeVisible();
+  await waitFor(() => expect(send()).toBeEnabled());
+  await t.user.click(send());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "no longer available",
+  );
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+  expect(t.messages.send).not.toHaveBeenCalled();
+  await t.user.type(recipient(), "Person 1");
+  expect(
+    screen.queryByRole("option", { name: "Person 1" }),
+  ).not.toBeInTheDocument();
 });
 
 it("offers only local agents in this community, including cached searches after their list changes", async () => {
@@ -849,14 +946,32 @@ it("opens blank and focused, adds multiple recipients, deduplicates, and enforce
     screen.getAllByRole("button", { name: /^Remove Person/ }),
   ).toHaveLength(8);
   expect(recipient()).toHaveAttribute("readonly");
+  // The eighth pick keeps the list open and swaps it for the limit, since
+  // "8 people selected" alone doesn't say eight is the most.
+  expect(recipient()).toHaveFocus();
+  expect(recipient()).toHaveAttribute("aria-expanded", "true");
+  expect(recipient()).toHaveAttribute("placeholder", "8 people selected");
+  expect(
+    screen.getByText("You can message up to 8 people at once."),
+  ).toHaveAttribute("role", "status");
+  expect(screen.queryAllByRole("option")).toHaveLength(0);
   await t.user.keyboard("{Tab}");
   expect(screen.getByRole("textbox")).toHaveFocus();
   await t.user.click(recipient());
+  expect(
+    await screen.findByText("You can message up to 8 people at once."),
+  ).toHaveAttribute("role", "status");
   await t.user.keyboard("{Enter}");
   expect(
     screen.getAllByRole("button", { name: /^Remove Person/ }),
   ).toHaveLength(8);
   expect(t.directMessages.open).not.toHaveBeenCalled();
+  await t.user.keyboard("{Backspace}");
+  expect(
+    screen.getAllByRole("button", { name: /^Remove Person/ }),
+  ).toHaveLength(7);
+  expect(recipient()).not.toHaveAttribute("readonly");
+  expect(await screen.findAllByRole("option")).not.toHaveLength(0);
 });
 
 it("shows selected recipient artwork without opening or sending, and updates it on removal", async () => {

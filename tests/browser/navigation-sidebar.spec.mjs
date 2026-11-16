@@ -9,6 +9,7 @@ import {
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { createServer } from "./vite-server.mjs";
+import { animationsSettled } from "./animations.mjs";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 test.use({
   enabledPlugins: ["buzz.workflows"],
@@ -40,11 +41,7 @@ test("segmented selections slide but window resizing follows the selected tab im
       await page.setViewportSize({ width: 1280, height: 900 });
       const list = page.getByRole("tablist", { name: label, exact: true });
       await list.getByRole("tab").first().click();
-      await list.locator(".buzz-tabs-indicator").evaluate(async (element) => {
-        await Promise.all(
-          element.getAnimations().map((animation) => animation.finished),
-        );
-      });
+      await animationsSettled(list.locator(".buzz-tabs-indicator"));
       const capture = await list.evaluateHandle((list) => {
         const indicator = list.querySelector(".buzz-tabs-indicator");
         if (!indicator) throw new Error("Missing segmented indicator");
@@ -456,14 +453,17 @@ creationSidebar(
     await summary.hover();
     await expect(createContainer).toHaveCSS("opacity", "1");
     await expect(create).toHaveAttribute("data-icon-shape", "control");
-    const [summaryBox, createBox] = await Promise.all([
-      summary.boundingBox(),
-      create.boundingBox(),
-    ]);
-    expect(summaryBox.x + summaryBox.width).toBeCloseTo(
-      createBox.x + createBox.width + 4,
-      0,
-    );
+    // The button sits in the heading row's actions, after the title, ending
+    // one trailing inset before the row's edge; nothing floats over the title.
+    const placement = await create.evaluate((button) => {
+      const row = button.closest(".navigation-section-heading");
+      const title = row.querySelector("summary").getBoundingClientRect();
+      const rowEnd = row.getBoundingClientRect().right;
+      const { left, right } = button.getBoundingClientRect();
+      return { afterTitle: left >= title.right - 0.5, inset: rowEnd - right };
+    });
+    expect(placement.afterTitle).toBe(true);
+    expect(placement.inset).toBeCloseTo(4, 0);
     await create.click();
 
     const dialog = page.getByRole("dialog", { name: "Create a channel" });

@@ -245,6 +245,10 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
     const opener = mentionRow.getByRole("button", { name: /^Open / });
     const dot = opener.getByRole("img", { name: "Unread", exact: true });
     await expect(dot).toBeVisible();
+    await expect(dot.locator("span")).toHaveCSS(
+      "background-color",
+      mode === "light" ? "rgb(223, 30, 133)" : "rgb(244, 188, 207)",
+    );
     const dotLayout = await dot.evaluate((element) => {
       const button = element.closest("button");
       const label = button.querySelector(".navigation-item-label");

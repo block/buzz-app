@@ -17,6 +17,7 @@ import {
   UsersIcon,
   WrenchIcon,
   GearIcon,
+  GlobeIcon,
   LockIcon,
 } from "../shared/design-system/icons/index";
 import type { SettingsCard } from "../features/settings/service";
@@ -52,6 +53,7 @@ const app: readonly SettingsSection[] = [
   { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
   { id: "agents", label: "Agent setup", icon: RobotIcon },
   { id: "decisions", label: "Decisions API", icon: BrainIcon },
+  { id: "manage-communities", label: "Manage communities", icon: GlobeIcon },
   { id: "updates", label: "Software updates", icon: DownloadIcon },
 ];
 const plugins: SettingsSection = {

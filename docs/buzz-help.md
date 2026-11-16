@@ -180,6 +180,7 @@ mention anyone. Explicit agent watches on that room can still receive them.
   Backup and restore options depend on the build and account; do not promise
   recovery or assume automatic backup is on. Losing every copy of the private
   key can mean losing the identity.
+- **Manage communities…** at the bottom of the community switcher opens the saved community list in Settings. **Remove from this device** deletes that community’s connection, saved drafts and local data after confirmation; your membership stays unchanged. Removing the selected community returns you to Personal space, which is always available and cannot be removed. Device removal also works when a community is offline. To end membership instead, use **Leave community** in the community’s context menu or **Settings → Community → Leave or remove**.
 - **Settings → Plugins → Builderlab** shows previews of your hosted communities
   and remote agents. Open either card to manage it, then use the left caret beside the title to return. Both lists load when the overview opens and refresh
   when the window regains focus; opening a section preserves its current draft.

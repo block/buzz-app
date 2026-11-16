@@ -48,6 +48,7 @@ const app = [
   "shortcuts",
   "agents",
   "decisions",
+  "manage-communities",
   "buzz.channels/templates",
   "updates",
   ...(developerMode ? ["developer"] : []),

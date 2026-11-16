@@ -1278,9 +1278,10 @@ it("shows only the active community until opened and routes creation through Hos
   await user.click(switcher());
   const popup = await screen.findByRole("dialog", { name: "Switch community" });
   expect(within(popup).getAllByRole("button").at(-1)).toHaveTextContent(
-    "Create community",
+    "Manage communities…",
   );
   await user.keyboard("{End}");
+  await user.keyboard("{ArrowUp}");
   expect(
     screen.getByRole("button", { name: "Create community" }),
   ).toHaveFocus();
@@ -1418,4 +1419,24 @@ it("shares discovered community artwork with an already-open Settings address wi
     cleanup();
     await root.fiber.dispose();
   }
+});
+
+it("opens the saved community management destination from the last picker action", async () => {
+  const h = harness();
+  render(
+    <CommunityPicker
+      communities={h.communities}
+      onOpenTarget={h.onOpenTarget}
+    />,
+  );
+  const manage = screen.getByRole("button", { name: "Manage communities…" });
+  const popup = screen.getByRole("dialog", { name: "Switch community" });
+  fireEvent.keyDown(popup, { key: "End" });
+  expect(manage).toHaveFocus();
+  fireEvent.click(manage);
+  expect(h.onOpenTarget).toHaveBeenCalledWith({
+    version: 1,
+    kind: "settings",
+    section: "manage-communities",
+  });
 });

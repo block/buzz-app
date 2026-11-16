@@ -369,7 +369,6 @@ export function pastedHtml(data: DataTransfer | null) {
   return html;
 }
 
-
 /** Pictures a paste carries only in its HTML, with no file item. WebKit
  * exposes a pasted RTFD's or web archive's pictures, as TextEdit, Notes, Pages
  * and Mail copy them, as `blob:` URLs of this page. Chromium does not, so

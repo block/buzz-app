@@ -47,6 +47,7 @@ import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
 import { Settings } from "./Settings";
 import { SettingsSidebar } from "./SettingsSidebar";
+import { defaultSettingsSection } from "./settings-sections";
 import { pendingManaged } from "../plugins/managed";
 import { RecoveryScreen } from "./RecoveryScreen";
 import { PageView } from "../features/pages/PageView";
@@ -173,6 +174,8 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
   // Unsaved Profile edits turn a Settings dismissal into a discard prompt.
   const [settingsUnsaved, setSettingsUnsaved] = useState(false);
   const [confirmSettingsDiscard, setConfirmSettingsDiscard] = useState(false);
+  // Discarding on the way to another section resets the still-mounted editor.
+  const [profileDiscards, setProfileDiscards] = useState(0);
   const [departure, setDeparture] = useState<PendingSettingsDeparture | null>(
     null,
   );
@@ -190,14 +193,24 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
         return false;
       }
       const current = services.navigation.snapshot().entry.target;
-      // Settings sections share the mounted Profile editor. A different scope
-      // or leaving the dialog would unmount it.
+      // Settings sections share the mounted Profile editor, but another
+      // section hides it, so leaving Profile asks while its edits are in view.
+      // A different scope or leaving the dialog would unmount it.
       if (
         next.kind === "settings" &&
         current.kind === "settings" &&
         JSON.stringify(next.scope) === JSON.stringify(current.scope)
-      )
-        return false;
+      ) {
+        const client = services.communities.snapshot();
+        const fallback = defaultSettingsSection(
+          client.memberships.find(({ id }) => id === client.selected),
+        );
+        if (
+          (current.section ?? fallback) !== "profile" ||
+          (next.section ?? fallback) === "profile"
+        )
+          return false;
+      }
       settingsTraversal.current = decide;
       setConfirmSettingsDiscard(true);
       return true;
@@ -906,6 +919,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
                       }
                       onProvider={route.setSettingsProvider}
                       onUnsavedChange={setSettingsUnsaved}
+                      profileDiscards={profileDiscards}
                     />
                   )}
                 </Presented>
@@ -924,6 +938,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
                     variant="destructive"
                     onClick={() => {
                       setConfirmSettingsDiscard(false);
+                      setProfileDiscards((count) => count + 1);
                       const decide = settingsTraversal.current;
                       settingsTraversal.current = undefined;
                       if (decide) decide(true);

@@ -164,7 +164,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "agent_read",
-    "Read one of your owner's agents here, yourself included: name, type, instructions, sync revision and safe modelSettings. Settings identify configured values, unresolved harness defaults or Recommended policy; they do not prove an active turn's model. Unreadable or unsupported settings say unavailable. agent is its pubkey or exact name; without it, lists them all.",
+    "Read one of your owner's agents here, yourself included: name, type, instructions, sync revision and safe modelSettings. Settings identify configured values, unresolved inherited defaults or Recommended policy; they do not prove an active turn's model. Unreadable or unsupported settings say unavailable. agent is its pubkey or exact name; without it, lists them all.",
     { agent: str },
   ),
   tool(

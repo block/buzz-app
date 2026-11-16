@@ -32,6 +32,8 @@ it.each([
           type = registered;
         },
         relay: () => undefined,
+        subscribe: () => () => {},
+        snapshot: () => ({ status: "ready", running: [] }),
       },
       effect: vi.fn(),
     } as never);
@@ -54,23 +56,21 @@ it.each([
       }),
     });
     expect(type.readModelSettings(type.defaults().config)).toEqual({
-      model: { source: "harness-default" },
-      effort: { source: "harness-default" },
-      ...(provider && { provider: { source: "harness-default" } }),
+      model: { source: "default" },
+      effort: { source: "default" },
+      ...(provider && { provider: { source: "default" } }),
     });
     expect(type.readModelSettings({ ...saved, effort: "" })).toMatchObject({
       model: { source: "configured", value: "model-a" },
-      effort: { source: "harness-default" },
+      effort: { source: "default" },
     });
     expect(
       type.readModelSettings({ ...saved, effort: { secret: "invalid" } }),
     ).toMatchObject({
-      effort: { source: name === "Codex" ? "harness-default" : "unavailable" },
+      effort: { source: name === "Codex" ? "default" : "unavailable" },
     });
     if (recommended) {
-      expect(
-        type.readModelSettings({ ...saved, preset: "recommended" }),
-      ).toEqual({
+      expect(type.readModelSettings({ preset: "recommended" })).toEqual({
         model: { source: "recommended" },
         effort: { source: "recommended" },
         ...(provider && { provider: { source: "recommended" } }),

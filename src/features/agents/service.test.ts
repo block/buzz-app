@@ -15052,7 +15052,7 @@ it("reads model selections through MCP by name and in lists without exposing con
     id: "models",
     readModelSettings: () => ({
       model: { source: "configured", value: "model-a" },
-      effort: { source: "harness-default" },
+      effort: { source: "default" },
     }),
   });
   await f.service.create({ type: "example/echo", name: "Reader" });
@@ -15076,7 +15076,7 @@ it("reads model selections through MCP by name and in lists without exposing con
       synced: false,
       modelSettings: {
         model: { source: "configured", value: "model-a" },
-        effort: { source: "harness-default" },
+        effort: { source: "default" },
       },
     };
     expect(await read("Model")).toEqual(expected);
@@ -15130,7 +15130,7 @@ it("reads confirmed synced model settings and refuses stale local choices", asyn
   });
   const project = vi.fn(({ reply }: Config) => ({
     model: { source: "configured" as const, value: reply },
-    effort: { source: "harness-default" as const },
+    effort: { source: "default" as const },
   }));
   f.plugin.agents.register({
     ...f.type,

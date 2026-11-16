@@ -158,10 +158,11 @@ and otherwise `unavailable` saying why.
 Each named or listed agent also has `modelSettings`. Codex, Claude Code, goose
 and Pi expose `model` and `effort`; goose and Pi also expose `provider`.
 Each field has a `source`: `configured` includes the saved string `value`,
-`harness-default` leaves the choice to the harness, and `recommended` follows
+`default` inherits the type's defaults, and `recommended` follows
 Buzz's Recommended policy. Defaults and recommendations have no `value`: this
 read does not discover models, resolve aliases, inspect harness files or start
-a process. These are saved agent selections, not proof of an active turn's
+a process. A type can inherit device preferences before the harness default.
+These are saved agent selections, not proof of an active turn's
 model or effort. Per-conversation choices can differ.
 An invalid field has `source: "unavailable"`. A type without this read contract,
 an unreadable synced config, or an agent hosted elsewhere has

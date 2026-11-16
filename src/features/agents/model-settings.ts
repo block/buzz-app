@@ -1,7 +1,7 @@
 /** Saved selection policy, never evidence of an active turn's model. */
 export type AgentModelSetting = Readonly<
   | { source: "configured"; value: string }
-  | { source: "harness-default" | "recommended" | "unavailable" }
+  | { source: "default" | "recommended" | "unavailable" }
 >;
 
 export type AgentModelSettings = Readonly<{
@@ -24,7 +24,7 @@ export function readModelSettings(
         ? { source: "unavailable" }
         : value
           ? { source: "configured", value }
-          : { source: "harness-default" };
+          : { source: "default" };
   return {
     model: read(config.model),
     effort: read(config.effort),

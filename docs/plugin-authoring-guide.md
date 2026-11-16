@@ -167,7 +167,8 @@ trigger/close, title/description, non-member label, member actions, access setti
 and share link; host navigation and visit-lifetime props remain internal.
 
 `memberActions` routes individual additions, role changes and removals through
-the plugin, retaining host role checks; team additions are hidden. Its `canAdd`
+the plugin, retaining host role checks; team additions and host-owned addition
+recovery are hidden. Retained host recovery state stays with its session owner. Its `canAdd`
 can restrict additions and `pending` blocks member mutations and local dismissal.
 The picker also locks while its callback is unresolved, shows callback errors,
 and passes an AbortSignal retired on unmount or session/channel change. The

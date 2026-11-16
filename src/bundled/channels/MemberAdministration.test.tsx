@@ -19,6 +19,7 @@ import { keypair, profile, signed } from "../../features/relay/testing";
 import { matchesEvent } from "../../features/relay/projection";
 import type { RelayEvent } from "../../features/relay/events";
 import { PublishRejected } from "../../features/relay/outbox";
+import { createMemberAdditions } from "../../features/channel-members/operations";
 import type {
   Presence,
   PresenceStatus,
@@ -2438,6 +2439,54 @@ function pluginPicker(
     </ToastProvider>,
   );
 }
+
+it("keeps grouped host recovery and its receipts with the host owner in plugin mode", async () => {
+  const t = await setup("owner", "absent");
+  const lifetime = new AbortController();
+  stops.push(() => lifetime.abort());
+  let refused = true;
+  const hostAdd = vi.fn<Parameters<typeof createMemberAdditions>[1]>(
+    async (_channel, key, intent) => {
+      intent.id ??= `receipt-${key}`;
+      if (refused) throw new Error("Confirmation unavailable");
+    },
+  );
+  const additions = createMemberAdditions(lifetime.signal, hostAdd);
+  const keys = [t.target.pubkey, keypair().pubkey];
+  await Promise.allSettled(keys.map((key) => additions.add(id, key)));
+  const retained = additions.snapshot();
+  expect(retained).toHaveLength(2);
+  const session = { ...t.session, memberAdditions: additions };
+  const change = vi.fn(async () => {});
+  pluginPicker(t, {
+    session,
+    memberActions: { canAdd: true, pending: true, change },
+  });
+  expect(
+    screen.queryByRole("button", { name: /^Retry adding / }),
+  ).not.toBeInTheDocument();
+  expect(additions.snapshot()).toBe(retained);
+  expect(hostAdd).toHaveBeenCalledTimes(2);
+  expect(change).not.toHaveBeenCalled();
+
+  // Returning to the host exposes its recovery without losing either receipt.
+  pluginPicker(t, { session });
+  const retry = await screen.findByRole("button", { name: /^Retry adding / });
+  expect(
+    screen.getAllByRole("button", { name: /^Retry adding / }),
+  ).toHaveLength(1);
+  expect(retry).toBeEnabled();
+  refused = false;
+  await t.user.click(retry);
+  await vi.waitFor(() => expect(additions.snapshot()).toEqual([]));
+  expect(hostAdd).toHaveBeenCalledTimes(4);
+  for (const key of keys) {
+    const calls = hostAdd.mock.calls.filter((call) => call[1] === key);
+    expect(calls[1]?.[2]).toBe(calls[0]?.[2]);
+    expect(calls[1]?.[2].id).toBe(`receipt-${key}`);
+  }
+  expect(change).not.toHaveBeenCalled();
+});
 
 it.each(["Directory Morgan", "Directory <b>Morgan</b>"])(
   "announces the literal cold-directory label %s after plugin addition",

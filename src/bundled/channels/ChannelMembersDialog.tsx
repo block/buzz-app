@@ -818,10 +818,13 @@ export function ChannelMembersDialog({
     item.keys.push(key);
     refusals.set(group, item);
   };
-  for (const item of additions)
-    if (item.error) refuse(item.error, item.error, item.pubkey);
-  for (const [key, item] of Object.entries(soloAdditions))
-    if (item.error) refuse(key, item.error, key);
+  // Retained host recovery stays with its owner, including uncertain receipts.
+  if (!memberActions) {
+    for (const item of additions)
+      if (item.error) refuse(item.error, item.error, item.pubkey);
+    for (const [key, item] of Object.entries(soloAdditions))
+      if (item.error) refuse(key, item.error, key);
+  }
   const [notice, setNotice] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
   const copyFailure = copyStatus && copyStatus !== "Link copied";
@@ -1851,7 +1854,7 @@ export function ChannelMembersDialog({
   const addAll = useCallback(
     async (keys: readonly string[], done: string) => {
       const signal = lifetime.current?.signal;
-      if (!signal) return;
+      if (!signal || memberActions || memberPending) return;
       setNotice("");
       const added = await Promise.allSettled(
         keys.map((key) => session.memberAdditions.add(channelId, key)),
@@ -1859,7 +1862,7 @@ export function ChannelMembersDialog({
       if (!signal.aborted && added.every((item) => item.status === "fulfilled"))
         setNotice(done);
     },
-    [session, channelId],
+    [session, channelId, memberActions, memberPending],
   );
 
   // Typed text highlights the first person not in the channel, so Enter adds
@@ -2402,7 +2405,7 @@ export function ChannelMembersDialog({
                     <Button
                       variant="outline"
                       aria-label={`Retry adding ${names}`}
-                      disabled={!canAdd}
+                      disabled={!canAdd || memberPending}
                       onClick={() => {
                         // Land where Add does, so the next step is the search.
                         input.current?.focus();

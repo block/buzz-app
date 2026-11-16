@@ -2459,69 +2459,32 @@ it("serializes owner follow-ups and routes tool replies to the latest accepted r
     tags: expect.arrayContaining([["e", "c".repeat(64), "", "reply"]]),
   });
 });
-it("retries a failed history read and keeps what the retry finds", async () => {
+it("starts a turn without history when the history read times out", async () => {
   const f = fixture();
-  const first = f.delivery("CURRENT_REQUEST");
-  if (!("event" in first.trigger)) throw new Error("Expected a mention");
-  f.read
-    .mockRejectedValueOnce(new ReadError("unavailable", "Relay read timed out"))
-    .mockResolvedValueOnce([
-      {
-        ...first.trigger.event,
-        id: "6".repeat(64),
-        created_at: first.trigger.event.created_at - 1,
-        content: "EARLIER_MESSAGE",
-      },
-    ]);
-  await f.runtime.run(first);
+  f.read.mockRejectedValue(
+    new ReadError("unavailable", "Relay read timed out"),
+  );
+  await f.runtime.run(f.delivery("FIRST_REQUEST"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  // The retry repeats the same read; the edits read for what it found follows.
-  expect(f.read.mock.calls[1]).toEqual(f.read.mock.calls[0]);
-  expect(JSON.stringify(f.starts()[0]?.params)).toContain("EARLIER_MESSAGE");
-});
-it("starts a turn without history when the history read keeps timing out", async () => {
-  const f = fixture();
-  // The native transport rejects with its own message, not a ReadError.
-  f.read
-    .mockRejectedValueOnce(new ReadError("unavailable", "Relay read timed out"))
-    .mockRejectedValue("Relay request could not be confirmed");
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  try {
-    await f.runtime.run(f.delivery("FIRST_REQUEST"));
-    // Past every retry delay.
-    await vi.advanceTimersByTimeAsync(10_000);
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  } finally {
-    vi.useRealTimers();
-  }
-  // The shared read retry's initial read and three retries.
-  expect(f.read).toHaveBeenCalledTimes(4);
+  expect(f.read).toHaveBeenCalledTimes(1);
   expect(JSON.stringify(f.starts()[0]?.params)).toContain("FIRST_REQUEST");
   f.complete();
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: "DONE" });
 });
-it("accepts a steer without history when the history read keeps timing out", async () => {
+it("accepts a steer without history when the history read times out", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("FIRST_REQUEST"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  f.read.mockRejectedValue(
-    new ReadError("unavailable", "Relay read timed out"),
+  // The native transport rejects with its own message, not a ReadError.
+  f.read.mockRejectedValue("Relay request could not be confirmed");
+  await f.runtime.run(f.delivery("STEER_REQUEST"));
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      1,
+    ),
   );
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  try {
-    await f.runtime.run(f.delivery("STEER_REQUEST"));
-    // Past every retry delay.
-    await vi.advanceTimersByTimeAsync(10_000);
-    await vi.waitFor(() =>
-      expect(
-        f.sent.filter((wire) => wire.method === "turn/steer"),
-      ).toHaveLength(1),
-    );
-  } finally {
-    vi.useRealTimers();
-  }
-  expect(f.read).toHaveBeenCalledTimes(5);
+  expect(f.read).toHaveBeenCalledTimes(2);
   expect(
     JSON.stringify(f.sent.find((wire) => wire.method === "turn/steer")?.params),
   ).toContain("STEER_REQUEST");

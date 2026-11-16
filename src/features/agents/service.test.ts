@@ -43,7 +43,6 @@ import { bytesToHex } from "nostr-tools/utils";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import {
   afterEach,
-  onTestFinished,
   beforeAll,
   beforeEach,
   describe,

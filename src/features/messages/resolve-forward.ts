@@ -1,7 +1,19 @@
+import { snapshotMessage } from "../relay/forwarded-message";
 import type { RelaySession } from "../relay/session";
 import { splitPartition } from "../relay/partition";
 import { linkedMessage } from "../conversation/linked-message";
 import { forwardReference, type ForwardReference } from "./forward-clipboard";
+
+/** Freeze the displayed bindings before crossing a composer/queue boundary. */
+export function prepareForwardSource(
+  ...args: Parameters<typeof snapshotMessage>
+) {
+  const snapshot = snapshotMessage(...args);
+  return {
+    row: { ...args[0], mentionLabels: snapshot.mentionLabels ?? [] },
+    snapshot,
+  };
+}
 
 /** Resolve in the owning authorized session, including for detached composers. */
 export async function resolveForward(
@@ -62,13 +74,19 @@ export async function resolveForward(
       channel.private ||
       channel.hidden ||
       ["dm", "solo"].includes(channel.channelType ?? "");
-    return {
+    const prepared = prepareForwardSource(
       row,
+      name,
+      session.profiles.snapshot(),
+      session.agentLibrary?.snapshot().identities ?? [],
+    );
+    return {
+      row: prepared.row,
       name,
       privateSource: !!privateSource,
       problem: session.messages.forwardProblem(
         reference.channelId,
-        row,
+        prepared.row,
         name,
         "",
       ),

@@ -756,14 +756,22 @@ it("resolves and rechecks a detached forward in the owning session, never accept
     channelId: "source",
     id: "c".repeat(64),
   };
-  let content = "Authorized source";
+  const agent = "de".repeat(32);
+  Object.assign(h.session, {
+    agentLibrary: {
+      snapshot: () => ({
+        identities: [{ pubkey: agent, name: "Local Agent" }],
+      }),
+    },
+  });
+  let content = "Authorized source @Local Agent";
   const row = () => ({
     id: reference.id,
     channelId: "source",
     authorId: h.session.viewer,
     createdAt: 1,
     content,
-    mentions: [],
+    mentions: [agent],
     participants: [],
     attachments: [],
     reactions: [],
@@ -793,14 +801,17 @@ it("resolves and rechecks a detached forward in the owning session, never accept
   expect(
     (await remote.forwarding?.resolve(reference, new AbortController().signal))
       ?.row.content,
-  ).toBe("Authorized source");
-  content = "Current authorized source";
+  ).toBe("Authorized source @Local Agent");
+  content = "Current authorized source @Local Agent";
   expect(await remote.forwarding?.send(reference, "Note", [], [], [], {})).toBe(
     "forwarded-id",
   );
   expect(forward).toHaveBeenCalledWith(
     "room",
-    expect.objectContaining({ content }),
+    expect.objectContaining({
+      content,
+      mentionLabels: [{ id: agent, names: ["Local Agent"] }],
+    }),
     expect.any(String),
     "Note",
     undefined,

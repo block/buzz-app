@@ -1,10 +1,9 @@
 import { snapshotAttachments } from "../relay/forwarded-message";
 import { useEffect, useState } from "react";
 import { fullSession, type ComposerSession } from "./composer-session";
-import type { ResolvedForward } from "./resolve-forward";
+import { prepareForwardSource, type ResolvedForward } from "./resolve-forward";
 import type { RelaySession } from "../relay/session";
 import { splitPartition } from "../relay/partition";
-import { snapshotMessage } from "../relay/forwarded-message";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useForwardSource } from "./use-forward-source";
 import type { ForwardReference } from "./forward-clipboard";
@@ -78,13 +77,11 @@ export function useComposerForward(
           directory.profiles.get(author)?.name ?? author.slice(0, 10),
         )
       : "");
-  const snapshot = row
-    ? snapshotMessage(row, name, directory.profiles, directory.agents)
+  const prepared = row
+    ? prepareForwardSource(row, name, directory.profiles, directory.agents)
     : undefined;
-  const forwardRow =
-    row && snapshot
-      ? { ...row, mentionLabels: snapshot.mentionLabels ?? [] }
-      : undefined;
+  const snapshot = prepared?.snapshot;
+  const forwardRow = prepared?.row;
   const problem = !reference
     ? undefined
     : !session

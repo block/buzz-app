@@ -2175,7 +2175,7 @@ it("holds automatic release while editing, then sends the saved text", async () 
   expect(h.send.mock.calls[0]?.[1]).toBe("Saved before release");
 });
 
-it("persists a queued forward locator and publishes its snapshot with recovery", () => {
+it("resolves queued agent mentions before publishing its snapshot with recovery", async () => {
   const h = fixture();
   const reference = {
     version: 1 as const,
@@ -2199,20 +2199,42 @@ it("persists a queued forward locator and publishes its snapshot with recovery",
     channelId: "source",
     authorId: viewer,
     createdAt: 1,
-    content: "Source",
-    mentions: [],
+    content: "Hello @Local Agent",
+    mentions: [agent],
     participants: [],
     attachments: [],
     reactions: [],
     replyCount: 0,
   };
-  const entry = followUpMessage(h.session, saved, { row, name: "Author" });
+  Object.assign(h.session, {
+    profiles: { snapshot: () => new Map() },
+    agentLibrary: {
+      snapshot: () => ({
+        identities: [{ pubkey: agent, name: "Local Agent" }],
+      }),
+    },
+    thread: () => ({
+      snapshot: () => ({
+        status: "ready",
+        targetStatus: "ready",
+        target: row,
+        replies: [],
+        canLoadMore: false,
+      }),
+      subscribe: () => () => {},
+      refresh: async () => {},
+      dispose() {},
+    }),
+  });
+  vi.spyOn(h.session.messages, "forwardProblem").mockReturnValue(undefined);
+  const entry = followUpMessage(h.session, saved);
+  await entry.beforeRelease();
   const recovery = followUpRecovery(saved.id);
   expect(entry.publish(recovery)).toBe("forward-id");
   expect(forward).toHaveBeenCalledWith(
     "chat",
-    row,
-    "Author",
+    { ...row, mentionLabels: [{ id: agent, names: ["Local Agent"] }] },
+    viewer.slice(0, 10),
     message.text,
     recovery,
     {
@@ -2223,4 +2245,33 @@ it("persists a queued forward locator and publishes its snapshot with recovery",
     },
   );
   expect(h.send).not.toHaveBeenCalled();
+});
+
+it("allows clearing a queued forward note and labels the remaining content", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const h = fixture();
+  const forward = {
+    version: 1 as const,
+    origin: "https://relay.example",
+    channelId: "source",
+    id: "c".repeat(64),
+  };
+  const id = h.enqueue({ ...structuredClone(message), forward });
+  await h.queue.edit(id).save("");
+  expect(followUpStorage(scope).load()[0]).toMatchObject({ text: "", forward });
+  render(
+    createElement(QueuedFollowUps, {
+      session: h.session,
+      channelId: "chat",
+      disabled: false,
+      focusComposer() {},
+    }),
+  );
+  expect(screen.getAllByText("Forwarded message").length).toBeGreaterThan(0);
 });

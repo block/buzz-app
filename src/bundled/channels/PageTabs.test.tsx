@@ -398,6 +398,84 @@ it.each([
   },
 );
 
+it.each([
+  ["a reply link and then a root link keep the root link's target", true],
+  ["a root link and then a reply link keep the reply link's target", false],
+] as const)(
+  "merging a resolved reply tab into its thread's tab keeps the latest link's return target: %s",
+  (_, replyFirst) => {
+    const page = fixture();
+    const target = () => {
+      const media = document.createElement("button");
+      document.body.append(media);
+      onTestFinished(() => media.remove());
+      return media;
+    };
+    const first = target();
+    const latest = target();
+    // A link at a reply, without its thread, hints the reply as the root.
+    const reply = (media: HTMLElement) =>
+      expect(page.openLinked("alpha", "reply", "reply", media)).toBe(true);
+    const root = (media: HTMLElement) =>
+      expect(page.openLinked("alpha", "older", "older", media)).toBe(true);
+    if (replyFirst) {
+      reply(first);
+      root(latest);
+    } else {
+      root(first);
+      reply(latest);
+    }
+    const reader = screen
+      .getAllByText("thread in alpha")
+      .find((item) => item.dataset.tab === "thread:alpha:reply");
+    fireEvent.click(
+      // The reply's tab is unselected when the root link came last.
+      within(reader as HTMLElement).getByRole("button", {
+        name: "Resolve root",
+        hidden: true,
+      }),
+    );
+    expect(side()).toHaveLength(1);
+
+    const pane = screen
+      .getAllByRole("tablist")
+      .find((item) => item.getAttribute("aria-label") !== "Switchboard tabs")
+      ?.closest<HTMLElement>("[data-panel-workspace]");
+    fireEvent.click(
+      within(pane as HTMLElement).getByRole("button", {
+        name: /^Close .* tab$/,
+      }),
+    );
+    expect(page.isOpen({ channelId: "alpha", threadId: "older" })).toBe(false);
+    expect(latest).toHaveFocus();
+  },
+);
+
+it("an ordinary reply link that merges into its thread's tab replaces the earlier link's return target", () => {
+  const page = fixture();
+  const media = document.createElement("button");
+  document.body.append(media);
+  onTestFinished(() => media.remove());
+  expect(page.openLinked("alpha", "older", "older", media)).toBe(true);
+  expect(page.openLinked("alpha", "reply", "reply")).toBe(true);
+  const reader = screen
+    .getAllByText("thread in alpha")
+    .find((item) => item.dataset.tab === "thread:alpha:reply");
+  fireEvent.click(
+    within(reader as HTMLElement).getByRole("button", { name: "Resolve root" }),
+  );
+  expect(side()).toHaveLength(1);
+  const pane = screen
+    .getAllByRole("tablist")
+    .find((item) => item.getAttribute("aria-label") !== "Switchboard tabs")
+    ?.closest<HTMLElement>("[data-panel-workspace]");
+  fireEvent.click(
+    within(pane as HTMLElement).getByRole("button", { name: /^Close .* tab$/ }),
+  );
+  expect(page.isOpen({ channelId: "alpha", threadId: "older" })).toBe(false);
+  expect(media).not.toHaveFocus();
+});
+
 // jsdom applies no stylesheet; the dock's computed position is what tells the
 // page that its side pane floats over it (useCoveredByDock).
 function floatSidePane() {

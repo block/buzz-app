@@ -214,9 +214,13 @@ export function useConversationTabs({
   const panelTrigger = useRef<HTMLElement | null>(null);
   // The return target each linked thread's latest link named, as a media
   // review's comment does (LinkThreadTabContext), while that thread's tab
-  // stays open; undefined when that link named none. Keyed by threadKey, it
-  // follows the thread's verified root.
-  const linkedReturn = useRef(new Map<string, HTMLElement | undefined>());
+  // stays open; no target when that link named none. Keyed by threadKey, it
+  // follows the thread's verified root. `order` ranks links by when they were
+  // followed, so the latest one wins when two tabs merge.
+  const linkedReturn = useRef(
+    new Map<string, { order: number; target: HTMLElement | undefined }>(),
+  );
+  const linkOrder = useRef(0);
   const mounted = useRef(false);
   const visit = useMemo(() => ({ queries, currentId }), [queries, currentId]);
   const liveVisit = useRef(visit);
@@ -596,7 +600,7 @@ export function useConversationTabs({
       closing?.kind === "thread"
         ? linkedReturn.current.get(
             threadKey(closing.channelId, rootOfTab(closing)),
-          )
+          )?.target
         : undefined;
     const returnTarget = () =>
       linked?.isConnected &&
@@ -827,7 +831,10 @@ export function useConversationTabs({
         threadPane ?? (mainThread(channelId) ? undefined : "side"),
       );
       // Only this thread's target changes; other open threads keep theirs.
-      linkedReturn.current.set(threadKey(channelId, rootId), returnFocus);
+      linkedReturn.current.set(threadKey(channelId, rootId), {
+        order: ++linkOrder.current,
+        target: returnFocus,
+      });
       if (
         opening.current &&
         panelTabId(opening.current) !== tabState.getSelected()
@@ -1187,12 +1194,15 @@ export function useConversationTabs({
               onRetryNavigation={onRetryNavigation}
               onResolvedRoot={(rootId) => {
                 // A link at a reply hints that reply as its root. The return
-                // target follows the verified root, into any tab it merges with.
+                // target follows the verified root. In a tab it merges with,
+                // the link followed most recently keeps its target.
                 const hinted = threadKey(tab.channelId, rootOfTab(tab));
                 const verified = threadKey(tab.channelId, rootId);
                 const targets = linkedReturn.current;
-                if (hinted !== verified && targets.has(hinted)) {
-                  targets.set(verified, targets.get(hinted));
+                const moving = targets.get(hinted);
+                if (hinted !== verified && moving) {
+                  if (moving.order > (targets.get(verified)?.order ?? 0))
+                    targets.set(verified, moving);
                   targets.delete(hinted);
                 }
                 tabState.resolveThreadRoot(tab.id, rootId);

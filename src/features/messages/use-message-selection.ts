@@ -35,6 +35,7 @@ export function useMessageSelection(
         : null;
     };
     const unregister = registerMessageList(element, {
+      scope: session.scope,
       row: (id) =>
         latest.current.find((row) => row.id === id && !row.membership),
       newest: () =>
@@ -54,7 +55,8 @@ export function useMessageSelection(
       markUnread: (row) => actions?.markUnread(row),
       composer: () => editScope?.focusTarget() ?? null,
       canQuote: () => !!quoteTarget(),
-      quote: (html) => !!quoteTarget()?.insertQuote(html),
+      quote: (html, sourceLinks) =>
+        !!quoteTarget()?.insertQuote(html, sourceLinks),
     });
     return () => {
       unregister();

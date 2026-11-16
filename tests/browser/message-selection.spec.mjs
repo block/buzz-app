@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { frames, open } from "./timeline.mjs";
+import { open } from "./timeline.mjs";
 
 test.use({ historyCounts: { alpha: 3, beta: 0 } });
 
@@ -8,7 +8,7 @@ for (const [scheme, width, scale] of [
   ["light", 1440, 1],
   ["dark", 800, 1.25],
 ]) {
-  test(`selected links yield Quote to their context menu (${scheme})`, async ({
+  test(`right-clicking selected text quotes it instead of opening the link menu (${scheme})`, async ({
     page,
     app,
   }) => {
@@ -26,7 +26,7 @@ for (const [scheme, width, scale] of [
     const message = app.append(
       "primary",
       "alpha",
-      "[Example link](https://example.org/pull/1)",
+      "Before [Example link](https://example.org/pull/1) after.",
     );
     const link = page
       .locator(`[data-channel-timeline] [data-message-id="${message.id}"]`)
@@ -36,6 +36,27 @@ for (const [scheme, width, scale] of [
         includeHidden: true,
       });
     await expect(link).toBeVisible();
+    // Compare against the actions this message actually offers in this host.
+    // Forward and plugin actions depend on their providers/capabilities.
+    await link.locator("xpath=ancestor::p[1]").click({
+      button: "right",
+      position: { x: 3, y: 10 },
+    });
+    const menu = page.getByRole("menu");
+    await expect(
+      menu.getByRole("menuitem", { name: "Copy message", exact: true }),
+    ).toBeVisible();
+    const messageActions = await menu.getByRole("menuitem").allTextContents();
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await page.evaluate(() => getSelection()?.removeAllRanges());
+    // Unselected links keep their own menu.
+    await link.click({ button: "right" });
+    await expect(
+      page.getByRole("menuitem", { name: "Copy link" }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
     const selectLink = () =>
       link.evaluate((element) => {
         const range = document.createRange();
@@ -45,34 +66,87 @@ for (const [scheme, width, scale] of [
         selection.addRange(range);
       });
     await selectLink();
-    const quote = page.getByRole("button", {
-      name: "Quote",
-      exact: true,
-      includeHidden: true,
-    });
-    await expect(quote).toBeVisible();
-    await link.click({ button: "right" });
-    const menu = page.getByRole("menu");
     await expect(
-      menu.getByRole("menuitem", { name: "Copy link" }),
+      page.getByRole("button", { name: "Quote highlight", exact: true }),
+    ).toHaveCount(0);
+    await link.click({ button: "right" });
+    await expect(
+      menu.getByRole("menuitem", { name: "Copy highlight" }),
     ).toBeVisible();
-    // Engines can update the link selection after the menu has taken focus.
-    // Keep that ordering explicit instead of relying on a platform's timing.
-    await selectLink();
-    await expect
-      .poll(() => page.evaluate(() => getSelection()?.toString()))
-      .toBe("Example link");
-    await frames(page);
-    await expect(quote).toHaveCount(0);
+    await expect(menu.getByRole("menuitem").nth(0)).toHaveText(
+      "Copy highlight",
+    );
+    await expect(menu.getByRole("menuitem").nth(1)).toHaveText(
+      "Quote highlight",
+    );
+    await expect(
+      menu.getByRole("menuitem", { name: "Copy message", exact: true }),
+    ).toBeVisible();
+    await expect(
+      menu.getByRole("menuitem", { name: "Copy link", exact: true }),
+    ).toBeVisible();
+    expect(
+      (await menu.getByRole("menuitem").allTextContents()).slice(2),
+    ).toEqual(messageActions);
+    // Dismissal leaves the draft unchanged and does not resurrect a floating button.
     await page.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
+    const input = page.getByRole("textbox", {
+      name: "Message #Alpha",
+      exact: true,
+    });
+    await expect(input.locator("blockquote")).toHaveCount(0);
+    await selectLink();
+    await link.click({ button: "right" });
+    const quote = menu.getByRole("menuitem", {
+      name: "Quote highlight",
+      exact: true,
+    });
     await expect(quote).toBeVisible();
+    // Focus can move or clear the live selection after the menu opens.
+    await page.evaluate(() => getSelection()?.removeAllRanges());
+    expect(
+      await page.evaluate(() =>
+        [...(CSS.highlights.get("buzz-message-highlight") ?? [])]
+          .map((range) => range.toString())
+          .join(""),
+      ),
+    ).toBe("Example link");
+    expect(
+      await link.evaluate(
+        (element) =>
+          getComputedStyle(element, "::highlight(buzz-message-highlight)")
+            .backgroundColor,
+      ),
+    ).not.toBe("rgba(0, 0, 0, 0)");
     await quote.click();
     await expect(
       page
         .getByRole("textbox", { name: "Message #Alpha", exact: true })
         .locator("blockquote"),
     ).toContainText("Example link");
+    await expect(
+      input.locator(":scope > p:first-child [data-source]").first(),
+    ).toHaveAttribute(
+      "data-source",
+      `buzz://message?channel=alpha&id=${message.id}`,
+    );
+    await expect(input.locator(":scope > p:first-child")).toHaveText(
+      /^From .+:$/,
+    );
+    await expect(input.locator(":scope > p:first-child em")).toHaveCount(0);
+    await expect(input.locator(":scope > blockquote + p")).toBeEmpty();
+    await expect(input).toBeFocused();
+    await page.keyboard.insertText("Reply");
+    await expect(input.locator(":scope > blockquote + p + p")).toHaveText(
+      "Reply",
+    );
+    await expect(input.locator(":scope > p:last-child em")).toHaveCount(0);
+    await expect
+      .poll(() =>
+        page.evaluate(() => CSS.highlights.has("buzz-message-highlight")),
+      )
+      .toBe(false);
   });
 }
 

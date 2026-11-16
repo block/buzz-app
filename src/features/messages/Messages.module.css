@@ -1,5 +1,18 @@
 @reference "../../shared/styles/globals.css";
 
+/* Match native selection while a message menu owns keyboard focus. Gate the
+   rule to its visible lifetime, as Find on screen does for its highlights. */
+:root[data-message-highlight] ::highlight(buzz-message-highlight) {
+  background-color: var(--selection-fill, var(--surface-text-selection));
+  color: var(--selection-text, var(--text-on-selection));
+}
+@media (forced-colors: active) {
+  :root[data-message-highlight] ::highlight(buzz-message-highlight) {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+}
+
 /* Reusable conversation components; plugins own placement and surrounding layout. */
 .thread {
   position: relative;

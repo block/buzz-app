@@ -170,6 +170,10 @@ re-check after the gateway refuses a request, a turn waits for it for up to 5
 seconds. A check that fails with anything but a 401 or 403 is tried once more
 after a short pause. If the gateway refuses access (a 401 or 403), the turn
 fails with a message asking the user to sign in again; it never falls back.
+That refusal remains effective while access is checked again, including if
+the recheck hangs or fails with a network or gateway error. Only a successful
+access check or a changed membership context (identity, community or relay
+session) clears it. A 401/403 from discovery or inference applies the same rule.
 When the route is otherwise blocked (network, gateway error, still checking
 after the wait, or a community or identity problem), the harness runs with the
 user's own configuration and none of the Buzz request context, and the turn is

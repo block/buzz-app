@@ -136,6 +136,9 @@ export class GatewayRoutes {
   /** By (AgentKey, gateway origin, community ID): the app doesn't know the
    * signed-in principal, so the agent binding is the cache boundary. */
   private readonly readiness = new Map<string, Readiness>();
+  /** A recheck's progress or failure cannot erase a known 401/403. Only a
+   * successful check or a membership context reset clears the refusal. */
+  private readonly authRefusals = new Set<string>();
   /** Kept after a membership is removed, so a membership that comes back
    * never reuses a revision. */
   private readonly revisions = new Map<AgentKey, number>();
@@ -220,6 +223,8 @@ export class GatewayRoutes {
   routeFor(key: AgentKey): GatewayRoute {
     const decided = this.decide(key);
     if (decided.kind !== "pending") return decided.route;
+    if (this.authRefusals.has(decided.cache))
+      return blocked(decided.gateway, "auth", this.revision(key));
     const state = this.readiness.get(decided.cache);
     return state?.status === "ready"
       ? Object.freeze({
@@ -243,7 +248,8 @@ export class GatewayRoutes {
    * never starts a probe to wait on, so with no request bound or nothing in
    * flight it doesn't wait at all. A route that is already failed is
    * returned at once and retried in the background, so a later turn can
-   * route after a network blip. The caller owns the wait's cap and any
+   * route after a network blip. A known auth refusal remains effective
+   * throughout rechecks, even when they fail or outlast the wait. The caller owns the wait's cap and any
    * cancellation, and checks its own signal afterwards. */
   async routeForTurn(key: AgentKey, wait?: AbortSignal): Promise<GatewayRoute> {
     const route = this.routeFor(key);
@@ -252,8 +258,7 @@ export class GatewayRoutes {
     const state = this.readiness.get(decided.cache);
     if (state?.status === "failed") {
       // Nothing is admitted at a failed revision, so retrying revokes nothing.
-      // Without a request path the failure stands, so a 401/403 can't be
-      // forgotten into a pending route that falls back.
+      // Auth refusals stand independently of the recheck's readiness.
       if (this.request) {
         this.readiness.delete(decided.cache);
         this.bump(key);
@@ -307,14 +312,15 @@ export class GatewayRoutes {
     };
   }
 
-  /** Drops what was learned about the membership's access, for a 401 or 403
-   * from discovery or inference: it is pending until a new probe settles.
+  /** Revokes the membership's access on a 401 or 403 from discovery or
+   * inference: auth-blocked until a new probe succeeds or its context resets.
    * Given the revision the failing request ran under, a late failure from an
    * older revision doesn't discard a newer answer. */
   invalidate(key: AgentKey, revision?: number) {
     if (revision !== undefined && revision !== this.revision(key)) return;
     const decided = this.decide(key);
     if (decided.kind !== "pending") return;
+    this.authRefusals.add(decided.cache);
     this.readiness.delete(decided.cache);
     this.bump(key);
     this.probe(key);
@@ -403,6 +409,8 @@ export class GatewayRoutes {
           return;
         }
         this.bump(key);
+        if (!("reason" in result)) this.authRefusals.delete(decided.cache);
+        else if (result.reason === "auth") this.authRefusals.add(decided.cache);
         this.readiness.set(
           decided.cache,
           Object.freeze(
@@ -421,7 +429,10 @@ export class GatewayRoutes {
 
   private forget(member: GatewayMembership) {
     const decided = this.decide(member.key);
-    if (decided.kind === "pending") this.readiness.delete(decided.cache);
+    if (decided.kind === "pending") {
+      this.readiness.delete(decided.cache);
+      this.authRefusals.delete(decided.cache);
+    }
   }
 
   private revision(key: AgentKey) {

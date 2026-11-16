@@ -46,8 +46,8 @@ function gateway() {
         }),
       ),
   );
-  const answer = async (body: string, status = 200) => {
-    const next = pending.shift();
+  const answer = async (body: string, status = 200, index = 0) => {
+    const [next] = pending.splice(index, 1);
     if (!next) throw new Error("No request pending");
     next.respond({ status, headers: {}, body });
     await Promise.resolve();
@@ -358,13 +358,13 @@ describe("GatewayRoutes", () => {
     });
   });
 
-  it("invalidates on a 401/403 from inference: pending at a new revision until a new probe settles", async () => {
+  it("invalidates on a 401/403 from inference: auth-blocked at a new revision until a successful probe", async () => {
     const { routes, answer } = setup();
     routes.setMembership(member("b1", {}));
     await answer('{"harnesses":[]}');
     routes.invalidate(key("b1"));
     expect(routes.routeFor(key("b1"))).toMatchObject({
-      reason: "readiness_pending",
+      reason: "auth",
       revision: 3,
     });
     await answer("", 403);
@@ -440,6 +440,75 @@ describe("GatewayRoutes", () => {
         routes.routeForTurn(key("b1"), new AbortController().signal),
       ).resolves.toMatchObject({ kind: "blocked", reason: "auth" });
     expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([401, 403, "inference"] as const)(
+    "preserves a %s refusal across consecutive turns, hung and failed rechecks, until success",
+    async (denial) => {
+      const retry = retryClock();
+      const { routes, answer, pending } = setup();
+      routes.setMembership(member("b1", {}));
+      if (denial === "inference") {
+        await answer('{"harnesses":["pi"]}');
+        routes.invalidate(key("b1"));
+      } else await answer("", denial);
+      const auth = { kind: "blocked", reason: "auth" };
+      await expect(routes.routeForTurn(key("b1"))).resolves.toMatchObject(auth);
+      expect(pending).toHaveLength(1);
+      // A later turn's wait has expired while the recheck is still hung.
+      await expect(
+        routes.routeForTurn(key("b1"), AbortSignal.abort()),
+      ).resolves.toMatchObject(auth);
+      pending.shift()?.respond(new Error("offline"));
+      await retry();
+      await answer("", 503);
+      expect(routes.routeFor(key("b1"))).toMatchObject(auth);
+      // The failed recheck is retried without forgetting the refusal.
+      await expect(routes.routeForTurn(key("b1"))).resolves.toMatchObject(auth);
+      await answer('{"harnesses":["pi"]}');
+      await expect(routes.routeForTurn(key("b1"))).resolves.toMatchObject({
+        kind: "eligible",
+        harnesses: ["pi"],
+      });
+    },
+  );
+
+  it("preserves auth refusal while explicit discovery retries and fails", async () => {
+    const retry = retryClock();
+    const { routes, answer } = setup();
+    routes.setMembership(member("b1", {}));
+    await answer("", 403);
+    const ready = routes.routeReady(key("b1"), new AbortController().signal);
+    expect(routes.routeFor(key("b1"))).toMatchObject({ reason: "auth" });
+    await answer("", 500);
+    await retry();
+    await answer("", 502);
+    await expect(ready).resolves.toMatchObject({ reason: "auth" });
+  });
+
+  it("clears a refusal on membership context reset and ignores stale recheck answers", async () => {
+    const { routes, answer } = setup();
+    const original = member("b1", {});
+    routes.setMembership(original);
+    await answer("", 403);
+    await routes.routeForTurn(key("b1"));
+    routes.setMembership({ ...original, owner: "c".repeat(64) });
+    expect(routes.routeFor(key("b1"))).toMatchObject({
+      reason: "readiness_pending",
+    });
+    // Settle the new identity's denial before the old identity's success.
+    await answer("", 403, 1);
+    await answer('{"harnesses":["pi"]}');
+    expect(routes.routeFor(key("b1"))).toMatchObject({ reason: "auth" });
+    await routes.routeForTurn(key("b1"));
+    routes.removeMembership(key("b1"));
+    routes.setMembership(original);
+    await answer('{"harnesses":["pi"]}');
+    expect(routes.routeFor(key("b1"))).toMatchObject({
+      reason: "readiness_pending",
+    });
+    await answer('{"harnesses":["pi"]}');
+    expect(routes.routeFor(key("b1"))).toMatchObject({ kind: "eligible" });
   });
 
   it("lets a turn wait for a probe in flight that settles before its wait ends", async () => {

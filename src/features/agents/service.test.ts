@@ -19713,7 +19713,7 @@ describe("agent gateway gate", () => {
     await vi.waitFor(() =>
       expect(routes.routeFor(bot as never).kind).toBe("eligible"),
     );
-    // Inference got a 403: the route goes pending and re-probes.
+    // Inference got a 403: the route stays auth-blocked while it re-probes.
     routes.invalidate(bot as never);
     expect(request).toHaveBeenCalledTimes(2);
     const f = await mentioned(true);
@@ -19727,6 +19727,55 @@ describe("agent gateway gate", () => {
     );
     expect(f.run).not.toHaveBeenCalled();
   });
+
+  it.each([401, 403, "inference"] as const)(
+    "keeps consecutive turns out of type code after %s while a recheck exceeds the wait cap",
+    async (denial) => {
+      const cap = capReached();
+      try {
+        const { routes, answer, request } = liveRoutes();
+        if (denial === "inference") {
+          answer(200, '{"harnesses":["relay"]}');
+          await vi.waitFor(() =>
+            expect(routes.routeFor(bot as never).kind).toBe("eligible"),
+          );
+          routes.invalidate(bot as never);
+        } else {
+          answer(denial);
+          await vi.waitFor(() =>
+            expect(routes.routeFor(bot as never)).toMatchObject({
+              reason: "auth",
+            }),
+          );
+        }
+        for (let turn = 0; turn < 2; turn++) {
+          const f = await mentioned(
+            true,
+            event(`denied-${denial}-${turn}`, {
+              pubkey: viewer,
+              tags: [
+                ["h", channel],
+                ["p", bot],
+                ["model", bot, "deep"],
+              ],
+            }),
+          );
+          await vi.waitFor(() =>
+            expect(f.activity.reader.work()[0]).toMatchObject({
+              state: "error",
+              error: AUTH,
+            }),
+          );
+          expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
+          expect(f.run).not.toHaveBeenCalled();
+          expect(f.models).not.toHaveBeenCalled();
+        }
+        expect(request).toHaveBeenCalledTimes(2);
+      } finally {
+        cap.mockRestore();
+      }
+    },
+  );
 
   it("hands a blocked watch turn the fallback, keeping its one signed event", async () => {
     ready.mockResolvedValue(blockedRoute);

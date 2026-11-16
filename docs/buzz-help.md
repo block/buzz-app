@@ -1358,6 +1358,10 @@ available rather than silently discarding it.
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace. Codex's harness defaults offer that sign-in while Codex is signed
   out. API key and keyring sign-ins can't run them.
+- **Agent gateway access**: in builds that route local agents through a gateway,
+  a refused sign-in or access check stops the turn and asks you to sign in again.
+  Later turns stay blocked while access is rechecked, even if that check stalls
+  or loses its connection. A successful access check lets the agent run again.
 - **Settings → Agent details** says where an agent's configuration lives:
   **Synced in** its community, or **Only on this Mac** with why (the relay
   doesn't sync agent settings, or the first copy failed and Buzz will try

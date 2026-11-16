@@ -66,7 +66,7 @@ function fixture() {
       media: () => undefined,
       query: async (filters) =>
         [
-          metadata(relayKey, id, "Work", clock, [
+          metadata(relayKey, id, "Work-team", clock, [
             ["t", "stream"],
             ...labels.map((label) => ["t", label]),
             ["private"],
@@ -251,7 +251,9 @@ it("Messages conversion survives signed type replacement, announces completion a
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(await screen.findByText("Converted to channel.")).toBeVisible();
   await waitFor(() =>
-    expect(screen.getByRole("textbox", { name: "Message Work" })).toHaveFocus(),
+    expect(
+      screen.getByRole("textbox", { name: "Message Work-team" }),
+    ).toHaveFocus(),
   );
   expect(t.sign).toHaveBeenCalledOnce();
   expect(t.publish).toHaveBeenCalledOnce();
@@ -323,6 +325,8 @@ it("Messages header reopens unfiling recovery after confirmed metadata and a fai
   expect(t.unfile).toHaveBeenCalledTimes(2);
   expect(t.publish).toHaveBeenCalledOnce();
   await waitFor(() =>
-    expect(screen.getByRole("textbox", { name: "Message Work" })).toHaveFocus(),
+    expect(
+      screen.getByRole("textbox", { name: "Message Work-team" }),
+    ).toHaveFocus(),
   );
 });

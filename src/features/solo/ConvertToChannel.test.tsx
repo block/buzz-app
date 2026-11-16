@@ -35,7 +35,7 @@ function setup(
 ) {
   let clock = 100,
     role = "owner",
-    name = "Original",
+    name = "Original-team",
     visibility = initialVisibility,
     joinRole = initialJoinRole;
   let labels = solo ? [SOLO_LABEL, "work"] : ["work"];
@@ -139,7 +139,7 @@ function setup(
       role = next;
     },
     rename: () => {
-      name = "Changed";
+      name = "Changed-team";
       clock++;
     },
     admission: (next: "member" | "guest") => {
@@ -228,14 +228,14 @@ it.each(["private", "public"])(
     expect(event?.kind).toBe(9002);
     expect(event?.tags).toEqual([
       ["h", id],
-      ["name", "Original"],
+      ["name", "Original-team"],
       ["about", "Notes"],
       ...(visibility === "public" ? [["visibility", "open"]] : []),
       ["t", "work"],
     ]);
     const saved = await h.details.capability.load(id);
     expect(saved).toMatchObject({
-      name: "Original",
+      name: "Original-team",
       description: "Notes",
       visibility,
       ttlSeconds: 86400,
@@ -336,7 +336,7 @@ it("retires superseded View-only recovery after Finish rejects changed admission
   expect(
     canConvertToChannel(h.session, {
       id,
-      name: "Original",
+      name: "Original-team",
       channelType: "stream",
     }),
   ).toBe(false);
@@ -563,7 +563,7 @@ it("retries only project unfiling after confirmed conversion and remount", async
   expect(
     canConvertToChannel(h.session, {
       id,
-      name: "Original",
+      name: "Original-team",
       channelType: "stream",
     }),
   ).toBe(true);

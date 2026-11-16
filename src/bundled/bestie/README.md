@@ -93,7 +93,8 @@ rules, which every turn needs: each slug with its size and who writes it
 finds it), what is a fact and what a guess, and checking a fact against its source before
 relying on it. Sizes are asked for in the text; nothing enforces them yet. An
 agent that already has the v1 section keeps it until Remembers you is turned
-off and on again, or until the upgrade from Every hour below replaces it.
+off and on again, or until the upgrade from Every hour below replaces it, which
+it does only while the section's text is still v1 as it shipped.
 Nightly review never drops what v1 kept in `mem/memory`: before it rebuilds
 the index, it moves each claim there that is not a card line, a "Now" line or
 a lesson to its card, or to `mem/hypotheses` if it is a guess. The switch is on while the section is
@@ -173,8 +174,9 @@ was on with memory, paused if its timer or Interest was paused in Attention.
 That is one Attention change that removes the old Interest and timer before it
 adds the new ones, so it saves whole or not at all, and an agent at its limit
 of 250 watches and timers has the old timer's room. Then it removes the old
-section, and replaces a whole v1 memory section where it is with the current
-one. A failure leaves what is left of the old check-in to try again. An old check-in that read as off,
+section, and replaces a v1 memory section where it is with the current one,
+unless you edited it: one whose text differs from v1 as it shipped, beyond line
+endings and trailing spaces, stays as it is. A failure leaves what is left of the old check-in to try again. An old check-in that read as off,
 such as one with only its timer left, is only removed. Another agent's is
 stopped, as any former Bestie's. For an agent also in another community, only
 the timers change, as its instructions are shared.

@@ -305,6 +305,35 @@ it("upgrades an earlier version's whole section where it is, and nothing else", 
   const edited = owner(old).replace(CLOSE, "");
   expect(upgradedFeature(edited, memory)).toBe(edited);
   expect(upgradedFeature("Be brief.", memory)).toBe("Be brief.");
+  // Stock text in other line endings, or with trailing spaces, is still stock.
+  const crlf = owner(old)
+    .replace(/\n/g, "\r\n")
+    .replace(/\.\r\n/g, ".  \r\n");
+  expect(upgradedFeature(crlf, memory)).toContain(OPEN);
+  expect(upgradedFeature(crlf, memory)).not.toContain("memory v1");
+});
+
+it("leaves an earlier version's section the owner edited inside its markers as it is", () => {
+  const old = withFeature("Be brief.", v1Memory, true);
+  for (const edited of [
+    // A rule added, one changed and one removed, all between whole markers.
+    old.replace("Rules:", "Rules:\n- Never store my medical details."),
+    old.replace("Never duplicate a claim", "Always duplicate a claim"),
+    old.replace(/^- Quoted, forwarded.*\n/m, ""),
+  ]) {
+    expect(edited).not.toBe(old);
+    expect(featureState(edited, memory)).toBe("on");
+    expect(upgradedFeature(edited, memory)).toBe(edited);
+  }
+});
+
+it("pins version 1 of Remembers you as it shipped", () => {
+  const text = memory.earlier?.[1] ?? "";
+  expect(text.startsWith("# Memory\n")).toBe(true);
+  expect(text).toContain(
+    "- mem/memory: curated longer-term knowledge. Replace superseded claims; never duplicate.",
+  );
+  expect(text).not.toContain("mem/entities");
 });
 
 it("has Nightly review keep what an earlier version saved in mem/memory before rebuilding it", () => {

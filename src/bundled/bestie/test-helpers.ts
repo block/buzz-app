@@ -13,12 +13,10 @@ This runs only when your hourly check-in timer wakes you with "Hourly upkeep wak
 6. FINISH. Advance each channel's last-processed created_at only after its work succeeded.`,
 };
 
-/** Remembers you as an earlier version saved it, which had chat turns keep
- * prose in mem/memory. */
+/** Remembers you as version 1 shipped it, which had chat turns keep prose
+ * in mem/memory. */
 export const v1Memory: Feature = {
   ...memory,
   version: 1,
-  text: `# Memory
-Your memory has these slugs:
-- mem/memory: curated longer-term knowledge. Replace superseded claims; never duplicate.`,
+  text: memory.earlier?.[1] ?? "",
 };

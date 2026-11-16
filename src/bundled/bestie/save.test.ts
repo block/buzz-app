@@ -389,6 +389,21 @@ it("upgrades a v1 memory section in place with the old check-in's section, so ch
   expect(save.mock.calls.some(([, change]) => change.config)).toBe(false);
 });
 
+it("takes only the old check-in's section away beside a v1 memory section the owner edited", async () => {
+  const save = vi.fn<Agents["save"]>(async () => {});
+  const mine = withFeature("Be brief.", v1Memory, true).replace(
+    "Rules:",
+    "Rules:\n- Never store my medical details.",
+  );
+  await replaceCheckIn(
+    { save, types: () => [] },
+    ada(held(LEGACY_TIMER), withFeature(mine, v1CheckIn, true)),
+  );
+  expect(save).toHaveBeenLastCalledWith(expect.any(String), {
+    config: { instructions: mine },
+  });
+});
+
 it("undoes the timer of a feature with a section when its instructions can't be saved", async () => {
   const save = vi
     .fn<Agents["save"]>()

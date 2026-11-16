@@ -398,6 +398,65 @@ it.each([
   },
 );
 
+// jsdom applies no stylesheet; the dock's computed position is what tells the
+// page that its side pane floats over it (useCoveredByDock).
+function floatSidePane() {
+  const computed = window.getComputedStyle.bind(window);
+  const spy = vi
+    .spyOn(window, "getComputedStyle")
+    .mockImplementation((element, pseudo) => {
+      const style = computed(element, pseudo);
+      return element.matches("[data-panel-dock]")
+        ? new Proxy(style, {
+            get: (target, key) =>
+              key === "position" ? "absolute" : Reflect.get(target, key),
+          })
+        : style;
+    });
+  onTestFinished(() => spy.mockRestore());
+}
+
+it.each([
+  ["returns focus where its link named once the close uncovers it", true],
+  ["leaves a target in an unselected main tab to the page", false],
+] as const)(
+  "closing the only side thread of a floating pane %s",
+  (_, selected) => {
+    floatSidePane();
+    const page = fixture();
+    // The media that opened a review, in a thread moved to the main pane.
+    page.open({ channelId: "alpha", threadId: "root" });
+    act(() => {
+      fireEvent.keyDown(screen.getByRole("tab", { name: /Root text/ }), {
+        key: "ArrowLeft",
+        altKey: true,
+        shiftKey: true,
+      });
+    });
+    const media = screen.getByRole("button", { name: "Resolve root" });
+    const main = screen.getByRole("tablist", { name: "Switchboard tabs" });
+    if (!selected)
+      fireEvent.click(screen.getByRole("tab", { name: "Switchboard" }));
+    expect(page.openLinked("alpha", "linked", "linked", media)).toBe(true);
+    // The pane covers the page, and with it the media, until the close commits.
+    expect(main.closest('[inert][aria-hidden="true"]')).toContainElement(media);
+
+    const pane = screen
+      .getAllByRole("tablist")
+      .find((item) => item.getAttribute("aria-label") !== "Switchboard tabs")
+      ?.closest<HTMLElement>("[data-panel-workspace]");
+    fireEvent.click(
+      within(pane as HTMLElement).getByRole("button", {
+        name: /^Close .* tab$/,
+      }),
+    );
+    expect(page.isOpen({ channelId: "alpha", threadId: "linked" })).toBe(false);
+    expect(main.closest("[inert]")).toBeNull();
+    if (selected) expect(media).toHaveFocus();
+    else expect(main.closest('[tabindex="-1"]')).toHaveFocus();
+  },
+);
+
 it("opens a page's tabs without visiting their conversations when it asks", () => {
   const page = fixture(false);
   expect(

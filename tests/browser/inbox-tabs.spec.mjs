@@ -251,12 +251,10 @@ test.describe("with the thread's root beyond the channel's newest page", () => {
 // workspace's frame-deferred focus and the side pane's unmount. A comment's
 // Open link leaves the review for a side thread; closing that only side tab
 // returns focus to the image in the main-pane thread that opened the review.
-test("closing the side thread a media comment opened returns focus to the image in Activity's main pane", async ({
-  page,
-  app,
-  context,
-}) => {
-  await page.setViewportSize({ width: 1280, height: 900 });
+// Where the side pane floats over the main pane, the image is inert until the
+// close commits, so real layout decides when it can take focus again.
+async function followMediaCommentLink({ page, app, context }, width, floating) {
+  await page.setViewportSize({ width, height: 900 });
   await context.route("**/api/relay/primary/media?**", (route) =>
     route.fulfill({
       path: fileURLToPath(
@@ -339,13 +337,25 @@ test("closing the side thread a media comment opened returns focus to the image 
   await expect(
     threads.locator(`[data-message-id="${linked.id}"]`),
   ).toBeFocused();
+  // A floating pane covers the main pane, hiding the image from roles.
+  await expect(attachment).toHaveCount(floating ? 0 : 1);
 
   await inbox
     .getByRole("button", { name: "Close Thread root 0 tab", exact: true })
     .click();
   await expect(side).toHaveCount(0);
   await expect(attachment).toBeFocused();
-});
+}
+for (const [pane, width] of [
+  ["docked", 1280],
+  ["floating", 760],
+])
+  test(`closing the ${pane} side thread a media comment opened returns focus to the image in Activity's main pane`, async ({
+    page,
+    app,
+    context,
+  }) =>
+    followMediaCommentLink({ page, app, context }, width, pane === "floating"));
 
 // Browser-only: the list's offset needs real layout. Leaving Inbox through a
 // thread tab's channel name unmounts the page; Back returns to the offset the

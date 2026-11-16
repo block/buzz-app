@@ -57,6 +57,10 @@ import {
 } from "./useChannelTabState";
 import tabStyles from "./ChannelTabs.module.css";
 
+/** A thread across tab IDs, which a reopened thread reuses. */
+const threadKey = (channelId: string, rootId: string) =>
+  JSON.stringify([channelId, rootId]);
+
 /** The content-tab families whose visits follow explicit dismissal. */
 export const historyPanel = (entry: PanelOpening) =>
   !entry.channelContext &&
@@ -208,12 +212,11 @@ export function useConversationTabs({
     else target?.focus({ preventScroll: true });
   });
   const panelTrigger = useRef<HTMLElement | null>(null);
-  // The return target the last linked thread's link named, as a media review's
-  // comment does (LinkThreadTabContext), while that thread's tab stays open.
-  // It follows the thread's verified root.
-  const linkedReturn = useRef<
-    { channelId: string; rootId: string; trigger: HTMLElement } | undefined
-  >(undefined);
+  // The return target each linked thread's latest link named, as a media
+  // review's comment does (LinkThreadTabContext), while that thread's tab
+  // stays open; undefined when that link named none. Keyed by threadKey, it
+  // follows the thread's verified root.
+  const linkedReturn = useRef(new Map<string, HTMLElement | undefined>());
   const mounted = useRef(false);
   const visit = useMemo(() => ({ queries, currentId }), [queries, currentId]);
   const liveVisit = useRef(visit);
@@ -589,19 +592,25 @@ export function useConversationTabs({
     }
     // A linked thread whose link named a return target, such as the media
     // that opened a review, returns focus there as its pane empties.
-    const linked = linkedReturn.current;
-    const returning =
-      closing?.kind === "thread" &&
-      linked?.channelId === closing.channelId &&
-      linked.rootId === rootOfTab(closing);
-    const trigger =
-      returning &&
-      linked.trigger.isConnected &&
-      !linked.trigger.closest('[inert], [hidden], [aria-hidden="true"]')
-        ? linked.trigger
+    const linked =
+      closing?.kind === "thread"
+        ? linkedReturn.current.get(
+            threadKey(closing.channelId, rootOfTab(closing)),
+          )
         : undefined;
+    const returnTarget = () =>
+      linked?.isConnected &&
+      !linked.closest('[inert], [hidden], [aria-hidden="true"]')
+        ? linked
+        : undefined;
+    const trigger = returnTarget();
     afterClose(id, trigger);
-    if (rootTabIds.length === 1 && !trigger) focusSplit.current = true;
+    if (rootTabIds.length === 1 && !trigger) {
+      // A floating pane covers the target until this close commits, so it is
+      // checked again then. One in an unselected tab stays rejected.
+      if (linked) focusUncovered.current = returnTarget;
+      else focusSplit.current = true;
+    }
     notify(rootTabIds.length === 1);
   };
   const [announcement, setAnnouncement] = useState("");
@@ -776,17 +785,15 @@ export function useConversationTabs({
   for (const id of visitTab.shown)
     if (!openIds.has(id)) visitTab.shown.delete(id);
   // So does a linked thread's return target, however its tab closed.
-  const returnThread = linkedReturn.current;
-  if (
-    returnThread &&
-    !tabState.tabs.some(
-      (tab) =>
-        tab.kind === "thread" &&
-        tab.channelId === returnThread.channelId &&
-        rootOfTab(tab) === returnThread.rootId,
+  for (const key of linkedReturn.current.keys())
+    if (
+      !tabState.tabs.some(
+        (tab) =>
+          tab.kind === "thread" &&
+          threadKey(tab.channelId, rootOfTab(tab)) === key,
+      )
     )
-  )
-    linkedReturn.current = undefined;
+      linkedReturn.current.delete(key);
   // The channel a tab is a view of. The currently resolved channel can be a
   // verified public/archived preview absent from the joined sidebar list.
   function listedChannel(tab: Pick<Tab, "kind" | "channelId">) {
@@ -819,11 +826,8 @@ export function useConversationTabs({
         "reveal",
         threadPane ?? (mainThread(channelId) ? undefined : "side"),
       );
-      linkedReturn.current = returnFocus && {
-        channelId,
-        rootId,
-        trigger: returnFocus,
-      };
+      // Only this thread's target changes; other open threads keep theirs.
+      linkedReturn.current.set(threadKey(channelId, rootId), returnFocus);
       if (
         opening.current &&
         panelTabId(opening.current) !== tabState.getSelected()
@@ -1184,12 +1188,13 @@ export function useConversationTabs({
               onResolvedRoot={(rootId) => {
                 // A link at a reply hints that reply as its root. The return
                 // target follows the verified root, into any tab it merges with.
-                const linked = linkedReturn.current;
-                if (
-                  linked?.channelId === tab.channelId &&
-                  linked.rootId === rootOfTab(tab)
-                )
-                  linkedReturn.current = { ...linked, rootId };
+                const hinted = threadKey(tab.channelId, rootOfTab(tab));
+                const verified = threadKey(tab.channelId, rootId);
+                const targets = linkedReturn.current;
+                if (hinted !== verified && targets.has(hinted)) {
+                  targets.set(verified, targets.get(hinted));
+                  targets.delete(hinted);
+                }
                 tabState.resolveThreadRoot(tab.id, rootId);
               }}
               onDifferentThread={(requested, kept) =>

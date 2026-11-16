@@ -1464,6 +1464,25 @@ it("closing the last side thread returns focus where its link named, unless that
   media.hidden = true;
   close("thread:alpha:a");
   expect(fallback).toHaveFocus();
+  media.hidden = false;
+
+  // An ordinary link that opens another thread leaves this thread's target.
+  act(() => {
+    h.result.current.openLinkedThread("alpha", "a", "a", media);
+    h.result.current.openLinkedThread("alpha", "b", "b");
+  });
+  close("thread:alpha:b");
+  expect(media).not.toHaveFocus();
+  close("thread:alpha:a");
+  expect(media).toHaveFocus();
+
+  // An ordinary link that reopens the thread itself replaces its target.
+  act(() => {
+    h.result.current.openLinkedThread("alpha", "a", "a", media);
+    h.result.current.openLinkedThread("alpha", "a", "a");
+  });
+  close("thread:alpha:a");
+  expect(fallback).toHaveFocus();
 });
 
 it.each(["a main-pane close", "Close all", "Close other tabs"] as const)(

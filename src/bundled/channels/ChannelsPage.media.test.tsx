@@ -227,6 +227,7 @@ async function mount(h: Awaited<ReturnType<typeof channels>>) {
     snapshot: () => snapshot,
     subscribe: () => () => {},
     retry() {},
+    tryAgain() {},
     disconnect() {},
     clearCache: async () => {},
   };

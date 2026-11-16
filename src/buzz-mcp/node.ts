@@ -168,6 +168,7 @@ export function nodeClient(
   return {
     pubkey,
     key: pubkey,
+    owner,
     query: async (filters) =>
       eventsDto(await request("/query", JSON.stringify(filters))),
     async effectiveEdit(id, channel) {

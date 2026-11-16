@@ -19,7 +19,7 @@ import {
   wakeLands,
 } from "../../features/agent-harness/plugin-wake";
 import type { AgentKey } from "../../features/agents/membership";
-import type { AgentReads } from "../../features/agents/reads";
+import { ownerDm, type AgentReads } from "../../features/agents/reads";
 import {
   EACH_TURN,
   sessionPrompts,
@@ -1808,6 +1808,9 @@ export class CodexRuntime {
         ...(root ? { root } : {}),
         ...(topLevel ? { topLevel } : {}),
         ...(topLevel && !solo && !huddle ? { threadReplies: true } : {}),
+        ...(channel?.dm && !ownerDm(channel, agent.pubkey, agent.owner)
+          ? { dm: true as const }
+          : {}),
       },
       team: delivery.team ?? "",
       ...(delivery.session ? { session: delivery.session } : {}),

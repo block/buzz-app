@@ -21,7 +21,7 @@ import {
 import type { McpHandler } from "../host/service";
 import type { AgentKey } from "../agents/membership";
 import { fromOwner } from "../agents/owner-attestation";
-import { ownerReads } from "../agents/reads";
+import { ownerDm, ownerReads } from "../agents/reads";
 import type {
   AgentHandle,
   ConversationWake,
@@ -129,6 +129,8 @@ type Admitted = Readonly<{
   event: EventData;
   solo: boolean;
   dm: boolean;
+  /** A DM with only the agent's owner, which it answers in. */
+  ownerDm: boolean;
   name?: string;
   wake?: ConversationWake;
   resumed: boolean;
@@ -264,6 +266,11 @@ export function harnessKit(sources: Sources): HarnessKit {
         event,
         solo,
         dm,
+        ownerDm: ownerDm(
+          { dm, members: found?.members ?? [] },
+          agent.pubkey,
+          agent.owner,
+        ),
         ...(found?.name ? { name: found.name } : {}),
         ...(wake ? { wake } : {}),
         resumed: trigger.type === "mention" && !!trigger.resumed,
@@ -295,7 +302,15 @@ export function harnessKit(sources: Sources): HarnessKit {
       conversation,
       options = {},
     ) {
-      const { event, solo, dm, name, wake, resumed } = known(conversation);
+      const {
+        event,
+        solo,
+        dm,
+        ownerDm: withOwner,
+        name,
+        wake,
+        resumed,
+      } = known(conversation);
       const { key, channel: channelId, topLevel } = conversation;
       const ready = session(agent.key);
       const thread = threadReference(event);
@@ -380,7 +395,12 @@ export function harnessKit(sources: Sources): HarnessKit {
         scope: key === channelId ? "channel" : "thread",
         topLevel,
         channelLevel: topLevel && !solo,
-        channel: { id: channelId, ...(name ? { name } : {}), dm },
+        channel: {
+          id: channelId,
+          ...(name ? { name } : {}),
+          dm,
+          ...(withOwner ? { ownerDm: true } : {}),
+        },
         ...(thread ? { thread } : {}),
         context: unseen,
         total: earlier.length + 1,

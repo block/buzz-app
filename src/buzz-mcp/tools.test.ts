@@ -35,6 +35,7 @@ function gate<T>() {
 const me = "c".repeat(64);
 const alice = "a".repeat(64);
 const bob = "b".repeat(64);
+const boss = "d".repeat(64);
 const root = "1".repeat(64);
 const nested = "2".repeat(64);
 const event = (fields: Partial<BuzzEvent>): BuzzEvent => ({
@@ -90,6 +91,7 @@ function fake(
   const client: BuzzClient = {
     key: me,
     pubkey: me,
+    owner: boss,
     effectiveEdit: vi.fn(async (id: string) => {
       const found = events.find((event) => event.id === id);
       if (!found) throw new Error("No effective edit fixture");
@@ -1795,7 +1797,7 @@ it("creates a system channel", async () => {
   ).rejects.toThrow("type must be stream, forum or system.");
 });
 
-it("creates a Solo chat with its members in the create, as Buzz does", async () => {
+it("creates a Solo chat with its members and its owner in the create, as Buzz does", async () => {
   const { client, published } = relay();
   const answer = await callTool(client, {}, "channel_create", {
     name: "triage",
@@ -1817,18 +1819,19 @@ it("creates a Solo chat with its members in the create, as Buzz does", async () 
         ["t", "buzz.session.named"],
         ["p", alice],
         ["p", bob],
+        ["p", boss],
       ],
     },
   ]);
   expect(answer).toBe(
-    `created ${id}\nadded ${alice} Alice Smith\nadded ${bob}`,
+    `created ${id}\nadded ${alice} Alice Smith\nadded ${bob}\nadded ${boss}`,
   );
   await expect(
     callTool(client, {}, "channel_get", { channel: id }),
   ).resolves.toBe(`${id} triage (stream, solo, private)\nyou: owner`);
   await expect(
     callTool(client, {}, "member_list", { channel: id }),
-  ).resolves.toBe(`${me}  (owner)\n${alice} Alice Smith\n${bob} `);
+  ).resolves.toBe(`${me}  (owner)\n${alice} Alice Smith\n${bob} \n${boss} `);
   // An ordinary private channel is not Solo.
   await callTool(client, {}, "channel_create", {
     name: "ops",
@@ -1860,10 +1863,10 @@ it("discovers local workspaces and files only after creating a Solo with explici
     workspace: "work",
   });
   const id = published[0]?.tags[0]?.[1];
-  expect(prepare).toHaveBeenCalledExactlyOnceWith("work", [alice], id);
+  expect(prepare).toHaveBeenCalledExactlyOnceWith("work", [alice, boss], id);
   expect(file).toHaveBeenCalledExactlyOnceWith(id);
   expect(answer).toBe(
-    `created ${id}\nadded ${alice} Alice Smith\nfiled in workspace work`,
+    `created ${id}\nadded ${alice} Alice Smith\nadded ${boss}\nfiled in workspace work`,
   );
   expect(published).toHaveLength(1);
   expect(published[0]?.kind).toBe(9007);
@@ -2036,20 +2039,128 @@ it("refuses Solo arguments that do not fit, before publishing", async () => {
   expect(published).toEqual([]);
 });
 
-it("starts a Solo chat with the relay's maximum of 32 members", async () => {
+it("starts a Solo chat with the relay's maximum of 32 members, its owner among them", async () => {
   const { client, published } = relay();
-  const members = Array.from({ length: 32 }, (_, n) =>
+  const members = Array.from({ length: 31 }, (_, n) =>
     (n + 1).toString(16).padStart(64, "0"),
   );
   await callTool(client, {}, "channel_create", {
     name: "x",
     visibility: "private",
     solo: true,
-    members: [...members, me],
+    members: [...members, me, boss],
   });
   expect(
     published[0]?.tags.filter(([key]) => key === "p").map(([, key]) => key),
-  ).toEqual(members);
+  ).toEqual([...members, boss]);
+  await expect(
+    callTool(client, {}, "channel_create", {
+      name: "x",
+      visibility: "private",
+      solo: true,
+      members: [...members, "f".repeat(64)],
+    }),
+  ).rejects.toThrow("A Solo chat starts with at most 32 members.");
+});
+
+it("starts no Solo chat without its owner", async () => {
+  const { client, published } = relay();
+  const ownerless = { ...client, owner: undefined };
+  await expect(
+    callTool(ownerless, {}, "channel_create", {
+      name: "triage",
+      visibility: "private",
+      solo: true,
+      members: [alice],
+    }),
+  ).rejects.toThrow(
+    "A Solo chat includes your owner, and your host does not name them.",
+  );
+  expect(published).toEqual([]);
+});
+
+it("has no DM tool, and posts in no DM but one with only its owner", async () => {
+  const dm = "dm-channel";
+  const withOwner = "owner-dm";
+  const { client, published, state } = relay();
+  state.push(
+    event({
+      kind: 39000,
+      tags: [["d", dm], ["t", "dm"], ["private"]],
+    }),
+    event({
+      kind: 39002,
+      tags: [
+        ["d", dm],
+        ["p", me],
+        ["p", alice],
+        ["p", boss],
+      ],
+    }),
+    event({
+      kind: 39000,
+      tags: [["d", withOwner], ["t", "dm"], ["private"]],
+    }),
+    event({
+      kind: 39002,
+      tags: [
+        ["d", withOwner],
+        ["p", me],
+        ["p", boss],
+      ],
+    }),
+  );
+  expect(TOOLS.some((tool) => tool.name === "dm")).toBe(false);
+  expect(() => callTool(client, {}, "dm", { to: [alice] })).toThrow(
+    "No tool dm",
+  );
+  const refusal =
+    "Agents only post in a DM with just their owner. Start a Solo chat instead: channel_create with solo true and the people as members; your owner is added too.";
+  await expect(
+    callTool(client, { channel: dm }, "send", {
+      text: "hi",
+      audience: "everyone",
+    }),
+  ).rejects.toThrow(refusal);
+  await expect(
+    callTool(client, {}, "send", {
+      channel: dm,
+      text: "hi",
+      audience: "everyone",
+    }),
+  ).rejects.toThrow(refusal);
+  await expect(
+    callTool(
+      client,
+      { channel: dm, root: "r".repeat(64) },
+      "reply_in_subthread",
+      {
+        parent: "r".repeat(64),
+        text: "hi",
+        audience: "everyone",
+      },
+    ),
+  ).rejects.toThrow(refusal);
+  expect(published).toEqual([]);
+  await expect(
+    callTool(client, {}, "send", {
+      channel: room,
+      text: "hi",
+      audience: "everyone",
+    }),
+  ).resolves.toBe(`sent ${"e".repeat(64)}`);
+  await expect(
+    callTool(client, { channel: withOwner }, "send", {
+      text: "hi",
+      audience: "everyone",
+    }),
+  ).resolves.toMatch(/^sent /);
+  await expect(
+    callTool({ ...client, owner: undefined }, { channel: withOwner }, "send", {
+      text: "hi",
+      audience: "everyone",
+    }),
+  ).rejects.toThrow(refusal);
 });
 
 it("creates no Solo chat when a member refuses, and says what it cannot confirm", async () => {
@@ -2086,7 +2197,7 @@ it("creates no Solo chat when a member refuses, and says what it cannot confirm"
     await vi.runAllTimersAsync();
     let id = published.at(-1)?.tags[0]?.[1] as string;
     await expect(answer).resolves.toBe(
-      `created ${id}\nThe community did not keep the Solo label, so it is an ordinary private channel.\nadded ${bob}`,
+      `created ${id}\nThe community did not keep the Solo label, so it is an ordinary private channel.\nadded ${bob}\nadded ${boss}`,
     );
     // A create the community never shows leaves its members unconfirmed.
     client.query = vi.fn(async () => []);

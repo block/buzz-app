@@ -70,7 +70,7 @@ function setup(initial?: StatusInput) {
   const relayListeners = new Set<() => void>();
   const sidebarScope = new SidebarScopeService(ctx);
   const accountActions = new AccountActionsService(ctx);
-  ctx.provide("relay", {
+  const relay = {
     snapshot: () => ({
       status: "ready",
       cached: false,
@@ -98,6 +98,15 @@ function setup(initial?: StatusInput) {
       relayListeners.add(listener);
       return () => relayListeners.delete(listener);
     },
+  };
+  ctx.provide("relay", relay);
+  // Focus judges a conversation in its own community's retained session.
+  ctx.provide("communityReader", {
+    retained: (target: typeof scope) =>
+      target.communityOrigin === scope.communityOrigin &&
+      target.viewer === scope.viewer
+        ? relay.snapshot()
+        : undefined,
   });
   const plugin = {
     manifest: { id: "buzz.focus", name: "Focus", apiVersion: 1 as const },

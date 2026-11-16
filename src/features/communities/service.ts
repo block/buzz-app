@@ -4,7 +4,12 @@ import type { LocalAgents } from "../agents/local";
 import type { IdentityNames } from "../identity-names/service";
 import { createPresenceActivity } from "../presence/activity";
 import { Context } from "@deepseek-ai/cordis";
-import { provideRelay, type RelayData } from "../relay/service";
+import {
+  provideRelay,
+  type RelayData,
+  type RelaySnapshot,
+} from "../relay/service";
+import type { NavigationScope } from "../navigation/targets";
 import { connectBrokerTransport, type ReadTransport } from "../relay/transport";
 import {
   communityDestination,
@@ -63,11 +68,17 @@ export type ClientSnapshot = Saved & {
 export type CommunityReader = {
   snapshot(): ClientSnapshot;
   subscribe(listener: () => void): () => void;
+  /** The current viewer's joined community's session state, only if a session
+   * is already retained for it. Never connects or promotes one. */
+  retained(scope: NavigationScope): RelaySnapshot | undefined;
 };
 /** Known-community sync for its one upload owner: read the record and the
  * outbox, write back what the server settled and the memberships a server
  * list adds. Never joins, selects, forgets or contacts a relay. */
-export type KnownCommunities = CommunityReader & {
+export type KnownCommunities = Pick<
+  CommunityReader,
+  "snapshot" | "subscribe"
+> & {
   pending(): PendingOp[];
   apply(next: SyncState, add?: string[]): Promise<void>;
 };
@@ -536,6 +547,13 @@ export function createCommunities(
         throw new Error("Join this community first");
       if (id) acquire(id);
       update({ selected: id });
+    },
+    retained({ viewer, communityOrigin }: NavigationScope) {
+      const { id } = communityDestination(communityOrigin);
+      return viewer === state.viewer &&
+        state.memberships.some((m) => m.id === id)
+        ? sessions.get(id)?.snapshot()
+        : undefined;
     },
     /** A joined community's session, connected without selecting it, for
      * background work such as agents; it lives until the community is left.

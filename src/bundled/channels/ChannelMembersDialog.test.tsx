@@ -682,7 +682,11 @@ it("explains imported agents with the current community's badge and nested popov
     sync: emptySync(),
   };
   const t = await setup("stream", false, false, undefined, undefined, {
-    communities: { snapshot: () => snapshot, subscribe: () => () => {} },
+    communities: {
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      retained: () => undefined,
+    },
   });
   const group = await screen.findByRole("region", { name: "Your agents" });
   const badge = within(group).getByRole("button", {

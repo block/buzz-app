@@ -8,7 +8,9 @@ import {
   createCommunityUnreads,
   observeCommunityUnread,
   type CommunityUnread,
+  type UnreadGates,
 } from "./community-unread";
+import { soloConversation } from "../../bundled/focus/status";
 
 const viewer = "a".repeat(64);
 const one = "https://one.example";
@@ -285,6 +287,74 @@ it("keys every joined community's unread, opening its session and repair once", 
   expect([...unreads.snapshot().keys()]).toEqual([one]);
   expect(first.ensure).toHaveBeenCalledTimes(1);
   expect(second.rows.size).toBe(0);
+});
+
+it("Focus judges each community's conversations in that community, whatever is selected", async () => {
+  const [first, second] = [fakeSession(), fakeSession()];
+  const fakes = new Map([
+    [one, first],
+    [two, second],
+  ]);
+  const relays = new Map(
+    [...fakes].map(([id, fake]) => [
+      id,
+      {
+        snapshot: () => ({ status: "ready", viewer, session: fake.session }),
+        subscribe: () => () => {},
+      } as unknown as RelayData,
+    ]),
+  );
+  const client = signal();
+  let snapshot: {
+    viewer: string;
+    selected: string | null;
+    memberships: { id: string }[];
+  } = {
+    viewer,
+    selected: one,
+    memberships: [{ id: one }, { id: two }],
+  };
+  const communities = {
+    snapshot: () => snapshot,
+    subscribe: client.subscribe,
+    open: (id: string) => relays.get(id),
+    relay: { snapshot: () => ({ status: "ready" }), subscribe: () => () => {} },
+  } as unknown as Communities;
+  // Focus's gate, looking each target up as the community reader does.
+  const gates: UnreadGates = {
+    allows: (target) =>
+      soloConversation(
+        target.kind === "conversation"
+          ? relays.get(target.scope.communityOrigin)?.snapshot()
+          : undefined,
+        target,
+      ),
+    subscribe: () => () => {},
+  };
+  const unreads = createCommunityUnreads(communities, gates);
+  cleanups.push(unreads.dispose);
+  // The same channel id is a stream in one and a Solo chat in two.
+  first.join();
+  first.channelType("x", "stream");
+  first.set("x", { observedCount: 1, attentionCount: 1 });
+  second.join();
+  second.channelType("x", "solo");
+  second.set("x", { observedCount: 1, attentionCount: 1 });
+  await vi.waitFor(() =>
+    expect(unreads.snapshot().get(two)).toEqual({ unread: true, attention: 1 }),
+  );
+  // One counts no channel, so its unread is not known: never a badge.
+  expect(unreads.snapshot().get(one)).toBeUndefined();
+  for (const selected of [two, null]) {
+    snapshot = { ...snapshot, selected };
+    client.emit();
+    expect(unreads.snapshot().get(one)).toBeUndefined();
+    expect(unreads.snapshot().get(two)).toEqual({ unread: true, attention: 1 });
+  }
+  // Its own roster change is judged again in its own community.
+  second.join();
+  second.channelType("x", "stream");
+  expect(unreads.snapshot().get(two)).toBeUndefined();
 });
 
 function observeKnown(fake: ReturnType<typeof fakeSession>) {

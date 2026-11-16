@@ -398,6 +398,24 @@ it("with the real unread projection, rejoining a badge-only community promotes i
   expect(held.has(id(2))).toBe(false);
   unreads.dispose();
 });
+it("reads a joined community's retained session for its viewer, and never opens one", async () => {
+  const { client, id, connect } = await nativeAtLimit();
+  const viewer = client.snapshot().viewer as string;
+  const scope = (index: number, as = viewer) => ({
+    viewer: as,
+    communityOrigin: communityDestination(id(index)).url,
+  });
+  expect(client.retained(scope(1))).toEqual(
+    client.open(id(1), true)?.snapshot(),
+  );
+  expect(client.retained(scope(1, "d".repeat(64)))).toBeUndefined();
+  const calls = connect.mock.calls.length;
+  expect(client.retained(scope(SESSION_LIMIT + 1))).toBeUndefined();
+  expect(
+    client.retained({ viewer, communityOrigin: "https://x.example" }),
+  ).toBeUndefined();
+  expect(connect.mock.calls.length).toBe(calls);
+});
 it("keeps badge-only sessions within the broker's session limit", async () => {
   const ids = Array.from(
     { length: BROKER_SESSION_LIMIT + 1 },

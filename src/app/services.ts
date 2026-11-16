@@ -136,6 +136,7 @@ export function createServices() {
   ctx.provide("communityReader", {
     snapshot: communities.snapshot,
     subscribe: communities.subscribe,
+    retained: communities.retained,
   });
   ctx.provide("knownCommunities", {
     snapshot: communities.snapshot,

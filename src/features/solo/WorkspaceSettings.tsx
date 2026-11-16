@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import type { RelaySession } from "../relay/session";
+import { soloGroups } from "../relay/solo-preferences";
 import type { KitEntry, Lineup } from "../channel-templates/model";
 import { emptyLineup, parseLineup } from "../channel-templates/model";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -62,6 +63,7 @@ export function WorkspaceSettings({
   const [projectName, setProjectName] = useState(target.name);
   const [nameConflict, setNameConflict] = useState(false);
   const confirmedName = useRef(target.name);
+  const renamedName = useRef<string | undefined>(undefined);
   const keptName = useRef(target.name);
   const nextName = projectName.trim();
   const nameChanged =
@@ -116,6 +118,15 @@ export function WorkspaceSettings({
         const kit = session.channelKit.snapshot();
         if (kit.status !== "ready")
           throw new Error(kit.error ?? "Workspace defaults are unavailable.");
+        const groups = soloGroups(kit.entries);
+        if (
+          groups &&
+          !groups.record.deleted &&
+          groups.record.value.type === "groups"
+        )
+          confirmedName.current =
+            groups.record.value.groups.find((group) => group.id === target.id)
+              ?.name ?? confirmedName.current;
         const id = await projectTemplateId(target.id);
         if (!active()) return;
         // Tombstones still own the revision even though they supply no defaults.
@@ -230,7 +241,7 @@ export function WorkspaceSettings({
     let nameConfirmed =
       target.kind === "project" &&
       !nameChanged &&
-      confirmedName.current !== target.name;
+      confirmedName.current === renamedName.current;
     try {
       if (lifetime.checkOnly) {
         // Checking an uncertain details write never publishes pending Canvas edits.
@@ -290,6 +301,7 @@ export function WorkspaceSettings({
         if (nameChanged) {
           await session.soloPreferences.renameSection(target.id, nextName);
           confirmedName.current = nextName;
+          renamedName.current = nextName;
           nameConfirmed = true;
           if (
             !writeView(scope, key, {

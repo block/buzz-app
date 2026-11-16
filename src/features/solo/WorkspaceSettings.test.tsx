@@ -877,27 +877,50 @@ it("closes untouched settings at once, and Cancel discards edits without asking"
 
 function project(entries: unknown[] = []) {
   const close = vi.fn();
-  const rename = vi.fn(async () => {});
+  const group = { id: "work", name: "Work", defaultTemplateId: "" };
+  const rename = vi.fn(async (_id: string, name: string) => {
+    group.name = name;
+  });
   const save = vi.fn(async () => {});
   const session = {
     scope: "https://relay.example.test:viewer",
     channelKit: {
       refresh: async () => {},
-      snapshot: () => ({ status: "ready", entries }),
+      snapshot: () => ({
+        status: "ready",
+        entries: [
+          {
+            eventId: "groups-revision",
+            createdAt: 1,
+            record: {
+              version: 1,
+              community: "https://relay.example.test",
+              deleted: false,
+              value: {
+                type: "groups",
+                id: "me",
+                groups: [group],
+                assignments: {},
+              },
+            },
+          },
+          ...entries,
+        ],
+      }),
       save,
     },
     soloPreferences: { sectionRenameWritable: true, renameSection: rename },
   } as unknown as RelaySession;
-  const view = (name = "Work") => (
+  const view = () => (
     <WorkspaceSettings
       session={session}
       scope="test"
-      target={{ kind: "project", id: "work", name }}
+      target={{ kind: "project", id: "work", name: "Work" }}
       close={close}
     />
   );
   const mounted = render(view());
-  return { close, rename, save, view, mounted };
+  return { close, rename, save, view, mounted, group };
 }
 
 it.each([
@@ -905,7 +928,7 @@ it.each([
   { renamed: true, external: false },
   { renamed: true, external: true },
 ])(
-  "retries failed defaults with the current name ($renamed saved, $external external rename)",
+  "retries failed defaults with the live name despite a stale sidebar ($renamed saved, $external external rename)",
   async ({ renamed, external }) => {
     const h = project();
     fireEvent.change(await instructions(), {
@@ -925,10 +948,16 @@ it.each([
     );
     h.mounted.unmount();
     const currentName = external ? "Renamed elsewhere" : "Projects";
-    render(h.view(currentName));
+    h.group.name = currentName;
+    render(h.view());
     expect(await instructions()).toHaveValue("Keep these instructions");
     expect(screen.getByRole("textbox", { name: "Workspace name" })).toHaveValue(
       currentName,
+    );
+    h.save.mockRejectedValueOnce(new Error("retry offline"));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /^retry offline$/,
     );
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
@@ -944,7 +973,7 @@ it.each([
 );
 
 it.each([true, false])(
-  "keeps an unsaved conflicting name draft for review (recorded baseline: %s)",
+  "keeps a conflicting name draft despite a stale sidebar (recorded baseline: %s)",
   async (baseline) => {
     const h = project();
     fireEvent.change(await instructions(), {
@@ -965,7 +994,8 @@ it.each([true, false])(
       delete draft.nameBase;
       writeView("test", key, draft);
     }
-    render(h.view("Renamed elsewhere"));
+    h.group.name = "Renamed elsewhere";
+    render(h.view());
     expect(await instructions()).toHaveValue("Keep the conflicting draft");
     expect(screen.getByRole("textbox", { name: "Workspace name" })).toHaveValue(
       "Projects",

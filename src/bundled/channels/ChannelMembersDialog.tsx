@@ -7,6 +7,7 @@ import {
 import { useProfileGeneration } from "../../features/relay/react";
 import { agentUnavailable } from "../../features/agents/choices";
 import { archiveHides } from "../../features/relay/identity-archives";
+import { NeedsHistoryChoice } from "../../features/relay/direct-messages";
 import { Button as BaseButton } from "@base-ui/react/button";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import { SEARCH_MIN_CHARS } from "../../shared/search-debounce";
@@ -1620,19 +1621,6 @@ export function ChannelMembersDialog({
     )
       input.current?.focus();
   }, [memberKey, offering]);
-  // Whether to ask how someone joins a DM, from the latest classification,
-  // without rebuilding `add` on each render. Only the question depends on it:
-  // the relay decides who is an agent and enforces the people limit. It
-  // counts only agents with an owner, so one known only by its profile's
-  // say-so is asked about, like a person.
-  const dmAgent = useRef<(key: string) => boolean>(() => false);
-  dmAgent.current = (key) => known.has(key) || ownership.owners.has(key);
-  // A DM of at most one person and their agents never gains a person. Its
-  // members are counted by the same rule, so one whose profile only claims
-  // to be an agent counts as a person.
-  const dmAgentOnly = useRef(false);
-  dmAgentOnly.current =
-    currentMembers.filter((key) => !dmAgent.current(key)).length < 2;
   const [dmChoice, setDmChoice] = useState<string>();
   const add = useCallback(
     async (key: string, includeHistory?: boolean) => {
@@ -1645,19 +1633,6 @@ export function ChannelMembersDialog({
       );
       setNotice("");
       const pending = directPending.current;
-      // A person joins a DM with or without its history; they choose first.
-      // An agent joins with it, so someone the relay counts as a person
-      // still joins this DM instead of starting another. Nothing is asked in
-      // a DM of one person and their agents: the relay adds an agent to it
-      // and starts a new DM for a person, whatever this side thinks they are.
-      if (dm && includeHistory === undefined) {
-        if (pending.has(key)) return;
-        if (dmAgentOnly.current || dmAgent.current(key)) includeHistory = true;
-        else {
-          setDmChoice(key);
-          return;
-        }
-      }
       // A Solo owner's agents and DM additions join directly; people use
       // ordinary additions.
       const direct =
@@ -1676,7 +1651,10 @@ export function ChannelMembersDialog({
           ? await session.directMessages.add(
               channelId,
               [key],
-              includeHistory === true,
+              // Only the relay knows who is an agent: it adds agents, starts
+              // a new DM for a person added to a DM of one person, and asks
+              // when a person would join this one.
+              includeHistory ?? "ask",
               signal,
             )
           : channelId;
@@ -1712,7 +1690,14 @@ export function ChannelMembersDialog({
           );
         }
       } catch (error: unknown) {
-        if (direct && !signal.aborted)
+        if (error instanceof NeedsHistoryChoice && !signal.aborted) {
+          // Nothing was added: they choose, then this adds with their choice.
+          setDirectAdditions((old) => {
+            const { [key]: _, ...rest } = old;
+            return rest;
+          });
+          setDmChoice(key);
+        } else if (direct && !signal.aborted)
           setDirectAdditions((old) => ({
             ...old,
             [key]: {

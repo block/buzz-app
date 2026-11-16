@@ -52,6 +52,7 @@ import {
   directMessageEvent,
   directMessageReceipt,
 } from "./direct-messages.mjs";
+import { directMessageRefusal } from "../src/features/relay/direct-message-policy.ts";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import { CANVAS_MAX_EVENT_BYTES } from "../src/features/channel-templates/canvas-limits.ts";
 import {
@@ -2792,7 +2793,13 @@ export function relayBrokerPlugin({
                 ? claimReason
                 : leave
                   ? leaveRefusal
-                  : undefined;
+                  : directMessage
+                    ? (body) =>
+                        directMessageRefusal(
+                          filters.tags.some(([name]) => name === "h"),
+                          body?.error,
+                        )
+                    : undefined;
           if (invite || member || leave) {
             // Community-bound only; the relay remains the authority for roles.
             if (!scoped)

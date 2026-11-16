@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { npubEncode } from "nostr-tools/nip19";
 import { createRelaySession } from "./session";
-import { createDirectMessages } from "./direct-messages";
+import { createDirectMessages, NeedsHistoryChoice } from "./direct-messages";
 import type { RelayReader } from "./reader";
 import type { VerifiedProfileAuthority } from "./verified-profile";
 import { keypair, profile, roster, signed } from "./testing";
@@ -16,8 +16,9 @@ function setup(
     untrusted?: boolean;
     lagging?: boolean;
     human?: boolean;
-    /** A member the DM holds that the viewer did not name. */
-    extra?: "agent" | "person";
+    /** A member the DM holds that the viewer did not name: one of its
+     * people's agents, as only the relay knows, with no agent profile. */
+    extra?: boolean;
   } = {},
 ) {
   const viewer = keypair(),
@@ -58,18 +59,7 @@ function setup(
               }),
               tags: [["auth", agentOwner.pubkey, "", "a".repeat(128)]],
             }),
-        ...(options.extra
-          ? [
-              signed(unnamed, {
-                kind: 0,
-                content: JSON.stringify({ name: "Unnamed" }),
-                tags:
-                  options.extra === "agent"
-                    ? [["auth", agentOwner.pubkey, "", "a".repeat(128)]]
-                    : [],
-              }),
-            ]
-          : []),
+        ...(options.extra ? [profile(unnamed, { name: "Unnamed" })] : []),
       ];
     return options.lagging &&
       !filters.every((filter) => filter.consistency === "strong")
@@ -196,22 +186,12 @@ it.each([{ badRoster: true }, { untrusted: true }])(
     }
   },
 );
-it("opens the DM of these people when it also holds an agent they did not name", async () => {
-  const t = setup({ extra: "agent" });
+it("opens the DM of these people when it also holds an agent with no agent profile", async () => {
+  const t = setup({ extra: true });
   try {
     await expect(
       t.dm.open([t.other.pubkey], new AbortController().signal),
     ).resolves.toBe(id);
-  } finally {
-    t.owner.dispose();
-  }
-});
-it("refuses a DM that holds a person the viewer did not name", async () => {
-  const t = setup({ extra: "person" });
-  try {
-    await expect(
-      t.dm.open([t.other.pubkey], new AbortController().signal),
-    ).rejects.toThrow("participants");
   } finally {
     t.owner.dispose();
   }
@@ -231,6 +211,25 @@ it("adds to a DM through the host and confirms the signed membership", async () 
     );
     // Growing in place is not opening another conversation.
     expect(opened).not.toHaveBeenCalled();
+  } finally {
+    t.owner.dispose();
+  }
+});
+it("a refusal that needs the history choice is told apart from other refusals", async () => {
+  const t = setup();
+  try {
+    t.openDirectMessage.mockRejectedValueOnce(
+      new Error("needs-choice: history"),
+    );
+    await expect(
+      t.dm.add(id, [t.other.pubkey], "ask", new AbortController().signal),
+    ).rejects.toBeInstanceOf(NeedsHistoryChoice);
+    t.openDirectMessage.mockRejectedValueOnce(
+      new Error("Couldn’t add them. Try again."),
+    );
+    await expect(
+      t.dm.add(id, [t.other.pubkey], "ask", new AbortController().signal),
+    ).rejects.not.toBeInstanceOf(NeedsHistoryChoice);
   } finally {
     t.owner.dispose();
   }

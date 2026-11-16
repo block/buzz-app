@@ -6,21 +6,27 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** Idempotent participant-set command (kind 41010), or with `channel`, adding
  * people to that DM (kind 41011). Only with `includeHistory` may anyone join
- * an existing DM and read its history. Keys stay in the broker. */
+ * an existing DM and read its history; an addition's `"ask"` lets the relay
+ * decide whether to ask first. Keys stay in the broker. */
 export function directMessageEvent(input, viewer, key) {
+  const adding = input?.channel !== undefined;
   if (
     !input ||
     !Array.isArray(input.pubkeys) ||
     input.pubkeys.some((value) => typeof value !== "string") ||
-    !validDirectMessageParticipants(input.pubkeys, viewer)
+    !validDirectMessageParticipants(input.pubkeys, viewer, adding)
   )
-    throw new Error("Choose between one and eight other people.");
-  const adding = input.channel !== undefined;
+    throw new Error(
+      adding
+        ? "Choose who to add to this DM."
+        : "Choose between one and eight other people.",
+    );
   if (
     adding
       ? typeof input.channel !== "string" ||
         !UUID.test(input.channel) ||
-        typeof input.includeHistory !== "boolean"
+        (typeof input.includeHistory !== "boolean" &&
+          input.includeHistory !== "ask")
       : input.includeHistory !== undefined &&
         typeof input.includeHistory !== "boolean"
   )
@@ -33,7 +39,9 @@ export function directMessageEvent(input, viewer, key) {
       tags: [
         ...(adding ? [["h", input.channel]] : []),
         ...input.pubkeys.map((pubkey) => ["p", pubkey]),
-        ...(input.includeHistory ? [["history", "include"]] : []),
+        ...(input.includeHistory
+          ? [["history", input.includeHistory === "ask" ? "ask" : "include"]]
+          : []),
         ["client", randomUUID()],
       ],
     },

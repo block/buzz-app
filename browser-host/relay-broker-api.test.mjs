@@ -2565,6 +2565,51 @@ test("direct-message transport opens and adds to a DM with or without its histor
   }
 });
 
+test("an addition can ask the relay first, and its refusal reaches the app as words to show", async () => {
+  const channelId = "11111111-1111-4111-8111-111111111111";
+  const reasons = [
+    "needs-choice: history",
+    'invalid: history must be "include", got "ask"',
+    "invalid: DM supports at most 9 people",
+    'invalid: history must be "include", got "x"',
+  ];
+  const h = await harness(() =>
+    Response.json({ error: reasons.shift() }, { status: 400 }),
+  );
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const person = "a".repeat(64);
+    const ask = () =>
+      transport.openDirectMessage([person], new AbortController().signal, {
+        channelId,
+        includeHistory: "ask",
+      });
+    await expect(ask()).rejects.toThrow("needs-choice: history");
+    await expect(ask()).rejects.toThrow("needs-choice: history");
+    await expect(ask()).rejects.toThrow(
+      "Couldn’t add them. A DM holds up to 9 people, not counting agents.",
+    );
+    await expect(ask()).rejects.toThrow("Couldn’t add them. Try again.");
+    expect(h.calls[0].body.tags.filter(([tag]) => tag !== "client")).toEqual([
+      ["h", channelId],
+      ["p", person],
+      ["history", "ask"],
+    ]);
+    // Only an addition asks.
+    expect(
+      (
+        await h.post("direct-message", {
+          pubkeys: [person],
+          includeHistory: "ask",
+        })
+      ).status,
+    ).toBe(400);
+    expect(h.calls).toHaveLength(4);
+  } finally {
+    await h.close();
+  }
+});
+
 test.each([
   {
     accepted: false,

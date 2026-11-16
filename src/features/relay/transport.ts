@@ -71,6 +71,7 @@ import { PublishNotSent, PublishRejected } from "./outbox";
 import { httpReadError, ReadError } from "./errors";
 import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
+import { directMessageRefusal } from "./direct-message-policy";
 import {
   createEventVerifier,
   eventDto,
@@ -94,13 +95,15 @@ export interface RelayWriter {
 }
 /** Whether a DM command may share an existing DM's history. With
  * `channelId`, it adds to that DM: they join it with its history only when
- * `includeHistory`, and otherwise start a new DM of everyone. Without, it
- * opens a DM: with `includeHistory`, the DM of these people, adding any named
- * agents to it; otherwise the DM of exactly these members. */
-export type DirectMessageHistory = {
-  readonly channelId?: string;
-  readonly includeHistory: boolean;
-};
+ * `includeHistory`, and otherwise start a new DM of everyone. `"ask"` lets
+ * the relay decide: agents join, and people joining a DM of two or more
+ * people are refused with `NEEDS_HISTORY_CHOICE` so the adder chooses.
+ * Without `channelId`, it opens a DM: with `includeHistory`, the DM of these
+ * people, adding any named agents to it; otherwise the DM of exactly these
+ * members. */
+export type DirectMessageHistory =
+  | { readonly channelId?: string; readonly includeHistory: boolean }
+  | { readonly channelId: string; readonly includeHistory: "ask" };
 
 export interface ReadTransport {
   /** Hear the relay refuse this account for the whole community, on any
@@ -720,12 +723,16 @@ export async function connectBrokerTransport(
               ),
               signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
             });
-            if (!result.ok)
+            if (!result.ok) {
+              // The broker shows the relay's refusal as `directMessageRefusal`
+              // words it.
+              const body = await result.json().catch(() => undefined);
               throw new Error(
-                history?.channelId
-                  ? "Couldn’t add them. A DM holds up to 9 people, not counting agents."
-                  : "Could not open the direct message. Try again.",
+                typeof body?.error === "string"
+                  ? body.error
+                  : directMessageRefusal(!!history?.channelId, undefined),
               );
+            }
             const value = await result.json();
             if (
               typeof value?.channelId !== "string" ||

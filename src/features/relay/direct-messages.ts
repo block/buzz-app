@@ -1,4 +1,7 @@
-import { validDirectMessageParticipants } from "./direct-message-policy";
+import {
+  NEEDS_HISTORY_CHOICE,
+  validDirectMessageParticipants,
+} from "./direct-message-policy";
 import { foldProfiles } from "./profiles";
 import type { ChannelQueries } from "./contracts";
 import type { ReadTransport } from "./transport";
@@ -20,6 +23,15 @@ import {
 export const PEOPLE_SEARCH_MAX_LENGTH = 100;
 
 /** Opening is idempotent by participant set; first messages use the durable outbox. */
+/** People would join the DM: the adder chooses whether they see its
+ * history. Nothing was added. */
+export class NeedsHistoryChoice extends Error {
+  constructor() {
+    super(NEEDS_HISTORY_CHOICE);
+    this.name = "NeedsHistoryChoice";
+  }
+}
+
 export function createDirectMessages(
   transport: ReadTransport | null,
   reader: RelayReader,
@@ -196,30 +208,9 @@ export function createDirectMessages(
         includeHistory ? { includeHistory } : undefined,
       );
       active.throwIfAborted();
-      const expected = new Set([transport.viewer, ...pubkeys]);
-      const members = await confirmed(id, [...expected], active);
-      // The DM of these people may hold agents they did not name; it must
-      // hold no one else.
-      const extra = members.filter((key) => !expected.has(key));
-      const agents = new Set(
-        [
-          ...foldProfiles(
-            extra.length
-              ? await directoryReader.read(
-                  [{ kinds: [0], authors: extra, limit: extra.length }],
-                  { signal: active, fresh: true },
-                )
-              : [],
-          ),
-        ]
-          .filter(([, profile]) => profile.isAgent)
-          .map(([pubkey]) => pubkey),
-      );
-      active.throwIfAborted();
-      if (!extra.every((key) => agents.has(key)))
-        throw new Error(
-          "The conversation’s participants could not be confirmed. Try again.",
-        );
+      // The relay may return the DM of these people with agents they did
+      // not name: it decides who is an agent, so only who is named is checked.
+      await confirmed(id, [transport.viewer, ...pubkeys], active);
       // A 1:1 DM's agent partner is woken only by a `p` tag, which `send`
       // adds from the shared profile cache. The people directory leaves that
       // cache empty, so load the partner before the first message is sent.
@@ -233,23 +224,28 @@ export function createDirectMessages(
     },
     /** Add `pubkeys` to the DM `channelId` and return the DM they ended up
      * in: this one, a new DM of everyone without `includeHistory`, or an
-     * existing DM of the grown set of people. */
+     * existing DM of the grown set of people. With `"ask"`, the relay
+     * decides, and throws `NeedsHistoryChoice` when people would join this
+     * DM: the adder chooses, then adds again with their choice. */
     async add(
       channelId: string,
       pubkeys: readonly string[],
-      includeHistory: boolean,
+      includeHistory: boolean | "ask",
       signal: AbortSignal,
     ) {
       if (!available || !transport?.openDirectMessage)
         throw new Error("This connection cannot add people to messages.");
-      if (!validDirectMessageParticipants(pubkeys, transport.viewer))
-        throw new Error("Choose between one and eight other people.");
+      if (!validDirectMessageParticipants(pubkeys, transport.viewer, true))
+        throw new Error("Choose who to add to this DM.");
       const active = AbortSignal.any([lifetime, signal]);
       active.throwIfAborted();
-      const id = await transport.openDirectMessage(pubkeys, active, {
-        channelId,
-        includeHistory,
-      });
+      const id = await transport
+        .openDirectMessage(pubkeys, active, { channelId, includeHistory })
+        .catch((error: unknown) => {
+          throw error instanceof Error && error.message === NEEDS_HISTORY_CHOICE
+            ? new NeedsHistoryChoice()
+            : error;
+        });
       active.throwIfAborted();
       await confirmed(id, [transport.viewer, ...pubkeys], active);
       if (id !== channelId) for (const listener of [...opened]) listener(id);

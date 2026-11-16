@@ -643,7 +643,12 @@ export async function connectNativeTransport(
         ...(history
           ? {
               channel: history.channelId,
-              includeHistory: history.includeHistory,
+              history:
+                history.includeHistory === "ask"
+                  ? "ask"
+                  : history.includeHistory
+                    ? "include"
+                    : undefined,
             }
           : {}),
       });

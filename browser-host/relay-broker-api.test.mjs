@@ -2510,7 +2510,7 @@ test("direct-message transport signs only bounded participants and binds the ret
   }
 });
 
-test("direct-message transport opens and adds to a DM with or without its history", async () => {
+test("direct-message transport opens a DM, and adds to one with or without its history", async () => {
   const channelId = "11111111-1111-4111-8111-111111111111";
   const h = await harness((call) =>
     Response.json({
@@ -2530,11 +2530,9 @@ test("direct-message transport opens and adds to a DM with or without its histor
         }),
       ).resolves.toBe(channelId);
     await expect(
-      transport.openDirectMessage([person], new AbortController().signal, {
-        includeHistory: true,
-      }),
+      transport.openDirectMessage([person], new AbortController().signal),
     ).resolves.toBe(channelId);
-    const [grown, forked, shared] = h.calls.map((call) => call.body);
+    const [grown, forked, opened] = h.calls.map((call) => call.body);
     expect(verifyEvent(grown)).toBe(true);
     expect(grown.kind).toBe(41011);
     expect(grown.tags.filter(([tag]) => tag !== "client")).toEqual([
@@ -2547,16 +2545,18 @@ test("direct-message transport opens and adds to a DM with or without its histor
       ["h", channelId],
       ["p", person],
     ]);
-    expect(shared.kind).toBe(41010);
-    expect(shared.tags.filter(([tag]) => tag !== "client")).toEqual([
+    expect(opened.kind).toBe(41010);
+    expect(opened.tags.filter(([tag]) => tag !== "client")).toEqual([
       ["p", person],
-      ["history", "include"],
     ]);
     for (const body of [
       { pubkeys: [person], channel: "not-a-channel", includeHistory: true },
       { pubkeys: [person], channel: channelId },
       { pubkeys: [person], channel: channelId, includeHistory: "yes" },
       { pubkeys: [person], includeHistory: "yes" },
+      // Only an addition names its DM, so only it may share history.
+      { pubkeys: [person], includeHistory: true },
+      { pubkeys: [person], includeHistory: false },
     ])
       expect((await h.post("direct-message", body)).status).toBe(400);
     expect(h.calls).toHaveLength(3);

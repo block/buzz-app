@@ -1661,7 +1661,7 @@ it("a person joins a DM with its history when the adder includes it", async () =
   );
   expect(t.publish).not.toHaveBeenCalled();
 });
-it("a person added without history opens a new DM of everyone", async () => {
+it("a person added without history opens a new DM of its people and them", async () => {
   const onOpenConversation = vi.fn(() => true);
   const t = await setup("dm", false, false, { onOpenConversation }, undefined, {
     directMessages: true,

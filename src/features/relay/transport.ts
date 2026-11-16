@@ -93,17 +93,17 @@ export interface RelayWriter {
     signal: AbortSignal,
   ): Promise<string> | Promise<void>;
 }
-/** Whether a DM command may share an existing DM's history. With
- * `channelId`, it adds to that DM: they join it with its history only when
- * `includeHistory`, and otherwise start a new DM of everyone. `"ask"` lets
- * the relay decide: agents join, and people joining a DM of two or more
- * people are refused with `NEEDS_HISTORY_CHOICE` so the adder chooses.
- * Without `channelId`, it opens a DM: with `includeHistory`, the DM of these
- * people, adding any named agents to it; otherwise the DM of exactly these
- * members. */
-export type DirectMessageHistory =
-  | { readonly channelId?: string; readonly includeHistory: boolean }
-  | { readonly channelId: string; readonly includeHistory: "ask" };
+/** An addition to the DM `channelId`. Only an addition names its DM, so only
+ * it may share that DM's history: they join it with its history when
+ * `includeHistory`, and otherwise start a new DM of its people plus them, its
+ * agents left behind. `"ask"` lets the relay decide: agents join, and people
+ * joining a DM of two or more people are refused with `NEEDS_HISTORY_CHOICE`
+ * so the adder chooses. Without it, a command opens the DM of exactly the
+ * named members. */
+export type DirectMessageHistory = {
+  readonly channelId: string;
+  readonly includeHistory: boolean | "ask";
+};
 
 export interface ReadTransport {
   /** Hear the relay refuse this account for the whole community, on any

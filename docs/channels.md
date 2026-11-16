@@ -392,10 +392,14 @@ exact command receipt, and returns the canonical channel ID. A unique client tag
 allows reissuing this participant-set command after a lost response without
 receiving a generic duplicate-event receipt. No private key or arbitrary signing
 capability is exposed to the page. Other host adapters report this capability as
-unavailable until they implement it. Without `["history", "include"]` the relay
-finds or makes the DM of exactly the named members, agents included. New
-message sends the tag only while it shows an existing DM, so named agents join
-the DM on screen, with its history, as the page says; every other open omits it.
+unavailable until they implement it. An open never carries a history tag: the
+relay finds or makes the DM of exactly the named members, agents included, and
+may pick another DM of the same people than one on screen. So while New message
+shows an existing DM, it sends to that DM by its ID. Named agents it lacks join
+it through an addition that asks the relay (below), so its history reaches only
+the DM on screen, as the page says; if the relay counts one of them as a person,
+the page opens the DM of exactly the named members instead, without history.
+When nobody joins, it still opens first, which restores a hidden DM.
 
 Before sending, the session requires signed DM metadata and a signed roster
 containing the viewer and selected people, plus only agents they did not name.
@@ -403,20 +407,23 @@ containing the viewer and selected people, plus only agents they did not name.
 ## Adding to a direct message
 
 The access dialog of a DM adds people and agents through the same
-purpose-bound endpoint, which signs kind 41011 with the DM's `h` tag. An agent
-joins in place with the DM's history and never changes which DM it is; the
-dialog sends it with `["history", "include"]`, without which the relay starts a
-new DM of everyone, and someone the relay counts as a person still joins in
-place. Only whether to ask depends on the app's agent
-classification. Adding a person first asks **Include history** or **Start a new DM**. Include history
-adds them in place with `["history", "include"]`; the DM is then identified by
-the grown set of people, so messaging only the original people later starts a
-new DM. Start a new DM, the default without the tag, creates a DM of the
-people plus whoever is added, without the history; agents already in the DM
-stay behind. Either way, if a DM of the grown set of people already
-exists, the relay returns it and the dialog opens it. A DM of at most one
-person and their agents never gains a person in place: adding one opens the DM
-of everyone without asking, and the relay starts that DM even with the tag. A DM holds at most nine
+purpose-bound endpoint, which signs kind 41011 with the DM's `h` tag. Only the
+relay knows who is an agent, so the app never decides whether to ask: every
+addition first sends `["history", "ask"]`. The relay adds agents in place with
+the DM's history, and an agent never changes which DM it is. When a person
+would join a DM of two or more people, it refuses with `needs-choice: history`
+and changes nothing; only then does the dialog ask **Include history** or
+**Start a new DM** and add again with its choice. Include history adds them in
+place with `["history", "include"]`; the DM is then identified by the grown set
+of people, so messaging only the original people later starts a new DM. Start a
+new DM, without the tag, creates a DM of the existing people plus whoever is
+added, without the history; agents already in the DM stay behind. Either way,
+if a DM of the grown set of people already exists, the relay returns it and the
+dialog opens it. A DM of at most one person and their agents never gains a
+person in place: the relay starts a DM of that person plus whoever is added,
+with its agents left behind, without asking. A relay from before `"ask"`
+refuses it as `invalid: history must be "include", got "ask"`, which the app
+treats as the same question. A DM holds at most nine
 people; agents do not count. The relay enforces this and decides who is an
 agent. Opening a DM still names at most eight others, agents included. The session confirms the returned DM from signed
 discovery before reporting the addition. The first kind-9 message then uses the

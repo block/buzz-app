@@ -189,24 +189,16 @@ export function createDirectMessages(
     searched(pubkey: string, authority: VerifiedProfileAuthority) {
       return searchProfiles.answered(pubkey, authority);
     },
-    /** Open the DM of `pubkeys`. With `includeHistory`, the caller has warned
-     * that named agents join the DM of these people and can read it. */
-    async open(
-      pubkeys: readonly string[],
-      signal: AbortSignal,
-      includeHistory = false,
-    ) {
+    /** Open the DM of `pubkeys`. It never shares a DM's history: the relay
+     * picks the DM by its people, so it could be another than one shown. */
+    async open(pubkeys: readonly string[], signal: AbortSignal) {
       if (!available || !transport?.openDirectMessage)
         throw new Error("This connection cannot start direct messages.");
       if (!validDirectMessageParticipants(pubkeys, transport.viewer))
         throw new Error("Choose between one and eight other people.");
       const active = AbortSignal.any([lifetime, signal]);
       active.throwIfAborted();
-      const id = await transport.openDirectMessage(
-        pubkeys,
-        active,
-        includeHistory ? { includeHistory } : undefined,
-      );
+      const id = await transport.openDirectMessage(pubkeys, active);
       active.throwIfAborted();
       // The relay may return the DM of these people with agents they did
       // not name: it decides who is an agent, so only who is named is checked.
@@ -223,10 +215,11 @@ export function createDirectMessages(
       return id;
     },
     /** Add `pubkeys` to the DM `channelId` and return the DM they ended up
-     * in: this one, a new DM of everyone without `includeHistory`, or an
-     * existing DM of the grown set of people. With `"ask"`, the relay
-     * decides, and throws `NeedsHistoryChoice` when people would join this
-     * DM: the adder chooses, then adds again with their choice. */
+     * in: this one; without `includeHistory`, a new DM of its people plus
+     * `pubkeys`, its agents left behind; or an existing DM of the grown set
+     * of people. With `"ask"`, the relay decides, and throws
+     * `NeedsHistoryChoice` when people would join this DM: the adder chooses,
+     * then adds again with their choice. */
     async add(
       channelId: string,
       pubkeys: readonly string[],

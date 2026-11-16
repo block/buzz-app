@@ -283,13 +283,12 @@ pub(crate) async fn relay_kit_decode(
     Ok(decoded)
 }
 
-/// Opens the DM of `pubkeys` (kind:41010), or, with `channel`, adds them to
-/// that DM (kind:41011). Only with `history` `"include"` may anyone join an
-/// existing DM and read its history: an open then finds the DM of these
-/// people and adds any named agents, and an add joins that DM instead of
-/// starting a new DM of everyone. An add's `"ask"` lets the relay decide,
-/// refusing with `needs-choice: history` when people would join. Returns the
-/// DM the relay settled on.
+/// Opens the DM of exactly `pubkeys` (kind:41010), or, with `channel`, adds
+/// them to that DM (kind:41011). Only an addition, which names its DM, may
+/// share history: with `history` `"include"` they join that DM instead of
+/// starting a new DM of its people plus them, its agents left behind. An
+/// add's `"ask"` lets the relay decide, refusing with `needs-choice: history`
+/// when people would join. Returns the DM the relay settled on.
 #[tauri::command]
 pub(crate) async fn relay_direct_message(
     host: tauri::State<'_, IdentityHost>,
@@ -418,8 +417,10 @@ pub(super) fn direct_message_tags(
     tags.extend(pubkeys.into_iter().map(|p| vec!["p".into(), p]));
     match history {
         None => {}
-        Some(value @ "include") => tags.push(vec!["history".into(), value.into()]),
-        Some(value @ "ask") if adding => tags.push(vec!["history".into(), value.into()]),
+        // Only an addition names its DM, so only it may share that DM's history.
+        Some(value @ ("include" | "ask")) if adding => {
+            tags.push(vec!["history".into(), value.into()])
+        }
         Some(_) => return Err("Choose whether they see this DM’s history.".into()),
     }
     tags.push(vec!["client".into(), uuid::Uuid::new_v4().to_string()]);
@@ -1063,17 +1064,6 @@ mod direct_message_tests {
     }
 
     #[test]
-    fn an_open_carries_the_history_choice() {
-        let shared = direct_message_tags(&key('a'), vec![key('b')], None, Some("include")).unwrap();
-        assert_eq!(
-            shared[1],
-            vec!["history".to_string(), "include".to_string()]
-        );
-        let exact = direct_message_tags(&key('a'), vec![key('b')], None, None).unwrap();
-        assert!(!exact.iter().any(|tag| tag[0] == "history"));
-    }
-
-    #[test]
     fn an_addition_leads_with_its_dm_and_carries_the_history_choice() {
         let dm = uuid::Uuid::nil().to_string();
         for value in ["include", "ask"] {
@@ -1139,6 +1129,8 @@ mod direct_message_tests {
                 Some("not-a-uuid".to_string()),
                 Some("include"),
             ),
+            // Only an addition names its DM, so only it may share history.
+            (vec![key('b')], None, Some("include")),
             (vec![key('b')], None, Some("ask")),
             (vec![key('b')], dm, Some("exclude")),
         ] {

@@ -16,7 +16,7 @@ const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
   for (const stop of cleanups.splice(0).reverse()) await stop();
 });
-function fixture() {
+function fixture(type = "buzz.codex/codex") {
   const channels = new Set<() => void>(),
     views = new Set<() => void>(),
     connections = new Set<() => void>(),
@@ -69,17 +69,18 @@ function fixture() {
     key: peer,
     owner,
     relay: "https://example.org",
-    type: "buzz.codex/codex",
+    type,
     place: "here",
     name: "Codex",
   } as Agent;
   const input = vi.fn(),
     close = vi.fn();
   const voice = vi.fn(async () => ({ input, close }));
+  const types = [{ key: type, voice }];
   const agents = {
     snapshot: () => ({ status: "ready", running: [agent] }),
     subscribe: subscribe(channels),
-    types: () => [{ key: agent.type, voice }],
+    types: () => types,
   } as unknown as Agents;
   const view = {
     snapshot: () => ({ events, status: "ready" }),
@@ -156,6 +157,7 @@ function fixture() {
     resolve: connection.session.channels.resolve as ReturnType<typeof vi.fn>,
     backing,
     agent,
+    types,
     emit(
       kind: number,
       author = authority,
@@ -188,38 +190,52 @@ function fixture() {
     stop,
   };
 }
-it("seats a phone caller's Codex peer without opening a desktop human call, and stops on leave", async () => {
-  const f = fixture();
-  expect(f.bridge.open).not.toHaveBeenCalled();
-  f.emit(48101);
-  await vi.waitFor(() => expect(f.voice).toHaveBeenCalledOnce());
-  expect(f.bridge.open).toHaveBeenCalledWith(
-    expect.any(String),
-    expect.objectContaining({ channelId: parent, viewer: owner }),
-    room,
-    expect.any(Function),
-    peer,
-  );
-  f.audio("stranger");
-  f.audio(owner);
-  expect(f.input).toHaveBeenCalledExactlyOnceWith([0]);
-  f.emit(48102, authority, f.now + 1);
-  await vi.waitFor(() => expect(f.close).toHaveBeenCalledOnce());
-});
+it.each(["buzz.codex/codex", "example.fleet/agent"])(
+  "seats a remote owner's %s peer without opening a desktop human call, and stops on leave",
+  async (type) => {
+    const f = fixture(type);
+    expect(f.bridge.open).not.toHaveBeenCalled();
+    expect(f.remote.snapshot().phase).toBe("idle");
+    f.emit(48101);
+    await vi.waitFor(() => expect(f.voice).toHaveBeenCalledOnce());
+    expect(f.bridge.open).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ channelId: parent, viewer: owner }),
+      room,
+      expect.any(Function),
+      peer,
+    );
+    f.audio("stranger");
+    f.audio(owner);
+    expect(f.input).toHaveBeenCalledExactlyOnceWith([0]);
+    f.emit(48102, authority, f.now + 1);
+    await vi.waitFor(() => expect(f.close).toHaveBeenCalledOnce());
+  },
+);
 it.each([
   "forged",
   "other-owner",
   "not-in-room",
   "wrong-parent",
   "protected",
+  "other-agent-owner",
+  "elsewhere",
+  "execution-target",
+  "other-community",
   "unsupported",
 ])("does not seat %s", async (reason) => {
-  const f = fixture();
+  const f = fixture("example.fleet/agent");
   if (reason === "not-in-room") f.backing.members = [owner];
   if (reason === "wrong-parent") f.backing.parentChannelId = "other";
   if (reason === "protected") Object.assign(f.agent, { protection: {} });
-  if (reason === "unsupported")
-    Object.assign(f.agent, { type: "buzz.claude/claude" });
+  if (reason === "other-agent-owner")
+    Object.assign(f.agent, { owner: "other" });
+  if (reason === "elsewhere") Object.assign(f.agent, { place: "elsewhere" });
+  if (reason === "execution-target")
+    Object.assign(f.agent, { executionBinding: {} });
+  if (reason === "other-community")
+    Object.assign(f.agent, { relay: "https://other.example.org" });
+  if (reason === "unsupported") f.types.length = 0;
   f.emit(
     48101,
     reason === "forged" ? owner : authority,
@@ -233,6 +249,21 @@ it.each([
   } else expect(f.remote.snapshot().phase).toBe("idle");
   expect(f.voice).not.toHaveBeenCalled();
   await f.stop();
+});
+it("discovers a custom agent when voice becomes available and closes it when capability is removed", async () => {
+  const f = fixture("example.fleet/agent");
+  f.types.length = 0;
+  f.notify();
+  f.emit(48101);
+  expect(f.remote.snapshot().phase).toBe("idle");
+  expect(f.bridge.open).not.toHaveBeenCalled();
+  f.types.push({ key: f.agent.type, voice: f.voice });
+  f.notify();
+  await vi.waitFor(() => expect(f.voice).toHaveBeenCalledOnce());
+  f.types.length = 0;
+  f.notify();
+  await vi.waitFor(() => expect(f.close).toHaveBeenCalledOnce());
+  expect(f.remote.snapshot().phase).toBe("idle");
 });
 it("tears down on community disconnection", async () => {
   const f = fixture();

@@ -2427,17 +2427,23 @@ function pluginPicker(
   overrides: Partial<ChannelMembersDialogProps>,
 ) {
   cleanup();
-  return render(
+  const picker = (props: Partial<ChannelMembersDialogProps>) => (
     <ToastProvider>
       <ChannelMembersDialog
         session={t.session}
         channelId={id}
         trigger={{ current: null }}
         close={() => {}}
-        {...overrides}
+        {...props}
       />
-    </ToastProvider>,
+    </ToastProvider>
   );
+  const view = render(picker(overrides));
+  return {
+    ...view,
+    rerenderPicker: (props: Partial<ChannelMembersDialogProps>) =>
+      view.rerender(picker(props)),
+  };
 }
 
 it("keeps grouped host recovery and its receipts with the host owner in plugin mode", async () => {
@@ -2576,12 +2582,13 @@ it("routes plugin additions, retains failed input, locks pending work, and copie
   });
   const change = vi.fn(() => gate);
   const close = vi.fn();
-  pluginPicker(t, {
+  const props = {
     close,
     shareLink: "buzz://plugin?id=example.records&record=design",
     accessSettings: <p>Record access settings</p>,
-    memberActions: { canAdd: true, pending: false, change },
-  });
+    memberActions: { canAdd: true, pending: true, change },
+  };
+  const view = pluginPicker(t, props);
   expect(screen.getByText("Record access settings")).toBeVisible();
   expect(
     screen.queryByRole("combobox", { name: "General access" }),
@@ -2594,6 +2601,18 @@ it("routes plugin additions, retains failed input, locks pending work, and copie
   const add = await screen.findByRole("button", {
     name: /^Add Morgan \(.*\)$/,
   });
+  expect(add).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
+  fireEvent.click(add);
+  await t.user.keyboard("{Enter}{Escape}");
+  expect(close).not.toHaveBeenCalled();
+  expect(change).not.toHaveBeenCalled();
+  view.rerenderPicker({
+    ...props,
+    memberActions: { ...props.memberActions, pending: false },
+  });
+  expect(add).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Done" })).toBeEnabled();
   try {
     await t.user.click(add);
     expect(screen.getByRole("searchbox")).toHaveFocus();

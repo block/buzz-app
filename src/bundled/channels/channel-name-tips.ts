@@ -62,7 +62,7 @@ export function channelNameTips(input: NameTipInput): NameTips {
     parts.length > 1 && (PREFIXES.includes(first) || SUFFIXES.includes(last));
   const midType = parts.slice(0, -1).some((part) => SUFFIXES.includes(part));
 
-  if (!typed && !parts.includes("proj")) {
+  if (!typed && !(parts.length > 1 && parts.includes("proj"))) {
     if (midType) {
       const hint = "Put the type word at the end, like payments-team.";
       tips.push(hint);

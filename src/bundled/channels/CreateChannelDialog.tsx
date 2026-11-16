@@ -481,7 +481,6 @@ function OpenCreateChannelDialog({
                     <a
                       className={styles.guidelinesLink}
                       href={guidelinesUrl}
-                      tabIndex={-1}
                       target="_blank"
                       rel="noreferrer"
                     >

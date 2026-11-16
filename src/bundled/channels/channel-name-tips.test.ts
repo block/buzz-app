@@ -59,4 +59,8 @@ describe("normalization and wording", () => {
       "Put the type word at the end, like payments-team.",
     ]);
   });
+  it("blocks a bare proj, like a bare tmp", () => {
+    expect(check("proj")).not.toEqual([]);
+    expect(check("proj-")).not.toEqual([]);
+  });
 });

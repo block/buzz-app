@@ -130,6 +130,7 @@ function fakeSession() {
 function observe(
   fake: ReturnType<typeof fakeSession>,
   allows?: (id: string) => boolean,
+  mutedRows = false,
 ) {
   const publish = vi.fn<(state: CommunityUnread | undefined) => void>();
   const gates = allows && {
@@ -143,6 +144,8 @@ function observe(
       one,
       publish,
       gates as Parameters<typeof observeCommunityUnread>[4],
+      false,
+      mutedRows,
     ),
   );
   return () => publish.mock.lastCall?.[0];
@@ -173,9 +176,18 @@ it("follows the sidebar row a visit quieted, and keeps manual unread", () => {
   expect(state()).toEqual({ unread: true, attention: 0 });
 });
 
-it("counts muted channels as their sidebar rows do, and leaves out channels notification settings exclude", () => {
+it("leaves out muted channels unless asked to count them as their rows do", () => {
   const fake = fakeSession();
-  const state = observe(fake, (id) => id !== "quiet");
+  const state = observe(fake);
+  fake.join("muted");
+  fake.preferences({ status: "ready", data: { muted: ["muted"] } });
+  fake.set("muted", { observedCount: 5, attentionCount: 5 });
+  expect(state()).toEqual({ unread: false, attention: 0 });
+});
+
+it("with mutedRows, counts muted channels as their sidebar rows do, and leaves out channels notification settings exclude", () => {
+  const fake = fakeSession();
+  const state = observe(fake, (id) => id !== "quiet", true);
   fake.join("muted", "quiet", "open");
   fake.channelType("dm", "dm");
   fake.preferences({ status: "ready", data: { muted: ["muted", "dm"] } });

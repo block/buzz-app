@@ -21,7 +21,9 @@ export type CommunityUnread = Readonly<{ unread: boolean; attention: number }>;
  * `undefined` while the session's live connection is not up (HTTP reads can
  * still succeed without it), while its unread is stale (its connection dropped
  * and no fresh evidence has arrived since, which the reconnect's read or a newly
- * arrived event provides) or no counted channel has observed evidence; channels without it are left out of the count. */
+ * arrived event provides) or no counted channel has observed evidence; channels without it are left out of the count.
+ * With `mutedRows`, a muted channel counts as its sidebar row shows it (its
+ * mentions, or any unread in a muted DM); without, muted channels are left out. */
 export function observeCommunityUnread(
   session: RelaySession,
   viewer: string,
@@ -29,6 +31,7 @@ export function observeCommunityUnread(
   publish: (state: CommunityUnread | undefined) => void,
   gates?: UnreadGates,
   known = false,
+  mutedRows = false,
 ) {
   let closed = false;
   const channels = new Map<string, () => void>();
@@ -46,6 +49,7 @@ export function observeCommunityUnread(
     let attention = 0;
     let observed = 0;
     for (const channelId of channels.keys()) {
+      if (!mutedRows && muted.has(channelId)) continue;
       const snapshot = session.unread.snapshot({ kind: "channel", channelId });
       if (known) {
         if (snapshot.freshness === "stale") return publish(undefined);
@@ -225,6 +229,7 @@ export function createCommunityUnreads(
         communityDestination(id).url,
         (state) => set(id, state),
         gates,
+        true,
         true,
       );
     }

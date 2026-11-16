@@ -37,7 +37,12 @@ function setup() {
         {
           row: node,
           bar,
-          hit: (target) => target instanceof Node && node.contains(target),
+          hit: (target) =>
+            target instanceof Element &&
+            !target.closest(
+              "[data-message-reactions], [data-media-timecode]",
+            ) &&
+            node.contains(target),
           retain: () => false,
           changed,
         },
@@ -148,3 +153,34 @@ it("retains routes toward a toolbar above, below, left, or right without coverin
     expect(inToolbarRoute({ x: -200, y: -200 }, origin, box)).toBe(false);
   }
 });
+
+it.each(["data-message-reactions", "data-media-timecode"])(
+  "protects travel across a neighbor's %s without activating its controls",
+  (attribute) => {
+    vi.useFakeTimers();
+    const { a, b, close } = setup();
+    const control = document.createElement("button");
+    control.setAttribute(attribute, "");
+    b.node.append(control);
+    try {
+      fireEvent.pointerMove(control, point(150, 160));
+      expect(a.changed).toHaveBeenLastCalledWith(true);
+      expect(b.changed).not.toHaveBeenCalled();
+      fireEvent.pointerMove(a.bar, point(200, 120));
+      vi.advanceTimersByTime(MESSAGE_ACTION_TRAVEL_IDLE_MS);
+      expect(a.changed).toHaveBeenLastCalledWith(true);
+      fireEvent.pointerMove(a.content, point(100, 200));
+      fireEvent.pointerMove(control, point(150, 160));
+      vi.advanceTimersByTime(MESSAGE_ACTION_TRAVEL_IDLE_MS);
+      expect(a.changed).toHaveBeenLastCalledWith(false);
+      expect(b.changed).not.toHaveBeenCalled();
+      fireEvent.pointerMove(a.content, point(100, 200));
+      fireEvent.pointerMove(control, point(150, 160));
+      fireEvent.pointerDown(control, point(150, 160));
+      expect(a.changed).toHaveBeenLastCalledWith(false);
+      expect(b.changed).not.toHaveBeenCalled();
+    } finally {
+      close();
+    }
+  },
+);

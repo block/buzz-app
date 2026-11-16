@@ -116,7 +116,6 @@ function hoverOwner(document: Document) {
       previous &&
       target instanceof Element &&
       scope?.contains(target) &&
-      !target.closest("[data-message-reactions], [data-media-timecode]") &&
       current.bar.matches(":popover-open") &&
       current.bar.getBoundingClientRect().width > 0
     ) {

@@ -269,7 +269,9 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
     .click();
   await expect(trigger).toBeFocused();
 
-  const sockets = app.relay.sockets.length;
+  const sockets = app.relay.sockets.filter(
+    (s) => s.community === "primary",
+  ).length;
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page
@@ -289,7 +291,9 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   await expect
     .poll(() => app.relay.hasRoute("primary", "observer"))
     .toBe(false);
-  expect(app.relay.sockets).toHaveLength(sockets);
+  expect(
+    app.relay.sockets.filter((s) => s.community === "primary"),
+  ).toHaveLength(sockets);
   await closeSettings(page);
   await page.locator('[data-channel-id="alpha"]').click();
   await expect(

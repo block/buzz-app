@@ -50,7 +50,9 @@ export interface ProfileQueries {
    * later, the limit returns to the largest remaining reservation and evicts
    * the least recently used profiles past it. */
   reserve?(members: number): () => void;
-  /** Profiles the cache can hold now; one ensure may ask for at most this many. */
+  /** Room open views reserved, on top of the base; one ensure may ask for at
+   * most this many. A released view's hold keeps more profiles cached but
+   * does not count here, so reads sized by it do not evict the held names. */
   limit?(): number;
   /** Moves when the budget drops loaded profiles or a shrink cancels
    * background reads asked for before the release. A view that requested names
@@ -570,7 +572,7 @@ export function createProfileDirectory(
     unnamed: () => unnamed,
     generation: () => generation,
     reserve,
-    limit: () => limit,
+    limit: () => opened,
     evictions: () => events.evictions + cancelled,
     verifiedAuthority: () => verified?.authority(),
     verifiedHeld: (pubkey: string) => !!verified?.holds(pubkey),

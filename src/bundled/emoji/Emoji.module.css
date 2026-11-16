@@ -55,7 +55,11 @@
 }
 .emojiMart {
   position: relative;
-  height: var(--emoji-picker-height, var(--picker-panel-height));
+  /* Avatar pickers mount outside .emojiContent and keep their earlier height. */
+  height: var(
+    --emoji-picker-height,
+    var(--picker-panel-height, min(21.75rem, 40vh))
+  );
   min-height: 0;
 }
 .emojiMart > div {

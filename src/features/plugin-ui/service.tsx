@@ -52,7 +52,7 @@ export const pluginUi: PluginUi = Object.freeze({
       value={props.value}
       defaultValue={props.defaultValue}
       onValueChange={onValueChange && ((value) => onValueChange(value))}
-      type={oneOf(props.type, ["text", "email", "url", "search", "password"])}
+      type={oneOf(props.type, ["text", "email", "url", "password"])}
       placeholder={props.placeholder}
       name={props.name}
       id={props.id}
@@ -98,6 +98,7 @@ export const pluginUi: PluginUi = Object.freeze({
       description={props.description}
       actions={props.actions}
       size={oneOf(props.size, ["compact", "default"]) ?? "default"}
+      dismissOnOutsideClick={props.dismissOnOutsideClick !== false}
       preventClose={props.preventClose === true}
     >
       {props.children}

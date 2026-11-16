@@ -419,7 +419,7 @@ API v1: the host may restyle a control but only adds controls, props and values.
 Components marked `pluginApi: "v1"` in the design-system registry are the ones
 offered, and a test keeps the two in step. A component reads the same on every
 access, so it is safe to use as a React element type. Plugin page state stays
-in the plugin's components; disabling a plugin unmounts an open `Dialog` with its
+in the plugin's components; unmounting a page with an open `Dialog` removes its
 portal and scroll lock.
 
 For styling beyond these controls, rely on the `core` roles in the token

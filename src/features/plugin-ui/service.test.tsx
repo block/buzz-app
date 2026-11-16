@@ -45,14 +45,23 @@ it("lets a plugin build a form in a dialog from host controls", async () => {
   function Page() {
     const [open, setOpen] = useState(false);
     const [name, setName] = useState("");
+    const [attempted, setAttempted] = useState(false);
     const [alerts, setAlerts] = useState(false);
     const save = () => {
-      saved({ name, alerts });
+      setAttempted(true);
+      if (!name) return;
+      saved(name);
       setOpen(false);
     };
     return h(
       "section",
       null,
+      // A Switch applies at once, so it lives on the page, not behind Save.
+      h(Switch, {
+        label: "Desktop alerts",
+        checked: alerts,
+        onCheckedChange: setAlerts,
+      }),
       h(
         loose.Button,
         {
@@ -69,28 +78,30 @@ it("lets a plugin build a form in a dialog from host controls", async () => {
           onOpenChange: setOpen,
           title: "Profile",
           description: "Shown to people in this community.",
+          dismissOnOutsideClick: false,
           // Host-owned options are not part of the contract.
           visit: true,
           actions: h(Button, { variant: "prominent", onClick: save }, "Save"),
         },
         h(
           Field,
-          { label: "Display name", error: name ? "" : "Required" },
+          {
+            label: "Display name",
+            error: attempted && !name ? "Required" : "",
+          },
           h(loose.Input, {
             value: name,
             onValueChange: (...args: unknown[]) => setName(args.join("|")),
           }),
         ),
-        h(Switch, {
-          label: "Desktop alerts",
-          checked: alerts,
-          onCheckedChange: setAlerts,
-        }),
       ),
     );
   }
 
   const view = render(h(Page));
+  const alerts = screen.getByRole("switch", { name: "Desktop alerts" });
+  await user.click(alerts);
+  expect(alerts).toBeChecked();
   const trigger = screen.getByRole("button", { name: "Edit profile" });
   expect(trigger).toHaveAttribute("data-variant", "subtle");
   expect(trigger).not.toHaveClass("plugin-chrome");
@@ -101,17 +112,20 @@ it("lets a plugin build a form in a dialog from host controls", async () => {
     "Shown to people in this community.",
   );
   const input = screen.getByRole("textbox", { name: "Display name" });
+  expect(input).not.toHaveAttribute("aria-invalid");
+  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByRole("alert")).toHaveTextContent("Required");
   await user.type(input, "Ada");
   // Only the value reaches the plugin, never Base UI's event details.
   expect(input).toHaveValue("Ada");
   expect(input).not.toHaveAttribute("aria-invalid");
-  await user.click(screen.getByRole("switch", { name: "Desktop alerts" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
-  expect(saved).toHaveBeenCalledExactlyOnceWith({ name: "Ada", alerts: true });
+  expect(saved).toHaveBeenCalledExactlyOnceWith("Ada");
   await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-  // Disabling the plugin unmounts its page with the dialog open.
+  // Escape returns focus. Then unmount the page with the dialog open; this is
+  // component cleanup only, not the plugin runtime's disable path.
   await user.click(trigger);
   await screen.findByRole("dialog", { name: "Profile" });
   await user.keyboard("{Escape}");

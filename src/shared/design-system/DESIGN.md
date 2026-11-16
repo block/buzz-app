@@ -451,11 +451,12 @@ use the actual supported author contract and exposed CSS roles; source paths are
 not a published component SDK. The author contract's `ui` service offers the
 components marked `pluginApi: "v1"` in the registry, with narrower props; changing
 their appearance is fine, but removing them or their plugin props breaks plugins.
-These are composition requirements for Buzz UI, not a claim that arbitrary external code is automatically constrained. Do not
-introduce a private reset, theme provider, palette, body-level stylesheet, global
-control override, or parallel dialog/toast system to make one contribution fit.
-Keep plugin styles scoped to owned layout/content. Renderer exceptions do not
-exempt surrounding controls from shared appearance.
+These are composition requirements for Buzz UI, not a claim that arbitrary
+external code is automatically constrained. Do not introduce a private reset,
+theme provider, palette, body-level stylesheet, global control override, or
+parallel dialog/toast system to make one contribution fit. Keep plugin styles
+scoped to owned layout/content. Renderer exceptions do not exempt surrounding
+controls from shared appearance.
 
 For a genuinely new surface, describe its task and the nearest recipe first.
 State the missing capability and smallest extension in its existing owner. Keep

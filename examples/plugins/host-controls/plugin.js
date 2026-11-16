@@ -15,13 +15,12 @@ export function apply(ctx) {
       const [open, setOpen] = React.useState(false);
       const [name, setName] = React.useState("");
       const [draft, setDraft] = React.useState("");
+      const [attempted, setAttempted] = React.useState(false);
       const [alerts, setAlerts] = React.useState(false);
-      const intro = h(
+      const summary = h(
         "p",
         null,
-        name
-          ? `Saved as ${name}, alerts ${alerts ? "on" : "off"}.`
-          : "Nothing saved yet.",
+        name ? `Saved as ${name}.` : "No name saved yet.",
       );
       if (!ui)
         return h(
@@ -29,30 +28,49 @@ export function apply(ctx) {
           { style: { padding: "var(--space-panel-inset)" } },
           h("h1", null, "Host controls playground"),
           h("p", null, "This version of Buzz does not offer host controls."),
-          intro,
+          summary,
         );
       const edit = () => {
         setDraft(name);
+        setAttempted(false);
         setOpen(true);
       };
       const save = () => {
+        setAttempted(true);
+        if (!draft.trim()) return;
         setName(draft.trim());
         setOpen(false);
       };
       return h(
         "section",
-        { style: { padding: "var(--space-panel-inset)" } },
+        {
+          style: {
+            padding: "var(--space-panel-inset)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-start",
+            gap: "var(--space-2)",
+          },
+        },
         h("h1", null, "Host controls playground"),
-        intro,
-        h(ui.Button, { variant: "prominent", onClick: edit }, "Edit profile"),
+        summary,
+        // A switch applies immediately, so it sits on the page, not behind Save.
+        h(ui.Switch, {
+          label: "Desktop alerts",
+          checked: alerts,
+          onCheckedChange: setAlerts,
+        }),
+        h(ui.Button, { variant: "prominent", onClick: edit }, "Edit name"),
         h(
           ui.Dialog,
           {
             open,
             onOpenChange: setOpen,
-            title: "Profile",
+            title: "Display name",
             description:
               "Try typing, Tab, Escape, and disabling the plugin while this is open.",
+            // The dialog holds a draft, so a stray click outside must not discard it.
+            dismissOnOutsideClick: false,
             actions: [
               h(
                 ui.Button,
@@ -61,12 +79,7 @@ export function apply(ctx) {
               ),
               h(
                 ui.Button,
-                {
-                  key: "save",
-                  variant: "prominent",
-                  disabled: !draft.trim(),
-                  onClick: save,
-                },
+                { key: "save", variant: "prominent", onClick: save },
                 "Save",
               ),
             ],
@@ -74,8 +87,8 @@ export function apply(ctx) {
           h(
             ui.Field,
             {
-              label: "Display name",
-              error: draft.trim() ? undefined : "Enter a name",
+              label: "Name",
+              error: attempted && !draft.trim() ? "Enter a name" : undefined,
             },
             h(ui.Input, {
               value: draft,
@@ -83,11 +96,6 @@ export function apply(ctx) {
               autoFocus: true,
             }),
           ),
-          h(ui.Switch, {
-            label: "Desktop alerts",
-            checked: alerts,
-            onCheckedChange: setAlerts,
-          }),
         ),
       );
     },

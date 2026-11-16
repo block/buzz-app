@@ -26,7 +26,7 @@ export type PluginInputProps = Readonly<{
   defaultValue?: string | undefined;
   onValueChange?: ((value: string) => void) | undefined;
   /** Default `text`. */
-  type?: "text" | "email" | "url" | "search" | "password" | undefined;
+  type?: "text" | "email" | "url" | "password" | undefined;
   placeholder?: string | undefined;
   name?: string | undefined;
   id?: string | undefined;
@@ -39,7 +39,7 @@ export type PluginInputProps = Readonly<{
   "aria-label"?: string | undefined;
 }>;
 
-/** Labels the control it contains and announces `error`. */
+/** Labels the one Input it contains and announces `error`. A Switch labels itself. */
 export type PluginFieldProps = Readonly<{
   label: ReactNode;
   /** Hidden while `error` is shown. */
@@ -51,6 +51,7 @@ export type PluginFieldProps = Readonly<{
   children?: ReactNode;
 }>;
 
+/** Applies immediately; do not put it behind a Save action. */
 export type PluginSwitchProps = Readonly<
   {
     checked?: boolean | undefined;
@@ -77,6 +78,8 @@ export type PluginDialogProps = Readonly<{
   actions?: ReactNode;
   /** Default `default`. */
   size?: "compact" | "default" | undefined;
+  /** Default `true`. Set `false` when it holds a draft that a stray click would lose. */
+  dismissOnOutsideClick?: boolean | undefined;
   /** Blocks every way of dismissing it, for example while saving. */
   preventClose?: boolean | undefined;
 }>;

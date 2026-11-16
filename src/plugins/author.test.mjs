@@ -68,8 +68,8 @@ export function apply(ctx: Context) {
   if (ui) {
     void createElement(ui.Dialog, { open: true, onOpenChange: (open: boolean) => void open, title: "Edit",
       actions: createElement(ui.Button, { variant: "prominent", onClick: () => {} }, "Save") },
-      createElement(ui.Field, { label: "Name" }, createElement(ui.Input, { onValueChange: (value: string) => void value })),
-      createElement(ui.Switch, { label: "Alerts", onCheckedChange: (checked: boolean) => void checked }));
+      createElement(ui.Field, { label: "Name" }, createElement(ui.Input, { onValueChange: (value: string) => void value })));
+    void createElement(ui.Switch, { label: "Alerts", onCheckedChange: (checked: boolean) => void checked });
     // @ts-expect-error Internal and legacy variants are not part of the plugin contract.
     void createElement(ui.Button, { variant: "glass", children: "Glass" });
   }

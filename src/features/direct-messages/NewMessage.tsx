@@ -218,7 +218,6 @@ export function NewMessage({
   const [uploadFailed, setUploadFailed] = useState(false);
   const [draftChannel] = useState(() => crypto.randomUUID());
   const attempt = useRef<AbortController | null>(null);
-  const prepared = useRef<{ key: string; id: string } | undefined>(undefined);
   const outbox = session.outbox;
   const operations = useSyncExternalStore(
     outbox?.subscribe ?? noSubscribe,
@@ -238,7 +237,6 @@ export function NewMessage({
   const retire = useCallback(() => {
     clearAttachmentDraft(session, `${scope}:${draftKey}`);
     retiring.current = undefined;
-    prepared.current = undefined;
     draftEdited(undefined);
     setRecipients([]);
     setRestoredDraft(mentionDraft(""));
@@ -323,7 +321,6 @@ export function NewMessage({
   }
   function change(people: Recipient[]) {
     if (locked || attempt.current) return;
-    prepared.current = undefined;
     setRecipients(people);
     writeView(scope, "direct-message:recipients", people.map(recipientView));
     setError("");
@@ -391,19 +388,16 @@ export function NewMessage({
       if (!current) {
         validateAgents();
         onPreparing?.(recipients.map((person) => person.pubkey));
-        const id =
-          prepared.current?.key === key
-            ? prepared.current.id
-            : // The relay picks the DM of these people, which can differ
-              // from the one shown, and named agents join it with its
-              // history. The message goes where the relay says.
-              await session.directMessages.open(
-                recipients.map((person) => person.pubkey),
-                controller.signal,
-                true,
-              );
+        // The relay picks the DM of these people, which can differ from the
+        // one shown, and named agents join it with its history. The message
+        // goes where the relay says now: someone may have joined the DM it
+        // gave an earlier attempt, so every new message asks again.
+        const id = await session.directMessages.open(
+          recipients.map((person) => person.pubkey),
+          controller.signal,
+          true,
+        );
         controller.signal.throwIfAborted();
-        prepared.current = { key, id };
         validateAgents();
         const messageId = session.messages.send(
           id,

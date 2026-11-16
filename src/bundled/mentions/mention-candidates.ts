@@ -187,7 +187,7 @@ function buildCandidates(
   // own member list says who is; a draft with no saved list has only the roster.
   const joined =
     roster && channel?.members?.length ? new Set(channel.members) : memberKeys;
-  const agents = session.agentChoices.snapshot().identities;
+  const { identities: agents, complete } = session.agentChoices.snapshot();
   const executions = new Map(
     agents.map((agent) => [agent.pubkey, agent.execution]),
   );
@@ -206,8 +206,19 @@ function buildCandidates(
           session.outbox?.supports(9000),
         )))
     choices.set(person.pubkey, { pubkey: person.pubkey, name: person.name });
+  // The viewer's own agent that their complete agent inventory no longer
+  // lists is a superseded copy: the directory does not offer it.
+  const inventory = new Set(agents.map((agent) => agent.pubkey));
+  const superseded = (person: DirectoryPerson) =>
+    complete &&
+    !!person.isAgent &&
+    !!session.viewer &&
+    (person.ownerPubkey ?? profiles.get(person.pubkey)?.ownerPubkey) ===
+      session.viewer &&
+    !inventory.has(person.pubkey);
   if (!roster && !inviteAgents && allowsOutsideMentions(channel))
-    for (const person of directory) choices.set(person.pubkey, person);
+    for (const person of directory)
+      if (!superseded(person)) choices.set(person.pubkey, person);
   // Another community's agent is never a member or an agent here; it only
   // takes a row no one in this community has. Sending asks before it joins.
   const hosts = new Map<string, string>();

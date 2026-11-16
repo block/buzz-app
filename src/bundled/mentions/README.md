@@ -84,7 +84,10 @@ invite agents, such as media comments and edits. A Solo chat that invites agents
 instead of items 3 and 4. Archived or read-only channels have
 no choices. Clients MUST exclude invalid keys and identities known to be
 archived, except the viewer's own key: a user always sees themself. Unknown
-archive state does not exclude a key.
+archive state does not exclude a key. Once the viewer's agent inventory has
+loaded completely, clients SHOULD leave out a directory agent that declares the
+viewer as its owner but that the inventory does not list: it is a superseded
+copy the viewer cannot manage. An incomplete inventory excludes nothing.
 
 Labels MUST be resolved against the whole choice set, not only the rows that
 match the search. Directory people with no cached profile still take part, so

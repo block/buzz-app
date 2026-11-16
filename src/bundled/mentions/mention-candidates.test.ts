@@ -210,3 +210,41 @@ it("shows the verified name each row is not, and matches every verified name", (
     setNamePreference("username");
   }
 });
+
+it("leaves out the viewer's own agents that their complete inventory no longer lists", () => {
+  const directory = [
+    // Superseded copy of the viewer's agent.
+    {
+      pubkey: key(8),
+      name: "Helper",
+      isAgent: true as const,
+      ownerPubkey: key(1),
+    },
+    // Someone else's namesake.
+    {
+      pubkey: key(9),
+      name: "Helper",
+      isAgent: true as const,
+      ownerPubkey: key(4),
+    },
+    // The viewer's listed agent.
+    {
+      pubkey: key(6),
+      name: "Helper",
+      isAgent: true as const,
+      ownerPubkey: key(1),
+    },
+  ];
+  const offered = (complete: boolean) => {
+    const session = fresh();
+    Object.assign(session, {
+      agentChoices: { snapshot: () => ({ identities: agents, complete }) },
+    });
+    return rows(directory, session)
+      .map((row) => row.recipient.pubkey)
+      .filter((pubkey) => [8, 9, 6].map(key).includes(pubkey));
+  };
+  expect(offered(true)).toEqual([key(6), key(9)]);
+  // An incomplete inventory hides nothing.
+  expect(offered(false)).toEqual([key(6), key(8), key(9)]);
+});

@@ -4,6 +4,7 @@ import {
   WorkspaceCompositionContext,
   RegionWorkspace,
   RegionChats,
+  RegionChatList,
   type ComposeWorkspaces,
 } from "./WorkspaceComposition";
 import {
@@ -466,6 +467,7 @@ function RegionFrame({
                     ...destinationUi,
                     Workspace: RegionWorkspace,
                     Chats: RegionChats,
+                    ChatList: RegionChatList,
                   }
                 : destinationUi
             }

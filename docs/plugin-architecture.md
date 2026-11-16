@@ -413,20 +413,22 @@ for installation. Read the optional `pluginInstaller` service with
 lookup returns `undefined` when an older host has not provided it.
 
 ```ts
+type PluginInstallSource =
+  | {
+      repository: string; // https://, ssh:// or scp-style Git URL
+      reference: string; // branch or tag
+      path?: string; // relative folder inside the repository; only it is read
+      commit?: string; // 40- or 64-hex; install exactly this commit, on `reference`
+    }
+  | {
+      id: string; // the artifact's plugin ID
+      url: string; // https:// artifact from `buzzodz plugin pack`
+      sha256: string; // 64-hex; install exactly these bytes
+    };
+
 type PluginInstaller = {
   requestInstall(
-    source:
-      | {
-          repository: string; // https://, ssh:// or scp-style git URL
-          reference: string; // branch or tag
-          path?: string; // relative folder inside the repository; only it is read
-          commit?: string; // 40- or 64-hex; install exactly this commit, on `reference`
-        }
-      | {
-          id: string; // the artifact's plugin ID
-          url: string; // https:// artifact from `buzzodz plugin pack`
-          sha256: string; // 64-hex; install exactly these bytes
-        },
+    source: PluginInstallSource,
   ): Promise<"installed" | "updated" | "cancelled" | "unavailable">;
   getInstallationStatus(
     id: string,
@@ -434,6 +436,13 @@ type PluginInstaller = {
   getInstallationSource?(
     id: string,
   ): "git" | "url" | "folder" | "bundled" | "absent" | "unavailable";
+  compareInstallationRelease?(
+    id: string,
+    candidate: {
+      source: PluginInstallSource;
+      release: { revision: string; publisher?: string | null };
+    },
+  ): "current" | "different" | "review" | "unknown";
   subscribeInstallationStatus(
     id: string,
     listener: (status: "installed" | "absent" | "unavailable") => void,
@@ -446,6 +455,60 @@ These installation-status methods may be missing on an older host even when the
 optional service is available. Feature-check each method before calling it; see
 the [plugin authoring guide](plugin-authoring-guide.md#extension-points) for
 status semantics and subscription-lifetime guidance.
+
+`compareInstallationRelease` is an optional, read-only comparison for one listed
+release. Its answer is relative to the caller-supplied candidate: use trusted
+catalog data, not arbitrary plugin or user input. This is neither a catalog
+attestation nor an inventory. It returns bounded equality/mismatch results for
+caller-supplied values, not raw installed revision, publisher, source URL,
+repository, or local path. `current` requires a unique, ready, error-free external
+install, an exact immutable saved
+source pin (Git commit plus repository/reference/path, or URL plus artifact
+SHA-256), and matching native release revision and known publisher. `different`
+requires the same source line and known publisher but a different source pin
+and native revision. It means “does not match this release,” **not “newer”**: Git commits are not ordered by
+their hashes, and an artifact SHA is an integrity pin, not a native plugin
+revision. `review` means a known source or publisher mismatch, or inconsistent
+listed metadata; `unknown` covers missing/invalid source or release data,
+unpinned Git sources, absence, duplicate IDs, non-ready/recovery state, plugin
+errors, folder or bundled installs, and unknown publishers. Neither `review` nor
+`unknown` is evidence of an update or downgrade opportunity. Older hosts without
+the method are also unknown. In particular, callers must not substitute a Git
+commit or URL archive SHA for the native `release.revision`.
+
+The input publisher is optional so incomplete catalog records remain representable;
+an omitted or null publisher always returns `unknown`. URL spelling is normalized
+as in native imports (including scp-style Git remotes), while Git transports,
+users, references, and plugin paths remain distinct.
+
+For example, a Marketplace consumer may feature-check the method and use only a
+verified catalog release identity. It may label a `different` result **Update**
+only when its own catalog authority establishes that the listing is the intended
+current release and not a downgrade; the host comparison itself proves no order.
+The button still opens the existing native review with `requestInstall`, never an
+automatic install:
+
+```ts
+const comparison = installer?.compareInstallationRelease?.(listing.id, {
+  source: listing.installSource,
+  release: listing.verifiedNativeRelease,
+}) ?? "unknown";
+
+const showUpdate = comparison === "different" && catalogConfirmsCurrentRelease(listing);
+function onUpdateClick() {
+  // Wire this to a user action, never to render or the comparison read.
+  if (showUpdate) return installer?.requestInstall(listing.installSource);
+}
+```
+
+`catalogConfirmsCurrentRelease` represents catalog-side publisher/order evidence;
+it is not a host API. If the catalog supplies only an immutable Git commit or URL
+artifact hash, without a verified native revision and publisher, comparison stays
+unknown rather than guessing. Subscribe before reading for current state; the
+existing status subscription is also an invalidation signal for same-ID release,
+publisher, source, and removal changes, and may notify with the unchanged
+`installed` status. Re-read the comparison after each notification and release
+the subscription with the plugin effect.
 
 ```ts
 type Updates = NonNullable<PluginInstaller["updates"]>;
@@ -1302,7 +1365,7 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Todos, Usage, Reminders,
-Workflows, Changesets, Shared compute and Charts are off by default for fresh installs. Bestie,
+Workflows, Changesets, Shared compute, Charts and File viewer are off by default for fresh installs. Bestie,
 Feedback, Diff viewer, Identity Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and
@@ -2850,6 +2913,22 @@ tooltips and anything else that fetches or injects. Marks use the four
 `chart-series` roles, with extra version 1 series summed into Other. Its action
 opens the chart in an expanded dialog, and invalid JSON shows the error with the
 source. The host's Copy action copies the fenced JSON.
+The bundled **File viewer** plugin (`buzz.file-viewer`, off by default) claims
+file cards for PDFs, Markdown, code, text, CSV and TSV at `order: 100`, the
+bundled catch-all band, so a plugin registered at a lower order for the same
+files takes them over. The
+card's preview opens a `buzz-file:?url=…&name=…&mime=…&time=…` panel target,
+which other plugins may also open. The panel reads only `/media/` URLs on the
+current community's origin, through the session's media proxy, and caps text at
+20 MB and PDFs at 100 MB; tables stop at 50,000 cells. Markdown, code and text
+are indexed once and shown in parts of at most 12,500 characters, mounted near
+the view and dropped away from it. Markdown renders through the shared `MarkdownDocument` with the document profile,
+which the viewer extends with heading ids, code highlighting, in-document `#`
+links and images, which load only from the same community media. PDFs use
+[PDF.js](https://mozilla.github.io/pdf.js/) in a worker, loaded on the first
+PDF, and draw only the pages near the viewport. Its CMaps, standard fonts and
+image decoders are bundled assets served through a `BinaryDataFactory`, so
+PDFs need no network access beyond the file.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
 methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` / `.Conversation` /

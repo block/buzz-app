@@ -1405,15 +1405,20 @@ or explicit-save actions inside the content, rather than a modal-wide Save foote
 
 Use `text-label` (16px, 500 weight at the default scale) for the shared Dialog
 title. Group the title and optional description with `--space-2` (8px), beside
-the close button so its hit area does not enlarge the text gap. The body owns
-vertical padding matching the dialog's horizontal `--dialog-padding`: `2rem`,
-or `1rem` at viewport widths up to `30rem`. Do not add an outer flex gap
-on top of that body padding. Footers following body content also reserve a fixed
+the close button so its hit area does not enlarge the text gap. Dialog uses one
+`--space-3` (12px) heading-to-body gap at every breakpoint. Sticky headers do not
+add another gap; omit `headerGap` in callers. `headerGap="compact"` remains a
+compatible alias. AlertDialog
+retains its body inset matching the horizontal `--dialog-padding`: `2rem`, or
+`1rem` at viewport widths up to `30rem`. Dialog body-bottom padding also retains
+that responsive inset. Do not add an outer flex gap on top of the shared spacing.
+Search and integrated navigation retain their own framing.
+Padded chrome keeps the gap on its fixed header rather than inside the body
+scrollport.
+Footers following body content also reserve a fixed
 `--space-4` (`1rem`) top gutter outside the scrollport, so scrolling content never
 meets the buttons directly. Header-only confirmations retain their header-to-action
-gap. Create/Edit channel forms and plugin update reviews opt into
-`headerGap="compact"` for a 12px heading-to-body gap at every breakpoint;
-other dialog compositions retain their default spacing. Channel privacy confirmation
+gap. Channel privacy confirmation
 steps also opt into `footerGap="compact"` for `0.5rem` of body-bottom padding
 before the fixed footer gutter; returning to the form restores the normal
 body-bottom padding.
@@ -2230,8 +2235,9 @@ Inline search settings use the search variant of PreferenceRow with a gear icon 
 
 Proposed pending designer sign-off, as a narrow exception to the chat and
 conversation icon rule under Icons. Use `ChatCircleIcon` for a Solo chat in navigation, headers, tabs and chat cards.
-Use `MessageReplyIcon` (Tabler MessageReply) for thread tabs, thread links and
-Reply actions. Keep private Team channels' lock icon; privacy alone does not
+Use `ThreadIcon` (Tabler Message2) for thread tabs, thread links and Reply actions.
+Its text lines identify a conversation without the forward-like arrow in MessageReply.
+Keep private Team channels' lock icon; privacy alone does not
 replace a Solo chat's identity icon. Accessible chat cards end with a right
 chevron. Unavailable chat cards retain a lock and unavailable accessible text;
 unknown access does not earn a chevron. Display chat cards as **Chat:**, while

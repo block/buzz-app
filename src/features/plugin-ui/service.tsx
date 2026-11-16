@@ -59,7 +59,6 @@ export const pluginUi: PluginUi = Object.freeze({
       disabled={props.disabled}
       readOnly={props.readOnly}
       required={props.required}
-      autoFocus={props.autoFocus}
       maxLength={props.maxLength}
       aria-label={props["aria-label"]}
     />

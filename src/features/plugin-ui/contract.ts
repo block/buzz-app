@@ -21,6 +21,8 @@ export type PluginButtonProps = Readonly<{
   "aria-label"?: string | undefined;
 }>;
 
+// No `autoFocus`: in a Dialog it focuses the Input before the Dialog records
+// the opener, so Escape would lose the way back to it.
 export type PluginInputProps = Readonly<{
   value?: string | undefined;
   defaultValue?: string | undefined;
@@ -33,7 +35,6 @@ export type PluginInputProps = Readonly<{
   disabled?: boolean | undefined;
   readOnly?: boolean | undefined;
   required?: boolean | undefined;
-  autoFocus?: boolean | undefined;
   maxLength?: number | undefined;
   /** Needed only outside a `Field`, which labels its control. */
   "aria-label"?: string | undefined;

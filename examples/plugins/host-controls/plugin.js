@@ -93,7 +93,6 @@ export function apply(ctx) {
             h(ui.Input, {
               value: draft,
               onValueChange: setDraft,
-              autoFocus: true,
             }),
           ),
         ),

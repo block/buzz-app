@@ -551,7 +551,7 @@ it.each(
 );
 
 it.each([
-  ["archive", "Archive channel", "subtle", "prominent", false],
+  ["archive", "Archive channel", "prominent", "subtle", false],
   ["unarchive", "Unarchive channel", "prominent", "subtle", true],
   ["hide", "Hide conversation", "prominent", "subtle", true],
   ["leave", "Leave channel", "subtle", "subtle", false],

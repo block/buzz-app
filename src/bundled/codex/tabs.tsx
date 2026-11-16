@@ -4,7 +4,10 @@ import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { useClockFormat } from "../../shared/clock-preference";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
-import { CaretRightIcon } from "../../shared/design-system/icons";
+import {
+  CaretRightIcon,
+  CodexLogoIcon,
+} from "../../shared/design-system/icons";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
@@ -21,6 +24,15 @@ import { TranscriptPanel } from "../../features/agents/TranscriptPanel";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { ModelPicker } from "../../features/agents/ModelPicker";
+import { AISettings, runsOnDetails } from "../../features/agents/AISettings";
+import {
+  candidatesFor,
+  followRecommended,
+  offRecommended,
+  onRecommended,
+  type RecommendedCandidate,
+  withRecommended,
+} from "../../features/agents/recommended";
 import {
   ConversationName,
   OpenedConversation,
@@ -37,6 +49,7 @@ import { PanelSubview } from "../../features/panels/PanelSubview";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -70,7 +83,7 @@ type ProviderState = AgentProviderSnapshot &
   }>;
 const STORAGE_KEY = "buzz.codex.provider-defaults.v1";
 const SIGN_IN_ERROR = "Codex needs you to sign in.";
-const NOT_INSTALLED = "Codex is not installed.";
+const NOT_INSTALLED = "The Codex integration isn't installed yet.";
 const CONVERSATION_LIMIT = 30;
 /** Read-only setup/catalog discovery uses the same declared native transport. */
 async function catalog(spawn: Spawn, signal: AbortSignal) {
@@ -174,7 +187,7 @@ export class CodexProvider {
           readiness: "attention",
           attentionLabel:
             reason === NOT_INSTALLED
-              ? "Install Codex"
+              ? "Install Codex integration"
               : reason === SIGN_IN_ERROR
                 ? "Log in to Codex"
                 : "Codex needs attention",
@@ -204,9 +217,47 @@ export class CodexProvider {
     );
     this.set({ defaults });
   }
+  /** Whether Codex is installed, signed in and offers the candidate's model
+   * on its thinking level. */
+  async recommends(candidate: RecommendedCandidate) {
+    if (this.state.readiness !== "ready") await this.check();
+    return (
+      this.state.readiness === "ready" &&
+      !!this.state.data &&
+      offers(this.state.data, candidate)
+    );
+  }
+  /** What its agents on Recommended run on: the first Codex candidate its
+   * catalog offers. Undefined until the catalog is read; `null`, for Codex's
+   * own default, when none is offered or the catalog can't be read. */
+  recommended(): RecommendedCandidate | null | undefined {
+    if (this.found) return this.found;
+    const { data, readiness } = this.state;
+    if (!data) return readiness === "attention" ? null : undefined;
+    // A pick is kept for the launch, as goose keeps its own: a later failed
+    // check doesn't move agents to the default mid-session. "None offered"
+    // isn't kept, so a later catalog that offers one is taken up.
+    const found =
+      candidatesFor("codex").find((candidate) => offers(data, candidate)) ??
+      null;
+    if (found) this.found = found;
+    return found;
+  }
+  private found: RecommendedCandidate | undefined;
   resolve(raw: unknown, remote = false): Config {
-    const explicit = readConfig(raw);
-    if (remote) return explicit;
+    // A remote target's catalog isn't this computer's: an agent on
+    // Recommended there runs on its Codex default. Apps follow this
+    // computer's Codex sign-in, so they stay off there.
+    if (remote) {
+      const { apps: _apps, ...config } = readConfig(raw);
+      return config;
+    }
+    // Recommended picks the model and level, as an explicit choice would.
+    const explicit = followRecommended(
+      raw,
+      readConfig(raw),
+      this.recommended(),
+    );
     const data = this.state.data;
     const inheritedModel = this.state.defaults.model;
     const unavailable = Boolean(
@@ -284,6 +335,16 @@ const catalogModel = (model: string, data?: Catalog) => {
   const resolved = resolveModel(model, data.models);
   return data.models.find((choice) => choice.model === resolved);
 };
+/** Whether the catalog lists a candidate's model on its thinking level, so
+ * a run never swaps in another level than the one shown. */
+const offers = (data: Catalog, { model, effort }: RecommendedCandidate) =>
+  data.models.some(
+    (row) =>
+      row.model === model &&
+      row.supportedReasoningEfforts.some(
+        (choice) => choice.reasoningEffort === effort,
+      ),
+  );
 const providerDefaultLabel = (model: string, data?: Catalog) => {
   const selected = catalogModel(model, data);
   const name = selected?.displayName || selected?.model;
@@ -356,7 +417,7 @@ function CodexSignIn({
     login.subscribe,
     login.snapshot,
   );
-  const action = step === "install" ? "Install Codex" : "Sign in";
+  const action = step === "install" ? "Install integration" : "Sign in";
   // A step's process ends before the check that follows it, which may still
   // find the step needed; until it answers, neither button starts another.
   return (
@@ -376,7 +437,7 @@ function CodexSignIn({
       </Button>
       <Dialog
         open={open}
-        title={step === "install" ? "Set up Codex" : "Sign in to Codex"}
+        title={step === "install" ? "Codex integration" : "Sign in to Codex"}
         description={step === "login" ? "Continue in your browser." : undefined}
         onOpenChange={(next) => {
           setOpen(next);
@@ -386,9 +447,7 @@ function CodexSignIn({
         <section className="grid gap-2">
           {step === "install" && (
             <p role="status" className="m-0">
-              {checking && !running
-                ? "Checking Codex…"
-                : "Codex is not installed."}
+              {checking && !running ? "Checking Codex…" : NOT_INSTALLED}
             </p>
           )}
           {/* One button per slot, so focus stays put as Install becomes
@@ -416,10 +475,9 @@ function CodexSignIn({
           </div>
           {step === "install" && (
             <p className="m-0 text-body-sm text-subtle">
-              Downloads Buzz's own copy of Codex (about 130 MB) from
-              releases.openai.com and keeps it on the latest release. It does
-              not change the <code>codex</code> in your terminal, and uses the
-              same sign-in and settings.
+              Downloads Buzz's own copy of Codex (about 130 MB) and keeps it on
+              the latest release. Your own installation of Codex will be
+              unaffected, and uses the same sign-in and settings.
             </p>
           )}
           {output && (
@@ -558,7 +616,6 @@ export function createTabs(
     onReadyChange,
     ...props
   }: AgentCreateProps<Config>) {
-    const current = readConfig(config);
     const {
       data,
       checking,
@@ -568,8 +625,16 @@ export function createTabs(
       local,
       check,
     } = useProvider(agent);
+    // A pick here takes the agent off Recommended, from what it runs on.
+    const current = offRecommended(
+      followRecommended(
+        config,
+        readConfig(config),
+        bound ? null : provider.recommended(),
+      ),
+    );
     // The setup's status holds through the provider's next check, so the
-    // button, and its focus, stays put as Install Codex becomes Sign in.
+    // button, and its focus, stays put as Install integration becomes Sign in.
     const { status } = useSyncExternalStore(
       login.subscribe,
       login.snapshot,
@@ -784,11 +849,9 @@ export function createTabs(
     const [draft, setDraft] = useState(state.defaults);
     const [saveError, setSaveError] = useState("");
     const [savingDefaults, setSavingDefaults] = useState(false);
-    // Keeps a ready-state sign-in's output once it ends, failed or not.
-    const [signingIn, setSigningIn] = useState(false);
     const action =
       error === NOT_INSTALLED
-        ? ({ step: "install", label: "Install Codex" } as const)
+        ? ({ step: "install", label: "Install integration" } as const)
         : error === SIGN_IN_ERROR
           ? ({ step: "login", label: "Sign in" } as const)
           : undefined;
@@ -856,29 +919,7 @@ export function createTabs(
             </p>
           )}
         </form>
-        {/* Signed in elsewhere, Codex is ready, but reviews need a sign-in
-            made here, which records its workspace. */}
-        {state.readiness === "ready" && (
-          <div className="grid justify-items-start gap-2">
-            <p className="m-0 text-body-sm text-subtle">
-              Security reviews need a ChatGPT sign-in made in Buzz.
-            </p>
-            <Button
-              loading={installing.running === "login"}
-              disabled={installing.running === "install"}
-              onClick={() => {
-                setSigningIn(true);
-                void setup.run("login");
-              }}
-            >
-              Sign in again
-            </Button>
-          </div>
-        )}
-        <div
-          className="grid gap-2"
-          hidden={state.readiness === "ready" && !signingIn}
-        >
+        <div className="grid gap-2" hidden={state.readiness === "ready"}>
           {installing.running ? (
             <div className="flex flex-wrap items-center gap-2">
               <p role="status" className="m-0 text-body-sm">
@@ -898,10 +939,9 @@ export function createTabs(
           ) : null}
           {action?.step === "install" && !installing.running && (
             <p className="m-0 text-body-sm text-subtle">
-              Downloads Buzz's own copy of Codex (about 130 MB) from
-              releases.openai.com and keeps it on the latest release. It does
-              not change the <code>codex</code> in your terminal, and uses the
-              same sign-in and settings.
+              Downloads Buzz's own copy of Codex (about 130 MB) and keeps it on
+              the latest release. Your own installation of Codex will be
+              unaffected, and uses the same sign-in and settings.
             </p>
           )}
           {installing.output && (
@@ -1234,6 +1274,10 @@ export function createTabs(
     useEffect(() => {
       setDraft(readConfig(agent.config));
     }, [agent.config]);
+    // Inert in a build that recommends nothing for Codex.
+    const following = onRecommended(draft) && candidatesFor("codex").length > 0;
+    // A remote target runs Recommended on its own default.
+    const resolved = bound ? null : provider.recommended();
     const effective = provider.resolve({ ...draft, effort: "" }, !!bound);
     const selected = catalogModel(effective.model, data);
     const efforts = thinkingOptions(
@@ -1255,7 +1299,11 @@ export function createTabs(
         });
         if (!validWorkspace(settings.workspace))
           throw new Error("Enter an absolute or ~/… workspace path.");
-        await save(settings);
+        // A Custom agent's save drops a mark left from before, which a later
+        // blank synced model would otherwise turn back on.
+        await save(
+          onRecommended(settings) ? settings : offRecommended(settings),
+        );
       } catch (reason) {
         setError(message(reason));
       } finally {
@@ -1296,8 +1344,9 @@ export function createTabs(
           }
           loading={checking}
           disabled={saving}
+          // A manual choice, even of the default, is never Recommended.
           onChange={(model) =>
-            setDraft({ ...draft, ...modelChange(model, data) })
+            setDraft(offRecommended({ ...draft, ...modelChange(model, data) }))
           }
         />
         <Select
@@ -1312,7 +1361,9 @@ export function createTabs(
           value={draft.effort}
           groups={[{ label: "", options: efforts }]}
           disabled={checking || saving || !selected}
-          onValueChange={(effort) => setDraft({ ...draft, effort })}
+          onValueChange={(effort) =>
+            setDraft(offRecommended({ ...draft, effort }))
+          }
         />
       </>
     );
@@ -1338,8 +1389,35 @@ export function createTabs(
         {settingsSection !== "runtime" && (
           <>
             <SettingsGroup>
-              {settingsHost?.typeControl?.(configChanged)}
-              {customization}
+              {candidatesFor("codex").length ? (
+                <AISettings
+                  automatic={following}
+                  harnessIcon={CodexLogoIcon}
+                  disabled={saving}
+                  {...runsOnDetails(
+                    { title: "Codex", icon: CodexLogoIcon },
+                    resolved,
+                  )}
+                  onChange={(on) =>
+                    // Manual starts from the recommendation it ran on.
+                    setDraft(
+                      on
+                        ? readConfig(withRecommended(draft))
+                        : offRecommended(
+                            followRecommended(draft, draft, resolved),
+                          ),
+                    )
+                  }
+                >
+                  {settingsHost?.typeControl?.(configChanged)}
+                  {customization}
+                </AISettings>
+              ) : (
+                <>
+                  {settingsHost?.typeControl?.(configChanged)}
+                  {customization}
+                </>
+              )}
             </SettingsGroup>
             <AgentInstructions
               value={draft.instructions}
@@ -1355,7 +1433,7 @@ export function createTabs(
               description={
                 bound
                   ? "The adapter selects a workspace for each conversation session."
-                  : "Codex starts here with full access to your files and network. Buzz tools run inside the app. Inherited MCP/Apps/plugin tools are disabled."
+                  : "Codex starts here with full access to your files and network. Buzz tools run inside the app. Inherited MCP tools are disabled."
               }
             >
               <Input
@@ -1381,6 +1459,22 @@ export function createTabs(
                 })
               }
             />
+            {!bound && (
+              <SwitchPreferenceRow
+                label="Codex apps and plugins"
+                description={
+                  agent.protection
+                    ? "Protected agents never use Codex apps or plugins."
+                    : "The agent may use apps and plugins that are installed in Codex."
+                }
+                checked={!!draft.apps && !agent.protection}
+                disabled={saving || !!agent.protection}
+                onCheckedChange={(checked) => {
+                  const { apps: _apps, ...rest } = draft;
+                  setDraft(checked ? { ...rest, apps: true } : rest);
+                }}
+              />
+            )}
           </>
         )}
         <AgentSaveButton form={form} saving={saving} disabled={!changed} />

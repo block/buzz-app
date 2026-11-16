@@ -246,10 +246,39 @@ it("reads back expired delivery with strong consistency without re-signing or pu
     vi.mocked(invoke).mock.calls.some(([command]) => command === "relay_sign"),
   ).toBe(false);
 });
+it.each([
+  {},
+  { supported_extensions: null },
+  { supported_extensions: [] },
+  { supported_extensions: ["nip-cl"] },
+  { supported_extensions: "nip-ar" },
+])(
+  "does not offer artifact writes without NIP-AR advertisement: %o",
+  async (extensions) => {
+    discovery = extensions;
+    expect(
+      (await connectNativeTransport(community)).configArtifacts,
+    ).toBeUndefined();
+  },
+);
 it("publishes config artifacts straight to the relay, re-sending identical bytes and keeping typed refusals", async () => {
+  discovery = { supported_extensions: ["nip-ar"] };
   const transport = await connectNativeTransport(community);
   assert.exists(transport.configArtifacts);
   expect(transport.configArtifacts.kinds).toEqual([45010]);
+  const signal = new AbortController().signal;
+  const template = {
+    kind: 45010,
+    created_at: 1700000000,
+    content: "{}",
+    tags: [["ar", "1"]],
+  };
+  const revision = await transport.configArtifacts.sign(template, signal);
+  expect(verifyEvent(revision)).toBe(true);
+  expect(revision.pubkey).toBe(viewer.pubkey);
+  await expect(
+    transport.configArtifacts.sign({ ...template, kind: 9 }, signal),
+  ).rejects.toThrow("Not an artifact");
   // Older than the message writer's 15-minute retry block.
   const event = signed(viewer, {
     kind: 45010,
@@ -260,7 +289,6 @@ it("publishes config artifacts straight to the relay, re-sending identical bytes
       ["d", "agent"],
     ],
   });
-  const signal = new AbortController().signal;
   respond = () => ({
     body: { accepted: true, event_id: event.id, message: "" },
   });
@@ -283,6 +311,15 @@ it("publishes config artifacts straight to the relay, re-sending identical bytes
     .publish(event, signal)
     .catch((error: unknown) => error);
   expect(refused).toBeInstanceOf(PublishRejected);
+  expect(transport.configArtifacts.isNotSent?.(refused)).toBe(true);
+  expect(
+    transport.configArtifacts.isNotSent?.(
+      new Error((refused as Error).message),
+    ),
+  ).toBe(false);
+  expect(
+    transport.configArtifacts.isNotSent?.(new PublishRejected("denied")),
+  ).toBe(false);
   expect((refused as Error).message).toBe(
     "rate-limited: quota exceeded; retry in 9s",
   );
@@ -835,7 +872,9 @@ it.each(["message", "reaction"] as const)(
 
 it("exposes workflow history over the purpose-bound native route and workflow write kinds", async () => {
   const transport = await connectNativeTransport(community);
-  expect(nativeWriteKinds).toEqual(expect.arrayContaining([30620, 46020, 5]));
+  expect(nativeWriteKinds).toEqual(
+    expect.arrayContaining([30620, 46020, 5, 48103]),
+  );
   expect(transport.writer?.kinds).toEqual(nativeWriteKinds);
   assert.exists(transport.workflows);
   const id = "11111111-1111-4111-8111-111111111111";
@@ -1407,8 +1446,9 @@ it("exposes purpose-bound agent readers and fences obsolete observer decoding", 
   const signal = new AbortController().signal;
   const agent = keypair();
   const dispatch = vi.mocked(invoke);
-  dispatch.mockImplementationOnce(async (command) => {
+  dispatch.mockImplementationOnce(async (command, args) => {
     expect(command).toBe("relay_agent_library");
+    expect(args).toEqual({ community });
     return { definitions: [], identities: [] };
   });
   expect(await transport.readAgentLibrary?.(signal)).toEqual({
@@ -2222,4 +2262,64 @@ it.each([
   );
   await expect(work).rejects.toBeInstanceOf(ArtifactIncrementalError);
   await expect(work).rejects.toMatchObject({ code });
+});
+
+it.each([
+  ["sign-in", 401, "authentication required\n"],
+  ["access", 403, "authorization denied\n"],
+  ["access", 403, JSON.stringify({ error: "relay_membership_required" })],
+])(
+  "a refused response reports its %s refusal to the community's observer without the window event",
+  async (kind, status, body) => {
+    // This test environment has no Tauri window, so the event listener never
+    // installs: only the response itself can report the refusal.
+    const transport = await connectNativeTransport(community);
+    const refusals: string[] = [];
+    const stop = transport.observeRefusal?.((refusal) =>
+      refusals.push(refusal),
+    );
+    const answer = vi.mocked(invoke).getMockImplementation();
+    vi.mocked(invoke).mockImplementation(async (command, args, options) =>
+      command === "relay_http" && (args as Request).path === "/query"
+        ? { status, headers: {}, body }
+        : answer?.(command, args, options),
+    );
+    await expect(
+      transport.query([{ kinds: [9], "#h": ["channel"], limit: 10 }]),
+    ).rejects.toThrow();
+    expect(refusals).toEqual([kind]);
+    stop?.();
+  },
+);
+
+it("an ordinary 403 reports no community refusal", async () => {
+  const transport = await connectNativeTransport(community);
+  const refusals: string[] = [];
+  const stop = transport.observeRefusal?.((refusal) => refusals.push(refusal));
+  respond = () => ({
+    status: 403,
+    body: { error: "restricted: not a channel member" },
+  });
+  await expect(
+    transport.query([{ kinds: [9], "#h": ["channel"], limit: 10 }]),
+  ).rejects.toThrow();
+  expect(refusals).toEqual([]);
+  stop?.();
+});
+
+it("a refused unsigned GET reports no community refusal", async () => {
+  // Native signs only POST and reports refusals only for signed requests.
+  const transport = await connectNativeTransport(community);
+  const refusals: string[] = [];
+  const stop = transport.observeRefusal?.((refusal) => refusals.push(refusal));
+  const answer = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation(async (command, args, options) =>
+    command === "relay_http" && (args as Request).method === "GET"
+      ? { status: 401, headers: {}, body: "authentication required\n" }
+      : answer?.(command, args, options),
+  );
+  const response = await nativeRelayRequest(community, "/gated");
+  expect(response.status).toBe(401);
+  expect(refusals).toEqual([]);
+  stop?.();
 });

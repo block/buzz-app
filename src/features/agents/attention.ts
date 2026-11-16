@@ -4,6 +4,8 @@
 // local storage to the relay's encrypted addressable events.
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
+import { channelSourceKind } from "../relay/channel-kinds";
+import { reactionTarget } from "../relay/reaction-target";
 
 export const ATTENTION_SCHEMA = "agent-attention/v1";
 
@@ -88,7 +90,7 @@ const PUBKEY = /^[0-9a-f]{64}$/;
 const MAX_INT = 2 ** 53 - 1;
 const BODY_LIMIT = 65_535;
 /** At most this many Interests, and this many watches and timers together. */
-export const OBJECT_LIMIT = 100;
+export const OBJECT_LIMIT = 250;
 const TEXT_LIMIT = 16_384;
 
 export function parseSlug(slug: string) {
@@ -371,6 +373,11 @@ export const tagsAgent = (event: EventData, agent: string) =>
  * agent's own events) belongs to the caller; classifiers are not run here. */
 export function watchMatches(watch: EventWatch, event: EventData): boolean {
   if (!watch.enabled || event.created_at < watch.since) return false;
+  // Watches need a channel source whether delivered live or polled. Global
+  // events cannot gain one by supplying h tags; multiple homes are ambiguous.
+  const homes = event.tags.filter(([name]) => name === "h");
+  if (!channelSourceKind(event.kind) || homes.length !== 1 || !homes[0]?.[1])
+    return false;
   if (watch.channels !== "all") {
     const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
     if (!channel || !watch.channels.includes(channel)) return false;
@@ -380,10 +387,12 @@ export function watchMatches(watch: EventWatch, event: EventData): boolean {
   if (watch.exclude_authors?.includes(event.pubkey)) return false;
   for (const [key, values] of Object.entries(watch.tags ?? {}))
     if (
-      !event.tags.some(
-        (tag) =>
-          tag[0] === key && tag[1] !== undefined && values.includes(tag[1]),
-      )
+      event.kind === 7 && key === "e"
+        ? !values.includes(reactionTarget(event) ?? "")
+        : !event.tags.some(
+            (tag) =>
+              tag[0] === key && tag[1] !== undefined && values.includes(tag[1]),
+          )
     )
       return false;
   // The relay's NIP-10 rule: only a `reply` marker makes a reply.

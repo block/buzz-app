@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { watchPageErrors } from "./page-errors.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 let server, directory, fixture;
 // A dev server serves this fixture as about 1,600 modules, and each test
@@ -140,13 +141,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
   // shape, typography, clear target and alignment in both appearance modes.
   const searchAppearance = async (field) => {
     // Main animates field focus; compare settled appearance, not an arbitrary frame.
-    await field.evaluate(async (element) => {
-      await Promise.all(
-        element
-          .getAnimations({ subtree: true })
-          .map((animation) => animation.finished),
-      );
-    });
+    await animationsSettled(field, { subtree: true });
     return field.evaluate((element) => {
       const nativeInput = element.querySelector("input");
       // Both the React and vendor search use the shared field boundary.
@@ -291,7 +286,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
   );
   await search.fill("grinning");
   await page.getByRole("button", { name: "😀", exact: true }).click();
-  await expect(input).toHaveJSProperty("value", "@Honey @Honey 😀");
+  await expect(input).toHaveJSProperty("value", "@Honey @Honey 😀 ");
   await expect(page.getByRole("textbox").locator(".inline-chip")).toHaveCount(
     2,
   );
@@ -369,7 +364,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
         emojiBox.x,
       );
       expect(Math.abs(recipientsBox.y - mentionBox.y)).toBeLessThanOrEqual(2);
-      await expect(input).toHaveJSProperty("value", "@Honey @Honey 😀");
+      await expect(input).toHaveJSProperty("value", "@Honey @Honey 😀 ");
     }
   }
   await chip.hover();
@@ -395,7 +390,10 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
   const first = await page.evaluate(
     () => window.mentionFixture.publications[0],
   );
-  expect(first.content).toBe("@Honey @Honey 😀");
+  // The sent body qualifies each namesake so readers bind it to one key.
+  expect(first.content).toBe(
+    `@Honey (${keys.first}) @Honey (${keys.second}) 😀`,
+  );
   expect(first.tags.filter(([tag]) => tag === "p")).toEqual([
     ["p", keys.first],
     ["p", keys.second],

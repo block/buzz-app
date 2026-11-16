@@ -42,6 +42,7 @@ it("retries from the failed step and rests where the steps would have", async ()
     error: "Linking failed",
     retryable: true,
     skipsLink: false,
+    bound: false,
   });
 
   failing.heal();
@@ -52,7 +53,29 @@ it("retries from the failed step and rests where the steps would have", async ()
   expect(after.run).toHaveBeenCalledTimes(1);
 });
 
-it("reports only an error that says so as retryable", async () => {
+it.each(["pubkey_already_bound", "identity_already_bound"])(
+  "reports a link Builderlab refused as %s as bound, which Try again cannot change",
+  async (code) => {
+    const setup = createSetup();
+    const refusal = Object.assign(new Error("Refused"), { code });
+    await setup.start([
+      { label: "Linking", run: () => Promise.reject<void>(refusal) },
+    ]);
+    expect(setup.snapshot()).toMatchObject({ status: "failed", bound: true });
+    await setup.start([
+      {
+        label: "Linking",
+        run: () =>
+          Promise.reject<void>(
+            Object.assign(new Error("Busy"), { code: "too_many_attempts" }),
+          ),
+      },
+    ]);
+    expect(setup.snapshot()).toMatchObject({ status: "failed", bound: false });
+  },
+);
+
+it("reports an error as not retryable only when it says so", async () => {
   const setup = createSetup();
   await setup.start([flaky("Backing up", false).step]);
   expect(setup.snapshot()).toEqual({
@@ -60,11 +83,20 @@ it("reports only an error that says so as retryable", async () => {
     error: "Backing up failed",
     retryable: false,
     skipsLink: false,
+    bound: false,
   });
+  // An error that does not say keeps Try again, which may help.
+  await setup.start([
+    {
+      label: "Plain",
+      run: () => Promise.reject<void>(new Error("Plain failed")),
+    },
+  ]);
+  expect(setup.snapshot()).toMatchObject({ retryable: true });
   await setup.start([
     { label: "Odd", run: () => Promise.reject<void>("text") },
   ]);
-  expect(setup.snapshot()).toMatchObject({ retryable: false });
+  expect(setup.snapshot()).toMatchObject({ retryable: true });
 });
 
 it.each([
@@ -203,9 +235,10 @@ it("reports the backed-up keys, and an unavailable or failed status as none list
   expect(await lookup(() => Promise.resolve("unavailable"))).toEqual([
     [undefined],
   ]);
+  // A failed lookup says so: a backup may still hold the key.
   expect(
     await lookup(() => Promise.reject(new BackupError("unreachable"))),
-  ).toEqual([[undefined]]);
+  ).toEqual([[undefined, true]]);
 });
 
 it("keeping a listed backup saves automatic backup only where this build backs up to Builderlab", async () => {

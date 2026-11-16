@@ -10,7 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
 import { SettingsCardsService } from "../settings/service";
@@ -1196,6 +1196,31 @@ it("opens a deep-link invite on Personal space without claiming until the user c
   expect(t.select).not.toHaveBeenCalled();
 });
 
+it("connects at once to a community the person asked to join from the app", async () => {
+  const t = harness();
+  render(
+    <CommunityPicker
+      communities={t.communities}
+      invite={{
+        community: "https://created.example",
+        code: "",
+        submitted: true,
+        requestId: 2,
+      }}
+      onInviteClose={vi.fn()}
+      onSelect={t.onSelect}
+    />,
+  );
+  // No Continue: the dialog looks the community up as soon as it opens.
+  await waitFor(() =>
+    expect(t.fetch).toHaveBeenCalledWith(
+      `/api/relay/${encodeURIComponent("https://created.example")}/info`,
+      expect.anything(),
+    ),
+  );
+  expect(t.select).not.toHaveBeenCalled();
+});
+
 it("labels the existing picker Communities only while no community is saved", async () => {
   const h = harness();
   h.update({ selected: null, memberships: [] });
@@ -1264,6 +1289,7 @@ it("shows only the active community until opened and routes creation through Hos
     version: 1,
     kind: "settings",
     section: "block.builderlab/login",
+    route: { version: 1, params: "create-community" },
   });
   expect(h.select).not.toHaveBeenCalled();
   await waitFor(() =>
@@ -1271,6 +1297,59 @@ it("shows only the active community until opened and routes creation through Hos
       screen.queryByRole("dialog", { name: "Switch community" }),
     ).toBeNull(),
   );
+});
+
+it("returns focus to the trigger when the host reopens the switcher after a choice navigated", async () => {
+  const h = harness();
+  function Host() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        {/* The shell's content, which focus follows after a choice navigates. */}
+        <main id="main-content" tabIndex={-1} />
+        <button type="button" onClick={() => setOpen(true)}>
+          Choose a community
+        </button>
+        <CommunityPicker
+          communities={h.communities}
+          onOpenTarget={h.onOpenTarget}
+          settingsCards={{
+            subscribe: () => () => {},
+            has: (key) => key === "block.builderlab/login",
+          }}
+          open={open}
+          onOpenChange={setOpen}
+        />
+      </>
+    );
+  }
+  rtlRender(<Host />, { wrapper: ToastProvider });
+  const user = userEvent.setup();
+  await user.click(switcher());
+  await user.click(
+    await screen.findByRole("button", { name: "Create community" }),
+  );
+  expect(h.onOpenTarget).toHaveBeenCalledWith({
+    version: 1,
+    kind: "settings",
+    section: "block.builderlab/login",
+    route: { version: 1, params: "create-community" },
+  });
+  await waitFor(() =>
+    expect(document.getElementById("main-content")).toHaveFocus(),
+  );
+
+  // The host opens the switcher without its trigger; a dismissal without a
+  // choice still returns focus to the trigger, not to the earlier destination.
+  await user.click(screen.getByRole("button", { name: "Choose a community" }));
+  await screen.findByRole("dialog", { name: "Switch community" });
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Switch community" }),
+    ).toBeNull(),
+  );
+  await waitFor(() => expect(switcher()).toHaveFocus());
 });
 
 it("shares discovered community artwork with an already-open Settings address without another read", async () => {

@@ -14,6 +14,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -67,14 +68,17 @@ type MediaReviewViewerProps = {
 
 export function MediaReviewViewer(props: MediaReviewViewerProps) {
   const { session, channelId, messageId } = props;
-  const [origin] = useState(() =>
-    readReviewOrigin(
+  const [{ origin, readingAnchor }] = useState(() => {
+    const opener =
       props.restoreFocus?.current ??
-        (document.activeElement instanceof HTMLElement
-          ? document.activeElement
-          : null),
-    ),
-  );
+      (document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null);
+    return {
+      origin: readReviewOrigin(opener),
+      readingAnchor: firstVisibleMessageId(opener),
+    };
+  });
   const [active, setActive] = useState(() => ({
     attachment: props.attachment,
     initialTime: props.initialTime,
@@ -96,6 +100,7 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
   const activeProps = {
     ...props,
     origin,
+    readingAnchor,
     attachment: active.attachment,
     initialTime: active.initialTime,
     selectionRequest: active.request,
@@ -111,8 +116,19 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
   );
 }
 
+/** The reader's place in the conversation the review opens over. */
+function firstVisibleMessageId(opener: HTMLElement | null) {
+  const scroller = opener?.closest<HTMLElement>("[data-message-scroller]");
+  if (!scroller) return undefined;
+  const top = scroller.getBoundingClientRect().top;
+  return [...scroller.querySelectorAll<HTMLElement>("[data-message-id]")].find(
+    (row) => row.getBoundingClientRect().bottom > top,
+  )?.dataset.messageId;
+}
+
 type ActiveReviewProps = MediaReviewViewerProps & {
   origin: ReturnType<typeof readReviewOrigin>;
+  readingAnchor: string | undefined;
   selectionRequest: number;
   selectAttachment(attachment: Attachment, initialTime: number): void;
 };
@@ -234,6 +250,7 @@ function ReviewShell({
   initialTime,
   hasComments = false,
   origin,
+  readingAnchor,
   close,
   onOpenLink,
   rootId,
@@ -478,6 +495,7 @@ function ReviewShell({
                   channelId={channelId}
                   threadRootId={rootId}
                   selectedComment={selectedComment}
+                  readingAnchor={readingAnchor}
                   replies={replies}
                   limited={limited}
                   session={session}
@@ -611,6 +629,7 @@ function ReviewComments({
   threadRootId,
   replies,
   selectedComment,
+  readingAnchor,
   limited,
   session,
   scope,
@@ -623,6 +642,7 @@ function ReviewComments({
   threadRootId: string;
   replies: ReturnType<ThreadView["snapshot"]>["replies"];
   selectedComment?: string | undefined;
+  readingAnchor: string | undefined;
   limited: boolean;
   session: RelaySession;
   scope: string;
@@ -646,6 +666,22 @@ function ReviewComments({
         ?.querySelector(`[data-review-comment="${selectedComment}"]`)
         ?.scrollIntoView?.({ block: "nearest" });
   }, [selectedComment]);
+  // Open where the reader was in the thread behind the review. Replies load in
+  // pages, so wait for the anchor to arrive, then place it once.
+  const anchored = useRef(false);
+  const anchorLoaded = replies.some((row) => row.id === readingAnchor);
+  useLayoutEffect(() => {
+    const section = comments.current;
+    const row =
+      anchorLoaded &&
+      section?.querySelector(
+        `[data-review-comment="${CSS.escape(readingAnchor ?? "")}"]`,
+      );
+    if (anchored.current || !section || !row) return;
+    anchored.current = true;
+    section.scrollTop +=
+      row.getBoundingClientRect().top - section.getBoundingClientRect().top;
+  }, [readingAnchor, anchorLoaded]);
   const authors = [...new Set(replies.flatMap(rowProfileIds))].sort().join(":");
   const profileGeneration = useProfileGeneration(session.profiles);
   useEffect(() => {

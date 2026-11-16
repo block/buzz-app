@@ -36,7 +36,10 @@ function fixture(
   let ids = ["existing"];
   const session = () =>
     ({
-      channels: { list: () => ({ channels: ids.map((id) => ({ id })) }) },
+      channels: {
+        list: () => ({ channels: ids.map((id) => ({ id })) }),
+        subscribeList: () => () => {},
+      },
       sidebarPreferences: { setMute: async () => [] },
       channelLifecycle: { run },
     }) as unknown as RelaySession;
@@ -181,6 +184,25 @@ it("hands both entrances to one confirmation and preserves its origin until clos
   });
 });
 
+it("does not depart through a retired session's submission callback", () => {
+  const h = fixture();
+  const view = mount(h.relay);
+  const depart = vi.fn();
+  act(() =>
+    view.result.current.openLifecycle(
+      { id: "plans", name: "Plans", channelType: "solo" },
+      "delete",
+      undefined,
+      undefined,
+      { close: vi.fn(), depart },
+    ),
+  );
+  const retired = view.result.current;
+  act(() => h.replace());
+  act(() => retired.beginLifecycle());
+  expect(depart).not.toHaveBeenCalled();
+});
+
 it.each([true, false])(
   "says whether archiving starter channel (%s) resumes adding new members on Unarchive",
   async (autoJoin) => {
@@ -192,7 +214,7 @@ it.each([true, false])(
       ),
     );
     const archive =
-      "Archive this channel for everyone and remove it from the sidebar. Messages are kept. Find it in search and open Settings to unarchive it later.";
+      "Archive this channel for everyone and remove it from the sidebar. Messages are kept. Find it in search to unarchive it later.";
     expect(
       await screen.findByRole("dialog", { name: "Archive channel: general" }),
     ).toHaveAccessibleDescription(

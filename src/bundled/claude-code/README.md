@@ -4,7 +4,7 @@ Create agents that run Claude on your computer and answer you in Buzz. Each agen
 
 ## Getting started
 
-1. Go to **Settings** → **Agent setup** → **Harness defaults** → **Claude** to install Claude and paste an Anthropic API key from [console.anthropic.com](https://console.anthropic.com/settings/keys). Also enter the **Anthropic workspace ID** to use with that key. Buzz keeps them in the OS credential store (Keychain on macOS), and native code gives them to every Claude process, security reviews included.
+1. Go to **Settings** → **Agent setup** → **Harness defaults** → **Claude** to install Claude. If Claude already works on this computer (such as Amazon Bedrock or Google Vertex AI, set up with the Claude CLI), Buzz uses that setup as it is. Otherwise, enter the **Anthropic workspace ID** together with an Anthropic API key from [console.anthropic.com](https://console.anthropic.com/settings/keys), or set up your own with the Claude CLI and choose **Refresh**. Buzz keeps a key in the OS credential store (Keychain on macOS), and native code gives it to Claude processes that have no setup of their own. Security reviews always use the key.
 2. Choose **New agent** → **Create a new agent**, and pick **Claude** as the **Harness**.
 3. Mention your agent in a conversation to give it work.
 
@@ -17,6 +17,8 @@ New local Claude sessions and security reviews need a key again after removal; a
 ---
 
 ## Authentication transport
+
+The saved workspace is applied when a launch uses Buzz's saved API key. An existing Claude setup keeps its own configuration.
 
 Buzz drives the Claude Code binary over the same stream-JSON protocol as the Claude Agent SDK. Authentication follows the SDK's [environment option](https://code.claude.com/docs/en/agent-sdk/typescript#options) and Claude Code's [documented environment variables](https://code.claude.com/docs/en/env-vars):
 

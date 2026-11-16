@@ -131,7 +131,7 @@ type Request = {
   /** A failed final delivery stays pending until this request gets a reply. */
   finalDelivery?: Error | true;
   step?: (tool: string, target?: string) => void;
-  acknowledged?: () => void;
+  acknowledged?: (input?: Readonly<{ steering?: true }>) => void;
   superseded?: () => void;
   /** Takes a title for a new Solo chat; see `Delivery.named`. */
   named?: (title: string) => void;
@@ -278,7 +278,11 @@ function noteOf(request: Request) {
     request.sessionContext,
     request.resumed ? RESUMED_PROMPT : undefined,
     ...request.notes,
-    turnNote(request.agent),
+    turnNote(
+      request.agent,
+      request.conversation.channelId,
+      request.conversation.root,
+    ),
   ].filter(Boolean);
   return notes.length ? notes.join("\n\n") : undefined;
 }
@@ -1915,7 +1919,7 @@ export class CodexRuntime {
               active.requests.push(request);
               entry.waiting.delete(request);
               this.touch(request, entry, key);
-              this.acknowledgeActivity(active, request);
+              this.acknowledgeActivity(active, request, true);
             } catch (error) {
               if (entry.abort.signal.aborted) {
                 request.failActivity("Codex was stopped");
@@ -2165,7 +2169,11 @@ export class CodexRuntime {
   /** A positive harness response transfers presentation, not execution or
    * success. Watches have no bubble; mentions in other threads keep theirs,
    * and a top-level chat is one scope. */
-  private acknowledgeActivity(active: Active, request: Request) {
+  private acknowledgeActivity(
+    active: Active,
+    request: Request,
+    steering = false,
+  ) {
     if (request.step) {
       const scope = request.activityScope;
       const prior = active.activity.get(scope);
@@ -2173,7 +2181,7 @@ export class CodexRuntime {
       prior?.superseded?.();
       active.activity.set(scope, request);
     }
-    request.acknowledged?.();
+    request.acknowledged?.(steering ? { steering: true } : undefined);
   }
 
   /** Compacts thread `threadId`, which runs as a turn of its own on it. */
@@ -2514,7 +2522,8 @@ export class CodexRuntime {
     text: string,
     stopped: AbortSignal,
     // The conversation's thread settings: its workspace, model, and Codex
-    // config with MCP servers, plugins, apps and web search off.
+    // config. The title thread turns MCP servers, plugins and apps off
+    // whatever the conversation allows.
     {
       cwd,
       model,
@@ -2561,6 +2570,8 @@ export class CodexRuntime {
                 >,
               ).map(([name, server]) => [name, { ...server, enabled: false }]),
             ),
+            "features.plugins": false,
+            "features.apps": false,
             ...(this.server?.rpc === rpc && this.hooks
               ? { "hooks.state": await nativeHookState(rpc, cwd, false) }
               : {}),
@@ -2623,7 +2634,10 @@ export class CodexRuntime {
    * model and effort its turn runs on: `pick`'s when available. */
   private async prepare(
     rpc: AppServer,
-    agent: Pick<AgentHandle, "key" | "name" | "pubkey" | "relay">,
+    // Protected when it has a policy, bound or not yet.
+    agent: Pick<AgentHandle, "key" | "name" | "pubkey" | "relay"> & {
+      protection?: unknown;
+    },
     settings: Config,
     workspace: string,
     pick: Readonly<{ model?: string; effort?: string }>,
@@ -2680,8 +2694,9 @@ export class CodexRuntime {
         ...(hooks ? { "hooks.state": hooks } : {}),
         web_search: "disabled",
         mcp_servers: { ...mcp, ...bridge?.config },
-        "features.plugins": false,
-        "features.apps": false,
+        ...(settings.apps && !agent.protection
+          ? {}
+          : { "features.plugins": false, "features.apps": false }),
         ...(credential && {
           [`shell_environment_policy.set.${CREDENTIAL_ENV}`]: credential,
         }),

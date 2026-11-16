@@ -782,6 +782,46 @@ it("hands over promptly and runs conversations independently on one server", asy
     tags: expect.arrayContaining([["e", root, "", "reply"]]),
   });
 });
+it("leaves Codex's Apps and plugins to its configuration only for an agent that allows them", async () => {
+  const f = fixture();
+  const delivery = f.delivery("@Codex check my mail");
+  await f.runtime.run({
+    ...delivery,
+    config: { ...(delivery.config as object), apps: true },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const started = f.sent.find((wire) => wire.method === "thread/start")
+    ?.params as { config: Record<string, unknown> };
+  const { config } = started;
+  expect(config).not.toHaveProperty("features.apps");
+  expect(config).not.toHaveProperty("features.plugins");
+  // Everything else inherited stays off.
+  expect(config).toMatchObject({
+    web_search: "disabled",
+    mcp_servers: { "company.tools": { enabled: false } },
+  });
+  f.complete(0, "DONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+});
+it("keeps Codex's Apps and plugins off for a protected agent that allows them", async () => {
+  const f = protectedPreview();
+  try {
+    await f.runtime.run({
+      ...f.delivery("@Codex check my mail"),
+      agent: f.handle as unknown as Delivery["agent"],
+      config: { ...(f.agent.config as object), apps: true },
+    });
+    await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(1));
+    expect(
+      f.worker.sent.find((wire) => wire.method === "thread/start")?.params,
+    ).toMatchObject({
+      config: { "features.apps": false, "features.plugins": false },
+    });
+    await f.worker.complete(0, "");
+  } finally {
+    f.runtime.dispose();
+  }
+});
 /** A second agent on the same runtime, with its own identity and publisher. */
 function second(f: ReturnType<typeof fixture>) {
   const other = "9".repeat(64);
@@ -2133,6 +2173,29 @@ it("ends a turn's input with plugins' instructions, once", async () => {
   expect(text.match(/<plugin-instructions /g)).toHaveLength(1);
   expect(text).toMatch(
     /<\/buzz-event>\n\n<plugin-instructions plugin="acme\.dibs">\nRun dibs_check\.\n<\/plugin-instructions>/,
+  );
+});
+
+it("ends a turn's input with its conversation's instructions, keyed as its notes are", async () => {
+  const f = fixture();
+  const delivery = f.delivery("@Codex go on");
+  const conversationInstructions = vi.fn(() => ({
+    plugin: "acme.tasks",
+    text: "Review only.",
+  }));
+  const notes = vi.fn(() => []);
+  await f.runtime.run({
+    ...delivery,
+    agent: { ...delivery.agent, notes, conversationInstructions },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  expect(params.input[0]?.text).toMatch(
+    /<owner-instructions source="acme\.tasks">\n[\s\S]*\n\nReview only\.\n<\/owner-instructions>/,
+  );
+  expect(notes).toHaveBeenCalledOnce();
+  expect(conversationInstructions).toHaveBeenCalledWith(
+    ...(notes.mock.calls[0] as unknown[]),
   );
 });
 
@@ -5265,6 +5328,8 @@ it("continues an owner's Solo chat as one channel conversation posted at the top
     expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(1),
   );
   await vi.waitFor(() => expect(activity.superseded).toHaveBeenCalledOnce());
+  expect(activity.acknowledged).toHaveBeenCalledWith(undefined);
+  expect(next.acknowledged).toHaveBeenCalledWith({ steering: true });
   await f.tool("send", { audience: "everyone", text: "Progress" });
   if (first.trigger.type !== "mention") throw new Error("Expected mention");
   // A stale reply into the chat is returned for correction, not posted.
@@ -5320,13 +5385,20 @@ it("titles a new Solo chat once, from its first message on an ephemeral read-onl
         wire.method === "thread/start" &&
         (wire.params as { ephemeral?: boolean }).ephemeral,
     );
-  await f.runtime.run({ ...f.delivery("@Codex fix the login bug"), named });
+  const delivery = f.delivery("@Codex fix the login bug");
+  // Even when the conversation allows Codex apps and plugins.
+  await f.runtime.run({
+    ...delivery,
+    config: { ...(delivery.config as object), apps: true },
+    named,
+  });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   // Without Codex's title model in the catalog, the chat's own model titles it.
   expect(titling()[0]?.params).toMatchObject({
     model: "test-model",
     approvalPolicy: "never",
     sandbox: "read-only",
+    config: { "features.apps": false, "features.plugins": false },
   });
   expect(f.starts()[1]?.params).toMatchObject({
     threadId: "thread-2",

@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import type { TranscriptTurn } from "../../../features/agents/activity-transcript";
 import type { AgentClient, AgentSession } from "../agents/client";
 import type { BuilderlabSession } from "../session";
-import { historyReader, mergeTurns, sessionTurns } from "./history";
+import { listSessions, readSession, sessionTurns, TURN_LIMIT } from "./history";
 
 const mention = "e".repeat(64);
 const session: AgentSession = {
@@ -169,180 +169,106 @@ it("marks a failed tool call and a model error", () => {
   ]);
 });
 
-const live = (turnId: string, partial: boolean, startedAt: number) =>
-  ({
-    turnId,
-    partial,
-    startedAt,
-    items: [{ id: `${turnId}-live`, at: startedAt, type: "status", text: "" }],
-  }) as unknown as TranscriptTurn;
-
-it("keeps live turns, and a stored copy of one Buzz saw only part of", () => {
-  const stored = [live("old", false, 1), live("mid", false, 2)].map((turn) => ({
-    ...turn,
-    items: [],
-  }));
-  const merged = mergeTurns(
-    [
-      {
-        ...live("mid", true, 2),
-        items: [{ id: "later", at: 5, type: "status", text: "" }],
-        outcome: "stopped",
-      },
-      live("new", false, 3),
-      live("old", false, 1),
-    ],
-    stored,
-  );
-  expect(
-    merged.map((turn) => [turn.turnId, turn.items.length, turn.outcome]),
-  ).toEqual([
-    ["old", 1, undefined],
-    ["mid", 1, "stopped"],
-    ["new", 1, undefined],
-  ]);
-});
-
-it("keeps a stored copy of a running turn up to date with the live one", () => {
-  const tool = (status: string, output: string) => ({
-    id: `call-${status}`,
-    at: 20,
-    type: "tool",
-    toolCallId: "c1",
-    status,
-    output,
-  });
-  const copy = {
-    ...live("t", false, 10),
-    items: [
-      { id: "p", at: 10, type: "prompt", text: "Go" },
-      tool("in_progress", ""),
-      { id: "m", at: 30, type: "message", text: "Checking" },
-    ],
-  } as unknown as TranscriptTurn;
-  const running = {
-    ...live("t", true, 10),
-    items: [
-      tool("completed", "done"),
-      { id: "seen", at: 30, type: "message", text: "Checking" },
-      { id: "after", at: 40, type: "message", text: "Shipped" },
-    ],
-    outcome: "ended",
-    endedAt: 50,
-  } as unknown as TranscriptTurn;
-  const [turn] = mergeTurns([running], [copy]);
-  expect(turn).toMatchObject({ outcome: "ended", endedAt: 50, partial: false });
-  expect(turn?.items.map((item) => item.id)).toEqual([
-    "p",
-    "call-completed",
-    "m",
-    "after",
-  ]);
-});
-
-function reader(overrides: Partial<Record<keyof AgentClient, unknown>> = {}) {
-  const client = {
+const signal = new AbortController().signal;
+const missing = () => Object.assign(new Error("missing"), { status: 404 });
+const signedIn = {
+  snapshot: () => ({
+    status: "signed-in",
+    account: { canUseRemoteAgents: true },
+  }),
+} as unknown as BuilderlabSession;
+function client(overrides: Partial<Record<keyof AgentClient, unknown>> = {}) {
+  return {
     list: vi.fn(async () => [{ id: "agent-1", pubkey: "a".repeat(64) }]),
-    sessions: vi.fn(async () => ({
-      sessions: [
-        session,
-        { ...session, sessionId: "s2", threadRootId: "o".repeat(64) },
-        { sessionId: "s3", channelId: "alpha", updatedAt: 0 },
-        { sessionId: "s4", channelId: "beta", updatedAt: 0 },
-      ],
-      more: false,
-    })),
-    sessionMessages: vi.fn(async (id: string) => ({ id })),
+    sessions: vi.fn(async () => ({ sessions: [session], more: true })),
+    sessionMessages: vi.fn(async () => ({ turns: [], messages: [] })),
     ...overrides,
   } as unknown as AgentClient;
-  const login = {
-    snapshot: () => ({
-      status: "signed-in",
-      account: { canUseRemoteAgents: true },
-    }),
-  } as unknown as BuilderlabSession;
-  return { client, read: historyReader(client, login) };
 }
-const signal = new AbortController().signal;
 
-it("reads the opened thread's session and its channel's shared one", async () => {
-  const { client, read } = reader();
-  const history = await read(
-    "a".repeat(64),
-    { channelId: "alpha", rootId: session.threadRootId as string },
-    signal,
-  );
-  expect(client.sessions).toHaveBeenCalledWith("agent-1", signal);
-  expect(history).toEqual({
+it("lists the signed-in owner's stored sessions of an agent", async () => {
+  const reader = client();
+  expect(await listSessions(reader, signedIn, "a".repeat(64), signal)).toEqual({
     status: "loaded",
-    more: false,
-    sessions: [
-      { session, response: { id: "s1" } },
-      {
-        session: { sessionId: "s3", channelId: "alpha", updatedAt: 0 },
-        response: { id: "s3" },
-      },
-    ],
+    agentId: "agent-1",
+    sessions: [session],
+    more: true,
   });
+  expect(reader.sessions).toHaveBeenCalledWith("agent-1", signal);
 });
 
-it("reads the most recent sessions for all conversations, and says when more remain", async () => {
-  const sessions = Array.from({ length: 7 }, (_, index) => ({
-    ...session,
-    sessionId: `s${index}`,
-  }));
-  const { client, read } = reader({
-    sessions: vi.fn(async () => ({ sessions, more: false })),
-  });
-  const history = await read("a".repeat(64), {}, signal);
-  expect(client.sessionMessages).toHaveBeenCalledTimes(5);
-  expect(history).toMatchObject({ status: "loaded", more: true });
-});
-
-it("treats a Builderlab without stored sessions as live-only", async () => {
-  const missing = () => Object.assign(new Error("missing"), { status: 404 });
-  const { read } = reader({
-    sessions: vi.fn(async () => {
-      throw missing();
-    }),
-  });
-  expect(await read("a".repeat(64), {}, signal)).toEqual({
-    status: "unsupported",
-  });
-  const { read: ended } = reader({
-    sessionMessages: vi.fn(async (id: string) => {
-      if (id === "s1") throw missing();
-      return { id };
-    }),
-  });
-  const history = await ended("a".repeat(64), { channelId: "beta" }, signal);
-  expect(history).toMatchObject({ sessions: [{ response: { id: "s4" } }] });
-  const failed = await ended("a".repeat(64), {}, signal);
-  expect(failed).toMatchObject({ sessions: { length: 3 } });
-});
-
-it("reads nothing for an agent outside the signed-in account", async () => {
-  const { client, read } = reader({ list: vi.fn(async () => []) });
-  expect(await read("a".repeat(64), {}, signal)).toEqual({
+it("lists nothing for an agent outside the signed-in account", async () => {
+  const reader = client({ list: vi.fn(async () => []) });
+  expect(await listSessions(reader, signedIn, "a".repeat(64), signal)).toEqual({
     status: "loaded",
     sessions: [],
     more: false,
   });
-  expect(client.sessions).not.toHaveBeenCalled();
+  expect(reader.sessions).not.toHaveBeenCalled();
 });
 
-it("reads nothing before the owner signs in with remote agents", async () => {
-  const client = { list: vi.fn() } as unknown as AgentClient;
+it("treats a Builderlab without stored sessions as unsupported", async () => {
+  const reader = client({
+    sessions: vi.fn(async () => {
+      throw missing();
+    }),
+  });
+  expect(await listSessions(reader, signedIn, "a".repeat(64), signal)).toEqual({
+    status: "unsupported",
+  });
+});
+
+it("lists nothing before the owner signs in with remote agents", async () => {
+  const reader = client();
   for (const snapshot of [
     { status: "signed-out" },
     { status: "signed-in", account: { canUseRemoteAgents: false } },
-  ]) {
-    const read = historyReader(client, {
-      snapshot: () => snapshot,
-    } as unknown as BuilderlabSession);
-    expect(await read("a".repeat(64), {}, signal)).toEqual({
-      status: "signed-out",
-    });
-  }
-  expect(client.list).not.toHaveBeenCalled();
+  ])
+    expect(
+      await listSessions(
+        reader,
+        { snapshot: () => snapshot } as unknown as BuilderlabSession,
+        "a".repeat(64),
+        signal,
+      ),
+    ).toEqual({ status: "signed-out" });
+  expect(reader.list).not.toHaveBeenCalled();
+});
+
+it("reads a session's latest turns, and says when earlier ones exist", async () => {
+  const turns = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      turn_id: `t${index}`,
+      created_at: index + 1,
+    }));
+  const read = async (response: unknown) =>
+    readSession(
+      client({ sessionMessages: vi.fn(async () => response) }),
+      session,
+      signal,
+    );
+  expect(await read({ turns: turns(2), messages: [] })).toMatchObject({
+    turns: [{ turnId: "t0" }, { turnId: "t1" }],
+    more: false,
+  });
+  expect(
+    await read({ turns: turns(2), messages: [], has_earlier_turns: true }),
+  ).toMatchObject({ more: true });
+  const many = await read({ turns: turns(TURN_LIMIT + 1), messages: [] });
+  expect(many?.turns).toHaveLength(TURN_LIMIT);
+  expect(many?.turns[0]?.turnId).toBe("t1");
+  expect(many?.more).toBe(true);
+});
+
+it("reads no transcript for a session Builderlab no longer has", async () => {
+  const gone = client({
+    sessionMessages: vi.fn(async () => {
+      throw missing();
+    }),
+  });
+  expect(await readSession(gone, session, signal)).toBeUndefined();
+  const removed = client({
+    sessionMessages: vi.fn(async () => ({ removal_state: 1 })),
+  });
+  expect(await readSession(removed, session, signal)).toBeUndefined();
 });

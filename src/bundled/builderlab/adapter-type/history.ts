@@ -6,12 +6,13 @@ import {
   promptSections,
   STEER,
   type ToolItem,
+  type Transcript,
   type TranscriptItem,
   type TranscriptTurn,
 } from "../../../features/agents/activity-transcript";
 import { terminalOutcome } from "../../../features/agents/observer";
 import type { AgentClient, AgentSession } from "../agents/client";
-import type { BuilderlabSession } from "../session";
+import type { BuilderlabSession, LoginSnapshot } from "../session";
 
 type Json = Record<string, unknown>;
 type Names = (pubkey: string) => string | undefined;
@@ -209,122 +210,73 @@ export function sessionTurns(
   return turns;
 }
 
-/** Stored sessions read at most for one view, most recently active first. */
-export const SESSION_LIMIT = 5;
-export type StoredSession = Readonly<{ session: AgentSession; response: Json }>;
-export type StoredHistory =
-  | Readonly<{ status: "loaded"; sessions: StoredSession[]; more: boolean }>
+export type SessionList =
+  | Readonly<{
+      status: "loaded";
+      sessions: readonly AgentSession[];
+      more: boolean;
+      /** Builderlab's id for the agent, absent when it has none. */
+      agentId?: string;
+    }>
   | Readonly<{ status: "signed-out" | "unsupported" }>;
-export type HistoryReader = (
-  pubkey: string,
-  scope: Readonly<{ channelId?: string; rootId?: string }>,
-  signal: AbortSignal,
-) => Promise<StoredHistory>;
 
 const notFound = (error: unknown) =>
   error instanceof Error && "status" in error && error.status === 404;
 
-/** Reads the signed-in owner's stored sessions of an agent for a view: one
- * conversation (its thread's session and its channel's shared one), or all. */
-export function historyReader(
+/** Whether the owner is signed in to Builderlab with remote agents, so its
+ * stored sessions can be read. */
+export const canReadSessions = (login: LoginSnapshot) =>
+  login.status === "signed-in" && !!login.account?.canUseRemoteAgents;
+
+/** The signed-in owner's stored sessions of an agent, most recently active
+ * first. */
+export async function listSessions(
   client: AgentClient,
   session: BuilderlabSession,
-): HistoryReader {
-  return async (pubkey, { channelId, rootId }, signal) => {
-    const login = session.snapshot();
-    if (login.status !== "signed-in" || !login.account?.canUseRemoteAgents)
-      return { status: "signed-out" };
-    const agent = (await client.list(signal)).find(
-      (row) => row.pubkey === pubkey,
-    );
-    if (!agent) return { status: "loaded", sessions: [], more: false };
-    let listed: Awaited<ReturnType<AgentClient["sessions"]>>;
-    try {
-      listed = await client.sessions(agent.id, signal);
-    } catch (error) {
-      // A Builderlab without stored sessions has no such route.
-      if (notFound(error)) return { status: "unsupported" };
-      throw error;
-    }
-    const matching = listed.sessions.filter(
-      (stored) =>
-        !channelId ||
-        (stored.channelId === channelId &&
-          (!stored.threadRootId || !rootId || stored.threadRootId === rootId)),
-    );
-    const sessions = await Promise.all(
-      matching.slice(0, SESSION_LIMIT).map(async (stored) => {
-        try {
-          return [
-            {
-              session: stored,
-              response: await client.sessionMessages(stored.sessionId, signal),
-            },
-          ];
-        } catch (error) {
-          // Ended or replaced since it was listed.
-          if (notFound(error)) return [];
-          throw error;
-        }
-      }),
-    );
+  pubkey: string,
+  signal: AbortSignal,
+): Promise<SessionList> {
+  if (!canReadSessions(session.snapshot())) return { status: "signed-out" };
+  const agent = (await client.list(signal)).find(
+    (row) => row.pubkey === pubkey,
+  );
+  if (!agent) return { status: "loaded", sessions: [], more: false };
+  try {
     return {
       status: "loaded",
-      sessions: sessions.flat(),
-      more: listed.more || matching.length > SESSION_LIMIT,
+      agentId: agent.id,
+      ...(await client.sessions(agent.id, signal)),
     };
-  };
+  } catch (error) {
+    // A Builderlab without stored sessions has no such route.
+    if (notFound(error)) return { status: "unsupported" };
+    throw error;
+  }
 }
 
-/** Turns from stored sessions; a removed session's are withheld. */
-export const storedTurns = (sessions: readonly StoredSession[], name?: Names) =>
-  sessions.flatMap((stored) =>
-    stored.response.removal_state
-      ? []
-      : sessionTurns(stored.session, stored.response, name),
-  );
+/** Turns a stored transcript shows at most, as local transcripts do. */
+export const TURN_LIMIT = 50;
+export type StoredTranscript = Transcript & Readonly<{ more: boolean }>;
 
-/** A stored copy, brought up to date with what Buzz saw of the turn since:
- * newer items, calls that finished, and how it ended. */
-function withLive(copy: TranscriptTurn, turn: TranscriptTurn): TranscriptTurn {
-  const copied = Math.max(copy.startedAt, ...copy.items.map((item) => item.at));
-  const calls = new Map(
-    turn.items.flatMap((item) =>
-      item.type === "tool" ? [[item.toolCallId, item] as const] : [],
-    ),
-  );
-  const used = new Set<TranscriptItem>();
-  const items = copy.items.map((item) => {
-    const update = item.type === "tool" && calls.get(item.toolCallId);
-    if (!update) return item;
-    used.add(update);
-    return update;
-  });
-  for (const item of turn.items)
-    if (item.at > copied && !used.has(item)) items.push(item);
+/** A stored session's latest turns, at most {@link TURN_LIMIT}; undefined once
+ * Builderlab no longer has it, or it was removed. */
+export async function readSession(
+  client: AgentClient,
+  session: AgentSession,
+  signal: AbortSignal,
+  name?: Names,
+): Promise<StoredTranscript | undefined> {
+  let response: Json | undefined;
+  try {
+    response = object(await client.sessionMessages(session.sessionId, signal));
+  } catch (error) {
+    if (notFound(error)) return undefined;
+    throw error;
+  }
+  if (!response || response.removal_state) return undefined;
+  const turns = sessionTurns(session, response, name);
   return {
-    ...copy,
-    items,
-    ...(turn.outcome ? { outcome: turn.outcome } : {}),
-    ...(turn.endedAt !== undefined ? { endedAt: turn.endedAt } : {}),
-    ...(turn.error ? { error: turn.error } : {}),
+    turns: turns.slice(-TURN_LIMIT),
+    more: response.has_earlier_turns === true || turns.length > TURN_LIMIT,
   };
-}
-
-/** Live turns, with stored ones Buzz did not see. A live turn that began
- * before Buzz saw it is partial, so its stored copy shows instead, kept up
- * to date by the live one. */
-export function mergeTurns(
-  live: readonly TranscriptTurn[],
-  stored: readonly TranscriptTurn[],
-): TranscriptTurn[] {
-  const saved = new Map(stored.map((turn) => [turn.turnId, turn]));
-  const shown = new Set<string>();
-  const turns = live.map((turn): TranscriptTurn => {
-    shown.add(turn.turnId);
-    const copy = saved.get(turn.turnId);
-    return turn.partial && copy ? withLive(copy, turn) : turn;
-  });
-  for (const turn of stored) if (!shown.has(turn.turnId)) turns.push(turn);
-  return turns.sort((a, b) => a.startedAt - b.startedAt);
 }

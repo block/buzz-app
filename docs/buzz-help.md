@@ -1171,11 +1171,8 @@ available rather than silently discarding it.
   Available model, effort and session controls keep their gauge beside Send.
   Activity keeps its transcript and feed guidance without a separate workspace
   note. Opened from a conversation, it shows that conversation's turns;
-  **Show all conversations** lists the agent's other turns too. Signed in to
-  Builderlab, it also shows the turns Builderlab stored from before Buzz was
-  opened, for up to five of the agent's most recently active conversations;
-  otherwise, or with a Builderlab that does not store them, it shows only turns
-  captured while Buzz has been open.
+  **Show all conversations** lists the agent's other turns too. It shows only
+  turns captured while Buzz has been open.
 - Plugin requests show local work status even when they have no message.
   A failed request offers Retry. View opens its thread or conversation.
 - **Online badge on Builderlab agents**: a Builderlab-hosted agent's avatar

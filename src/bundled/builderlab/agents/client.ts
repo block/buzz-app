@@ -45,8 +45,8 @@ export type AgentSession = Readonly<{
   threadRootId?: string;
   updatedAt: number;
 }>;
-/** Session list pages read at most, so a long history stays bounded. */
-const SESSION_PAGES = 4;
+/** Sessions read at most, the most the server returns in one page. */
+const SESSION_LIMIT = 50;
 
 export type RemoteAgentModel = Readonly<{
   id: string;
@@ -419,50 +419,60 @@ export function createAgentClient(
       }
       return statuses;
     },
-    /** The agent's conversation sessions, most recently active first, from
-     * at most {@link SESSION_PAGES} pages; `more` when others remain. A
-     * session active while paging can show on two pages; its first stays. */
-    async sessions(agentId: string, signal: AbortSignal) {
-      const sessions: AgentSession[] = [];
-      const seen = new Set<string>();
-      let cursor: string | undefined;
-      for (let page = 0; page < SESSION_PAGES; page++) {
-        const result = await readRequest(
-          "list-agent-sessions",
-          { agent_id: agentId, limit: 50, ...(cursor ? { cursor } : {}) },
-          signal,
-        );
-        const rows = result.sessions ?? [];
-        if (!Array.isArray(rows))
+    /** One page of the agent's conversation sessions, most recently active
+     * first; `more` when older ones remain. With `place`, only the session of
+     * that conversation: its thread's, else its channel's. */
+    async sessions(
+      agentId: string,
+      signal: AbortSignal,
+      place?: Readonly<{
+        community: string;
+        channelId: string;
+        threadRootId?: string | undefined;
+      }>,
+    ) {
+      const result = await readRequest(
+        "list-agent-sessions",
+        {
+          agent_id: agentId,
+          limit: SESSION_LIMIT,
+          ...(place && {
+            // Beekeeper keys conversations by the community's host.
+            community: new URL(place.community).host,
+            channel_id: place.channelId,
+            ...(place.threadRootId && {
+              thread_root_event_id: place.threadRootId,
+            }),
+          }),
+        },
+        signal,
+      );
+      const rows = result.sessions ?? [];
+      if (!Array.isArray(rows))
+        throw new Error("Builderlab returned an invalid session list.");
+      const sessions = rows.map((row): AgentSession => {
+        const updatedAt = Number(row?.updated_at);
+        if (
+          typeof row?.session_id !== "string" ||
+          !row.session_id ||
+          typeof row.channel_id !== "string" ||
+          !row.channel_id
+        )
           throw new Error("Builderlab returned an invalid session list.");
-        for (const row of rows) {
-          const updatedAt = Number(row?.updated_at);
-          if (
-            typeof row?.session_id !== "string" ||
-            !row.session_id ||
-            typeof row.channel_id !== "string" ||
-            !row.channel_id
-          )
-            throw new Error("Builderlab returned an invalid session list.");
-          if (seen.has(row.session_id)) continue;
-          seen.add(row.session_id);
-          sessions.push({
-            sessionId: row.session_id,
-            channelId: row.channel_id,
-            ...(typeof row.thread_root_event_id === "string" &&
-            row.thread_root_event_id
-              ? { threadRootId: row.thread_root_event_id }
-              : {}),
-            updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
-          });
-        }
-        cursor =
-          typeof result.next_cursor === "string" && result.next_cursor
-            ? result.next_cursor
-            : undefined;
-        if (!cursor) return { sessions, more: false };
-      }
-      return { sessions, more: true };
+        return {
+          sessionId: row.session_id,
+          channelId: row.channel_id,
+          ...(typeof row.thread_root_event_id === "string" &&
+          row.thread_root_event_id
+            ? { threadRootId: row.thread_root_event_id }
+            : {}),
+          updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
+        };
+      });
+      return {
+        sessions,
+        more: typeof result.next_cursor === "string" && !!result.next_cursor,
+      };
     },
     /** A listed session's stored messages and turns, as Builderlab sent them. */
     sessionMessages(sessionId: string, signal: AbortSignal) {

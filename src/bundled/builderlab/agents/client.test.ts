@@ -112,41 +112,45 @@ it("reads terminal task status only for the requested task IDs", async () => {
     ).rejects.toThrow("invalid turn status");
   }
 });
-it("pages an agent's stored sessions up to a bound, once each, and reads one's messages", async () => {
+it("reads one page of an agent's stored sessions, or one conversation's, and a session's messages", async () => {
   const h = await fixture();
-  const page = (cursor?: string) =>
+  vi.mocked(h.host.request).mockResolvedValueOnce(
     response({
       sessions: [
         {
-          session_id: `s-${cursor ?? "last"}`,
+          session_id: "s-thread",
           channel_id: "alpha",
           thread_root_event_id: "r".repeat(64),
           updated_at: "2000",
         },
         { session_id: "dm", channel_id: "beta" },
       ],
-      ...(cursor ? { next_cursor: cursor } : {}),
-    });
-  vi.mocked(h.host.request)
-    .mockResolvedValueOnce(page("p1"))
-    .mockResolvedValueOnce(page());
+      next_cursor: "older",
+    }),
+  );
   expect(await h.client.sessions("agent-1", h.signal)).toEqual({
-    more: false,
+    more: true,
     sessions: [
       {
-        sessionId: "s-p1",
+        sessionId: "s-thread",
         channelId: "alpha",
         threadRootId: "r".repeat(64),
         updatedAt: 2000,
       },
       { sessionId: "dm", channelId: "beta", updatedAt: 0 },
-      {
-        sessionId: "s-last",
-        channelId: "alpha",
-        threadRootId: "r".repeat(64),
-        updatedAt: 2000,
-      },
     ],
+  });
+  vi.mocked(h.host.request).mockResolvedValue(response({ sessions: [] }));
+  expect(
+    await h.client.sessions("agent-1", h.signal, {
+      community: "wss://relay.example.org",
+      channelId: "alpha",
+      threadRootId: "r".repeat(64),
+    }),
+  ).toEqual({ more: false, sessions: [] });
+  await h.client.sessions("agent-1", h.signal, {
+    community: "wss://relay.example.org",
+    channelId: "beta",
   });
   const bodies = vi
     .mocked(h.host.request)
@@ -156,14 +160,25 @@ it("pages an agent's stored sessions up to a bound, once each, and reads one's m
     ]);
   expect(bodies).toEqual([
     ["list-agent-sessions", { agent_id: "agent-1", limit: 50 }],
-    ["list-agent-sessions", { agent_id: "agent-1", limit: 50, cursor: "p1" }],
-  ]);
-  vi.mocked(h.host.request).mockResolvedValue(page("again"));
-  const bounded = await h.client.sessions("agent-1", h.signal);
-  expect(bounded.more).toBe(true);
-  expect(bounded.sessions.map((row) => row.sessionId)).toEqual([
-    "s-again",
-    "dm",
+    [
+      "list-agent-sessions",
+      {
+        agent_id: "agent-1",
+        limit: 50,
+        community: "relay.example.org",
+        channel_id: "alpha",
+        thread_root_event_id: "r".repeat(64),
+      },
+    ],
+    [
+      "list-agent-sessions",
+      {
+        agent_id: "agent-1",
+        limit: 50,
+        community: "relay.example.org",
+        channel_id: "beta",
+      },
+    ],
   ]);
   vi.mocked(h.host.request).mockResolvedValueOnce(
     response({ sessions: [{ session_id: "s" }] }),

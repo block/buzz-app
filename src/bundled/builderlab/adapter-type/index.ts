@@ -141,7 +141,7 @@ export function builderlabType(
         id: "activity",
         title: "Activity",
         role: "activity",
-        component: createActivityTab(relay, openSettings, { client, session }),
+        component: createActivityTab(relay, openSettings),
       },
     ],
     remote: {

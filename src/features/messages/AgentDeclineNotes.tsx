@@ -9,7 +9,7 @@ const noSubscribe = () => () => {};
 export function agentDeclineText(name: string, ownerOnly: boolean) {
   if (!ownerOnly)
     return `${name} didn't respond because this workflow message wasn't set up to direct agents.`;
-  return `${name} didn't respond to this workflow message. This community limits which workflows can use agents, so other people can't use yours. The workflow's Runs tab shows why it didn't respond this time.`;
+  return `${name} didn't respond to this workflow message. This community limits which workflows can use agents, so other people can't use yours. If the workflow's Runs tab gives a reason, it's there.`;
 }
 
 /** Why this device's agents didn't act on this message. Local and owner-only:

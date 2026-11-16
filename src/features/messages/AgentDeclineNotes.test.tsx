@@ -47,7 +47,7 @@ it("says which agent didn't act and why", () => {
   );
   expect(
     screen.getByText(
-      "Your agent didn't respond to this workflow message. This community limits which workflows can use agents, so other people can't use yours. The workflow's Runs tab shows why it didn't respond this time.",
+      "Your agent didn't respond to this workflow message. This community limits which workflows can use agents, so other people can't use yours. If the workflow's Runs tab gives a reason, it's there.",
     ),
   ).toBeInTheDocument();
 });

@@ -258,8 +258,9 @@ for (const close of [
             .getByRole("button", { name: /^Close / })
             .click();
         } else {
-          await (
-            close === "Close other tabs" ? tabs.first() : pendingTab
+          await (close === "Close other tabs"
+            ? tabs.first()
+            : pendingTab
           ).click({ button: "right" });
           await page
             .getByRole("menuitem", { name: close, exact: true })

@@ -3544,7 +3544,18 @@ export class AgentRunners {
             if (value && value.type !== "interest" && value.enabled) {
               const agent = this.host.agent(key);
               if (!agent) throw new Error("This agent is no longer running");
-              if (value.type === "event" && value.channels !== "all") {
+              const previous = before.attention[slug]?.value;
+              const prior =
+                previous?.type === "interest" ? undefined : previous;
+              const enabling = !prior?.enabled;
+              if (
+                value.type === "event" &&
+                value.channels !== "all" &&
+                (enabling ||
+                  prior?.type !== "event" ||
+                  JSON.stringify(prior.channels) !==
+                    JSON.stringify(value.channels))
+              ) {
                 await this.host.resolveChannels?.(
                   agent,
                   value.channels,
@@ -3558,18 +3569,24 @@ export class AgentRunners {
                   )
                     throw new AttentionError(
                       "invalid-operation",
-                      `Cannot receive events from channel ${channel}. Check channel access and wait for confirmed metadata before enabling this watch.`,
+                      `Cannot receive events from channel ${channel}. Check channel access and retry this write after metadata is confirmed.`,
                     );
               }
               if (
                 value.channel &&
-                this.host.member(agent, { tags: [["h", value.channel]] }) !==
-                  true
-              )
-                throw new AttentionError(
-                  "invalid-operation",
-                  `Agent is not a member of the delivery channel ${value.channel}, or membership is unconfirmed. Join it and wait for confirmation before enabling this watch.`,
-                );
+                (enabling || prior?.channel !== value.channel)
+              ) {
+                const member = this.host.member(agent, {
+                  tags: [["h", value.channel]],
+                });
+                if (member !== true)
+                  throw new AttentionError(
+                    "invalid-operation",
+                    member === undefined
+                      ? `Membership of delivery channel ${value.channel} is unconfirmed. Retry this write after the relay confirms membership.`
+                      : `Agent is not a member of the delivery channel ${value.channel}. Choose a joined channel or join it before retrying this write.`,
+                  );
+              }
             }
             return next;
           });

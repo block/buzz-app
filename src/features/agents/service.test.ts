@@ -12878,7 +12878,9 @@ it.each(["event", "timer", "source"] as const)(
             ? { interval_secs: 60, prompt: "Check" }
             : { provider: "attention/command", config: { command: ["true"] } }),
       }),
-    ).rejects.toThrow(/not a member.*delivery channel/i);
+    ).rejects.toThrow(
+      /(?:not a member.*delivery channel|membership of delivery channel.*unconfirmed)/i,
+    );
     expect((await attention.show("watch/unreachable")).object).toBeNull();
   },
 );
@@ -12943,7 +12945,9 @@ it.each(refusedChannels)(
         { channel: target, topLevel: true },
         { url, interest: "moved" },
       ),
-    ).rejects.toThrow(/not a member.*delivery channel/i);
+    ).rejects.toThrow(
+      /(?:not a member.*delivery channel|membership of delivery channel.*unconfirmed)/i,
+    );
     expect(await attention.show(slug)).toEqual(before);
     // Retry after returning to a confirmed destination, using the same watch.
     await tool.call(
@@ -13006,7 +13010,9 @@ it("resolves an unopened public listening channel before admission and delivers 
       expected_state: (await attention.show("watch/unopened")).expected_state,
       channel: target,
     }),
-  ).rejects.toThrow(/not a member.*delivery channel/i);
+  ).rejects.toThrow(
+    /(?:not a member.*delivery channel|membership of delivery channel.*unconfirmed)/i,
+  );
 });
 
 it.each(["private", "empty", "failed"] as const)(
@@ -13089,7 +13095,84 @@ it("uses one listening policy for watch admission and event delivery", async () 
   });
 });
 
-it("can disable an unreachable watch, but cannot enable it until channel membership is confirmed", async () => {
+it.each(["cached", "private"] as const)(
+  "allows unchanged destinations to be edited, rearmed and disabled after becoming %s",
+  async (state) => {
+    const { service, run, emit, session } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, { attentionEnabled: true });
+    const { attention } = await handleOf(run, emit);
+    for (const type of ["event", "timer"] as const) {
+      await callAttentionTool(attention, "watch_add", {
+        id: type,
+        interest: "default",
+        expected_state: "object-v1:absent",
+        type,
+        channel,
+        ...(type === "event"
+          ? { channels: [channel], since: "now" }
+          : { interval_secs: 600, prompt: "Check" }),
+      });
+    }
+    const list = session.channels.list();
+    vi.spyOn(session.channels, "list").mockReturnValue({
+      ...list,
+      channels: list.channels.map((row) =>
+        row.id === channel
+          ? {
+              ...row,
+              ...(state === "cached"
+                ? { cached: true as const }
+                : { members: [], visibility: "private" as const }),
+            }
+          : row,
+      ),
+    });
+    for (const type of ["event", "timer"] as const) {
+      const shown = await attention.show(`watch/${type}`);
+      await callAttentionTool(attention, "watch_update", {
+        id: type,
+        interest: "default",
+        expected_state: shown.expected_state,
+        ...(type === "timer" ? { prompt: "Updated" } : { name: "Renamed" }),
+      });
+      const renamed = await attention.show(`watch/${type}`);
+      expect(renamed.object).toMatchObject({
+        enabled: true,
+        ...(type === "timer" ? { prompt: "Updated" } : { name: "Renamed" }),
+      });
+      if (type === "timer") {
+        await callAttentionTool(attention, "watch_rearm", {
+          id: type,
+          interest: "default",
+          expected_state: renamed.expected_state,
+        });
+      }
+      const enabled = await attention.show(`watch/${type}`);
+      await callAttentionTool(attention, "watch_disable", {
+        id: type,
+        interest: "default",
+        expected_state: enabled.expected_state,
+      });
+      const disabled = await attention.show(`watch/${type}`);
+      expect(disabled.object).toMatchObject({ enabled: false });
+      await expect(
+        callAttentionTool(
+          attention,
+          type === "timer" ? "watch_rearm" : "watch_enable",
+          {
+            id: type,
+            interest: "default",
+            expected_state: disabled.expected_state,
+          },
+        ),
+      ).rejects.toThrow(/channel/i);
+      expect(await attention.show(`watch/${type}`)).toEqual(disabled);
+    }
+  },
+);
+
+it("can save an unreachable watch disabled, but cannot enable it until channel membership is confirmed", async () => {
   const { service, run, emit, session } = await setup();
   watchChannelMetadata(session);
   await service.create({ type: "example/echo", name: "Echo" });

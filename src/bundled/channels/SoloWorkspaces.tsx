@@ -1,4 +1,5 @@
 import { FadingLabel } from "./FadingLabel";
+import { ChannelSidebarRows } from "../../features/channel-navigation/ChannelSidebarRows";
 import { createPortal } from "react-dom";
 import type { ComposeWorkspaces } from "../../features/channel-navigation/WorkspaceComposition";
 import { prepareSoloMove } from "../../features/channel-navigation/solo-navigation";
@@ -9,6 +10,7 @@ import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { SoloChatName } from "./SoloChatName";
 import { canEditLifetime } from "../../features/solo/Lifetime";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
+import { matchesConversation } from "../../features/channel-navigation/routes";
 import {
   soloNeighbors,
   soloSuccessor,
@@ -94,12 +96,17 @@ export function SoloWorkspaces({
   onNew,
   onConverted,
   visit,
-  draft,
+  drafts = [],
   sidebarRows = emptyRows,
   compose,
 }: {
   compose?: ComposeWorkspaces | undefined;
-  draft?: { projectId?: string | undefined; content: ReactNode } | undefined;
+  drafts?: readonly {
+    id: string;
+    projectId?: string | undefined;
+    selected: boolean;
+    content: ReactNode;
+  }[];
   onConverted?: ((id: string) => void) | undefined;
   visit?: AbortSignal;
   session: RelaySession;
@@ -209,11 +216,14 @@ export function SoloWorkspaces({
       )?.id ?? "";
     // Resolve against current visibility when focus is restored, including when
     // collapse was requested after the asynchronous save began.
-    const target = collapsed.includes(project)
-      ? `project-${project}`
-      : rowFocus;
+    const target =
+      collapsed.includes(project) && !rowHosts.current.get(project)?.unframed
+        ? `project-${project}`
+        : rowFocus;
     document
-      .querySelector<HTMLElement>(`[data-solo-menu-id="${target}"] button`)
+      .querySelector<HTMLElement>(
+        `[data-solo-menu-id="${target}"]:not([inert] *) button`,
+      )
       ?.focus({ preventScroll: true });
     setRowFocus(undefined);
   }, [rowFocus, collapsed, snapshot.data]);
@@ -230,7 +240,8 @@ export function SoloWorkspaces({
     const panel = document.querySelector(
       `[data-solo-project="${CSS.escape(stepFocus)}"]`,
     );
-    const chats = panel?.querySelectorAll("[data-solo-menu-id]") ?? [];
+    const chats =
+      panel?.querySelectorAll("[data-solo-menu-id]:not([inert] *)") ?? [];
     const target =
       row?.querySelector<HTMLElement>("button") ??
       [...chats].at(-1)?.querySelector<HTMLElement>("button");
@@ -246,9 +257,10 @@ export function SoloWorkspaces({
   const assignmentFor = (item: ChatListItem) =>
     dormantAssignments?.has(item.id) ? undefined : assigned[item.id];
   const ids = new Set(groups.map((group) => group.id));
-  const draftProject = draft
-    ? ids.has(draft.projectId ?? "")
-      ? (draft.projectId ?? "")
+  const activeDraft = drafts.find((draft) => draft.selected);
+  const draftProject = activeDraft
+    ? ids.has(activeDraft.projectId ?? "")
+      ? (activeDraft.projectId ?? "")
       : ""
     : undefined;
   useEffect(() => {
@@ -290,7 +302,7 @@ export function SoloWorkspaces({
     void saving.catch(() => {
       // A rollback remounts the original row. Do not steal focus if the user moved on.
       if (
-        !document.querySelector(`[data-solo-menu-id="${id}"]`) ||
+        !document.querySelector(`[data-solo-menu-id="${id}"]:not([inert] *)`) ||
         document.activeElement !== document.body
       )
         return;
@@ -306,7 +318,7 @@ export function SoloWorkspaces({
     const neighbors = handoff?.soloNeighbors.current?.(channel.id) ?? [];
     const trigger =
       document.querySelector<HTMLElement>(
-        `[data-solo-menu-id="${CSS.escape(channel.id)}"] button`,
+        `[data-solo-menu-id="${CSS.escape(channel.id)}"]:not([inert] *) button`,
       ) ?? undefined;
     const current = navigationController?.snapshot();
     const leavesOpenChat =
@@ -319,9 +331,17 @@ export function SoloWorkspaces({
         close() {
           if (trigger?.isConnected) trigger.focus({ preventScroll: true });
         },
-        completed() {
+        depart(visit) {
           const shown = new Set(handoff?.soloNeighbors.current?.(channel.id));
-          if (leavesOpenChat && !current.attempt.signal.aborted)
+          const active =
+            visit === "current"
+              ? matchesConversation(
+                  navigationController?.snapshot().entry.target,
+                  scope,
+                  channel.id,
+                )
+              : leavesOpenChat && !current.attempt.signal.aborted;
+          if (active)
             void navigationController?.open(
               soloSuccessor(
                 scope,
@@ -367,7 +387,11 @@ export function SoloWorkspaces({
         compose ||
         project.id ||
         project.rows.length ||
-        draftProject === project.id,
+        drafts.some(
+          (draft) =>
+            (ids.has(draft.projectId ?? "") ? draft.projectId : "") ===
+            project.id,
+        ),
     )
     .map((project) => {
       // A list that shrank back under the cap has nothing to fold.
@@ -399,16 +423,18 @@ export function SoloWorkspaces({
   const soloNeighborsRef = handoff?.soloNeighbors;
   useLayoutEffect(() => {
     if (!soloNeighborsRef) return;
-    const shown = visible.map((project) => ({
-      rows: project.rows,
-      shown: collapsed.includes(project.id)
-        ? []
-        : project.listed.map((item) => item.id),
-    }));
     const neighbors = (id: string) =>
-      soloNeighbors(shown, id).filter(
-        (neighbor) => !pluginHiddenRows.current.has(neighbor),
-      );
+      soloNeighbors(
+        visible.map((project) => ({
+          rows: project.rows,
+          shown:
+            collapsed.includes(project.id) &&
+            !rowHosts.current.get(project.id)?.unframed
+              ? []
+              : project.listed.map((item) => item.id),
+        })),
+        id,
+      ).filter((neighbor) => !pluginHiddenRows.current.has(neighbor));
     soloNeighborsRef.current = neighbors;
     return () => {
       if (soloNeighborsRef.current === neighbors)
@@ -567,65 +593,74 @@ export function SoloWorkspaces({
     }
     const rows = (
       <>
-        {draftProject === project.id && draft && (
-          <ChatActionsMenu
-            id="new-chat-draft"
-            title="New chat"
-            className={styles.organizedRow}
-            content={null}
-            enabled={false}
-          >
-            <div>{draft.content}</div>
-          </ChatActionsMenu>
-        )}
-        {project.listed.map((item) => {
-          const channel = channels.channels.find(
-            (channel) => channel.id === item.id,
-          );
-          if (renaming === item.id)
-            return (
-              <SoloChatName
+        {drafts
+          .filter(
+            (draft) =>
+              (ids.has(draft.projectId ?? "") ? draft.projectId : "") ===
+              project.id,
+          )
+          .map((draft) => (
+            <ChatActionsMenu
+              key={draft.id}
+              id={`new-chat-draft:${draft.id}`}
+              title="New chat"
+              className={styles.organizedRow}
+              content={null}
+              enabled={false}
+            >
+              <div>{draft.content}</div>
+            </ChatActionsMenu>
+          ))}
+        <ChannelSidebarRows open={open}>
+          {project.listed.map((item) => {
+            const channel = channels.channels.find(
+              (channel) => channel.id === item.id,
+            );
+            if (renaming === item.id)
+              return (
+                <SoloChatName
+                  key={item.id}
+                  session={session}
+                  id={item.id}
+                  title={item.title}
+                  close={(focus) => {
+                    setRenaming(undefined);
+                    if (focus) setRowFocus(item.id);
+                  }}
+                />
+              );
+            const row = (
+              <SoloChatEntry
                 key={item.id}
-                session={session}
                 id={item.id}
                 title={item.title}
-                close={(focus) => {
-                  setRenaming(undefined);
-                  if (focus) setRowFocus(item.id);
-                }}
+                pinned={item.pinned}
+                projectKey={DROP + project.id}
+                sectionKey={project.id}
+                channel={channel}
+                renameable={canRename(project.id, channel)}
+                lifecycle={!!handoff}
+                session={session}
+                actions={entryActions}
+                renderChat={renderChat}
+                renderChatMenu={renderChatMenu}
+                sidebarRows={sidebarRows}
+                onHiddenChange={setRowHidden}
               />
             );
-          const row = (
-            <SoloChatEntry
-              key={item.id}
-              id={item.id}
-              title={item.title}
-              pinned={item.pinned}
-              projectKey={DROP + project.id}
-              sectionKey={project.id}
-              channel={channel}
-              renameable={canRename(project.id, channel)}
-              lifecycle={!!handoff}
-              session={session}
-              actions={entryActions}
-              renderChat={renderChat}
-              renderChatMenu={renderChatMenu}
-              sidebarRows={sidebarRows}
-              onHiddenChange={setRowHidden}
-            />
-          );
-          return compose && project.id ? (
-            <NavigationCard
-              key={item.id}
-              tone="tonal"
-              className={styles.composedChat}
-            >
-              {row}
-            </NavigationCard>
-          ) : (
-            row
-          );
-        })}
+            return compose && project.id ? (
+              <NavigationCard
+                key={item.id}
+                tone="tonal"
+                className={styles.composedChat}
+              >
+                {row}
+              </NavigationCard>
+            ) : (
+              row
+            );
+          })}
+        </ChannelSidebarRows>
         {(project.hidden > 0 || project.foldable) && (
           <div className={styles.showMore} data-solo-show-more={project.id}>
             {project.hidden > 0 && (
@@ -722,6 +757,9 @@ export function SoloWorkspaces({
       header,
       panel,
       ordinary,
+      chatList: (
+        <WorkspaceRows key={project.id} host={rowsHost} unframed={project.id} />
+      ),
       rows: compose ? createPortal(rows, rowsHost.element, project.id) : null,
     };
   });
@@ -775,6 +813,7 @@ export function SoloWorkspaces({
         {compose
           ? compose({
               chats: entries.find((entry) => !entry.id)?.ordinary,
+              chatList: entries.map((entry) => entry.chatList),
               workspaces: entries,
               ordinary: entries.map((entry) => entry.ordinary),
             })
@@ -790,7 +829,7 @@ export function SoloWorkspaces({
           close={() => setConverting(undefined)}
           finalFocus={() =>
             document.querySelector<HTMLElement>(
-              `[data-solo-menu-id="${converting.id}"] button`,
+              `[data-solo-menu-id="${converting.id}"]:not([inert] *) button`,
             ) ?? false
           }
         />
@@ -805,10 +844,11 @@ export function SoloWorkspaces({
           trigger={{
             // Read on close: the mark is gone once the chat stops being shared.
             get current() {
-              return sharing.trigger?.isConnected
+              return sharing.trigger?.isConnected &&
+                !sharing.trigger.closest("[inert]")
                 ? sharing.trigger
                 : document.querySelector<HTMLElement>(
-                    `[data-solo-menu-id="${sharing.id}"] button`,
+                    `[data-solo-menu-id="${sharing.id}"]:not([inert] *) button`,
                   );
             },
           }}
@@ -821,7 +861,7 @@ export function SoloWorkspaces({
           signal={chatSettings.visit}
           finalFocus={() =>
             document.querySelector<HTMLElement>(
-              `[data-solo-menu-id="${chatSettings.item.id}"] button`,
+              `[data-solo-menu-id="${chatSettings.item.id}"]:not([inert] *) button`,
             ) ?? false
           }
           session={session}
@@ -898,22 +938,31 @@ export function SoloWorkspaces({
 type WorkspaceRowsHost = {
   element: HTMLDivElement;
   focus?: HTMLElement | undefined;
+  unframed?: boolean | undefined;
 };
-function WorkspaceRows({ host }: { host: WorkspaceRowsHost }) {
+function WorkspaceRows({
+  host,
+  unframed,
+}: {
+  host: WorkspaceRowsHost;
+  unframed?: string;
+}) {
   const slot = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const parent = slot.current;
+    host.unframed = unframed !== undefined;
     parent?.appendChild(host.element);
     if (host.focus?.isConnected && document.activeElement === document.body)
       host.focus.focus({ preventScroll: true });
     host.focus = undefined;
     return () => {
+      host.unframed = false;
       if (host.element.contains(document.activeElement))
         host.focus = document.activeElement as HTMLElement;
       if (host.element.parentElement === parent) host.element.remove();
     };
-  }, [host]);
-  return <div ref={slot} />;
+  }, [host, unframed]);
+  return <div ref={slot} data-solo-project={unframed} />;
 }
 
 const DROP = "project:";
@@ -1107,7 +1156,9 @@ export function ChatActionsMenu({
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLElement>();
   const restoreFocus = () => {
-    const row = document.querySelector(`[data-solo-menu-id="${id}"]`);
+    const row = document.querySelector(
+      `[data-solo-menu-id="${id}"]:not([inert] *)`,
+    );
     return (
       row?.querySelector<HTMLElement>("[data-solo-destination-id]") ??
       row?.querySelector<HTMLElement>("button") ??

@@ -47,6 +47,8 @@ export type {
   PluginInstallOutcome,
   PluginInstallSource,
   PluginInstaller,
+  PluginReleaseCandidate,
+  PluginReleaseComparison,
 } from "./installer";
 export type {
   SidebarRestriction,
@@ -201,6 +203,7 @@ export type {
   SoloWorkspaces,
   SoloWorkspaceSnapshot,
   SoloWorkspaceProps,
+  SoloChannelGroupProps,
   SoloRegionBinding,
   SoloRegionSnapshot,
   SoloRegionAction,

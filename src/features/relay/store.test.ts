@@ -525,6 +525,28 @@ it("refreshes one channel's roster with an exact read and merges it without drop
     test.store.dispose();
   }
 });
+it("stamps rosterAsOf only when a complete roster read commits", async () => {
+  let clock = 1_000;
+  const test = setup(2, () => ++clock);
+  try {
+    await discovered(test);
+    const complete = test.queries.list().rosterAsOf;
+    expect(complete).toBeDefined();
+    // An exact roster read commits the list again, but proves no absence.
+    const refreshing = test.queries.refreshRoster?.("a");
+    test
+      .next()
+      .respond([
+        roster(relay, "a", [viewer.pubkey, alice.pubkey], 1_700_000_001),
+      ]);
+    await expect(refreshing).resolves.toBe(true);
+    const exact = test.queries.list();
+    expect(exact.asOf).toBeGreaterThan(complete ?? Infinity);
+    expect(exact.rosterAsOf).toBe(complete);
+  } finally {
+    test.store.dispose();
+  }
+});
 it("reports no fresh roster evidence when an exact read omits the cached channel", async () => {
   const test = setup();
   try {

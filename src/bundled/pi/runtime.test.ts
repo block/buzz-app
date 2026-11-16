@@ -14,6 +14,8 @@ import type {
   StandaloneTurn,
 } from "../../features/agents/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
+import { eventDto } from "../../features/relay/events";
+import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import { deferred, fakeHost, type Handler } from "./pi-testing";
 import { type Config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
@@ -75,6 +77,7 @@ function setup(
   /** Channels that are the owner's own Solo chats; the owner is the viewer. */
   const solo = new Set<string>();
   const session = {
+    workflowAuthority: undefined as string | undefined,
     read: vi.fn(async () => [root]),
     agentMemories: {
       read: vi.fn(async () => ({
@@ -471,6 +474,30 @@ it("shows a conversation only the messages it was not shown, nor its own replies
   expect(text).toContain("Bob checked it");
   expect(text).not.toContain("Build is red");
   expect(text).not.toContain("Earlier from Pi");
+});
+
+it("gives the workflow reason for its owner's workflow mention that doesn't name it", async () => {
+  const { host, deliver, session } = setup();
+  const relay = keypair();
+  session.workflowAuthority = relay.pubkey;
+  const turn = deliver({
+    type: "mention",
+    event: eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Agent workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+        ],
+      }),
+    ),
+  });
+  await turn.run;
+  expect(turn.ignored).toHaveBeenCalledExactlyOnceWith("workflow");
+  expect(host.processes).toEqual([]);
 });
 
 it("ignores a mention from someone who is not the owner", async () => {

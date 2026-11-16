@@ -45,6 +45,7 @@ import {
   expect,
   it,
   type MockInstance,
+  onTestFinished,
   vi,
 } from "vitest";
 import {
@@ -2328,6 +2329,32 @@ it("shows no typing for a mention its runtime ignores", async () => {
   await settle();
   await vi.advanceTimersByTimeAsync(9_000);
   expect(await published(native, 20002)).toEqual([]);
+});
+
+it("keeps a runtime's refusal reason for its owner's decline note", async () => {
+  const { service, run, emit, activity } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  run.mockImplementationOnce(async ({ ignored }) => ignored?.("workflow"));
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() =>
+    expect(activity.reader.declined?.()).toEqual([
+      expect.objectContaining({
+        agent: bot,
+        channelId: channel,
+        refusal: "workflow",
+      }),
+    ]),
+  );
 });
 
 it("wakes on a reply in a thread it started only by a mention or a watch", async () => {
@@ -6592,6 +6619,126 @@ it("reads the list again on refresh and clears the error a failed read left", as
     ],
   });
   expect(service.snapshot().error).toBeUndefined();
+});
+
+it("rereads agent execution bindings only after one may have changed", async () => {
+  const storage = memoryStorage();
+  const get = vi.spyOn(storage, "get");
+  const page = new EventTarget();
+  vi.stubGlobal("addEventListener", page.addEventListener.bind(page));
+  vi.stubGlobal("removeEventListener", page.removeEventListener.bind(page));
+  onTestFinished(() => {
+    vi.unstubAllGlobals();
+  });
+  const { service } = await setup({ storage });
+  const agent = await service.create({ type: "example/echo", name: "Echo" });
+  const reads = () =>
+    get.mock.calls.filter(([key]) => key.startsWith("buzz.agent.execution.v1:"))
+      .length;
+  const stored = (key: string) =>
+    page.dispatchEvent(Object.assign(new Event("storage"), { key }));
+  const local = service.local();
+  const before = reads();
+  // Each name lookup asks again; nothing changed, so no binding is read.
+  for (let lookup = 0; lookup < 5; lookup++)
+    expect(service.local()).toBe(local);
+  stored("buzz.agent.other");
+  expect(service.local()).toBe(local);
+  expect(reads()).toBe(before);
+  // Another window saved this agent's binding: the next snapshot shows it.
+  storage.setItem(
+    `buzz.agent.execution.v1:${agent.key}`,
+    JSON.stringify({ provider: "example/remote" }),
+  );
+  stored(`buzz.agent.execution.v1:${agent.key}`);
+  expect(
+    service.local().agents.find((item) => item.pubkey === agent.pubkey)
+      ?.execution,
+  ).toBe("remote");
+});
+
+it("filters the agent list for hosted choices only when the list changes", async () => {
+  const { service } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const filter = vi.spyOn(Array.prototype, "filter");
+  onTestFinished(() => {
+    filter.mockRestore();
+  });
+  const agents = service.snapshot().agents;
+  const filtered = () =>
+    filter.mock.contexts.filter((list) => list === agents).length;
+  service.local();
+  const first = filtered();
+  // Each name lookup asks again; the same list is not filtered again.
+  for (let lookup = 0; lookup < 5; lookup++) service.local();
+  expect(filtered()).toBe(first);
+});
+
+it("classifies an agent as remote after an update overlaps its held binding save", async () => {
+  let entered = () => {};
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const saving = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const storage = fileStore(
+    new Map(),
+    async () => {},
+    async (key) => {
+      if (key.startsWith("buzz.agent.execution.v1:")) {
+        entered();
+        await held;
+      }
+      return null;
+    },
+  );
+  const { ctx, plugin, service } = await setup({ storage });
+  plugin.agents.register({
+    id: "native",
+    title: "Native",
+    execution: true,
+    retire: async () => {},
+    defaults: () => ({ config: {} }),
+    run: vi.fn(),
+  });
+  const adapter = ctx.extend({
+    pluginOwner: {
+      id: "internal",
+      revision: "one",
+      agentExecution: ["example/native"],
+    },
+  });
+  adapter.agents.registerExecution({
+    id: "remote",
+    harnesses: ["example/native"],
+    connect: vi.fn(),
+  });
+  const agent = await service.create({
+    type: "example/native",
+    name: "Dedicated",
+  });
+  const execution = () =>
+    service.local().agents.find((item) => item.pubkey === agent.pubkey)
+      ?.execution;
+  // What a subscriber, such as a Remote badge, last saw.
+  let seen = execution();
+  const off = service.subscribe(() => {
+    seen = execution();
+  });
+  onTestFinished(off);
+  expect(seen).toBeUndefined();
+  const binding = adapter.agents.bindExecution(agent.key, { id: "remote" });
+  await saving;
+  try {
+    // An update while the binding is saved.
+    await service.save(agent.pubkey, { attentionEnabled: true });
+  } finally {
+    release();
+  }
+  await binding;
+  expect(seen).toBe("remote");
 });
 
 it("keeps local selection evidence stable across unrelated agent attention changes", async () => {

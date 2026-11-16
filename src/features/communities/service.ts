@@ -235,6 +235,8 @@ export function createCommunities(
     tryAgain: () => current().tryAgain(),
     disconnect: () => current().disconnect(),
     clearCache: () => current().clearCache(),
+    selected: () =>
+      state.selected ? communityDestination(state.selected).url : undefined,
   };
   ctx.provide("relay", relay);
   const identity =

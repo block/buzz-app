@@ -29,7 +29,10 @@ import {
 } from "../../features/agent-harness/core-memory";
 import { readAuthorNames } from "../../features/agent-harness/author-names";
 import { readProject } from "../../features/agent-harness/project";
-import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
+import {
+  mentionAuthority,
+  workflowOf,
+} from "../../features/agents/owner-attestation";
 import { type AgentKey, pubkeyOf } from "../../features/agents/membership";
 import { sessionPrompts } from "../../features/agents/session-prompts";
 import { localStore, type AgentStore } from "../../features/agents/store";
@@ -545,15 +548,14 @@ export class PiRuntime {
     // it, and keeps its own destination for a failure recovered after a stop.
     const attention = wake?.type === "attention";
     // Pi runs commands as you; mentions need owner or delegated authority.
-    if (
-      trigger.type === "mention" &&
-      !(await fromOwner(
+    if (trigger.type === "mention") {
+      const authority = await mentionAuthority(
         trigger.event,
         agent.owner,
         workflowOf(this.reads(agent.key), agent.pubkey),
-      ))
-    )
-      return ignored?.();
+      );
+      if (authority !== "owner") return ignored?.(authority);
+    }
     signal.throwIfAborted();
     const entry = this.entry(agent, config(raw));
     entry.handle = agent;

@@ -18,11 +18,12 @@ import {
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
 
-import { fixture, owners, id, viewer, scope } from "./sidebar-testing";
+import { fixture, owners, id, viewer, scope, root } from "./sidebar-testing";
 import { federatedFixture } from "../../features/federated-identity/testing";
 import type { ChannelDetails } from "../../features/relay/channel-details-protocol";
 import { createSoloRegionFixture } from "../../features/channel-navigation/solo-navigation-testing";
 import { PrimarySidebar } from "./PrimarySidebar";
+import type { OpenTarget } from "../../features/navigation/targets";
 import { NewMenu } from "./NewMenu";
 import type { SidebarPreferences } from "../../features/relay/sidebar-preferences";
 import type {
@@ -457,6 +458,61 @@ it.each(["Solo", "All"])(
     expect(teamRow).toHaveAttribute("aria-current", "page");
   },
 );
+
+it("preserves a source opening only for itself, through a later render", async () => {
+  const f = fixture(true);
+  f.roster((channels) => [
+    ...channels,
+    {
+      id: "source",
+      name: "Source channel",
+      channelType: "stream",
+      cached: true,
+    },
+  ]);
+  await waitFor(() =>
+    expect(document.querySelector('[data-channel-id="source"]')).not.toBeNull(),
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("tab", { name: "Solo" }));
+  const target = conversationTarget(scope, "source");
+  const thread: OpenTarget = {
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: "https://relay.test" },
+    channelId: "source",
+    messageId: root,
+    threadRootId: root,
+  };
+  const teamRow = () => document.querySelector('[data-channel-id="source"]');
+  await act(() => f.open(target, { sidebar: "preserve" }));
+  // Something unrelated rendering the sidebar keeps the preserved opening.
+  f.connection({ status: "ready" });
+  expect(teamRow()).not.toHaveAttribute("aria-current");
+  expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  // A later open in it, here a thread, uses the normal destination rules.
+  await act(() => f.open(thread));
+  expect(teamRow()).toHaveAttribute("aria-current", "page");
+  expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  // Moving within the conversation, as Back and Forward over the thread do,
+  // keeps a filter chosen since: it is not a new destination.
+  await user.click(screen.getByRole("tab", { name: "Solo" }));
+  f.navigateWithin(target);
+  f.navigateWithin(thread);
+  expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  // And a preserved opening from inside that thread applies again.
+  await act(() => f.open(target, { sidebar: "preserve" }));
+  expect(teamRow()).not.toHaveAttribute("aria-current");
+});
 
 it.each([
   ["New workspace", "New workspace", "Cancel"],

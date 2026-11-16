@@ -214,7 +214,10 @@ function fixture(
   const navigator = {
     open: vi.fn().mockResolvedValue({ status: "opened" }),
     subscribe: () => () => {},
-    snapshot: () => ({ attempt: { id: "visit" } }),
+    snapshot: () => ({
+      entry: { target: { version: 1, kind: "home" } },
+      attempt: { id: "visit" },
+    }),
   } as unknown as Navigation;
   const view = (
     id: string,
@@ -1718,6 +1721,31 @@ it("clears only the removed section's collapsed intent after confirmation, never
     preferences.dispose();
   }
 });
+it("keeps sidebar rows still when only navigation state changes", async () => {
+  const h = fixture();
+  const unread = h.session.unread;
+  const reads: string[] = [];
+  h.session.unread = {
+    ...unread,
+    snapshot(target) {
+      if (target.kind === "channel") reads.push(target.channelId);
+      return unread.snapshot(target);
+    },
+  };
+  let navigation: ReturnType<typeof useChannelNavigation>;
+  function Probe() {
+    navigation = useChannelNavigation();
+    return null;
+  }
+  render(h.view("beta", <Probe />));
+  await screen.findByRole("button", { name: "gamma" });
+  reads.length = 0;
+  act(() => navigation?.prepareDm(["c".repeat(64)]));
+  expect(navigation?.preparingDm).toBeDefined();
+  // A rendered row reads its unread state; unchanged rows must not rerender.
+  expect(reads).toEqual([]);
+});
+
 it("restores lifecycle focus to the active row while an inert copy is exiting", async () => {
   const h = fixture();
   const channel = h.list.channels[1];

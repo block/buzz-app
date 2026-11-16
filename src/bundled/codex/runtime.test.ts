@@ -2459,7 +2459,7 @@ it("serializes owner follow-ups and routes tool replies to the latest accepted r
     tags: expect.arrayContaining([["e", "c".repeat(64), "", "reply"]]),
   });
 });
-it("retries a timed-out history read once and keeps what the retry finds", async () => {
+it("retries a failed history read and keeps what the retry finds", async () => {
   const f = fixture();
   const first = f.delivery("CURRENT_REQUEST");
   if (!("event" in first.trigger)) throw new Error("Expected a mention");
@@ -2484,10 +2484,18 @@ it("starts a turn without history when the history read keeps timing out", async
   // The native transport rejects with its own message, not a ReadError.
   f.read
     .mockRejectedValueOnce(new ReadError("unavailable", "Relay read timed out"))
-    .mockRejectedValueOnce("Relay request could not be confirmed");
-  await f.runtime.run(f.delivery("FIRST_REQUEST"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(f.read).toHaveBeenCalledTimes(2);
+    .mockRejectedValue("Relay request could not be confirmed");
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await f.runtime.run(f.delivery("FIRST_REQUEST"));
+    // Past every retry delay.
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  } finally {
+    vi.useRealTimers();
+  }
+  // The shared read retry's initial read and three retries.
+  expect(f.read).toHaveBeenCalledTimes(4);
   expect(JSON.stringify(f.starts()[0]?.params)).toContain("FIRST_REQUEST");
   f.complete();
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
@@ -2497,15 +2505,23 @@ it("accepts a steer without history when the history read keeps timing out", asy
   const f = fixture();
   await f.runtime.run(f.delivery("FIRST_REQUEST"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  const timeout = new ReadError("unavailable", "Relay read timed out");
-  f.read.mockRejectedValueOnce(timeout).mockRejectedValueOnce(timeout);
-  await f.runtime.run(f.delivery("STEER_REQUEST"));
-  await vi.waitFor(() =>
-    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
-      1,
-    ),
+  f.read.mockRejectedValue(
+    new ReadError("unavailable", "Relay read timed out"),
   );
-  expect(f.read).toHaveBeenCalledTimes(3);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await f.runtime.run(f.delivery("STEER_REQUEST"));
+    // Past every retry delay.
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.waitFor(() =>
+      expect(
+        f.sent.filter((wire) => wire.method === "turn/steer"),
+      ).toHaveLength(1),
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+  expect(f.read).toHaveBeenCalledTimes(5);
   expect(
     JSON.stringify(f.sent.find((wire) => wire.method === "turn/steer")?.params),
   ).toContain("STEER_REQUEST");

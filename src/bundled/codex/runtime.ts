@@ -45,7 +45,7 @@ import type {
 } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { CREDENTIAL_ENV } from "../../features/host/service";
-import { isRetryableRead } from "../../features/relay/read-retry";
+import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
@@ -2301,18 +2301,15 @@ export class CodexRuntime {
       );
     };
     // A slow relay costs the turn its earlier messages, not the turn itself.
-    for (let retried = false; ; retried = true)
-      try {
-        return await read();
-      } catch (error) {
-        if (signal.aborted || !isRetryableRead(error)) throw error;
-        if (retried) {
-          console.warn("Codex could not read the conversation", error);
-          // Without history, the turn still names who asked.
-          await readAuthorNames(reads, [request.event]);
-          return "";
-        }
-      }
+    try {
+      return await retryRead(read, signal);
+    } catch (error) {
+      if (signal.aborted || !isRetryableRead(error)) throw error;
+      console.warn("Codex could not read the conversation", error);
+      // Without history, the turn still names who asked.
+      await readAuthorNames(reads, [request.event]);
+      return "";
+    }
   }
   // Tags the owner even when a sibling asked: tagging the sibling would wake
   // it, and two agents failing alike would wake each other without end.

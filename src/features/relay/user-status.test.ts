@@ -266,6 +266,56 @@ it("reloads an author unmounted before its initial read completed", async () => 
   expect(owner.queries.snapshot().get(bob.pubkey)?.text).toBe("Remote");
 });
 
+it("keeps an unmounted author current from live traffic and reads again only after a reconnect", async () => {
+  const read = vi.fn<RelayReader["read"]>().mockResolvedValue([]);
+  const owner = createUserStatuses({ read });
+  owners.push(owner);
+  const later = signed(bob, {
+    kind: 30315,
+    created_at: now,
+    content: "Later",
+    tags: [["d", "general"]],
+  });
+  let unwatch = owner.queries.watch([bob.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  unwatch();
+  // Bob had no status when read; one set while no row shows him still lands.
+  owner.accept([later]);
+  unwatch = owner.queries.watch([bob.pubkey]);
+  expect(owner.queries.snapshot().get(bob.pubkey)?.text).toBe("Later");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledOnce();
+  unwatch();
+  owner.reconnect();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledOnce();
+  owner.queries.watch([bob.pubkey]);
+  expect(owner.queries.snapshot().get(bob.pubkey)?.text).toBe("Later");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(read.mock.calls[1]?.[0][0]?.authors).toEqual([bob.pubkey]);
+});
+
+it("forgets the longest-unshown authors beyond 512", async () => {
+  const read = vi.fn<RelayReader["read"]>().mockResolvedValue([]);
+  const owner = createUserStatuses({ read });
+  owners.push(owner);
+  const ids = Array.from({ length: 513 }, (_, i) =>
+    i.toString(16).padStart(64, "0"),
+  );
+  const unwatches = ids.map((id) => owner.queries.watch([id]));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledTimes(6);
+  for (const unwatch of unwatches) unwatch();
+  owner.queries.watch([ids[1] ?? ""]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledTimes(6);
+  owner.queries.watch([ids[0] ?? ""]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledTimes(7);
+  expect(read.mock.calls[6]?.[0][0]?.authors).toEqual([ids[0]]);
+});
+
 it("recovers a mounted status after a transient read failure without hot-looping", async () => {
   const read = vi
     .fn<RelayReader["read"]>()

@@ -14,7 +14,7 @@ import { createRelaySession } from "../relay/session";
 import { flush, keypair, scriptedTransport, signed } from "../relay/testing";
 import type { UserStatus } from "../relay/user-status";
 import { HELPFUL_HINT_REST_MS } from "../../shared/design-system/ui/hoverIntent";
-import { StatusDisplay } from "./StatusDisplay";
+import { StatusDisplay, UserStatusDisplay } from "./StatusDisplay";
 
 // The caption ticker measures its slot.
 vi.stubGlobal(
@@ -219,4 +219,53 @@ it("reserves an unresolved code's space while loading, then shows 💬 when comp
   const tip = await tooltip(h.compact);
   expect(within(tip).getByText(":wasp:")).toBeVisible();
   expect(within(tip).queryByText("💬")).toBeNull();
+});
+
+it("shows a remounted byline's status at once, without reading it again", async () => {
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const owner = createRelaySession(wire.transport, {
+    outboxStorage: { load: () => [], save() {} },
+  });
+  owners.push(owner);
+  const { session } = owner;
+  const reads = () =>
+    wire.pending.filter(({ filters }) =>
+      filters.some(
+        (filter) =>
+          filter.kinds?.includes(30315) &&
+          filter.authors?.includes(other.pubkey),
+      ),
+    );
+  const byline = () =>
+    render(
+      <UserStatusDisplay
+        session={session}
+        userId={other.pubkey}
+        compact
+        focusable={false}
+      />,
+    );
+  const first = byline();
+  await waitFor(() => expect(reads()).toHaveLength(1));
+  await act(async () => {
+    reads()[0]?.respond([
+      signed(other, {
+        kind: 30315,
+        content: "Buzzin'",
+        tags: [
+          ["d", "general"],
+          ["emoji", "🐝"],
+        ],
+      }),
+    ]);
+    await flush();
+  });
+  expect(screen.getByRole("img", { name: "🐝 Buzzin'" })).toBeInTheDocument();
+  // A virtualized timeline unmounts a row scrolled far away and mounts it
+  // again on return; no other row shows this author meanwhile.
+  first.unmount();
+  byline();
+  expect(screen.getByRole("img", { name: "🐝 Buzzin'" })).toBeInTheDocument();
+  await act(flush);
+  expect(reads()).toHaveLength(1);
 });

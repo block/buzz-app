@@ -71,9 +71,27 @@ export function apply(ctx) {
 | `decisions` | Typed judgments about text | `await ctx.decisions.decide({ state, questions, timeoutMs?, community? })`. `questions` maps 1 to 32 answer names to `{ type: "yes_no", instructions }`, `{ type: "choice", instructions, options }` (value -> when to pick it) or `{ type: "score", instructions, levels }` (lowest first). `timeoutMs` is in milliseconds (1000-30000). `community` is the relay URL the text came from; Builderlab fails without it (in an agent tool: `ctx.agents.snapshot().running.find((a) => a.key === client.key)?.relay`; in a channel panel: `channelContext.relayUrl`). Resolves `{ outcome: "answered", model, answers }` (for example `answers.urgent.probability`) or `{ outcome: "failed", reason }`; never rejects. By default Builderlab or TypeSafe answers, with Jev. |
 | `host` | Commands, HTTPS, processes, files | Requires `manifest.host` grants; see below. |
 | `subjectLift` (optional) | Lift a message image's subject | `const lift = ctx.reflect.get("subjectLift")`. `lift?.supports(source)`, then `await lift.lift(source, signal?)` resolves a transparent PNG `File` ready for `session.emoji.upload`, or rejects with a reason. `source` is `session.media(attachment.url)`. macOS 14+ only; see the plugin architecture's Subject lift contract. |
-| `pluginInstaller` (optional) | Ask the owner to install another plugin, check installation status, or access retained update reviews | `requestInstall(...)` resolves `"installed" \| "updated" \| "cancelled" \| "unavailable"` and never installs silently. Status methods are described below. `updates` is an optional, host-retained capability; see [Plugin architecture](plugin-architecture.md#plugin-installer). |
+| `pluginInstaller` (optional) | Ask the owner to install another plugin, compare a listed release, check installation status, or access retained update reviews | `requestInstall(...)` resolves `"installed" \| "updated" \| "cancelled" \| "unavailable"` and never installs silently. Status and release-comparison methods are described below. `updates` is an optional, host-retained capability; see [Plugin architecture](plugin-architecture.md#plugin-installer). |
 
-The installation-status methods may be missing on older hosts even when `pluginInstaller` is available, so feature-check each method before calling it. `getInstallationStatus` returns `"installed"` when the manifest ID is in the ready catalog, `"absent"` when it is not, and `"unavailable"` while the catalog is not ready. Installed status is independent of whether the plugin is enabled, contributes UI, or came from a particular install source. A subscription reports later status changes; subscribe first, then read the current status to avoid missing a change between the read and subscription. Own the subscription with `ctx.effect`:
+The installation-status and release-comparison methods may be missing on older
+hosts even when `pluginInstaller` is available, so feature-check each method
+before calling it. `getInstallationStatus` returns `"installed"` when the
+manifest ID is in the ready catalog, `"absent"` when it is not, and
+`"unavailable"` while the catalog is not ready. Installed status is independent
+of whether the plugin is enabled, contributes UI, or came from a particular
+install source.
+
+The optional `compareInstallationRelease` accepts one immutable Git or URL
+source plus its native release revision and publisher; it returns only
+`"current"`, `"different"`, `"review"` or `"unknown"` for caller-supplied
+values, not raw installed metadata. `"different"` means the release does not match,
+not that it is newer; use it as an update only when your catalog independently proves release order
+and authority. See the [full comparison contract](plugin-architecture.md#plugin-installer)
+for source, publisher and unknown-state rules. The status subscription is also a
+release/source identity invalidation signal: the callback may repeat
+`"installed"`, so re-read the comparison. Subscribe first, then read the current
+status to avoid missing a change between the read and subscription. Own the
+subscription with `ctx.effect`:
 
 ```js
 const installer = ctx.reflect.get("pluginInstaller");
@@ -88,7 +106,8 @@ ctx.effect(() => {
   const unsubscribe = installer.subscribeInstallationStatus(
     "example.hello",
     (status) => {
-      // Respond to a status change.
+      // Status may repeat "installed" when its release/source identity changes.
+      // Re-read current status and any release comparison.
     },
   );
   if (typeof installer.getInstallationStatus === "function") {

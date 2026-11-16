@@ -210,7 +210,9 @@
   .buzz-dialog-content {
     padding-block: var(--dialog-padding);
   }
-  .buzz-dialog-content[data-header-gap="compact"] {
+  /* Dialog uses one heading-to-body gap; AlertDialog retains its body inset.
+     Keep the compact attribute as a compatible alias for existing callers. */
+  .buzz-dialog-content[data-header-gap] {
     padding-block-start: var(--space-3);
   }
   .buzz-dialog-content[data-footer-gap="compact"] {
@@ -761,10 +763,12 @@ html[data-keyboard-navigation]
       padding-bottom: var(--space-6);
     }
 
-    > .buzz-dialog-header:has(
-        + .buzz-dialog-content[data-header-gap="compact"]
-      ) {
+    > .buzz-dialog-header:has(+ .buzz-dialog-content[data-header-gap]) {
       padding-bottom: 0;
+
+      &[data-chrome-spacing="padded"] {
+        padding-bottom: var(--space-3);
+      }
     }
 
     > .buzz-dialog-actions {

@@ -58,7 +58,6 @@ export function RenameSidebarSection({
       onOpenChange={(open) => !open && close()}
       preventClose={pending}
       title="Edit section"
-      headerGap="compact"
       finalFocus={finalFocus}
       actions={
         <>

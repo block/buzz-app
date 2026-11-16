@@ -120,6 +120,7 @@ import {
   pastedMentionRecipient,
 } from "../messages/mention-admission";
 import type { ComposerSession } from "../messages/composer-session";
+import { setRuntimeRecommendation } from "./recommended";
 
 /** The tag that the echo type's default watch matches. */
 const DEPLOY = ["t", "deploy"];
@@ -230,6 +231,8 @@ async function setup({
   deviceSettings = undefined as DeviceSettings | undefined,
   /** The echo type's plugin revision: "bundled" for a bundled harness. */
   revision = "one",
+  /** The example type's id, "echo" unless a test needs a real harness's. */
+  typeId = "echo",
   conversationFolders = undefined as true | undefined,
   sessions = undefined as AgentType<Config>["sessions"],
 } = {}) {
@@ -281,7 +284,7 @@ async function setup({
   const run =
     vi.fn<(delivery: Delivery<Config>) => void | Promise<void>>(answer);
   const type: AgentType<Config> = {
-    id: "echo",
+    id: typeId,
     title: "Echo",
     timeoutMs,
     adopt: (carry, saved) => ({ reply: carry.instructions ?? saved.reply }),
@@ -2974,6 +2977,44 @@ it("passes the model and effort its owner asked for, and no other", async () => 
     { model: "deep", effort: undefined },
     { model: undefined, effort: "low" },
   ]);
+});
+
+it("ignores the model and effort asked of an agent on Automatic", async () => {
+  // A synthetic recommendation for the example type.
+  setRuntimeRecommendation({
+    candidates: [
+      { harness: "codex", model: "deep", effort: "max", label: "Deep" },
+    ],
+  });
+  try {
+    const { service, run, emit } = await setup({ typeId: "codex" });
+    await service.create({
+      type: "example/codex",
+      name: "Echo",
+      config: { preset: "recommended" },
+    });
+    // As a Solo chat's pick saved before the agent switched to Automatic.
+    emit({
+      events: [
+        event("picked", {
+          pubkey: viewer,
+          tags: [
+            ["h", channel],
+            ["p", bot],
+            ["model", bot, "deep"],
+            ["effort", bot, "max"],
+          ],
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    const [delivery] = run.mock.calls[0] ?? [];
+    expect(delivery?.config).toMatchObject({ preset: "recommended" });
+    expect(delivery?.model).toBeUndefined();
+    expect(delivery?.effort).toBeUndefined();
+  } finally {
+    setRuntimeRecommendation(undefined);
+  }
 });
 
 it("ignores session tags even for a type with immediate session controls", async () => {
@@ -16733,37 +16774,77 @@ describe("full external agent access", () => {
     expect(readFile.mock.calls[0]?.[2].aborted).toBe(true);
   });
 
-  it("hands off as the app, never as the agent's own conversation or a watch", async () => {
-    const root = "e".repeat(64);
-    const f = await fixture();
-    f.native.query.mockImplementation(async (_member, filters) => {
-      const [filter] = filters as { kinds?: number[]; ids?: string[] }[];
-      if (filter?.kinds?.includes(39000))
-        return [event("meta", { kind: 39000, tags: [["d", channel]] })];
-      return filter?.ids?.includes(root) ? [event(root)] : [];
-    });
-    try {
-      expect(
-        await f.call("self_handoff", { channel, thread: root, text: "Look" }),
-      ).toHaveProperty(
-        "result.content.0.text",
-        `Handed off to thread ${root}.`,
-      );
-      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
-      const { trigger } = f.run.mock.calls[0]?.[0] ?? {};
-      expect(trigger).toMatchObject({
-        type: "plugin",
-        from: { external: true },
-        channel,
-        root,
-        text: "Look",
+  it.each([false, true])(
+    "hands off as the app without replaying self-posts (busy: %s)",
+    async (busy) => {
+      const root = "e".repeat(64);
+      const f = await fixture();
+      const active = runnerGate();
+      f.native.query.mockImplementation(async (_member, filters) => {
+        const [filter] = filters as { kinds?: number[]; ids?: string[] }[];
+        if (filter?.kinds?.includes(39000))
+          return [event("meta", { kind: 39000, tags: [["d", channel]] })];
+        return filter?.ids?.includes(root) ? [event(root)] : [];
       });
-      expect(trigger).not.toHaveProperty("plugin");
-      expect(trigger).not.toHaveProperty("from.channel");
-    } finally {
-      await f.cleanup();
-    }
-  });
+      try {
+        if (busy) {
+          f.run.mockImplementationOnce(async () => active.promise);
+          f.emit({
+            events: [
+              event("active", {
+                tags: [
+                  ["h", channel],
+                  ["p", bot],
+                ],
+              }),
+            ],
+            channelId: channel,
+          });
+          await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+        }
+        const own = event("own-correction", {
+          pubkey: bot,
+          tags: [
+            ["h", channel],
+            ["p", bot],
+            ["e", root, "", "reply"],
+          ],
+        });
+        f.emit({ events: [own, own], channelId: channel });
+        await settle();
+        expect(f.run).toHaveBeenCalledTimes(busy ? 1 : 0);
+        expect(
+          await f.call("self_handoff", { channel, thread: root, text: "Look" }),
+        ).toHaveProperty(
+          "result.content.0.text",
+          `Queued self-handoff to ${channel}, thread ${root}. No message was posted. Execution has not been confirmed.`,
+        );
+        if (busy) {
+          await settle();
+          expect(f.run).toHaveBeenCalledTimes(1);
+        }
+        active.resolve();
+        const count = busy ? 2 : 1;
+        await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(count));
+        const { trigger } = f.run.mock.calls[count - 1]?.[0] ?? {};
+        expect(trigger).toMatchObject({
+          type: "plugin",
+          from: { external: true },
+          channel,
+          root,
+          text: "Look",
+        });
+        expect(trigger).not.toHaveProperty("plugin");
+        expect(trigger).not.toHaveProperty("from.channel");
+        f.emit({ events: [own], channelId: channel });
+        await settle();
+        expect(f.run).toHaveBeenCalledTimes(count);
+      } finally {
+        active.resolve();
+        await f.cleanup();
+      }
+    },
+  );
 
   it("grants an older narrow approval nothing until the owner approves full access", async () => {
     const f = await fixture(["read", "post", "create"]);

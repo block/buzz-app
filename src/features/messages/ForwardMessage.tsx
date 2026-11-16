@@ -460,7 +460,6 @@ function ForwardMessageDialog({
         open={open}
         title="Forward message"
         description="Send this message to a person, with an optional note."
-        headerGap="compact"
         footerGap="compact"
         preventClose={pending}
         dismissOnOutsideClick={false}

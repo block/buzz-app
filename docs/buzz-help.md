@@ -1175,7 +1175,8 @@ available rather than silently discarding it.
   shows only turns captured while Buzz has been open. Signed in to Builderlab,
   the tab also lists the agent's stored conversations above it: the one it was
   opened from, then recent ones. **View transcript** opens a conversation's
-  latest 50 turns, with a link to its thread, and keeps a running turn current.
+  latest 50 turns, with a link to its thread, and refreshes while the live
+  feed shows its turn running.
 - Plugin requests show local work status even when they have no message.
   A failed request offers Retry. View opens its thread or conversation.
 - **Online badge on Builderlab agents**: a Builderlab-hosted agent's avatar

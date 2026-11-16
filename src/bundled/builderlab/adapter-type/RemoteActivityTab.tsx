@@ -21,9 +21,10 @@ import { type ListedSessions, StoredActivity } from "./StoredActivity";
 
 const EMPTY = { status: "loaded", sessions: [], more: false } as const;
 
-/** The agent's stored sessions, read once per agent and account. `shown`
- * while the owner can read them and Builderlab stores them; known before the
- * list arrives, so the tab's layout and its transcript request don't move. */
+/** The agent's stored sessions, read each time the tab opens for an agent
+ * and account. `shown` while the owner can read them and Builderlab stores
+ * them; known before the list arrives, so the tab's layout and its transcript
+ * request don't move. */
 function useListedSessions(
   client: AgentClient,
   session: BuilderlabSession,
@@ -61,6 +62,8 @@ function useListedSessions(
         );
       return EMPTY;
     });
+    // A read aborted before the list renders has no other reader.
+    sessions.catch(() => {});
     setListed({ key, sessions });
     return () => abort.abort();
   }, [key]);
@@ -88,9 +91,12 @@ export function createRemoteActivityTab(
       agent.pubkey,
     );
     const reads = ownerReads(relay, agent.pubkey);
+    // Without stored sessions the tab is the live feed alone, as before. It
+    // mounts afresh then, so it answers a transcript request still pending.
+    if (!shown) return <Live {...props} />;
     return (
       <div className={activityStyles.activity}>
-        {shown && sessions && (
+        {sessions && (
           <StoredActivity
             agent={agent}
             conversation={conversation}
@@ -109,18 +115,17 @@ export function createRemoteActivityTab(
           />
         )}
         <section className={activityStyles.section}>
-          {shown && <InlineHeader title="Live activity" />}
+          <InlineHeader title="Live activity" />
           <Live
             {...props}
             // The stored transcript answers the request; the live feed only
             // returns to this conversation for it.
-            {...(shown &&
-              initialTranscript && {
-                initialTranscript: {
-                  opening: initialTranscript.opening,
-                  done: () => {},
-                },
-              })}
+            {...(initialTranscript && {
+              initialTranscript: {
+                opening: initialTranscript.opening,
+                done: () => {},
+              },
+            })}
           />
         </section>
       </div>

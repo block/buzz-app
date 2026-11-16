@@ -133,14 +133,16 @@ export function StoredActivity({
           : turn.channelId === session.channelId &&
             (turn.threadRootId || undefined) === session.root),
     );
-  const recent = rows
+  const others = rows
     .filter((item) => item.key !== here?.key)
     .sort(
       (a, b) =>
         Number(b.channelId === conversation?.channelId) -
         Number(a.channelId === conversation?.channelId),
-    )
-    .slice(0, CONVERSATION_LIMIT);
+    );
+  const recent = others.slice(0, CONVERSATION_LIMIT);
+  const older =
+    settled?.value?.more === true || others.length > CONVERSATION_LIMIT;
   const conversationLink = (item: Row) =>
     openConversation && (
       // An inline link wraps in a narrow pane at large text sizes.
@@ -227,7 +229,7 @@ export function StoredActivity({
               No other conversations stored yet.
             </p>
           )}
-          {settled?.value?.more && (
+          {older && (
             <p className="m-0 text-body-sm text-subtle">
               Older conversations aren't shown.
             </p>

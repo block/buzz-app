@@ -132,3 +132,18 @@ it("reads a transcript only when it opens, and links to its conversation", async
   );
   expect(openConversation).toHaveBeenCalledWith("alpha", root);
 });
+
+it("says older conversations aren't shown when the list is cut", async () => {
+  setup({
+    listed: Array.from({ length: 31 }, (_, index) => ({
+      sessionId: `s${index}`,
+      channelId: `c${index}`,
+      updatedAt: index,
+    })),
+  });
+  const recent = await section("Recent conversations");
+  expect(
+    recent.getAllByRole("button", { name: /View transcript/ }),
+  ).toHaveLength(30);
+  expect(recent.getByText("Older conversations aren't shown.")).toBeVisible();
+});

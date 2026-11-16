@@ -4,6 +4,7 @@ import {
   hoverMessage,
 } from "./message-actions.mjs";
 import { open, settle, virtuaIdle, wheel } from "./timeline.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 test.use({
   productionBroker: true,
@@ -116,11 +117,7 @@ for (const own of [true, false]) {
         await row.getByText("Hi", { exact: true }).hover();
         await above(actions);
         await expect(bubble).not.toHaveCSS("background-color", restingFill);
-        await actions.evaluate((bar) =>
-          Promise.all(
-            bar.getAnimations().map((animation) => animation.finished),
-          ),
-        );
+        await animationsSettled(actions);
         // A slow diagonal from a short bubble must reach both toolbar ends.
         for (const label of ["Add reaction", "More message actions"]) {
           await hoverMessage(row);
@@ -243,9 +240,7 @@ test("actions clear a short received message's name and stay reachable beside it
   await settle(page);
   await hoverMessage(row);
   await shown(actions);
-  await actions.evaluate((bar) =>
-    Promise.all(bar.getAnimations().map((animation) => animation.finished)),
-  );
+  await animationsSettled(actions);
   const [nameBox, bar] = await Promise.all([
     name.boundingBox(),
     actions.boundingBox(),
@@ -314,9 +309,7 @@ for (const own of [false, true]) {
     await attachment.hover();
     await shown(actions);
     await above(actions);
-    await actions.evaluate((bar) =>
-      Promise.all(bar.getAnimations().map((animation) => animation.finished)),
-    );
+    await animationsSettled(actions);
     const target = actions.getByRole("button", {
       name: "More message actions",
     });
@@ -363,9 +356,7 @@ for (const own of [false, true]) {
     await attachment.hover();
     await shown(actions);
     await above(actions);
-    await actions.evaluate((bar) =>
-      Promise.all(bar.getAnimations().map((animation) => animation.finished)),
-    );
+    await animationsSettled(actions);
     const reference = row.getByRole("link", { name: "Caption reference" });
     // The hovered media's toolbar must not take hits from the caption above it.
     expect(
@@ -553,9 +544,7 @@ test("thread actions and growing reactions paint beyond the scroller without mov
     .toEqual({ anchored: true, crosses: true, hit: true });
   expect((await row.boundingBox()).height).toBe(restingHeight);
   // Wait for the entrance transform before choosing a pointer hit coordinate.
-  await actions.evaluate((bar) =>
-    Promise.all(bar.getAnimations().map((animation) => animation.finished)),
-  );
+  await animationsSettled(actions);
   const toolbarBounds = await actions.boundingBox();
   // A real padding click switches to pointer input without invoking an action.
   const padding = {
@@ -589,6 +578,82 @@ test("thread actions and growing reactions paint beyond the scroller without mov
   await expect(actions).toHaveCSS("opacity", "0");
   // Closed bars stay laid out in every row; only open ones carry the glass.
   await expect(actions).toHaveCSS("backdrop-filter", "none");
+});
+
+// Browser-only: the sticky thread header, native top-layer toolbar and emoji
+// picker share viewport geometry that a DOM test cannot exercise. Before this
+// regression, the first thread message hid its actions above that header.
+test("thread-root actions nest from the message top edge", async ({
+  page,
+  app,
+}) => {
+  const root = app.histories
+    .get("primary/alpha")
+    .find((event) => event.content === "Thread root 0");
+  app.append(
+    "primary",
+    "alpha",
+    `First visible reply\n\n${"More reply content.\n\n".repeat(30)}`,
+    false,
+    false,
+    root.id,
+  );
+  await open(page, app);
+  await page
+    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ })
+    .click();
+  const panel = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const scroller = panel.getByRole("region", { name: "Thread messages" });
+  const row = panel.locator(`[data-message-id="${root.id}"]`);
+  const actions = actionsFor(row);
+  await expect(row).toBeVisible();
+  await settle(page, scroller);
+  await hoverMessage(row);
+  await shown(actions);
+  await expect
+    .poll(() =>
+      actions.evaluate((bar) => {
+        const row = bar.closest("[data-layout]");
+        const toolbar = bar.getBoundingClientRect();
+        const viewport = bar
+          .closest("[data-message-scroller]")
+          .getBoundingClientRect();
+        return {
+          nested:
+            Math.abs(toolbar.top - row.getBoundingClientRect().top - 8) < 1,
+          visible:
+            toolbar.top >= viewport.top && toolbar.bottom <= viewport.bottom,
+        };
+      }),
+    )
+    .toEqual({ nested: true, visible: true });
+  await actions.getByRole("button", { name: "Add reaction" }).click();
+  await expect(page.locator("em-emoji-picker")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await actions.getByRole("button").first().focus();
+  await page.mouse.move(0, 0);
+  await row.evaluate((node) => {
+    const scroller = node.closest("[data-message-scroller]");
+    scroller.scrollTop +=
+      node.getBoundingClientRect().bottom -
+      scroller.getBoundingClientRect().top +
+      8;
+  });
+  await settle(page, scroller);
+  await expect
+    .poll(() =>
+      row.evaluate(
+        (node) =>
+          node.getBoundingClientRect().bottom <=
+          node.closest("[data-message-scroller]").getBoundingClientRect().top,
+      ),
+    )
+    .toBe(true);
+  await hidden(actions);
 });
 
 test("compact timeline actions slide under the top edge, track scrolling and preserve keyboard order", async ({
@@ -1055,4 +1120,89 @@ test("long bubbles expand to 32px before the opposite avatar", async ({
       path: test.info().outputPath(`message-width-${width}.png`),
     });
   }
+});
+
+// Browser-only: row-wide hit testing, top-layer placement, and avatar alignment
+// need real layout. The existing cases above retain Default's content-only hover.
+test("Compact reveals actions from row whitespace and pins them to the trailing edge", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-message-density.v1", "compact"),
+  );
+  await open(page, app);
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-message-density",
+    "compact",
+  );
+  app.append("primary", "alpha", "Separate author", true, false);
+  const event = app.append("primary", "alpha", "One line", true, true);
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${event.id}"]`,
+  );
+  await expect(row).toBeVisible();
+  await settle(page);
+  // The primary byline is stable metadata; only continuation timestamps wait
+  // for hover in Compact.
+  await expect(row.locator("[class*='byline'] time")).toHaveCSS("opacity", "1");
+  const whitespace = await row.evaluate((node) => {
+    const box = node.querySelector("[data-layout]").getBoundingClientRect();
+    const text = node
+      .querySelector("[data-message-action-anchor] p")
+      .getBoundingClientRect();
+    return { x: box.right - 2, y: text.top + text.height / 2 };
+  });
+  await page.mouse.move(whitespace.x, whitespace.y);
+  const actions = actionsFor(row);
+  await shown(actions);
+  await expect
+    .poll(() =>
+      row.evaluate((node) => {
+        const box = node.querySelector("[data-layout]").getBoundingClientRect();
+        const scroller = node
+          .closest("[data-message-scroller]")
+          .getBoundingClientRect();
+        const bar = node
+          .querySelector("[data-message-actions]")
+          .getBoundingClientRect();
+        return bar.right >= box.right - 1 && bar.right <= scroller.right + 1;
+      }),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      row.evaluate((node) => {
+        const message = node.querySelector("[data-layout]");
+        const fill = getComputedStyle(message, "::before");
+        const avatar = node
+          .querySelector('[class*="messageAvatar"]')
+          .getBoundingClientRect();
+        const byline = node
+          .querySelector('[class*="byline"]')
+          .getBoundingClientRect();
+        const text = node
+          .querySelector("[data-message-action-anchor] p")
+          .getBoundingClientRect();
+        return (
+          fill.content !== "none" &&
+          fill.backgroundColor !== "rgba(0, 0, 0, 0)" &&
+          Math.abs(
+            avatar.top + avatar.height / 2 - (byline.top + text.bottom) / 2,
+          ) < 1
+        );
+      }),
+    )
+    .toBe(true);
+  const more = row.getByRole("button", { name: "More message actions" });
+  await more.click();
+  await expect(
+    page.getByRole("menuitem", { name: "Copy message", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(more).toBeFocused();
+  // Escape retains keyboard access; pointer dismissal releases that focus.
+  await page.mouse.click(0, 0);
+  await hidden(actions);
 });

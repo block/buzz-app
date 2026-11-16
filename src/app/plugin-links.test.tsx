@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
 import type { PageProps } from "../features/pages/service";
@@ -62,7 +70,7 @@ vi.mock("../bundled", () => ({
     {
       manifest: { id: "test.plain", name: "Plain", apiVersion: 1 },
       module: {
-        inject: ["pages"],
+        inject: ["pages", "settingsCards"],
         apply(ctx: Context) {
           ctx.pages.register({
             id: "first",
@@ -73,6 +81,12 @@ vi.mock("../bundled", () => ({
             id: "second",
             title: "Second",
             component: Params,
+          });
+          ctx.settingsCards.register({
+            id: "options",
+            title: "Plain options",
+            group: "Plugins",
+            component: () => <p>Plain options body</p>,
           });
         },
       },
@@ -188,6 +202,96 @@ it.each([
   expect(
     await screen.findByRole("heading", { name: "This page isn’t available" }),
   ).toBeVisible();
+  expect(current.navigation.snapshot()).toMatchObject({
+    status: "failed",
+    reason: "unavailable",
+  });
+});
+
+it("says a link's plugin is turned off and offers Manage plugins", async () => {
+  localStorage.setItem(
+    "buzzodz.plugins.v1",
+    JSON.stringify({ version: 3, enabled: { "test.plain": false } }),
+  );
+  const current = start(link({ pluginId: "test.plain" }));
+  const card = (
+    await screen.findByRole("heading", { name: "Plain is turned off" })
+  ).closest<HTMLElement>('[role="alert"]');
+  if (!card) throw new Error("Expected the failure alert");
+  expect(
+    within(card).getByText("Turn it on in Manage plugins to open this page."),
+  ).toBeVisible();
+  // This fixture has no Messages page to go to.
+  expect(
+    within(card)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Manage plugins"]);
+  expect(current.navigation.snapshot()).toMatchObject({
+    status: "failed",
+    reason: "unavailable",
+  });
+});
+
+it("says a Settings section's plugin is turned off and offers Manage plugins", async () => {
+  localStorage.setItem(
+    "buzzodz.plugins.v1",
+    JSON.stringify({ version: 3, enabled: { "test.plain": false } }),
+  );
+  const current = start({
+    version: 1,
+    kind: "settings",
+    section: "test.plain/options",
+    scope: null,
+  });
+  const card = (
+    await screen.findByRole("heading", { name: "Plain is turned off" })
+  ).closest<HTMLElement>('[role="alert"]');
+  if (!card) throw new Error("Expected the failure alert");
+  expect(
+    within(card).getByText(
+      "Turn it on in Manage plugins to open this section.",
+    ),
+  ).toBeVisible();
+  expect(current.navigation.snapshot()).toMatchObject({
+    status: "failed",
+    reason: "unavailable",
+  });
+  fireEvent.click(within(card).getByRole("button", { name: "Manage plugins" }));
+  const details = await screen.findByRole("complementary", {
+    name: "Plain details",
+  });
+  expect(within(details).getByRole("button", { name: "Enable" })).toBeVisible();
+});
+
+it("opens a Settings section's card while its plugin is enabled", async () => {
+  const current = start({
+    version: 1,
+    kind: "settings",
+    section: "test.plain/options",
+    scope: null,
+  });
+  expect(await screen.findByText("Plain options body")).toBeVisible();
+  expect(current.navigation.snapshot().status).toBe("opened");
+});
+
+it("keeps the not-available card for a bare section id, even when a plugin of that name is turned off", async () => {
+  localStorage.setItem(
+    "buzzodz.plugins.v1",
+    JSON.stringify({ version: 3, enabled: { "test.plain": false } }),
+  );
+  const current = start({
+    version: 1,
+    kind: "settings",
+    section: "test.plain",
+    scope: null,
+  });
+  expect(
+    await screen.findByRole("heading", { name: "This page isn’t available" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "Plain is turned off" }),
+  ).not.toBeInTheDocument();
   expect(current.navigation.snapshot()).toMatchObject({
     status: "failed",
     reason: "unavailable",

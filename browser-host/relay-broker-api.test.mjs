@@ -3,6 +3,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { HostService } from "../src/features/host/service.ts";
 import { authTagOwner } from "../src/features/agents/owner-attestation.ts";
 import { publishAgentRecord } from "../src/features/agents/relay-removal.ts";
+import { publishProfile } from "../src/features/communities/api.ts";
 import { logSocketFrame } from "../src/features/developer/traffic.ts";
 import { getLogger, setLogLevel } from "../src/features/developer/logging.ts";
 import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
@@ -1449,6 +1450,63 @@ test("query keeps relay 403 refusals but turns an edge 403 page into a gateway f
   }
 });
 
+test("a queued request's community refusal marks its own response", async () => {
+  // A held sidebar write and five held queries fill the community's six-slot
+  // lane. The next query waits and starts from whichever finishes first, so
+  // its refusal must mark its own response, not that one's.
+  const releases = new Map();
+  let holding = true;
+  const h = await harness(async (call, count, event) => {
+    const filter = call.body?.[0];
+    const sidebar = filter?.kinds?.[0] === 30078;
+    if (filter?.limit === 7)
+      return new Response("authorization denied\n", { status: 403 });
+    if (holding && call.url.endsWith("/query"))
+      await new Promise((resolve) =>
+        releases.set(sidebar ? "sidebar" : filter.limit, resolve),
+      );
+    if (sidebar) return Response.json([]);
+    if (call.url.endsWith("/events"))
+      return Response.json({ accepted: true, event_id: call.body.id });
+    return success(call, count, event);
+  });
+  const releaseAll = () => {
+    holding = false;
+    for (const release of releases.values()) release();
+  };
+  try {
+    const sidebar = h.post("sidebar-sort", {
+      group: "forums",
+      mode: "recent",
+      sectionIds: [],
+    });
+    await vi.waitFor(() => expect(releases.has("sidebar")).toBe(true));
+    const held = [1, 2, 3, 4, 5].map((limit) =>
+      h.post("query", [{ kinds: [0], limit }]),
+    );
+    await vi.waitFor(() => expect(releases.size).toBe(6));
+    const queued = h.post("query", [{ kinds: [0], limit: 7 }]);
+    await delay(20);
+    expect(h.calls).toHaveLength(6);
+    releases.get(1)();
+    const first = await held[0];
+    const refused = await queued;
+    expect(refused.status).toBe(403);
+    expect(refused.headers.get("x-buzz-refusal")).toBe("access");
+    expect(first.headers.get("x-buzz-refusal")).toBeNull();
+    await Promise.all([first.text(), refused.text()]);
+    releaseAll();
+    await Promise.all(
+      [sidebar, ...held.slice(1)].map(async (response) =>
+        (await response).text(),
+      ),
+    );
+  } finally {
+    releaseAll();
+    await h.close();
+  }
+});
+
 test("Canvas sign and publish bound content and the complete signed event", async () => {
   const h = await harness((call) =>
     Response.json({ accepted: true, event_id: call.body.id }),
@@ -2155,6 +2213,55 @@ test("message/reaction deletions pass real signing and publication without admit
     }
     expect(h.publications).toHaveLength(1);
   } finally {
+    await h.close();
+  }
+});
+
+test("a profile save keeps a Buzz mobile emoji avatar through the broker, never other SVG", async () => {
+  const h = await harness(success);
+  try {
+    const http = globalThis.fetch;
+    vi.stubGlobal("fetch", (url, input) => http(new URL(url, h.base), input));
+    // Buzz mobile's emojiAvatarDataUrl("🛹", 0xFFFFB84D).
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="256" fill="#FFB84D"/><text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" font-size="258">🛹</text></svg>';
+    const picture = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+    const published = () =>
+      h.calls.filter((call) => call.url.endsWith("/events"));
+    await publishProfile(
+      fixtureRelayUrl,
+      { name: "Changed", picture, about: "Keep this" },
+      { picture, website: "https://example.org" },
+    );
+    expect(published()).toHaveLength(1);
+    const event = published()[0].body;
+    expect(verifyEvent(event)).toBe(true);
+    expect(event).toMatchObject({ kind: 0, pubkey: h.event.pubkey });
+    expect(JSON.parse(event.content)).toEqual({
+      picture,
+      website: "https://example.org",
+      name: "Changed",
+      display_name: "Changed",
+      about: "Keep this",
+    });
+    for (const rejected of [
+      "data:image/svg+xml,%3Csvg%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E%3C%2Fsvg%3E",
+      `data:image/svg+xml,${encodeURIComponent(svg.replace("<text ", '<text onclick="alert(1)" '))}`,
+      `data:image/svg+xml,${encodeURIComponent(svg.replace("#FFB84D", "url(https://example.org/x)"))}`,
+      "data:image/png;base64,AA==",
+      "http://example.org/avatar.png",
+      `https://example.org/${"a".repeat(2048)}`,
+    ])
+      await expect(
+        publishProfile(
+          fixtureRelayUrl,
+          { name: "Changed", picture: rejected },
+          {},
+        ),
+      ).rejects.toThrow(/optional HTTPS picture URL/);
+    expect(published()).toHaveLength(1);
+  } finally {
+    vi.unstubAllGlobals();
     await h.close();
   }
 });
@@ -4101,6 +4208,7 @@ test("Builderlab HTTP accepts full agent instructions and isolates the fixed nat
   });
   const instructions = "\\".repeat(20_000);
   let received;
+  let accountReads = 0;
   const nativeCalls = [];
   const h = await harness(() => Response.json([]), {}, fixtureRelayUrl, {
     open: async (url) => openLogin(new URL(url)),
@@ -4111,12 +4219,14 @@ test("Builderlab HTTP accepts full agent instructions and isolates the fixed nat
           session_credential: "fixture-only",
           expires_at: "2030",
         });
-      if (path.endsWith("/v1/auth/me"))
+      if (path.endsWith("/v1/auth/me")) {
+        accountReads += 1;
         return Response.json({
           subject: "fixture-account",
           expires_at: "2030",
           capabilities: { can_use_remote_agents: true },
         });
+      }
       if (path.endsWith("/nostr-identities/challenge"))
         return Response.json({
           error: { code: "missing_mapping", setup_needed: true },
@@ -4165,6 +4275,29 @@ test("Builderlab HTTP accepts full agent instructions and isolates the fixed nat
     const { revision } = JSON.parse(
       event.slice("data: ".length).split("\n\n")[0],
     );
+    const capabilityCheck = await fetch(
+      `${h.base}/api/builderlab/capabilities?revision=${encodeURIComponent(revision)}`,
+    );
+    expect(capabilityCheck.status).toBe(200);
+    expect(await capabilityCheck.json()).toEqual({
+      revision,
+      capabilities: {
+        can_use_remote_agents: true,
+        can_use_builderlab_decisions: false,
+        can_delete_buzz_communities: false,
+      },
+    });
+    const reads = accountReads;
+    for (const query of ["", "?revision=previous"]) {
+      const refused = await fetch(
+        `${h.base}/api/builderlab/capabilities${query}`,
+      );
+      expect(refused.status).toBe(502);
+      expect(await refused.json()).toEqual({
+        error: "Builderlab session changed",
+      });
+    }
+    expect(accountReads).toBe(reads);
     const body = JSON.stringify({
       agent_pubkey: "a".repeat(64),
       agent_instructions: instructions,

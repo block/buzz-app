@@ -547,14 +547,14 @@ test("Canvas opens once beside Thread and retains its channel draft", async ({
   await expect(view).toBeVisible();
   await edit.click();
   await expect(text).toHaveValue("Channel-scoped draft");
-  // Leaving a channel retires its Canvas tab; reopening restores the draft.
+  // Leaving a channel keeps its Canvas tab open for the return.
   await page.locator('button[data-solo-channel-id="beta"]').click();
   await expect(workspace).toHaveCount(0);
   await page.locator('button[data-channel-id="alpha"]').click();
   await expect(thread).toBeVisible();
-  await expect(canvas).toHaveCount(0);
-  await viewCanvas();
-  await expect(view).toBeVisible();
+  await expect(canvas).toHaveCount(1);
+  await expect(canvas).toHaveAttribute("aria-selected", "true");
+  // Returning shows the open Canvas; Edit still holds the channel's draft.
   await edit.click();
   await expect(text).toHaveValue("Channel-scoped draft");
 });

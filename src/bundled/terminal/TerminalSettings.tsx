@@ -4,7 +4,9 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Button } from "../../shared/design-system/ui/Button";
+import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { isApplePlatform } from "../../features/shortcuts/format";
 import { useFontAvailability } from "./font-availability";
 import {
   parseFontFamily,
@@ -14,6 +16,7 @@ import {
   MAX_FONT_SIZE,
   type TerminalFontPreference,
 } from "./font-preference";
+import { optionMetaPreference } from "./option-meta-preference";
 
 /** Unsaved form state belongs to the plugin, across Settings card mounts. */
 export function createTerminalSettingsDraft() {
@@ -194,6 +197,8 @@ export function TerminalSettings({
           </div>
         </form>
       </SettingsGroup>
+      {/* Only macOS keyboards choose between Option characters and Meta. */}
+      {isApplePlatform(navigator.platform) && <OptionMetaSetting />}
       {active() && error && (
         <ToastNotice
           title="Terminal font preference needs attention"
@@ -203,6 +208,37 @@ export function TerminalSettings({
             Retry terminal font preference
           </Button>
         </ToastNotice>
+      )}
+    </section>
+  );
+}
+
+function OptionMetaSetting() {
+  const checked = optionMetaPreference.usePreference();
+  const error = optionMetaPreference.useSaveError();
+  return (
+    <section className="mt-section-gap">
+      <InlineHeader title="Keyboard" />
+      <SettingsGroup>
+        <SwitchPreferenceRow
+          label="Use Option as Meta key"
+          description="Treat the Option key as the Meta key in the terminal."
+          checked={checked}
+          onCheckedChange={optionMetaPreference.set}
+        />
+      </SettingsGroup>
+      {error && (
+        <div role="alert" className="grid gap-3 text-body-sm text-standard">
+          <p className="m-0">{error}</p>
+          <div>
+            <Button
+              type="button"
+              onClick={() => optionMetaPreference.set(checked)}
+            >
+              Retry saving
+            </Button>
+          </div>
+        </div>
       )}
     </section>
   );

@@ -57,6 +57,7 @@ import {
   MenuItem,
   MenuPopup,
 } from "../../shared/design-system/ui/Menu";
+import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
 import styles from "./Inbox.module.css";
 import {
   readView,
@@ -120,15 +121,21 @@ const targetOf = (item: InboxItem) => ({
   ...(item.rootId ? { rootId: item.rootId } : {}),
 });
 
-/** DMs and a Solo chat's own messages open whole; others open at their message. */
+/** DMs, including their reactions, and a Solo chat's own messages open whole;
+ * others open at their message. A DM row opens as its thread only when that
+ * thread alone shows its unread messages; its read then stops before any
+ * message outside the thread. */
 const tabTarget = (
-  item: Pick<InboxItem, "channelId" | "messageId" | "rootId" | "thread"> & {
+  item: Pick<
+    InboxItem,
+    "channelId" | "messageId" | "rootId" | "thread" | "threadOnly"
+  > & {
     target?: InboxItem["target"];
   },
   channel: { channelType?: string } | undefined,
 ): PageTabTarget =>
-  item.target?.kind === "channel" ||
-  channel?.channelType === "dm" ||
+  ((item.target?.kind === "channel" || channel?.channelType === "dm") &&
+    !item.threadOnly) ||
   (channel?.channelType === "solo" && !item.thread)
     ? { channelId: item.channelId }
     : {
@@ -219,11 +226,14 @@ export function InboxPage({
               <p className="text-body text-subtle">
                 {connection.status === "connecting"
                   ? "Connecting to your activity…"
-                  : (connection.error ??
-                    "Choose a community to see your activity.")}
+                  : connection.denied
+                    ? // Its notice, on every page, offers what fixes it.
+                      communityRefusalTitle(connection.refusal)
+                    : (connection.error ??
+                      "Choose a community to see your activity.")}
               </p>
-              {connection.status === "error" && (
-                <Button onClick={relay.retry}>Retry connection</Button>
+              {connection.status === "error" && !connection.denied && (
+                <Button onClick={relay.tryAgain}>Retry connection</Button>
               )}
             </div>
           </div>
@@ -396,7 +406,13 @@ function InboxList({
   const [pending, setPending] = useState(false);
   const [refreshAfterRoster, setRefreshAfterRoster] = useState(false);
   const [error, setError] = useState<string>();
-  const [menu, setMenu] = useState<{ id: string; anchor?: HTMLElement }>();
+  /** `unread` is the row's read state when its menu opened, which fixes the
+   * menu's one read action for as long as it stays open. */
+  const [menu, setMenu] = useState<{
+    id: string;
+    unread: boolean;
+    anchor?: HTMLElement;
+  }>();
   const active = useRef(false);
   const busy = useRef(false);
   const failedMutation = useRef<
@@ -804,11 +820,13 @@ function InboxList({
     })();
   }
 
+  /** `threadId` is the thread an opened tab shows, which bounds a DM read. */
   function mutate(
     item: InboxItem,
     unread: boolean,
     onSuccess?: () => void,
     onFailure?: () => void,
+    threadId?: string,
   ) {
     // An open menu is not authority: recheck the current session at action entry.
     if (
@@ -861,7 +879,10 @@ function InboxList({
     const work = async () => {
       if (unread) await session.unread.markUnreadLocal(item.target);
       else if (item.target.kind === "channel") {
-        readChannel ??= session.unread.prepareChannelRead(item.channelId);
+        readChannel ??= session.unread.prepareChannelRead(
+          item.channelId,
+          threadId,
+        );
         await readChannel();
       } else if (item.timeline)
         await session.unread.markTimelineRead(item.channelId, item.messageIds);
@@ -1142,6 +1163,7 @@ function InboxList({
                 const { sender, context } = identity;
                 const unread = hasUnread(item);
                 const readable = unread && canRead;
+                const menuUnread = menu?.id === item.id ? menu.unread : unread;
                 return (
                   <li
                     key={item.id}
@@ -1154,7 +1176,7 @@ function InboxList({
                     <ContextMenuRoot
                       open={menu?.id === item.id}
                       onOpenChange={(open) =>
-                        setMenu(open ? { id: item.id } : undefined)
+                        setMenu(open ? { id: item.id, unread } : undefined)
                       }
                     >
                       <ContextMenuTrigger
@@ -1167,6 +1189,7 @@ function InboxList({
                             event.preventDefault();
                             setMenu({
                               id: item.id,
+                              unread,
                               anchor: event.target as HTMLElement,
                             });
                           }
@@ -1184,13 +1207,15 @@ function InboxList({
                           onClick={() => {
                             if (busy.current) return;
                             // The selected row reveals its current message in
-                            // its captured tab, even after regrouping would
-                            // open a whole conversation as a thread.
+                            // its captured tab, even after regrouping or
+                            // reading would open a whole conversation as a
+                            // thread. A captured thread follows the row,
+                            // which may now open whole.
                             const reselect =
                               selectedId === item.id &&
                               opened &&
-                              !opened.threadId !==
-                                !tabTarget(item, channel).threadId
+                              !opened.threadId &&
+                              tabTarget(item, channel).threadId
                                 ? opened
                                 : undefined;
                             if (
@@ -1213,7 +1238,14 @@ function InboxList({
                             if (selectedId === item.id) return;
                             cancelRetry();
                             setSelectedTarget(targetOf(item));
-                            if (unread && canRead) mutate(item, false);
+                            if (unread && canRead)
+                              mutate(
+                                item,
+                                false,
+                                undefined,
+                                undefined,
+                                tabTarget(item, channel).threadId,
+                              );
                           }}
                         />
                         {readable && (
@@ -1235,17 +1267,20 @@ function InboxList({
                         aria-label={`Actions for ${sender} in ${context}`}
                         anchor={menu?.id === item.id ? menu.anchor : undefined}
                       >
+                        {/* One action, for the row's read state when the menu
+                            opened. It stays, disabled, when it cannot run, so
+                            the menu is never empty. That includes the row's
+                            state changing under the open menu: the item keeps
+                            its label rather than reversing under the pointer. */}
                         <MenuItem
-                          disabled={pending || !unread || !canRead}
-                          onClick={() => markRead(item)}
+                          disabled={
+                            pending || !canRead || menuUnread !== unread
+                          }
+                          onClick={() =>
+                            menuUnread ? markRead(item) : mutate(item, true)
+                          }
                         >
-                          Mark as read
-                        </MenuItem>
-                        <MenuItem
-                          disabled={pending || unread || !canRead}
-                          onClick={() => mutate(item, true)}
-                        >
-                          Mark unread
+                          {menuUnread ? "Mark as read" : "Mark unread"}
                         </MenuItem>
                       </MenuPopup>
                     </ContextMenuRoot>

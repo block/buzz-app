@@ -1,9 +1,16 @@
 import { test, expect } from "./fixture.mjs";
-import { newChat, openPage } from "./navigation.mjs";
+import {
+  newChat,
+  openPage,
+  pageChoice,
+  selectCommunity,
+  selectPage,
+} from "./navigation.mjs";
 
 // Browser-only boundaries: painted focus, native insets, resize geometry, and
-// real App wiring between Messages and Solo chats. Contract matrices stay in RTL.
-test.use({ pluginFixtures: true });
+// real App wiring between Messages, Solo chats and the pages listed in its
+// sidebar. Contract matrices stay in RTL.
+test.use({ pluginFixtures: true, enabledPlugins: ["buzz.drafts-and-sent"] });
 
 test("shared navigation preserves drafts and history across Solo and header pages", async ({
   page,
@@ -28,7 +35,6 @@ test("shared navigation preserves drafts and history across Solo and header page
   await composer.fill("Keep this draft");
   const topbar = page.getByRole("navigation", { name: "Apps dock" });
   await expect(topbar.getByRole("tab")).toHaveText([
-    "Activity",
     "Messages",
     "Reminders",
     "Agents",
@@ -181,22 +187,66 @@ test("shared navigation preserves drafts and history across Solo and header page
   await expect(
     page.getByRole("complementary", { name: "Sidebar", exact: true }),
   ).toBeVisible();
-  const inbox = topbar.getByRole("tab", { name: "Activity", exact: true });
-  await inbox.click();
-  await expect(inbox).toHaveAttribute("aria-selected", "true");
+  const workflows = topbar.getByRole("tab", { name: "Workflows", exact: true });
+  await workflows.click();
+  await expect(workflows).toHaveAttribute("aria-selected", "true");
   await expect(messages).toHaveAttribute("aria-selected", "false");
   await page.reload();
-  await expect(inbox).toHaveAttribute("aria-selected", "true");
+  await expect(workflows).toHaveAttribute("aria-selected", "true");
   await reminders.click();
   await expect(reminders).toHaveAttribute("aria-selected", "true");
   await page.goBack();
-  await expect(inbox).toHaveAttribute("aria-selected", "true");
+  await expect(workflows).toHaveAttribute("aria-selected", "true");
   await page.goForward();
   await expect(reminders).toHaveAttribute("aria-selected", "true");
   await messages.click();
   await expect(composer).toHaveText("Keep this draft");
   await openPage(page, "Settings");
   await expect(topbar.locator('[aria-selected="true"]')).toHaveCount(0);
+});
+
+test("a page listed in the Messages sidebar keeps Messages and the conversation sidebar", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "buzzodz.plugins.v1",
+      JSON.stringify({
+        version: 2,
+        enabled: { "fixture.page-placement": true },
+      }),
+    );
+  });
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await expect(composer).toBeVisible();
+  const sidebar = page.getByRole("complementary", {
+    name: "Sidebar",
+    exact: true,
+  });
+  const destination = sidebar
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("button", { name: "Listed destination", exact: true });
+  await destination.click();
+  await expect(
+    page.getByRole("heading", { name: "Listed destination", exact: true }),
+  ).toBeVisible();
+
+  const messages = page
+    .getByRole("navigation", { name: "Apps dock" })
+    .getByRole("tab", { name: "Messages", exact: true });
+  await expect(messages).toHaveAttribute("aria-selected", "true");
+  await expect(sidebar).toBeVisible();
+  await expect(destination).toHaveAttribute("aria-current", "page");
+
+  await messages.click();
+  await expect(composer).toBeVisible();
+  await expect(destination).not.toHaveAttribute("aria-current");
 });
 
 test("a page sidebar uses the shell slot, generic toggle, theme, and narrow drawer", async ({
@@ -213,6 +263,7 @@ test("a page sidebar uses the shell slot, generic toggle, theme, and narrow draw
           "fixture.page-placement": true,
           "buzz.reminders": true,
           "buzz.workflows": true,
+          "buzz.drafts-and-sent": true,
         },
       }),
     );
@@ -230,9 +281,20 @@ test("a page sidebar uses the shell slot, generic toggle, theme, and narrow draw
 
   const sidebar = page.getByRole("complementary", { name: "Fixture sidebar" });
   await expect(sidebar).toContainText("Target: sidebar");
+  const drafts = sidebar
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("button", { name: "Drafts & sent", exact: true });
+  await expect(drafts).toHaveCount(1);
+  // The page's own sidebar replaces the Messages sidebar it is listed in, and
+  // Messages stays selected.
   await expect(
     page.getByRole("complementary", { name: "Sidebar", exact: true }),
   ).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("navigation", { name: "Apps dock" })
+      .getByRole("tab", { name: "Messages", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   const wideSize = await sidebar.evaluate(
     (element) => element.getBoundingClientRect().width,
   );
@@ -281,6 +343,10 @@ test("a page sidebar uses the shell slot, generic toggle, theme, and narrow draw
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    await expect(drafts).toBeVisible();
+    await page.screenshot({
+      path: test.info().outputPath(`drafts-sidebar-${mode}.png`),
+    });
     const geometryAndColors = await sidebar.evaluate((element) => {
       const slot = element.parentElement.getBoundingClientRect();
       const action = element.querySelector("button").getBoundingClientRect();
@@ -394,6 +460,47 @@ test("a page sidebar uses the shell slot, generic toggle, theme, and narrow draw
       element.contains(document.activeElement),
     ),
   ).toBe(false);
+  // Native focus and drawer handoff across a contributed sidebar cannot be
+  // established by the mounted App's route/slot coverage.
+  await selectCommunity(page, "Personal space");
+  await openPage(page, "Sidebar playground");
+  await showNavigation.click();
+  await drafts.focus();
+  await expect(drafts).toBeInViewport();
+  await drafts.press("Enter");
+  const draftsPage = page.getByRole("region", {
+    name: "Drafts & sent",
+    exact: true,
+  });
+  await expect(draftsPage).toBeVisible();
+  await expect(page.locator("#main-content")).toBeFocused();
+  await expect(shellNavigation).toHaveAttribute("aria-hidden", "true");
+  await showNavigation.click();
+  const coreDrafts = pages.getByRole("button", {
+    name: "Drafts & sent",
+    exact: true,
+  });
+  await expect(coreDrafts).toHaveCount(1);
+  await expect(coreDrafts).toHaveAttribute("aria-current", "page");
+  await destination.click();
+  await expect(
+    page.getByRole("heading", { name: "Sidebar playground", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Search Buzz", exact: true }).click();
+  const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
+  const input = search.getByRole("combobox", { name: "Search Buzz" });
+  await input.fill("drafts");
+  await expect(pageChoice(search, "Drafts & sent")).toHaveCount(1);
+  await selectPage(page, "Drafts & sent");
+  await expect(search).toHaveCount(0);
+  await expect(draftsPage).toBeVisible();
+  await expect(page.locator("#main-content")).toBeFocused();
+  await expect(
+    page.getByRole("button", {
+      name: "Community switcher: Personal space",
+      exact: true,
+    }),
+  ).toBeVisible();
 });
 
 test.describe("failed page sidebar recovery", () => {

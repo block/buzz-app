@@ -8,6 +8,7 @@ import { retryRead } from "./read-retry";
 import { yieldToHost } from "./yield";
 import { hasTag, newer, type RelayEvent } from "./events";
 import { openMetadata } from "./discovery";
+import { FRESH_FOR } from "./store";
 import {
   channelTypeTag,
   DM_VISIBILITY_KIND,
@@ -41,6 +42,9 @@ export interface ChannelLifecycleCapability {
   load(
     channelId: string,
     signal?: AbortSignal,
+    /** The channel's relay records the caller already read, so its answer and
+     * these rights share one snapshot; omitted, load reads them. */
+    records?: readonly RelayEvent[],
   ): Promise<ChannelLifecycleSettings>;
   run(
     action: ChannelLifecycleCommand,
@@ -51,7 +55,14 @@ export interface ChannelLifecycleCapability {
   ): Promise<void>;
   snapshot(): DmVisibility;
   subscribe(listener: () => void): () => void;
-  refreshVisibility(signal?: AbortSignal): Promise<void>;
+  /** `ifStale` lets a read that succeeded within `FRESH_FOR` answer, for
+   * triggers that only suggest visibility may have changed. `trailing` needs
+   * a read that starts after this call: repeated calls during a pending read
+   * share one more read after it. */
+  refreshVisibility(
+    signal?: AbortSignal,
+    options?: { ifStale?: boolean; trailing?: boolean },
+  ): Promise<void>;
   observeRemoval(listener: (channelId: string) => void): () => void;
 }
 
@@ -91,6 +102,10 @@ export function createChannelLifecycle({
   let refresh: Promise<void> | undefined;
   let refreshSignal: AbortSignal | undefined;
   let refreshController: AbortController | undefined;
+  // The one read `trailing` refreshes queue behind a pending read.
+  let trailing: Promise<void> | undefined;
+  // When this epoch's last visibility refresh succeeded.
+  let refreshedAt: number | undefined;
   const available = !!reader && !!writer;
   const emit = (next: DmVisibility) => {
     snapshot = Object.freeze(next);
@@ -175,9 +190,10 @@ export function createChannelLifecycle({
     // Which action needs owner-agent evidence; "any" checks for every action
     // the channel's state allows and false skips the optional profile reads.
     need: OwnedAgentAction | "any" | false = "any",
+    records?: readonly RelayEvent[],
   ) {
     assertAccess(id);
-    const events = await read([39000, 39001, 39002], id, signal);
+    const events = records ?? (await read([39000, 39001, 39002], id, signal));
     assertAccess(id);
     const settings = lifecycleSettings(events, id, viewer, relayAuthor);
     const metadata = lifecycleRecord(events, 39000, id, relayAuthor);
@@ -309,9 +325,31 @@ export function createChannelLifecycle({
         listeners.delete(listener);
       };
     },
-    refreshVisibility(caller?: AbortSignal) {
+    refreshVisibility(
+      caller?: AbortSignal,
+      options?: { ifStale?: boolean; trailing?: boolean },
+    ) {
       if (!reader || closed || caller?.aborted) return Promise.resolve();
-      if (refresh && !refreshSignal?.aborted) return refresh;
+      if (refresh && !refreshSignal?.aborted) {
+        if (!options?.trailing) return refresh;
+        // The pending read may predate this call.
+        if (!trailing) {
+          const started = epoch;
+          const next: Promise<void> = refresh.then(() => {
+            if (trailing === next) trailing = undefined;
+            if (started === epoch) return capability.refreshVisibility(caller);
+          });
+          trailing = next;
+        }
+        return trailing;
+      }
+      if (
+        options?.ifStale &&
+        snapshot.status === "ready" &&
+        refreshedAt !== undefined &&
+        Date.now() - refreshedAt < FRESH_FOR
+      )
+        return Promise.resolve();
       const started = epoch;
       const controller = new AbortController();
       refreshController = controller;
@@ -327,6 +365,7 @@ export function createChannelLifecycle({
       const operation = retryRead(
         async () => {
           await owned({ caller: signal }, readVisibility);
+          if (started === epoch) refreshedAt = Date.now();
         },
         signal,
         isTransientFailure,
@@ -357,10 +396,17 @@ export function createChannelLifecycle({
       refresh = operation;
       return operation;
     },
-    async load(value: string, caller?: AbortSignal) {
+    async load(
+      value: string,
+      caller?: AbortSignal,
+      records?: readonly RelayEvent[],
+    ) {
       const id = lifecycleChannelId(value);
       return owned({ id, caller }, (signal) =>
-        retryRead(() => reread(signal, () => load(id, signal)), signal),
+        retryRead(
+          () => reread(signal, () => load(id, signal, "any", records)),
+          signal,
+        ),
       );
     },
     async run(
@@ -570,6 +616,8 @@ export function createChannelLifecycle({
       refreshController?.abort();
       for (const controller of controllers.keys()) controller.abort();
       refresh = undefined;
+      trailing = undefined;
+      refreshedAt = undefined;
       visibility = undefined;
       emit({ status: "idle", hidden: Object.freeze([]) });
     },

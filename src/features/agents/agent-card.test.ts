@@ -1,5 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { agentCardCdn, fetchAgentCard, parseAgentCard } from "./agent-card";
+import {
+  agentCardCdn,
+  agentCardShares,
+  fetchAgentCard,
+  parseAgentCard,
+} from "./agent-card";
 
 const card = {
   v: 1,
@@ -48,6 +53,16 @@ it("uses the staging CDN only for a staging build", () => {
   );
   for (const build of ["https://app.builderlab.xyz", "", "not a url"])
     expect(agentCardCdn(build)).toBe("https://d2z0pbxrxbsiz5.cloudfront.net");
+});
+
+it("pairs each build's cards with that environment's share pages", () => {
+  expect(agentCardShares("https://app.builderlabstaging.xyz")).toEqual({
+    "app.builderlabstaging.xyz": "a",
+  });
+  expect(agentCardShares("not a url")).toEqual({
+    "app.builderlab.xyz": "a",
+    "builderlab.xyz": "agents",
+  });
 });
 
 it("fetches the card from the CDN without credentials or redirects", async () => {

@@ -27,12 +27,22 @@ provides Compact session and Start a new session when idle, and Interrupt while
 working. There are no special chat commands.
 
 Thread scope is the default; channel scope shares a session across threads.
-DMs and the owner's Solo chat each share one conversation. Workspace or tool-schema
+DMs, huddle rooms and the owner's Solo chat each share one conversation. Workspace or tool-schema
 changes start a fresh session, as does a missing saved thread. Bindings persist
 locally per community and agent. Switching communities does not stop work;
 removing an agent, leaving its community or disabling the plugin does.
 
 To inspect a conversation, see [View a Codex session](../../../docs/view-codex-session.md).
+
+## Huddle voice
+
+An eligible voice seat uses the room's existing Codex thread with automatic
+WebRTC handoffs. The adapter carries 48 kHz mono PCM through the existing huddle
+capture worklet; Codex controls speech and interruption. Delegated work enters
+the ordinary active-turn and Buzz-tool path, and room mentions steer that work.
+The seat retains its resolved opening settings and thread subscription until
+close finishes. Protected agents and devices without WebRTC are refused.
+Final realtime transcripts go through the host's transcript policy.
 
 ## Conversation storage
 
@@ -66,8 +76,7 @@ instructions, skills and memories, so no Codex settings, instructions, skills or
 memories reach a review.
 
 Signing in through Buzz runs `codex login` in the review home, records the
-ChatGPT workspace there, and then hands the sign-in to the shared one. Once
-Codex is ready, **Sign in again** in its harness defaults does the same. It
+ChatGPT workspace there, and then hands the sign-in to the shared one. It
 first removes the review home's link, so Codex's sign-out before a sign-in
 revokes nothing and a cancelled sign-in leaves the shared one working; the
 replaced sign-in is left to expire. With
@@ -92,7 +101,7 @@ published checksum and tests the release before switching. A failed update
 leaves the previous copy in use.
 
 Buzz checks for updates when agents load and every six hours. The first download
-(about 130 MB) waits until a Codex agent is running or **Install Codex** is clicked.
+(about 130 MB) waits until a Codex agent is running or **Install integration** is clicked.
 Mentions wait for installation; a failed first download is retried on the next mention.
 
 ## Checks
@@ -121,7 +130,11 @@ no Buzz messages. Set `BUZZ_CODEX_TEST_MODEL` to override its model.
   developer instructions, preserving Codex's native coding prompt.
 - Codex runs with sandbox `danger-full-access` and approval policy `never`: it
   can write outside its workspace, access the network and use git and `gh`.
-  Web search, inherited MCP servers, Apps and plugins are disabled.
+  Web search and inherited MCP servers are disabled. Apps and plugins are
+  disabled unless the agent's **Codex apps and plugins** setting is on for
+  this device; then Codex's own configuration decides, and the agent gets the Apps
+  connected to its ChatGPT sign-in. Protected agents and security reviews never
+  get them.
 - The Activity tab shows conversation status and the latest command/output;
   shared Agent Activity integration is deferred. Assistant text is not posted
   automatically. Final Buzz sends finish normally, consume pending steering and

@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { buzzPin } from "../../scripts/build-buzz-cli.mjs";
+import {
+  buzzPin,
+  cliBuildDir,
+  cliTarget,
+} from "../../scripts/build-buzz-cli.mjs";
 
 const read = (path) =>
   readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
@@ -28,6 +35,46 @@ test("a manifest without a pinned revision is rejected", () => {
     assert.throws(() => buzzPin(manifest), /no buzz-audio-client git revision/);
 });
 
+test("linked worktrees share the main checkout's buzz CLI build", (t) => {
+  const scratch = realpathSync(mkdtempSync(join(tmpdir(), "buzz-cli-")));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  // Without GIT_* from a calling hook, so git discovers the scratch repositories.
+  const env = { PATH: process.env.PATH };
+  const main = join(scratch, "main");
+  const linked = join(scratch, "linked");
+  const git = (...args) =>
+    execFileSync("git", args, { cwd: scratch, env, stdio: "ignore" });
+  git("init", "-q", main);
+  git(
+    "-C",
+    main,
+    "-c",
+    "user.name=Example",
+    "-c",
+    "user.email=dev@example.org",
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "init",
+  );
+  git("-C", main, "worktree", "add", "-q", linked);
+
+  assert.equal(cliTarget(linked, env), join(main, "target"));
+  assert.equal(cliTarget(main, env), join(main, "target"));
+  assert.equal(cliTarget(scratch, env), join(scratch, "target"));
+  assert.equal(
+    cliTarget(linked, { ...env, CARGO_TARGET_DIR: join(scratch, "custom") }),
+    join(scratch, "custom"),
+  );
+});
+
+test("each block/buzz revision builds in its own directory", () => {
+  const other = "0e6037c74d67930de36143ed4661f469039d8dc7";
+  assert.equal(cliBuildDir("/t", rev), join("/t", "buzz-cli-build", rev));
+  assert.notEqual(cliBuildDir("/t", rev), cliBuildDir("/t", other));
+});
+
 test("desktop builds stage buzz after the other helpers", () => {
   const { beforeBuildCommand } = JSON.parse(
     read("src-tauri/tauri.conf.json"),
@@ -39,7 +86,7 @@ test("desktop builds stage buzz after the other helpers", () => {
 });
 
 test("every release job checks that its packaged buzz exists and runs", () => {
-  const release = read(".github/workflows/release.yml");
+  const release = read(".github/workflows/desktop-build.yml");
   for (const check of [
     'cli="$app/Contents/Resources/bin/buzz"',
     '"$cli" --help',

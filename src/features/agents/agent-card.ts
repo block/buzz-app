@@ -5,23 +5,42 @@
 import { AGENT_CARD_ID } from "../navigation/buzz-links";
 import { checkText } from "./agent-share";
 
-const PRODUCTION = "https://d2z0pbxrxbsiz5.cloudfront.net";
+type Environment = Readonly<{
+  cdn: string;
+  /** Its share pages: the first path section, by host. */
+  shares: Readonly<Record<string, string>>;
+}>;
+
+const PRODUCTION: Environment = {
+  cdn: "https://d2z0pbxrxbsiz5.cloudfront.net",
+  shares: { "app.builderlab.xyz": "a", "builderlab.xyz": "agents" },
+};
 // Keyed by the build's Builderlab, as Buzz mobile's account environment; every
 // other build reads the production cards, which are public.
-const CDNS: Readonly<Record<string, string>> = {
-  "https://app.builderlabstaging.xyz": "https://d10hx6rb3fdt3l.cloudfront.net",
+const ENVIRONMENTS: Readonly<Record<string, Environment>> = {
+  "https://app.builderlabstaging.xyz": {
+    cdn: "https://d10hx6rb3fdt3l.cloudfront.net",
+    shares: { "app.builderlabstaging.xyz": "a" },
+  },
 };
 
-/** The avatars CDN that serves this build's cards. */
-export function agentCardCdn(
-  build = import.meta.env.VITE_BUZZ_BUILDERLAB_URL ?? "",
-) {
+function environment(build: string) {
+  let origin = "";
   try {
-    return CDNS[new URL(build).origin] ?? PRODUCTION;
-  } catch {
-    return PRODUCTION;
-  }
+    origin = new URL(build).origin;
+  } catch {}
+  return (
+    (Object.hasOwn(ENVIRONMENTS, origin) && ENVIRONMENTS[origin]) || PRODUCTION
+  );
 }
+
+const BUILD = import.meta.env.VITE_BUZZ_BUILDERLAB_URL ?? "";
+
+/** The avatars CDN that serves this build's cards. */
+export const agentCardCdn = (build = BUILD) => environment(build).cdn;
+
+/** The Builderlab share pages of this build's cards, whose ids it can read. */
+export const agentCardShares = (build = BUILD) => environment(build).shares;
 
 /** Far above any real card. */
 const MAX_BYTES = 2 * 1024 * 1024;

@@ -5,6 +5,7 @@ import {
 } from "../../features/identity-names/react";
 import { npubEncode } from "nostr-tools/nip19";
 import {
+  type ReactNode,
   useEffect,
   useMemo,
   useRef,
@@ -12,23 +13,31 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
-import type { EventData } from "../../features/relay/events";
+import type { RelayEvent } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
 import {
   useChannelList,
   useProfileGeneration,
 } from "../../features/relay/react";
 import { useSavedHiddenDmIds } from "../../bundled/channels/useHiddenDms";
-import { useUnreadChannelIds } from "../../bundled/channels/useSidebarFilters";
+import {
+  useUnreadChannelIds,
+  useUnreadThreadOnly,
+} from "../../bundled/channels/useSidebarFilters";
 import { useAgentChoices } from "../../features/agents/use-choices";
-import { canMessageAgent } from "../../features/agents/choices";
+import {
+  agentUnavailable,
+  canMessageAgent,
+} from "../../features/agents/choices";
 import { useMentionArchives } from "../../features/messages/use-mention-archives";
 import { archiveHides } from "../../features/relay/identity-archives";
+import { searchedProfiles } from "../../features/relay/profile-search";
 import { foldProfiles } from "../../features/relay/profiles";
 import {
   ArrowsDownUpIcon,
   CalendarIcon,
   ChatCircleIcon,
+  ThreadIcon,
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Calendar } from "../../shared/design-system/ui/Calendar";
@@ -87,8 +96,15 @@ import {
   parseSearchOperators,
 } from "./parseSearchOperators";
 import { avatarMedia } from "../../shared/avatar-source";
-import { useVerifiedNames } from "../../features/profiles/useVerifiedNames";
-import { verifiedLabel } from "../../features/profiles/name-preference";
+import {
+  useVerifiedNames,
+  withVerifiedNames,
+} from "../../features/profiles/useVerifiedNames";
+import {
+  otherVerifiedName,
+  useNamePreference,
+  verifiedLabel,
+} from "../../features/profiles/name-preference";
 import { sortParticipantNames } from "../../features/identity-names/participant-order";
 
 function conversationName(
@@ -187,6 +203,7 @@ export function SearchResults({
   usageScope,
   sidebarScope,
   views,
+  offline,
 }: {
   session: RelaySession;
   /** Tabs that switch this search to other views of it. */
@@ -195,7 +212,11 @@ export function SearchResults({
   scopedChannelId?: string | undefined;
   currentChannelId?: string | undefined;
   onScopeChange?: ((channelId?: string) => void) | undefined;
-  openConversation: (channelId: string, messageId?: string) => void;
+  openConversation: (
+    channelId: string,
+    messageId?: string,
+    threadRootId?: string,
+  ) => void;
   /** Open a new Solo chat with one of the viewer's agents. Without it,
    * choosing one of their agents opens a direct message, as for anyone else. */
   openAgentSession?: ((pubkey: string) => void) | undefined;
@@ -203,6 +224,9 @@ export function SearchResults({
   usageScope?: string | undefined;
   /** The sidebar's view scope, whose hidden DMs search leaves out too. */
   sidebarScope?: string | undefined;
+  /** Why only saved conversations are searched. The relay's message, people
+   * and open-channel lookups wait for the connection instead of failing. */
+  offline?: ReactNode;
 } & SearchInputProps) {
   const resolveName = useIdentityNames(session.names);
   const list = useChannelList(session.channels);
@@ -228,7 +252,10 @@ export function SearchResults({
           !channel.huddle &&
           !channel.metadataPending &&
           (!channel.archived ||
-            (!channel.readOnly &&
+            // A saved member row stays read-only until the relay confirms it.
+            // A guest's archived row stays out, as it does live.
+            ((!channel.readOnly ||
+              (channel.cached && channel.viewerRole !== "guest")) &&
               (channel.channelType === "stream" ||
                 channel.channelType === "forum" ||
                 channel.channelType === "solo"))) &&
@@ -237,7 +264,7 @@ export function SearchResults({
       ),
     [list.channels, scopedChannelId],
   );
-  // A DM hidden from the sidebar (Remove from Team, or Hide conversation) has
+  // A DM hidden from the sidebar (Close conversation, or Hide conversation) has
   // no row here either. Its messages still match, and choosing the person
   // opens it again through the confirmed open, which restores its sidebar row.
   const dmVisibility = useSyncExternalStore(
@@ -317,8 +344,9 @@ export function SearchResults({
   };
   const [authorSuggestions, setAuthorSuggestions] = useState<{
     query: string;
+    savedOnly: boolean;
     lookupFailed?: boolean;
-    remote: readonly EventData[];
+    remote: readonly RelayEvent[];
   }>();
   // Completing either from:name or from:@name selects an exact signed key.
   const datePrompt = operatorMatches(
@@ -443,6 +471,7 @@ export function SearchResults({
       ? []
       : list.channels.filter(matchesInOperator);
   const needsPublicLookup =
+    !offline &&
     !scopedChannelId &&
     !!operatorChannel &&
     operatorPerson === undefined &&
@@ -535,7 +564,7 @@ export function SearchResults({
   const [sort, setSort] = useState<SearchSort>("relevance");
   const search = useSearchMessages(
     session,
-    query,
+    offline ? "" : query,
     scopedChannelId,
     operatorChannelId,
     new Map(
@@ -561,7 +590,7 @@ export function SearchResults({
     .replace(/^@/, "")
     .toLowerCase();
   const showAuthorPicker = pickerPrompt || showAmbiguousPicker;
-  const agents = useAgentChoices(session, showAuthorPicker);
+  const agents = useAgentChoices(session, showAuthorPicker && !offline);
   // People and agents are destinations for plain typed text outside a
   // conversation scope; an operator asks for messages. `@` asks for a person
   // and `#` for a channel.
@@ -573,6 +602,7 @@ export function SearchResults({
     parsed.since !== null ||
     parsed.until !== null;
   const peopleActive =
+    !offline &&
     !scopedChannelId &&
     !hasOperator &&
     !showAuthorPicker &&
@@ -590,9 +620,9 @@ export function SearchResults({
     key: peopleNeedle,
     settled: !personDirectory.loading,
   });
-  useMentionArchives(session, showAuthorPicker || peopleActive);
+  useMentionArchives(session, (showAuthorPicker && !offline) || peopleActive);
   // People labels come from one names scope built each render.
-  useNamesRevision(session.names, peopleActive);
+  useNamesRevision(session.names, peopleActive || showAuthorPicker);
   // The viewer's own agents open a new chat, not a direct message: the
   // same agents the new-chat composer accepts. Their earlier chats
   // still show as conversations.
@@ -605,6 +635,9 @@ export function SearchResults({
     ]),
   );
   const effectiveChannelId = scopedChannelId ?? operatorChannelId;
+  // The notice is a new element each render; the lookup below reruns only
+  // when search goes offline or back.
+  const savedOnly = !!offline;
   useEffect(() => {
     if (!showAuthorPicker) return;
     const controller = new AbortController();
@@ -613,7 +646,9 @@ export function SearchResults({
         const members = effectiveChannelId
           ? (session.channels.get?.(effectiveChannelId)?.members ?? [])
           : [];
-        if (members.length) {
+        // Offline, the picker offers only members and profiles already known.
+        // No longer name finds more, so it asks for the connection instead.
+        if (members.length && !savedOnly) {
           try {
             await session.profiles.ensure(members, "foreground");
           } catch (error) {
@@ -621,9 +656,9 @@ export function SearchResults({
             // A partial directory still contains verified member profiles.
           }
         }
-        let remote: readonly EventData[] = [];
+        let remote: readonly RelayEvent[] = [];
         let lookupFailed = false;
-        if (searchable(authorNeedle)) {
+        if (!savedOnly && searchable(authorNeedle)) {
           try {
             remote = await session.searchProfiles(authorNeedle, {
               limit: 40,
@@ -635,17 +670,36 @@ export function SearchResults({
           }
         }
         controller.signal.throwIfAborted();
-        setAuthorSuggestions({ query, lookupFailed, remote });
+        setAuthorSuggestions({ query, savedOnly, lookupFailed, remote });
       })().catch(() => {
         if (!controller.signal.aborted)
-          setAuthorSuggestions({ query, remote: [], lookupFailed: true });
+          setAuthorSuggestions({
+            query,
+            savedOnly,
+            remote: [],
+            lookupFailed: true,
+          });
       });
     });
     return () => {
       cancel();
       controller.abort();
     };
-  }, [session, effectiveChannelId, query, authorNeedle, showAuthorPicker]);
+  }, [
+    session,
+    effectiveChannelId,
+    query,
+    authorNeedle,
+    showAuthorPicker,
+    savedOnly,
+  ]);
+  // The lookup answers this text in this connection state: once the session
+  // is live, saved data's answer no longer stands.
+  const authorAnswer =
+    authorSuggestions?.query === query &&
+    authorSuggestions.savedOnly === savedOnly
+      ? authorSuggestions
+      : undefined;
   const members = effectiveChannelId
     ? (session.channels.get?.(effectiveChannelId)?.members ?? [])
     : [];
@@ -653,8 +707,21 @@ export function SearchResults({
   const selectableAgents = new Map(
     agents.selectable.map((agent) => [agent.pubkey, agent]),
   );
+  const remoteAuthors = searchedProfiles(
+    authorAnswer?.remote ?? [],
+    session.profiles.verifiedAuthority?.(),
+  );
   const candidates = new Map([
-    ...[...profiles].filter(([pubkey]) => members.includes(pubkey)),
+    ...members.map(
+      (pubkey) =>
+        [
+          pubkey,
+          profiles.get(pubkey) ?? {
+            name: pubkey.slice(0, 10),
+            nameIsFallback: true,
+          },
+        ] as const,
+    ),
     ...agents.selectable.map(
       (agent) =>
         [
@@ -666,52 +733,112 @@ export function SearchResults({
           },
         ] as const,
     ),
-    ...foldProfiles(
-      authorSuggestions?.query === query ? authorSuggestions.remote : [],
-    ),
+    ...remoteAuthors,
   ]);
-  // A selectable agent also matches by its own name, as in @ mentions.
-  const authorTier = (pubkey: string, name: string) =>
-    Math.min(
-      ...[name, selectableAgents.get(pubkey)?.name].map((alias) =>
+  const authorPeople = (showAuthorPicker ? [...candidates] : []).map(
+    ([pubkey, profile]) => ({
+      pubkey,
+      ...profile,
+    }),
+  );
+  const authorVerified = useVerifiedNames(
+    session,
+    [...candidates].map(([pubkey, profile]) => ({
+      pubkey,
+      isAgent: profile.isAgent || knownAgents.has(pubkey),
+    })),
+    {
+      key: query,
+      settled: showAuthorPicker && !!authorAnswer && !savedOnly,
+    },
+  );
+  const preference = useNamePreference();
+  const namedAuthors = withVerifiedNames(
+    authorPeople,
+    authorVerified,
+    profiles,
+    preference,
+  );
+  const authorNames = session.names.scope(
+    effectiveChannelId ? members : undefined,
+    namedAuthors.filter(
+      ({ pubkey }) =>
+        authorVerified.has(pubkey) && !profiles.get(pubkey)?.verified,
+    ),
+  );
+  // Match both verified names regardless of the display preference, retaining
+  // the profile and selectable-agent aliases the picker already accepted.
+  const originalAuthors = foldProfiles(
+    [...candidates.keys()].flatMap((pubkey) => {
+      const event = session.profiles.event?.(pubkey);
+      return event ? [event] : [];
+    }),
+  );
+  const rankedAuthors = namedAuthors.map((profile) => {
+    const { pubkey } = profile;
+    const original = originalAuthors.get(pubkey);
+    const found = authorNames(pubkey);
+    const verified =
+      profiles.get(pubkey)?.verified ?? authorVerified.get(pubkey);
+    const label =
+      (found?.source === "public-profile" && authorVerified.has(pubkey)
+        ? undefined
+        : found?.name) ?? profile.name;
+    const tier = Math.min(
+      ...[
+        label,
+        profile.name,
+        profile.username,
+        profile.fullName,
+        ...(profile.profileNames ?? []),
+        original?.name,
+        original?.username,
+        selectableAgents.get(pubkey)?.name,
+      ].map((alias) =>
         alias === undefined
           ? Infinity
           : (matchPerson(alias, authorNeedle)?.tier ?? Infinity),
       ),
     );
+    return { pubkey, profile, label, verified, tier };
+  });
   const authorChoices =
-    authorToken && showAuthorPicker && authorSuggestions?.query === query
-      ? [...candidates]
-          .filter(([pubkey, profile]) => authorTier(pubkey, profile.name) < 4)
+    authorToken && showAuthorPicker && authorAnswer
+      ? rankedAuthors
+          .filter(({ tier }) => tier < 4)
           .filter(
-            ([pubkey]) =>
+            ({ pubkey }) =>
               !archiveHides(session.archives, pubkey, session.viewer) &&
               (!knownAgents.has(pubkey) || selectableAgents.has(pubkey)),
           )
           // Exact names survive the cap when the resolver reports ambiguity.
           .sort(
-            ([left, leftProfile], [right, rightProfile]) =>
-              Number(authorTier(right, rightProfile.name) === 0) -
-                Number(authorTier(left, leftProfile.name) === 0) ||
+            (
+              { pubkey: left, profile: leftProfile, tier: leftTier },
+              { pubkey: right, profile: rightProfile, tier: rightTier },
+            ) =>
+              Number(rightTier === 0) - Number(leftTier === 0) ||
               Number(!!leftProfile.isAgent || knownAgents.has(left)) -
                 Number(!!rightProfile.isAgent || knownAgents.has(right)) ||
               Number(members.includes(right)) - Number(members.includes(left)),
           )
           .slice(0, 12)
-          .map(([pubkey, profile]) => ({ pubkey, profile }))
-          .map(({ pubkey, profile }) => {
+          .map(({ pubkey, profile, label, verified }) => {
             const agent = selectableAgents.get(pubkey);
             const isAgent = !!agent || !!profile.isAgent;
             return {
               key: `author:${pubkey}`,
-              label: resolveName(
-                pubkey,
-                profile.name,
-                effectiveChannelId
-                  ? session.channels.get?.(effectiveChannelId)?.members
-                  : undefined,
-              ),
-              detail: pubkey.slice(0, 12),
+              label,
+              detail: [
+                verified &&
+                  otherVerifiedName(
+                    verifiedLabel(verified, preference),
+                    verified,
+                  ),
+                pubkey.slice(0, 12),
+              ]
+                .filter(Boolean)
+                .join(" · "),
               icon: ChatCircleIcon,
               avatar: {
                 src: avatarMedia(
@@ -730,10 +857,10 @@ export function SearchResults({
                   tokenEnd,
                   {
                     operand: conversation ? `in:@${pubkey}` : `from:${pubkey}`,
-                    text: `${operator}:@${profile.name}`,
+                    text: `${operator}:@${label}`,
                     // Its first word reopens the picker on this person.
-                    edit: `${operator}:@${profile.name.split(/\s/)[0]}`,
-                    label: `Remove ${conversation ? "conversation with" : "author"} ${profile.name}`,
+                    edit: `${operator}:@${label.split(/\s/)[0]}`,
+                    label: `Remove ${conversation ? "conversation with" : "author"} ${label}`,
                     title: npubEncode(pubkey),
                   },
                 );
@@ -743,7 +870,7 @@ export function SearchResults({
       : [];
   const publicChannels = usePublicChannelSearch(
     session,
-    scopedChannelId || hasOperator ? "" : parsed.text,
+    scopedChannelId || hasOperator || offline ? "" : parsed.text,
     list.status === "ready",
   );
   // Scoped search passes no text, so the lookup is idle there.
@@ -864,7 +991,7 @@ export function SearchResults({
         (agent &&
           !messageableAgents.has(pubkey) &&
           !sessionAgents.has(pubkey)) ||
-        archiveHides(session.archives, pubkey, session.viewer)
+        agentUnavailable(session, pubkey)
         ? []
         : [{ pubkey, source, agent }];
     });
@@ -1177,17 +1304,21 @@ export function SearchResults({
     )
       return openConversation(existing.id);
     if (
-      agent &&
       !existing &&
-      !session.agentChoices
-        .snapshot()
-        .identities.some(
-          (item) => canMessageAgent(item) && item.pubkey === pubkey,
-        )
+      // Whatever its profile says, by key.
+      (agentUnavailable(session, pubkey) ||
+        (agent &&
+          !session.agentChoices
+            .snapshot()
+            .identities.some(
+              (item) => canMessageAgent(item) && item.pubkey === pubkey,
+            )))
     ) {
       setPersonOpen({
         name,
-        error: "This agent is not ready to message in this community.",
+        error: agentUnavailable(session, pubkey)
+          ? "This identity is archived or being deleted in this community."
+          : "This agent is not ready to message in this community.",
       });
       return;
     }
@@ -1271,7 +1402,9 @@ export function SearchResults({
   const suggestions = channels
     .filter(
       (channel) =>
-        (!channel.readOnly || channel.viewerRole === "guest") &&
+        (!channel.readOnly ||
+          channel.cached ||
+          channel.viewerRole === "guest") &&
         !channel.archived &&
         !sidebarHidden(channel),
     )
@@ -1298,14 +1431,59 @@ export function SearchResults({
     id !== currentChannelId &&
     unreadIds.has(id) &&
     !muted.includes(id);
-  const suggestion = (channel: ChannelSummary): SearchDestination => ({
-    ...conversationDestination(channel),
-    ...(channel.preview ? { detail: channel.preview } : {}),
-  });
-  const unread = suggestions
-    .filter(isUnread)
-    .slice(0, UNREAD_ROWS)
-    .map(suggestion);
+  const unreadChannels = suggestions.filter(isUnread).slice(0, UNREAD_ROWS);
+  // A channel unread only through thread replies previews and opens the
+  // newest one, as its sidebar activity does.
+  const unreadThreads = useUnreadThreadOnly(
+    session.unread,
+    JSON.stringify(
+      unreadChannels.map(({ id, channelType }) => [id, channelType === "dm"]),
+    ),
+  );
+  const threadAuthors = [
+    ...new Set(
+      [...unreadThreads.values()].map(
+        ({ authorId, workflowOwnerId }) => workflowOwnerId ?? authorId,
+      ),
+    ),
+  ]
+    .sort()
+    .join(":");
+  useEffect(() => {
+    void profileGeneration;
+    if (threadAuthors)
+      void session.profiles
+        .ensure(threadAuthors.split(":"), "background")
+        .catch(() => {});
+  }, [session, threadAuthors, profileGeneration]);
+  const suggestion = (channel: ChannelSummary): SearchDestination => {
+    const destination = conversationDestination(channel);
+    const thread = unreadThreads.get(channel.id);
+    if (!thread)
+      return {
+        ...destination,
+        ...(channel.preview ? { detail: channel.preview } : {}),
+      };
+    const displayId = thread.workflowOwnerId ?? thread.authorId;
+    const resolved = resolveName(
+      displayId,
+      profiles.get(displayId)?.name ?? displayId.slice(0, 10),
+      channel.members ?? noMembers,
+    );
+    const name = thread.workflowOwnerId ? workflowLabel(resolved) : resolved;
+    return {
+      ...destination,
+      detailIcon: ThreadIcon,
+      detailIconLabel: "Thread reply",
+      detail: thread.preview.trim()
+        ? `${name}: ${thread.preview}`
+        : `${name} replied in a thread`,
+      run: choose(destination.key, () =>
+        openConversation(channel.id, thread.latestMessageId, thread.rootId),
+      ),
+    };
+  };
+  const unread = unreadChannels.map(suggestion);
   const recent = suggestions
     .filter((channel) => !isUnread(channel))
     .slice(0, 4)
@@ -1314,7 +1492,7 @@ export function SearchResults({
     ? channels.find((channel) => channel.id === currentChannelId)
     : undefined;
   const scopeAction: SearchDestination[] =
-    !scopedChannelId && currentChannel && onScopeChange
+    !scopedChannelId && !offline && currentChannel && onScopeChange
       ? [
           {
             key: `scope:${currentChannel.id}`,
@@ -1391,7 +1569,7 @@ export function SearchResults({
         ? `More than one conversation is named “${operatorChannel}”. Search in that conversation instead.`
         : `No conversation named “${operatorChannel}”.`;
   const messageEmpty =
-    operatorLookupPending || search.loading
+    offline || operatorLookupPending || search.loading
       ? undefined
       : operatorLookupError || search.error
         ? "Message search is unavailable."
@@ -1424,15 +1602,17 @@ export function SearchResults({
             destinations: authorChoices.filter((choice) => !choice.isAgent),
             empty: authorChoices.length
               ? undefined
-              : authorSuggestions?.query !== query
+              : !authorAnswer
                 ? "Searching people…"
-                : authorSuggestions.lookupFailed
-                  ? "People search is unavailable. Try a longer name."
-                  : authorNeedle && !searchable(authorNeedle)
-                    ? `Type at least ${SEARCH_MIN_CHARS} characters to search people.`
-                    : authorNeedle
-                      ? "No matching people. Try a different name."
-                      : "Type a name to search people.",
+                : authorAnswer.savedOnly
+                  ? "Connect to this community to search people."
+                  : authorAnswer.lookupFailed
+                    ? "People search is unavailable. Try a longer name."
+                    : authorNeedle && !searchable(authorNeedle)
+                      ? `Type at least ${SEARCH_MIN_CHARS} characters to search people.`
+                      : authorNeedle
+                        ? "No matching people. Try a different name."
+                        : "Type a name to search people.",
           },
           {
             label: "Agents",
@@ -1677,6 +1857,7 @@ export function SearchResults({
         )
       }
       isAction={isSearchAction}
+      footer={offline}
     >
       {dateOperator === "on" && (
         <Calendar

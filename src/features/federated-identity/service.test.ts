@@ -114,6 +114,25 @@ it("fails closed when the native session event listener cannot be registered", a
   expect(invoke).not.toHaveBeenCalledWith("federated_identity_snapshot");
 });
 
+it("asks native for the sign-up screen and a forced login only when the sign-in asks for them", async () => {
+  const { service } = setup();
+  await vi.waitFor(() => expect(service.snapshot()).toBe(signedOut));
+  await service.signIn();
+  await service.signIn({ signup: true });
+  await service.signIn({ forceLogin: true });
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(
+        ([command]) => command === "federated_identity_sign_in",
+      ),
+  ).toEqual([
+    ["federated_identity_sign_in", { signup: false, forceLogin: false }],
+    ["federated_identity_sign_in", { signup: true, forceLogin: false }],
+    ["federated_identity_sign_in", { signup: false, forceLogin: true }],
+  ]);
+});
+
 it("reauthorizes on sign-in and account change, not on startup restore or sign-out", async () => {
   const h = federatedFixture();
   h.publish({ status: "restoring" });
@@ -382,6 +401,33 @@ it("signs in to a community's own server and follows only that server", async ()
   expect(invoke).toHaveBeenCalledWith("federated_identity_sign_in", {
     relay: "wss://team.communities.example",
   });
+});
+
+it("sends a plugin's community call with that community's server session", async () => {
+  const { root, service } = setup();
+  const a = await plugin(root);
+  publish({ payload: signedIn });
+  vi.mocked(invoke).mockResolvedValue({
+    ...signedIn,
+    authority: peer,
+    revision: "peer-in",
+  });
+  const relay = "wss://team.communities.example";
+  service.forCommunity?.(relay).subscribe(() => {});
+  await vi.waitFor(() =>
+    expect(service.forCommunity?.(relay).snapshot().revision).toBe("peer-in"),
+  );
+  vi.mocked(invoke).mockResolvedValue({ status: 200, headers: {}, body: "{}" });
+  await a.service.request({ path: "/api/list", relay });
+  await a.service.request({ path: "/api/list" });
+  const requests = vi
+    .mocked(invoke)
+    .mock.calls.filter(([command]) => command === "federated_identity_request")
+    .map(([, args]) => args as { session: string; request: object });
+  expect(requests.map(({ session, request }) => [session, request])).toEqual([
+    ["peer-in", { path: "/api/list", relay }],
+    ["in", { path: "/api/list" }],
+  ]);
 });
 
 it("addresses a server by id, for its own Settings row", async () => {

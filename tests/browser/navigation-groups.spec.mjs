@@ -922,17 +922,15 @@ test("Create new retains its draft when preferences fail before submission and r
     );
     held.resolve();
     await failed;
-    // The one recovery notice reports it; there is no separate preferences toast.
-    // The modal makes the page inert, so match the inline notice by attribute.
-    await expect(
-      page.locator('[role="status"][aria-label="Reconnecting to relay…"]'),
-    ).toBeVisible();
     await expect(
       dialog.getByRole("button", { name: "Create and move" }),
     ).toBeDisabled();
     await expect(dialog).toBeVisible();
     await expect(field).toHaveValue("Retained launch");
     await expect(dialog.getByRole("alert")).toContainText("Retry preferences");
+    // Relay recovery owns the transient failure: it stays quiet through its
+    // delay, and there is no separate preferences toast.
+    await expect(page.locator(".buzz-toast")).toHaveCount(0);
     expect(app.report.sidebarPublications ?? []).toHaveLength(0);
     // Another failed recovery must keep both the draft and recovery action.
     // Recovery would retry a transient failure on its own seconds later, and

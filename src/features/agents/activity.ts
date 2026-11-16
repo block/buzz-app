@@ -1,10 +1,17 @@
-import type { LocalAgentSource, LocalWork } from "./local-activity";
+import type {
+  LocalAgentSource,
+  LocalDecline,
+  LocalWork,
+} from "./local-activity";
+import { activityPromptThread } from "./activity-transcript";
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 import type { LiveSnapshot } from "../relay/live";
+import { freshTurnTriggers, turnTriggerIds } from "./turn-triggers";
 import {
   ACTIVITY_HISTORY_AGE_MS,
   observerFrame,
+  terminalOutcome,
   type ObserverFrame,
 } from "./observer";
 
@@ -22,9 +29,16 @@ type RawRecord = ObserverFrame &
 export type ActivityTurn = Readonly<{
   agent: string;
   turnId: string;
+  sessionId?: string;
+  threadRootId?: string;
   channelId: string | null;
   timestamp: number;
   state: "working" | "unknown" | "ended";
+  /** Retained independently of the bounded raw activity buffer. */
+  outcome?: ReturnType<typeof terminalOutcome>;
+  triggeringEventIds?: readonly string[];
+  /** Multiple distinct starts reused this turn ID; request identity is ambiguous. */
+  ambiguous?: boolean;
   /** Roots established from retained signed triggering messages, not typing. */
   requests?: readonly Readonly<{ messageId: string; threadRootId: string }>[];
 }>;
@@ -51,8 +65,12 @@ type Snapshot = Readonly<{
   records: readonly RawRecord[];
   turns: readonly ActivityTurn[];
   local?: readonly LocalWork[];
+  /** This device's agents' mentions declined for who sent them. */
+  declined?: readonly LocalDecline[];
   typing: readonly TypingEntry[];
   trimmed: number;
+  /** Unlike raw-record trimming, losing a turn can lose request completeness. */
+  turnsTrimmed?: boolean;
 }>;
 type Turn = Omit<ActivityTurn, "state" | "requests"> & {
   requests?: ActivityTurn["requests"];
@@ -60,6 +78,8 @@ type Turn = Omit<ActivityTurn, "state" | "requests"> & {
   ended: boolean;
   epoch: number;
   unresolvedTriggers?: readonly string[];
+  /** A turn_started frame set triggers; a second one makes the turn ambiguous. */
+  started?: boolean;
 };
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value)
@@ -69,12 +89,36 @@ const text = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 256;
 const starts = new Set([
   "turn_started",
+  // A message the agent's harness added to this running turn (remote steering).
+  "turn_steered",
   "turn_liveness",
   "acp_read",
   "acp_write",
   "session_resolved",
 ]);
 const ends = new Set(["turn_completed", "turn_error", "agent_panic"]);
+/** A start's or steer's messages join the turn's triggers; nothing removes one. */
+function triggerFields(
+  previous: Turn | undefined,
+  added: readonly string[] | undefined,
+): Required<
+  Pick<Turn, "triggeringEventIds" | "requests" | "unresolvedTriggers">
+> {
+  const known = previous?.triggeringEventIds ?? [];
+  const fresh = freshTurnTriggers(known, added);
+  return {
+    triggeringEventIds: fresh.length ? [...known, ...fresh] : known,
+    requests: previous?.requests ?? [],
+    unresolvedTriggers: [...(previous?.unresolvedTriggers ?? []), ...fresh],
+  };
+}
+function withTriggers(previous: Turn, added: readonly string[]): Turn {
+  const fields = triggerFields(previous, added);
+  return fields.triggeringEventIds.length ===
+    (previous.triggeringEventIds?.length ?? 0)
+    ? previous
+    : { ...previous, ...fields };
+}
 
 /** Session-owned live evidence. Plugin activation owns demand, not sockets or keys. */
 export function createAgentActivity(
@@ -95,6 +139,7 @@ export function createAgentActivity(
     bytes = 0,
     trimmed = 0,
     evidenceFloor = 0;
+  let turnsTrimmed = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   const turns = new Map<string, Turn>();
   const typing = new Map<string, Typing>();
@@ -145,6 +190,12 @@ export function createAgentActivity(
               (row) => row.scope === local.scope && canAccess(row.channelId),
             )
         : [];
+    const declined =
+      local && !closed
+        ? (local.source.declined?.() ?? []).filter(
+            (row) => row.scope === local.scope && canAccess(row.channelId),
+          )
+        : [];
     const now = Date.now();
     const fresh = records.filter(
       (record) => now - record.receivedAt < ACTIVITY_HISTORY_AGE_MS,
@@ -175,8 +226,15 @@ export function createAgentActivity(
         Object.freeze({
           agent: turn.agent,
           turnId: turn.turnId,
+          ...(turn.sessionId ? { sessionId: turn.sessionId } : {}),
+          ...(turn.threadRootId ? { threadRootId: turn.threadRootId } : {}),
+          ...(turn.ambiguous ? { ambiguous: true } : {}),
           channelId: turn.channelId,
           timestamp: turn.timestamp,
+          ...(turn.outcome ? { outcome: turn.outcome } : {}),
+          ...(turn.triggeringEventIds
+            ? { triggeringEventIds: turn.triggeringEventIds }
+            : {}),
           ...(turn.triggeringEventIds ? { requests: turn.requests ?? [] } : {}),
           state: turn.ended
             ? "ended"
@@ -213,6 +271,10 @@ export function createAgentActivity(
       snapshot.status === status &&
       (snapshot.local ?? []).length === localWork.length &&
       (snapshot.local ?? []).every((row, index) => row === localWork[index]) &&
+      (snapshot.declined ?? []).length === declined.length &&
+      (snapshot.declined ?? []).every(
+        (row, index) => row === declined[index],
+      ) &&
       snapshot.records === records &&
       snapshot.trimmed === trimmed &&
       JSON.stringify(snapshot.turns) === JSON.stringify(visible) &&
@@ -225,8 +287,10 @@ export function createAgentActivity(
       records: Object.freeze(records),
       turns: Object.freeze(visible),
       local: Object.freeze(localWork),
+      declined: Object.freeze(declined),
       typing: Object.freeze(typers),
       trimmed,
+      turnsTrimmed,
     });
     for (const listener of listeners) notify(listener);
     if (workingChanged)
@@ -237,6 +301,7 @@ export function createAgentActivity(
     bytes = 0;
     trimmed = 0;
     evidenceFloor = 0;
+    turnsTrimmed = false;
     turns.clear();
     typing.clear();
     liveAgents.clear();
@@ -267,41 +332,74 @@ export function createAgentActivity(
     if (!Number.isFinite(timestamp) || timestamp > Date.now() + 5000) return;
     const key = `${agent}:${item.turnId}`;
     const previous = turns.get(key);
+    const payload = object(item.payload);
+    const added =
+      item.kind === "turn_started" || item.kind === "turn_steered"
+        ? turnTriggerIds(payload?.triggeringEventIds)
+        : undefined;
     // Terminal evidence wins even when a delayed earlier heartbeat arrives later.
     if (
       previous?.ended ||
       (previous && previous.timestamp > timestamp && !ends.has(item.kind))
-    )
+    ) {
+      // Membership is not progress: a late start or steer still names the
+      // messages its turn ran for, without reviving or refreshing it. A late
+      // second start makes the turn ambiguous, as one in order would.
+      if (!added || !previous) return;
+      let merged: Turn;
+      if (item.kind === "turn_steered") merged = withTriggers(previous, added);
+      else if (item.kind !== "turn_started") return;
+      else if (previous.started)
+        merged = previous.ambiguous
+          ? previous
+          : { ...previous, ambiguous: true };
+      else merged = { ...withTriggers(previous, added), started: true };
+      if (merged === previous) return;
+      associate(merged);
+      turns.set(key, merged);
       return;
+    }
     if (!previous && timestamp <= evidenceFloor) return;
-    const triggers =
-      item.kind === "turn_started"
-        ? object(item.payload)?.triggeringEventIds
-        : previous?.triggeringEventIds;
-    const triggeringEventIds =
-      Array.isArray(triggers) &&
-      triggers.length <= 64 &&
-      triggers.every(
-        (id) => typeof id === "string" && /^[0-9a-f]{64}$/.test(id),
-      )
-        ? (triggers as string[])
+    const root = payload?.threadRootEventId;
+    const legacyRoot =
+      item.kind === "acp_write" && !previous?.threadRootId
+        ? activityPromptThread(payload)
         : undefined;
+    const sessionId =
+      item.kind === "session_resolved" && text(payload?.sessionId)
+        ? payload.sessionId
+        : item.sessionId;
     const turn: Turn = {
-      ...(triggeringEventIds
-        ? {
-            triggeringEventIds,
-            requests: previous?.requests ?? [],
-            unresolvedTriggers:
-              previous?.unresolvedTriggers ?? triggeringEventIds,
-          }
+      ...(previous?.triggeringEventIds || added
+        ? triggerFields(previous, added)
+        : {}),
+      ...(previous?.started || (item.kind === "turn_started" && added)
+        ? { started: true }
         : {}),
       agent,
       turnId: item.turnId,
+      ...(previous?.ambiguous ||
+      (item.kind === "turn_started" && previous?.started)
+        ? { ambiguous: true }
+        : {}),
+      ...(typeof root === "string" && /^[0-9a-f]{64}$/.test(root)
+        ? { threadRootId: root }
+        : previous?.threadRootId
+          ? { threadRootId: previous.threadRootId }
+          : typeof legacyRoot === "string"
+            ? { threadRootId: legacyRoot }
+            : {}),
+      ...(text(sessionId)
+        ? { sessionId }
+        : previous?.sessionId
+          ? { sessionId: previous.sessionId }
+          : {}),
       channelId: item.channelId,
       // Completion may precede liveness on a rolled-back producer clock. Keep
       // the highest observed time so eventual eviction cannot weaken the fence.
       timestamp: Math.max(timestamp, previous?.timestamp ?? timestamp),
       ended: ends.has(item.kind),
+      outcome: terminalOutcome(item.kind, payload?.outcome),
       epoch,
     };
     associate(turn);
@@ -314,6 +412,7 @@ export function createAgentActivity(
         turns.delete(oldest[0]);
         // Forgetting a tombstone must not let older evidence resurrect that turn.
         evidenceFloor = Math.max(evidenceFloor, oldest[1].timestamp);
+        turnsTrimmed = true;
         trimmed++;
       }
     }
@@ -350,12 +449,12 @@ export function createAgentActivity(
     const items = Array.isArray(children) ? children : [raw];
     // A denied child cannot leak through an otherwise visible raw batch.
     if (!channelsAllowed(raw, canAccess)) return;
-    liveAgents.add(frame.agent);
-    for (const item of items) fold(frame.agent, item);
     if (records.some((record) => record.id === frame.id)) {
       publish();
       return;
     }
+    liveAgents.add(frame.agent);
+    for (const item of items) fold(frame.agent, item);
     const record = Object.freeze({
       id: frame.id,
       agent: frame.agent,
@@ -389,6 +488,27 @@ export function createAgentActivity(
   return {
     queries: Object.freeze({
       snapshot: () => snapshot,
+      /** Owner-authorized status readback for an exact retained remote task.
+       * Never invent raw telemetry or replace an already received terminal. */
+      reconcile(turn: ActivityTurn, outcome: "ended" | "error" | "stopped") {
+        if (closed || !leases || !turn.channelId || !canAccess(turn.channelId))
+          return;
+        const current = turns.get(`${turn.agent}:${turn.turnId}`);
+        if (
+          !current ||
+          current.ended ||
+          !turn.sessionId ||
+          current.sessionId !== turn.sessionId ||
+          current.channelId !== turn.channelId
+        )
+          return;
+        turns.set(`${turn.agent}:${turn.turnId}`, {
+          ...current,
+          ended: true,
+          outcome,
+        });
+        publish();
+      },
       /** Display-only local acknowledgement, scoped to this session and access. */
       dismissError(agent: string, channelId: string, messageId: string) {
         if (!local || closed || !canAccess(channelId)) return false;
@@ -506,34 +626,43 @@ export function createAgentActivity(
         // Malformed thread tags must not become channel-wide working evidence.
         if (event.tags.some(([name]) => name === "e") && !reference) continue;
         const threadRootId = reference?.rootId;
-        const key = JSON.stringify([event.pubkey, channelId, threadRootId]);
-        const previous = typing.get(key);
-        if (
-          previous &&
-          (timestamp < previous.timestamp ||
-            (event.kind === 20002 &&
-              !previous.working &&
-              timestamp <= previous.timestamp + 2000))
-        )
-          continue;
-        changed = true;
-        typing.delete(key);
-        typing.set(
-          key,
-          Object.freeze({
-            agent: event.pubkey,
-            channelId,
-            threadRootId,
-            timestamp,
-            startedAt:
-              previous?.working && now < previous.expiresAt
-                ? previous.startedAt
-                : timestamp,
-            working: event.kind === 20002,
-            expiresAt: Math.min(timestamp, now) + TYPING_FRESH_MS,
-          }),
-        );
-        if (typing.size > ACTIVITY_TURN_LIMIT) {
+        // A reply in a thread also ends the agent's channel-level typing: its
+        // pulses and replies can be filed apart for the same turn. Other
+        // threads keep theirs.
+        const scopes =
+          event.kind === 9 && threadRootId
+            ? [threadRootId, undefined]
+            : [threadRootId];
+        for (const threadRootId of scopes) {
+          const key = JSON.stringify([event.pubkey, channelId, threadRootId]);
+          const previous = typing.get(key);
+          if (
+            previous &&
+            (timestamp < previous.timestamp ||
+              (event.kind === 20002 &&
+                !previous.working &&
+                timestamp <= previous.timestamp + 2000))
+          )
+            continue;
+          changed = true;
+          typing.delete(key);
+          typing.set(
+            key,
+            Object.freeze({
+              agent: event.pubkey,
+              channelId,
+              threadRootId,
+              timestamp,
+              startedAt:
+                previous?.working && now < previous.expiresAt
+                  ? previous.startedAt
+                  : timestamp,
+              working: event.kind === 20002,
+              expiresAt: Math.min(timestamp, now) + TYPING_FRESH_MS,
+            }),
+          );
+        }
+        while (typing.size > ACTIVITY_TURN_LIMIT) {
           const oldest = typing.keys().next().value;
           if (oldest) typing.delete(oldest);
         }

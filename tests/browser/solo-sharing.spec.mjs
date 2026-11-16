@@ -577,9 +577,7 @@ test.describe("View only channel share", () => {
       await expect(confirmation).toContainText(
         "full history, Canvas, workspace folders, and agent instructions",
       );
-      await expect(
-        confirmation.getByRole("button", { name: "Cancel", exact: true }),
-      ).toBeFocused();
+      await expect(primary).toBeFocused();
       await reachable(primary);
       await expect(primary).toBeInViewport({ ratio: 1 });
       if (info.project.name === "chromium")
@@ -672,9 +670,7 @@ test.describe("View only channel share", () => {
       .getByRole("button", { name: "Share", exact: true })
       .click();
     await expect(confirmation).toContainText("from Private to View only");
-    await expect(
-      confirmation.getByRole("button", { name: "Cancel", exact: true }),
-    ).toBeFocused();
+    await expect(primary).toBeFocused();
     expect(app.report.detailsPublications).toHaveLength(1);
     expect(
       app.report.publications.filter(({ event }) => event.kind === 9),

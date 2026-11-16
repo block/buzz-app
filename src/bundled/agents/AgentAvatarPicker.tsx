@@ -138,15 +138,58 @@ export function AgentAvatarPicker({
   const swap = useRef<(() => void) | undefined>(undefined);
   useEffect(() => () => swap.current?.(), []);
   const dockPointer = useRef<number | null>(null);
+  const drag = useRef<{
+    pointer: number;
+    x: number;
+    left: number;
+    moved: boolean;
+  } | null>(null);
+  const suppressClick = useRef(false);
   const [magnifier] = useState(createDockMagnifier);
   useEffect(() => () => magnifier.dispose(), [magnifier]);
   const resetDock = (dock: HTMLElement) => {
     dockPointer.current = null;
     magnifier.move(dock, null);
   };
+  const endDrag = (event: React.PointerEvent<HTMLFieldSetElement>) => {
+    if (drag.current?.pointer !== event.pointerId) return;
+    drag.current = null;
+    delete event.currentTarget.dataset.dragging;
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+  };
   const dockEvents = {
+    onPointerDown: (event: React.PointerEvent<HTMLFieldSetElement>) => {
+      suppressClick.current = false;
+      if (event.pointerType !== "mouse" || event.button !== 0) return;
+      const dock = event.currentTarget;
+      if (disabled || busy || dock.scrollWidth <= dock.clientWidth) return;
+      event.preventDefault();
+      drag.current = {
+        pointer: event.pointerId,
+        x: event.clientX,
+        left: dock.scrollLeft,
+        moved: false,
+      };
+    },
     onPointerMove: (event: React.PointerEvent<HTMLFieldSetElement>) => {
       const dock = event.currentTarget;
+      const gesture = drag.current;
+      if (gesture?.pointer === event.pointerId) {
+        if (!event.buttons || disabled || busy) {
+          endDrag(event);
+          return;
+        }
+        const distance = event.clientX - gesture.x;
+        if (!gesture.moved && Math.abs(distance) < 4) return;
+        gesture.moved = true;
+        suppressClick.current = true;
+        dock.setPointerCapture(event.pointerId);
+        dock.dataset.dragging = "true";
+        resetDock(dock);
+        dock.scrollLeft = gesture.left - distance;
+        return;
+      }
       const bounds = dock.getBoundingClientRect();
       // The native scrollbar is navigation, not part of the magnification area.
       if (event.clientY >= bounds.top + dock.clientHeight || event.buttons) {
@@ -163,6 +206,17 @@ export function AgentAvatarPicker({
         magnifier.move(dock, event.clientX);
       }
     },
+    onPointerUp: endDrag,
+    onPointerCancel: endDrag,
+    onLostPointerCapture: endDrag,
+    onClickCapture: (event: React.MouseEvent<HTMLFieldSetElement>) => {
+      // A released drag must never choose the avatar underneath it. Keyboard
+      // activation has detail 0 and remains available after a drag.
+      if (suppressClick.current && event.detail > 0) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    },
     onPointerLeave: (event: React.PointerEvent<HTMLFieldSetElement>) =>
       resetDock(event.currentTarget),
     onKeyDown: (event: React.KeyboardEvent<HTMLFieldSetElement>) => {
@@ -172,6 +226,38 @@ export function AgentAvatarPicker({
     onScroll: (event: React.UIEvent<HTMLFieldSetElement>) =>
       magnifier.move(event.currentTarget, dockPointer.current),
   };
+  const dockSurface = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const surface = dockSurface.current;
+    if (!surface) return;
+    // The dock hides its scrollbar; the dominant axis of any wheel moves it.
+    const wheel = (event: WheelEvent) => {
+      const dock = surface.querySelector("fieldset");
+      if (!dock || event.ctrlKey) return;
+      const unit =
+        event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? dock.clientWidth
+          : event.deltaMode === WheelEvent.DOM_DELTA_LINE
+            ? 16
+            : 1;
+      const delta =
+        (Math.abs(event.deltaX) > Math.abs(event.deltaY)
+          ? event.deltaX
+          : event.deltaY) * unit;
+      const room = dock.scrollWidth - dock.clientWidth;
+      if (
+        !delta ||
+        room <= 0 ||
+        (delta < 0 && dock.scrollLeft <= 0) ||
+        (delta > 0 && dock.scrollLeft >= room)
+      )
+        return;
+      event.preventDefault();
+      dock.scrollBy({ left: delta, behavior: "instant" });
+    };
+    surface.addEventListener("wheel", wheel, { passive: false });
+    return () => surface.removeEventListener("wheel", wheel);
+  }, []);
   const preview = useAvatarPreview(selected ? "" : picture, community, "small");
   useEffect(() => () => pending.current?.abort(), []);
   useImperativeHandle(avatarRef, () => ({
@@ -277,7 +363,7 @@ export function AgentAvatarPicker({
                     alt=""
                     fallback={lastAvatar.label}
                     size="fill"
-                    shape="circle"
+                    shape="squircle"
                   />
                 ),
               },
@@ -340,7 +426,7 @@ export function AgentAvatarPicker({
                   alt="Uploading avatar"
                   fallback={name}
                   size="fill"
-                  shape="circle"
+                  shape="squircle"
                 />
                 <span className={styles.uploadCancel}>
                   <IconButton
@@ -402,13 +488,18 @@ export function AgentAvatarPicker({
                   render={
                     <SurfaceButton
                       className={styles.emojiAvatarButton}
-                      style={{ backgroundColor: color }}
                       aria-label="Choose emoji"
                       disabled={locked}
                     />
                   }
                 >
-                  <EmojiSwap emoji={emoji} animate={animateEmoji} />
+                  <span
+                    data-avatar-shape="squircle"
+                    className={styles.emojiAvatarArtwork}
+                    style={{ backgroundColor: color }}
+                  >
+                    <EmojiSwap emoji={emoji} animate={animateEmoji} />
+                  </span>
                 </PopoverTrigger>
                 <PopoverPopup
                   aria-label="Choose emoji"
@@ -443,11 +534,11 @@ export function AgentAvatarPicker({
                 alt="Selected avatar"
                 fallback={name}
                 size="fill"
-                shape="circle"
+                shape="squircle"
               />
             )}
           </div>
-          <div className={styles.dockSurface}>
+          <div ref={dockSurface} className={styles.dockSurface}>
             <div
               ref={filmCorners}
               aria-hidden="true"
@@ -540,7 +631,12 @@ export function AgentAvatarPicker({
                         onChange({ kind: "gloopie", picture: avatar.url });
                       }}
                     >
-                      <img src={avatar.preview} alt="" loading="lazy" />
+                      <img
+                        src={avatar.preview}
+                        alt=""
+                        loading="lazy"
+                        draggable={false}
+                      />
                     </SurfaceButton>
                   </span>
                 ))}

@@ -1,26 +1,43 @@
-import { useSyncExternalStore } from "react";
+import { BuilderlabIdentityRow } from "./login/IdentityRow";
+import {
+  useLayoutEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
+import type { OverviewObserver, OverviewSnapshot } from "./overview";
 import type { PluginModule } from "../../plugins/api";
+import type { PageNavigation } from "../../features/navigation/service";
 import { handoffFederatedBackupSession } from "../../features/identity/backup";
 import { nativeIdentityEnabled } from "../../features/identity/service";
 import { Login } from "./login/Login";
 import { browserLoginAvailable, oauthTarget } from "./oauth/browser";
 import { brokerBuilderlab, createDevSession } from "./dev-session";
-import { createNativeSession, nativeBuilderlab } from "./session";
+import {
+  createNativeSession,
+  followCommunity,
+  nativeBuilderlab,
+} from "./session";
 import { createAgentClient } from "./agents/client";
+import { startTurnStatusRecovery } from "./agents/turn-status";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
 import { createKnownCommunitiesClient } from "./known-communities/client";
 import { startKnownCommunitiesSync } from "./known-communities/sync";
 import { offerBuilderlabDecisions } from "./decisions";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
-import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
-import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { useAgentsSnapshot } from "../../features/agents/react";
+import { agentTarget } from "../agents/routes";
+import { BuilderlabSettings, ManagementHeader } from "./BuilderlabSettings";
 import { BuilderlabLogoIcon } from "../../shared/design-system/icons";
 import { HostedCommunities } from "./communities/HostedCommunities";
 import { brokerApi, createApi } from "./communities/api";
 import { createNativeBackend } from "./communities/native";
 import { hostedAgentSettings } from "./service";
 import { applyApps } from "./apps";
+
+const CREATE_DISMISSED = "builderlab:create-dismissed";
 
 export const inject = [
   "host",
@@ -30,6 +47,7 @@ export const inject = [
   "panels",
   "browser",
   "knownCommunities",
+  "communityJoin",
   "decisions",
   "navigation",
   ...(nativeBuilderlab() ? ["federatedIdentity"] : []),
@@ -50,14 +68,34 @@ export const apply: PluginModule["apply"] = (ctx) => {
   }
   const session = dev?.session ?? createNativeSession(ctx.federatedIdentity);
   ctx.effect(() => () => session.dispose());
+  // Remote agents use the sign-in server of the community in view; the rest
+  // of Builderlab stays with the build's.
+  const agentSession = dev
+    ? session
+    : followCommunity(session, ctx.federatedIdentity, ctx.relay);
+  if (agentSession !== session) ctx.effect(() => () => agentSession.dispose());
   const loginAvailable = (!!dev || browserLoginAvailable()) && !unavailable;
   const openSettings = (section: string) =>
     void ctx.navigation.open({ version: 1, kind: "settings", section });
   // An FI build signs out where its shared organization sign-in is managed.
   const openIdentity = !nativeBuilderlab()
     ? undefined
-    : () => openSettings("identity");
-  applyApps(ctx, session, loginAvailable, dev?.apps);
+    : () =>
+        void ctx.navigation.open({
+          version: 1,
+          kind: "settings",
+          section: "identity",
+          part: "organization-sign-in",
+        });
+  // An app that refuses the sign-in sends you where it is renewed: Identity in
+  // an FI build, this card in live development.
+  applyApps(
+    ctx,
+    session,
+    loginAvailable,
+    dev?.apps,
+    openIdentity ?? (() => openSettings("block.builderlab/login")),
+  );
   const handoff = (signedIn: boolean) =>
     handoffFederatedBackupSession(
       signedIn ? ctx.federatedIdentity.snapshot().revision : null,
@@ -84,7 +122,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
         knownCommunities: ctx.knownCommunities,
       }),
     );
-  const agents = createAgentClient(session);
+  const agents = createAgentClient(agentSession);
+  if (loginAvailable)
+    ctx.effect(() =>
+      startTurnStatusRecovery({
+        relay: ctx.relay,
+        session: agentSession,
+        client: agents,
+      }),
+    );
   if (!unavailable) {
     let providerState: AgentProviderSnapshot = {
       readiness: "attention",
@@ -92,12 +138,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
     };
     const providerListeners = new Set<() => void>();
     const updateProvider = () => {
-      const state = session.snapshot();
+      const state = agentSession.snapshot();
       providerState = Object.freeze(
         state.status === "signed-in"
           ? state.account?.canUseRemoteAgents
             ? { readiness: "ready" }
-            : { readiness: "attention", attentionLabel: "Coming soon" }
+            : {
+                readiness: "attention",
+                attentionLabel: null,
+                attentionDescription: "Unavailable for this account",
+              }
           : state.status === "pending"
             ? { readiness: "checking", blocking: true }
             : {
@@ -107,14 +157,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
       );
       for (const listener of providerListeners) listener();
     };
-    const stopProvider = session.subscribe(updateProvider);
+    const stopProvider = agentSession.subscribe(updateProvider);
     const ProviderDialogBody = () => {
-      const state = useSyncExternalStore(session.subscribe, session.snapshot);
+      const state = useSyncExternalStore(
+        agentSession.subscribe,
+        agentSession.snapshot,
+      );
       return (
         <div className="grid gap-3">
           <InlineHeader level={3} title="Connection" />
           <Login
-            session={session}
+            session={agentSession}
             available={loginAvailable}
             active={() => true}
             showHeading={false}
@@ -123,14 +176,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
           {state.status === "signed-in" &&
             !state.account?.canUseRemoteAgents && (
               <p role="status" className="text-body-sm text-secondary">
-                Builderlab remote agents are coming soon for your account.
+                Builderlab remote agents are unavailable for this account.
               </p>
             )}
         </div>
       );
     };
     ctx.agents.register({
-      ...builderlabType(agents, session, ctx.relay, openIdentity, openSettings),
+      ...builderlabType(
+        agents,
+        agentSession,
+        ctx.relay,
+        openIdentity,
+        openSettings,
+      ),
       provider: {
         snapshot: () => providerState,
         subscribe: (listener) => {
@@ -150,19 +209,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
       dev?.decide,
       openIdentity,
     );
-    ctx.provide("builderlab", hostedAgentSettings(session, agents));
+    ctx.provide("builderlab", hostedAgentSettings(agentSession, agents));
   }
   // Link the Buzz key at sign-in. Best effort: activation links again and
   // reports why when it cannot.
   let linked: unknown;
   let linking = Promise.resolve();
+  const accountAgents =
+    agentSession === session ? agents : createAgentClient(session);
   ctx.effect(() =>
     session.subscribe(() => {
       if (session.snapshot().status !== "signed-in") return;
       const credential = session.credential();
       if (linked === credential) return;
       linked = credential;
-      linking = agents.link(new AbortController().signal).catch(() => {});
+      linking = accountAgents
+        .link(new AbortController().signal)
+        .catch(() => {});
     }),
   );
   // Desktop communities use this sign-in. Live development with a pinned
@@ -174,15 +237,51 @@ export const apply: PluginModule["apply"] = (ctx) => {
       : loginAvailable
         ? createApi(createNativeBackend(session, () => linking))
         : null);
-  const Communities = ({ active }: { active(): boolean }) => {
+  const Communities = ({
+    active,
+    onOverview,
+    navigation,
+    initialCreate,
+    onCreateClose,
+  }: {
+    active(): boolean;
+    onOverview: OverviewObserver;
+    navigation: ReactNode;
+    initialCreate: boolean;
+    onCreateClose(): void;
+  }) => {
     const state = useSyncExternalStore(session.subscribe, session.snapshot);
-    if (!communities) return null;
+    useLayoutEffect(() => {
+      if (
+        active() &&
+        (!communities ||
+          (communities !== brokerApi && state.status !== "signed-in"))
+      )
+        onOverview({ kind: "empty" });
+    }, [active, onOverview, state.status]);
+    const heading = (
+      <ManagementHeader navigation={navigation} title="Communities" />
+    );
+    if (!communities) return heading;
     if (communities === brokerApi)
-      return <HostedCommunities api={communities} active={active} />;
+      return (
+        <HostedCommunities
+          initialCreate={initialCreate}
+          onCreateClose={onCreateClose}
+          navigation={navigation}
+          api={communities}
+          active={active}
+          onOverview={onOverview}
+          join={ctx.communityJoin?.open}
+        />
+      );
     const viewer =
       state.status === "signed-in" && dev ? session.viewerSession() : undefined;
     return state.status === "signed-in" ? (
       <HostedCommunities
+        initialCreate={initialCreate}
+        onCreateClose={onCreateClose}
+        navigation={navigation}
         key={
           viewer && "broker" in viewer
             ? viewer.broker.revision
@@ -190,25 +289,50 @@ export const apply: PluginModule["apply"] = (ctx) => {
         }
         api={communities}
         active={active}
+        onOverview={onOverview}
+        join={ctx.communityJoin?.open}
         sharedSignIn
       />
-    ) : null;
+    ) : (
+      heading
+    );
   };
-  ctx.settingsCards.register({
-    id: "login",
-    title: "Builderlab",
-    icon: BuilderlabLogoIcon,
-    group: "Plugins",
-    component: ({ active }) => (
-      <section aria-labelledby="builderlab-title">
-        <Header
-          id="builderlab-title"
-          title="Builderlab"
-          subtitle="One Builderlab account for hosted communities, remote agents and apps."
-        />
-        <InlineHeader title="Account" />
-        <SettingsGroup layout="form">
+  const Settings = ({
+    active,
+    navigation,
+  }: {
+    active(): boolean;
+    navigation?: PageNavigation | undefined;
+  }) => {
+    const state = useSyncExternalStore(session.subscribe, session.snapshot);
+    useSyncExternalStore(agentSession.subscribe, agentSession.snapshot);
+    const agentServer =
+      agentSession.providerName !== session.providerName
+        ? agentSession.providerName
+        : undefined;
+    const route =
+      navigation?.target.kind === "settings"
+        ? navigation.target.route
+        : undefined;
+    const createRequested =
+      route?.version === 1 && route.params === "create-community";
+    const saved = useAgentsSnapshot(ctx.agents);
+    const [communityOverview, setCommunityOverview] =
+      useState<OverviewSnapshot>({ kind: "pending" });
+    const [agentOverview, setAgentOverview] = useState<OverviewSnapshot>({
+      kind: "pending",
+    });
+    return (
+      <BuilderlabSettings
+        key={navigation?.entryId}
+        active={active}
+        initialSection={createRequested ? "communities" : undefined}
+        keepAccountVisible={state.status !== "signed-in"}
+        summaries={{ communities: communityOverview, agents: agentOverview }}
+        agentServer={agentServer}
+        account={
           <Login
+            notice
             showHeading={false}
             session={session}
             available={loginAvailable}
@@ -220,10 +344,74 @@ export const apply: PluginModule["apply"] = (ctx) => {
             active={active}
             openIdentity={openIdentity}
           />
-        </SettingsGroup>
-        <Communities active={active} />
-        <RemoteAgents client={agents} session={session} active={active} />
-      </section>
-    ),
+        }
+        communities={(back) => (
+          <Communities
+            initialCreate={
+              createRequested && navigation?.position(CREATE_DISMISSED) !== true
+            }
+            onCreateClose={() => {
+              if (createRequested)
+                navigation?.savePosition(CREATE_DISMISSED, true);
+            }}
+            navigation={back}
+            active={active}
+            onOverview={setCommunityOverview}
+          />
+        )}
+        agents={
+          <RemoteAgents
+            client={agents}
+            session={agentSession}
+            signIn={
+              agentSession.target ? (
+                <Login
+                  session={agentSession}
+                  available={loginAvailable}
+                  active={active}
+                  showHeading={false}
+                  openIdentity={openIdentity}
+                />
+              ) : undefined
+            }
+            active={active}
+            onOverview={setAgentOverview}
+            savedAgents={saved?.agents ?? []}
+            openAgent={(pubkey) => {
+              if (active() && ctx.agents.find(pubkey))
+                void ctx.navigation.open(agentTarget(pubkey));
+            }}
+            showHeading={false}
+            openAgents={() => {
+              if (active())
+                void ctx.navigation.open({
+                  version: 1,
+                  kind: "page",
+                  pluginId: "buzz.agents",
+                  pageId: "agents",
+                });
+            }}
+          />
+        }
+      />
+    );
+  };
+  ctx.settingsCards.register({
+    id: "login",
+    title: "Builderlab",
+    icon: BuilderlabLogoIcon,
+    group: "Plugins",
+    ...(nativeBuilderlab() && !unavailable
+      ? {
+          identityRow: ({ active }: { active(): boolean }) => (
+            <BuilderlabIdentityRow
+              session={session}
+              active={active}
+              openSettings={() => openSettings("block.builderlab/login")}
+            />
+          ),
+        }
+      : {}),
+    component: Settings,
   });
 };

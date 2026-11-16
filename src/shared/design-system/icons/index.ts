@@ -1,4 +1,6 @@
 import { defineIcon } from "./createDecorativeIcon";
+import TablerMenuIcon from "@tabler/icons-react/dist/esm/icons/IconMenu2.mjs";
+export const MenuIcon = defineIcon("tabler", TablerMenuIcon);
 export type { DefinedIcon } from "./createDecorativeIcon";
 import { BestieMarkArtwork } from "./BestieMark";
 import { BlockLogoArtwork } from "./BlockLogo";
@@ -85,8 +87,12 @@ export const ArrowCounterClockwiseIcon = defineIcon(
 // Tabler only. Add individual exports as needed; outline icons are the default.
 import TablerSendIcon from "@tabler/icons-react/dist/esm/icons/IconSend.mjs";
 export const SendIcon = defineIcon("tabler", TablerSendIcon);
+import TablerBookIcon from "@tabler/icons-react/dist/esm/icons/IconBook.mjs";
+export const BookIcon = defineIcon("tabler", TablerBookIcon);
 import TablerSparklesIcon from "@tabler/icons-react/dist/esm/icons/IconSparkles.mjs";
 export const SparklesIcon = defineIcon("tabler", TablerSparklesIcon);
+import TablerSettingsAiIcon from "@tabler/icons-react/dist/esm/icons/IconSettingsAi.mjs";
+export const SettingsAiIcon = defineIcon("tabler", TablerSettingsAiIcon);
 import TablerStarFilledIcon from "@tabler/icons-react/dist/esm/icons/IconStarFilled.mjs";
 export const StarFilledIcon = defineIcon("tabler", TablerStarFilledIcon);
 import TablerBrowserIcon from "@tabler/icons-react/dist/esm/icons/IconBrowser.mjs";
@@ -145,8 +151,8 @@ import TablerCaretUpIcon from "@tabler/icons-react/dist/esm/icons/IconChevronUp.
 export const CaretUpIcon = defineIcon("tabler", TablerCaretUpIcon);
 import TablerChatCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessageCircle.mjs";
 export const ChatCircleIcon = defineIcon("tabler", TablerChatCircleIcon);
-import TablerMessageReplyIcon from "@tabler/icons-react/dist/esm/icons/IconMessageReply.mjs";
-export const MessageReplyIcon = defineIcon("tabler", TablerMessageReplyIcon);
+import TablerMessage2Icon from "@tabler/icons-react/dist/esm/icons/IconMessage2.mjs";
+export const ThreadIcon = defineIcon("tabler", TablerMessage2Icon);
 import TablerChatsCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessages.mjs";
 export const ChatsCircleIcon = defineIcon("tabler", TablerChatsCircleIcon);
 import { ChatUnreadArtwork } from "./ChatUnread";
@@ -533,6 +539,12 @@ export const HashArrowInIcon = defineIcon("custom", HashArrowInArtwork, {
   intendedSizes: [{ width: 16, height: 16 }],
 });
 
+import TablerCpuIcon from "@tabler/icons-react/dist/esm/icons/IconCpu.mjs";
+export const CpuIcon = defineIcon("tabler", TablerCpuIcon);
+import TablerHexagonIcon from "@tabler/icons-react/dist/esm/icons/IconHexagon.mjs";
+export const HexagonIcon = defineIcon("tabler", TablerHexagonIcon);
+import TablerHexagonFilledIcon from "@tabler/icons-react/dist/esm/icons/IconHexagonFilled.mjs";
+export const HexagonFilledIcon = defineIcon("tabler", TablerHexagonFilledIcon);
 export const ClaudeLogoIcon = defineIcon("custom", ClaudeLogoArtwork, {
   meaning: "Claude harness",
   category: "Custom brand mark",

@@ -26,6 +26,7 @@ function memory(initial: Record<string, string> = {}) {
   return {
     getItem: (key: string) => values.get(key) ?? null,
     setItem: (key: string, value: string) => void values.set(key, value),
+    removeItem: (key: string) => void values.delete(key),
     values,
   } as unknown as Storage & { values: Map<string, string> };
 }
@@ -96,6 +97,83 @@ it("is unavailable with no provider, and never rejects", async () => {
     backend: undefined,
     reason: "unavailable",
   });
+});
+
+it("uses the default after a plugin retires its saved provider, including after reload", async () => {
+  const storage = memory({ [DECISION_BACKEND_KEY]: "example.plugin/retired" });
+  const f = setup(storage);
+  const decide = vi.fn<DecisionProvider["decide"]>(async () => reply);
+  await f.plugin("block.builderlab", { id: "builderlab", decide });
+  expect(f.service.status()).toBe("unavailable");
+  const listener = vi.fn();
+  f.service.subscribe(listener);
+  const fiber = f.root
+    .extend({ pluginOwner: { id: "example.plugin", revision: "two" } })
+    .plugin((ctx) => ctx.decisions.retireProvider("retired"));
+  await fiber.await();
+  expect(listener).toHaveBeenCalledOnce();
+  await expect(f.service.decide(request)).resolves.toMatchObject({
+    outcome: "answered",
+    backend: "block.builderlab/builderlab",
+  });
+  expect(storage.getItem(DECISION_BACKEND_KEY)).toBeNull();
+  const reload = setup(storage);
+  await reload.plugin("block.builderlab", { id: "builderlab" });
+  expect(reload.service.backend()).toBe("block.builderlab/builderlab");
+  await f.root.fiber.dispose();
+  await reload.root.fiber.dispose();
+});
+
+it.each([
+  "example.other/retired",
+  "example.plugin/current",
+  "buzz.typesafe/typesafe",
+])(
+  "preserves the saved choice %s when a plugin retires another provider",
+  async (chosen) => {
+    const storage = memory({ [DECISION_BACKEND_KEY]: chosen });
+    const { root } = setup(storage);
+    const fiber = root
+      .extend({ pluginOwner: { id: "example.plugin", revision: "two" } })
+      .plugin((ctx) => ctx.decisions.retireProvider("retired"));
+    await fiber.await();
+    expect(storage.getItem(DECISION_BACKEND_KEY)).toBe(chosen);
+    await root.fiber.dispose();
+  },
+);
+
+it("keeps the saved provider when its retirement cannot be stored", async () => {
+  const storage = memory({ [DECISION_BACKEND_KEY]: "example.plugin/retired" });
+  storage.removeItem = () => {
+    throw new Error("Storage unavailable");
+  };
+  const { root, service, plugin } = setup(storage);
+  await plugin("example.plugin", { id: "retired" });
+  const scoped = root.extend({
+    pluginOwner: { id: "example.plugin", revision: "two" },
+  });
+  expect(() => scoped.decisions.retireProvider("retired")).toThrow(
+    "Storage unavailable",
+  );
+  expect(service.backend()).toBe("example.plugin/retired");
+  await root.fiber.dispose();
+});
+
+it("requires a plugin scope and a local provider ID for retirement", async () => {
+  const { root, service } = setup();
+  expect(() => service.retireProvider("retired")).toThrow(
+    "Only an installed plugin",
+  );
+  const scoped = root.extend({
+    pluginOwner: { id: "example.plugin", revision: "two" },
+  });
+  expect(() =>
+    scoped.decisions.retireProvider("example.other/retired"),
+  ).toThrow("Invalid decision provider ID");
+  expect(() => scoped.decisions.retireProvider("")).toThrow(
+    "Invalid decision provider ID",
+  );
+  await root.fiber.dispose();
 });
 
 it("asks the provider plugins register, through the injected ctx.decisions", async () => {
@@ -210,6 +288,90 @@ it("uses Builderlab while it is registered, unless the user chose another", asyn
   expect(storage.values.get(DECISION_BACKEND_KEY)).toBe(
     DEFAULT_DECISION_PROVIDER,
   );
+});
+
+it("routes to the first default that can answer, else TypeSafe", async () => {
+  const { service, plugin } = setup();
+  const builderlab = settable("needs-setup");
+  const typesafe = settable("needs-setup");
+  await plugin("buzz.typesafe", { id: "typesafe", ...typesafe });
+  await plugin("block.builderlab", { id: "builderlab", ...builderlab });
+  // When no default can answer, TypeSafe shows: the user can set it up.
+  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(service.status()).toBe("needs-setup");
+  // A default still checking makes the routing checking, not the backend.
+  builderlab.set("checking");
+  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(service.status()).toBe("checking");
+  typesafe.set("ready");
+  // One that can answer is not held up by one that is checking.
+  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
+  expect(service.status()).toBe("ready");
+  builderlab.set("ready");
+  expect(service.backend()).toBe("block.builderlab/builderlab");
+  // A choice is kept even while it needs setup.
+  builderlab.set("needs-setup");
+  service.setBackend("block.builderlab/builderlab");
+  expect(service.backend()).toBe("block.builderlab/builderlab");
+  expect(service.status()).toBe("needs-setup");
+});
+
+it("routes a request once a checking default knows whether it can answer", async () => {
+  const { service, plugin, timers } = setup();
+  const builderlab = settable("checking");
+  const fromBuilderlab = vi.fn(async () => reply);
+  const fromTypesafe = vi.fn(async () => reply);
+  await plugin("buzz.typesafe", {
+    id: "typesafe",
+    ...settable("needs-setup"),
+    decide: fromTypesafe,
+  });
+  await plugin("block.builderlab", {
+    id: "builderlab",
+    ...builderlab,
+    decide: fromBuilderlab,
+  });
+  const refused = service.decide(request);
+  await flush();
+  expect(fromBuilderlab).not.toHaveBeenCalled();
+  expect(fromTypesafe).not.toHaveBeenCalled();
+  builderlab.set("needs-setup");
+  await expect(refused).resolves.toMatchObject({
+    outcome: "answered",
+    backend: DEFAULT_DECISION_PROVIDER,
+  });
+  builderlab.set("checking");
+  const granted = service.decide(request);
+  await flush();
+  builderlab.set("ready");
+  await expect(granted).resolves.toMatchObject({
+    backend: "block.builderlab/builderlab",
+  });
+  expect(fromBuilderlab).toHaveBeenCalledOnce();
+  // The wait counts against the request's deadline.
+  builderlab.set("checking");
+  const late = service.decide(request);
+  await flush();
+  timers[0]?.run();
+  await expect(late).resolves.toMatchObject({ reason: "timeout" });
+  expect(fromBuilderlab).toHaveBeenCalledOnce();
+});
+
+it("does not hold a request for a checking default when another can answer", async () => {
+  const { service, plugin } = setup();
+  const fromBuilderlab = vi.fn(async () => reply);
+  const fromTypesafe = vi.fn(async () => reply);
+  await plugin("buzz.typesafe", { id: "typesafe", decide: fromTypesafe });
+  await plugin("block.builderlab", {
+    id: "builderlab",
+    ...settable("checking"),
+    decide: fromBuilderlab,
+  });
+  await expect(service.decide(request)).resolves.toMatchObject({
+    outcome: "answered",
+    backend: DEFAULT_DECISION_PROVIDER,
+  });
+  expect(fromBuilderlab).not.toHaveBeenCalled();
 });
 
 it("removes a provider when the plugin asks, before its scope ends", async () => {

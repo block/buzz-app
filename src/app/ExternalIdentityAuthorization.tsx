@@ -53,7 +53,7 @@ export function ExternalIdentityAuthorization({ viewer }: { viewer: string }) {
       if (attempt.signal.aborted) return;
       if (tag[1] !== viewer)
         throw new Error(
-          "Your Buzz identity changed. Reopen Identity settings before authorizing.",
+          "Your Buzz identity changed. Reopen Security settings before authorizing.",
         );
       setProof(JSON.stringify(tag));
     } catch (failure) {

@@ -404,15 +404,13 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   await page.keyboard.press("Enter");
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toContainText("It will run for every new message");
-  await expect(button("Keep editing")).toBeFocused();
+  await expect(button("Save enabled workflow")).toBeFocused();
   expect(await saves()).toBe(0);
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(button("Create workflow")).toBeFocused();
   expect(await saves()).toBe(0);
   await page.keyboard.press("Space");
-  await expect(button("Keep editing")).toBeFocused();
-  await page.keyboard.press(tab);
   await expect(button("Save enabled workflow")).toBeFocused();
   await page.keyboard.press("Enter");
   await expect.poll(saves).toBe(1);

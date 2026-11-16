@@ -28,6 +28,24 @@ afterEach(() => {
 });
 
 describe("navigation attempts over one history driver", () => {
+  it("keeps sidebar intent through resolution and retry, and clears it for an explicit open or history", async () => {
+    const { host, navigation: nav } = setup();
+    void nav.open(page, { sidebar: "preserve" });
+    expect(nav.snapshot().attempt.sidebar).toBe("preserve");
+    expect(host.resolve(nav.snapshot().attempt, settings)).toBe(true);
+    expect(nav.snapshot().attempt.sidebar).toBe("preserve");
+    const retry = nav.retry();
+    expect(nav.snapshot().attempt.sidebar).toBe("preserve");
+    host.complete(nav.snapshot().attempt, { status: "opened" });
+    await expect(retry).resolves.toEqual({ status: "opened" });
+    void nav.open(settings);
+    expect(nav.snapshot().attempt.sidebar).toBeUndefined();
+    void nav.open(page, { sidebar: "preserve" });
+    nav.back();
+    expect(nav.snapshot().attempt.sidebar).toBeUndefined();
+    nav.forward();
+    expect(nav.snapshot().attempt.sidebar).toBeUndefined();
+  });
   it("dismissing an inactive visit preserves the selected attempt and its signal", () => {
     const { navigation: nav } = setup();
     void nav.open(settings);
@@ -456,6 +474,72 @@ describe("navigation attempts over one history driver", () => {
     expect(nav.snapshot().entry.target).toEqual(homeTarget);
     nav.forward();
     expect(nav.snapshot().entry.target).toEqual(settings);
+  });
+  describe("a visit whose page passes through", () => {
+    const draft: OpenTarget = { ...page, pageId: "draft" };
+    const other: OpenTarget = { ...page, pageId: "other" };
+    function onDraft(passes: () => boolean) {
+      const t = setup();
+      void t.navigation.open(page);
+      void t.navigation.open(draft);
+      const stop = t.host.passThrough(t.navigation.snapshot().entry.id, passes);
+      return { ...t, stop };
+    }
+    it("is replaced by the next page while it holds nothing", () => {
+      const { navigation: nav } = onDraft(() => true);
+      void nav.open(other);
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(page);
+    });
+    it("returns to its opener when that page opens again", () => {
+      const t = setup();
+      const nav = t.navigation;
+      void nav.open(page);
+      const opener = nav.snapshot().entry;
+      void nav.open(draft);
+      t.host.passThrough(nav.snapshot().entry.id, () => true);
+      void nav.open(page);
+      expect(nav.snapshot().entry).toBe(opener);
+      nav.back();
+      expect(nav.snapshot().entry.target).not.toEqual(page);
+    });
+    it("stays a Back stop while it holds something", () => {
+      const { navigation: nav } = onDraft(() => false);
+      void nav.open(other);
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(draft);
+    });
+    it("stays under Settings, which returns to it", () => {
+      const { navigation: nav } = onDraft(() => true);
+      void nav.open(settings);
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(draft);
+    });
+    it("is still replaced after returning from Settings", () => {
+      const { navigation: nav } = onDraft(() => true);
+      void nav.open(settings);
+      nav.back();
+      expect(nav.snapshot().canGoForward).toBe(true);
+      void nav.open(other);
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(page);
+    });
+    it("stays when its page cannot answer", () => {
+      const { navigation: nav } = onDraft(() => {
+        throw new Error("unavailable");
+      });
+      void nav.open(other);
+      expect(nav.snapshot().entry.target).toEqual(other);
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(draft);
+    });
+    it("stays once its page stops reporting", () => {
+      const { navigation: nav, stop } = onDraft(() => true);
+      stop();
+      void nav.open(other);
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(draft);
+    });
   });
   it("uses driver-initiated traversal and bounds the memory driver without inventing history", () => {
     const { navigation: nav, history } = setup(2);

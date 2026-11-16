@@ -153,6 +153,7 @@ function fixture() {
     snapshot: () => snapshot,
     subscribe: () => () => {},
     retry() {},
+    tryAgain() {},
     disconnect() {},
     async clearCache() {},
   };
@@ -172,6 +173,7 @@ function fixture() {
     position: () => undefined,
     savePosition() {},
     forSession: () => navigation,
+    passThrough: () => () => {},
     complete: () => true,
     resolve: () => true,
   };
@@ -249,9 +251,7 @@ it("Messages conversion survives signed type replacement, announces completion a
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(await screen.findByText("Converted to channel.")).toBeVisible();
   await waitFor(() =>
-    expect(
-      screen.getByRole("textbox", { name: "Message #Work" }),
-    ).toHaveFocus(),
+    expect(screen.getByRole("textbox", { name: "Message Work" })).toHaveFocus(),
   );
   expect(t.sign).toHaveBeenCalledOnce();
   expect(t.publish).toHaveBeenCalledOnce();
@@ -323,8 +323,6 @@ it("Messages header reopens unfiling recovery after confirmed metadata and a fai
   expect(t.unfile).toHaveBeenCalledTimes(2);
   expect(t.publish).toHaveBeenCalledOnce();
   await waitFor(() =>
-    expect(
-      screen.getByRole("textbox", { name: "Message #Work" }),
-    ).toHaveFocus(),
+    expect(screen.getByRole("textbox", { name: "Message Work" })).toHaveFocus(),
   );
 });

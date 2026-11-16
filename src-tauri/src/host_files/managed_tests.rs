@@ -27,6 +27,8 @@ impl Fixture {
             "host":{"managedFiles":managed,"files":files,"networkOrigins":["https://example.test"],
                 "processes":[{"id":"read","program":"cat"},{"id":"read-protected","program":"cat"}]}
         })).unwrap()).unwrap();
+        buzzodz_plugins::sign_release(&source, &nostr::key::SecretKey::generate().to_secret_hex())
+            .unwrap();
         let catalog = manager.install(&source).unwrap();
         let revision = catalog
             .plugins
@@ -668,6 +670,8 @@ fn own_managed_delete_refuses_other_plugins_legacy_paths_and_active_reads() {
         .unwrap(),
     )
     .unwrap();
+    buzzodz_plugins::sign_release(&source, &nostr::key::SecretKey::generate().to_secret_hex())
+        .unwrap();
     let catalog = f.manager.install(&source).unwrap();
     let other = catalog
         .plugins
@@ -834,6 +838,7 @@ fn process_attachment_reader_blocks_delete_until_output_and_killed_child_complet
             None,
             None,
             channel,
+            None,
             None,
             None,
             None,

@@ -124,11 +124,12 @@ it("shows a sent agent as its card, and adds it from there", async () => {
   );
   show();
   const button = await screen.findByRole("button", {
-    name: "Ada, shared agent",
+    name: "Add agent: Ada",
   });
   await vi.waitFor(() => expect(button).toBeEnabled());
   expect(fetch).toHaveBeenCalledWith("buzz-media://ada.png", expect.anything());
-  expect(within(button).getByText("echo-1")).toBeInTheDocument();
+  expect(within(button).getByText("Add agent")).toBeVisible();
+  expect(screen.queryByText("echo-1")).not.toBeInTheDocument();
   await user.click(button);
   const dialog = screen.getByRole("dialog", { name: "Ada" });
   // What it will follow can be changed before it is added.
@@ -183,7 +184,7 @@ it("names what it added, and opens it from there", async () => {
     { wrapper: ToastProvider },
   );
   const button = await screen.findByRole("button", {
-    name: "Ada, shared agent",
+    name: "Add agent: Ada",
   });
   await vi.waitFor(() => expect(button).toBeEnabled());
   await user.click(button);
@@ -200,6 +201,45 @@ it("names what it added, and opens it from there", async () => {
   expect(navigator.open).toHaveBeenCalledExactlyOnceWith(
     agentTarget("e".repeat(64)),
   );
+});
+
+it("links Manage plugins from a card while no agent type plugin is on", async () => {
+  const user = userEvent.setup();
+  await serve(ada());
+  const none: RegisteredAgentType[] = [];
+  const navigator = { open: vi.fn(async () => ({})) };
+  render(
+    <AgentCardAttachment
+      attachment={card}
+      source="buzz-media://ada.png"
+      agents={{ ...agents, types: () => none }}
+      relay={relay}
+      navigator={navigator as unknown as Navigation}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  const button = await screen.findByRole("button", {
+    name: "Add agent: Ada",
+  });
+  await vi.waitFor(() => expect(button).toBeEnabled());
+  await user.click(button);
+  const dialog = screen.getByRole("dialog", { name: "Ada" });
+  expect(
+    within(dialog).getByText(/No harness that runs agents on this computer/),
+  ).toHaveTextContent(
+    "No harness that runs agents on this computer is available. Check Manage plugins.",
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Manage plugins" }),
+  );
+  expect(navigator.open).toHaveBeenCalledExactlyOnceWith({
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+  });
+  // Settings opens in place of the dialog, not over it.
+  expect(screen.queryByRole("dialog", { name: "Ada" })).not.toBeInTheDocument();
 });
 
 it("refuses a card larger than the limit without reading it all", async () => {
@@ -235,11 +275,37 @@ it("reads a card again when chosen after its read failed", async () => {
   vi.stubGlobal("fetch", fetch);
   show();
   const button = await screen.findByRole("button", {
-    name: "Ada, shared agent. Couldn’t load. Try again",
+    name: "Try again: Ada",
   });
   expect(within(button).getByText("Couldn’t load. Try again")).toBeVisible();
   expect(screen.queryByRole("img", { name: "Ada" })).not.toBeInTheDocument();
   await user.click(button);
   expect(await screen.findByRole("dialog", { name: "Ada" })).toBeVisible();
   expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it("keeps Add agent disabled while loading and restores keyboard focus after cancel", async () => {
+  const user = userEvent.setup();
+  const bytes = new Uint8Array(await ada().arrayBuffer());
+  let respond!: (value: ReturnType<typeof stream>["response"]) => void;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise((resolve) => {
+          respond = resolve;
+        }),
+    ),
+  );
+  show();
+  const button = screen.getByRole("button", { name: "Add agent: Ada" });
+  expect(button).toBeDisabled();
+  respond(stream([bytes]).response);
+  await vi.waitFor(() => expect(button).toBeEnabled());
+  await user.tab();
+  expect(button).toHaveFocus();
+  await user.keyboard("{Enter}");
+  const dialog = await screen.findByRole("dialog", { name: "Ada" });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await vi.waitFor(() => expect(button).toHaveFocus());
 });

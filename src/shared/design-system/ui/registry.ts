@@ -157,7 +157,13 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "FieldButton",
     purpose: "Open a picker with the same shape and inset as a text field.",
     behavior: "Base UI Button composes with menu and popover triggers.",
-    variants: ["default", "disabled", "expanded"],
+    variants: [
+      "default",
+      "disabled",
+      "expanded",
+      "masked placeholder dots",
+      "masked prefix",
+    ],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/FieldButton.tsx",
@@ -209,7 +215,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Dialog",
     purpose: "A shared modal frame with title, content and actions.",
     behavior:
-      "Shared title/description header and secondary Close; 2rem insets (1rem at viewport widths up to 30rem) and a fixed 1rem minimum gutter above footer buttons outside scrolling content. Compact dialogs center; task modals start 8rem from the top. Base UI owns focus, default outside dismissal and transition presence; shared motion tokens animate entry and exit. The host can preserve native titlebar dragging through the backdrop.",
+      "Shared title/description header and secondary Close; one 12px heading-to-body gap, 2rem outer insets (1rem at viewport widths up to 30rem) and a fixed 1rem minimum gutter above footer buttons outside scrolling content. Compact dialogs center; task modals start 8rem from the top. Base UI owns focus, default outside dismissal and transition presence; shared motion tokens animate entry and exit. The host can preserve native titlebar dragging through the backdrop.",
     variants: [
       "compact (25rem)",
       "default (40rem)",
@@ -289,12 +295,14 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "A single-line text field. InputGroup owns the shared frame for leading and trailing content.",
     behavior:
-      "Base UI owns form and keyboard semantics. InputGroup supports inset and panel surfaces while its native input retains focus.",
+      "Base UI owns form and keyboard semantics. Large text highlights a composed value; InputGroup can wrap fixed text affixes within its shared frame while the input retains focus.",
     variants: [
       "default",
       "disabled",
       "invalid",
       "title",
+      "large text",
+      "InputGroup wrapping affix",
       "InputGroup panel surface",
     ],
     status: "proposed",
@@ -382,6 +390,21 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: ["field", "radio-group"],
   },
   {
+    slug: "count-badge",
+    name: "CountBadge",
+    purpose:
+      "Show a quiet item count, such as drafts, at the end of a navigation row.",
+    behavior:
+      "Image role with an exact spoken count; caps the visible number at 99+. Not interactive.",
+    variants: ["single digit", "multiple digits", "capped", "selected row"],
+    status: "proposed",
+    collection: "components",
+    owner: "desktop-new Messages",
+    source: "shared/design-system/ui/CountBadge.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
     slug: "keyboard-shortcut",
     name: "KeyboardShortcut",
     purpose:
@@ -399,14 +422,29 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "settings-group",
     name: "SettingsGroup",
     purpose:
-      "A subtle bordered container for related settings rows or form fields, or a stack of individually bordered cards.",
+      "A subtle bordered container for related settings rows or form fields, or a stack of individually bordered cards. SettingsGroupExpand reveals rows in place under a choice.",
     behavior:
-      "Presentation only; children retain their labels, state, and interactions.",
-    variants: ["rows", "form", "cards"],
+      "Presentation only; children retain their labels, state, and interactions. Expanded rows mount when first opened; closed again, they are inert and keep their state.",
+    variants: ["rows", "form", "cards", "expand"],
     status: "proposed",
     collection: "components",
     owner: "Buzz Settings",
     source: "shared/design-system/ui/SettingsGroup.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
+    slug: "value-chip",
+    name: "ValueChip",
+    purpose:
+      "A short read-only value in running text, such as the model a setting chose, with an optional mark.",
+    behavior:
+      "Presentation only; long values ellipsize, and an optional label names the value for assistive technology.",
+    variants: ["text", "icon"],
+    status: "proposed",
+    collection: "components",
+    owner: "Buzz Settings",
+    source: "shared/design-system/ui/ValueChip.tsx",
     baseUi: [],
     composes: [],
   },
@@ -463,15 +501,17 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "attention (proposed): light dashed danger outline with slow marching ants",
       "glass",
       "glass-ghost (proposed): quiet artwork control with glass hover/open states",
+      "glass-clear (proposed): barely-there glass secondary action over bright brand surfaces",
       "inverted",
       "link",
       "plain: unfilled text disclosure without an underline",
       "glass (proposed): frosted action over profile artwork",
-      "size: caption (32px, caption text) | inline | row (8px insets, stretched label) | xs | sm | md (default) | lg",
+      "size: text (small label text, no insets) | caption (32px, caption text) | inline | row (8px insets, stretched label) | xs | sm | md (default) | lg",
       "medium leading icon + label: 12px leading / 16px trailing inset (proposed)",
       "shape: capsule (default) | control (12px) | icon (square, 10px)",
       "SurfaceButton: artwork layout with shared activation and focus (proposed)",
       "loading",
+      "loadingAppearance: disabled (opt-in unavailable colors while busy)",
     ],
     status: "proposed",
     collection: "components",
@@ -685,7 +725,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "tabs",
     name: "Tabs",
     purpose:
-      "Switch between sibling views. Choose dock for static icon-only shell destinations with a theme-accent selected fill and inactive hover feedback, chrome for grouped tabs on the app backdrop, panel for a plain surface, segmented for grouped filters on an opaque surface, workspace for combined panes, or navigation for content-sized tabs capped at 12rem with icons or avatars. Closable tabs provide a sibling close button and support Delete or middle-click. The caller owns selection, retained content, and the next selection after closing.",
+      "Switch between sibling views. Choose dock for static icon-only shell destinations with a theme-accent selected fill and inactive hover feedback, chrome for grouped tabs on the app backdrop, panel for a plain surface, capsule for outlined filters with a trailing action, segmented for grouped filters on an opaque surface, workspace for combined panes, or navigation for content-sized tabs capped at 12rem with icons or avatars. Closable tabs provide a sibling close button and support Delete or middle-click. The caller owns selection, retained content, and the next selection after closing.",
     behavior:
       "Base UI Tabs. Icon-only variants keep item labels accessible. Dock labels use instant tooltips to the right of vertical docks or beneath horizontal docks; segmented-icons labels remain available as titles. Items can be disabled. Navigation items accept attentionRequest to identify a repeated opening without changing focus or remounting content. Hosts may opt movable tabs into Panel Swap title-only dragging using TabDragFeedback; hosts own hit testing, cancellation and the committed order. tabMenu composes the host’s scoped Close all tabs action with Rename tab in one shared menu, without changing tab selection.",
     variants: [
@@ -694,6 +734,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "panel",
       "workspace",
       "navigation",
+      "capsule",
       "segmented",
       "segmented-icons",
       "size: sm (32px) | md (40px default), for segmented filters",
@@ -710,8 +751,9 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Header",
     purpose:
       "Introduce page content with a title and optional subtitle, eyebrow, icon, or actions. Use InlineHeader for groups within the page.",
-    behavior: "Semantic heading with caller-selected level.",
-    variants: ["header", "inline"],
+    behavior:
+      "Semantic heading with caller-selected level. Top-aligned by default; align=end bottom-aligns the title and actions. Narrow Settings headers move end-aligned actions below the title.",
+    variants: ["header", "inline", "align=end"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Header.tsx",
@@ -790,8 +832,14 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "NavigationSection",
     purpose: "A named group of related rows in a dense workspace navigator.",
     behavior:
-      "Semantic native section, composed inside SidebarNavigation for shared compact heading and grouping rhythm.",
-    variants: ["default", "headingless", "inside SidebarNavigation"],
+      "Semantic native section, composed inside SidebarNavigation for shared compact heading and grouping rhythm. NavigationSectionHeading is its one heading row: the label fills, actions hug, and neither overlays nor reserves space for the other.",
+    variants: [
+      "default",
+      "headingless",
+      "inside SidebarNavigation",
+      "disclosure heading",
+      "revealed actions",
+    ],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

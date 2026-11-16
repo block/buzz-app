@@ -320,6 +320,7 @@ it.each(["icons", "", "two\nlines"])(
           position: () => undefined,
           savePosition() {},
           forSession: () => request,
+          passThrough: () => () => {},
           resolve: () => false,
           complete: (result) => controller.complete(snapshot.attempt, result),
         };
@@ -642,6 +643,7 @@ it("cancels retired community reads and never displays their late result", async
       return () => listeners.delete(listener);
     },
     retry: vi.fn(),
+    tryAgain: vi.fn(),
     disconnect: vi.fn(),
     clearCache: vi.fn(async () => {}),
   } as RelayData;
@@ -742,6 +744,7 @@ it("opens Buzz message and channel links in the app, naming a raw channel link",
     snapshot: () => connection,
     subscribe: () => () => {},
     retry: vi.fn(),
+    tryAgain: vi.fn(),
     disconnect: vi.fn(),
     clearCache: vi.fn(async () => {}),
   } as RelayData;

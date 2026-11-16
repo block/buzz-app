@@ -1,7 +1,11 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { invoke } from "@tauri-apps/api/core";
 import { recoveryMessage } from "../../../features/federated-identity/CommunitySignIn";
-import type { FederatedIdentity } from "../../../features/federated-identity/service";
+import type {
+  FederatedIdentity,
+  SessionSnapshot,
+  SignInOptions,
+} from "../../../features/federated-identity/service";
 import type { StorageResult } from "../../../plugins/types";
 import manifest from "../manifest.json";
 import {
@@ -20,12 +24,15 @@ export const bundledFederatedIdentity = (ctx: Context): FederatedIdentity =>
   ctx.extend({ pluginOwner: { id: manifest.id, revision: "bundled" } })
     .federatedIdentity;
 
-/** What first run uses of the NIP-FI session: it signs out only when the
- * person rejects the account (`releaseFirstRunSession`). */
+/**
+ * What first run uses of the NIP-FI session: it signs out only when the
+ * person rejects the account (`releaseFirstRunSession`), and it alone passes
+ * sign-in choices, which the host's service passes to native.
+ */
 export type FirstRunIdentity = Pick<
   FederatedIdentity,
-  "snapshot" | "subscribe" | "signIn" | "cancelSignIn" | "signOut" | "request"
->;
+  "snapshot" | "subscribe" | "cancelSignIn" | "signOut" | "request"
+> & { signIn(options?: SignInOptions): Promise<SessionSnapshot> };
 
 /**
  * "Use a different account": signs the shared session out, but only while it
@@ -61,6 +68,9 @@ export async function releaseFirstRunSession(
 export async function firstRunCredential(
   signal: AbortSignal,
   federated: FirstRunIdentity,
+  /** What the browser step asks for: Create account's sign-up screen, or
+   * credentials over the browser's session after Use a different account. */
+  options: SignInOptions = {},
 ): Promise<Credential> {
   const result = await invoke<StorageResult>("plugin_catalog").catch(() => {
     throw new Error("Could not complete Builderlab sign-in. Try again.");
@@ -77,12 +87,12 @@ export async function firstRunCredential(
     throw new Error(
       "Builderlab is turned off on this device, so you can't sign in with email. Enter a community address instead.",
     );
-  return federatedCredential(federated, signal);
+  return federatedCredential(federated, signal, options);
 }
 
 // Native rejects with a bare failure code, such as a refused renewal's.
-const signIn = (identity: FirstRunIdentity) =>
-  identity.signIn().catch((error: unknown) => {
+const signIn = (identity: FirstRunIdentity, options: SignInOptions) =>
+  identity.signIn(options).catch((error: unknown) => {
     throw new Error(
       recoveryMessage(error instanceof Error ? error.message : ""),
     );
@@ -99,6 +109,7 @@ const signIn = (identity: FirstRunIdentity) =>
 async function federatedCredential(
   identity: FirstRunIdentity,
   signal: AbortSignal,
+  options: SignInOptions,
 ): Promise<Credential> {
   signal.throwIfAborted();
   let wake = () => {};
@@ -131,7 +142,7 @@ async function federatedCredential(
     let before = identity.snapshot();
     // Pushed snapshots from before this sign-in answered; see the wait below.
     const earlier = [before.revision];
-    let session = await signIn(identity);
+    let session = await signIn(identity, options);
     signal.throwIfAborted();
     // After a failed restore, `signIn` restores again first and answers with
     // the stored session it finds; from signed out, it adopts a session
@@ -144,12 +155,12 @@ async function federatedCredential(
     ) {
       before = session;
       earlier.push(session.revision);
-      session = await signIn(identity);
+      session = await signIn(identity, options);
       signal.throwIfAborted();
     }
     // A renewal that is canceled (in the browser, by Cancel, or by a newer
     // sign-in's callback) answers with the session it would have replaced:
-    // never continue as it. One that times out rejects (`callback-refused`).
+    // never continue as it. One that times out rejects (`sign-in-timed-out`).
     if (before.status === "signed-in" && session.revision === before.revision)
       throw new Error(recoveryMessage("sign-in-canceled"));
     if (session.status !== "signed-in")

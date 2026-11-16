@@ -13,6 +13,7 @@ function platform(available: boolean): BrowserPlatform {
     available,
     attach: vi.fn(),
     setBounds: vi.fn(),
+    setMediaSuspended: vi.fn(),
     navigate: vi.fn(),
     action: vi.fn(),
     status: vi.fn(),

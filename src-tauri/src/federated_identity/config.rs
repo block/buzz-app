@@ -219,6 +219,16 @@ impl Config {
         Ok(servers)
     }
 
+    /// Whether this is the built-in server, which Builderlab customers'
+    /// servers (`customers::builderlab_customer`) come with.
+    #[allow(dead_code)] // Called by the app, not build.rs.
+    pub(crate) fn is_built_in(&self) -> bool {
+        Self::parse(BUILT_IN).is_ok_and(|built_in| {
+            serde_json::to_value(built_in.identity()).ok()
+                == serde_json::to_value(self.identity()).ok()
+        })
+    }
+
     /// The deployment as it identifies saved sessions, without presentation.
     pub(crate) fn identity(&self) -> Self {
         Self {
@@ -374,7 +384,7 @@ mod tests {
         }
     }
 
-    const BB_BLOCK: &str = r#"{"version":1,"id":"bb-block","identityOrigin":"https://block.builderlab.xyz","communityHosts":["buzz.block.builderlab.xyz"],"adapterBase":"https://block.builderlab.xyz/api/goose","apiBasePath":"/api/goose/","signIn":"at-launch","organization":"Block"}"#;
+    const BB_ACME: &str = r#"{"version":1,"id":"bb-acme","identityOrigin":"https://acme.builderlab.xyz","communityHosts":["buzz.acme.builderlab.xyz"],"adapterBase":"https://acme.builderlab.xyz/api/goose","apiBasePath":"/api/goose/","signIn":"at-launch","organization":"Acme"}"#;
 
     fn ids(servers: &[Config]) -> Vec<&str> {
         servers.iter().map(|server| server.id.as_str()).collect()
@@ -398,7 +408,7 @@ mod tests {
             assert!(built_in.matches_relay(relay).unwrap(), "{relay}");
         }
         assert!(!built_in
-            .matches_relay("wss://buzz.block.builderlab.xyz")
+            .matches_relay("wss://buzz.acme.builderlab.xyz")
             .unwrap());
         // The default Builderlab URL, however written, keeps it.
         for url in ["https://app.builderlab.xyz", "https://app.builderlab.xyz/"] {
@@ -427,8 +437,8 @@ mod tests {
             ["bb-public"]
         );
         assert_eq!(
-            ids(&compiled(Some(BB_BLOCK), None, Some("npub1viewer")).unwrap()),
-            ["bb-block", "bb-public"]
+            ids(&compiled(Some(BB_ACME), None, Some("npub1viewer")).unwrap()),
+            ["bb-acme", "bb-public"]
         );
         assert!(compiled(Some(""), Some("https://app.builderlab.xyz"), None)
             .unwrap()
@@ -444,17 +454,17 @@ mod tests {
 
     #[test]
     fn an_internal_build_adds_its_server_before_the_built_in_one() {
-        let servers = compiled(Some(BB_BLOCK), None, None).unwrap();
-        assert_eq!(ids(&servers), ["bb-block", "bb-public"]);
+        let servers = compiled(Some(BB_ACME), None, None).unwrap();
+        assert_eq!(ids(&servers), ["bb-acme", "bb-public"]);
         assert!(servers[0].sign_in == SignIn::AtLaunch);
-        let list = format!("[{BB_BLOCK}]");
+        let list = format!("[{BB_ACME}]");
         assert_eq!(
             ids(&compiled(Some(&list), None, None).unwrap()),
-            ["bb-block", "bb-public"]
+            ["bb-acme", "bb-public"]
         );
         // build.rs compiles the list; the app parses the same bytes back.
         let rebuilt = Config::parse_list(&serde_json::to_string(&servers).unwrap()).unwrap();
-        assert_eq!(ids(&rebuilt), ["bb-block", "bb-public"]);
+        assert_eq!(ids(&rebuilt), ["bb-acme", "bb-public"]);
     }
 
     /// The staging descriptor docs/configuration.md documents, verbatim.

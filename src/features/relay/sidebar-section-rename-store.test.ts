@@ -46,6 +46,11 @@ it("publishes the confirmed name only after the host accepts the rename", async 
     "Projects",
     "B",
   ]);
+  await queries.renameSection("a", "Work", "Projects");
+  expect(rename).toHaveBeenLastCalledWith(
+    { sectionId: "a", name: "Work", expectedName: "Projects" },
+    expect.any(AbortSignal),
+  );
 });
 
 it("publishes a confirmed icon-only edit without resending the name", async () => {

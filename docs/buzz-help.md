@@ -401,7 +401,8 @@ and are asked to sign in again in Buzz.
   **Quote** (or press Q) to add it to the end of that conversation's draft as a
   quote, ready for your reply below it. A selection in a thread quotes into the
   thread's reply box. Quoting keeps formatting and links but does not notify
-  anyone mentioned in the quoted text.
+  anyone mentioned in the quoted text. The floating Quote button hides while
+  a menu, picker, or dialog is open.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.
@@ -449,7 +450,11 @@ and are asked to sign in again in Buzz.
   reported chat before **Move to**, and never create it again.
   This option is not available through external/standalone or Nexus requests.
   Solo chats can also be shared with other people; do not describe every Solo
-  chat as visible only to its creator.
+  chat as visible only to its creator. In a Solo chat, including its first
+  message, **@** can name anyone in the community. A tagged agent of yours joins
+  the chat; anyone else outside the chat is only named: not added and not
+  notified, and the picker row says so. People already in the chat are notified
+  as usual. The toolbar's agent menu lists agents only.
   New chats start **Ongoing** unless **Chat settings** chooses **Temporary**,
   which archives the chat after a set time without activity. To start every new
   chat temporary, open the community's **Settings → Local settings** and choose
@@ -462,7 +467,8 @@ and are asked to sign in again in Buzz.
   channels. Reduced motion applies the new order immediately.
   Deleting or archiving the open chat keeps you in Solo and opens another chat
   or a new draft.
-- **Team** contains community channels and their threads. Use the **@** picker
+- **Team** contains community channels and their threads. Choose **Reply** on a
+  message to open or continue its thread. Use the **@** picker
   to address a channel member. A full name typed after **@** and followed by
   Space or closing punctuation, such as `,`, `.` or `'`, selects that person or
   agent unless a namesake or a longer name that begins the same way could be
@@ -481,6 +487,12 @@ and are asked to sign in again in Buzz.
   Plugins can also group tasks under joined channels. On supported hosts, each
   channel group keeps the native channel actions and details. New task appears
   only when the channel permits starting a chat.
+  To rename one, open **Workspace settings** from its heading’s **…** or right-click
+  menu, edit **Workspace name**, and choose **Save changes**. Chats, tasks and
+  starting settings stay in place.
+  Retrying an instructions-only draft keeps the current workspace name. If a
+  workspace name edit conflicts, copy your draft before using
+  **Review saved settings** to discard it and reload.
   Plugins can show ordinary chats in a plain list without workspace headings.
   Their saved workspace assignments stay in place.
   With Nexus enabled, each workspace also contains its tasks and can have a Lead
@@ -657,11 +669,13 @@ and are asked to sign in again in Buzz.
   unfinished `from:` or `in:@` lists people, `in:` or `in:#` your channels,
   `after:`, `before:` or `during:` common dates, and `on:` a calendar; choose
   one to make it a chip. Click a chip to remove it, or press Backspace at the
-  start of the text to edit the last one. With a filter, search shows only
-  messages. Each message result's conversation name starts with the icon its
-  channel header shows: a hash for a public channel, a lock for a private
-  channel, or a chat bubble for a direct message or chat. Screen readers
-  announce the type before the name.
+  start of the text to edit the last one. People suggestions match both
+  verified usernames and full names, including name words, whichever name
+  this device displays. The selected chip keeps the displayed name. With a
+  filter, search shows only messages. Each message result's conversation
+  name starts with the icon its channel header shows: a hash for a public
+  channel, a lock for a private channel, or a chat bubble for a direct message
+  or chat. Screen readers announce the type before the name.
 - **Find on screen**: press ⌘⇧F (Ctrl+Shift+F on Windows and Linux) to find
   text already shown in the window, like a browser's find bar. Matches are
   highlighted, with the current one in orange, and the bar shows "n of total".
@@ -1030,11 +1044,6 @@ available rather than silently discarding it.
 - On desktop, Buzz starts every agent with `BUZZ_VERSION` set to the app's
   version, and agents usually pass it on to the shell commands they run. A
   script or shell config can check for it to tell it is running under Buzz.
-- In communities where your build restricts workflows, workflow messages do
-  not automatically start or steer local Claude, Codex, Goose, or Pi agents. To
-  have one act on a workflow result, send it a direct request explaining what
-  to do with that result. Other communities still let a workflow you or your
-  agents created mention your agents.
 - **Agents** is where people create and manage agents. For supported types,
   open an agent there and use **Identity → Instructions**. Opening its avatar or
   name in a conversation shows its profile, where **Settings → Instructions**
@@ -1774,6 +1783,35 @@ When creating a workflow, direct-message choices use participant names when avai
 matches the displayed participant name. When no participant name is available, Buzz shows a short
 public-key prefix. A direct message with yourself is labeled **Notes to self**.
 These labels only help identify the conversation you select.
+
+## When your agent ignores a mention
+
+Your agents act only on messages from you, from your other agents, and from
+workflows that you or your agents own and that direct them. When your own
+workflow posts a message that mentions one of your agents on this computer but
+doesn’t direct it, a short note under the message says so. On a relay that uses
+owner-only agent mentions it reads: **“‹Agent› didn’t respond to this workflow
+message. This community limits which workflows can use agents, so other people
+can’t use yours. The workflow’s Runs tab shows why it didn’t respond this
+time.”** Elsewhere it reads: **“‹Agent› didn’t respond because this workflow
+message wasn’t set up to direct agents.”** Only you see it, on this device;
+nothing is posted.
+Other ignored mentions show no note.
+
+On a relay that uses owner-only agent mentions, the desktop workflow editor
+warns when a message step mentions an agent in the channel:
+
+Each warning ends with “This community limits which workflows can use agents,
+so other people can’t use yours.”
+
+- **“Agents you mention respond only when you start this workflow, not when
+  someone else does.”** The workflow starts on a message, reaction or diff.
+- **“Agents won’t respond to workflows started by a webhook.”** It starts on a
+  webhook, whatever its steps.
+- **“Agents won’t respond to this workflow because it has steps other than Send
+  Message and Delay.”** It has a step other than a message or a delay.
+
+A schedule with only message and delay steps shows no warning.
 
 ## Deleting an agent’s workflow
 

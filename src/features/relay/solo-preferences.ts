@@ -14,6 +14,14 @@ import type {
   SidebarGroups,
 } from "./sidebar-preferences";
 
+export class WorkspaceNameConflict extends Error {
+  constructor() {
+    super(
+      "The saved workspace name needs review. Your draft is kept; copy it before reloading saved settings.",
+    );
+  }
+}
+
 export function soloGroups(entries: readonly KitEntry[]) {
   return entries.find(
     (entry) =>
@@ -212,6 +220,28 @@ export function createSoloPreferences(
         return saved;
       }),
     groupsOnly: true,
+    renameSection: ({ sectionId, name, expectedName }, signal) =>
+      serialize(async () => {
+        const next = name?.trim();
+        if (!next || next.length > 120)
+          throw new Error("Use a workspace name of 1–120 characters.");
+        const { value, entry, active } = await current(signal);
+        const group = value.groups.find((group) => group.id === sectionId);
+        if (!group) throw new Error("This workspace no longer exists.");
+        if (group.name === next) return project(value);
+        if (expectedName !== undefined && group.name !== expectedName)
+          throw new WorkspaceNameConflict();
+        return save(
+          {
+            ...value,
+            groups: value.groups.map((item) =>
+              item.id === sectionId ? { ...item, name: next } : item,
+            ),
+          },
+          entry,
+          active,
+        );
+      }),
     createSection: (section, signal) =>
       serialize(async () => {
         const { value, entry, active } = await current(signal);

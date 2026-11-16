@@ -717,12 +717,23 @@ export function createSidebarPreferencesStore({
       get sectionRenameWritable() {
         return renameWritable();
       },
-      renameSection(sectionId: string, edit: string | SidebarSectionEdit) {
+      renameSection(
+        sectionId: string,
+        edit: string | SidebarSectionEdit,
+        expectedName?: string,
+      ) {
         if (!renameWritable() || !renameSection)
           return Promise.reject(new Error("Section edit is unavailable"));
         const changes = typeof edit === "string" ? { name: edit } : edit;
         return writeGroups("Section edit is unavailable", (signal) =>
-          renameSection({ sectionId, ...changes }, signal),
+          renameSection(
+            {
+              sectionId,
+              ...changes,
+              ...(expectedName === undefined ? {} : { expectedName }),
+            },
+            signal,
+          ),
         );
       },
       get sectionCreationWritable() {

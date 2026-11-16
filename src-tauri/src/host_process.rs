@@ -17,10 +17,10 @@ use crate::{with_manager, PluginManager};
 use buzzodz_plugins::{HostProcess, ProcessArtifact};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -610,6 +610,18 @@ fn set_environment(
             command.env_remove(&name);
         }
     }
+    // An AppImage's launcher points library and data paths into its bundle for
+    // the app alone; a host program loading the bundle's older OpenSSL fails.
+    if let Some(appdir) = std::env::var_os("APPDIR").filter(|dir| !dir.is_empty()) {
+        for (name, value) in std::env::vars_os() {
+            if let Some(kept) = without_bundle_paths(&value, Path::new(&appdir)) {
+                match kept {
+                    Some(kept) => command.env(&name, kept),
+                    None => command.env_remove(&name),
+                };
+            }
+        }
+    }
     command.env("PATH", path);
     for (name, value) in environment {
         if name.is_empty() || name.contains(['=', '\0']) {
@@ -622,6 +634,26 @@ fn set_environment(
     }
     command.env("BUZZ_VERSION", version);
     Ok(())
+}
+
+/// `value`'s path list less its entries in the bundle at `appdir`, when it
+/// has any there: `Some(None)` when none of the person's own are left.
+fn without_bundle_paths(value: &OsStr, appdir: &Path) -> Option<Option<OsString>> {
+    let paths: Vec<PathBuf> = std::env::split_paths(value).collect();
+    if !paths.iter().any(|path| path.starts_with(appdir)) {
+        return None;
+    }
+    // Also drops an empty entry, which a launcher's `$APPDIR/usr/lib:$LD_LIBRARY_PATH`
+    // leaves and which would mean the current folder.
+    let kept: Vec<PathBuf> = paths
+        .into_iter()
+        .filter(|path| !path.as_os_str().is_empty() && !path.starts_with(appdir))
+        .collect();
+    Some(
+        std::env::join_paths(kept)
+            .ok()
+            .filter(|joined| !joined.is_empty()),
+    )
 }
 
 /// The verified target stays inside the MCP prefix and the same containment.

@@ -1185,3 +1185,32 @@ fn every_process_is_told_the_buzz_version_a_plugin_cannot_change() {
         assert_eq!(get(&command, "PATH").as_deref(), Some("/bin"));
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn host_programs_never_load_an_appimage_bundle() {
+    let appdir = Path::new("/tmp/.mount_BuzzX1");
+    for (value, expected) in [
+        // linuxdeploy's launcher, started without a library path of its own.
+        ("/tmp/.mount_BuzzX1/usr/lib:", Some(None)),
+        (
+            "/tmp/.mount_BuzzX1/usr/lib:/opt/mine/lib",
+            Some(Some("/opt/mine/lib")),
+        ),
+        ("/tmp/.mount_BuzzX1", Some(None)),
+        (
+            "/usr/share:/tmp/.mount_BuzzX1/usr/share",
+            Some(Some("/usr/share")),
+        ),
+        // Another AppImage's mount, or none, is the person's own.
+        ("/tmp/.mount_BuzzX10/usr/lib", None),
+        ("/opt/mine/lib", None),
+        ("", None),
+    ] {
+        assert_eq!(
+            without_bundle_paths(OsStr::new(value), appdir),
+            expected.map(|kept| kept.map(OsString::from)),
+            "{value}"
+        );
+    }
+}

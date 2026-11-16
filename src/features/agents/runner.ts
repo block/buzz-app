@@ -868,8 +868,6 @@ export class AgentRunners {
           drop("unavailable");
           return false;
         }
-        // Cancellation cannot retract input already handed to the transport.
-        if (outcome?.status === "delivered") return true;
         if (options.signal?.aborted) {
           drop("aborted");
           return false;
@@ -879,7 +877,7 @@ export class AgentRunners {
           if (controller.aborted || lifetime.aborted || !available())
             drop("unavailable");
           else if (options.signal?.aborted) drop("aborted");
-          else if (valid && !outcome) return true;
+          else if (valid) return true;
           else drop("stale");
         } catch {
           drop("guard-error");

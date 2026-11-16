@@ -586,7 +586,7 @@ export class GooseRuntime {
               : (threadReference(event)?.rootId ?? event.id),
             ...(step ? { step } : {}),
             ...(acknowledged ? { acknowledged } : {}),
-            ...(accepted ? { delivered: accepted } : {}),
+            ...(accepted ? { accepted } : {}),
             ...(superseded ? { superseded } : {}),
           });
         })();

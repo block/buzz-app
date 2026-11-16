@@ -2442,7 +2442,7 @@ describe("guarded plugin wakes", () => {
         await expect(delivered).resolves.toEqual({ status: "delivered" });
         abort.abort();
         const accepted = f.run.mock.calls[1]?.[0];
-        expect(accepted?.current()).toBe(true);
+        expect(accepted?.current()).toBe(false);
         expect(accepted?.trigger).toMatchObject({
           type: "plugin",
           plugin: "example",
@@ -2486,7 +2486,7 @@ describe("guarded plugin wakes", () => {
           delivery.workingUntil(
             session.send(wake.text, {
               current: delivery.current,
-              ...(delivery.accepted ? { delivered: delivery.accepted } : {}),
+              ...(delivery.accepted ? { accepted: delivery.accepted } : {}),
               ...(delivery.acknowledged
                 ? { acknowledged: delivery.acknowledged }
                 : {}),

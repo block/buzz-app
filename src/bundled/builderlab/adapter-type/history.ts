@@ -55,7 +55,7 @@ const decodeEntities = (text: string) =>
 /** The composer writes a sender as its label, then its keys, then whether
  * they are the owner: `Name (username: …, npub: …, hex: …). This sender …`. */
 const SENDER =
-  /^From: (.+?)(?: \((?:username: [^,()]*, )?(?:npub: [^,()]*, )?hex: ([0-9a-f]{64})\))?\. This sender is (?:your owner|not verified as your owner)\.$/gm;
+  /^From: (.+?)(?: \((?:username: [^,()]*, )?(?:npub: [^,()]*, )?hex: ([0-9a-f]{64})\))?\. This sender .*$/gm;
 const EVENT_ID = /^Event ID: (\S+)$/gm;
 /** Tool results are text, or other content shown as JSON. */
 const resultText = (results: unknown) =>

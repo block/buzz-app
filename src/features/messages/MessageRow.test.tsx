@@ -3834,13 +3834,29 @@ it("offers the viewer's own message the activity of each agent it names", async 
   const second = "ef".repeat(32);
   const person = "12".repeat(32);
   const open = vi.fn(() => true);
-  const render = (mentions: string[], authorId = viewer) =>
-    renderDom(
+  const render = (
+    mentions: string[],
+    authorId = viewer,
+    channel?: { channelType: "dm"; members: string[] },
+  ) => {
+    const list = {
+      channels: channel ? [{ id: row.channelId, ...channel }] : [],
+      status: "ready",
+    };
+    return renderDom(
       <MessageRow
         row={{ ...row, id: "prompt", authorId, mentions }}
         profile={undefined}
         viewer={viewer}
         agentPubkeys={new Set([first, second])}
+        participantProfiles={
+          new Map([[first, { name: "Carl", isAgent: true }]])
+        }
+        references={
+          {
+            channels: { list: () => list, subscribeList: () => () => {} },
+          } as unknown as RelaySession
+        }
         media={() => undefined}
         onOpenLink={open}
         canOpenLink={() => true}
@@ -3848,16 +3864,25 @@ it("offers the viewer's own message the activity of each agent it names", async 
         retry={undefined}
       />,
     );
+  };
   const menu = async () => {
     fireEvent.click(
       screen.getByRole("button", { name: "More message actions" }),
     );
     await screen.findByRole("menu");
   };
+  const activityItems = () =>
+    screen
+      .getAllByRole("menuitem")
+      .map((item) => item.textContent)
+      .filter((text) => text?.includes("activity"));
   try {
+    // One agent: the item says whose activity it opens.
     render([first, person]);
     await menu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "View activity" }));
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "View Carl’s activity" }),
+    );
     const target = profileActivityViewTarget(first) as string;
     expect(open).toHaveBeenCalledExactlyOnceWith(target, { rootId: "prompt" });
     expect(
@@ -3865,25 +3890,52 @@ it("offers the viewer's own message the activity of each agent it names", async 
     ).toEqual(["prompt"]);
     cleanup();
 
-    render([first, second]);
+    // An agent without a name is called Agent, not a key fragment.
+    render([second]);
     await menu();
-    expect(
-      screen
-        .getAllByRole("menuitem")
-        .map((item) => item.textContent)
-        .filter((text) => text?.includes("activity")),
-    ).toEqual([
-      `View ${first.slice(0, 10)} activity`,
-      `View ${second.slice(0, 10)} activity`,
-    ]);
+    expect(activityItems()).toEqual(["View Agent’s activity"]);
     cleanup();
 
-    // Someone else's message, or one naming no agent, has no activity.
-    for (const [mentions, author] of [
-      [[first], person],
-      [[person], viewer],
+    // Several agents share one item, listing them by name in its submenu.
+    open.mockClear();
+    render([first, second]);
+    await menu();
+    expect(activityItems()).toEqual(["View activity"]);
+    const trigger = screen.getByRole("menuitem", { name: "View activity" });
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    act(() => trigger.focus());
+    fireEvent.keyDown(trigger, { key: "ArrowRight" });
+    const agents = await screen.findByRole("menu", { name: "View activity" });
+    expect(
+      within(agents)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual(["Carl", "Agent"]);
+    fireEvent.click(within(agents).getByRole("menuitem", { name: "Agent" }));
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      profileActivityViewTarget(second),
+      { rootId: "prompt" },
+    );
+    cleanup();
+
+    // A one-to-one DM wakes its agent without a mention.
+    render([], viewer, { channelType: "dm", members: [viewer, first] });
+    await menu();
+    expect(activityItems()).toEqual(["View Carl’s activity"]);
+    cleanup();
+
+    // Someone else's message, or one naming no agent, has no activity; nor
+    // does a group DM's unnamed agent.
+    for (const [mentions, author, channel] of [
+      [[first], person, undefined],
+      [[person], viewer, undefined],
+      [[], viewer, { channelType: "dm", members: [viewer, first, person] }],
     ] as const) {
-      render([...mentions], author);
+      render(
+        [...mentions],
+        author,
+        channel && { ...channel, members: [...channel.members] },
+      );
       await menu();
       expect(
         screen.queryByRole("menuitem", { name: /activity/ }),

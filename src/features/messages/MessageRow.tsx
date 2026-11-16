@@ -112,6 +112,9 @@ import {
   MenuIcon,
   MenuItem,
   MenuSeparator,
+  MenuSubmenu,
+  MenuSubmenuPopup,
+  MenuSubmenuTrigger,
 } from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
@@ -326,6 +329,11 @@ function MessageRowContent({
     row.channelId,
     (channel) => channel?.channelType === "solo",
   );
+  const dmMembers = useListedChannel(
+    references?.channels,
+    row.channelId,
+    (channel) => (channel?.channelType === "dm" && channel.members) || none,
+  );
   const showTime =
     messageTimestamps === "show" ||
     (messageTimestamps === "hide-solo" && !solo);
@@ -385,11 +393,20 @@ function MessageRowContent({
     row,
   );
   // An agent's message opens at the turn that posted it; the viewer's own
-  // message, at the turns it began for each agent it names.
+  // message, at the turns it began for each agent it names, or for the other
+  // member of a one-to-one DM, which wakes without a mention.
+  const own = !canViewActivity && !!viewer && row.authorId === viewer;
   const activityAgents = canViewActivity
     ? [row.authorId]
-    : viewer && row.authorId === viewer && row.audience !== "agents"
-      ? [...new Set(row.mentions)].filter(
+    : own && row.audience !== "agents"
+      ? [
+          ...new Set([
+            ...row.mentions,
+            ...(dmMembers.length === 2
+              ? dmMembers.filter((pubkey) => pubkey !== viewer)
+              : []),
+          ]),
+        ].filter(
           (pubkey) =>
             agentPubkeys?.has(pubkey) ||
             !!directory.profiles.get(pubkey)?.isAgent ||
@@ -399,22 +416,53 @@ function MessageRowContent({
   const activityFocus = [row.id, ...(row.request ? [row.request] : [])];
   const openActivity = (view: string) =>
     canOpenLink?.(view) && openProfileTranscript(view, openLink, activityFocus);
-  const activityItem = activityAgents.map((pubkey) => {
+  const activityViews = activityAgents.flatMap((pubkey) => {
     const view = profileActivityViewTarget(pubkey);
-    return (
-      view &&
-      canOpenLink?.(view) && (
-        <MenuItem key={pubkey} onClick={() => openActivity(view)}>
-          <MenuIcon>
-            <ListBulletsIcon />
-          </MenuIcon>
-          {activityAgents.length > 1
-            ? `View ${resolveName(pubkey, directory.profiles.get(pubkey)?.name ?? pubkey.slice(0, 10))} activity`
+    return view && canOpenLink?.(view) ? [{ pubkey, view }] : [];
+  });
+  // On the viewer's own message, say whose activity: the agent's name as the
+  // rest of the app shows it, or "Agent" when it has none.
+  const agentName = (pubkey: string) => {
+    const profile = directory.profiles.get(pubkey);
+    return resolveName(
+      pubkey,
+      directory.agents.find((item) => item.pubkey === pubkey)?.name.trim() ||
+        (profile?.nameIsFallback ? "" : profile?.name.trim()) ||
+        "Agent",
+    );
+  };
+  const activityIcon = (
+    <MenuIcon>
+      <ListBulletsIcon />
+    </MenuIcon>
+  );
+  const [onlyActivity] = activityViews;
+  const activityItem =
+    activityViews.length > 1 ? (
+      // Several agents share one item, so the menu keeps its length.
+      <MenuSubmenu>
+        <MenuSubmenuTrigger>
+          {activityIcon}
+          View activity
+        </MenuSubmenuTrigger>
+        <MenuSubmenuPopup>
+          {activityViews.map(({ pubkey, view }) => (
+            <MenuItem key={pubkey} onClick={() => openActivity(view)}>
+              {agentName(pubkey)}
+            </MenuItem>
+          ))}
+        </MenuSubmenuPopup>
+      </MenuSubmenu>
+    ) : (
+      onlyActivity && (
+        <MenuItem onClick={() => openActivity(onlyActivity.view)}>
+          {activityIcon}
+          {own
+            ? `View ${agentName(onlyActivity.pubkey)}’s activity`
             : "View activity"}
         </MenuItem>
       )
     );
-  });
   const avatarShape =
     row.agentEnvelope || agentPubkeys?.has(row.authorId) || profile?.isAgent
       ? "squircle"

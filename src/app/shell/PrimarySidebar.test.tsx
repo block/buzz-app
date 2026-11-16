@@ -500,6 +500,15 @@ it("preserves a source opening only for itself, through a later render", async (
     "aria-selected",
     "true",
   );
+  // Moving within the conversation, as Back and Forward over the thread do,
+  // keeps a filter chosen since: it is not a new destination.
+  await user.click(screen.getByRole("tab", { name: "Solo" }));
+  f.navigateWithin(target);
+  f.navigateWithin(thread);
+  expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   // And a preserved opening from inside that thread applies again.
   await act(() => f.open(target, { sidebar: "preserve" }));
   expect(teamRow()).not.toHaveAttribute("aria-current");

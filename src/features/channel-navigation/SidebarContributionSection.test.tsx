@@ -326,7 +326,24 @@ it("keeps conversation-level rows selected through in-conversation navigation", 
     subscribe: () => () => {},
     register: () => {},
   };
-  const renderSection = (target: OpenTarget, open = target) => (
+  // One navigator for the whole test: its open entry changes through its
+  // listener, as a thread open does, without the sidebar rendering.
+  let open: OpenTarget = message;
+  const listeners = new Set<() => void>();
+  const navigator = {
+    open: vi.fn(),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    snapshot: () => ({ entry: { target: open } }),
+  } as unknown as Navigation;
+  const navigate = (next: OpenTarget) =>
+    act(() => {
+      open = next;
+      for (const listener of listeners) listener();
+    });
+  const renderSection = (target: OpenTarget) => (
     <ChannelSidebarDnd
       writable={false}
       onMove={() => {}}
@@ -336,7 +353,7 @@ it("keeps conversation-level rows selected through in-conversation navigation", 
       <SidebarContributionSection
         entry={entry}
         registry={registry}
-        navigator={navigatorAt(open)}
+        navigator={navigator}
         target={target}
         open
         onToggle={() => {}}
@@ -358,17 +375,24 @@ it("keeps conversation-level rows selected through in-conversation navigation", 
 
   // The shell's sidebar target names only the conversation; the open entry
   // still selects the exact message. Under Settings, the target stands.
-  rerender(renderSection(conversation, message));
+  rerender(renderSection(conversation));
   expect(conversationRow()).toHaveAttribute("aria-current", "page");
   expect(exactMessageRow()).toHaveAttribute("aria-current", "page");
-  rerender(renderSection(conversation, { version: 1, kind: "settings" }));
+  // Leaving and returning to the message does not render the sidebar.
+  navigate(conversation);
+  expect(exactMessageRow()).not.toHaveAttribute("aria-current");
+  navigate(message);
+  expect(exactMessageRow()).toHaveAttribute("aria-current", "page");
+  navigate({ version: 1, kind: "settings" });
   expect(conversationRow()).toHaveAttribute("aria-current", "page");
   expect(exactMessageRow()).not.toHaveAttribute("aria-current");
 
+  navigate({ ...message, panel: "members" });
   rerender(renderSection({ ...message, panel: "members" }));
   expect(conversationRow()).toHaveAttribute("aria-current", "page");
   expect(exactMessageRow()).not.toHaveAttribute("aria-current");
 
+  navigate({ ...conversation, messageId: "c".repeat(64) });
   rerender(renderSection({ ...conversation, messageId: "c".repeat(64) }));
   expect(conversationRow()).toHaveAttribute("aria-current", "page");
   expect(exactMessageRow()).not.toHaveAttribute("aria-current");

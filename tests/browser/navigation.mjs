@@ -258,10 +258,16 @@ export function communitySwitcher(page, name) {
 
 export async function selectCommunity(page, name) {
   const picker = await openCommunityPicker(page);
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // A row's name carries its unread suffix once that community's unread is known.
   await picker
     .getByRole("button", {
-      name: name === "Personal space" ? name : `Switch to ${name}`,
-      exact: true,
+      name:
+        name === "Personal space"
+          ? name
+          : new RegExp(
+              `^Switch to ${escaped}(, unread|, \\d+ items? needs? you)?$`,
+            ),
     })
     .click();
   await expect(communitySwitcher(page, name)).toBeVisible();

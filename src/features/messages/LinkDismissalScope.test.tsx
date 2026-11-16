@@ -6,7 +6,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { useSyncExternalStore, type ComponentProps } from "react";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
-import type { LinkRenderer } from "../conversation/contracts";
+import type { LinkPreviewProps, LinkRenderer } from "../conversation/contracts";
 import { eventDto, type RelayEvent } from "../relay/events";
 import { createRelaySession } from "../relay/session";
 import {
@@ -18,7 +18,7 @@ import {
   signed,
   type Key,
 } from "../relay/testing";
-import { MessageMarkdown } from "./MessageMarkdown";
+import { MessageRow } from "./MessageRow";
 
 const url = "https://example.test/a";
 const content = `See ${url} and ${url}`;
@@ -45,7 +45,26 @@ const registry = [
 const links = { snapshot: () => registry as never, subscribe: () => () => {} };
 const noInline: never[] = [];
 const inline = { snapshot: () => noInline, subscribe: () => () => {} };
-const extensions = { links, inline } as never;
+const cards: LinkPreviewProps[] = [];
+const previewRegistry = [
+  {
+    id: "card",
+    title: "Card",
+    key: "test/card",
+    pluginId: "test",
+    revision: "1",
+    matches: () => true,
+    component: (props: LinkPreviewProps) => {
+      cards.push(props);
+      return <span>Card face</span>;
+    },
+  },
+];
+const linkPreviews = {
+  snapshot: () => previewRegistry as never,
+  subscribe: () => () => {},
+};
+const extensions = { links, inline, linkPreviews } as never;
 
 async function ownerAuth(agent: Key, owner: Key) {
   const condition = "kind=0&created_at<1700000001";
@@ -72,7 +91,13 @@ async function ownerAuth(agent: Key, owner: Key) {
 type Author = "viewer" | "agent" | "stranger";
 type Evidence = "viewer" | "other" | "none" | "forged";
 
-async function fixture(author: Author, evidence: Evidence = "none", count = 1) {
+async function fixture(
+  author: Author,
+  evidence: Evidence = "none",
+  count = 1,
+  text = content,
+  mention?: { key: Key; name: string },
+) {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -88,7 +113,13 @@ async function fixture(author: Author, evidence: Evidence = "none", count = 1) {
   const writer = author === "viewer" ? viewer : agent;
   const authorKey = author === "stranger" ? stranger : writer;
   const originals = Array.from({ length: count }, (_, index) =>
-    message(authorKey, "room", content, 1700000000 + index),
+    message(
+      authorKey,
+      "room",
+      text,
+      1700000000 + index,
+      mention ? [["p", mention.key.pubkey]] : [],
+    ),
   );
   const original = originals[0];
   assert.exists(original);
@@ -133,7 +164,20 @@ async function fixture(author: Author, evidence: Evidence = "none", count = 1) {
             }),
           ];
         if (filter.kinds?.includes(0))
-          return filter.authors?.includes(agent.pubkey) ? [agentProfile] : [];
+          return [
+            ...(filter.authors?.includes(agent.pubkey) ? [agentProfile] : []),
+            ...(mention && filter.authors?.includes(mention.key.pubkey)
+              ? [
+                  eventDto(
+                    signed(mention.key, {
+                      kind: 0,
+                      content: JSON.stringify({ name: mention.name }),
+                      tags: [],
+                    }),
+                  ),
+                ]
+              : []),
+          ];
         if (filter.kinds?.includes(9))
           return [
             ...originals,
@@ -177,19 +221,24 @@ async function fixture(author: Author, evidence: Evidence = "none", count = 1) {
     return (
       <ConversationPresentation value>
         {rows.map((row) => (
-          <MessageMarkdown
+          <MessageRow
             key={row.id}
             row={row}
             session={observed}
+            scope="test"
+            profile={undefined}
             extensions={extensions}
             media={() => undefined}
             onOpenLink={() => true}
+            day={false}
+            retry={undefined}
           />
         ))}
       </ConversationPresentation>
     );
   }
   faces.length = 0;
+  cards.length = 0;
   const observe = vi.fn(owner.session.observe);
   const observed = Object.create(owner.session, {
     observe: { value: observe },
@@ -289,6 +338,8 @@ it.each([
   await h.settled();
   await waitFor(() => expect(faces.length).toBeGreaterThan(0));
   expect(faces.every((face) => face.dismiss === undefined)).toBe(true);
+  expect(cards.length).toBeGreaterThan(0);
+  expect(cards.every((card) => card.dismiss === undefined)).toBe(true);
   expect(h.published).toHaveLength(0);
 });
 
@@ -355,4 +406,159 @@ it("shares one ownership observation across an agent's rows", async () => {
   await h.settled();
   expect(faces.length).toBeGreaterThanOrEqual(10);
   expect(h.ownershipViews()).toBe(1);
+});
+
+const chat = "[Chat: Demo](buzz://channel/session-id)";
+const face = (target: string) =>
+  [...faces].reverse().find((candidate) => candidate.url === target);
+
+async function dismissFace(
+  h: Awaited<ReturnType<typeof fixture>>,
+  target: string,
+) {
+  await waitFor(() => expect(face(target)?.dismiss).toBeDefined());
+  await act(async () => {
+    await face(target)?.dismiss?.();
+  });
+  await waitFor(() => expect(h.published).toHaveLength(1));
+  return edited(h.published[0]);
+}
+
+it("rewrites the complete message when a chat card is drawn apart from its text", async () => {
+  const h = await fixture("viewer", "none", 1, `${chat}\n\nSee ${url}`);
+  expect(await dismissFace(h, url)).toBe(`${chat}\n\nSee <${url}>`);
+  expect(face("buzz://channel/session-id")?.dismiss).toBeUndefined();
+});
+
+it("counts links past a chat card that shares their address", async () => {
+  const target = "buzz://channel/c";
+  const h = await fixture(
+    "viewer",
+    "none",
+    1,
+    `[Chat: Demo](${target})\n\n[${target}](${target})`,
+  );
+  expect(await dismissFace(h, target)).toBe(
+    `[Chat: Demo](${target})\n\n<${target}>`,
+  );
+});
+
+it("keeps a media timestamp when a reply's link is dismissed", async () => {
+  const h = await fixture("viewer", "none", 1, `⏱ 0:30 — See ${url}`);
+  expect(await dismissFace(h, url)).toBe(`⏱ 0:30 — See <${url}>`);
+});
+
+it("keeps a media timestamp and a chat card together", async () => {
+  const h = await fixture(
+    "viewer",
+    "none",
+    1,
+    `⏱ 0:30 — ${chat}\n\nSee ${url}`,
+  );
+  expect(await dismissFace(h, url)).toBe(`⏱ 0:30 — ${chat}\n\nSee <${url}>`);
+});
+
+it("tells a link written without a trailing slash from one written with it", async () => {
+  const origin = "https://example.test";
+  const h = await fixture("viewer", "none", 1, `${origin} ${origin}/`);
+  await waitFor(() => expect(faces.at(-2)?.dismiss).toBeDefined());
+  const [first, second] = faces.slice(-2);
+  expect(first?.url).toBe(`${origin}/`);
+  await act(async () => {
+    await first?.dismiss?.();
+  });
+  await waitFor(() => expect(h.published).toHaveLength(1));
+  expect(edited(h.published[0])).toBe(`<${origin}> ${origin}/`);
+  await waitFor(async () => {
+    await act(async () => {
+      await second?.dismiss?.();
+    });
+    expect(h.published).toHaveLength(2);
+  });
+  expect(edited(h.published[1])).toBe(`<${origin}> <${origin}/>`);
+});
+
+it("dismisses an origin-only link", async () => {
+  const h = await fixture("viewer", "none", 1, "See https://example.test");
+  expect(await dismissFace(h, "https://example.test/")).toBe(
+    "See <https://example.test>",
+  );
+});
+
+it("changes only the link of a message that mentions someone", async () => {
+  const sam = keypair();
+  const h = await fixture("viewer", "none", 1, `@Sam see ${url}`, {
+    key: sam,
+    name: "Sam",
+  });
+  await waitFor(() =>
+    expect(h.owner.session.profiles.snapshot().get(sam.pubkey)).toBeDefined(),
+  );
+  expect(await dismissFace(h, url)).toBe(`@Sam see <${url}>`);
+  await waitFor(() =>
+    expect(h.owner.session.channels.window("room").rows[0]?.content).toBe(
+      `@Sam see <${url}>`,
+    ),
+  );
+  const [shown] = h.owner.session.channels.window("room").rows;
+  expect(shown?.edited).toBeUndefined();
+  expect(shown?.mentions).toEqual([sam.pubkey]);
+});
+
+it("offers the same dismissal on a preview card", async () => {
+  const h = await fixture("viewer");
+  await waitFor(() => expect(cards.at(-1)?.dismiss).toBeDefined());
+  expect(new Set(cards.map((card) => card.url))).toEqual(new Set([url]));
+  await act(async () => {
+    await cards.at(-1)?.dismiss?.();
+  });
+  await waitFor(() => expect(h.published).toHaveLength(1));
+  expect(edited(h.published[0])).toBe(`See <${url}> and ${url}`);
+});
+
+it.each([
+  [
+    "skips links written in angle brackets",
+    `<${url}> then ${url}`,
+    `<${url}> then <${url}>`,
+  ],
+  [
+    "skips links hidden in a spoiler",
+    `||${url}|| ${url}`,
+    `||${url}|| <${url}>`,
+  ],
+  [
+    "follows a card drawn apart from the text",
+    `${chat}\n\nSee ${url}`,
+    `${chat}\n\nSee <${url}>`,
+  ],
+])(
+  "rewrites the link a preview card is drawn for: it %s",
+  async (_name, text, expected) => {
+    const h = await fixture("viewer", "none", 1, text);
+    await waitFor(() => expect(cards.at(-1)?.dismiss).toBeDefined());
+    await act(async () => {
+      await cards.at(-1)?.dismiss?.();
+    });
+    await waitFor(() => expect(h.published).toHaveLength(1));
+    expect(edited(h.published[0])).toBe(expected);
+  },
+);
+
+it("offers no dismissal on a card for a labeled link", async () => {
+  const h = await fixture("viewer", "none", 1, `See [docs](${url})`);
+  await h.settled();
+  await waitFor(() => expect(cards.length).toBeGreaterThan(0));
+  expect(cards.every((card) => card.dismiss === undefined)).toBe(true);
+  expect(face(url)?.dismiss).toBeUndefined();
+});
+
+it("lets the verified owner of an agent dismiss a preview card", async () => {
+  const h = await fixture("agent", "viewer");
+  await waitFor(() => expect(cards.at(-1)?.dismiss).toBeDefined());
+  await act(async () => {
+    await cards.at(-1)?.dismiss?.();
+  });
+  await waitFor(() => expect(h.published).toHaveLength(1));
+  expect(edited(h.published[0])).toBe(`See <${url}> and ${url}`);
 });

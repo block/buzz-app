@@ -12,19 +12,33 @@ type LinkNode = {
   data?: { hProperties?: Record<string, string> };
 };
 
-export type WrittenLink = Readonly<{
-  node: LinkNode;
+/** One link occurrence by its address as written in the message source, which
+ * may differ from the address the host opens, and its place among the links
+ * that share that written address, in reading order. */
+export type LinkTarget = Readonly<{
   url: string;
   written: LinkWritten;
-  /** Position among the links to the same URL, in reading order. */
   occurrence: number;
-  start: number;
-  end: number;
 }>;
 
+export type SourceRange = Readonly<{ start: number; end: number }>;
+
+export type WrittenLink = LinkTarget &
+  Readonly<{
+    node: LinkNode;
+    start: number;
+    end: number;
+  }>;
+
 /** Links the Markdown parser found in `source`, the string it parsed. Code spans
- * and blocks hold no link nodes, so they are never listed. */
-export function writtenLinks(tree: LinkNode, source: string): WrittenLink[] {
+ * and blocks hold no link nodes, so they are never listed. Links inside
+ * `hidden` are neither listed nor counted, so occurrences number only what a
+ * reader of the remaining text sees. */
+export function writtenLinks(
+  tree: LinkNode,
+  source: string,
+  hidden: readonly SourceRange[] = [],
+): WrittenLink[] {
   const seen = new Map<string, number>();
   const links: WrittenLink[] = [];
   const visit = (node: LinkNode) => {
@@ -34,7 +48,8 @@ export function writtenLinks(tree: LinkNode, source: string): WrittenLink[] {
       node.type === "link" &&
       node.url !== undefined &&
       start !== undefined &&
-      end !== undefined
+      end !== undefined &&
+      !hidden.some((range) => start >= range.start && start < range.end)
     ) {
       const occurrence = seen.get(node.url) ?? 0;
       seen.set(node.url, occurrence + 1);
@@ -55,14 +70,16 @@ export function writtenLinks(tree: LinkNode, source: string): WrittenLink[] {
   return links;
 }
 
-/** Hands each link's form and position to the anchor renderer as `data-link-*`. */
+/** Hands each link's written address, form and position to the anchor renderer
+ * as `data-link-*`. */
 export function remarkLinkForms(source: string) {
   return (tree: LinkNode) => {
-    for (const { node, written, occurrence } of writtenLinks(tree, source))
+    for (const { node, url, written, occurrence } of writtenLinks(tree, source))
       node.data = {
         ...node.data,
         hProperties: {
           ...node.data?.hProperties,
+          "data-link-source": url,
           "data-link-written": written,
           "data-link-occurrence": String(occurrence),
         },
@@ -70,13 +87,10 @@ export function remarkLinkForms(source: string) {
   };
 }
 
-/** `source` with exactly one occurrence of a link rewritten to `<url>`, which
- * asks for no preview, or undefined when it is not there as described or
- * cannot be written that way. */
-export function angleLink(
+function parsedLinks(
   source: string,
-  link: Readonly<{ url: string; written: LinkWritten; occurrence: number }>,
-): string | undefined {
+  hidden: readonly SourceRange[] = [],
+): WrittenLink[] {
   let tree: LinkNode | undefined;
   Markdown({
     remarkPlugins: [
@@ -89,13 +103,24 @@ export function angleLink(
     urlTransform: (value) => value,
     children: source,
   });
-  const match = tree
-    ? writtenLinks(tree, source).find(
-        (item) => item.url === link.url && item.occurrence === link.occurrence,
-      )
-    : undefined;
-  if (!match || match.written !== link.written || match.written === "angle")
-    return undefined;
+  return tree ? writtenLinks(tree, source, hidden) : [];
+}
+
+/** `source` with exactly one occurrence of a link rewritten to `<url>`, which
+ * asks for no preview, or undefined when it is not there as described or
+ * cannot be written that way. */
+export function angleLink(
+  source: string,
+  link: LinkTarget,
+  hidden: readonly SourceRange[] = [],
+): string | undefined {
+  const match = parsedLinks(source, hidden).find(
+    (item) =>
+      item.url === link.url &&
+      item.occurrence === link.occurrence &&
+      item.written === link.written,
+  );
+  if (!match || match.written === "angle") return undefined;
   const [label] = match.node.children ?? [];
   if (
     match.written === "labeled" &&
@@ -109,4 +134,23 @@ export function angleLink(
   return /[\s<>]/.test(target)
     ? undefined
     : `${source.slice(0, match.start)}<${target}>${source.slice(match.end)}`;
+}
+
+/** The link in `source` that begins at `at` and opens `url`, as `angleLink`
+ * names it. */
+export function linkAt(
+  source: string,
+  at: number,
+  opens: (url: string) => boolean,
+): LinkTarget | undefined {
+  const match = parsedLinks(source).find(
+    (item) => item.start === at && opens(item.url),
+  );
+  return (
+    match && {
+      url: match.url,
+      written: match.written,
+      occurrence: match.occurrence,
+    }
+  );
 }

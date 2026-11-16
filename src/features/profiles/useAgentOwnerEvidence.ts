@@ -72,6 +72,8 @@ export function useAgentOwnerEvidence(
       return;
     }
     setView(owned.view);
+    // A view another holder left failed is not idle, so only this retries it.
+    if (owned.view.snapshot().status === "error") void owned.view.refresh();
     return owned.release;
   }, [session, pubkey, attempt]);
   const events = useSyncExternalStore(

@@ -14,7 +14,6 @@ import type { RelaySession } from "../relay/session";
 import type { ComposerSession } from "./composer-session";
 import { MessageLink } from "../conversation/MessageLink";
 import { LinkMessageIdContext } from "../conversation/LinkLabelContext";
-import { LinkDismissalScope } from "./LinkDismissalScope";
 import { remarkLinkForms } from "./link-forms";
 import type { LinkWritten } from "../conversation/contracts";
 import { parseBuzzLink } from "../navigation/buzz-links";
@@ -545,24 +544,22 @@ export function MessageMarkdown({
     );
   return (
     <LinkMessageIdContext value={interactive ? row.id : undefined}>
-      <LinkDismissalScope row={row} session={session} interactive={interactive}>
-        <PreparedMessageMarkdown
-          row={row}
-          prepared={prepared}
-          directory={directory}
-          session={session}
-          scope={scope}
-          extensions={extensions}
-          media={media}
-          onOpenLink={onOpenLink}
-          canOpenLink={canOpenLink}
-          participantProfiles={participantProfiles}
-          resolveName={resolveName}
-          largeEmoji={largeEmoji}
-          interactive={interactive}
-          edited={edited}
-        />
-      </LinkDismissalScope>
+      <PreparedMessageMarkdown
+        row={row}
+        prepared={prepared}
+        directory={directory}
+        session={session}
+        scope={scope}
+        extensions={extensions}
+        media={media}
+        onOpenLink={onOpenLink}
+        canOpenLink={canOpenLink}
+        participantProfiles={participantProfiles}
+        resolveName={resolveName}
+        largeEmoji={largeEmoji}
+        interactive={interactive}
+        edited={edited}
+      />
     </LinkMessageIdContext>
   );
 }
@@ -591,15 +588,18 @@ function PreparedMessageMarkdown({
   prepared: Extract<PreparedMarkdown, { kind: "markdown" }>;
   resolveName: (pubkey: string, fallback: string) => string;
 }) {
-  const row =
-    prepared.content === sourceRow.content
-      ? sourceRow
-      : { ...sourceRow, content: prepared.content };
+  const verbatim = prepared.content === sourceRow.content;
+  const row = verbatim
+    ? sourceRow
+    : { ...sourceRow, content: prepared.content };
   const renderLink = (
     url: string,
     label?: string,
     children?: ReactNode,
-    form?: { written: LinkWritten; occurrence?: number | undefined },
+    form?: {
+      written: LinkWritten;
+      source?: { url: string; occurrence: number } | undefined;
+    },
   ) => {
     const channel = channelForLink(url, directory.channels);
     return (
@@ -716,6 +716,9 @@ function PreparedMessageMarkdown({
       const written = props["data-link-written" as keyof typeof props] as
         | LinkWritten
         | undefined;
+      const sourceUrl = props["data-link-source" as keyof typeof props] as
+        | string
+        | undefined;
       const position = Number(
         props["data-link-occurrence" as keyof typeof props],
       );
@@ -740,9 +743,12 @@ function PreparedMessageMarkdown({
           plain ? undefined : children,
           written && {
             written,
-            occurrence:
-              written !== "angle" && (written === "bare" || plain)
-                ? position
+            source:
+              verbatim &&
+              written !== "angle" &&
+              sourceUrl !== undefined &&
+              (written === "bare" || labelText(children) === sourceUrl)
+                ? { url: sourceUrl, occurrence: position }
                 : undefined,
           },
         )

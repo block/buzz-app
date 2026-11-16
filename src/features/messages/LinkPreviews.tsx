@@ -1,4 +1,5 @@
 import {
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -11,6 +12,7 @@ import {
   ContributionBoundary,
   contributionKey,
 } from "../conversation/ContributionBoundary";
+import { LinkDismissContext } from "../conversation/LinkLabelContext";
 import type {
   ContributionReader,
   LinkPreviewRenderer,
@@ -20,6 +22,7 @@ import type {
 import { useTargetOpener } from "../conversation/opener";
 import { Button } from "../../shared/design-system/ui/Button";
 import { combineStatuses, linkPreviewStatus } from "./link-preview-status";
+import type { PreviewLink } from "./preview-links";
 import styles from "./LinkPreviews.module.css";
 
 /** A message shows this many cards before the rest fold behind one button. */
@@ -37,17 +40,25 @@ function LinkPreviewCard({
   registry,
   renderer,
   open,
+  dismiss,
 }: {
   url: string;
   messageId: string;
   registry: ContributionReader<LinkPreviewRenderer>;
   renderer: Contribution<LinkPreviewRenderer>;
   open(): boolean;
+  dismiss: (() => Promise<void>) | undefined;
 }) {
   const opener = useTargetOpener(registry, renderer);
   const Preview = renderer.component;
   return (
-    <Preview url={url} messageId={messageId} open={open} opener={opener} />
+    <Preview
+      url={url}
+      messageId={messageId}
+      open={open}
+      opener={opener}
+      dismiss={dismiss}
+    />
   );
 }
 
@@ -116,13 +127,13 @@ function shownWithin(element: HTMLElement, root: HTMLElement): boolean {
 }
 
 export function LinkPreviews({
-  urls,
+  links,
   messageId,
   registry,
   onOpenLink,
   settings,
 }: {
-  urls: readonly string[];
+  links: readonly PreviewLink[];
   messageId: string;
   registry: ContributionReader<LinkPreviewRenderer> | undefined;
   onOpenLink(url: string): boolean;
@@ -142,9 +153,10 @@ export function LinkPreviews({
       live.current = false;
     };
   }, []);
-  const matched = urls.flatMap((url) => {
+  const dismissLink = useContext(LinkDismissContext);
+  const matched = links.flatMap(({ url, at }) => {
     const renderer = resolveMatch(renderers, url);
-    return renderer ? [{ url, renderer }] : [];
+    return renderer ? [{ url, at, renderer }] : [];
   });
   const distinct = [...new Set(matched.map(({ renderer }) => renderer))];
   const identity = distinct.map(contributionKey).join(",");
@@ -188,11 +200,11 @@ export function LinkPreviews({
       return section && available[index] === "1" ? [[renderer, section]] : [];
     }),
   );
-  const cards = matched.flatMap(({ url, renderer }) => {
+  const cards = matched.flatMap(({ url, at, renderer }) => {
     const status = statusOf.get(renderer) ?? "checking";
     if (status === "checking") return [];
     if (status === "needs-setup" && !sectionOf.has(renderer)) return [];
-    return [{ url, renderer, status }];
+    return [{ url, at, renderer, status }];
   });
   const container = useRef<HTMLDivElement>(null);
   const focusLost = useRef(false);
@@ -229,7 +241,7 @@ export function LinkPreviews({
       tabIndex={-1}
       data-link-previews={cards.length ? "" : undefined}
     >
-      {shown.map(({ url, renderer, status }) => {
+      {shown.map(({ url, at, renderer, status }) => {
         const key = contributionKey(renderer);
         const section = sectionOf.get(renderer);
         if (status === "needs-setup" && settings && section) {
@@ -266,6 +278,11 @@ export function LinkPreviews({
                 live.current && registry.snapshot().includes(renderer)
                   ? onOpenLink(url)
                   : false
+              }
+              dismiss={
+                dismissLink && at !== undefined
+                  ? () => dismissLink({ url, at })
+                  : undefined
               }
             />
           </ContributionBoundary>

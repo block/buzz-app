@@ -1,39 +1,72 @@
 import { useRef, useSyncExternalStore, type ReactNode } from "react";
 import { useKnownAgentPubkeys } from "../agents/use-known";
-import { LinkDismissContext } from "../conversation/LinkLabelContext";
+import {
+  LinkDismissContext,
+  type LinkDismissal,
+} from "../conversation/LinkLabelContext";
 import { useAgentOwnerEvidence } from "../profiles/useAgentOwnerEvidence";
 import type { ChannelMessage } from "../relay/contracts";
 import { useListedChannel } from "../relay/listed-channel";
 import { useRowProfiles } from "../relay/react";
 import type { RelaySession } from "../relay/session";
-import { fullSession, type ComposerSession } from "./composer-session";
-import { angleLink } from "./link-forms";
-import { messageEditText, validateMessageEdit } from "./message-edit";
+import { separateChatCards } from "./chat-cards";
+import { angleLink, linkAt } from "./link-forms";
+import { parseMediaTimeReply } from "./media-timecode";
+import { validateMessageEdit } from "./message-edit";
+import { httpsUrl } from "./preview-links";
+import type { ReferenceChannel } from "./ReferenceText";
 import { lastEditableMessage } from "./useMessageEdit";
 
+const sourceOf = (row: ChannelMessage) => row.sourceContent ?? row.content;
 const hasLink = (content: string) => /\w:\/\/|www\./i.test(content);
+
+/** What a message row draws as its text, as `MessageRow` projects it, and where
+ * `content` holds the chat cards it draws apart, whose links the text does not
+ * count. */
+function drawnText(
+  row: ChannelMessage,
+  content: string,
+  channels: readonly ReferenceChannel[],
+) {
+  const reply = row.diff ? undefined : parseMediaTimeReply(content);
+  const offset = reply ? content.length - reply.content.length : 0;
+  const { caption, ranges } = separateChatCards(
+    { ...row, content: reply?.content ?? content },
+    channels,
+  );
+  return {
+    text: caption.content,
+    cards: ranges.map(({ start, end }) => ({
+      start: start + offset,
+      end: end + offset,
+    })),
+  };
+}
+
+/** Messages whose dismissal is being sent, across the scopes of its body and cards. */
+const sending = new Set<string>();
 const noEvents: readonly never[] = [];
 const noSnapshot = () => noEvents;
 const noSubscribe = () => () => {};
 
-/** Lets a link renderer in this message rewrite one of its links to angle
- * brackets, as an ordinary edit, when the viewer may edit the message: its
- * author, or the verified owner of the agent that wrote it. */
+/** Lets the link renderers and preview cards of a message rewrite one of its
+ * links to angle brackets, as an ordinary edit, when the viewer may edit the
+ * message: its author, or the verified owner of the agent that wrote it. `row`
+ * is the complete message, whatever part of it the children draw. */
 export function LinkDismissalScope({
   row,
+  channels,
   session,
-  interactive,
   children,
 }: {
   row: ChannelMessage;
-  session: RelaySession | ComposerSession | undefined;
-  interactive: boolean;
+  channels: readonly ReferenceChannel[];
+  session: RelaySession | undefined;
   children: ReactNode;
 }) {
-  const full = interactive ? fullSession(session) : undefined;
-  if (!full?.viewer || !hasLink(row.content)) return children;
+  if (!session?.viewer || !hasLink(sourceOf(row))) return children;
   return (
-    <Dismissable row={row} session={full}>
+    <Dismissable row={row} channels={channels} session={session}>
       {children}
     </Dismissable>
   );
@@ -41,10 +74,12 @@ export function LinkDismissalScope({
 
 function Dismissable({
   row,
+  channels,
   session,
   children,
 }: {
   row: ChannelMessage;
+  channels: readonly ReferenceChannel[];
   session: RelaySession;
   children: ReactNode;
 }) {
@@ -61,9 +96,8 @@ function Dismissable({
     session,
     own || !agentHinted ? undefined : row.authorId,
   );
-  const current = useRef(row);
-  current.current = row;
-  const inFlight = useRef(false);
+  const current = useRef({ row, channels });
+  current.current = { row, channels };
   useSyncExternalStore(
     session.outbox?.subscribe ?? noSubscribe,
     session.outbox?.snapshot ?? noSnapshot,
@@ -78,21 +112,31 @@ function Dismissable({
     writable &&
     (own || owner) &&
     lastEditableMessage(session, [row], row.authorId)
-      ? async (link: Parameters<typeof angleLink>[1]) => {
-          if (inFlight.current)
+      ? async (link: LinkDismissal) => {
+          if (sending.has(row.id))
             throw new Error("Wait for the previous change to finish.");
-          inFlight.current = true;
+          sending.add(row.id);
           try {
             const rewrite = () => {
-              const latest = current.current;
+              const { row: latest, channels } = current.current;
               if (!lastEditableMessage(session, [latest], latest.authorId))
                 throw new Error("This message can’t be edited right now.");
-              const base = messageEditText(
-                latest,
-                session.profiles.snapshot(),
-                session.agentLibrary.snapshot().identities,
-              );
-              const next = angleLink(base, link);
+              const base = sourceOf(latest);
+              const target =
+                "at" in link
+                  ? linkAt(
+                      drawnText(latest, latest.content, channels).text,
+                      link.at,
+                      (url) => httpsUrl(url) === link.url,
+                    )
+                  : link;
+              const next =
+                target &&
+                angleLink(
+                  base,
+                  target,
+                  drawnText(latest, base, channels).cards,
+                );
               if (!next) throw new Error("This link can’t be changed here.");
               validateMessageEdit(latest, base, next);
               return {
@@ -105,7 +149,7 @@ function Dismissable({
               session.messages.edit(row.id, content, attachmentSourceId);
             } else await session.messages.editOwnedAgent(row.id, rewrite);
           } finally {
-            inFlight.current = false;
+            sending.delete(row.id);
           }
         }
       : undefined;

@@ -21,15 +21,16 @@ export const LinkMessageIdContext = createContext<string | undefined>(
   undefined,
 );
 
+/** The link to rewrite: by its written address, form and place among links
+ * written that way, or by where it begins in the text a card was found in. */
+export type LinkDismissal =
+  | Readonly<{ url: string; written: LinkWritten; occurrence: number }>
+  | Readonly<{ url: string; at: number }>;
+
 /** Rewrites one link of the surrounding message to angle brackets, or is absent
  * when the viewer may not edit that message. */
 export const LinkDismissContext = createContext<
-  | ((link: {
-      url: string;
-      written: LinkWritten;
-      occurrence: number;
-    }) => Promise<void>)
-  | undefined
+  ((link: LinkDismissal) => Promise<void>) | undefined
 >(undefined);
 
 /** Sets the host anchor's description, such as a pull request's state, so a

@@ -1575,6 +1575,20 @@ describe("link preview dismissal edits", () => {
     ).toBe(true);
   });
 
+  it("keeps a bound mention bound when a dismissal leaves its prose alone", () => {
+    const sam = "5".repeat(64);
+    const original = message(alice, channel, "@Sam see https://a.test/x", 10, [
+      ["p", sam],
+    ]);
+    const [row] = foldMessages(channel, relay.pubkey, [
+      original,
+      edit(original, "@Sam see <https://a.test/x>", 11),
+    ]);
+    expect(row?.content).toBe("@Sam see <https://a.test/x>");
+    expect(row?.edited).toBeUndefined();
+    expect(row?.mentions).toEqual([sam]);
+  });
+
   it("does not mark an agent envelope edited when a dismissal only wraps a link", () => {
     const original = signed(alice, {
       kind: 40002,

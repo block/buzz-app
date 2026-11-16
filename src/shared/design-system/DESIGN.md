@@ -1070,6 +1070,11 @@ other IconButtons.
 IconButton also offers `xs` (20px with 12px icons) for dense formatting actions. Mode
 toggles remain `sm`.
 
+An IconButton takes either `icon` or `emoji`. Use `emoji` when the action is
+best shown as an emoji, such as a skin-tone choice shown as a hand in that tone.
+The glyph uses `--font-emoji` at `--size-emoji-inline`, centred in the same
+control. Its accessible name still comes from `aria-label`.
+
 An `xs` Button whose label starts with an icon reduces its leading padding to its
 4px vertical padding, so the icon sits evenly in the capsule's leading corner.
 
@@ -1616,7 +1621,7 @@ separate from status text and the overflow action.
 Selected rows can expand without painting the entire branch in the accent color.
 
 Its `text` variant is a text-only row action, such as a capped list's Show
-more and Show less: the base navigation item's type and padding with no fill, resting in
+more and Show fewer: the base navigation item's type and padding with no fill, resting in
 `--text-subtle` and strengthening to `--text-standard` on hover and keyboard
 focus. Use it where a fill would read as another destination.
 
@@ -2235,8 +2240,9 @@ Inline search settings use the search variant of PreferenceRow with a gear icon 
 
 Proposed pending designer sign-off, as a narrow exception to the chat and
 conversation icon rule under Icons. Use `ChatCircleIcon` for a Solo chat in navigation, headers, tabs and chat cards.
-Use `MessageReplyIcon` (Tabler MessageReply) for thread tabs, thread links and
-Reply actions. Keep private Team channels' lock icon; privacy alone does not
+Use `ThreadIcon` (Tabler Message2) for thread tabs, thread links and Reply actions.
+Its text lines identify a conversation without the forward-like arrow in MessageReply.
+Keep private Team channels' lock icon; privacy alone does not
 replace a Solo chat's identity icon. Accessible chat cards end with a right
 chevron. Unavailable chat cards retain a lock and unavailable accessible text;
 unknown access does not earn a chevron. Display chat cards as **Chat:**, while

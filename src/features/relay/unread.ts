@@ -68,6 +68,21 @@ export type UnreadSnapshot = Readonly<{
     threadCount: number;
   }>;
 }>;
+/** Whether a channel's sidebar row shows unread. Opening a channel quiets
+ * its row (`row`); a muted channel still shows its mentions, and a muted DM
+ * still shows. */
+export function rowUnread(
+  snapshot: UnreadSnapshot,
+  dm: boolean,
+  muted: boolean,
+) {
+  const { observedCount, attentionCount } = snapshot.row ?? snapshot;
+  return (
+    snapshot.manual !== "none" ||
+    ((observedCount ?? 0) > 0 && (dm || !muted || (attentionCount ?? 0) > 0))
+  );
+}
+
 export type MessageAttention = Readonly<{
   status: "unknown" | "ineligible" | "eligible";
   category?: "mention" | "direct" | "thread";

@@ -217,6 +217,8 @@ export type ChannelTimelineProps = {
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
+  /** Root of the thread currently displayed beside this conversation. */
+  openThreadRootId?: string | undefined;
   /** One inline exact visit: focus the verified mounted row, without a page
    * navigation. `focus: false` marks it beside a reader that owns focus. */
   inlineTarget?:
@@ -267,6 +269,7 @@ function Timeline({
   onOpenLink,
   canOpenLink,
   revealMessageId,
+  openThreadRootId,
   inlineTarget,
   transient = false,
   marksRead = true,
@@ -2194,6 +2197,7 @@ function Timeline({
                   session={queries}
                   scope={scope}
                   row={row}
+                  threadOpen={row.id === openThreadRootId}
                   unread={queries.unread}
                   extensions={extensions}
                   profile={profiles.get(row.authorId)}

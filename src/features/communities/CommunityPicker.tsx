@@ -47,6 +47,12 @@ import {
   communityActionLabel,
 } from "./names";
 import { useCommunityRole } from "./useCommunityRole";
+import type {
+  CommunityUnread,
+  CommunityUnreads,
+} from "../notifications/community-unread";
+
+const noUnreads: ReadonlyMap<string, CommunityUnread> = new Map();
 
 const noSubscription = () => () => {};
 
@@ -65,6 +71,7 @@ type SwitcherState =
 /** Shell navigation only: selecting a community remains owned by Communities. */
 export function CommunityPicker({
   communities,
+  unreads,
   federatedIdentity,
   invite,
   onInviteClose,
@@ -75,6 +82,8 @@ export function CommunityPicker({
   onOpenChange,
 }: {
   communities: Communities;
+  /** Badges communities other than the selected one; absent shows none. */
+  unreads?: Pick<CommunityUnreads, "snapshot" | "subscribe"> | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
   invite?: (JoinRequest & { requestId: number }) | undefined;
   onInviteClose?: ((requestId: number) => void) | undefined;
@@ -205,6 +214,14 @@ export function CommunityPicker({
   const active = client.memberships.find(
     (membership) => membership.id === client.selected,
   );
+  const unread = useSyncExternalStore(
+    unreads?.subscribe ?? noSubscription,
+    () => unreads?.snapshot() ?? noUnreads,
+  );
+  const elsewhere = client.memberships.some(
+    (membership) =>
+      membership.id !== client.selected && unread.get(membership.id)?.unread,
+  );
   return (
     <>
       <nav aria-label="Communities" className={styles.picker}>
@@ -216,7 +233,7 @@ export function CommunityPicker({
                 size="md"
                 variant="avatar"
                 shape="round"
-                aria-label={`Community switcher: ${active ? communityName(active) : client.memberships.length === 0 ? "Communities" : "Personal space"}`}
+                aria-label={`Community switcher: ${active ? communityName(active) : client.memberships.length === 0 ? "Communities" : "Personal space"}${elsewhere ? ", unread in other communities" : ""}`}
                 title={
                   active
                     ? communityName(active)
@@ -225,17 +242,22 @@ export function CommunityPicker({
                       : "Personal space"
                 }
                 icon={
-                  active ? (
-                    <Avatar
-                      size="small"
-                      shape="squircle"
-                      alt=""
-                      fallback={communityName(active)}
-                      src={active.publishedIcon ?? active.icon}
-                    />
-                  ) : (
-                    <GlobeIcon size={22} aria-hidden="true" />
-                  )
+                  <span className={styles.trigger}>
+                    {active ? (
+                      <Avatar
+                        size="small"
+                        shape="squircle"
+                        alt=""
+                        fallback={communityName(active)}
+                        src={active.publishedIcon ?? active.icon}
+                      />
+                    ) : (
+                      <GlobeIcon size={22} aria-hidden="true" />
+                    )}
+                    {elsewhere && (
+                      <span className={styles.triggerDot} aria-hidden="true" />
+                    )}
+                  </span>
                 }
               />
             }
@@ -293,6 +315,7 @@ export function CommunityPicker({
                   selected={selected}
                   viewer={client.viewer}
                   session={selected ? session : undefined}
+                  unread={selected ? undefined : unread.get(membership.id)}
                   manager={selected && invites && role.manager}
                   leaving={
                     leaving?.membership.id === membership.id && leaving.pending

@@ -55,7 +55,7 @@ export async function promoteSoloAdmins(
   for (const admin of admins as string[]) {
     signal.throwIfAborted();
     const template = {
-      ...memberAdministrationTemplate(channel, {
+      ...memberAdministrationTemplate(channel, create.pubkey, {
         pubkey: admin,
         expectedRole: "member",
         role: "admin",

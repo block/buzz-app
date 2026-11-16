@@ -2,7 +2,13 @@ import { canonicalDetailsName } from "./channel-details-protocol";
 import { exactLifecycleTag } from "./channel-lifecycle-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
-import type { Outbox } from "./outbox";
+import type { Outbox, OutboxRecovery } from "./outbox";
+import type { RelayWriter } from "./transport";
+import {
+  promoteSoloAdmins,
+  soloAdminKey,
+  soloAdminRecovery,
+} from "./solo-admins";
 import { isBatchAddition } from "../channel-members/members";
 import { withdraw } from "./withdraw";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
@@ -46,6 +52,7 @@ export function createChannelWrites(
   /** Signed roster discovery, including channels this viewer cannot open. */
   discovery: RelayReader = reader,
   channelIdentity = false,
+  adminWriter?: RelayWriter,
 ) {
   const available = !!outbox?.supports(9007);
   function writer(addition = false) {
@@ -533,6 +540,38 @@ export function createChannelWrites(
   }
   /** Solo chats this device is starting, until they can take events. */
   const starts = new Map<string, Promise<void>>();
+  const adminSetups = new Map<string, Promise<void>>();
+  /** Publication retries also call this after reload. The create's local
+   * receipt retains the original recipients until every grant is recorded. */
+  function prepareOpening(id: string): Promise<void> | undefined {
+    const pending = (receipts ?? outbox)
+      ?.snapshot()
+      .find((item) => item.recovery?.key === soloAdminKey(id));
+    if (!pending) return;
+    const active = adminSetups.get(id);
+    if (active) return active;
+    const work = (async () => {
+      const source = writer();
+      if (!adminWriter || !relayAuthor)
+        throw new Error("This connection cannot set up chat admins.");
+      await created(pending.event.id);
+      const saved = await source.recovery(soloAdminKey(id));
+      // An explicit dismissal in another window retires this setup too.
+      if (!saved) return;
+      await promoteSoloAdmins(
+        saved,
+        adminWriter,
+        discovery,
+        relayAuthor,
+        signal,
+      );
+      signal.throwIfAborted();
+      await source.dismiss(saved.event.id, saved.recovery);
+    })();
+    adminSetups.set(id, work);
+    void work.catch(() => {}).finally(() => adminSetups.delete(id));
+    return work;
+  }
   /** The Canvas of each chat this device is starting ("" for none), until
    * its save lands; see `startingCanvas`. */
   const canvases = new Map<string, string>();
@@ -594,6 +633,7 @@ export function createChannelWrites(
     refreshMembership,
     memberChannels,
     listsMember,
+    prepareOpening,
     createChannel(
       id: string,
       title: string,
@@ -651,6 +691,7 @@ export function createChannelWrites(
       members: readonly string[] = [],
       active?: () => boolean,
       labels: readonly string[] = [],
+      recovery?: OutboxRecovery,
     ) {
       writer();
       identifier(id);
@@ -683,7 +724,7 @@ export function createChannelWrites(
             ...[...new Set(members)].map((key) => ["p", key]),
           ],
         },
-        undefined,
+        recovery,
         active,
       );
     },
@@ -701,8 +742,15 @@ export function createChannelWrites(
       /** The chat's Canvas, and the work that saves it once the chat
        * exists; nothing waits for it, and a failure leaves a working chat. */
       setup?: { canvas: string; apply(): Promise<unknown> },
-      options?: { labels?: readonly string[]; active?: () => boolean },
+      options?: {
+        labels?: readonly string[];
+        active?: () => boolean;
+        admins?: readonly string[];
+      },
     ) {
+      const recovery = soloAdminRecovery(id, members, options?.admins);
+      if (recovery && (!adminWriter || !relayAuthor))
+        throw new Error("This connection cannot set up chat admins.");
       const create = api.create(
         id,
         title,
@@ -711,6 +759,7 @@ export function createChannelWrites(
         members,
         options?.active,
         options?.labels,
+        recovery,
       );
       channels.start?.({
         id,

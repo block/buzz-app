@@ -85,6 +85,15 @@ behavior on the label, so a rename touches copy only.
   agents: answer as one channel-scoped, top-level conversation. It is not access
   authority. The in-app agent harness reads it from the channel list; remote
   harnesses that only read `about` need to learn the label.
+- The app promotes every agent addressed in the opening message through the
+  existing member-administration commands before releasing that message to
+  local agents or the relay. Workspace-only agents and later additions remain
+  ordinary participants. The create's local Outbox receipt retains the opening
+  recipients across interruptions; retries reconstruct the same grants and
+  confirm their recorded IDs before sending. A recorded grant stays complete
+  after a later demotion or removal. Expired, unrecorded grants require a new
+  chat; recovery never changes a command's timestamp. This needs no relay update
+  and does not change existing chats or tool-created Solo chats.
 - The Buzz tools' `channel_create` with `solo` sends the same create for any
   caller, including the standalone stdio server: signed by the caller, with the
   label and any `members` it names. The caller is the creator, so an agent's

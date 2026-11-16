@@ -22,7 +22,7 @@ pub const PATH_ENV: &str = "BUZZ_MANAGED_PLUGINS";
 pub const PACKAGED_URL: &str = env!("BUZZ_BUILD_MANAGED_PLUGINS_URL");
 const PACKAGED_FILE_PREFIX: &str = "packaged-managed-plugins";
 pub const MAX_BYTES: u64 = 256 * 1024;
-const MAX_PLUGINS: usize = 64;
+const MAX_PLUGINS: usize = 256;
 const MAX_PROBLEMS: usize = 16;
 const MAX_SOURCE_CHARS: usize = 80;
 
@@ -909,7 +909,19 @@ mod tests {
             .collect();
         let parsed = parse(&policy(&many)).unwrap();
         assert_eq!(parsed.plugins.len(), MAX_PLUGINS);
-        assert!(parsed.problems[0].contains("Only the first 64"));
+        assert!(parsed.problems[0].contains(&format!("Only the first {MAX_PLUGINS}")));
+    }
+
+    #[test]
+    fn keeps_a_full_list_within_the_file_limit() {
+        let full: Vec<String> = (0..MAX_PLUGINS)
+            .map(|i| entry(&format!("acme.p{i}")))
+            .collect();
+        let text = policy(&full);
+        assert!((text.len() as u64) < MAX_BYTES);
+        let parsed = parse(&text).unwrap();
+        assert_eq!(parsed.plugins.len(), MAX_PLUGINS);
+        assert!(parsed.problems.is_empty());
     }
 
     #[test]

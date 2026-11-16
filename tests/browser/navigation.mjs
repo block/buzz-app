@@ -11,11 +11,12 @@ export async function pageChoices(page, query = "") {
   );
 }
 
-// Activity is a row at the top of the Messages sidebar.
+// Activity is a row at the top of the Messages sidebar; its name ends with its
+// unread count while conversations are unread.
 export function activityRow(page) {
   return page
     .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Activity", exact: true });
+    .getByRole("button", { name: /^Activity(?: \d+ unread)?$/ });
 }
 
 export async function openPage(page, name, { connected = true } = {}) {

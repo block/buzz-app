@@ -3,6 +3,21 @@ import { hoverMessage } from "./message-actions.mjs";
 import { open } from "./timeline.mjs";
 import { animationsSettled } from "./animations.mjs";
 
+const paintedFill = (row, density) =>
+  row.evaluate((item, density) => {
+    const surface = item.querySelector("[data-highlight-surface]");
+    const style =
+      density === "compact"
+        ? getComputedStyle(surface, "::before")
+        : getComputedStyle(
+            surface.querySelector("[data-message-action-anchor]"),
+          );
+    // An ungenerated pseudo still has computed styles, but paints nothing.
+    if (density === "compact" && ["none", "normal"].includes(style.content))
+      return ["rgba(0, 0, 0, 0)", "1"];
+    return [style.backgroundColor, style.opacity];
+  }, density);
+
 test.use({ historyCounts: { alpha: 3, beta: 0 } });
 
 // Browser-only: prove selected-tab wiring reaches the virtualized row and that
@@ -49,17 +64,7 @@ for (const density of ["default", "compact"]) {
         page.locator(`[data-channel-timeline] [data-message-id="${event.id}"]`);
       const surface = (event) =>
         row(event).locator("[data-highlight-surface]").first();
-      const fill = (event) =>
-        row(event).evaluate((item, density) => {
-          const surface = item.querySelector("[data-highlight-surface]");
-          const style =
-            density === "compact"
-              ? getComputedStyle(surface, "::before")
-              : getComputedStyle(
-                  surface.querySelector("[data-message-action-anchor]"),
-                );
-          return [style.backgroundColor, style.opacity];
-        }, density);
+      const fill = (event) => paintedFill(row(event), density);
       const resting = [];
       for (const event of events) {
         await expect(surface(event)).toBeVisible();
@@ -99,3 +104,59 @@ for (const density of ["default", "compact"]) {
     });
   }
 }
+
+// CSS media queries and touch input need an actual browser, not jsdom.
+test.describe("touch-only pointer", () => {
+  test.use({ hasTouch: true, threadUnread: true, readState: true });
+  for (const density of ["default", "compact"]) {
+    test(`the ${density} thread marker paints without hover support`, async ({
+      page,
+      app,
+    }) => {
+      await page.addInitScript((density) => {
+        localStorage.setItem("buzz-message-density.v1", density);
+        localStorage.setItem("buzz-appearance.v1", "light");
+      }, density);
+      await open(page, app);
+      expect(
+        await page.evaluate(
+          () => matchMedia("(hover: hover) and (pointer: fine)").matches,
+        ),
+      ).toBe(false);
+      const roots = app.histories
+        .get("primary/alpha")
+        .filter((row) => row.content.startsWith("Thread root"));
+      expect(roots).toHaveLength(2);
+      const row = (root) =>
+        page.locator(`[data-channel-timeline] [data-message-id="${root.id}"]`);
+      const fill = (root) => paintedFill(row(root), density);
+      const resting = [];
+      for (const root of roots) {
+        await expect(row(root)).toBeVisible();
+        resting.push(await fill(root));
+        const expected = await row(root).evaluate((item, density) => {
+          const surface = item.querySelector("[data-highlight-surface]");
+          const sample = document.createElement("span");
+          sample.style.backgroundColor =
+            density === "compact"
+              ? "var(--affordance-subtle-hover)"
+              : surface.hasAttribute("data-own")
+                ? "var(--surface-message-own-hover)"
+                : "var(--surface-message-hover)";
+          surface.append(sample);
+          const color = getComputedStyle(sample).backgroundColor;
+          sample.remove();
+          return [color, density === "compact" ? "0.5" : "1"];
+        }, density);
+        expect(expected).not.toEqual(resting.at(-1));
+        await row(root)
+          .getByRole("button", { name: /^View thread:/ })
+          .tap();
+        await expect(row(root).locator("[data-thread-open]")).toHaveCount(1);
+        await expect.poll(() => fill(root)).toEqual(expected);
+      }
+      await expect(row(roots[0]).locator("[data-thread-open]")).toHaveCount(0);
+      await expect.poll(() => fill(roots[0])).toEqual(resting[0]);
+    });
+  }
+});

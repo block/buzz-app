@@ -26,6 +26,7 @@ import { useReturnHighlight } from "../../features/messages/use-return-highlight
 import { useMessageOpening } from "../../features/messages/use-message-opening";
 import { ChannelBody } from "./ChannelBody";
 import {
+  type ConversationTab,
   entryPane,
   panelTabId,
   rootOfTab,
@@ -2013,7 +2014,7 @@ function ChannelWorkspace({
   const highlightedThread =
     showingChannelPanel && !companion
       ? tabState.tabs.find(
-          (tab) =>
+          (tab): tab is Extract<ConversationTab, { kind: "thread" }> =>
             tab.kind === "thread" &&
             tabPane(tab) === "side" &&
             tab.id === selectedTab &&
@@ -2337,9 +2338,7 @@ function ChannelWorkspace({
             holding={contextHolding}
             inlineTarget={contextTarget}
             openThreadRootId={
-              highlightedThread?.kind === "thread"
-                ? rootOfTab(highlightedThread)
-                : undefined
+              highlightedThread ? rootOfTab(highlightedThread) : undefined
             }
             onOpenThread={openThread}
             revealMessageId={

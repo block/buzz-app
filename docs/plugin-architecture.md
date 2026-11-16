@@ -3208,8 +3208,9 @@ The existing native and browser upload adapters prepare `voice-note-*.wav` files
 as the old Buzz H.264/AAC MP4 envelope. Voice Notes adds no uploader, signer or
 outbox. Files upload on Send, retain the shared progress/recovery behavior, and
 carry bounded duration and waveform metadata through ordinary `imeta` tags.
-Recordings stop at five minutes. Pending files have the same tab-local lifetime
-and limits as other attachment drafts; they do not survive app restart.
+Recordings stop at five minutes. Pending files have the same lifetime and limits
+as other attachment drafts: uploaded files survive app restart with the draft;
+files still uploading do not.
 
 The player loads audio on Play, supports seeking and playback speed, and pauses
 when its conversation is hidden. Existing voice notes are recognized from signed

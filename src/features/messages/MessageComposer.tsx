@@ -1355,6 +1355,7 @@ function Composer({
     `${scope}:${draftKey}`,
     channelId,
     !!submission?.attachments,
+    host ? [scope, `${draftKey}:files`] : undefined,
   );
   const picker = useRef<HTMLInputElement>(null);
   const pickerFocus = useRef<

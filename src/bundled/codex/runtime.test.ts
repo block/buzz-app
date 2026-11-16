@@ -5984,7 +5984,7 @@ it("updates Codex repository context from the agent’s captured community, incl
 });
 
 it.each([false, true])(
-  "hands a guarded wake to %s active Codex transport before completion",
+  "hands a guarded wake to Codex before completion (active=%s)",
   async (active) => {
     const f = fixture();
     if (active) {
@@ -6003,6 +6003,36 @@ it.each([false, true])(
     await f.complete();
   },
 );
+
+it("does not steer a wake invalidated while active history loads", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const gate = deferred<EventData[]>();
+  const reading = deferred<void>();
+  f.read.mockImplementationOnce(() => {
+    reading.resolve();
+    return gate.promise;
+  });
+  let current = true;
+  const accepted = vi.fn();
+  const submitted = f.runtime.run({
+    ...pluginWake(f, root),
+    accepted,
+    current: () => current,
+  });
+  await reading.promise;
+  try {
+    current = false;
+  } finally {
+    gate.resolve([]);
+  }
+  await submitted;
+  await f.workingUntil.mock.calls.at(-1)?.[0];
+  expect(accepted).not.toHaveBeenCalled();
+  expect(f.sent.filter((wire) => wire.method === "turn/steer")).toEqual([]);
+  await f.complete();
+});
 
 it("drops a guarded wake invalidated during pending session save", async () => {
   const guest = fixture();

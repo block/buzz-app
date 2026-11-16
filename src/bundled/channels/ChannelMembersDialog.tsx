@@ -1766,6 +1766,10 @@ export function ChannelMembersDialog({
         return;
       setNotice("");
       if (memberActions) {
+        // Plugin writes disable Add. Hand off before the dialog trap can queue
+        // a recovery that would overwrite a later deliberate focus move.
+        if (document.activeElement === focusedAdd.current?.button)
+          input.current?.focus();
         if (
           await changeMember(
             { pubkey: key, expectedRole: "absent", role: "member" },

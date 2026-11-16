@@ -2532,6 +2532,7 @@ it("routes plugin additions, retains failed input, locks pending work, and copie
   });
   try {
     await t.user.click(add);
+    expect(screen.getByRole("searchbox")).toHaveFocus();
     expect(change).toHaveBeenCalledExactlyOnceWith(
       { pubkey: t.target.pubkey, expectedRole: "absent", role: "member" },
       expect.any(AbortSignal),

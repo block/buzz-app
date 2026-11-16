@@ -1398,6 +1398,7 @@ test("plugin additions retain Search focus unless it was deliberately moved", as
       else await add.click();
       await page.evaluate(() => window.focusFixture.published);
       await expect(add).toBeDisabled();
+      await expect(search).toBeFocused();
       let attempt = 0;
       if (action === "retry") {
         await page.evaluate(() => window.focusFixture.settleAddition(0, true));
@@ -1416,7 +1417,10 @@ test("plugin additions retain Search focus unless it was deliberately moved", as
         name: "Copy link",
         exact: true,
       });
-      if (action === "moved") await moved.focus();
+      if (action === "moved") {
+        await moved.focus();
+        await expect(moved).toBeFocused();
+      }
       await page.evaluate(
         (index) => window.focusFixture.settleAddition(index),
         attempt,

@@ -24,6 +24,7 @@ import {
 import {
   communityEmoji,
   contentEmojiTags,
+  CUSTOM_REACTION,
   EMOJI_SET,
   EMOJI_SET_KIND,
   referencedEmoji,
@@ -64,6 +65,11 @@ const audience = {
   enum: ["everyone", "agents"],
   description:
     "agents: only other agents need this (delegating, asking or answering an agent)",
+} as const;
+const request = {
+  type: "string",
+  description:
+    "Id of the message that started this turn, which this post answers or works on, even when the reply targets an earlier thread root.",
 } as const;
 const final = {
   type: "boolean",
@@ -146,8 +152,8 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "agent_create",
-    "Submit an unsaved agent-creation draft for your owner to review. Nothing is created until they save it. Use a type key from agent_types; picture is a local image file for its avatar.",
-    { type: str, name: str, picture: str },
+    "Submit an unsaved agent-creation draft for your owner to review. Nothing is created until they save it. Use a type key from agent_types; instructions are optional; picture is a local image file for its avatar.",
+    { type: str, name: str, instructions: str, picture: str },
     ["type", "name"],
   ),
   tool(
@@ -155,6 +161,22 @@ export const TOOLS: readonly Tool[] = [
     "Submit an unsaved draft of changes to one of your owner's agents, yourself included, for them to review. agent is its pubkey or exact name; type is a key from agent_types; picture is a local image file for its avatar. Nothing changes until they save it.",
     { agent: str, name: str, type: str, instructions: str, picture: str },
     ["agent"],
+  ),
+  tool(
+    "agent_read",
+    "Read one of your owner's agents here, yourself included: name, type, instructions, whether they sync and their current revision; a hosted agent or one on another device says its config is unavailable when it can't be read here. agent is its pubkey or exact name; without it, lists them all.",
+    { agent: str },
+  ),
+  tool(
+    "team_read",
+    "Read one of your owner's teams here: name, instructions, members, whether it syncs and its current revision. team is its id or exact name; without it, lists them all.",
+    { team: str },
+  ),
+  tool(
+    "team_update",
+    "Submit an unsaved draft of a new name or instructions for one of your owner's teams, for them to review. team is its id or exact name. Members never change this way. Nothing changes until they save it.",
+    { team: str, name: str, instructions: str },
+    ["team"],
   ),
   tool(
     "send",
@@ -167,13 +189,14 @@ export const TOOLS: readonly Tool[] = [
       files: strs,
       mentions: strs,
       audience,
+      request,
       final,
     },
     ["audience"],
   ),
   tool(
     "reply_in_subthread",
-    "Reply under a specific message, nested in a subthread below it rather than in the main thread. Use when asked to reply in a subthread, or to keep a side discussion under the message it is about. Takes send's text, path, files, mentions, audience and final; the channel is the parent's.",
+    "Reply under a specific message, nested in a subthread below it rather than in the main thread. Use when asked to reply in a subthread, or to keep a side discussion under the message it is about. Takes send's text, path, files, mentions, audience, request and final; the channel is the parent's.",
     {
       parent: { ...str, description: "Id of the message to reply under" },
       text: str,
@@ -181,6 +204,7 @@ export const TOOLS: readonly Tool[] = [
       files: strs,
       mentions: strs,
       audience,
+      request,
       final,
     },
     ["parent", "audience"],
@@ -253,6 +277,11 @@ export const TOOLS: readonly Tool[] = [
     channel: str,
   }),
   tool(
+    "solo_workspace_list",
+    "List your owner's personal Solo workspace IDs and names on this local host.",
+    {},
+  ),
+  tool(
     "channel_create",
     "Create a channel. template: one of your owner's, by name. solo: a private Solo chat, with members added in the create.",
     {
@@ -270,6 +299,11 @@ export const TOOLS: readonly Tool[] = [
       template: str,
       solo: { type: "boolean" },
       members: { ...strs, description: "Solo only: pubkeys or npubs." },
+      workspace: {
+        ...str,
+        description:
+          "Solo only, local host: exact ID from solo_workspace_list. Include your owner in members. Placement only; no workspace defaults.",
+      },
     },
     ["name", "visibility"],
   ),
@@ -471,9 +505,15 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const type = text(args.type)?.trim();
     const name = text(args.name)?.trim();
     if (!type || !name) throw new Error("type and name are required");
+    const instructions = text(args.instructions);
     const picture = proposedPicture(client, args.picture);
     return JSON.stringify(
-      await client.createAgent({ type, name, ...(picture && { picture }) }),
+      await client.createAgent({
+        type,
+        name,
+        ...(instructions && { instructions }),
+        ...(picture && { picture }),
+      }),
     );
   },
   async self_handoff(tools, args) {
@@ -534,8 +574,35 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       }),
     );
   },
+  async agent_read({ client }, args) {
+    if (!client.readAgents)
+      throw new Error("Agent reads are unavailable on this host");
+    return JSON.stringify(await client.readAgents(text(args.agent)));
+  },
+  async team_read({ client }, args) {
+    if (!client.readTeams)
+      throw new Error("Team reads are unavailable on this host");
+    return JSON.stringify(await client.readTeams(text(args.team)));
+  },
+  async team_update({ client }, args) {
+    if (!client.updateTeam)
+      throw new Error("Team changes are unavailable on this host");
+    const team = text(args.team);
+    if (!team) throw new Error("team is required");
+    const name = text(args.name);
+    // Empty instructions propose clearing them.
+    const { instructions } = args;
+    return JSON.stringify(
+      await client.updateTeam({
+        team,
+        ...(name && { name }),
+        ...(typeof instructions === "string" && { instructions }),
+      }),
+    );
+  },
   async send(tools, args) {
     const { context } = tools;
+    args = ignoreBlankFields(args, ["channel", "reply"]);
     const reply =
       text(args.reply) ??
       (args.channel === undefined ? context.root : undefined);
@@ -551,7 +618,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error(
         "This chat stays at the top level: send again without reply.",
       );
-    const audienceTags = audienceOf(args);
+    const audienceTags = [...audienceOf(args), ...requestOf(args)];
     const thread = reply ? await tools.threadTags(reply) : [];
     return post(tools, channel, args, thread, audienceTags);
   },
@@ -566,7 +633,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!channel) throw new Error("No channel for that message.");
     if (context.topLevel && channel === context.channel)
       throw new Error("This chat stays at the top level: use send instead.");
-    const audienceTags = audienceOf(args);
+    const audienceTags = [...audienceOf(args), ...requestOf(args)];
     // As relay ingest reads it: the last valid marker, in either case.
     const root = target
       ? (threadReference(target)?.rootId ?? target.id)
@@ -591,14 +658,23 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const channel = tag(target, "h");
     if (!channel) throw new Error(`${id} is not a channel message.`);
     const content = required(args, "text");
+    if (!tools.client.effectiveEdit)
+      throw new Error("This host cannot obtain effective edit state.");
+    const effective = await tools.client.effectiveEdit(id, channel);
+    const after = (effective.created_at + 1) * 1000;
+    if (after - Date.now() > 5000)
+      throw new Error(
+        "The message was just changed; try again when the clock catches up.",
+      );
+    await waitUntil(after);
     await tools.client.publish({
       kind: 40003,
       content,
-      // An edit replaces the attachments too, so it keeps the message's.
+      // An edit replaces attachments too, including an explicitly empty set.
       tags: [
         ["h", channel],
         ["e", id],
-        ...target.tags.filter((t) => t[0] === "imeta"),
+        ...effective.tags.filter((t) => t[0] === "imeta"),
         ...(await tools.emoji(content)),
       ],
     });
@@ -631,6 +707,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const emoji = required(args, "emoji");
     if (args.off !== true) {
       const target = await tools.event(id);
+      // A `:shortcode:` reaction renders only with its NIP-30 tag, so one
+      // outside the community palette is refused rather than published bare.
+      const isCustom = CUSTOM_REACTION.test(emoji);
+      const custom = isCustom ? await tools.emoji(emoji) : [];
+      if (isCustom && !custom.length)
+        throw new Error(`unknown custom emoji ${emoji}`);
       await client.publish({
         kind: 7,
         content: emoji,
@@ -643,6 +725,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
               client.signingAuthority,
             ),
           ],
+          ...custom,
         ],
       });
       return "reacted";
@@ -658,6 +741,13 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
 
   async read(tools, args) {
     const { client, context } = tools;
+    args = ignoreBlankFields(args, [
+      "channel",
+      "thread",
+      "message_url",
+      "author",
+      "before_id",
+    ]);
     if (args.message_url !== undefined) {
       if (args.channel !== undefined || args.thread !== undefined)
         throw new Error(
@@ -884,6 +974,11 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
 
   channel_get: (tools, args) => tools.details(target(tools, args)),
+  solo_workspace_list: async ({ client }) => {
+    if (!client.soloWorkspaces)
+      throw new Error("Solo workspaces are unavailable on this host");
+    return JSON.stringify(await client.soloWorkspaces.list());
+  },
   channel_create: (tools, args) => tools.create(args),
   channel_update: (tools, args) => tools.update(target(tools, args), args),
   channel_join: (tools, args) => lifecycle(tools, args, "join"),
@@ -1511,6 +1606,15 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
 };
 
+/** The signed request a post belongs to: the turn's triggering message,
+ * which a thread reply's flattened reply link cannot name. */
+function requestOf(args: Args): string[][] {
+  if (args.request === undefined) return [];
+  const id = text(args.request)?.toLowerCase();
+  if (!id || !HEX.test(id)) throw new Error(`Not an event id: ${args.request}`);
+  return [["buzz:request", id]];
+}
+
 /** The tags for a message's required audience. */
 function audienceOf(args: Args): string[][] {
   if (args.audience !== "everyone" && args.audience !== "agents")
@@ -1697,7 +1801,17 @@ class Tools {
       args.template === undefined
         ? undefined
         : await this.template(required(args, "template"));
+    const workspace =
+      args.workspace === undefined ? undefined : required(args, "workspace");
+    if (workspace !== undefined && !solo)
+      throw new Error("workspace is for Solo chats.");
+    if (workspace !== undefined && !this.client.soloWorkspaces)
+      throw new Error("Solo workspaces are unavailable on this host");
     const id = crypto.randomUUID();
+    const file =
+      workspace === undefined
+        ? undefined
+        : await this.client.soloWorkspaces?.prepare(workspace, members, id);
     await this.client.publish({
       kind: 9007,
       content: "",
@@ -1717,13 +1831,29 @@ class Tools {
       !!now && (!solo || soloChannelMetadata(now as RelayEvent));
     const shown = await until(() => this.metadata(id), labeled).catch(unread);
     if (!shown || shown instanceof Error)
-      return `The community accepted channel ${id} but ${shown ? shown.message : "does not show it yet"}${template ? "; the template was not applied" : ""}${role === "guest" ? "; join_role was not set" : ""}${members.length ? "; its members are not confirmed" : ""}.`;
+      return `The community accepted channel ${id} but ${shown ? shown.message : "does not show it yet"}${template ? "; the template was not applied" : ""}${role === "guest" ? "; join_role was not set" : ""}${members.length ? "; its members are not confirmed" : ""}${file ? "; not filed in workspace" : ""}.`;
     const lines = [`created ${id}`];
     if (!labeled(shown))
       lines.push(
         "The community did not keep the Solo label, so it is an ordinary private channel.",
       );
     if (members.length) lines.push(...(await this.joined(id, members)));
+    if (file) {
+      try {
+        const placement = await file(id);
+        lines.push(
+          placement.status === "filed"
+            ? `filed in workspace ${workspace}`
+            : placement.status === "not-filed"
+              ? `created, not filed in workspace: ${placement.error}. Use Move to on this chat; do not create another chat.`
+              : `created; workspace placement unconfirmed and may have completed: ${placement.error}. Inspect or refresh this chat before Move to; do not create another chat.`,
+        );
+      } catch (error) {
+        lines.push(
+          `created; workspace placement unconfirmed and may have completed: ${reason(error)}. Inspect or refresh this chat before Move to; do not create another chat.`,
+        );
+      }
+    }
     if (template) lines.push(...(await this.apply(id, template)));
     // Last, so the template's agents join as members, not guests.
     if (role === "guest")
@@ -2054,27 +2184,9 @@ class Tools {
       : [];
     const messages = edited([...events, ...edits]);
     const names = await this.names(messages.map((event) => event.pubkey));
-    return messages.map((event) => {
-      const name = names.get(event.pubkey);
-      const channel = tag(event, "h");
-      const owner = tag(event, "auth");
-      const reference = threadReference(event);
-      const thread = reference?.rootId;
-      return [
-        event.id,
-        `from ${event.pubkey}`,
-        name && JSON.stringify(name),
-        owner && `claimed owner ${owner}`,
-        channel && channel !== scope.channel && `in ${channel}`,
-        thread && thread !== scope.root && `re ${thread}`,
-        reference &&
-          reference.parentId !== thread &&
-          `reply_to ${reference.parentId}`,
-        `at ${time(event.created_at)}: ${event.content}`,
-      ]
-        .filter(Boolean)
-        .join(" ");
-    });
+    return messages.map((event) =>
+      messageLine(event, names.get(event.pubkey), scope),
+    );
   }
 
   /** NIP-30 tags for the community emoji `content` uses, as the composer
@@ -2157,6 +2269,32 @@ class Tools {
   }
 }
 
+/** A message's line in a read, omitting what `scope` names. */
+function messageLine(
+  event: BuzzEvent,
+  name: string | undefined,
+  scope: Readonly<{ channel?: string; root?: string }>,
+) {
+  const channel = tag(event, "h");
+  const owner = tag(event, "auth");
+  const reference = threadReference(event);
+  const thread = reference?.rootId;
+  return [
+    event.id,
+    `from ${event.pubkey}`,
+    name && JSON.stringify(name),
+    owner && `claimed owner ${owner}`,
+    channel && channel !== scope.channel && `in ${channel}`,
+    thread && thread !== scope.root && `re ${thread}`,
+    reference &&
+      reference.parentId !== thread &&
+      `reply_to ${reference.parentId}`,
+    `at ${time(event.created_at)}: ${event.content}`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 /** The root of the thread `event` is in, by its NIP-10 markers. */
 function rootOf(event: BuzzEvent) {
   const tags = event.tags.filter(
@@ -2169,21 +2307,26 @@ function rootOf(event: BuzzEvent) {
 
 /** Messages oldest first, each showing its author's latest edit. */
 function edited(events: readonly BuzzEvent[]) {
+  const messages = events.filter((event) => event.kind !== 40003);
+  const byId = new Map(messages.map((event) => [event.id, event]));
   const edits = new Map<string, BuzzEvent>();
   for (const event of events)
     if (event.kind === 40003) {
       const target = tag(event, "e");
+      const message = target ? byId.get(target) : undefined;
       const last = target && edits.get(target);
-      if (target && (!last || last.created_at < event.created_at))
+      // Authorship first, so someone else's newer edit hides none.
+      if (
+        target &&
+        message?.pubkey === event.pubkey &&
+        (!last || last.created_at < event.created_at)
+      )
         edits.set(target, event);
     }
-  return events
-    .filter((event) => event.kind !== 40003)
+  return messages
     .map((event) => {
       const edit = edits.get(event.id);
-      return edit && edit.pubkey === event.pubkey
-        ? { ...event, content: edit.content }
-        : event;
+      return edit ? { ...event, content: edit.content } : event;
     })
     .sort((a, b) => a.created_at - b.created_at);
 }
@@ -2653,7 +2796,8 @@ function joinRoleArg(args: Args) {
 /** A `since` or `before` argument: a Unix time in seconds, inclusive. */
 function unixTime(args: Args, key: string) {
   const value = args[key];
-  if (value === undefined) return undefined;
+  // 0 is left out too: no message is from before 1970.
+  if (value === undefined || value === 0) return undefined;
   // In milliseconds, a time from this century is past the year 5000.
   if (
     !Number.isSafeInteger(value) ||
@@ -2679,6 +2823,15 @@ function checkDetails(name?: string, about?: string, ttl?: number) {
 }
 const text = (value: unknown) =>
   typeof value === "string" && value.trim() ? value.trim() : undefined;
+const isBlank = (value: unknown) => typeof value === "string" && !value.trim();
+/** Some models fill in every optional field, sending "" for each one they
+ * mean to leave out. Reads a blank one of `fields` as left out. */
+function ignoreBlankFields(args: Args, fields: readonly string[]): Args {
+  const checked = { ...args };
+  for (const field of fields)
+    if (isBlank(checked[field])) delete checked[field];
+  return checked;
+}
 const list = (value: unknown) =>
   Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")

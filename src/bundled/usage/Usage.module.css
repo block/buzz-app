@@ -1,21 +1,9 @@
-.scroll {
-  min-height: 0;
-  flex: 1;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb-quiet) transparent;
-}
 .body {
   display: flex;
   flex-direction: column;
   gap: var(--space-8);
-  inline-size: 100%;
-  max-inline-size: 64rem;
-  margin-inline: auto;
-  padding: var(--space-panel-inset);
 }
 .status {
-  padding: var(--space-panel-inset);
   color: var(--text-subtle);
   font-size: var(--text-body);
   line-height: var(--text-body--line-height);
@@ -129,12 +117,15 @@
   padding: 0;
   list-style: none;
 }
+/* NavigationItem's geometry, so these rows line up with the ones beside them
+   and an agent's row stays put when its read finishes. */
 .agentRow,
 .staticRow {
   display: flex;
+  min-block-size: var(--size-row);
   align-items: center;
-  gap: var(--space-3);
-  padding-block: var(--space-2);
+  gap: var(--space-row-gap);
+  padding: var(--space-1) var(--space-control-inset);
 }
 .agentText,
 .sessionText {

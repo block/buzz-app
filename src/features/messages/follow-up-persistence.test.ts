@@ -19,6 +19,7 @@ import {
   followUpStorage,
   type FollowUpMessage,
 } from "./follow-up-storage";
+import { messageTokenTags } from "./message-tokens";
 
 const secret = new Uint8Array(32).fill(7);
 const viewer = getPublicKey(secret);
@@ -329,6 +330,50 @@ it("restores ordered payloads in the same account/community without automaticall
       .map((row) => row.text),
   ).toEqual(["Second"]);
 });
+
+it("restores a queued message's chips and signs them on the recovered send", async () => {
+  const token = {
+    kind: "folder" as const,
+    id: "/example/repos/notes",
+    label: "notes",
+  };
+  fixture().enqueue({ ...message, tokens: [token] });
+  const restored = fixture();
+  await restored.owner.ready;
+  const row = restored.queue.snapshot()[0];
+  if (!row) throw new Error("Queued message was not restored");
+  expect(row.message?.tokens).toEqual([token]);
+  restored.queue.sendNow(row.id);
+  await vi.waitFor(() => expect(restored.publish).toHaveBeenCalledOnce());
+  const [event] = restored.publish.mock.calls[0] as unknown as [
+    { tags: string[][] },
+  ];
+  expect(event.tags).toContainEqual(messageTokenTags([token])[0]);
+});
+
+it.each([
+  {},
+  [{ kind: "unknown", id: "broken", label: "Broken" }],
+  Array(33).fill({ kind: "folder", id: "/f", label: "f" }),
+])(
+  "keeps saved messages with invalid or oversized chips unsent and unchanged: %j",
+  async (tokens) => {
+    followUpStorage(scope).save({
+      ...message,
+      id: "invalid-tokens",
+      createdAt: 1,
+      tokens: tokens as unknown as NonNullable<FollowUpMessage["tokens"]>,
+    });
+    const key = `buzz-view.v1:${JSON.stringify([scope, "follow-up:invalid-tokens"])}`;
+    const saved = localStorage.getItem(key);
+    const restored = fixture();
+    await restored.owner.ready.catch(() => {});
+    expect(restored.queue.storageError()).toContain("could not be read");
+    expect(restored.queue.snapshot()).toEqual([]);
+    expect(restored.send).not.toHaveBeenCalled();
+    expect(localStorage.getItem(key)).toBe(saved);
+  },
+);
 
 it("refuses enqueue on save failure and leaves no in-memory-only queued row", () => {
   const h = fixture();
@@ -2051,4 +2096,81 @@ it("durably adopts a locally owned failed receipt after another window dismisses
     recovery: followUpRecovery(id),
   });
   expect(h.send).toHaveBeenCalledOnce();
+});
+
+it("edits durable text in place and publishes that text from another window", async () => {
+  const first = fixture();
+  const id = first.enqueue(structuredClone(message));
+  const second = fixture();
+  cleanup.push(second.queue.subscribe(() => {}));
+  const before = followUpStorage(scope).load()[0];
+  const edit = first.queue.edit(id);
+  await edit.save("Updated queued request");
+  expect(followUpStorage(scope).load()[0]).toEqual({
+    ...before,
+    text: "Updated queued request",
+  });
+  second.queue.sendNow(id);
+  await vi.waitFor(() => expect(second.send).toHaveBeenCalledOnce());
+  expect(second.send.mock.calls[0]?.[1]).toBe("Updated queued request");
+});
+
+it("keeps the original text after cancelling and rejects a stale edit", async () => {
+  const first = fixture();
+  const id = first.enqueue(structuredClone(message));
+  const cancelled = first.queue.edit(id);
+  cancelled.cancel();
+  await expect(cancelled.save("Discarded")).rejects.toThrow(
+    "no longer available",
+  );
+  expect(followUpStorage(scope).load()[0]?.text).toBe(message.text);
+  const second = fixture();
+  const edit = first.queue.edit(id);
+  const otherEdit = second.queue.edit(id);
+  await otherEdit.save("Other window edit");
+  await expect(edit.save("My stale edit")).rejects.toThrow(
+    "changed in another window",
+  );
+  expect(followUpStorage(scope).load()[0]?.text).toBe("Other window edit");
+  edit.cancel();
+});
+
+it("does not resurrect a removed queued message when saving an edit", async () => {
+  const h = fixture();
+  const id = h.enqueue(structuredClone(message));
+  const edit = h.queue.edit(id);
+  followUpStorage(scope).remove(id);
+  await expect(edit.save("Keep my draft")).rejects.toThrow("sent or removed");
+  expect(followUpStorage(scope).has(id)).toBe(false);
+  edit.cancel();
+});
+
+it("keeps an edit open on blank text or storage failure", async () => {
+  const h = fixture();
+  const id = h.enqueue(structuredClone(message));
+  const edit = h.queue.edit(id);
+  await expect(edit.save("  ")).rejects.toThrow("Enter a message");
+  const original = Storage.prototype.setItem;
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("Disk full");
+  });
+  await expect(edit.save("Changed")).rejects.toThrow("Could not save");
+  expect(h.queue.snapshot()[0]?.text).toBe(message.text);
+  Storage.prototype.setItem = original;
+  await edit.save("Changed");
+  expect(h.queue.snapshot()[0]?.text).toBe("Changed");
+});
+
+it("holds automatic release while editing, then sends the saved text", async () => {
+  const h = fixture();
+  const id = h.enqueue(structuredClone(message));
+  const edit = h.queue.edit(id);
+  h.finish();
+  // Drain the same locks automatic release uses before asserting it was held.
+  const storage = followUpStorage(scope);
+  await storage.lockChat("chat", () => storage.lock(id, async () => {}));
+  expect(h.send).not.toHaveBeenCalled();
+  await edit.save("Saved before release");
+  await vi.waitFor(() => expect(h.send).toHaveBeenCalledOnce());
+  expect(h.send.mock.calls[0]?.[1]).toBe("Saved before release");
 });

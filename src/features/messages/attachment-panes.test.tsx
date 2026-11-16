@@ -157,6 +157,7 @@ async function fixture(archived = false) {
     snapshot: () => snapshot,
     subscribe: () => () => {},
     retry() {},
+    tryAgain() {},
     disconnect() {},
     clearCache: owner.clearCache,
   };
@@ -209,6 +210,7 @@ it.each([false, true])(
       position: () => undefined,
       savePosition() {},
       forSession: () => navigation,
+      passThrough: () => () => {},
       complete: () => true,
       resolve: () => true,
     };
@@ -370,14 +372,14 @@ it("announces eager preparation, then background upload after Send, while editor
   // The file leaves the composer; the background pill announces its phases.
   await waitFor(() => expect(status).not.toBeInTheDocument());
   expect(screen.getByRole("status", { name: "" })).toHaveTextContent(
-    "Preparing",
+    /^Preparing upload to Work$/,
   );
   expect(editor).toHaveFocus();
   await act(async () => {
     header.resolve(new ArrayBuffer(0));
   });
   expect(screen.getByRole("status", { name: "" })).toHaveTextContent(
-    /^Uploading$/,
+    /^Uploading to Work$/,
   );
   expect(editor).toHaveFocus();
   await act(async () => {

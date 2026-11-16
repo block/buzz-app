@@ -143,6 +143,8 @@ export function ActivityReactionScope({
   );
 }
 
+/** Activity is a Messages sidebar row (presentation.ts), so its icon, and
+ * the latest reaction emoji that replaces it, fill the row's icon slot. */
 export function ActivityNavigationIcon({ children }: { children: ReactNode }) {
   const emoji = useContext(ActivityEmojiContext);
   return (

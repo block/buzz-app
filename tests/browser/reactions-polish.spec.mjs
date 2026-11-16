@@ -691,27 +691,37 @@ test("long native reactions and unavailable shortcode artwork stay inside the hi
     .locator("[data-message-id]")
     .first()
     .getByTestId("reaction-row");
-  for (const content of ["f".repeat(64), `:${"a".repeat(64)}:`]) {
+  const native = "f".repeat(64);
+  const shortcode = `:${"a".repeat(64)}:`;
+  for (const content of [native, shortcode]) {
     const pill = row.locator(`button[data-reaction="${content}"]`);
     await expect(pill).toHaveCount(1);
     await expect(pill).toHaveAttribute(
       "aria-label",
       `${content}: Fixture Member`,
     );
-    const bounds = await pill.evaluate((button) => {
-      const glyph = button.querySelector("[data-reaction-glyph] > span");
+    const bounds = await pill.evaluate((button, isShortcode) => {
+      const glyph = button.querySelector(
+        isShortcode
+          ? "[data-reaction-glyph] svg"
+          : "[data-reaction-glyph] > span",
+      );
+      const rect = glyph.getBoundingClientRect();
       const chip = button.getBoundingClientRect();
       return {
-        glyphWidth: glyph.getBoundingClientRect().width,
-        glyphLeft: glyph.getBoundingClientRect().left,
-        glyphRight: glyph.getBoundingClientRect().right,
+        glyphWidth: rect.width,
+        glyphLeft: rect.left,
+        glyphRight: rect.right,
         chipLeft: chip.left,
         chipRight: chip.right,
         truncated: glyph.scrollWidth > glyph.clientWidth,
+        text: button.querySelector("[data-reaction-glyph]").textContent,
       };
-    });
+    }, content === shortcode);
     expect(bounds.glyphWidth).toBeLessThanOrEqual(26);
-    expect(bounds.truncated).toBe(true);
+    if (content === native) expect(bounds.truncated).toBe(true);
+    // Unavailable shortcode artwork draws the placeholder icon, never its text.
+    else expect(bounds.text).toBe("");
     expect(bounds.glyphLeft).toBeGreaterThanOrEqual(bounds.chipLeft);
     expect(bounds.glyphRight).toBeLessThanOrEqual(bounds.chipRight);
   }
@@ -828,4 +838,33 @@ test("short reactor lists do not add a keyboard stop", async ({ page }) => {
       .getByRole("button", { name: "Add reaction", exact: true }),
   ).toBeFocused();
   await expect(preview).toHaveCount(0);
+});
+
+// Browser-only: real overflow and anchor geometry decide the Tab handoff, and
+// native Enter and Space activation is what the pill must reject.
+test("people who cannot react can read every reactor without toggling", async ({
+  page,
+}) => {
+  await page.goto(
+    "/tests/fixtures/emoji.html?reactions&grouped=150&long-names",
+  );
+  await page.evaluate(() => window.emojiFixture.archive(true));
+  const group = page.getByRole("button", { name: "👍: 150 people" });
+  await expect(group).toHaveAttribute("aria-disabled", "true");
+  await group.focus();
+  const people = page
+    .getByRole("dialog")
+    .getByRole("region", { name: "Everyone who reacted" });
+  await expect(people).toHaveAttribute("tabindex", "0");
+  await group.press("Enter");
+  await group.press(" ");
+  // Playwright will not click an aria-disabled control unless forced.
+  await group.click({ force: true });
+  // Activation enqueues synchronously, so the outbox is a complete barrier.
+  expect(await page.evaluate(() => window.emojiFixture.operations())).toBe(0);
+  await expect(group).toHaveAttribute("aria-pressed", "false");
+  await group.focus();
+  await expect(people).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(people).toBeFocused();
 });

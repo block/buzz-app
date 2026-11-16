@@ -269,6 +269,14 @@ describe("the NIP-FI sign-in", () => {
       "Secure storage is busy. Close another Buzz instance and try again.",
     ],
     [
+      "the browser step outlasts native's wait",
+      (fi: ReturnType<typeof federatedFixture>) =>
+        vi
+          .mocked(fi.service.signIn)
+          .mockRejectedValueOnce(new Error("sign-in-timed-out")),
+      "Sign-in timed out. Try again.",
+    ],
+    [
       "the account read is not JSON",
       (fi: ReturnType<typeof federatedFixture>) =>
         fi.request.mockResolvedValueOnce({
@@ -305,6 +313,30 @@ describe("the NIP-FI sign-in", () => {
       firstRunCredential(new AbortController().signal, fi.service),
     ).rejects.toThrow(new Error(message));
   });
+
+  it.each([
+    {},
+    { signup: true },
+    { forceLogin: true },
+    { signup: true, forceLogin: true },
+  ])(
+    "asks the native sign-in for the sign-up screen and a forced login only as Welcome chose (%o)",
+    async (options) => {
+      vi.mocked(invoke).mockResolvedValueOnce(catalog(true));
+      const fi = federatedFixture();
+      fi.request.mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        body: JSON.stringify(me),
+      });
+      await firstRunCredential(
+        new AbortController().signal,
+        fi.service,
+        options,
+      );
+      expect(vi.mocked(fi.service.signIn).mock.calls).toEqual([[options]]);
+    },
+  );
 
   it("continues as the account the browser chose again for a session that already exists", async () => {
     vi.mocked(invoke).mockResolvedValueOnce(catalog(true));
@@ -418,12 +450,18 @@ describe("the NIP-FI sign-in", () => {
         fi.publish({ status: "signed-in", revision: "stored", failure: null });
         return fi.service.snapshot();
       });
+      const options = { signup: true, forceLogin: true };
       const credential = await firstRunCredential(
         new AbortController().signal,
         fi.service,
+        options,
       );
       expect(credential.revision).toBe("user:1");
-      expect(fi.service.signIn).toHaveBeenCalledTimes(2);
+      // The renewal is the one that opens the browser: it keeps the choices.
+      expect(vi.mocked(fi.service.signIn).mock.calls).toEqual([
+        [options],
+        [options],
+      ]);
     });
 
     it("continues after a browser sign-in, without renewing it", async () => {

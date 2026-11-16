@@ -1,5 +1,24 @@
-import { test, expect } from "./source-fixture.mjs";
+import { test, expect } from "./playwright-test.mjs";
+import { previewFixtures } from "./vite-server.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
+
+let fixtures;
+// A dev server serves these fixtures as about 1,600 modules, and a worker's
+// first navigation outlasted the navigation timeout on a busy runner.
+test.beforeAll(async () => {
+  fixtures = await previewFixtures([
+    "tests/fixtures/emoji.html",
+    "tests/fixtures/mentions.html",
+    "tests/fixtures/messages.html",
+    "tests/fixtures/typeahead.html",
+  ]);
+});
+test.afterAll(() => fixtures?.close());
+// Journeys open the pages by path. The bundle's port is known only after
+// beforeAll, which runs before each test's fixtures. Playwright also resolves
+// baseURL for beforeAll itself, before the bundle exists.
+// biome-ignore lint/correctness/noEmptyPattern: Playwright requires a destructured fixture argument.
+test.use({ baseURL: async ({}, use) => use(fixtures?.origin) });
 
 const open = async (page) => {
   await page.goto("/tests/fixtures/mentions.html?test-controls");
@@ -35,18 +54,30 @@ test("closing-colon emoji conversion restores literal source and caret on undo",
     page.getByRole("option", { name: ":-1:", exact: true }),
   ).toBeVisible();
   await input.press("Shift+Semicolon");
-  await expect(input).toHaveJSProperty("value", "hello 👎");
+  await expect(input).toHaveJSProperty("value", "hello 👎 ");
   await input.press("ControlOrMeta+z");
   await expect(input).toHaveJSProperty("value", "hello :-1:");
   await expect(input).toHaveJSProperty("selectionStart", 10);
   await expect(input).toHaveJSProperty("selectionEnd", 10);
   await input.press("ControlOrMeta+Shift+z");
-  await expect(input).toHaveJSProperty("value", "hello 👎");
+  await expect(input).toHaveJSProperty("value", "hello 👎 ");
   await input.pressSequentially("!");
   await input.press("ControlOrMeta+z");
-  await expect(input).toHaveJSProperty("value", "hello 👎");
+  await expect(input).toHaveJSProperty("value", "hello 👎 ");
   await input.press("ControlOrMeta+z");
   await expect(input).toHaveJSProperty("value", "hello :-1:");
+
+  // An existing space is reused; typing continues after it.
+  await input.fill("a :-1 b");
+  await input.evaluate((el) => el.setSelectionRange(5, 5));
+  await expect(
+    page.getByRole("option", { name: ":-1:", exact: true }),
+  ).toBeVisible();
+  await input.press("Shift+Semicolon");
+  await expect(input).toHaveJSProperty("value", "a 👎 b");
+  await expect(input).toHaveJSProperty("selectionStart", "a 👎 ".length);
+  await input.pressSequentially("hi ");
+  await expect(input).toHaveJSProperty("value", "a 👎 hi b");
 
   // Pasted/restored Markdown remains plain editor text, not a rich code node.
   await input.fill("```\n:-1\n```");
@@ -184,7 +215,7 @@ for (const mode of ["light", "dark"]) {
       );
       const replacement =
         kind === "emoji"
-          ? await selected.locator("[data-native-emoji]").textContent()
+          ? `${await selected.locator("[data-native-emoji]").textContent()} `
           : "@Honey ";
       // Namesakes sort by their generated public keys, not fixture creation order.
       const recipient =
@@ -264,8 +295,9 @@ test("emoji keyboard, Escape, selected text, blur, IME and plugin disable preser
   await input.fill(":smile");
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
-  await expect(input).toHaveJSProperty("value", "😄");
+  await expect(input).toHaveJSProperty("value", "😄 ");
   await expect(input).toBeFocused();
+  await input.press("ArrowLeft");
   await input.press("Shift+ArrowLeft");
   await expect
     .poll(() =>
@@ -334,7 +366,7 @@ test("completion resumes after selection collapses to the original caret", async
     .toEqual([6, 6]);
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
-  await expect(input).toHaveJSProperty("value", "😄");
+  await expect(input).toHaveJSProperty("value", "😄 ");
   await expect(input).toBeFocused();
 });
 test("selection recovery requires fresh results and preserves Escape dismissal", async ({
@@ -568,7 +600,7 @@ test("emoji completion starts at the first ranked result when Unicode joins comm
     await input.press("Enter");
     await expect(input).toHaveJSProperty(
       "value",
-      query === "joy" ? "😂" : "😁",
+      query === "joy" ? "😂 " : "😁 ",
     );
   }
 });
@@ -591,7 +623,7 @@ test("custom emoji completion keeps the large preview and caret on one line", as
     await expect(option).toBeVisible();
     if (method === "click") await option.click();
     else await input.press(method === ":" ? "Shift+Semicolon" : method);
-    await expect(input).toHaveJSProperty("value", ":party:");
+    await expect(input).toHaveJSProperty("value", ":party: ");
     await expect(input.locator("img[data-copy-emoji]")).toHaveCSS(
       "width",
       "42px",
@@ -604,7 +636,7 @@ test("custom emoji completion keeps the large preview and caret on one line", as
       caret: "initial",
     });
     await input.pressSequentially("x");
-    await expect(input).toHaveJSProperty("value", ":party:x");
+    await expect(input).toHaveJSProperty("value", ":party: x");
   }
 });
 
@@ -753,12 +785,12 @@ test("current custom catalog drives typeahead and signed tags across community r
     ),
   ).toBeLessThan(1);
   await page.getByRole("option", { name: ":smirk:", exact: true }).click();
-  await expect(input).toHaveJSProperty("value", "😏");
+  await expect(input).toHaveJSProperty("value", "😏 ");
   expect(await input.evaluate((element) => element.selectionStart)).toBe(
-    "😏".length,
+    "😏 ".length,
   );
   await input.pressSequentially("hello");
-  await expect(input).toHaveJSProperty("value", "😏hello");
+  await expect(input).toHaveJSProperty("value", "😏 hello");
   await input.fill(":party-par");
   const first = page.getByRole("option", {
     name: ":party-parrot:",
@@ -772,11 +804,12 @@ test("current custom catalog drives typeahead and signed tags across community r
   const composerBox = await composer.boundingBox();
   expect(suggestionBox.width).toBeCloseTo(composerBox.width * 0.375, 1);
   await first.click();
-  await expect(input).toHaveJSProperty("value", ":party-parrot:");
+  await expect(input).toHaveJSProperty("value", ":party-parrot: ");
   await expect(composer.locator("img[data-copy-emoji]")).toHaveCSS(
     "width",
     "42px",
   );
+  await input.press("ArrowLeft");
   await input.press("Shift+ArrowLeft");
   expect(
     await input.evaluate((element) =>
@@ -793,15 +826,17 @@ test("current custom catalog drives typeahead and signed tags across community r
     caret: "initial",
   });
   await page.evaluate(() => window.emojiFixture.remove());
-  await expect(input).toHaveJSProperty("value", ":party-parrot:");
+  await expect(input).toHaveJSProperty("value", ":party-parrot: ");
   await page.evaluate(() => window.emojiFixture.replace());
   await input.press("Backspace");
-  await expect(input).toHaveJSProperty("value", "");
+  await expect(input).toHaveJSProperty("value", " ");
   await input.press("ControlOrMeta+z");
-  await expect(input).toHaveJSProperty("value", ":party-parrot:");
-  // macOS End scrolls the document; use its caret shortcut when overscroll is off.
-  await input.press(process.platform === "darwin" ? "Meta+ArrowRight" : "End");
-  await input.pressSequentially(" hello");
+  await expect(input).toHaveJSProperty("value", ":party-parrot: ");
+  // Undo reselects the restored emoji; continue after its trailing space.
+  await input.evaluate((element) =>
+    element.setSelectionRange(element.value.length, element.value.length),
+  );
+  await input.pressSequentially("hello");
   await expect(input).toHaveJSProperty("value", ":party-parrot: hello");
   await input.press("Enter");
   await expect
@@ -868,7 +903,7 @@ test("current custom catalog drives typeahead and signed tags across community r
   expect(inlineAlignment.textLeft).toBeCloseTo(inlineAlignment.right, 0);
   await input.fill("hello :party");
   await page.getByRole("option", { name: ":party:", exact: true }).click();
-  await expect(input).toHaveJSProperty("value", "hello :party:");
+  await expect(input).toHaveJSProperty("value", "hello :party: ");
   await input.fill(":party");
   await expect(
     page.getByRole("option", { name: ":party:", exact: true }),
@@ -881,7 +916,7 @@ test("current custom catalog drives typeahead and signed tags across community r
   await page.getByRole("button", { name: "Switch community" }).click();
   await input.fill(":party");
   await page.getByRole("option", { name: ":party:", exact: true }).click();
-  await expect(input).toHaveJSProperty("value", ":party:");
+  await expect(input).toHaveJSProperty("value", ":party: ");
   await input.press("Enter");
   await expect
     .poll(() =>
@@ -1032,7 +1067,7 @@ test("channel and actual ThreadPanel composers keep separate completion and draf
   await expect(main).toHaveJSProperty("selectionEnd", 6);
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await main.press("Tab");
-  await expect(main).toHaveJSProperty("value", "😄");
+  await expect(main).toHaveJSProperty("value", "😄 ");
   await expect(thread).toHaveJSProperty("value", "@Fixture Reader ");
 });
 
@@ -1073,7 +1108,7 @@ test("a later emoji trigger wins after a mention without discarding recipient in
   await input.pressSequentially(":smile");
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
-  await expect(input).toHaveJSProperty("value", "@Honey 😄");
+  await expect(input).toHaveJSProperty("value", "@Honey 😄 ");
   await input.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
@@ -1086,7 +1121,7 @@ test("a later emoji trigger wins after a mention without discarding recipient in
   await input.fill("@Honey :smile");
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
-  await expect(input).toHaveJSProperty("value", "@Honey 😄");
+  await expect(input).toHaveJSProperty("value", "@Honey 😄 ");
   await expect(input.locator(".inline-chip")).toHaveCount(0);
 });
 

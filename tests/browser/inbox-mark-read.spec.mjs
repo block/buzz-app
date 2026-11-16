@@ -91,9 +91,8 @@ test("Activity filter choices combine, persist, and hold menu focus through row 
   await unreadSwitch(inbox).click();
   await rows.getByRole("button", { name: /^Open / }).focus();
   await page.keyboard.press("Shift+F10");
-  await expect(
-    page.getByRole("menuitem", { name: "Mark unread", exact: true }),
-  ).toBeDisabled();
+  // An unread row offers only Mark as read.
+  await expect(page.getByRole("menuitem")).toHaveText(["Mark as read"]);
   await page
     .getByRole("menuitem", { name: "Mark as read", exact: true })
     .click();
@@ -263,13 +262,16 @@ test("the toolbar keeps tabs, From and Unread on one row in a 540px list and wra
     const narrow = await layout();
     const [tabs, from, unread] = narrow.controls;
     // Unread wraps first, to the start of the next line under "All"; once From
-    // wraps too, it starts that line instead and Unread follows it.
+    // wraps too, it starts that line instead and Unread follows it. Beside the
+    // dock, a 280px window is too narrow for both, so Unread takes a third line.
     expect(unread.top).toBeGreaterThanOrEqual(tabs.bottom - 1);
     if (from.top < tabs.bottom)
       expect(Math.abs(narrow.unreadText - narrow.tabText)).toBeLessThan(1);
     else {
       expect(Math.abs(from.left - narrow.tabText)).toBeLessThan(1);
-      expect(Math.abs(middle(from) - middle(unread))).toBeLessThan(2);
+      if (unread.top < from.bottom)
+        expect(Math.abs(middle(from) - middle(unread))).toBeLessThan(2);
+      else expect(Math.abs(narrow.unreadText - narrow.tabText)).toBeLessThan(1);
     }
     expect(from.left).toBeGreaterThanOrEqual(narrow.toolbar.left);
     narrow.controls.forEach((control, index) => {

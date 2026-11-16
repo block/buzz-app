@@ -1,17 +1,10 @@
 import { useEffect, useState } from "react";
 import { AgentPortrait } from "../agents/AgentCard";
-import { ChannelBody } from "../channels/ChannelBody";
-import {
-  ConversationChannel,
-  ConversationComposer,
-  ConversationThread,
-} from "../../features/conversation/Conversation";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Agents } from "../../features/agents/service";
-import { targetKey } from "../../features/navigation/targets";
 import { messageViewKey } from "../../features/messages/view-key";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
@@ -30,8 +23,7 @@ import {
 } from "../../shared/design-system/ui/PanelHeader";
 import { bestieChat } from "./chat";
 import { BestieChooser } from "./BestieChooser";
-import { bestieBaseTarget, bestieRoute, bestieThreadTarget } from "./routes";
-import styles from "./PinnedBestie.module.css";
+import { BestieConversation } from "./BestieConversation";
 
 /** Account-saved Besties use their canonical verified DM. No saved choice means
  * the caller keeps Riley's hosted setup page. */
@@ -74,24 +66,16 @@ export function PinnedBestie({
       : undefined;
   const identity = agent ?? known;
   const name = identity ? (identity.managedName ?? identity.name) : "Bestie";
-  const header = (
-    <PanelHeader
-      title={
-        <PanelHeaderLabel
-          title={name}
-          icon={
-            identity ? (
-              <AgentPortrait
-                agent={{ name, picture: identity.avatar }}
-                community={connection.origin}
-              />
-            ) : (
-              <RobotIcon size="1rem" />
-            )
-          }
-        />
-      }
+  const icon = identity ? (
+    <AgentPortrait
+      agent={{ name, picture: identity.avatar }}
+      community={connection.origin}
     />
+  ) : (
+    <RobotIcon size="1rem" />
+  );
+  const header = (
+    <PanelHeader title={<PanelHeaderLabel title={name} icon={icon} />} />
   );
   let content: React.ReactNode;
   if (!active || !scope) {
@@ -112,7 +96,7 @@ export function PinnedBestie({
         }
         action={
           connection.status === "error" ? (
-            <Button onClick={relay.retry}>Retry connection</Button>
+            <Button onClick={relay.tryAgain}>Retry connection</Button>
           ) : undefined
         }
       />
@@ -127,7 +111,9 @@ export function PinnedBestie({
         extensions={extensions}
         navigator={navigator}
         navigation={navigation}
-        agent={{ pubkey: saved, name }}
+        icon={icon}
+        agent={{ pubkey: saved, name, picture: identity?.avatar }}
+        community={connection.origin}
         channel={channel}
       />
     );
@@ -212,11 +198,14 @@ export function PinnedBestie({
           extensions={extensions}
           navigator={navigator}
           navigation={navigation}
-          agent={{ pubkey: agent.pubkey, name }}
+          icon={icon}
+          agent={{ pubkey: agent.pubkey, name, picture: agent.avatar }}
+          community={connection.origin}
           channel={undefined}
         />
       );
   }
+  if (active && scope && channel && saved) return content;
   return (
     <div className="h-full min-h-0">
       <FullPageSurface aria-label="Bestie">
@@ -237,6 +226,8 @@ function DirectMessage({
   navigator,
   navigation,
   agent,
+  community,
+  icon,
   channel,
 }: {
   session: RelaySession;
@@ -245,7 +236,9 @@ function DirectMessage({
   extensions: ConversationExtensions;
   navigator: Navigation;
   navigation?: PageNavigation | undefined;
-  agent: { pubkey: string; name: string };
+  agent: { pubkey: string; name: string; picture?: string | undefined };
+  community?: string | undefined;
+  icon: React.ReactNode;
   channel: ChannelSummary | undefined;
 }) {
   const [attempt, retry] = useState(0);
@@ -288,7 +281,9 @@ function DirectMessage({
         navigator={navigator}
         navigation={navigation}
         channel={channel}
-        bestie={agent.name}
+        agent={agent}
+        community={community}
+        icon={icon}
       />
     );
   if (error || attempt > 0)
@@ -314,132 +309,6 @@ function DirectMessage({
         description={`Connecting to your DM with ${agent.name}.`}
       />
     </LoadingRegion>
-  );
-}
-
-function BestieConversation({
-  session,
-  scope,
-  host,
-  extensions,
-  navigator,
-  navigation,
-  channel,
-  bestie,
-}: {
-  session: RelaySession;
-  scope: string;
-  host: ConversationHostServices;
-  extensions: ConversationExtensions;
-  navigator: Navigation;
-  navigation?: PageNavigation | undefined;
-  channel: ChannelSummary;
-  bestie: string;
-}) {
-  const [sent, setSent] = useState<string>();
-  const routed =
-    navigation?.target.kind === "page"
-      ? bestieRoute(navigation.target.route?.params)
-      : undefined;
-  const [localThread, setLocalThread] = useState<string>();
-  const thread =
-    routed?.channelId === channel.id ? routed.messageId : localThread;
-  const [composerFocus, focusComposer] = useState(0);
-  const ownsCurrentVisit =
-    !!navigation &&
-    !navigation.signal.aborted &&
-    navigator.snapshot().entry.id === navigation.entryId;
-  useEffect(() => {
-    if (
-      !routed ||
-      routed.channelId === channel.id ||
-      navigation?.target.kind !== "page" ||
-      navigation.signal.aborted ||
-      navigator.snapshot().entry.id !== navigation.entryId
-    )
-      return;
-    // A pinned page follows the current Bestie; its old threads do not. Retire
-    // incompatible visits rather than handing their messages to another DM.
-    const base = bestieBaseTarget(navigation.target);
-    navigator.dismiss((target) => {
-      if (
-        target.kind !== "page" ||
-        targetKey(bestieBaseTarget(target)) !== targetKey(base)
-      )
-        return false;
-      const route = bestieRoute(target.route?.params);
-      return !!route && route.channelId !== channel.id;
-    }, base);
-  }, [routed, channel.id, navigation, navigator]);
-  const openThread = (messageId: string, threadRootId: string) => {
-    if (!navigation) {
-      setLocalThread(messageId);
-      return;
-    }
-    if (navigation.target.kind !== "page" || !ownsCurrentVisit) return;
-    void navigator.open(
-      bestieThreadTarget(navigation.target, {
-        channelId: channel.id,
-        messageId,
-        threadRootId,
-      }),
-    );
-  };
-  const closeThread = () => {
-    if (navigation?.target.kind === "page" && routed && ownsCurrentVisit) {
-      const base = bestieBaseTarget(navigation.target);
-      navigator.dismiss(
-        (target) =>
-          target.kind === "page" &&
-          targetKey(bestieBaseTarget(target)) === targetKey(base) &&
-          bestieRoute(target.route?.params)?.channelId === routed.channelId &&
-          bestieRoute(target.route?.params)?.messageId === routed.messageId &&
-          bestieRoute(target.route?.params)?.threadRootId ===
-            routed.threadRootId,
-        base,
-      );
-    } else if (!navigation) setLocalThread(undefined);
-    focusComposer((value) => value + 1);
-  };
-  return (
-    <ConversationChannel
-      session={session}
-      scope={scope}
-      extensions={extensions}
-      host={host}
-      channel={channel}
-      channelName={channel.name || bestie}
-      active
-    >
-      <section
-        data-attachment-drop-zone=""
-        className={styles.work}
-        aria-label={`Chat with ${bestie}`}
-      >
-        {thread ? (
-          <ConversationThread
-            messageId={thread}
-            navigation={routed ? navigation : undefined}
-            close={closeThread}
-          />
-        ) : (
-          <>
-            <ChannelBody
-              viewer={session.viewer}
-              cached={!!channel.cached}
-              revealMessageId={sent}
-              marksRead
-              onOpenThread={openThread}
-            />
-            <ConversationComposer
-              label={`Message ${bestie}`}
-              focusRequest={composerFocus}
-              onSend={setSent}
-            />
-          </>
-        )}
-      </section>
-    </ConversationChannel>
   );
 }
 

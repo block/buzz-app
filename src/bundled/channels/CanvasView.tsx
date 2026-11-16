@@ -1,71 +1,47 @@
 import { memo, type Ref } from "react";
-import { fromMarkdown, type Options } from "mdast-util-from-markdown";
+import type {
+  CodeBlockRenderer,
+  ContributionReader,
+} from "../../features/conversation/contracts";
 import {
-  SafeMarkdown,
-  safeMarkdownPlugins,
-} from "../../features/messages/SafeMarkdown";
-import { scanMarkdown } from "../../features/relay/message-content";
+  DOCUMENT_PROFILE,
+  DOCUMENT_RENDER_CELLS,
+} from "../../features/markdown/document-profile";
+import { guardDocument } from "../../features/markdown/guard";
+import {
+  MarkdownDocument,
+  MarkdownSource,
+  sharedComponents,
+} from "../../features/markdown/MarkdownDocument";
+import { LIVE_CANVAS_BYTES } from "../../features/channel-templates/model";
 import { Button } from "../../shared/design-system/ui/Button";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import styles from "./Canvas.module.css";
 
 /**
- * Rendering budget for the View tab, independent of what Canvas saves accept.
- * Larger or deeply nested documents show their source instead.
+ * Rendering budget for the View tab, at the save limit: a UTF-16 length never
+ * exceeds the UTF-8 size, so every Canvas a save accepts passes this check.
  */
-export const CANVAS_RENDER_CHARS = 128 * 1024;
+export const CANVAS_RENDER_CHARS = LIVE_CANVAS_BYTES;
 
-/**
- * GFM pads every table row to its header's width, so a small sparse table can
- * still expand to many cells.
- */
-export const CANVAS_RENDER_CELLS = 10_000;
-
-type Node = { type: string; children?: Node[] };
-
-function tableCells(content: string) {
-  // Parse as remark-parse does under the renderer's plugins, so every table
-  // the renderer will build is counted, before any HAST or React conversion.
-  const data: {
-    micromarkExtensions?: NonNullable<Options["extensions"]>;
-    fromMarkdownExtensions?: NonNullable<Options["mdastExtensions"]>;
-  } = {};
-  const processor = {
-    data: () => data,
-  };
-  for (const plugin of safeMarkdownPlugins)
-    (plugin as (this: typeof processor) => void).call(processor);
-  const pending: Node[] = [
-    fromMarkdown(content, {
-      extensions: data.micromarkExtensions,
-      mdastExtensions: data.fromMarkdownExtensions,
-    }),
-  ];
-  let cells = 0;
-  for (let node = pending.pop(); node; node = pending.pop())
-    if (node.type === "table")
-      cells +=
-        (node.children?.[0]?.children?.length ?? 0) *
-        (node.children?.length ?? 0);
-    else for (const child of node.children ?? []) pending.push(child);
-  return cells;
-}
+export const CANVAS_RENDER_CELLS = DOCUMENT_RENDER_CELLS;
 
 export function renderable(content: string) {
-  return (
-    content.length <= CANVAS_RENDER_CHARS &&
-    !scanMarkdown(content).tooDeep &&
-    tableCells(content) <= CANVAS_RENDER_CELLS
-  );
+  return guardDocument(content, DOCUMENT_PROFILE, {
+    chars: CANVAS_RENDER_CHARS,
+    cells: CANVAS_RENDER_CELLS,
+  });
 }
 
 /** The saved Canvas as Markdown, without raw HTML, inline images or unsafe links. */
 export const CanvasMarkdown = memo(function CanvasMarkdown({
   content,
   openLink,
+  codeBlocks,
 }: {
   content: string;
   openLink(url: string): boolean;
+  codeBlocks?: ContributionReader<CodeBlockRenderer> | undefined;
 }) {
   if (!renderable(content))
     return (
@@ -74,10 +50,18 @@ export const CanvasMarkdown = memo(function CanvasMarkdown({
           This Canvas is too large or too complex to render, so it is shown as
           Markdown source.
         </p>
-        <pre>{content}</pre>
+        <MarkdownSource content={content} />
       </>
     );
-  return <SafeMarkdown content={content} openLink={openLink} />;
+  return (
+    <MarkdownDocument
+      content={content}
+      profile={DOCUMENT_PROFILE}
+      components={sharedComponents}
+      capabilities={{ openLink, codeBlocks, copy: true }}
+      scale="document"
+    />
+  );
 });
 
 export function CanvasView({
@@ -87,6 +71,7 @@ export function CanvasView({
   busy,
   retry,
   openLink,
+  codeBlocks,
   focusRef,
   retryRef,
   active,
@@ -98,6 +83,7 @@ export function CanvasView({
   busy: boolean;
   retry(): void;
   openLink(url: string): boolean;
+  codeBlocks?: ContributionReader<CodeBlockRenderer> | undefined;
   focusRef: Ref<HTMLElement>;
   retryRef: Ref<HTMLButtonElement>;
   /** Only the active tab offers the panel host a focus target. */
@@ -126,7 +112,11 @@ export function CanvasView({
         className={styles.markdown}
       >
         {!loaded ? null : content ? (
-          <CanvasMarkdown content={content} openLink={openLink} />
+          <CanvasMarkdown
+            content={content}
+            openLink={openLink}
+            codeBlocks={codeBlocks}
+          />
         ) : (
           <p className="text-secondary">This Canvas is empty.</p>
         )}

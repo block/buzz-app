@@ -1,12 +1,17 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { useSyncExternalStore } from "react";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Agent, AgentChange, Agents } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
+import type { RelaySession } from "../../features/relay/session";
 import { readView, writeView } from "../../shared/view-state";
-import { setDefaultAgent } from "../../features/solo/default-agent";
+import {
+  chooseDefaultAgent,
+  setDefaultAgent,
+} from "../../features/solo/default-agent";
 import { onBestieMade } from "../agents/BestieChoice";
 import { bestieTab, formerBestieTab } from "./BestieTab";
 import {
@@ -185,6 +190,32 @@ it("puts this device back on the account's Bestie when a failed Change is closed
   unmount();
   expect(deviceChoice()).toBe(ada.pubkey);
   stop?.();
+});
+
+it("keeps the Bestie an agent saved when its tab closes over a failed Change", async () => {
+  const user = userEvent.setup();
+  const { relay, mainAgent } = community(ada.pubkey);
+  mainAgent.write.mockRejectedValueOnce(new Error("offline"));
+  const tab = bestieTab(relay, host([]).agents);
+  const subscribe = tab.subscribe ?? (() => () => {});
+  const stop = subscribe(() => {});
+  await vi.waitFor(() => expect(tab.when?.(ada)).toBe(true));
+  const Tab = tab.component;
+  // As the side panel does, it drops the tab once Ada stops being Bestie.
+  function Panel() {
+    const shown = useSyncExternalStore(subscribe, () => !!tab.when?.(ada));
+    return shown ? <Tab agent={ada} /> : null;
+  }
+  render(<Panel />);
+  const confirmation = await switchToBea(user);
+  expect(await within(confirmation).findByRole("alert")).toBeVisible();
+  // An agent saves Bea, as bestie_set does, while the failure shows.
+  const { session } = relay.snapshot() as unknown as { session: RelaySession };
+  await act(() => chooseDefaultAgent(session, SCOPE, bea.pubkey));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(mainAgent.write).toHaveBeenLastCalledWith(bea.pubkey);
+  expect(deviceChoice()).toBe(bea.pubkey);
+  stop();
 });
 
 it("puts this device back when a Change still saving fails after the panel closes", async () => {
@@ -631,8 +662,6 @@ it("checks in every hour only while memory is on, with a timer in the owner's DM
     config: { instructions: withFeature(remembering, checkinHourly, true) },
     base,
   });
-  // Turning it on lets the agent's Attention run.
-  expect(timers.attentionEnabled).toBe(true);
   expect(timers.attention?.["watch/bestie-hourly-check-in"]).toMatchObject({
     type: "timer",
     interest_id: "bestie-hourly-check-in",
@@ -731,12 +760,11 @@ it("undoes a failed check-in's timer, so none runs behind a switch that reads of
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Instructions changed elsewhere",
   );
-  // The timer and its Interest are removed again, and Attention, which this
-  // turned on, goes back off.
+  // The timer and its Interest are removed again.
   expect(save).toHaveBeenCalledTimes(3);
   expect(save.mock.calls[2]).toEqual([
     ada.key,
-    { attention: { [INTEREST]: null, [TIMER]: null }, attentionEnabled: false },
+    { attention: { [INTEREST]: null, [TIMER]: null } },
   ]);
   expect(hourly).not.toBeChecked();
   // Trying again saves it all again.
@@ -744,23 +772,6 @@ it("undoes a failed check-in's timer, so none runs behind a switch that reads of
   await user.click(hourly);
   expect(save).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("alert")).toBeNull();
-});
-
-it("leaves Attention on after a failed check-in when it was already on", async () => {
-  const user = userEvent.setup();
-  const { relay } = community(ada.pubkey);
-  const { agents, save } = host();
-  const Tab = bestieTab(relay, agents).component;
-  render(<Tab agent={remembering(true)} />);
-  save
-    .mockResolvedValueOnce()
-    .mockRejectedValueOnce(new Error("Instructions changed elsewhere"));
-  await user.click(screen.getByRole("switch", { name: "Every hour" }));
-  await screen.findByRole("alert");
-  expect(save.mock.calls[2]).toEqual([
-    ada.key,
-    { attention: { [INTEREST]: null, [TIMER]: null } },
-  ]);
 });
 
 it("offers to remove a timer left without its section when undoing fails too", async () => {

@@ -166,3 +166,137 @@ it("reconnects a connection the federated session refused once it is signed in",
   expect(connect).toHaveBeenCalledTimes(2);
   expect(data.snapshot().status).toBe("ready");
 });
+it("makes Try again ask the issuer again for a refused connection before reconnecting", async () => {
+  const ctx = root();
+  const order: string[] = [];
+  const listeners = new Set<(kind: "sign-in" | "access") => void>();
+  const connect = vi.fn(async (): Promise<ReadTransport> => {
+    order.push("connect");
+    return {
+      ...transport("viewer"),
+      scope: "https://relay.example",
+      observeRefusal(listener) {
+        listeners.add(listener);
+        return () => void listeners.delete(listener);
+      },
+    };
+  });
+  const askAgain = vi.fn(async (relay: string) => {
+    order.push(`ask again ${relay}`);
+  });
+  const data = provideRelay(
+    ctx,
+    connect,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    askAgain,
+  );
+  await flush();
+  for (const listener of [...listeners]) listener("access");
+  await flush();
+  expect(data.snapshot()).toMatchObject({ status: "error", denied: true });
+  // An automatic reconnect does not ask.
+  data.retry();
+  await flush();
+  expect(askAgain).not.toHaveBeenCalled();
+  for (const listener of [...listeners]) listener("access");
+  await flush();
+  data.tryAgain();
+  // The attempt starts at once, so a route retried next sees it under way.
+  expect(data.snapshot().status).toBe("connecting");
+  // A second press while it runs joins it, but still asks, so an attempt
+  // already past its own ask can't repeat a cached refusal.
+  data.tryAgain();
+  await flush();
+  const ask = `ask again ${data.snapshot().origin}`;
+  expect(order).toEqual(["connect", "connect", ask, ask, "connect"]);
+  expect(data.snapshot().origin).toMatch(/relay\.example/);
+  expect(data.snapshot().status).toBe("ready");
+});
+it("makes Try again on a ready connection retry what failed, without reconnecting", async () => {
+  const ctx = root();
+  const connect = vi.fn(async () => transport("viewer"));
+  const askAgain = vi.fn(async () => {
+    throw new Error("unavailable");
+  });
+  const data = provideRelay(
+    ctx,
+    connect,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    askAgain,
+  );
+  await flush();
+  const recovery = data.snapshot().session.recovery;
+  expect(recovery?.snapshot().reauthorized ?? 0).toBe(0);
+  data.tryAgain();
+  await flush();
+  // A failed ask still retries: every failed read and the live socket.
+  expect(askAgain).toHaveBeenCalledOnce();
+  expect(recovery?.snapshot().reauthorized).toBe(1);
+  expect(connect).toHaveBeenCalledTimes(1);
+});
+it("asks a live socket that may have died during sleep to answer", async () => {
+  vi.useFakeTimers();
+  const check = vi.fn();
+  const source: ReadTransport = {
+    ...transport("viewer"),
+    subscribe: () => ({ update() {}, retry() {}, check, dispose() {} }),
+  };
+  const data = provideRelay(root(), async () => source);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(data.snapshot().status).toBe("ready");
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(check).not.toHaveBeenCalled();
+  // Timers stop while the machine sleeps, so the clock jumps between ticks.
+  vi.setSystemTime(Date.now() + 60_000);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(check).toHaveBeenCalledTimes(1);
+});
+
+it("turns a community refusal heard after connecting into one denied connection", async () => {
+  const ctx = root();
+  const listeners = new Set<(kind: "sign-in" | "access") => void>();
+  const refusing = (): ReadTransport => ({
+    ...transport("viewer"),
+    scope: "https://relay.example",
+    observeRefusal(listener) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+  });
+  const connect = vi.fn(async () => refusing());
+  const data = provideRelay(ctx, connect);
+  await flush();
+  expect(data.snapshot().status).toBe("ready");
+  const ready = data.snapshot().session;
+  for (const listener of [...listeners]) listener("sign-in");
+  // A second refusal from the same connection changes nothing.
+  for (const listener of [...listeners]) listener("access");
+  await flush();
+  expect(data.snapshot()).toMatchObject({
+    status: "error",
+    denied: true,
+    refusal: "sign-in",
+    viewer: "viewer",
+    error: "Federated sign-in is required",
+  });
+  expect(data.snapshot().retrying).toBeUndefined();
+  expect(data.snapshot().session).not.toBe(ready);
+  // Nothing reconnects by itself; signing in does, and the old connection's
+  // listener is gone.
+  expect(connect).toHaveBeenCalledTimes(1);
+  data.reauthorize();
+  await flush();
+  expect(connect).toHaveBeenCalledTimes(2);
+  expect(data.snapshot().status).toBe("ready");
+  expect(listeners.size).toBe(1);
+});

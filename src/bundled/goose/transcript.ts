@@ -83,13 +83,14 @@ function prompt(
   // An older steer wraps a whole turn.
   if (steer && !readEventBody(steer.body))
     sections = promptSections(steer.body);
-  const { text, author } = promptMessage(sections, name);
+  const { text, author, authorPubkey } = promptMessage(sections, name);
   return {
     id,
     at,
     type: "prompt" as const,
     text: text || raw,
     ...(author ? { author } : {}),
+    ...(authorPubkey ? { authorPubkey } : {}),
     sections,
     steer: steered || !!steer,
   };
@@ -283,24 +284,15 @@ function opening(messages: readonly Message[]) {
 export const ownerOf = (messages: readonly Message[]) =>
   opening(messages)?.("Agent");
 
-/** Whether a session was started for the agent in `place`: its first prompt's
- * context names the same agent, channel and, for a thread, thread root. */
-export function startedFor(
-  messages: readonly Message[],
-  agent: string,
-  place: Place,
-) {
-  const field = opening(messages);
-  return (
-    !!field &&
-    field("Agent") === agent &&
-    !!field("Channel")?.endsWith(`(#${place.channelId})`) &&
-    (place.root
-      ? field("Session scope") === "thread" &&
-        field("Thread root") === place.root
-      : field("Session scope") !== "thread")
-  );
-}
+/** The tags a Buzz session opens with, which goose indexes: the agent's
+ * membership key, and the conversation's key (its channel, or `channel/root`
+ * for a thread). A one-off turn has no conversation. */
+export const sessionTags = (agent: string, conversation?: string) => ({
+  "buzz.agent": agent,
+  ...(conversation ? { "buzz.conversation": conversation } : {}),
+});
+const conversationOf = (place: Place) =>
+  place.root ? `${place.channelId}/${place.root}` : place.channelId;
 
 type Listed = {
   sessionId: string;
@@ -308,20 +300,20 @@ type Listed = {
   updatedAt?: string | null;
 };
 
-/** A page of the goose sessions in the workspace, newest first; `query`
- * keeps those whose messages mention it. */
+/** A page of the goose sessions in the workspace, newest first; `tags`
+ * keeps those opened with every one of them, an index lookup. */
 async function page(
   goose: GooseProcess,
   cwd: string,
-  query?: string,
   cursor?: string,
+  tags?: Readonly<Record<string, string>>,
 ) {
   const { sessions, nextCursor } = (await goose.request(
     "session/list",
     {
       cwd,
       ...(cursor ? { cursor } : {}),
-      _meta: { types: ["acp"], ...(query ? { query } : {}) },
+      _meta: { types: ["acp"], ...(tags ? { tags } : {}) },
     },
     REQUEST_TIMEOUT_MS,
   )) as { sessions: Listed[]; nextCursor?: string | null };
@@ -337,20 +329,12 @@ async function page(
   };
 }
 
-/** The first page of the agent's goose sessions in the workspace, newest
- * first; `query` keeps those whose messages mention it. */
-async function list(goose: GooseProcess, cwd: string, query?: string) {
-  return (await page(goose, cwd, query)).rows;
-}
-
-/** Every goose session in the workspace. Without a query a page is an index
- * lookup; with one, the SQLite goose bundles (3.51) parses each session's
- * messages again for every message in it, which takes seconds. */
+/** Every goose session in the workspace. */
 async function all(goose: GooseProcess, cwd: string) {
   const rows: GooseSessionRow[] = [];
   let cursor: string | undefined;
   do {
-    const read = await page(goose, cwd, undefined, cursor);
+    const read = await page(goose, cwd, cursor);
     rows.push(...read.rows);
     cursor = read.next;
   } while (cursor);
@@ -383,12 +367,10 @@ export type Lookup = Readonly<{
   agent: string;
   workspace: string;
   sessionId?: string;
-  /** The ids saved for `place`, read without searching goose. */
+  /** The ids saved for `place`, read without listing goose's sessions. */
   sessions?: readonly string[];
+  /** Where the sessions ran, found by their tags when no saved id is. */
   place?: Place;
-  /** Also search goose's history for the place's sessions, which takes
-   * seconds; for one that saved no ids. */
-  search?: boolean;
   /** The session still working, whose last turn has not ended. */
   working?: string;
 }>;
@@ -396,6 +378,8 @@ export type Lookup = Readonly<{
 /** goose's history for an agent, each read in its own short-lived `goose-acp`. */
 export class GooseHistory {
   constructor(private readonly host: GooseHost | undefined) {}
+  /** The last transcript read's messages, by session. */
+  private exported = new Map<string, Message[]>();
 
   /** Every session in `workspace` used since `since`, newest first, and the
    * messages of those `wanted` picks, all from one `goose-acp`: every agent
@@ -421,14 +405,14 @@ export class GooseHistory {
 
   /** The listed rows of `ids`, read from goose's sessions in `workspace`
    * newest first, page by page, until every one is found or none are left:
-   * no search and no session's messages. */
+   * no session's messages. */
   listed(workspace: string, ids: ReadonlySet<string>, signal: AbortSignal) {
     return this.with(signal, async (goose, { resolveDirectory }) => {
       const cwd = await absolute(resolveDirectory, workspace);
       const found = new Map<string, GooseSessionRow>();
       let cursor: string | undefined;
       do {
-        const read = await page(goose, cwd, undefined, cursor);
+        const read = await page(goose, cwd, cursor);
         for (const row of read.rows)
           if (ids.has(row.sessionId)) found.set(row.sessionId, row);
         cursor = read.next;
@@ -444,46 +428,52 @@ export class GooseHistory {
     lookup: Lookup,
     signal: AbortSignal,
     name?: Names,
+    reuse = false,
   ): Promise<GooseTranscript | undefined> {
     return this.with(signal, async (goose, { resolveDirectory }) => {
-      const saved = new Set(lookup.sessions);
-      const ids = new Set([
-        ...(lookup.sessionId ? [lookup.sessionId] : []),
-        ...saved,
-      ]);
-      if (lookup.place && lookup.search) {
-        const cwd = await absolute(resolveDirectory, lookup.workspace);
-        for (const row of await candidates(goose, cwd, lookup.place))
-          ids.add(row.sessionId);
-      }
       const turns: TranscriptTurn[] = [];
       let found = false;
-      for (const sessionId of ids) {
-        let read: Message[];
-        try {
-          read = await messages(goose, sessionId);
-        } catch (error) {
-          if (/not found/i.test(String(error))) continue;
-          throw error;
+      // With `reuse`, while one session works, the others' messages are as
+      // last exported.
+      const exported = new Map<string, Message[]>();
+      const readAll = async (ids: Iterable<string>) => {
+        for (const sessionId of new Set(ids)) {
+          if (exported.has(sessionId)) continue;
+          let read: Message[];
+          signal.throwIfAborted();
+          const kept = reuse && lookup.working && this.exported.get(sessionId);
+          try {
+            read =
+              kept && sessionId !== lookup.working
+                ? kept
+                : await messages(goose, sessionId);
+          } catch (error) {
+            if (/not found/i.test(String(error))) continue;
+            throw error;
+          }
+          signal.throwIfAborted();
+          exported.set(sessionId, read);
+          found = true;
+          turns.push(
+            ...gooseTurns(
+              read,
+              { sessionId, ...(lookup.place ?? { channelId: "" }) },
+              sessionId === lookup.working,
+              name,
+            ),
+          );
         }
-        signal.throwIfAborted();
-        if (
-          lookup.place &&
-          sessionId !== lookup.sessionId &&
-          !saved.has(sessionId) &&
-          !startedFor(read, lookup.agent, lookup.place)
-        )
-          continue;
-        found = true;
-        turns.push(
-          ...gooseTurns(
-            read,
-            { sessionId, ...(lookup.place ?? { channelId: "" }) },
-            sessionId === lookup.working,
-            name,
-          ),
-        );
+      };
+      await readAll([
+        ...(lookup.sessionId ? [lookup.sessionId] : []),
+        ...(lookup.sessions ?? []),
+      ]);
+      // When goose has none of the saved ids, its tag index finds the place's.
+      if (!found && lookup.place) {
+        const cwd = await absolute(resolveDirectory, lookup.workspace);
+        await readAll(await tagged(goose, cwd, lookup.agent, lookup.place));
       }
+      this.exported = exported;
       if (!found) return undefined;
       turns.sort((a, b) => a.startedAt - b.startedAt);
       return {
@@ -499,15 +489,30 @@ export class GooseHistory {
   ) {
     const { host } = this;
     if (!host) throw new Error("goose runs only in the desktop app");
-    // Cancelling rejects at once, and `briefly` then stops goose.
-    return briefly(host, (goose) => abortable(run(goose, host), signal));
+    // Cancelling rejects at once, and `briefly` then stops goose, or stops
+    // its startup.
+    return briefly(
+      host,
+      (goose) => {
+        signal.throwIfAborted();
+        return abortable(run(goose, host), signal);
+      },
+      {},
+      signal,
+    );
   }
 }
 
-/** The workspace's sessions whose messages mention the place, newest first. */
-async function candidates(goose: GooseProcess, cwd: string, place: Place) {
-  return (await list(goose, cwd, place.root ?? place.channelId)).slice(
-    0,
-    SESSION_LIMIT,
-  );
+/** The agent's latest sessions goose tagged with the place's conversation,
+ * newest first. */
+async function tagged(
+  goose: GooseProcess,
+  cwd: string,
+  agent: string,
+  place: Place,
+) {
+  const tags = sessionTags(agent, conversationOf(place));
+  return (await page(goose, cwd, undefined, tags)).rows
+    .slice(0, SESSION_LIMIT)
+    .map((row) => row.sessionId);
 }

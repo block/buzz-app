@@ -45,7 +45,7 @@ function mount(
   save = true,
   identity: Partial<Pick<RelaySession, "profiles" | "names">> = {},
 ) {
-  const fixture = createWorkflowFixture();
+  const fixture = createWorkflowFixture(identity.profiles);
   fixture.definitions.update({
     status: "ready",
     data: {
@@ -700,6 +700,164 @@ async function confirmDeletion(from: "grid" | "detail" = "grid") {
     within(dialog).getByRole("button", { name: "Delete workflow" }),
   );
 }
+
+it.each(["grid", "detail"] as const)(
+  "deletes an owned agent's workflow from %s while keeping edits and runs read-only",
+  async (from) => {
+    const author = keypair().pubkey;
+    const profiles = createProfileDirectory({ read: async () => [] });
+    const listeners = new Set<() => void>();
+    let owned = false;
+    const fixture = mount(fixtureYaml, author, true, {
+      profiles: {
+        ...profiles.queries,
+        owner: (key) => (owned && key === author ? fixtureViewer : undefined),
+        subscribe: (fn) => {
+          listeners.add(fn);
+          return () => {
+            listeners.delete(fn);
+          };
+        },
+      },
+    });
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "Owner: My workflows" }),
+    );
+    await user.click(
+      screen.getByRole("radio", { name: "All channel workflows" }),
+    );
+    const card = (
+      await screen.findByRole("button", { name: /^Open Message helper:/ })
+    ).closest("article");
+    if (!card) throw new Error("Missing workflow card");
+    await user.click(
+      within(card).getByRole("button", { name: "Actions for Message helper" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Delete workflow" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("menuitem", { name: "Delete workflow" }),
+    ).toHaveAccessibleDescription(
+      "Only the author or their verified agent owner can delete this workflow.",
+    );
+    act(() => {
+      owned = true;
+      for (const fn of listeners) fn();
+    });
+    expect(
+      screen.getByRole("menuitem", { name: "Delete workflow" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
+    await user.keyboard("{Escape}");
+    expect(
+      within(card).getByRole("button", { name: "Run now: Message helper" }),
+    ).toBeDisabled();
+    if (from === "detail") {
+      await user.click(
+        within(card).getByRole("button", { name: /^Open Message helper:/ }),
+      );
+      await user.click(
+        detailPane().getByRole("button", { name: "View workflow" }),
+      );
+      expect(screen.queryByRole("button", { name: /^Run now$/ })).toBeNull();
+      await user.click(
+        screen.getByRole("button", { name: "Workflow actions" }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", { name: "Delete workflow" }),
+      );
+      const dialog = await screen.findByRole("alertdialog", {
+        name: "Delete this workflow?",
+      });
+      await user.click(
+        within(dialog).getByRole("button", { name: "Delete workflow" }),
+      );
+    } else await confirmDeletion();
+    expect(fixture.calls.delete).toBe(1);
+    expect(fixture.capability.operations.snapshot()[0]).toMatchObject({
+      action: "delete",
+      workflow: { owner: author },
+      outcome: "pending",
+    });
+    profiles.dispose();
+  },
+);
+
+it.each(["landing", "detail"])(
+  "reports ownership lost during %s deletion confirmation",
+  async (from) => {
+    const author = keypair().pubkey;
+    const profiles = createProfileDirectory({ read: async () => [] });
+    let owned = true;
+    const fixture = mount(fixtureYaml, author, true, {
+      profiles: {
+        ...profiles.queries,
+        owner: () => (owned ? fixtureViewer : undefined),
+      },
+    });
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "Owner: My workflows" }),
+    );
+    await user.click(
+      screen.getByRole("radio", { name: "All channel workflows" }),
+    );
+    if (from === "detail") {
+      await user.click(
+        await screen.findByRole("button", { name: /^Open Message helper:/ }),
+      );
+      await user.click(
+        detailPane().getByRole("button", { name: "View workflow" }),
+      );
+      await user.click(
+        screen.getByRole("button", { name: "Workflow actions" }),
+      );
+    } else {
+      await user.click(
+        await screen.findByRole("button", {
+          name: "Actions for Message helper",
+        }),
+      );
+    }
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Delete workflow" }),
+    );
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Delete this workflow?",
+    });
+    owned = false;
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete workflow" }),
+    );
+    expect(fixture.calls.delete).toBe(0);
+    expect(
+      screen.queryByRole("alertdialog", { name: "Delete this workflow?" }),
+    ).toBeNull();
+    expect(
+      await screen.findByText(
+        "You no longer have permission to delete this workflow. Refresh and try again.",
+      ),
+    ).toBeVisible();
+    if (from === "detail") {
+      expect(
+        screen.getByRole("dialog", { name: "Message helper" }),
+      ).toBeVisible();
+      await user.click(
+        screen.getByRole("button", { name: "Workflow actions" }),
+      );
+      expect(
+        await screen.findByRole("menuitem", { name: "Delete workflow" }),
+      ).toHaveAttribute("aria-disabled", "true");
+      expect(
+        screen.getByText(
+          "Only the author or their verified agent owner can delete this workflow.",
+        ),
+      ).toBeVisible();
+    } else expect(screen.getByText("Couldn't start deletion")).toBeVisible();
+    profiles.dispose();
+  },
+);
 
 it("confirms on the grid without mounting detail, cancels safely, and removes only after readback", async () => {
   const fixture = mount();
@@ -1473,4 +1631,86 @@ it("describes an unreadable workflow outside its row button", async () => {
   expect(
     screen.getByText("Unreadable configuration").closest("button"),
   ).toBeNull();
+});
+
+it("offers only live channels to New workflow and disables it when only archived channels remain", async () => {
+  const fixture = mount();
+  const user = userEvent.setup();
+  const archived = {
+    id: fixtureChannel,
+    name: "Fixture channel",
+    archived: true as const,
+  };
+  act(() =>
+    fixture.setChannels({
+      status: "ready",
+      channels: [archived, { id: "live-channel", name: "Live channel" }],
+    }),
+  );
+  await user.click(screen.getByRole("button", { name: "New workflow" }));
+  const create = await screen.findByRole("dialog", { name: "Create workflow" });
+  expect(
+    (await screen.findAllByRole("option")).map((option) => option.textContent),
+  ).toEqual(["Live channel"]);
+  // Escape closes the open channel list, which hides the dialog's other controls.
+  await user.keyboard("{Escape}");
+  await user.click(
+    within(create).getByRole("button", { name: "Close editor" }),
+  );
+  expect(screen.queryByRole("dialog", { name: "Create workflow" })).toBeNull();
+  act(() => fixture.setChannels({ status: "ready", channels: [archived] }));
+  expect(screen.getByRole("button", { name: "New workflow" })).toBeDisabled();
+  // Its workflows stay listed, so they can still be turned off or deleted.
+  expect(
+    screen.getByRole("button", { name: /^Open Message helper:/ }),
+  ).toBeVisible();
+  act(() =>
+    fixture.definitions.update({
+      status: "ready",
+      data: { partial: false, items: [] },
+    }),
+  );
+  await screen.findByText("Automations that keep your community moving.");
+  expect(screen.getAllByRole("button", { name: "New workflow" })).toEqual([
+    screen.getByRole("button", { name: "New workflow" }),
+  ]);
+});
+
+it("keeps an open editor and its draft when its channel is archived, and blocks saving it enabled and Run now", async () => {
+  const fixture = mount(fixtureYaml.replace("enabled: false", "enabled: true"));
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: /^Open Message helper:/ }),
+  );
+  await user.click(detailPane().getByRole("button", { name: "Edit workflow" }));
+  const editor = screen.getByRole("dialog", { name: "Message helper" });
+  await user.type(
+    within(editor).getByRole("textbox", { name: "Description" }),
+    "Draft note",
+  );
+  act(() =>
+    fixture.setChannels({
+      status: "ready",
+      channels: [
+        { id: fixtureChannel, name: "Fixture channel", archived: true },
+      ],
+    }),
+  );
+  expect(screen.getByRole("dialog", { name: "Message helper" })).toBe(editor);
+  expect(
+    within(editor).getByRole("textbox", { name: "Description" }),
+  ).toHaveValue("Draft note");
+  expect(
+    within(editor).getByText(
+      "This channel is archived, so its workflows can't run. Turn this workflow off to save it.",
+      { selector: "[role=status]" },
+    ),
+  ).toBeVisible();
+  expect(
+    within(editor).getByRole("button", { name: "Save changes" }),
+  ).toBeDisabled();
+  expect(
+    within(editor).getByRole("button", { name: "Run now" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(fixture.calls.save).toBe(0);
 });

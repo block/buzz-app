@@ -28,6 +28,8 @@ export type FakeTurn = {
 export type FakeGoose = {
   id: string;
   options: HostProcessOptions;
+  /** The agent its credential was bound to, if any. */
+  actedAs?: Readonly<{ pubkey: string; relay: string }>;
   /** Every message written to its stdin. */
   received: Message[];
   /** Each `session/new`'s params. */
@@ -41,6 +43,10 @@ export type FakeGoose = {
   deleted: string[];
   /** Each `session/set_config_option`, as `sessionId configId=value`. */
   configured: string[];
+  /** When set, the next system prompt set fails with it. */
+  promptError?: string;
+  /** When set, system prompt sets wait for it. */
+  promptGate?: Promise<void>;
   /** When set, `session/set_config_option` fails with it. */
   configError?: string;
   /** The environment it started with. */
@@ -72,6 +78,8 @@ export type FakeSession = Readonly<{
   cwd: string;
   updatedAt: string;
   conversation: readonly Record<string, unknown>[];
+  /** The tags it was opened with, which `session/list` filters by. */
+  tags?: Readonly<Record<string, string>>;
 }>;
 
 /** A loopback MCP server `serve` started, as the app's host would. */
@@ -281,9 +289,22 @@ export function fakeSpawn(
             configOptions: configOptions(sessionId),
           });
         }
-        case "_goose/unstable/session/system-prompt/set":
-          fake.prompts.set(sessionId, String(params.text));
-          return reply(id, {});
+        case "_goose/unstable/session/system-prompt/set": {
+          const failure = fake.promptError;
+          delete fake.promptError;
+          if (failure)
+            return send({
+              jsonrpc: "2.0",
+              ...(id !== undefined && { id }),
+              error: { code: -32603, message: failure },
+            });
+          const set = () => {
+            fake.prompts.set(sessionId, String(params.text));
+            reply(id, {});
+          };
+          if (fake.promptGate) return void fake.promptGate.then(set);
+          return set();
+        }
         case "session/prompt": {
           const runId = `run-${fake.turns.length + 1}`;
           const text = (params.prompt as { text: string }[])
@@ -409,14 +430,15 @@ export function fakeSpawn(
             models: options.supported ?? [],
           });
         case "session/list": {
-          const query = String(
-            (params._meta as { query?: string } | undefined)?.query ?? "",
-          );
-          const mentions = (session: FakeSession) =>
-            JSON.stringify(session.conversation).includes(query);
+          const tags = (params._meta as { tags?: Record<string, string> })
+            ?.tags;
+          // A session carries every tag asked for, as goose's index filters.
           const listed = (options.history ?? []).filter(
             (session) =>
-              session.cwd === params.cwd && (!query || mentions(session)),
+              session.cwd === params.cwd &&
+              Object.entries(tags ?? {}).every(
+                ([key, value]) => session.tags?.[key] === value,
+              ),
           );
           const from = Number(params.cursor ?? 0);
           const to = from + (options.page ?? listed.length);
@@ -478,6 +500,11 @@ export function fakeSpawn(
         fake.killed = true;
         fake.exit(null);
       },
+      ...(process.agentCredential && {
+        actAs: async (agent: Readonly<{ pubkey: string; relay: string }>) => {
+          fake.actedAs = agent;
+        },
+      }),
       exited,
     };
   };

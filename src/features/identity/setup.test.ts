@@ -6,7 +6,9 @@ import type { Identity } from "./service";
 import {
   checkAccount,
   checkBackup,
+  createKey,
   createSetup,
+  importKey,
   keepBackup,
   type SetupStep,
 } from "./setup";
@@ -33,24 +35,47 @@ it("retries from the failed step and rests where the steps would have", async ()
   const after = ok("After");
   await setup.start([before, failing.step, after], {
     status: "paused",
-    at: "key-choice",
+    at: "welcome-back",
   });
   expect(setup.snapshot()).toEqual({
     status: "failed",
     error: "Linking failed",
     retryable: true,
     skipsLink: false,
+    bound: false,
   });
 
   failing.heal();
   await setup.retry();
-  expect(setup.snapshot()).toEqual({ status: "paused", at: "key-choice" });
+  expect(setup.snapshot()).toEqual({ status: "paused", at: "welcome-back" });
   expect(before.run).toHaveBeenCalledTimes(1);
   expect(failing.run).toHaveBeenCalledTimes(2);
   expect(after.run).toHaveBeenCalledTimes(1);
 });
 
-it("reports only an error that says so as retryable", async () => {
+it.each(["pubkey_already_bound", "identity_already_bound"])(
+  "reports a link Builderlab refused as %s as bound, which Try again cannot change",
+  async (code) => {
+    const setup = createSetup();
+    const refusal = Object.assign(new Error("Refused"), { code });
+    await setup.start([
+      { label: "Linking", run: () => Promise.reject<void>(refusal) },
+    ]);
+    expect(setup.snapshot()).toMatchObject({ status: "failed", bound: true });
+    await setup.start([
+      {
+        label: "Linking",
+        run: () =>
+          Promise.reject<void>(
+            Object.assign(new Error("Busy"), { code: "too_many_attempts" }),
+          ),
+      },
+    ]);
+    expect(setup.snapshot()).toMatchObject({ status: "failed", bound: false });
+  },
+);
+
+it("reports an error as not retryable only when it says so", async () => {
   const setup = createSetup();
   await setup.start([flaky("Backing up", false).step]);
   expect(setup.snapshot()).toEqual({
@@ -58,11 +83,20 @@ it("reports only an error that says so as retryable", async () => {
     error: "Backing up failed",
     retryable: false,
     skipsLink: false,
+    bound: false,
   });
+  // An error that does not say keeps Try again, which may help.
+  await setup.start([
+    {
+      label: "Plain",
+      run: () => Promise.reject<void>(new Error("Plain failed")),
+    },
+  ]);
+  expect(setup.snapshot()).toMatchObject({ retryable: true });
   await setup.start([
     { label: "Odd", run: () => Promise.reject<void>("text") },
   ]);
-  expect(setup.snapshot()).toMatchObject({ retryable: false });
+  expect(setup.snapshot()).toMatchObject({ retryable: true });
 });
 
 it.each([
@@ -120,6 +154,7 @@ it("reads the linked key and the saved destinations together, and a failed list 
   const check = async (
     linkedKey: FirstRunAccount["linkedKey"],
     knownCommunities: FirstRunAccount["knownCommunities"],
+    onDevice?: string,
   ) => {
     const onLinked = vi.fn();
     const onKnown = vi.fn();
@@ -129,6 +164,7 @@ it("reads the linked key and the saved destinations together, and a failed list 
         { linkedKey, knownCommunities } as FirstRunAccount,
         onLinked,
         onKnown,
+        onDevice,
       ),
     ]);
     return {
@@ -156,6 +192,14 @@ it("reads the linked key and the saved destinations together, and a failed list 
     linked: [[pubkey]],
     known: [[["wss://a.example"]]],
   });
+  // The linked key already on this device leaves nothing to choose.
+  expect(
+    await check(
+      () => Promise.resolve(pubkey),
+      () => Promise.resolve([]),
+      pubkey,
+    ),
+  ).toEqual({ rest: { status: "done" }, linked: [[pubkey]], known: [[[]]] });
   expect(
     await check(
       () => Promise.resolve(null),
@@ -191,9 +235,10 @@ it("reports the backed-up keys, and an unavailable or failed status as none list
   expect(await lookup(() => Promise.resolve("unavailable"))).toEqual([
     [undefined],
   ]);
+  // A failed lookup says so: a backup may still hold the key.
   expect(
     await lookup(() => Promise.reject(new BackupError("unreachable"))),
-  ).toEqual([[undefined]]);
+  ).toEqual([[undefined, true]]);
 });
 
 it("keeping a listed backup saves automatic backup only where this build backs up to Builderlab", async () => {
@@ -250,8 +295,8 @@ it("a step that rests idle ends setup past the caller's rest, also when a retry 
   await setup.retry();
   expect(setup.snapshot()).toEqual({ status: "idle" });
   // Idle, unlike done, lets setup start again.
-  await setup.start([], { status: "paused", at: "key-choice" });
-  expect(setup.snapshot()).toEqual({ status: "paused", at: "key-choice" });
+  await setup.start([], { status: "paused", at: "welcome-back" });
+  expect(setup.snapshot()).toEqual({ status: "paused", at: "welcome-back" });
 });
 
 it.each([
@@ -274,4 +319,54 @@ it.each([
   await setup.continueWithoutBackup();
   expect(setup.snapshot().status).toBe("failed");
   expect(after.run).not.toHaveBeenCalled();
+});
+
+it("runs the steps a step decides on next, before the rest, and retries from them", async () => {
+  const setup = createSetup();
+  const order: string[] = [];
+  const failing = flaky("Linking", true);
+  const decided: SetupStep = {
+    label: "Decided",
+    run: async () => {
+      order.push("Decided");
+    },
+  };
+  const decide: SetupStep = {
+    label: "Checking",
+    run: async () => {
+      order.push("Checking");
+      return { next: [decided, failing.step] };
+    },
+  };
+  const after: SetupStep = {
+    label: "After",
+    run: async () => {
+      order.push("After");
+    },
+  };
+  await setup.start([decide, after]);
+  expect(setup.snapshot()).toMatchObject({ status: "failed" });
+  failing.heal();
+  await setup.retry();
+  expect(setup.snapshot()).toEqual({ status: "done" });
+  expect(order).toEqual(["Checking", "Decided", "After"]);
+  expect(failing.run).toHaveBeenCalledTimes(2);
+});
+
+it("creating or importing a key refuses while another key is on this device, before touching it", async () => {
+  const create = vi.fn();
+  const importNsec = vi.fn();
+  const identity = {
+    snapshot: () => ({ status: "ready", viewer: "ab".repeat(32) }),
+    create,
+    importKey: importNsec,
+  } as unknown as Identity;
+  await expect(createKey(identity).run()).rejects.toThrow(
+    "already has a different Buzz key",
+  );
+  await expect(importKey(identity, "nsec1")).rejects.toThrow(
+    "already has a different Buzz key",
+  );
+  expect(create).not.toHaveBeenCalled();
+  expect(importNsec).not.toHaveBeenCalled();
 });

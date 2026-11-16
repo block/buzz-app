@@ -1,5 +1,5 @@
 import type { RelaySession } from "../relay/session";
-import type { OutboxRecovery } from "../relay/outbox";
+import type { OutboxRecovery, OutgoingEvent } from "../relay/outbox";
 import { followUpMessage } from "./follow-up-message";
 import {
   followUpStorage,
@@ -54,6 +54,7 @@ function createQueue(session: RelaySession) {
   let storageError: string | undefined;
   let sequence = Date.now();
   const waits = new Map<string, Wait[]>();
+  const edits = new Set<string>();
   // Persist completion of our handoffs so other windows can recognize it.
   const handoffs = new Map<string, FollowUpHandoff>();
   const settlingHandoffs = new Set<string>();
@@ -79,16 +80,22 @@ function createQueue(session: RelaySession) {
           ),
         ]),
       );
-      entries = saved.map(
-        (saved) =>
-          entries.find((entry) => entry.id === saved.id) ?? {
-            ...saved,
-            message: saved,
-            restored: true,
-            recovered: true,
-            ...followUpMessage(session, saved),
-          },
-      );
+      entries = saved.map((saved) => {
+        const existing = entries.find((entry) => entry.id === saved.id);
+        if (existing) {
+          // Keep the message object captured by the original publish guards.
+          existing.text = saved.text;
+          if (existing.message) existing.message.text = saved.text;
+          return existing;
+        }
+        return {
+          ...saved,
+          message: saved,
+          restored: true,
+          recovered: true,
+          ...followUpMessage(session, saved),
+        };
+      });
       for (const entry of entries) {
         const removed = predecessors.get(entry.id) ?? [];
         const predecessor = removed.length
@@ -366,6 +373,22 @@ function createQueue(session: RelaySession) {
     waitForMessage(entry, id);
     return id;
   }
+  // A sent follow-up keeps its recovery after its queue record is removed. With
+  // the record gone, nothing here can resend it, so its send may be discarded.
+  function orphaned(item: OutgoingEvent | undefined) {
+    const recovery = item?.recovery;
+    if (
+      !storage ||
+      !recovery ||
+      recovery.key !== followUpRecovery(recovery.value).key
+    )
+      return false;
+    try {
+      return !storage.has(recovery.value);
+    } catch {
+      return false;
+    }
+  }
   // Recovery metadata bridges the durable queue to the durable Outbox. Keep it
   // until the queue record is removed, then release accepted delivery receipts.
   function reconcileDelivery() {
@@ -413,7 +436,19 @@ function createQueue(session: RelaySession) {
       }
       return;
     }
-    if (!entries.includes(entry) || publishing.has(entry.id)) return;
+    if (locked && storage && entry.message) {
+      const saved = storage.load().find((row) => row.id === entry.id);
+      if (saved) {
+        entry.text = saved.text;
+        entry.message.text = saved.text;
+      }
+    }
+    if (
+      !entries.includes(entry) ||
+      publishing.has(entry.id) ||
+      edits.has(entry.id)
+    )
+      return;
     publishing.add(entry.id);
     let id: string | undefined;
     let awaitingChoices = false;
@@ -994,6 +1029,52 @@ function createQueue(session: RelaySession) {
       emit();
       pump();
     },
+    edit(id: string) {
+      const entry = entries.find((item) => item.id === id);
+      if (
+        !entry?.message ||
+        !storage ||
+        entry.sending ||
+        publishing.has(id) ||
+        edits.has(id)
+      )
+        throw new Error("This queued message is no longer available to edit.");
+      const originalText = entry.text;
+      edits.add(id);
+      let closed = false;
+      const cancel = () => {
+        if (closed) return;
+        closed = true;
+        edits.delete(id);
+        pump();
+      };
+      return {
+        cancel,
+        async save(text: string) {
+          if (closed) throw new Error("This edit is no longer available.");
+          if (!text.trim() && !entry.message?.attachments.length)
+            throw new Error("Enter a message or keep an attachment.");
+          await storage.lock(id, async () => {
+            if (closed) throw new Error("This edit is no longer available.");
+            const saved = storage.load().find((row) => row.id === id);
+            if (!saved || saved.sending || entry.deliveryId)
+              throw new Error(
+                "This message has already been sent or removed. Your edit has been kept.",
+              );
+            if (saved.text !== originalText)
+              throw new Error(
+                "This message changed in another window. Your edit has been kept.",
+              );
+            storage.save({ ...saved, text });
+            entry.text = text;
+            if (entry.message) entry.message.text = text;
+            entries = [...entries];
+            emit();
+          });
+          cancel();
+        },
+      };
+    },
     sendNow(id: string, beforePublish?: () => void) {
       const entry = entries.find((item) => item.id === id);
       if (entry) {
@@ -1005,6 +1086,24 @@ function createQueue(session: RelaySession) {
       remove(id);
       reconcileDelivery();
       pump();
+    },
+    discardable: orphaned,
+    /** Discard an unconfirmed send whose queue record is gone. */
+    async discard(id: string) {
+      const outbox = session.outbox;
+      const current = () =>
+        outbox?.snapshot().find((item) => item.event.id === id);
+      const recovery = current()?.recovery;
+      const changed = () =>
+        new Error(
+          "This message’s delivery changed. Cancel to see its current status.",
+        );
+      if (!storage || !outbox || !recovery || !orphaned(current()))
+        throw changed();
+      await storage.lock(recovery.value, async () => {
+        if (!orphaned(current())) throw changed();
+        await outbox.dismiss(id, recovery);
+      });
     },
   };
 }

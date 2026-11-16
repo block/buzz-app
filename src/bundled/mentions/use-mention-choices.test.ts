@@ -5,9 +5,51 @@ import {
   type NameSource,
 } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
-import { namedCandidates } from "./use-mention-choices";
+import { namedCandidates, spaceMention } from "./use-mention-choices";
+import type { MentionChoice } from "./mention-ranking";
 
 const key = (n: number) => n.toString(16).padStart(64, "0");
+
+function fixture(policies?: ReturnType<typeof createAgentDirectory>[]) {
+  // Their kind-0 profile is cached; the community verified them as fname.
+  const profiles = new Map([[key(8), { name: "fak" }]]);
+  const names = bindNames(
+    {
+      profiles: {
+        snapshot: () => profiles,
+        subscribe: () => () => {},
+      },
+      agentLibrary: {
+        snapshot: () => ({
+          status: "ready",
+          definitions: [],
+          identities: [],
+        }),
+        subscribe: () => () => {},
+        refresh: async () => {},
+        retain: () => () => {},
+      },
+    } as unknown as NameSource,
+    policies && { snapshot: () => policies, subscribe: () => () => {} },
+  );
+  const session = {
+    viewer: key(1),
+    names,
+    channels: {
+      list: () => ({
+        status: "ready",
+        channels: [
+          { id: "c", name: "C", channelType: "stream", members: [key(1)] },
+        ],
+      }),
+    },
+    agentChoices: { snapshot: () => ({ identities: [] }) },
+    profiles: { snapshot: () => profiles },
+    archives: { snapshot: () => ({ status: "ready", archived: [] }) },
+    outbox: { supports: () => true },
+  } as unknown as ComposerSession;
+  return { session, names };
+}
 
 it.each([
   ["no naming policy", undefined],
@@ -15,43 +57,7 @@ it.each([
 ])(
   "labels a person with the verified name the mention will insert, with %s",
   (_, policies) => {
-    // Their kind-0 profile is cached; the community verified them as fname.
-    const profiles = new Map([[key(8), { name: "fak" }]]);
-    const names = bindNames(
-      {
-        profiles: {
-          snapshot: () => profiles,
-          subscribe: () => () => {},
-        },
-        agentLibrary: {
-          snapshot: () => ({
-            status: "ready",
-            definitions: [],
-            identities: [],
-          }),
-          subscribe: () => () => {},
-          refresh: async () => {},
-          retain: () => () => {},
-        },
-      } as unknown as NameSource,
-      policies && { snapshot: () => policies, subscribe: () => () => {} },
-    );
-    const session = {
-      viewer: key(1),
-      names,
-      channels: {
-        list: () => ({
-          status: "ready",
-          channels: [
-            { id: "c", name: "C", channelType: "stream", members: [key(1)] },
-          ],
-        }),
-      },
-      agentChoices: { snapshot: () => ({ identities: [] }) },
-      profiles: { snapshot: () => profiles },
-      archives: { snapshot: () => ({ status: "ready", archived: [] }) },
-      outbox: { supports: () => true },
-    } as unknown as ComposerSession;
+    const { session, names } = fixture(policies);
     const choices = namedCandidates(
       session,
       "c",
@@ -71,8 +77,63 @@ it.each([
     expect(fake).toMatchObject({
       label: "fname",
       recipient: { name: "fname" },
-      fullName: "Fake Name",
+      otherName: "Fake Name",
     });
     names.dispose();
   },
 );
+
+it("refreshes a full-name row when only the verified username changes", () => {
+  const { session, names } = fixture();
+  const choose = (username: string) =>
+    namedCandidates(
+      session,
+      "c",
+      false,
+      undefined,
+      [],
+      [{ pubkey: key(8), name: "Fake Name", username, fullName: "Fake Name" }],
+    ).find((choice) => choice.recipient.pubkey === key(8));
+  expect(choose("fname")).toMatchObject({ otherName: "@fname" });
+  const renamed = choose("fname2");
+  expect(renamed).toMatchObject({ otherName: "@fname2" });
+  expect(renamed?.aliases).toContain("fname2");
+  expect(renamed?.aliases).not.toContain("fname");
+  names.dispose();
+});
+
+it("Space selects a member's exact name beside a longer outside name at either step", () => {
+  const choice = (n: number, name: string, member: boolean): MentionChoice => ({
+    recipient: { pubkey: key(n), name },
+    label: name,
+    aliases: [name],
+    member,
+    agent: false,
+    managed: false,
+    owned: false,
+  });
+  const mira = choice(2, "Mira", true);
+  const outside = choice(3, "Mira-Example", false);
+  const longer = choice(4, "Mira Example", true);
+  const space = (
+    choices: readonly MentionChoice[],
+    evidence: { missingNames: boolean; complete: boolean },
+  ) =>
+    spaceMention(
+      choices,
+      new Set(choices.flatMap((c) => (c.member ? [c.recipient.pubkey] : []))),
+      "mira",
+      { pending: false, ...evidence },
+    );
+  const local = { missingNames: false, complete: false };
+  const full = { missingNames: true, complete: true };
+  // Every member named: the local step selects while the search still runs.
+  expect(space([mira, outside], local)).toBe(key(2));
+  // A member's name unknown: only the complete choice set decides.
+  expect(space([mira, outside], { ...full, complete: false })).toBeUndefined();
+  expect(space([mira, outside], full)).toBe(key(2));
+  // A member's longer name blocks both steps; alone, the name selects.
+  expect(space([mira, outside, longer], local)).toBeUndefined();
+  expect(space([mira, outside, longer], full)).toBeUndefined();
+  expect(space([mira], local)).toBe(key(2));
+});

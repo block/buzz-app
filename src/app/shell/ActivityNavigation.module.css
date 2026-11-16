@@ -1,6 +1,6 @@
 .icon {
-  /* Emoji artwork geometry stays fixed within the navigation icon slot. */
-  --reaction-emoji-size: 0.875rem;
+  /* Emoji artwork geometry stays fixed within the sidebar row's icon slot. */
+  --reaction-emoji-size: 1rem;
   position: relative;
   display: inline-grid;
   width: 1rem;

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -34,6 +35,11 @@ import { communityFixture } from "./agents/community-testing";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 import { federatedFixture } from "../../features/federated-identity/testing";
 
+async function settingsOverview() {
+  const back = screen.queryByRole("button", { name: "Back to Builderlab" });
+  if (back) await userEvent.click(back);
+}
+
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
 stubAvatarBrowserApis();
@@ -53,6 +59,7 @@ function provideKnownCommunities(root: Context, viewer: string) {
     apply: vi.fn(async () => {}),
   };
   root.provide("knownCommunities", knownCommunities);
+  root.provide("communityJoin", { open: vi.fn(() => true) });
   return knownCommunities;
 }
 beforeEach(() => {
@@ -111,6 +118,7 @@ function provideAgents(
     publish: vi.fn(),
     publishProfile: vi.fn(),
     query: vi.fn(),
+    effectiveEdit: vi.fn(),
     searchProfiles: vi.fn(),
     upload: vi.fn(),
     media: vi.fn(),
@@ -197,7 +205,11 @@ it.each([undefined, "", "http://builderlab.example"])(
       expect(screen.getByRole("status")).toHaveTextContent(
         /not configured|does not support/,
       );
-      expect(screen.queryByRole("button")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", {
+          name: "Sign in with builderlab.example",
+        }),
+      ).not.toBeInTheDocument();
       // Agents reads its own classifier key; Builderlab makes no native call.
       expect(
         native.invoke.mock.calls.filter(
@@ -272,8 +284,10 @@ it("a build with neither NIP-FI nor the development broker has no Builderlab", a
 });
 
 it.each([undefined, false, true])(
-  "gates remote agents on the login capability %s and refreshes it on sign-in",
+  "gates remote agents on capability %s and refreshes after one minute without signing in again",
   async (initialCapability) => {
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
     let capability = initialCapability;
     native.invoke.mockResolvedValue(undefined);
     const identity = fiBuild(async (url) =>
@@ -314,79 +328,99 @@ it.each([undefined, false, true])(
       const card = cards.snapshot()[0];
       if (!card) throw new Error("Missing Builderlab card");
       const Card = card.component;
+      const IdentityRow = card.identityRow;
+      if (!IdentityRow) throw new Error("Missing Builderlab identity row");
       render(
         <>
           <Card active={() => true} />
+          <IdentityRow active={() => true} />
           <AgentDefaults agents={agents} />
         </>,
       );
       const user = userEvent.setup();
       await user.click(
-        screen.getByRole("button", { name: "Sign in with Builderlab" }),
+        screen.getByRole("button", { name: "Log in to Builderlab, attention" }),
       );
-      await screen.findByRole("button", {
-        name: "Identity → Organization sign-in",
+      const dialog = await screen.findByRole("dialog", { name: "Builderlab" });
+      await user.click(
+        within(dialog).getByRole("button", {
+          name: "Sign in with builderlab.example",
+        }),
+      );
+      await within(dialog).findByRole("button", {
+        name: "Manage account",
       });
+      if (capability !== true) {
+        expect(
+          within(dialog).getByText(
+            "Builderlab remote agents are unavailable for this account.",
+          ),
+        ).toBeVisible();
+      }
+      await user.keyboard("{Escape}");
+      if (capability !== true) {
+        const status = screen.getByText("Unavailable for this account", {
+          selector: ".buzz-preference-row-description span",
+        });
+        await waitFor(() => expect(status).toHaveFocus());
+        expect(status).toHaveAttribute("tabindex", "-1");
+      }
       const type = agents.types()[0];
       if (!type?.remote) throw new Error("Missing Builderlab agent type");
+      await user.click(
+        within(screen.getByRole("region", { name: "Remote agents" })).getByRole(
+          "button",
+          { name: /^Open / },
+        ),
+      );
       if (capability === true) {
-        expect(
-          await screen.findByText("No remote agents yet."),
-        ).toBeInTheDocument();
+        expect(await screen.findByText("No agents yet")).toBeInTheDocument();
         expect(type.provider?.snapshot().readiness).toBe("ready");
       } else {
         expect(
-          screen.getByRole("heading", { name: "Coming soon" }),
+          screen.getByRole("heading", { name: "Remote agents" }),
         ).toBeInTheDocument();
-        expect(
-          screen.getByRole("button", { name: "Coming soon, attention" }),
-        ).toBeEnabled();
+        const row = screen
+          .getByText("Builderlab", { selector: ".buzz-preference-row-label" })
+          .closest(".buzz-preference-row");
+        expect(row).toHaveTextContent("Unavailable for this account");
+        expect(row?.querySelector("button")).toBeNull();
         await expect(
           type.remote.provision({
             name: "Helper",
             community: "wss://community.example",
             signal: new AbortController().signal,
           }),
-        ).rejects.toThrow("coming soon");
+        ).rejects.toThrow("unavailable for this account");
         // The known-communities sync follows sign-in, not the remote agents gate.
         expect(
-          identity
-            .forwarded()
-            .filter(
-              ({ url }) =>
-                !url.endsWith("/me") && !url.includes("/known-communities/"),
-            ),
+          identity.forwarded().filter(({ url }) => url.includes("/beekeeper/")),
         ).toHaveLength(0);
         expect(localStorage.length).toBe(0);
-        await user.click(
-          screen.getByRole("button", { name: "Coming soon, attention" }),
-        );
-        const dialog = screen.getByRole("dialog", { name: "Builderlab" });
-        expect(
-          within(dialog).getByText(/remote agents are coming soon/),
-        ).toBeVisible();
-        await user.keyboard("{Escape}");
       }
       capability = capability !== true;
-      await act(() => identity.service.signOut());
-      await user.click(
-        screen.getByRole("button", { name: "Sign in with Builderlab" }),
-      );
-      await screen.findByRole("button", {
-        name: "Identity → Organization sign-in",
-      });
+      const accountReads = () =>
+        identity.forwarded().filter(({ url }) => url.endsWith("/me")).length;
+      const before = accountReads();
+      now += 59_999;
+      await act(() => type.provider?.check());
+      expect(accountReads()).toBe(before);
+      now += 1;
+      await act(() => type.provider?.check());
+      expect(accountReads()).toBe(before + 1);
+      expect(identity.service.signIn).toHaveBeenCalledOnce();
+      expect(identity.service.signOut).not.toHaveBeenCalled();
       if (capability) {
-        expect(
-          await screen.findByText("No remote agents yet."),
-        ).toBeInTheDocument();
+        expect(await screen.findByText("No agents yet")).toBeInTheDocument();
         expect(type.provider?.snapshot().readiness).toBe("ready");
       } else {
         expect(
-          screen.getByRole("heading", { name: "Coming soon" }),
+          screen.getByRole("heading", { name: "Remote agents" }),
         ).toBeInTheDocument();
         expect(type.provider?.snapshot().readiness).toBe("attention");
       }
     } finally {
+      clock.mockRestore();
       cleanup();
       await runtime.dispose();
       await root.fiber.dispose();
@@ -462,29 +496,61 @@ it.each([true, false])(
       const card = cards.snapshot()[0];
       if (!card) throw new Error("Missing Builderlab login card");
       const Card = card.component;
-      render(<Card active={() => true} />);
+      const mounted = render(<Card active={() => true} />);
       const user = userEvent.setup();
+      // Both native signed-out sections must retain an actionable sign-in.
       await user.click(
-        screen.getByRole("button", { name: "Sign in with Builderlab" }),
+        screen.getByRole("button", {
+          name: canUseRemoteAgents ? "Create a community" : "Set up an agent",
+        }),
       );
+      await user.click(
+        screen.getByRole("button", { name: "Sign in with builderlab.example" }),
+      );
+      // Sign-in replaces the section's header; wait before using its Back control.
+      await screen.findByRole("button", {
+        name: "Manage account",
+        hidden: true,
+      });
+      await settingsOverview();
       expect(
         await screen.findByRole("button", {
-          name: "Identity → Organization sign-in",
+          name: "Manage account",
         }),
       ).toBeEnabled();
+      await user.click(
+        within(screen.getByRole("region", { name: "Remote agents" })).getByRole(
+          "button",
+          { name: /^Open / },
+        ),
+      );
       expect(
         await screen.findByText(
-          canUseRemoteAgents ? "No remote agents yet." : "Coming soon",
+          canUseRemoteAgents ? "No agents yet" : "Unavailable for this account",
         ),
       ).toBeInTheDocument();
       // Communities share the one sign-in and its identity link.
+      await user.click(
+        screen.getByRole("button", { name: "Back to Builderlab" }),
+      );
+      await user.click(
+        within(screen.getByRole("region", { name: "Communities" })).getByRole(
+          "button",
+          { name: /^Open / },
+        ),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Create community" }),
+        ).toBeEnabled(),
+      );
       expect(
-        await screen.findByText("No hosted communities yet"),
-      ).toBeInTheDocument();
-      expect(screen.getByText(/Buzz identity connected/)).toBeVisible();
+        screen.getByRole("img", { name: "Buzz identity connected" }),
+      ).toBeVisible();
       expect(
         screen.getAllByRole("button", {
-          name: "Identity → Organization sign-in",
+          name: "Manage account",
+          hidden: true,
         }),
       ).toHaveLength(1);
       expect(fetch).not.toHaveBeenCalled();
@@ -496,11 +562,68 @@ it.each([true, false])(
         generation: expect.any(Number),
         federated: "user:1",
       });
+      await settingsOverview();
       await act(() => identity.service.signOut());
       expect(
-        await screen.findByRole("button", { name: "Sign in with Builderlab" }),
+        await screen.findByRole("button", {
+          name: "Sign in with builderlab.example",
+        }),
       ).toBeEnabled();
       expect(backupCalls().at(-1)?.[1]).toMatchObject({ federated: null });
+      if (canUseRemoteAgents) {
+        const positions = new Map<string, boolean>();
+        mounted.rerender(
+          <Card
+            active={() => true}
+            navigation={
+              {
+                entryId: "picker-create",
+                position: (key: string) => positions.get(key),
+                savePosition: (key: string, value: boolean) => {
+                  positions.set(key, value);
+                },
+                target: {
+                  version: 1,
+                  kind: "settings",
+                  section: "block.builderlab/login",
+                  route: { version: 1, params: "create-community" },
+                },
+              } as never
+            }
+          />,
+        );
+        await user.click(
+          screen.getByRole("button", {
+            name: "Sign in with builderlab.example",
+          }),
+        );
+        await waitFor(() =>
+          expect(
+            screen.getByRole("textbox", { name: "Community address" }),
+          ).toHaveFocus(),
+        );
+        await user.click(screen.getByRole("button", { name: /^Cancel$/ }));
+        expect(
+          screen.queryByRole("dialog", { name: "Create community" }),
+        ).toBeNull();
+        // A session remount in the same visit must not replay the cancelled intent.
+        await act(() => identity.service.signOut());
+        await user.click(
+          screen.getByRole("button", {
+            name: "Sign in with builderlab.example",
+          }),
+        );
+        await waitFor(() =>
+          expect(
+            within(
+              screen.getByRole("region", { name: "Communities" }),
+            ).getByRole("button", { name: "Create community" }),
+          ).toBeEnabled(),
+        );
+        expect(
+          screen.queryByRole("dialog", { name: "Create community" }),
+        ).toBeNull();
+      }
       await runtime.dispose();
       expect(backupCalls().at(-1)?.[1]).toMatchObject({ federated: null });
     } finally {
@@ -541,7 +664,18 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
           can_use_builderlab_decisions: true,
         },
       };
-    else if (path.endsWith("/list-agents")) result = { status: 1, agents: [] };
+    else if (path.endsWith("/list-agents"))
+      result = {
+        status: 1,
+        agents: [
+          {
+            agent_id: "helper",
+            agent_name: "Helper",
+            agent_pubkey: "ab".repeat(32),
+            status: 2,
+          },
+        ],
+      };
     else if (path.endsWith("/v1/buzz/communities/list"))
       result = { communities: [], can_create: true };
     else if (path.endsWith("/nostr-identities/current"))
@@ -565,7 +699,17 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
   const navigation = { open: vi.fn(async () => ({ status: "opened" })) };
   root.provide("navigation", navigation as never);
   provideKnownCommunities(root, community.viewer);
-  provideAgents(root, community);
+  const service = provideAgents(root, community);
+  // The native service owns inventory; this Settings test supplies its snapshot.
+  const saved = {
+    pubkey: "ab".repeat(32),
+    picture: "https://example.com/helper.png",
+  } as Agent;
+  const snapshot = { ...service.snapshot(), agents: [saved] };
+  vi.spyOn(service, "snapshot").mockReturnValue(snapshot);
+  vi.spyOn(service, "find").mockImplementation((key) =>
+    key === saved.pubkey ? saved : undefined,
+  );
   try {
     runtime.reconcile([
       {
@@ -584,12 +728,42 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
     render(<Card active={() => true} />);
     const user = userEvent.setup();
     await user.click(
-      screen.getByRole("button", { name: "Sign in with Builderlab" }),
+      screen.getByRole("button", { name: "Sign in with builderlab.example" }),
     );
     expect(identity.service.signIn).toHaveBeenCalledOnce();
+    await user.click(
+      screen.getByRole("button", { name: "Open Remote agents" }),
+    );
+    const actions = await screen.findByRole("button", {
+      name: "More actions for Helper",
+    });
     expect(
-      await screen.findByText("No hosted communities yet"),
-    ).toBeInTheDocument();
+      screen.getByText("Helper").closest("li")?.querySelector("img"),
+    ).toHaveAttribute("src", saved.picture);
+    await user.click(actions);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "View Agent" }),
+    );
+    expect(navigation.open).toHaveBeenCalledExactlyOnceWith({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.agents",
+      pageId: "agents",
+      route: { version: 1, params: { agent: saved.pubkey } },
+    });
+    navigation.open.mockClear();
+    await settingsOverview();
+    await user.click(
+      within(screen.getByRole("region", { name: "Communities" })).getByRole(
+        "button",
+        { name: /^Open / },
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Create community" }),
+      ).toBeEnabled(),
+    );
     expect(identity.request).toHaveBeenCalledWith(
       expect.objectContaining({ path: "/api/goose/v1/auth/me" }),
     );
@@ -623,11 +797,10 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
           command.startsWith("oauth_") || command === "plugin_host_request",
       ),
     ).toEqual([]);
-    // The shared session ends only from Identity → Organization sign-in.
+    // Manage account opens Identity → Accounts to end the shared session.
     expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
-    await user.click(
-      screen.getByRole("button", { name: "Identity → Organization sign-in" }),
-    );
+    await settingsOverview();
+    await user.click(screen.getByRole("button", { name: "Manage account" }));
     expect(navigation.open).toHaveBeenCalledExactlyOnceWith({
       version: 1,
       kind: "settings",
@@ -635,7 +808,9 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
     });
     await act(() => identity.service.signOut());
     expect(
-      await screen.findByRole("button", { name: "Sign in with Builderlab" }),
+      await screen.findByRole("button", {
+        name: "Sign in with builderlab.example",
+      }),
     ).toBeEnabled();
     expect(native.invoke).toHaveBeenLastCalledWith("nsec_backup_session", {
       generation: expect.any(Number),
@@ -649,12 +824,18 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
   }
 });
 
-it.each([
+it.for([
   "shared login and re-enable",
   "creation sign-in recovery",
   "creation setup recovery",
   "instructions and deletion",
-])("coordinates hosted agents: %s", async (flow) => {
+])("coordinates hosted agents: %s", async (flow, { signal }) => {
+  let phase = "initialize plugin";
+  const reportTimeout = () => {
+    console.error(`Hosted-agent journey aborted: ${flow}; phase: ${phase}`);
+    screen.debug(document.body, 20_000);
+  };
+  signal.addEventListener("abort", reportTimeout, { once: true });
   const user = userEvent.setup();
   const hostedKey = "de".repeat(32);
   const browserKey = "09".repeat(32);
@@ -667,6 +848,7 @@ it.each([
     subject: "user",
   };
   let instructionsSave: ReturnType<typeof deferred<HostResponse>> | undefined;
+  let catalogLoad: ReturnType<typeof deferred<void>> | undefined;
   /** Holds the next native sign-in open in the browser until it settles. */
   let signInGate: ReturnType<typeof deferred<void>> | undefined;
   const backupHandoff = deferred<void>();
@@ -706,6 +888,7 @@ it.each([
           : [],
       };
     } else if (url.endsWith("/get-model-catalog")) {
+      await catalogLoad?.promise;
       result = {
         models: [
           {
@@ -814,12 +997,12 @@ it.each([
       });
       await providerUser.click(
         within(providerDialog).getByRole("button", {
-          name: "Sign in with Builderlab",
+          name: "Sign in with builderlab.example",
         }),
       );
       expect(
         await within(providerDialog).findByRole("button", {
-          name: "Identity → Organization sign-in",
+          name: "Manage account",
         }),
       ).toBeEnabled();
       expect(native.invoke).toHaveBeenCalledWith("nsec_backup_session", {
@@ -834,15 +1017,18 @@ it.each([
       const mounted = render(<Card active={() => true} />);
       expect(
         await screen.findByRole("button", {
-          name: "Identity → Organization sign-in",
+          name: "Manage account",
         }),
       ).toBeEnabled();
-      expect(
-        await screen.findByText("No remote agents yet."),
-      ).toBeInTheDocument();
-      expect(screen.getByText("Signed in as a@example.com.")).toHaveRole(
-        "status",
+      await userEvent.click(
+        within(screen.getByRole("region", { name: "Remote agents" })).getByRole(
+          "button",
+          { name: /^Open / },
+        ),
       );
+      expect(await screen.findByText("No agents yet")).toBeInTheDocument();
+      expect(screen.queryByText("a@example.com")).not.toBeInTheDocument();
+      expect(document.body).not.toHaveTextContent("private-token");
       // A sign-in Builderlab allows decisions for offers Builderlab as a
       // decision provider. It answers, since the user chose no other.
       const [provider] = decisions.providers();
@@ -854,6 +1040,15 @@ it.each([
       // account's community list follows through the same native session:
       // the complete list is read once. The card's Communities section reads
       // the account's identity and its hosted communities.
+      await userEvent.click(
+        screen.getByRole("button", { name: "Back to Builderlab" }),
+      );
+      await userEvent.click(
+        within(screen.getByRole("region", { name: "Communities" })).getByRole(
+          "button",
+          { name: /^Open / },
+        ),
+      );
       await waitFor(() => expect(knownCommunities.apply).toHaveBeenCalled());
       await waitFor(() =>
         expect(
@@ -980,7 +1175,10 @@ it.each([
       expect(cards.snapshot()).toHaveLength(0);
       expect(agents.types()).toHaveLength(0);
       expect(
-        screen.getByRole("button", { name: "Sign in with Builderlab" }),
+        screen.getByRole("button", {
+          name: "Sign in with builderlab.example",
+          hidden: true,
+        }),
       ).toBeEnabled();
       // The disabled plugin's sync owner stops listening with it.
       expect(
@@ -996,12 +1194,16 @@ it.each([
     render(<FreshCard active={() => true} />);
     if (flow === "shared login and re-enable") {
       // The native session outlives the plugin, so re-enabling keeps it.
-      expect(await screen.findByText("Signed in as a@example.com.")).toHaveRole(
-        "status",
-      );
+      await screen.findByRole("button", { name: "Manage account" });
+      expect(screen.queryByText("a@example.com")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Manage account" }),
+      ).toBeVisible();
       return;
     }
-    expect(screen.getByRole("status")).toHaveTextContent("Sign in securely");
+    expect(
+      screen.getByRole("button", { name: "Sign in with builderlab.example" }),
+    ).toBeVisible();
     if (flow === "instructions and deletion") {
       await act(async () => {
         await agents.create({
@@ -1018,28 +1220,42 @@ it.each([
       flow === "creation sign-in recovery" ||
       flow === "creation setup recovery"
     ) {
+      phase = "open creation form";
       await user.click(
         screen.getByRole("button", { name: "Create your first agent" }),
       );
       const createDialog = screen.getByRole("dialog", { name: "Create agent" });
       expect(
         within(createDialog).getByRole("combobox", { name: "Harness" }),
-      ).toHaveTextContent("Builderlab (hosted)");
+      ).toHaveTextContent(/^Builderlab$/);
       expect(
         within(createDialog).getByRole("textbox", {
           name: "Instructions Optional",
         }),
       ).toBeVisible();
       const name = within(createDialog).getByRole("textbox", { name: "Name" });
-      const create = within(createDialog).getByRole("button", {
-        name: "Create agent",
-      });
+      // The introduction retains the hidden form. Query only its action
+      // footer so role/name lookups do not walk those unrelated controls.
+      const footer = createDialog.querySelector("footer");
+      if (!footer) throw new Error("Missing creation actions");
+      const actions = within(footer);
+      let create = actions.getByRole("button", { name: "Create agent" });
       expect(create).toBeDisabled();
-      await user.type(name, "Browser");
+      // Fixed setup values; this journey exercises provisioning and recovery,
+      // rather than the individual keystrokes already covered by the form.
+      fireEvent.change(name, { target: { value: "Browser" } });
       expect(create).toBeDisabled();
+      expect(
+        within(createDialog).getByRole("button", {
+          name: "Model: Choose a model",
+        }),
+      ).toBeDisabled();
+      expect(
+        within(createDialog).getByRole("combobox", { name: "Thinking" }),
+      ).toBeDisabled();
       const signIn = () =>
         within(createDialog).getByRole("button", {
-          name: "Sign in with Builderlab",
+          name: "Sign in to Builderlab",
         });
       if (flow === "creation sign-in recovery") {
         const beforeCreateLogin = signIns.mock.calls.length;
@@ -1057,17 +1273,38 @@ it.each([
           ).toHaveTextContent("Builderlab sign-in did not finish. Try again.");
           expect(create).toBeDisabled();
           expect(name).toHaveValue("Browser");
-          // The wait itself can be abandoned from the dialog.
+          // Pending native sign-in shows a cancellable spinner.
           signInGate = deferred();
           await user.click(signIn());
-          await user.click(
-            await within(createDialog).findByRole("button", {
-              name: "Cancel sign-in",
+          const progress = await within(createDialog).findByRole("button", {
+            name: "Cancel sign-in",
+          });
+          expect(progress).toHaveAttribute("aria-busy", "true");
+          expect(
+            progress.querySelector('[class~="motion-safe:animate-spin"]'),
+          ).toBeInTheDocument();
+          expect(create).toBeDisabled();
+          await waitFor(() =>
+            expect(signIns).toHaveBeenCalledTimes(beforeCreateLogin + 2),
+          );
+          expect(progress).toBeEnabled();
+          // Browser cancellation still returns to a retryable form.
+          await act(async () => {
+            await identity.service.cancelSignIn();
+            signInGate?.resolve();
+            await signInGate?.promise;
+          });
+          await within(createDialog).findByRole("button", {
+            name: "Sign in to Builderlab",
+          });
+          expect(
+            within(createDialog).getByRole("button", {
+              name: "Model: Choose a model",
             }),
-          );
-          expect(within(createDialog).getByRole("status")).toHaveTextContent(
-            "Sign in to choose a model and thinking level.",
-          );
+          ).toBeDisabled();
+          expect(
+            within(createDialog).getByRole("combobox", { name: "Thinking" }),
+          ).toBeDisabled();
           expect(within(createDialog).queryByRole("alert")).toBeNull();
           expect(create).toBeDisabled();
           expect(
@@ -1085,18 +1322,30 @@ it.each([
           signInGate = undefined;
         }
         await user.click(signIn());
-        expect(
-          await within(createDialog).findByRole("button", {
-            name: "Model: Choose a model",
-          }),
-        ).toBeEnabled();
+        await waitFor(() =>
+          expect(
+            within(createDialog).getByRole("button", {
+              name: "Model: Choose a model",
+            }),
+          ).toBeEnabled(),
+        );
         expect(name).toHaveValue("Browser");
         return;
       }
+      const catalogsBeforeLogin = requestsTo("get-model-catalog").length;
+      catalogLoad = deferred();
+      phase = "sign in for creation";
       await user.click(signIn());
+      await waitFor(() =>
+        expect(requestsTo("get-model-catalog").length).toBeGreaterThan(
+          catalogsBeforeLogin,
+        ),
+      );
+      phase = "catalog requested";
       const model = await within(createDialog).findByRole("button", {
         name: "Model: Choose a model",
       });
+      expect(model).toBeDisabled();
       const createAgent = vi.spyOn(agents, "create");
       await user.click(create);
       expect(createAgent).not.toHaveBeenCalled();
@@ -1114,23 +1363,29 @@ it.each([
           name: "Instructions Optional",
         }),
       );
+      // Sign-in makes the control visible before its catalog is ready.
+      phase = "release catalog";
+      catalogLoad.resolve();
+      await waitFor(() => expect(model).toBeEnabled());
+      phase = "choose model";
       await user.click(model);
       (await screen.findByRole("menuitem", { name: "Other" })).focus();
       await user.keyboard("{ArrowRight}");
       await user.click(
         await screen.findByRole("menuitemradio", { name: "Model One" }),
       );
+      phase = "choose thinking";
       await user.click(
         within(createDialog).getByRole("combobox", {
           name: "Thinking",
         }),
       );
       await user.click(await screen.findByRole("option", { name: "High" }));
-      await user.type(
+      fireEvent.change(
         within(createDialog).getByRole("textbox", {
           name: "Instructions Optional",
         }),
-        "Be concise.",
+        { target: { value: "Be concise." } },
       );
       const beforeListing = community.events.filter(
         (event) => event.kind === 30177,
@@ -1146,7 +1401,14 @@ it.each([
       expect(create).toBeEnabled();
       instructionsSave = deferred();
       try {
+        phase = "open introduction";
         await user.click(create);
+        const introduction = await screen.findByRole("dialog", {
+          name: "Meet your remote agent",
+        });
+        expect(introduction).toHaveTextContent("Builderlab");
+        phase = "submit first attempt";
+        await user.click(actions.getByRole("button", { name: "Let’s go" }));
         await waitFor(() =>
           expect(
             requestsTo("update-agent").filter(
@@ -1154,12 +1416,22 @@ it.each([
             ),
           ).toHaveLength(1),
         );
-        expect(create).toBeDisabled();
+        expect(
+          screen.getByRole("dialog", { name: "Meet your remote agent" }),
+        ).toBe(introduction);
+        expect(
+          actions.getByRole("button", { name: "Let’s go" }),
+        ).toHaveAttribute("aria-busy", "true");
+        expect(actions.getByRole("button", { name: "Back" })).toBeDisabled();
         for (const control of controls) expect(control).toBeDisabled();
+        phase = "reject first attempt";
         instructionsSave.reject(new Error("offline"));
         expect(
           await within(createDialog).findByRole("alert"),
         ).toHaveTextContent("Could not reach Builderlab");
+        phase = "return to retained draft";
+        await user.click(actions.getByRole("button", { name: "Back" }));
+        create = actions.getByRole("button", { name: "Create agent" });
         for (const control of controls) expect(control).toBeEnabled();
         expect(create).toBeEnabled();
         expect(agents.find(browserKey)?.unfinished).toBe(true);
@@ -1175,16 +1447,22 @@ it.each([
         instructionsSave.resolve({ status: 200, headers: {}, body: "{}" });
         instructionsSave = undefined;
       }
+      phase = "retry creation";
       await user.click(create);
+      await user.click(
+        await actions.findByRole("button", { name: "Let’s go" }),
+      );
+      phase = "await created agent";
       await waitFor(() =>
         expect(agents.find(browserKey)).toMatchObject({
           name: "Browser",
           place: "hosted",
         }),
       );
+      phase = "await introduction dismissal";
       await waitFor(() =>
         expect(
-          screen.queryByRole("dialog", { name: "Create agent" }),
+          screen.queryByRole("dialog", { name: "Meet your remote agent" }),
         ).not.toBeInTheDocument(),
       );
       expect(agents.find(browserKey)?.unfinished).toBeUndefined();
@@ -1203,18 +1481,23 @@ it.each([
         },
       );
       expect(identity.service.snapshot().status).toBe("signed-in");
-      expect(screen.getByRole("tab", { name: "Identity" })).toBeInTheDocument();
+      phase = "await created agent Identity";
+      expect(
+        await screen.findByRole("tab", { name: "Identity" }),
+      ).toBeInTheDocument();
       return;
     }
+    phase = "open existing agent";
     await user.click(await screen.findByRole("gridcell", { name: /^Browser/ }));
-    await user.click(screen.getByRole("tab", { name: "Identity" }));
-    const instructions = await screen.findByRole("textbox", {
+    phase = "await existing agent Identity";
+    await user.click(await screen.findByRole("tab", { name: "Identity" }));
+    let instructions = await screen.findByRole("textbox", {
       name: "Instructions",
     });
     await waitFor(() => expect(instructions).toHaveValue("Be concise."));
     await user.clear(instructions);
     await user.type(instructions, "New direction.");
-    const save = screen.getByRole("button", { name: "Save" });
+    let save = screen.getByRole("button", { name: "Save" });
     instructionsSave = deferred();
     const updatesBeforeEdit = requestsTo("update-agent").length;
     try {
@@ -1238,18 +1521,21 @@ it.each([
       });
       instructionsSave = undefined;
     }
+    await settingsOverview();
     // The shared native session ends from Identity, not from Builderlab.
     await act(() => identity.service.signOut());
     // Sign-in stays user-started and the failed instructions draft survives it.
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Instructions" })).toBeNull();
     await user.click(
-      within(
-        await screen.findByRole("region", { name: "Sign in to Builderlab" }),
-      ).getByRole("button", { name: "Sign in to Builderlab" }),
+      screen.getByRole("button", { name: "Sign in to Builderlab" }),
     );
     await waitFor(() =>
       expect(identity.service.snapshot().status).toBe("signed-in"),
     );
+    instructions = await screen.findByRole("textbox", { name: "Instructions" });
+    expect(instructions).toHaveValue("New direction.");
+    save = screen.getByRole("button", { name: "Save" });
     await user.click(save);
     await waitFor(() => expect(instructions).toBeEnabled());
     expect(save).toHaveAttribute("aria-disabled", "true");
@@ -1264,6 +1550,7 @@ it.each([
     expect(screen.queryByRole("button", { name: /^Model:/ })).toBeNull();
     expect(screen.getByText("Workspace")).toBeVisible();
     // Confirmed deletion waits for login before provider or community removal.
+    await settingsOverview();
     await act(() => identity.service.signOut());
     await user.click(screen.getByRole("button", { name: "Delete agent" }));
     const deletion = screen.getByRole("dialog", { name: "Delete Browser?" });
@@ -1289,11 +1576,17 @@ it.each([
     await waitFor(() => expect(agents.find(browserKey)).toBeUndefined());
     expect(requestsTo("delete-agent")).toHaveLength(beforeDelete + 1);
   } finally {
+    catalogLoad?.resolve();
     backupHandoff.resolve();
+    phase = "unmount UI";
     cleanup();
+    phase = "dispose plugin runtime";
     await runtime.dispose();
+    phase = "dispose root context";
     await root.fiber.dispose();
+    phase = "dispose community";
     await community.dispose();
+    signal.removeEventListener("abort", reportTimeout);
   }
 });
 
@@ -1485,13 +1778,35 @@ it("uses one development-server login for the Settings account, hosting and remo
     await userEvent.click(
       await screen.findByRole("button", { name: "Sign in with Builderlab" }),
     );
+    await screen.findByRole("button", { name: "Sign out" });
+    expect(screen.queryByText("dev@example.com")).not.toBeInTheDocument();
+    await userEvent.click(
+      within(screen.getByRole("region", { name: "Communities" })).getByRole(
+        "button",
+        { name: /^Open / },
+      ),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Create community" }),
+    );
+    expect(await screen.findByText("0 of 1 communities used")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(
-      await screen.findByText("Signed in as dev@example.com."),
+      screen.getByRole("img", { name: "Buzz identity connected" }),
     ).toBeVisible();
-    expect(await screen.findByText("No hosted communities yet")).toBeVisible();
-    expect(await screen.findByText("No remote agents yet.")).toBeVisible();
-    expect(screen.getAllByRole("button", { name: "Sign out" })).toHaveLength(1);
-    expect(screen.getByText(/Buzz identity connected/)).toBeVisible();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Back to Builderlab" }),
+    );
+    await userEvent.click(
+      within(screen.getByRole("region", { name: "Remote agents" })).getByRole(
+        "button",
+        { name: /^Open / },
+      ),
+    );
+    expect(await screen.findByText("No agents yet")).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: "Sign out", hidden: true }),
+    ).toHaveLength(1);
     expect(requests).toContainEqual(
       expect.objectContaining({
         revision: "server-one",
@@ -1515,14 +1830,15 @@ it("uses one development-server login for the Settings account, hosting and remo
       request: question,
       broker: { origin: window.location.origin, revision: "server-one" },
     });
+    await settingsOverview();
     await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
     expect(
       await screen.findByRole("button", { name: "Sign in with Builderlab" }),
     ).toBeEnabled();
     expect(
-      screen.queryByText("No hosted communities yet"),
+      screen.queryByText("0 of 1 communities used"),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText("No remote agents yet.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No agents yet")).not.toBeInTheDocument();
   } finally {
     cleanup();
     await runtime.dispose();

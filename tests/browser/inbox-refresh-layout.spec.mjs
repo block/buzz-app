@@ -182,13 +182,13 @@ test("narrow enlarged-text rows overlay Mark as read without erasing their label
   );
   await open.focus();
   await expect(check.locator("xpath=..")).toHaveCSS("opacity", "1");
-  await expect(row.locator("time")).toHaveCSS("opacity", "0");
+  await expect(row.locator("[data-inbox-date]")).toHaveCSS("opacity", "0");
   await check.click();
   // With Unread off the row stays, read: its ✓ goes and its date returns.
   await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
   await expect(check).toHaveCount(0);
   await expect(rows).toHaveCount(3);
-  await expect(row.locator("time")).toHaveCSS("opacity", "1");
+  await expect(row.locator("[data-inbox-date]")).toHaveCSS("opacity", "1");
   // Row actions never open a conversation tab.
   await expect(
     inbox.getByRole("region", { name: /^Conversation in / }),

@@ -966,28 +966,45 @@ fn decode_memory_events(
 
 #[tauri::command]
 pub(crate) async fn relay_agent_library(
+    host: tauri::State<'_, IdentityHost>,
     state: tauri::State<'_, crate::app_agents::AppAgentHost>,
+    community: String,
 ) -> Result<Value> {
+    origin(&community)?;
+    let viewer = host.with_key(|_, viewer| Ok(viewer.to_owned())).await?;
     let agents = state
         .agents()
         .map_err(|_| "Current Buzz library unavailable")?;
-    tauri::async_runtime::spawn_blocking(move || read_agent_library(&agents))
+    tauri::async_runtime::spawn_blocking(move || read_agent_library(&agents, &community, &viewer))
         .await
         .map_err(|_| "Current Buzz library unavailable".to_owned())?
 }
 
 /// Public display metadata for the identities Agents saved, read through their
 /// owner so both share one schema.
-fn read_agent_library(agents: &AppAgents) -> Result<Value> {
+fn read_agent_library(agents: &AppAgents, community: &str, viewer: &str) -> Result<Value> {
+    // Match the saved canonical wss address, including DNS's trailing-dot alias.
+    let mut destination = origin(community)?;
+    let host = destination
+        .host_str()
+        .ok_or("Invalid community")?
+        .trim_end_matches('.')
+        .to_owned();
+    destination
+        .set_host(Some(&host))
+        .map_err(|_| "Invalid community")?;
+    destination
+        .set_scheme("wss")
+        .map_err(|_| "Invalid community")?;
+    let destination = destination.as_str().trim_end_matches('/');
     let rows = agents
         .list()
         .map_err(|_| "Current Buzz library unavailable")?;
     let mut identities = Vec::new();
     let mut keys = HashSet::new();
-    for agent in rows
-        .into_iter()
-        .filter(|agent| !agent.deleted && !agent.joining)
-    {
+    for agent in rows.into_iter().filter(|agent| {
+        !agent.deleted && !agent.joining && agent.owner == viewer && agent.relay == destination
+    }) {
         if !key(&agent.pubkey) || agent.name.encode_utf16().count() > 256 {
             return Err("Current Buzz library unavailable".into());
         }
@@ -1044,15 +1061,22 @@ mod tests {
         let path = dir.path().join("identities.json");
         let agents = AppAgents::open(path.clone());
         assert_eq!(
-            read_agent_library(&agents).unwrap(),
+            read_agent_library(&agents, "https://relay.example", &"d".repeat(64)).unwrap(),
             json!({"definitions": [], "identities": []})
         );
         for case in cases {
             let bytes = serde_json::to_vec(&case["rows"]).unwrap();
             std::fs::write(&path, &bytes).unwrap();
-            let result = read_agent_library(&agents);
-            if let Some(expected) = case.get("expected") {
+            let result = read_agent_library(&agents, "https://relay.example", &"d".repeat(64));
+            if let Some(expected) = case.get("scopedExpected").or_else(|| case.get("expected")) {
                 assert_eq!(&result.unwrap(), expected, "{}", case["name"]);
+                assert_eq!(
+                    &read_agent_library(&agents, "https://RELAY.example.:443/", &"d".repeat(64))
+                        .unwrap(),
+                    expected,
+                    "canonical {}",
+                    case["name"]
+                );
             } else {
                 assert!(result.is_err(), "{}", case["name"]);
             }
@@ -1655,13 +1679,12 @@ mod tests {
     }
 
     /// Reads `events` a page at a time through `read_memories`, each page
-    /// taking `fetch`, and decodes each on a blocking thread as the native
-    /// command does, sleeping `stall` after the first `decoded` events of the
-    /// first page.
+    /// arriving at once and the page after the last never, and decodes each
+    /// on a blocking thread as the native command does, sleeping `stall`
+    /// after the first `decoded` events of the first page.
     async fn read_through(
         events: Vec<Value>,
         deadline: std::time::Duration,
-        fetch: std::time::Duration,
         stall: Option<(usize, std::time::Duration)>,
     ) -> (Value, std::time::Duration) {
         let (secret, viewer, agent, _) = memory_events(1, 0);
@@ -1676,12 +1699,16 @@ mod tests {
             .collect::<Vec<_>>();
         pages.reverse();
         let first = std::sync::atomic::AtomicBool::new(true);
-        let listing = read_memories(
+        // The pending page would hang a read that ignored its deadline; this
+        // bound fails it instead. The callers assert the real time bound.
+        let read = read_memories(
             budget,
             |_| {
-                let page = pages.pop().unwrap_or_default();
+                let page = pages.pop();
                 async move {
-                    tokio::time::sleep(fetch).await;
+                    let Some(page) = page else {
+                        return std::future::pending().await;
+                    };
                     Ok(MemoryPage::Records(page.into_iter().map(Some).collect(), 1))
                 }
             },
@@ -1720,19 +1747,22 @@ mod tests {
                 }
             },
             |_| {},
-        )
-        .await
-        .unwrap();
+        );
+        let listing = tokio::time::timeout(std::time::Duration::from_secs(5), read)
+            .await
+            .expect("memory read outlived its deadline")
+            .unwrap();
         (listing, started.elapsed())
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn memory_read_keeps_what_it_decoded_when_its_deadline_passes() {
         let ms = std::time::Duration::from_millis;
-        // Slow pages: two arrive and decode before the deadline, the third
-        // does not. Their entries come back, partial, within the grace.
-        let (_, _, _, events) = memory_events(3 * MEMORY_PAGE as u64, 64);
-        let (listing, took) = read_through(events, ms(300), ms(120), None).await;
+        // Two full pages arrive and decode, then the deadline passes while
+        // the third is awaited. Their entries come back, partial, within the
+        // grace.
+        let (_, _, _, events) = memory_events(2 * MEMORY_PAGE as u64, 64);
+        let (listing, took) = read_through(events, ms(300), None).await;
         assert_eq!(listing["partial"], true);
         assert_eq!(
             listing["entries"].as_array().unwrap().len(),
@@ -1745,7 +1775,6 @@ mod tests {
         let (listing, took) = read_through(
             events,
             ms(100),
-            ms(0),
             Some((6, std::time::Duration::from_secs(3))),
         )
         .await;

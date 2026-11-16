@@ -1,3 +1,4 @@
+import { writeJSON } from "../../agent-protection/json-stream";
 // One ACP harness process, driven over line-delimited JSON-RPC. Each
 // conversation is one ACP session in it. Each session gets its own loopback
 // HTTP MCP server for its agent's Buzz tools, which the app serves and
@@ -11,6 +12,7 @@ import type {
   AcpHooks,
   Choice,
   McpServer,
+  PlatformTools,
   ServeMcp,
   Spawn,
   ToolServer,
@@ -111,6 +113,8 @@ export class AcpProcess {
       env?: Readonly<Record<string, string | null>>;
       serve?: ServeMcp;
       signal?: AbortSignal;
+      /** The one agent the harness runs: its tools get its Buzz credential. */
+      agent?: Readonly<{ pubkey: string; relay: string }>;
       /** Given the harness as soon as it has started, before `initialize`, so
        * a caller can keep one whose start fails until it has exited. */
       onProcess?: (acp: AcpProcess) => void;
@@ -125,6 +129,7 @@ export class AcpProcess {
       cwd: launch.cwd,
       ...(launch.args ? { args: launch.args } : {}),
       env: { ...hooks.env, ...launch.env, ...PROTECTED_ENV },
+      agentCredential: !!launch.agent,
       onStdout: (data) => (acp ? acp.read(data) : early.push(data)),
       onStderr: (data) => {
         if (acp) acp.readError(data);
@@ -147,6 +152,11 @@ export class AcpProcess {
         .then(resolve, reject)
         .finally(() => signal?.removeEventListener("abort", cancel));
     });
+    if (launch.agent)
+      await process.actAs?.(launch.agent).catch((error: unknown) => {
+        void process.kill();
+        throw error;
+      });
     acp = new AcpProcess(process, hooks, launch.serve);
     launch.onProcess?.(acp);
     for (const data of earlyErrors) acp.readError(data);
@@ -230,6 +240,14 @@ export class AcpProcess {
       named?: (title: string) => void;
       tools?: ToolServer;
       choice?: () => Choice;
+      /** Built-ins beside the Buzz tools, for harnesses that take them. */
+      platform?: PlatformTools;
+      /** Replaces the harness's own base prompt with `systemPrompt` instead
+       * of appending it, for small models that a long prompt throws off. */
+      replacePrompt?: boolean;
+      /** Keys the harness can find the session by later; only a harness
+       * whose `newSessionMeta` sends them keeps them. */
+      tags?: Readonly<Record<string, string>>;
       /** Given the session as soon as the harness has opened it, before it
        * is set up, so a caller can close one whose open then fails. */
       onSession?: (session: AcpSession) => void;
@@ -287,6 +305,8 @@ export class AcpProcess {
             _meta: hooks.newSessionMeta(buzz, {
               ...(title ? { title } : {}),
               provider,
+              ...(launch.platform ? { platform: launch.platform } : {}),
+              ...(launch.tags ? { tags: launch.tags } : {}),
             }),
           }),
         },
@@ -314,12 +334,27 @@ export class AcpProcess {
     }
     try {
       if (systemPrompt && hooks.systemPrompt)
-        await hooks.systemPrompt(this, sessionId, systemPrompt);
+        await hooks.systemPrompt(
+          this,
+          sessionId,
+          systemPrompt,
+          launch.replacePrompt,
+        );
     } catch (error) {
       void this.close(session);
       throw error;
     }
     return session;
+  }
+
+  /** Whether an open session can be given a new system prompt in place. */
+  get repromptable() {
+    return !!this.hooks.systemPrompt;
+  }
+  /** Gives an open session `systemPrompt` in place of the one it was opened
+   * with, keeping its conversation. */
+  async reprompt(session: AcpSession, systemPrompt: string) {
+    await this.hooks.systemPrompt?.(this, session.id, systemPrompt);
   }
 
   private names() {
@@ -424,7 +459,7 @@ export class AcpProcess {
   }
 
   private write(message: Wire) {
-    return this.process.write(`${JSON.stringify(message)}\n`);
+    return writeJSON(this.process, message);
   }
   private readError(data: string) {
     this.stderr = (this.stderr + data).slice(-STDERR_LIMIT);
@@ -500,22 +535,25 @@ export class AcpProcess {
   ): Promise<Wire | undefined> {
     const { id, method = "", params } = (message ?? {}) as Wire;
     if (id === undefined || id === null) return undefined;
-    const response = (await tools(session?.conversation, {
-      id,
-      method,
-      params,
-    })) as Wire;
+    const response = (await tools(
+      session?.conversation,
+      { id, method, params },
+      session?.signal ?? AbortSignal.abort(new Error("The turn has ended")),
+    )) as Wire;
     const call = (params ?? {}) as {
       name?: unknown;
       arguments?: { final?: unknown };
+      _meta?: Record<string, unknown>;
     };
     const worked =
       method === "tools/call" &&
       !response.error &&
       !(response.result as { isError?: unknown } | undefined)?.isError;
     if (worked && ANSWERS.has(String(call.name))) session?.answered();
+    // goose names the ACP tool call behind an MCP call in its `_meta`.
+    const toolCall = call._meta?.["agent-tool-call-request-id"];
     if (worked && isFinalMessage(call.name, call.arguments))
-      session?.finished();
+      session?.finished(typeof toolCall === "string" ? toolCall : undefined);
     return response;
   }
 }

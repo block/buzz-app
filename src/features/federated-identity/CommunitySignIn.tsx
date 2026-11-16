@@ -1,13 +1,24 @@
-import { useState, useSyncExternalStore } from "react";
+import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { FederatedIdentity, SessionSnapshot } from "./service";
 import type { Membership } from "../communities/service";
 import { communityDestination } from "../communities/destination";
-import { coveredCommunities, serverName } from "./community-servers";
+import { serverName, useSignInCommunities } from "./community-servers";
 import { Button } from "../../shared/design-system/ui/Button";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import type { CommunityRefusal } from "../relay/http-admission";
+
+/** Native's rejection when the browser step outlasts its wait (`oauth_callback::TIMED_OUT`). */
+export const SIGN_IN_TIMED_OUT = "Sign-in timed out. Try again.";
 
 export function recoveryMessage(code: string) {
+  if (code === "sign-in-timed-out") return SIGN_IN_TIMED_OUT;
   if (code === "storage-busy")
     return "Secure storage is busy. Close another Buzz instance and try again.";
+  // A record native can't decode, or (on Linux) duplicate keyring items: no
+  // sign-in can compare and replace it. Sign out of Buzz deletes a damaged
+  // record without reading it, but not duplicates, so it isn't offered here.
+  if (code === "storage-corrupt")
+    return "Buzz can’t read its saved sign-in for this server, and signing in again may not replace it. If this keeps happening, contact support.";
   if (code.startsWith("storage-"))
     return "Sign-in could not access secure storage. Check your system’s credential permissions and try again.";
   if (code === "sign-in-canceled")
@@ -18,7 +29,9 @@ export function recoveryMessage(code: string) {
 }
 
 /** Issuer refusals native keeps for the session revision (`refused()` in
- * assertion.rs) until the app restarts; signing in or retrying repeats them. */
+ * assertion.rs). An automatic retry repeats them; a person's Try again
+ * (`askAgain`), a sign-in that installs a new session, or a restart asks the
+ * issuer again. */
 const ISSUER_REFUSALS = new Set([
   "adapter-refused",
   "grant-refused",
@@ -28,6 +41,54 @@ const ISSUER_REFUSALS = new Set([
   "response-too-large",
 ]);
 
+const SIGN_IN_REQUIRED =
+  /Federated sign-in is required|reauthentication-required|Federated authorization (changed|expired)/;
+
+/** Whether `CommunitySignIn` explains this refusal with its own message. */
+function explains(state: SessionSnapshot, error: string | undefined) {
+  const refusal = error || state.failure || "";
+  return (
+    /binding[-_]mismatch|authorization[-_]denied/.test(refusal) ||
+    ISSUER_REFUSALS.has(refusal) ||
+    (!!error &&
+      SIGN_IN_REQUIRED.test(error) &&
+      !!state.authority &&
+      state.status !== "signed-in")
+  );
+}
+
+const noSubscribe = () => () => {};
+const noSnapshot = () => undefined;
+
+/** True once `CommunitySignIn` has explained `error`, so the caller does
+ * not also show the raw error. It stays true until `error` clears: a sign-in
+ * that resolves the refusal publishes signed-in before its retry clears the
+ * error, and the raw error must not mount as an alert in between. */
+export function useExplainedRefusal(
+  identity: FederatedIdentity | undefined,
+  error: string | undefined,
+) {
+  const state = useSyncExternalStore(
+    identity?.subscribe ?? noSubscribe,
+    identity?.snapshot ?? noSnapshot,
+    identity?.snapshot ?? noSnapshot,
+  );
+  const explained = useRef<string | undefined>(undefined);
+  if (!error) explained.current = undefined;
+  else if (state && explains(state, error)) explained.current = error;
+  return !!error && explained.current === error;
+}
+
+/** Refusals the sign-in server may answer differently when asked again, for
+ * example once an administrator fixes access or the identity link. */
+export function issuerMayAnswerAgain(error: string | undefined) {
+  return (
+    !!error &&
+    (ISSUER_REFUSALS.has(error) ||
+      /authorization[-_]denied|binding[-_]mismatch/.test(error))
+  );
+}
+
 /** Explicit recovery from native protected-community admission; never automatic login. */
 export function CommunitySignIn({
   identity,
@@ -35,10 +96,14 @@ export function CommunitySignIn({
   retry,
   relay,
   memberships = [],
+  asksAgain = false,
 }: {
   identity?: FederatedIdentity | undefined;
   error?: string | undefined;
   retry: () => void;
+  /** The caller shows its own Try again that asks the issuer again
+   * (`askAgain`), so an issuer refusal needn't wait for a restart. */
+  asksAgain?: boolean | undefined;
   /** The refusing community, so a switch names the others it affects. */
   relay?: string | undefined;
   memberships?: readonly Membership[] | undefined;
@@ -51,6 +116,7 @@ export function CommunitySignIn({
       retry={retry}
       relay={relay}
       memberships={memberships}
+      asksAgain={asksAgain}
     />
   );
 }
@@ -60,19 +126,20 @@ function Action({
   retry,
   relay,
   memberships,
+  asksAgain,
 }: {
   identity: FederatedIdentity;
   error?: string | undefined;
   retry: () => void;
   relay?: string | undefined;
   memberships: readonly Membership[];
+  asksAgain: boolean;
 }) {
   const state = useSyncExternalStore(
     identity.subscribe,
     identity.snapshot,
     identity.snapshot,
   );
-  const [failure, setFailure] = useState("");
   // A switch outlives the signed-in state that offered it: sign-out ends
   // that state, so its progress and recovery are kept here.
   const [switching, setSwitching] = useState<Switching | null>(null);
@@ -86,6 +153,7 @@ function Action({
         retry={retry}
       />
     );
+  if (!explains(state, error)) return null;
   const refusal = error || state.failure || "";
   const mismatch = /binding[-_]mismatch/.test(refusal);
   if (mismatch || /authorization[-_]denied/.test(refusal)) {
@@ -103,7 +171,14 @@ function Action({
         state={state}
         authority={state.authority}
         mismatch={mismatch}
-        others={othersAffected(state.authority, relay, memberships)}
+        affects={
+          <SwitchAffects
+            identity={identity}
+            authority={state.authority}
+            relay={relay}
+            memberships={memberships}
+          />
+        }
         onSwitch={(authority) =>
           setSwitching(
             runSwitch(identity, authority, "sign-out", setSwitching, retry),
@@ -115,20 +190,37 @@ function Action({
   if (ISSUER_REFUSALS.has(refusal))
     return (
       <p role="alert" className="text-body-sm text-danger">
-        Buzz couldn’t confirm your organization sign-in for this community.
-        Restart Buzz to try again. If it keeps happening, contact your
-        administrator.
+        Buzz couldn’t confirm your organization sign-in for this community.{" "}
+        {asksAgain ? "Try again." : "Restart Buzz to try again."} If it keeps
+        happening, contact your administrator.
       </p>
     );
-  if (
-    !error ||
-    !/Federated sign-in is required|reauthentication-required|Federated authorization (changed|expired)/.test(
-      error,
-    ) ||
-    !state.authority
-  )
-    return null;
-  if (state.status === "signed-in") return null;
+  // What remains is a sign-in the community requires.
+  if (!state.authority) return null;
+  return (
+    <>
+      <p className="text-body-sm">
+        This community requires {serverName(state.authority)} sign-in.
+      </p>
+      <SignInButton identity={identity} state={state} retry={retry} />
+    </>
+  );
+}
+
+/** Sign in (or cancel one in progress), then retry what was refused. Its
+ * own failure, or the session's, shows beneath it. */
+function SignInButton({
+  identity,
+  state,
+  retry,
+}: {
+  identity: FederatedIdentity;
+  state: SessionSnapshot;
+  retry: () => void;
+}) {
+  const [failure, setFailure] = useState("");
+  if (!state.authority) return null;
+  const server = serverName(state.authority);
   return (
     <>
       <Button
@@ -147,7 +239,9 @@ function Action({
           );
         }}
       >
-        {state.status === "signing-in" ? "Cancel sign-in" : "Sign in"}
+        {state.status === "signing-in"
+          ? "Cancel sign-in"
+          : `Sign in with ${server}`}
       </Button>
       {(failure || state.failure) && (
         <p role="alert" className="text-body-sm text-danger">
@@ -158,18 +252,36 @@ function Action({
   );
 }
 
-/** The other joined communities a switch on this server also signs out of. */
-function othersAffected(
-  authority: NonNullable<SessionSnapshot["authority"]>,
-  relay: string | undefined,
-  memberships: readonly Membership[],
-) {
+/** The other joined communities that rely on this server's account, which
+ * a switch may change access to. Signing in again needs no such line: the
+ * refused session is already dead, for them too. */
+function SwitchAffects({
+  identity,
+  authority,
+  relay,
+  memberships,
+}: {
+  identity: FederatedIdentity;
+  authority: Authority;
+  relay: string | undefined;
+  memberships: readonly Membership[];
+}) {
   const self = relay && communityDestination(relay).url;
-  return coveredCommunities(
+  const others = useSignInCommunities(
+    identity,
     authority.communityHosts,
     memberships.filter(
       (membership) => communityDestination(membership.id).url !== self,
     ),
+  );
+  if (others.length === 0) return null;
+  const names = new Intl.ListFormat(undefined, { type: "conjunction" }).format(
+    others,
+  );
+  return (
+    <p className="text-body-sm">
+      {`${names} also ${others.length === 1 ? "uses" : "use"} this account. Switching may change your access there.`}
+    </p>
   );
 }
 
@@ -179,13 +291,13 @@ function SwitchAccount({
   state,
   authority,
   mismatch,
-  others,
+  affects,
   onSwitch,
 }: {
   state: SessionSnapshot;
   authority: Authority;
   mismatch: boolean;
-  others: readonly string[];
+  affects: ReactNode;
   onSwitch: (authority: Authority) => void;
 }) {
   const [dismissed, setDismissed] = useState(false);
@@ -199,11 +311,7 @@ function SwitchAccount({
           ? `Your ${server} account (signed in as ${account}) is linked to a different Buzz identity. Keep this key until you have reviewed the link at ${new URL(authority.identityOrigin).host}, or switch to another ${server} account.`
           : `This community didn’t accept your ${server} account (signed in as ${account}).`}
       </p>
-      {others.length > 0 && (
-        <p className="text-body-sm">
-          Switching accounts also affects: {others.join(", ")}.
-        </p>
-      )}
+      {affects}
       <Button onClick={() => onSwitch(authority)}>Switch account</Button>
       {/* Closes the prompt; the session and the refusal stay as they are. */}
       <Button onClick={() => setDismissed(true)}>Not now</Button>
@@ -327,5 +435,116 @@ function SwitchProgress({
         </Button>
       )}
     </>
+  );
+}
+
+const noSubscription = () => () => {};
+const NO_ACCESS = "You don’t have access to this community";
+const SIGN_IN = "Sign in to open this community";
+/** What a page that the refusal left empty says; its notice says what fixes it. */
+export const communityRefusalTitle = (refusal?: CommunityRefusal) =>
+  refusal === "sign-in" ? SIGN_IN : NO_ACCESS;
+
+/** The one report of a community's refusal, in the toast stack on every page.
+ * The relay's reason and this device's sign-in for the community decide what
+ * it offers; Check again only where someone else (an admin) can fix it. */
+export function CommunityRefusalNotice({
+  refusal,
+  identity,
+  retry,
+  relay,
+  memberships = [],
+}: {
+  refusal: CommunityRefusal;
+  /** The sign-in session of the refusing community's own server. */
+  identity?: FederatedIdentity | undefined;
+  retry: () => void;
+  relay?: string | undefined;
+  memberships?: readonly Membership[] | undefined;
+}) {
+  const state = useSyncExternalStore(
+    identity?.subscribe ?? noSubscription,
+    () => identity?.snapshot(),
+    () => identity?.snapshot(),
+  );
+  // As in `Action`: sign-out ends the state that offered the switch.
+  const [switching, setSwitching] = useState<Switching | null>(null);
+  const authority = state?.authority;
+  const checkAgain = <Button onClick={retry}>Check again</Button>;
+  if (!identity || !state || !authority)
+    return refusal === "sign-in" ? (
+      <ToastNotice
+        title="This community needs a sign-in Buzz doesn’t support yet"
+        description="Ask the community’s admin which Buzz version or server to use."
+      />
+    ) : (
+      <ToastNotice
+        title={NO_ACCESS}
+        description="Ask the community’s admin to add you."
+      >
+        {checkAgain}
+      </ToastNotice>
+    );
+  const server = serverName(authority);
+  const signedIn = state.status === "signed-in";
+  // A switch signs out first, so its progress and recovery come before the
+  // signed-out answer.
+  if (refusal === "access" && !signedIn && !switching)
+    return (
+      <ToastNotice
+        title={NO_ACCESS}
+        description="Ask the community’s admin to add you."
+      >
+        {checkAgain}
+      </ToastNotice>
+    );
+  // Signing in again where Buzz still holds the refused session, or as
+  // another account, both sign out of this server first.
+  const action = switching ? (
+    <SwitchProgress
+      identity={identity}
+      state={state}
+      switching={switching}
+      onChange={setSwitching}
+      retry={retry}
+    />
+  ) : refusal === "sign-in" && !signedIn ? (
+    <SignInButton identity={identity} state={state} retry={retry} />
+  ) : (
+    <>
+      {refusal === "access" && (
+        <SwitchAffects
+          identity={identity}
+          authority={authority}
+          relay={relay}
+          memberships={memberships}
+        />
+      )}
+      <Button
+        onClick={() =>
+          setSwitching(
+            runSwitch(identity, authority, "sign-out", setSwitching, retry),
+          )
+        }
+      >
+        {refusal === "sign-in" ? "Sign in again" : "Switch account"}
+      </Button>
+      {refusal === "access" && checkAgain}
+    </>
+  );
+  return refusal === "sign-in" ? (
+    <ToastNotice
+      title={SIGN_IN}
+      description={`This community needs your ${server} sign-in.`}
+    >
+      {action}
+    </ToastNotice>
+  ) : (
+    <ToastNotice
+      title={NO_ACCESS}
+      description={`This community didn’t accept ${state.email ?? `your ${server} account`}.`}
+    >
+      {action}
+    </ToastNotice>
   );
 }

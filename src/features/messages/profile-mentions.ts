@@ -2,6 +2,17 @@ import type { AgentLibrary } from "../agents/library";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { profileTarget } from "../profiles/target";
 
+/** The names a person's signed prose mention binds by: their shown name and,
+ * when verified, both verified names, so prose written under either name
+ * preference stays a mention. Renderers key their caches on the same list. */
+export function profileMentionNames(profile: Profile | undefined) {
+  return [
+    profile?.name,
+    profile?.verified?.displayName,
+    profile?.verified?.fullName,
+  ];
+}
+
 type Part = { text: string; target?: string | undefined };
 /** Display only: signed recipients bound by an unedited body's exact known names.
  * This does not infer notification intent or resolve a name against a directory. */
@@ -25,12 +36,12 @@ export function profileMentionParts(
     const target = profileTarget(id);
     if (!target) continue;
     const labels = [
-      profiles?.get(id)?.name,
+      ...profileMentionNames(profiles?.get(id)),
       ...agents
         .filter((agent) => agent.pubkey === id)
         .map((agent) => agent.name),
     ];
-    for (const name of labels) {
+    for (const name of new Set(labels)) {
       if (!name || /[\r\n]/.test(name)) continue;
       const keys = names.get(name) ?? new Set<string>();
       keys.add(target);
@@ -54,6 +65,28 @@ export function profileMentionParts(
       i++;
       continue;
     }
+    // A qualified span names its signed key, so its name may differ in case:
+    // mobile keeps the spelling the author typed.
+    let bound: { end: number; target: string } | undefined;
+    for (const [name, keys] of candidates) {
+      if (
+        text.slice(i + 1, i + 1 + name.length).toLowerCase() !==
+        name.toLowerCase()
+      )
+        continue;
+      const qualifier = QUALIFIER.exec(text.slice(i + 1 + name.length));
+      const target = profileTarget(qualifier?.[1] ?? "");
+      if (qualifier && target && keys.has(target)) {
+        bound = { end: i + 1 + name.length + qualifier[0].length, target };
+        break;
+      }
+    }
+    if (bound && !spansSeam(i, bound.end)) {
+      if (i > plain) parts.push({ text: text.slice(plain, i) });
+      parts.push({ text: text.slice(i, bound.end), target: bound.target });
+      plain = i = bound.end;
+      continue;
+    }
     const candidate = candidates.find(
       ([name]) =>
         text.startsWith(name, i + 1) &&
@@ -66,11 +99,11 @@ export function profileMentionParts(
     }
     const [name, keys] = candidate;
     const end = i + 1 + name.length;
-    // Legacy namesake qualifiers carry a different exact identity. Do not let a
-    // known shorter name claim their prefix; qualified rendering is deferred.
-    const qualifier = /^ \([a-f0-9]{64}\)/i.exec(text.slice(end))?.[0];
+    // A qualifier no signed key with this name carries stays literal, and a
+    // known shorter name cannot claim its prefix.
+    const qualifier = QUALIFIER.exec(text.slice(end));
     if (qualifier) {
-      i = end + qualifier.length;
+      i = end + qualifier[0].length;
       continue;
     }
     if (keys.size === 1) {
@@ -83,6 +116,8 @@ export function profileMentionParts(
   if (plain < text.length) parts.push({ text: text.slice(plain) });
   return parts.length ? parts : [{ text }];
 }
+
+const QUALIFIER = /^ \(([a-f0-9]{64})\)/i;
 
 // Evaluate exclusions on the full body BEFORE splitting link/emoji rendering.
 // Deliberately conservative for incomplete code/link syntax; not a Markdown parser.

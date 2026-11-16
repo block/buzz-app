@@ -86,7 +86,8 @@ export interface Outbox {
     replacement?: Replacement,
   ): Promise<void>;
   retry(id: string, active?: () => boolean): void;
-  dismiss(id: string): Promise<void>;
+  /** owner: the recovery its caller owns and releases with an unconfirmed send. */
+  dismiss(id: string, owner?: OutboxRecovery): Promise<void>;
   /** Durable explicit dismissal, with delivery evidence at removal. */
   observeDismiss(listener: (item: OutgoingEvent) => void): () => void;
 }
@@ -903,14 +904,15 @@ export function createOutbox(
         await outbox.ready();
         const saved = recoveryValue(recovery);
         if (!saved) throw new Error("Invalid outbox recovery state");
+        const shared = (await storage.load({ readOnly: true })).find(
+          (entry) => entry.event.id === id,
+        );
+        if (closed) throw abortError();
         let item = visible.find((entry) => entry.event.id === id);
         if (!item || dismissing.has(id))
           throw new Error(
             "The original operation is unavailable. Refresh before retrying.",
           );
-        const shared = (await storage.load({ readOnly: true })).find(
-          (entry) => entry.event.id === id,
-        );
         if (!shared && restoredReceipts.has(id))
           throw new Error(
             "The original operation was removed in another window. Try Send again.",
@@ -924,11 +926,17 @@ export function createOutbox(
           consume?.();
           return;
         }
-        if (shared && restoredReceipts.has(id)) item = shared;
-        if (item.acknowledged) {
+        if (item.acknowledged || shared?.acknowledged) {
           consume?.();
           return;
         }
+        // Shared ownership still applies when this window verifies an echo
+        // after the journal read starts. That echo remains delivery evidence.
+        if (shared && restoredReceipts.has(id))
+          item =
+            item.delivery === "seen" && item.signed
+              ? { ...shared, signed: item.signed, delivery: "seen" }
+              : shared;
         if (
           (item.recovery &&
             (item.recovery.key !== saved.key ||
@@ -1075,12 +1083,17 @@ export function createOutbox(
         dismissListeners.delete(listener);
       };
     },
-    dismiss(id: string) {
+    dismiss(id: string, owner?: OutboxRecovery) {
       const pending = dismissing.get(id);
       if (pending) return pending;
       if (closed || attempts.has(id)) return Promise.resolve();
       const item = visible.find((item) => item.event.id === id);
-      if (item?.recovery && item.delivery !== "failed")
+      if (
+        item?.recovery &&
+        item.delivery !== "failed" &&
+        (item.recovery.key !== owner?.key ||
+          item.recovery.value !== owner.value)
+      )
         return Promise.reject(
           new Error(
             item.event.kind === 9000

@@ -9,11 +9,16 @@ Build defaults are readable binary data, **never secret storage**.
 | Input | Consumer and boundary |
 | --- | --- |
 | `BUZZ_EXTERNAL_MCP_COMMUNITIES` | Frontend build: space-separated secure community origins allowed to authorize external MCP access. Empty disables access. See below. |
+| `BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES` | Frontend build: space-separated secure community origins where workflow messages cannot start or steer local agents. Empty keeps checked workflow delegation everywhere. See below. |
 | `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: the live development broker's Builderlab, and whether a build without an added sign-in server keeps the built-in one; no runtime override. See below. |
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | Shared frontend/native build: exact Apps cookie domain paired with the login origin for native viewer SSO; no runtime override. |
+| `BUZZ_BUILDERLAB_APPS_CONTROL_PLANE` | Shared frontend/native build: HTTPS origin of the Apps control plane for the configured login origin, for deployments the built-in public table does not list; no runtime override. |
+| `BUZZ_BUILD_REPOSITORY_ACCESS` | Native build: default [repository access rules](repository-access.md#default-rules), in `repository-access.json`'s schema. Unset means none. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
+| `BUZZ_BUILD_MANAGED_PLUGINS_URL` | Native build: `https` URL of a version 1 [managed plugin policy](managed-plugins.md#packaged-policy). The desktop app fetches it and keeps the last good copy, used when no `managed-plugins.json` exists. It only recommends. Unset in OSS builds. |
 | `BUZZ_DATABRICKS_HOST` | Frontend build and dev server: `https://` Databricks workspace URL passed as `DATABRICKS_HOST` to every bundled `goose-acp`, which then prefers it to the host in goose's config. Unset in OSS builds. See [Databricks host](#databricks-host). |
 | `BUZZ_AGENT_GATEWAY` | Shared frontend/native build, process environment only: non-secret agent gateway deployment descriptor (version 2: gateway origin, exact community IDs/origins, access check path, context header profile and per-harness upstream bases). Unset, the release default, leaves gateway routing off. See [Agent gateway](#agent-gateway). |
+| `BUZZ_MOBILE_APP_IOS_URL`, `BUZZ_MOBILE_APP_ANDROID_URL` | Frontend build: `https://` store listings for the build's mobile app, shown with QR codes on the mobile Settings card to people whose Builderlab account holds this device's backed-up key. Unset in OSS builds. See [Mobile app links](#mobile-app-links). |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` | Native and frontend build: sign-in servers added to the built-in one, each with its adapter prefix and community hosts; empty opts out. See below. |
@@ -25,7 +30,9 @@ Build defaults are readable binary data, **never secret storage**.
 The retired v1 inputs `BUZZ_BUILD_AGENT_ENV`, `BUZZ_BUILD_BUZZ_AGENT_PROVIDER`
 and `BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` are no longer read or compiled. Agents
 uses each plugin agent type's settings. Remove these old defaults from local/CI
-configuration; they do not configure Agents. Restart Vite to change broker or
+configuration; they do not configure Agents. `BUZZ_OWNER_MCP_COMMUNITIES`,
+which enabled the retired owner-read agent tools, is no longer read either.
+Restart Vite to change broker or
 routing configuration. Production frontend builds never load the dev broker or
 expose its auto-open seed. They can separately opt into the packaged community
 default below.
@@ -37,11 +44,22 @@ default below.
 access in all communities. Invalid origins fail the build. The value is
 compiled into the frontend; a launched app cannot change it through its environment.
 
-The desktop preview workflow sets this flag to
-`https://buzz.block.builderlab.xyz` for bb-block only. Community names do not
-grant access. The Agents service compares the exact canonical origin before
+The distributor's release build chooses the allowed communities; this
+repository's workflow sets none. Community names do not grant access. The Agents service compares the exact canonical origin before
 opening a connection and on each tool call. Consent disables other communities,
 and Settings hides External apps there. Normal agent MCP servers are unchanged.
+
+## Workflow restriction community flag
+
+`BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES` is a space-separated list of `https://`
+or `wss://` community origins, parsed as the external flag is. The default is
+empty: in every community, a workflow mention can start or steer a local Claude,
+Codex, Goose or Pi agent when its creator is the agent's owner or a sibling the
+owner attested. Each build lists its own restricted community origins. In a listed community no
+workflow-marked message authorizes a local agent request, in bundled or plugin
+harnesses; the message stays visible. While any community is listed, an agent
+whose community cannot be read is restricted too. See
+[workflows](workflows.md).
 
 ## Packaged community default
 
@@ -129,10 +147,13 @@ object with exactly these keys:
 The descriptor is public routing data with no credential, and this code
 carries no default for any of its values. Both the frontend build and the
 plugin-manager native build read it from the process environment only, never
-from `.env` files, and validate all of it, in the same order, before using any
-of it. An invalid value, including a version 1 descriptor, fails either build
-with a fixed message that never echoes it; the shared cases in
-`src/features/agents/gateway/descriptor-vectors.json` pin both validators.
+from `.env` files. Only the frontend (Vite) build validates all of it, against
+the shared cases in `src/features/agents/gateway/descriptor-vectors.json`. The
+native build checks the version, the eight keys and the gateway origin, which
+is all its network grant needs, and nothing more. An invalid value, including
+a version 1 descriptor, fails the build that rejects it with a fixed message
+that never echoes it. A descriptor that is still invalid at runtime fails
+open: no harness gets an upstream, so turns run unchanged, with no notice.
 Leave it unset or blank (the release default) to keep every membership on its
 existing behavior.
 
@@ -143,16 +164,40 @@ an upstream, the gateway's access check succeeds, and the check's `harnesses`
 list names that harness. Any other field in the check's answer is the
 gateway's to enforce and is ignored. A type with no declared harness, no
 upstream, or a harness the gateway doesn't list keeps its existing behavior.
-A turn never waits on the gateway. When the route is blocked (auth, network,
-gateway error or still checking), the harness runs with the user's own
-configuration and none of the Buzz request context, and the turn is noted
-"Ran without the agent gateway" with the reason: under the request for a
+While an access check is in flight, such as the first one at startup or the
+re-check after the gateway refuses a request, a turn waits for it for up to 5
+seconds. A check that fails with anything but a 401 or 403 is tried once more
+after a short pause. If the gateway refuses access (a 401 or 403), the turn
+fails with a message asking the user to sign in again; it never falls back.
+When the route is otherwise blocked (network, gateway error, still checking
+after the wait, or a community or identity problem), the harness runs with the
+user's own configuration and none of the Buzz request context, and the turn is
+noted "Ran without the agent gateway" with the reason: under the request for a
 mention, and in the harness's own turn activity for other turns, which receive
-it as `delivery.gatewayFallback`. That choice is made before dispatch; a turn
-whose gateway access is revoked after dispatch fails visibly and is never
+it as `delivery.gatewayFallback`. The note stays under the request even when a
+later message supersedes it. That choice is made before dispatch; a turn whose
+gateway access is revoked after dispatch fails visibly and is never
 replayed. Memberships in other communities and hosted agents are unchanged.
 See `src/features/agents/gateway/` for the shared route, session and request
 context contract that harnesses consume.
+
+## Mobile app links
+
+Packagers that publish a Buzz mobile app can link its store listings:
+
+```sh
+BUZZ_MOBILE_APP_IOS_URL=https://apps.example.com/ios \
+BUZZ_MOBILE_APP_ANDROID_URL=https://apps.example.com/android bin/pnpm tauri build
+```
+
+The frontend reads each from repository-root `.env.local` or the process
+environment (process wins) and compiles it in. Each must be an `https://` URL
+without credentials; invalid values fail the build. When the Builderlab session
+is signed in and this device's key is the account's linked, backed-up key (so
+the phone restores it), the mobile Settings card says to install the app and
+sign in with Builderlab, with a link and QR code for each listing that is set. With neither
+set it gives the same instructions without links. Other identities keep the
+pairing flow.
 
 ## Builderlab URL build input
 
@@ -192,6 +237,21 @@ hosted communities:
   "apiBasePath": "/api/goose/"
 }
 ```
+
+With the built-in server, a build also trusts a server for each Builderlab
+customer, named by the community's host: `buzz.{name}.builderlab.xyz` signs in
+at `https://{name}.builderlab.xyz/api/goose`, on demand, with no organization
+name. `{name}` is one DNS label. The server is added the first time one of its
+communities connects, with its own session saved under its own fingerprint, and
+listed (hosts only) so every later launch adds it again, even once none of its
+communities remain: its session stays in Settings, and deleting an agent still
+retires the agent's grant there. A full Buzz sign-out deletes the list. Its id
+is `bb-{name}`, as Builderlab names its deployments, so its descriptor matches
+one a build lists for the same deployment and a dev build finds the session
+that build saved. For names of 61 to 63 bytes, which would exceed the 64-byte
+id limit, it is the name's first 44 bytes and 16 hex digits of its SHA-256. A
+listed server that covers the host, or has the same id, wins: a distributor's build keeps at-launch sign-in and its organization name
+by listing its server. Builds without the built-in server have none of these.
 
 `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` adds servers to it. Unset, the build
 has the built-in server only. Empty, it has no sign-in servers. Otherwise it is
@@ -261,8 +321,10 @@ The bundled Builderlab plugin has no renderer network or file grant in any
 build. In a build with a sign-in server, the plugin manager grants it only the
 native forwarder's Builderlab routes for that server's session; Apps deploys go
 through the same session to the control plane mapped from its identity origin
-(`https://compose-ctrl.builderlab.xyz` for production). The live development
-broker serves the plugin itself. Never put credentials in either input.
+(`https://compose-ctrl.builderlab.xyz` for production). Another deployment sets
+its control plane origin in `BUZZ_BUILDERLAB_APPS_CONTROL_PLANE`. The live
+development broker serves the plugin itself. Never put credentials in these
+inputs.
 
 Identity backup uses the session only when its separately configured service URL
 is the build's Builderlab, at the same origin and API base path. Backup still
@@ -360,13 +422,9 @@ The limit is the compile-time constant `WHOLE_VIDEO_MAX` in
 
 ## Deliberate exclusions
 
-Inventory source: `block/buzz-releases` at
-`af57fbf40b50941c03cef2466b1e6970ab6bc779` (`.buildkite/pipeline*.yml`,
-`scripts/build-macos.sh`, mobile helpers, `scripts/lib.sh` and publishing helpers),
-compared with OG `block/buzz` at
-`99c2acf90cfbb1cb2d3a8bd900c0ec1642e20540` (`desktop/src-tauri/build.rs` and its
-runtime consumers). No deployment-specific values from those repositories are
-copied here.
+Inputs that OG `block/buzz` at `99c2acf90cfbb1cb2d3a8bd900c0ec1642e20540`
+(`desktop/src-tauri/build.rs` and its runtime consumers) or release builds read,
+and this app does not.
 
 | OG/release input | Why it is not implemented here |
 | --- | --- |
@@ -377,7 +435,7 @@ copied here.
 | `BUZZ_BUILD_OBSERVER_ARCHIVE_DEFAULT`, `BUZZ_BUILD_AGENT_METRIC_ARCHIVE_DEFAULT` | Already no-ops in inspected OG: its archive capability checks return true for all builds. This app does not claim equivalent archive collection by accepting inert flags. |
 | Build-command `BUZZ_ACP_ALLOWED_RESPOND_TO`, `BUZZ_ACP_ALLOWED_CHANNEL_ADD_POLICIES` | OG consumers are runtime-only; setting these around compilation does not bake them. The retired v1 listener no longer consumes these inputs; Agents uses its attention settings. |
 | Mobile `BUZZ_AGE_GATING_ENABLED`, Android `BUZZ_ANDROID_RELEASE_SIGNING=external` | No corresponding Flutter/Android target in this app. |
-| CI version/tag metadata, artifact paths/upload controls, signing teams/profiles, Apple/App Store/Artifactory/Play credentials, Android signer roles/sockets, SDK/JDK/toolchain settings, Tauri bundle/config arguments | Release infrastructure and packaging controls, not product defaults. No new build-variable forwarding API. |
+| CI version/tag metadata, artifact paths/upload controls, signing teams/profiles, Apple/App Store/package-registry/Play credentials, Android signer roles/sockets, SDK/JDK/toolchain settings, Tauri bundle/config arguments | Release infrastructure and packaging controls, not product defaults. No new build-variable forwarding API. |
 
 Ignored `.env.local` can contain unrelated development settings. Only the inputs
 with current consumers listed above have an effect. Do not use any build input

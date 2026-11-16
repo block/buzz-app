@@ -42,12 +42,17 @@ export const test = base.extend({
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
   profilePicture: ["", { option: true }],
+  // The viewer profile's `tz`. The empty opt-out keeps launch from sharing the
+  // browser's zone into it; null leaves the key out so launch shares one.
+  profileTimeZone: ["", { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
   presenceThreadAuthors: [0, { option: true }],
   threadUnreadMentions: [false, { option: true }],
   threadUnreadJoined: [false, { option: true }],
   threadUnreadOwnedRoot: [true, { option: true }],
+  // Newer top-level alpha rows put the threadUnread roots beyond the head page.
+  threadUnreadNewerRows: [0, { option: true }],
   exactMessages: [false, { option: true }],
   openSearch: [false, { option: true }],
   searchAuthor: [false, { option: true }],
@@ -71,6 +76,13 @@ export const test = base.extend({
   sidebarIcons: [false, { option: true }],
   channelNames: [{}, { option: true }],
   expectedPageFailure: [false, { option: true }],
+  // Startup failure journeys inject one failure. An injected exception's
+  // console and page errors contain this text.
+  expectedStartupFailure: [false, { option: true }],
+  // A resource whose URL contains this text fails to load. Only each failed
+  // response's own "Failed to load resource" error passes; errors the app
+  // logs from that same chunk after Reload still fail.
+  expectedStartupLoadFailure: [false, { option: true }],
   expectedSidebarIconFailure: [false, { option: true }],
   largeSidebar: [false, { option: true }],
   iconCongestion: [false, { option: true }],
@@ -105,6 +117,10 @@ export const test = base.extend({
   pluginFixtures: [false, { option: true, scope: "worker" }],
   localAgentActivity: [false, { option: true, scope: "worker" }],
   pairingFixture: [false, { option: true, scope: "worker" }],
+  // A build whose startup throws where `window.__buzzFixtureStartupFailure`
+  // says: "services" in createServices, "render" in App, and "running" in
+  // the app's content the next time it renders.
+  startupFailureFixture: [false, { option: true, scope: "worker" }],
   companionFixture: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async (
@@ -120,12 +136,14 @@ export const test = base.extend({
       actionProfile,
       agentMessageDeletion,
       profilePicture,
+      profileTimeZone,
       readState,
       threadUnread,
       presenceThreadAuthors,
       threadUnreadMentions,
       threadUnreadJoined,
       threadUnreadOwnedRoot,
+      threadUnreadNewerRows,
       exactMessages,
       openSearch,
       searchAuthor,
@@ -149,6 +167,8 @@ export const test = base.extend({
       sidebarIcons,
       channelNames,
       expectedPageFailure,
+      expectedStartupFailure,
+      expectedStartupLoadFailure,
       expectedSidebarIconFailure,
       largeSidebar,
       iconCongestion,
@@ -241,7 +261,11 @@ export const test = base.extend({
         sign(
           0,
           [],
-          JSON.stringify({ name: "Fixture Reader", picture: profilePicture }),
+          JSON.stringify({
+            name: "Fixture Reader",
+            picture: profilePicture,
+            ...(profileTimeZone === null ? {} : { tz: profileTimeZone }),
+          }),
           userKey,
         ),
       ]),
@@ -829,6 +853,21 @@ export const test = base.extend({
             reply_count: 23,
             participants: [getPublicKey(peerKey)],
           }),
+        ),
+      );
+    }
+    if (threadUnread && threadUnreadNewerRows) {
+      const history = histories.get("primary/alpha");
+      const after = Math.max(...history.map((event) => event.created_at)) + 20;
+      history.push(
+        ...Array.from({ length: threadUnreadNewerRows }, (_, index) =>
+          sign(
+            9,
+            [["h", "alpha"]],
+            `Newer alpha message ${index}`,
+            userKey,
+            after + index,
+          ),
         ),
       );
     }
@@ -2490,9 +2529,19 @@ export const test = base.extend({
           report.consoleErrors.push(message.text());
         }
       });
+      const startupLoadFailures = [];
       page.on("response", (response) => {
         if (
-          response.url().endsWith("/stream-observer") &&
+          expectedStartupLoadFailure &&
+          response.status() >= 400 &&
+          response.url().includes(expectedStartupLoadFailure)
+        )
+          startupLoadFailures.push({
+            url: response.url(),
+            status: String(response.status()),
+          });
+        if (
+          /\/stream-(observer|priority)$/.test(response.url()) &&
           response.status() === 404
         ) {
           const { streamId } = response.request().postDataJSON();
@@ -2587,6 +2636,8 @@ export const test = base.extend({
         },
         origin,
         report,
+        /** The viewer's current kind 0 content in `community`. */
+        ownProfile: (community) => JSON.parse(profiles.get(community).content),
         watchPageErrors(other) {
           const watched = watchPageErrors(other);
           watchedPages.push(watched);
@@ -2920,7 +2971,7 @@ export const test = base.extend({
         },
       });
       expect(report.unexpected).toEqual([]);
-      // Aborted startup streams can race an already-dispatched observer control.
+      // Retired streams can race already-dispatched observer or priority controls.
       // Permit only 404s whose exact stream was already closed by the real host;
       // a current/unknown stream failure still fails, and all errors stay recorded.
       report.retiredObserverControls = [...observerFailures];
@@ -2986,10 +3037,30 @@ export const test = base.extend({
         githubFailures.splice(match, 1);
         return true;
       };
+      // Bundle-load journeys fail the app's entry. Match each failed response
+      // once, by exact URL and status, so an error the recovered app logs
+      // from that chunk still fails.
+      report.startupLoadFailures = [...startupLoadFailures];
+      const injectedStartupLoadFailure = (message, index) => {
+        const status =
+          /^Failed to load resource: the server responded with a status of (\d+)/.exec(
+            message,
+          )?.[1];
+        if (!status) return false;
+        const match = startupLoadFailures.findIndex(
+          (failure) =>
+            failure.url === consoleLocations.get(index) &&
+            failure.status === status,
+        );
+        if (match < 0) return false;
+        startupLoadFailures.splice(match, 1);
+        return true;
+      };
       expect(
         report.consoleErrors.filter(
           (message, index) =>
             !retiredConsole(message, index) &&
+            !injectedStartupLoadFailure(message, index) &&
             !injectedSidebarFailure(message, index) &&
             !injectedGitHubFailure(message, index) &&
             !(
@@ -3001,6 +3072,9 @@ export const test = base.extend({
               message.includes("Fixture page render failure")
             ) &&
             !(
+              expectedStartupFailure && message.includes(expectedStartupFailure)
+            ) &&
+            !(
               relay?.expectedHttpErrors() &&
               /^Failed to load resource: the server responded with a status of 429/.test(
                 message,
@@ -3008,8 +3082,14 @@ export const test = base.extend({
             ),
         ),
       ).toEqual([]);
-      // All page errors stay in the evidence; only known engine reports pass.
-      expect(unexplainedPageErrors()).toEqual([]);
+      // All page errors stay in the evidence; only known engine reports, and
+      // a startup journey's injected failure, pass.
+      expect(
+        unexplainedPageErrors().filter(
+          (error) =>
+            !(expectedStartupFailure && error.includes(expectedStartupFailure)),
+        ),
+      ).toEqual([]);
     } finally {
       for (const timer of olderPageTimers) clearTimeout(timer);
       if (iconCongestion)

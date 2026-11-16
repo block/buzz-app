@@ -6,6 +6,7 @@ import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
 import { createRelaySession, type RelaySession } from "./session";
 import { createHeadPersistence } from "./persistence";
+import { savedVerifiedProfileAuthority } from "./verified-profile";
 import {
   relayPartition,
   transportOrigin,
@@ -14,6 +15,13 @@ import {
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import { RECOVERY_DELAYS_MS } from "./recovery";
 import type { ReadTransport } from "./transport";
+import { refusalOfError, type CommunityRefusal } from "./http-admission";
+/** The snapshot's error for a refusal heard after connecting, for logs and
+ * diagnostics; what it offers follows `refusal`, never this text. */
+const REFUSAL_ERRORS: Record<CommunityRefusal, string> = {
+  "sign-in": "Federated sign-in is required",
+  access: "restricted: authorization denied",
+};
 const WAKE_TICK_MS = 5_000;
 const WAKE_GAP_MS = 15_000;
 
@@ -39,11 +47,18 @@ export type RelaySnapshot = Readonly<{
   retrying?: true;
   /** The community refused this account; not a connection problem. */
   denied?: true;
+  /** Why, when the relay said: its sign-in ended, or it has no access. */
+  refusal?: CommunityRefusal;
 }>;
 export type RelayData = {
   snapshot(): RelaySnapshot;
   subscribe(listener: () => void): () => void;
+  /** Reconnects. Automatic callers (timers, network hints) use this. */
   retry(): void;
+  /** A person's Try again: asks the community's sign-in server again (it
+   * may have changed its answer since this session cached a refusal), then
+   * retries what failed. Never call it automatically (NIP-FA). */
+  tryAgain(): void;
   disconnect(): void;
   clearCache(): Promise<void>;
 };
@@ -63,12 +78,20 @@ export function provideRelay(
   agentChoices?: LocalAgents,
   resume?: { viewer: string; scope: string },
   localAgents?: LocalAgentSource,
+  verifyStored?: ReadTransport["verifyStored"],
+  /** Forgets the sign-in server's cached refusals for a community. */
+  askAgain?: (relay: string) => Promise<void>,
 ) {
   let disposed = false;
   let generation = 0;
   let controller: AbortController | undefined;
   let connecting = false;
   let clearing: Promise<void> | undefined;
+  /** This community's origin, once a connection named it; a reconnect's
+   * snapshot does not until it is ready again. */
+  let origin: string | undefined;
+  /** What the next connection attempt asks first: a person's Try again. */
+  let asking: (() => Promise<void>) | undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   let store = createRelaySession(null, { identityNames });
   let snapshot: RelaySnapshot = Object.freeze({
@@ -86,6 +109,7 @@ export function provideRelay(
    * Later publishes of the same failure (cache handoff) keep it. */
   let transientFailure = false;
   const publish = ({ retrying: _retrying, ...next }: RelaySnapshot) => {
+    if (next.origin) origin = next.origin;
     if (next.status !== "error") transientFailure = false;
     snapshot = Object.freeze(
       transientFailure && !disposed
@@ -118,7 +142,8 @@ export function provideRelay(
     let cached: ReturnType<typeof createRelaySession> | undefined;
     let handedOff = false;
     try {
-      const saved = (await persistence.readStartup?.())?.discovery;
+      const startup = await persistence.readStartup?.();
+      const saved = startup?.discovery;
       if (
         !saved ||
         !/^[0-9a-f]{64}$/.test(saved.relayAuthor) ||
@@ -132,6 +157,9 @@ export function provideRelay(
           viewer: resume.viewer,
           scope: resume.scope,
           relayAuthor: saved.relayAuthor,
+          verifiedProfiles: savedVerifiedProfileAuthority(
+            startup?.verifiedProfiles,
+          ),
           query: () =>
             Promise.reject(
               new ReadError(
@@ -140,6 +168,7 @@ export function provideRelay(
               ),
             ),
           media: () => undefined,
+          ...(verifyStored ? { verifyStored } : {}),
         },
         {
           identityNames,
@@ -190,6 +219,51 @@ export function provideRelay(
       }
     }
   }
+  /** The community refused this account: nothing it showed stays on screen,
+   * and only signing in or Try again reconnects. A refusal of the account's
+   * access also forgets what this device saved from it; an ended sign-in keeps
+   * it for when the person signs in again. */
+  async function deny(
+    current: number,
+    signal: AbortSignal,
+    error: string,
+    kind?: CommunityRefusal,
+    /** The connection it refused, once one was made. */
+    refused?: { viewer: string; origin: string },
+  ) {
+    const live = () =>
+      !disposed &&
+      !signal.aborted &&
+      current === generation &&
+      signal === controller?.signal;
+    if (kind !== "sign-in") {
+      await store.clearCache();
+      if (resume) {
+        const disk = createHeadPersistence(resume.viewer, resume.scope);
+        try {
+          await disk.clear();
+        } catch {
+          /* Storage can be unavailable. */
+        } finally {
+          disk.close();
+        }
+      }
+    }
+    if (!live()) return;
+    store.dispose();
+    store = createRelaySession(null, { identityNames });
+    transientFailure = false;
+    publish({
+      status: "error",
+      generation,
+      session: store.session,
+      error,
+      denied: true,
+      ...(kind ? { refusal: kind } : {}),
+      // Sign-in recovery looks up this community's own sign-in by origin.
+      ...refused,
+    });
+  }
   const service: RelayData & {
     /** The federated session changed to signed in: retry what it refused. */
     reauthorize(): void;
@@ -202,7 +276,17 @@ export function provideRelay(
       };
     },
     retry() {
-      if (disposed || !connect || connecting || clearing) return;
+      // A person's Try again asks the sign-in server within this attempt.
+      const ask = asking;
+      asking = undefined;
+      if (disposed || !connect) return;
+      if (connecting || clearing) {
+        // A press joins the attempt under way (or the one after a clear)
+        // but still asks now, so that attempt or the next one doesn't
+        // repeat a cached refusal. Asking twice only forgets twice.
+        void ask?.().catch(() => {});
+        return;
+      }
       const retained = snapshot.cached;
       if (!retained) reset();
       connecting = true;
@@ -241,9 +325,27 @@ export function provideRelay(
       }, 8_000);
       deadline = timer;
       void Promise.resolve()
+        // Asking again is best effort: the attempt still connects.
+        .then(() => ask?.().catch(() => {}))
         .then(() => connect(signal))
         .then(async (transport) => {
           clearTimeout(timer);
+          // A request can be refused while this connection is still being
+          // prepared, or at any time after: either way the community is.
+          let refused: CommunityRefusal | undefined;
+          let ready = false;
+          const refuse = (kind: CommunityRefusal) =>
+            deny(current, signal, REFUSAL_ERRORS[kind], kind, {
+              viewer: transport.viewer,
+              origin: transportOrigin(transport),
+            });
+          const stopRefusals = transport.observeRefusal?.((kind) => {
+            if (refused || disposed || current !== generation) return;
+            refused = kind;
+            if (ready) void refuse(kind);
+          });
+          if (stopRefusals)
+            signal.addEventListener("abort", stopRefusals, { once: true });
           await restoring;
           if (
             disposed ||
@@ -286,6 +388,10 @@ export function provideRelay(
             successor.session.channels.ensure(id);
           store.dispose();
           store = successor;
+          if (refused) {
+            await refuse(refused);
+            return;
+          }
           publish({
             status: "ready",
             generation,
@@ -297,6 +403,7 @@ export function provideRelay(
               ? { communityId: transport.readState.communityId }
               : {}),
           });
+          ready = true;
           store.session.channels.ensureList();
         })
         .catch(async (error) => {
@@ -308,36 +415,9 @@ export function provideRelay(
             signal !== controller?.signal
           )
             return;
-          if (readErrorKind(error) === "denied") {
-            await store.clearCache();
-            if (resume) {
-              const disk = createHeadPersistence(resume.viewer, resume.scope);
-              try {
-                await disk.clear();
-              } catch {
-                /* Storage can be unavailable. */
-              } finally {
-                disk.close();
-              }
-            }
-            if (
-              disposed ||
-              signal.aborted ||
-              current !== generation ||
-              signal !== controller?.signal
-            )
-              return;
-            store.dispose();
-            store = createRelaySession(null, { identityNames });
-            transientFailure = false;
-            publish({
-              status: "error",
-              generation,
-              session: store.session,
-              error: String(error),
-              denied: true,
-            });
-          } else {
+          if (readErrorKind(error) === "denied")
+            await deny(current, signal, String(error), refusalOfError(error));
+          else {
             transientFailure = isTransientFailure(error);
             publish({
               ...snapshot,
@@ -356,6 +436,24 @@ export function provideRelay(
       if (disposed) return;
       if (snapshot.status === "error") service.retry();
       else store.session.recovery?.retryAll();
+    },
+    tryAgain() {
+      if (disposed) return;
+      const relay = snapshot.origin ?? origin ?? resume?.scope;
+      const ask = relay && askAgain ? () => askAgain(relay) : undefined;
+      if (snapshot.status === "ready" && !snapshot.cached) {
+        // Nothing reconnects: retry each failed read and the live socket.
+        void Promise.resolve(ask?.())
+          .catch(() => {})
+          .finally(() => {
+            if (!disposed) store.session.recovery?.retryAll();
+          });
+        return;
+      }
+      // Reconnect at once, so callers see the attempt under way; it asks
+      // first.
+      asking = ask;
+      service.retry();
     },
     disconnect() {
       if (disposed) return;
@@ -396,28 +494,33 @@ export function provideRelay(
   };
   ctx.provide("relay", service);
   ctx.effect(() => {
-    // Network, focus and wake are hints that the relay may answer again.
-    // Failed background reads retry now; healthy sessions do no extra work.
-    const online = () => {
+    // Network, focus and wake are hints that the relay may answer again, and
+    // that a socket which still looks open may have died while asleep.
+    // Failed background reads retry now; a live socket is asked to answer.
+    const hint = (network: boolean) => {
       if (snapshot.cached) service.retry();
-      else store.session.recovery?.retryNow();
+      else {
+        store.session.recovery?.retryNow();
+        store.session.checkLive(network);
+      }
     };
+    const resume = () => hint(false);
+    // A socket that answered just before a network change proves nothing after it.
+    const network = () => hint(true);
     const visible = () => {
-      if (document.visibilityState !== "visible") return;
-      if (snapshot.cached) service.retry();
-      else store.session.recovery?.retryNow();
+      if (document.visibilityState === "visible") resume();
     };
     // Timers stop while the machine sleeps. A large gap between ticks means
     // it woke up, which a desktop window does not always report as focus.
     let tick = Date.now();
     const wake = setInterval(() => {
       const now = Date.now();
-      if (now - tick > WAKE_GAP_MS) online();
+      if (now - tick > WAKE_GAP_MS) resume();
       tick = now;
     }, WAKE_TICK_MS);
     if (typeof window !== "undefined") {
-      window.addEventListener("online", online);
-      window.addEventListener("focus", online);
+      window.addEventListener("online", network);
+      window.addEventListener("focus", resume);
     }
     if (typeof document !== "undefined")
       document.addEventListener("visibilitychange", visible);
@@ -428,8 +531,8 @@ export function provideRelay(
       reset();
       listeners.clear();
       if (typeof window !== "undefined") {
-        window.removeEventListener("online", online);
-        window.removeEventListener("focus", online);
+        window.removeEventListener("online", network);
+        window.removeEventListener("focus", resume);
       }
       if (typeof document !== "undefined")
         document.removeEventListener("visibilitychange", visible);

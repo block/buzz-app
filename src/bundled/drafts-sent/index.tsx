@@ -1,46 +1,35 @@
 import type { PluginModule } from "../../plugins/api";
-import { useChannelList, useRelayConnection } from "../../features/relay/react";
-import { DraftsSentPage } from "./DraftsSentPage";
-import { useDrafts } from "./drafts";
-import { listed } from "./scope";
-import styles from "./DraftsSent.module.css";
+import { DraftsSentBadge } from "../../features/drafts-sent/DraftsSentBadge";
+import { DraftsSentPage } from "../../features/drafts-sent/DraftsSentPage";
 
-export const inject = ["pages", "relay", "navigation"];
+export const inject = [
+  "pages",
+  "relay",
+  "panels",
+  "conversation",
+  "navigation",
+];
 
+/** Opt-in Drafts & sent page, listed in the Messages sidebar. */
 export const apply: PluginModule["apply"] = (ctx) => {
-  const relay = ctx.relay;
-
-  /** Sidebar count of unsent drafts in the current community. */
-  function Badge() {
-    const connection = useRelayConnection(relay);
-    const session =
-      connection.status === "ready" ? connection.session : undefined;
-    const drafts = useDrafts(session);
-    const { channels } = useChannelList(connection.session.channels);
-    const count = session
-      ? drafts.entries.filter((entry) =>
-          listed(channels.find((channel) => channel.id === entry.channelId)),
-        ).length
-      : 0;
-    return count ? (
-      <span
-        className={styles.badge}
-        role="img"
-        aria-label={`${count} draft${count === 1 ? "" : "s"}`}
-      >
-        {count > 999 ? "999+" : count}
-      </span>
-    ) : null;
-  }
-
+  const { relay, panels, navigation: navigator } = ctx;
   ctx.pages.register({
     id: "drafts-sent",
     title: "Drafts & sent",
     layout: "workspace",
     primary: true,
-    badge: Badge,
-    component: () => (
-      <DraftsSentPage relay={relay} navigator={ctx.navigation} />
+    companion: true,
+    handlesNavigation: true,
+    badge: () => <DraftsSentBadge relay={relay} />,
+    component: ({ companion, navigation }) => (
+      <DraftsSentPage
+        relay={relay}
+        navigator={navigator}
+        navigation={navigation}
+        companion={companion}
+        panels={panels}
+        extensions={ctx.conversation}
+      />
     ),
   });
 };

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EventWatch, TimerWatch } from "./attention";
 import {
+  AGENT_BYTES,
   ABSENT,
   checkedWrite,
   interestIds,
@@ -147,6 +148,24 @@ describe("checked writes", () => {
     expect(interestIds(gone)).toEqual(["other"]);
   });
 
+  it("keep an Interest whose only remaining watch this app skipped", async () => {
+    const bare = await write(record(), "watch/asks", null);
+    const value: AgentRecord = {
+      ...bare,
+      skipped: {
+        "watch/over": {
+          slug: "watch/over",
+          value: timer(),
+          modifiedAt: 1,
+          problem: "Over the limit",
+        },
+      },
+    };
+    await expect(write(value, "interest/triage", null)).rejects.toThrow(
+      /^invalid-operation: .*over.*your owner can remove/,
+    );
+  });
+
   it("report the format's own problems as invalid", async () => {
     await expect(
       write(record(), "watch/asks", watch({ since: 0 })),
@@ -180,10 +199,10 @@ describe("checked writes", () => {
   it("cap the attention one agent can store", async () => {
     let value = record();
     const long = "x".repeat(16_000);
-    for (let index = 0; index < 16; index++)
+    for (let index = 0; index < Math.floor(AGENT_BYTES / 16_100); index++)
       value = await write(value, `interest/i${index}`, interest(long));
     await expect(write(value, "interest/more", interest(long))).rejects.toThrow(
-      /^invalid: Your attention would take more than 256 KB/,
+      `invalid: Your attention would take more than ${AGENT_BYTES / 1024} KB`,
     );
     // Removing is always allowed.
     value = await write(value, "interest/i0", null);

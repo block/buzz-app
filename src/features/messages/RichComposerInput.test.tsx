@@ -50,7 +50,11 @@ function mount(initial?: MentionDraft) {
   let commits = 0;
   let profiles: ReadonlyMap<string, Profile> = new Map();
   const profileListeners = new Set<() => void>();
-  const channels = { status: "ready", channels: [] };
+  let channels: { status: string; channels: { id: string; name: string }[] } = {
+    status: "ready",
+    channels: [],
+  };
+  const channelListeners = new Set<() => void>();
   const library = { status: "ready", identities: [], definitions: [] };
   // A catalog snapshot, as MessageComposer passes it.
   const emoji: readonly CustomEmoji[] = [];
@@ -70,7 +74,13 @@ function mount(initial?: MentionDraft) {
       refresh: async () => {},
       retain: () => () => {},
     },
-    channels: { list: () => channels, subscribeList: () => () => {} },
+    channels: {
+      list: () => channels,
+      subscribeList: (listener: () => void) => {
+        channelListeners.add(listener);
+        return () => channelListeners.delete(listener);
+      },
+    },
   };
   const session = {
     ...source,
@@ -131,6 +141,15 @@ function mount(initial?: MentionDraft) {
       ].map(
         (chip) => `${chip.dataset.kind}: ${chip.getAttribute("aria-label")}`,
       ),
+    setChannels(names: string[]) {
+      act(() => {
+        channels = {
+          status: "ready",
+          channels: names.map((name) => ({ id: name, name })),
+        };
+        for (const listener of channelListeners) listener();
+      });
+    },
     setProfiles(next: ReadonlyMap<string, Profile>) {
       act(() => {
         profiles = next;
@@ -139,6 +158,15 @@ function mount(initial?: MentionDraft) {
     },
   };
 }
+
+it("decorates a channel reference once its channel arrives or leaves, not from a stale scan", () => {
+  const h = mount(mentionDraft("see #general now"));
+  expect(h.chips()).toEqual([]);
+  h.setChannels(["general"]);
+  expect(h.chips().map(([source]) => source)).toEqual(["#general"]);
+  h.setChannels([]);
+  expect(h.chips()).toEqual([]);
+});
 
 const label = (source = "") => source.match(/^\[(.*)\]\(/)?.[1];
 
@@ -242,3 +270,127 @@ it("types into a mention-heavy draft without redrawing its chips, which still fo
     new Set(renders.mock.calls.map(([props]) => props.address.id)),
   ).toEqual(new Set([first.pubkey]));
 });
+
+it("edits a channel link as one chip: Backspace, Delete and typing remove it whole, arrows step over it, undo restores it", async () => {
+  const link = "[\\#general](buzz://channel/general)";
+  const text = `see ${link} now`;
+  const start = 4,
+    end = start + link.length;
+  const h = mount(mentionDraft(text));
+  expect(h.chips()).toEqual([[link, "#general"]]);
+  const user = userEvent.setup();
+  act(() => {
+    h.input.focus();
+    h.input.setSelectionRange(end, end);
+  });
+  await user.keyboard("{ArrowLeft}");
+  expect(h.input.selectionStart).toBe(start);
+  expect(h.chips()).toEqual([[link, "#general"]]);
+  await user.keyboard("{ArrowRight}{Backspace}");
+  expect(h.draft().text).toBe("see  now");
+  expect(h.chips()).toEqual([]);
+  act(() => h.input.undo(false));
+  expect(composerMarkdown(h.draft())).toBe(text);
+  expect(h.chips()).toEqual([[link, "#general"]]);
+  act(() => h.input.setSelectionRange(start, start));
+  await user.keyboard("{Delete}");
+  expect(h.draft().text).toBe("see  now");
+  act(() => h.input.undo(false));
+  act(() => h.input.setSelectionRange(start - 1, end + 1));
+  await user.keyboard("x");
+  expect(h.draft().text).toBe("seexnow");
+  act(() => h.input.undo(false));
+  expect(composerMarkdown(h.draft())).toBe(text);
+  act(() => h.input.undo(true));
+  expect(h.draft().text).toBe("seexnow");
+});
+
+it("restores a channel link saved as editable text as one chip", async () => {
+  const link = "[\\#general](buzz://channel/general)";
+  const end = 4 + link.length;
+  const h = mount(
+    mentionDraft({
+      text: `see ${link} now`,
+      recipients: [],
+      document: {
+        version: 1,
+        content: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "text", text: "see " },
+                { type: "token", attrs: { source: link, editAsText: true } },
+                { type: "text", text: " now" },
+              ],
+            },
+          ],
+        },
+      },
+    }),
+  );
+  act(() => {
+    h.input.focus();
+    h.input.setSelectionRange(end, end);
+  });
+  await userEvent.setup().keyboard("{Backspace}");
+  expect(h.draft().text).toBe("see  now");
+});
+
+it("keeps a bare channel URL editable as text", async () => {
+  const text = "see buzz://channel/genx";
+  const h = mount(mentionDraft(text));
+  act(() => {
+    h.input.focus();
+    h.input.setSelectionRange(text.length, text.length);
+  });
+  await userEvent.setup().keyboard("{Backspace}");
+  expect(h.draft().text).toMatch(/^see buzz:\/\/channel\/genx?$/);
+});
+
+it.each(["bold", "italic"])(
+  "restores a channel link in %s as one chip without losing its format",
+  async (mark) => {
+    const link = "[\\#general](buzz://channel/general)";
+    const end = 4 + link.length;
+    const h = mount(
+      mentionDraft({
+        text: `see ${link} now`,
+        recipients: [],
+        document: {
+          version: 1,
+          content: {
+            type: "doc",
+            content: [
+              {
+                type: "paragraph",
+                content: [
+                  { type: "text", text: "see " },
+                  {
+                    type: "token",
+                    attrs: { source: link, editAsText: true },
+                    marks: [{ type: mark }],
+                  },
+                  { type: "text", text: " now" },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const formatted = composerMarkdown(h.draft());
+    expect(formatted).not.toBe(`see ${link} now`);
+    act(() => {
+      h.input.focus();
+      h.input.setSelectionRange(h.draft().text.length, h.draft().text.length);
+    });
+    const user = userEvent.setup();
+    await user.keyboard("!");
+    expect(composerMarkdown(h.draft())).toBe(`${formatted}!`);
+    act(() => h.input.setSelectionRange(end, end));
+    await user.keyboard("{Backspace}");
+    expect(h.draft().text).toBe("see  now!");
+  },
+);

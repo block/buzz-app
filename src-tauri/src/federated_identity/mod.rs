@@ -4,12 +4,14 @@ pub(crate) mod access;
 pub(crate) mod agent;
 pub(crate) mod assertion;
 pub(crate) mod config;
+mod customers;
 pub(crate) mod protocol;
 pub(crate) mod socket;
 pub(crate) mod store;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use config::Config;
+use customers::Customers;
 use protocol::{expiry, now, Failure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -68,6 +70,9 @@ pub(crate) struct Snapshot {
     /// A retired session's record is still stored because removing it
     /// failed. Signing out again retries the removal.
     cleanup: bool,
+    /// Signing in again waits on the browser while this session stays live;
+    /// `cancel_sign_in` ends only that wait. False once it commits.
+    renewing: bool,
 }
 
 // No Debug, no IPC serialization. Only the secure store serializes this record.
@@ -119,6 +124,23 @@ struct State {
     /// the same lock as the change itself: derived agent credentials minted
     /// or stored under an older value are retired.
     retirements: u64,
+    /// Set by an explicit sign-out and kept on disk (`Inner::signed_out`):
+    /// the next sign-in asks for credentials instead of finishing on the
+    /// browser's session as the account just signed out. Only a completed
+    /// browser sign-in clears it; a restored session takes the file as it
+    /// is, so a restore checked before another copy's sign-out cannot erase
+    /// that sign-out. Expiry, refusals and close never set it.
+    force_login: bool,
+}
+impl State {
+    /// What a sign-in asks of the identity provider: the caller's `start`,
+    /// with credentials after an explicit sign-out (`force_login`).
+    fn asking(&self, start: LoginStart) -> LoginStart {
+        LoginStart {
+            force_login: start.force_login || self.force_login,
+            ..start
+        }
+    }
 }
 struct Inner {
     config: Option<Config>,
@@ -133,12 +155,47 @@ struct Inner {
     agent_tokens: Mutex<std::sync::Weak<agent::Inner>>,
     assertions: Mutex<assertion::AssertionCache>,
     discoveries: Mutex<assertion::DiscoveryCache>,
+    retiring: Mutex<Option<Retiring>>,
+    /// Holds the next renewal between recording its retirement and installing.
+    #[cfg(test)]
+    install_gate: Mutex<Option<testing::Gate>>,
     /// The build's other sign-in servers, each with its own session. Only the
     /// first server, the build's Builderlab, has them.
     peers: Vec<FederatedIdentity>,
+    /// How this first server adds Builderlab customers' servers
+    /// (`customers::builderlab_customer`), when the build trusts the built-in one.
+    customers: Option<Customers>,
+    /// Those servers, each added the first time one of its communities is
+    /// routed, and again at every later launch (`Customers::record`).
+    derived: Mutex<Vec<FederatedIdentity>>,
+    /// What each added server gets, as compiled peers get it at startup.
+    on_peer: Mutex<Vec<OnPeer>>,
+    /// Where `State::force_login` is kept, so a restart still asks.
+    signed_out: Option<std::path::PathBuf>,
     /// Each detached logout `revoke` started, so tests can wait for it.
     #[cfg(test)]
     revocations: Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>,
+    /// Each browser step's start URL, so tests can read what it asked for.
+    #[cfg(test)]
+    logins: Mutex<Vec<String>>,
+}
+/// Records durably, before a sign-out or change of account commits, what
+/// else that retirement revokes; see [`FederatedIdentity::on_retire`]. The
+/// change holds what it returns until it has committed or failed.
+pub(crate) type Retiring = Arc<
+    dyn Fn() -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Option<RetiringGuard>, String>> + Send>,
+        > + Send
+        + Sync,
+>;
+pub(crate) type RetiringGuard = Box<dyn Send + Sync>;
+/// Prepares a server added after startup; see [`FederatedIdentity::on_peer`].
+pub(crate) type OnPeer = Arc<dyn Fn(&FederatedIdentity) + Send + Sync>;
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 /// A sign-in server's session. The app holds the build's first server, which
 /// routes each community to its own server (`server_for`).
@@ -156,12 +213,13 @@ impl FederatedIdentity {
         if profile.is_empty() || profile.len() > 128 {
             return Err("Invalid federated identity profile".into());
         }
+        let customers = servers.iter().any(Config::is_built_in);
         let mut servers = servers.into_iter().map(Some);
         let first = servers.next().flatten();
         let peers = servers
-            .map(|config| Self::open(config, &profile, Vec::new()))
+            .map(|config| Self::open(config, &profile, Vec::new(), false))
             .collect::<Result<_, _>>()?;
-        Self::open(first, &profile, peers)
+        Self::open(first, &profile, peers, customers)
     }
     /// Each server's sessions are stored under its own descriptor, so a
     /// build's first server keeps the sessions it saved as the only one.
@@ -169,6 +227,7 @@ impl FederatedIdentity {
         config: Option<Config>,
         profile: &str,
         peers: Vec<FederatedIdentity>,
+        customers: bool,
     ) -> Result<Self, String> {
         let fingerprint = format!(
             "{:x}",
@@ -178,12 +237,26 @@ impl FederatedIdentity {
             )
         );
         let account = format!("{:x}", Sha256::digest(format!("{profile}\0{fingerprint}")));
+        let root = store::root()?;
+        let customers = customers.then(|| Customers {
+            profile: profile.into(),
+            record: Some(root.join(format!("{account}.customers"))),
+        });
+        let signed_out = Some(root.join(format!("{account}.signed-out")));
         let store = Arc::new(store::SecureStore {
             account: account.clone(),
-            root: store::root()?,
+            root,
             bundled: store::BUNDLED,
         });
-        Ok(Self::build(config, fingerprint, account, store, peers))
+        Ok(Self::build(
+            config,
+            fingerprint,
+            account,
+            store,
+            peers,
+            customers,
+            signed_out,
+        ))
     }
     #[cfg(test)]
     fn with_store(
@@ -192,7 +265,7 @@ impl FederatedIdentity {
         account: String,
         store: Arc<dyn Store>,
     ) -> Self {
-        Self::build(config, fingerprint, account, store, Vec::new())
+        Self::build(config, fingerprint, account, store, Vec::new(), None, None)
     }
     fn build(
         config: Option<Config>,
@@ -200,7 +273,10 @@ impl FederatedIdentity {
         account: String,
         store: Arc<dyn Store>,
         peers: Vec<FederatedIdentity>,
+        customers: Option<Customers>,
+        signed_out: Option<std::path::PathBuf>,
     ) -> Self {
+        let force_login = signed_out.as_deref().is_some_and(std::path::Path::exists);
         let snapshot = Snapshot {
             status: if config.is_some() {
                 Status::Restoring
@@ -221,10 +297,11 @@ impl FederatedIdentity {
             expires_at: None,
             expiring: false,
             cleanup: false,
+            renewing: false,
         };
         let (changes, _) = watch::channel(snapshot.clone());
         let (account_changes, _) = watch::channel(None);
-        Self(Arc::new(Inner {
+        let identity = Self(Arc::new(Inner {
             config,
             fingerprint,
             account,
@@ -241,36 +318,101 @@ impl FederatedIdentity {
                 callback: None,
                 renewal: None,
                 account: None,
+                force_login,
             }),
             operation: AsyncMutex::new(()),
             changes,
             account_changes,
+            #[cfg(test)]
+            install_gate: Mutex::default(),
             agent_tokens: Mutex::default(),
             assertions: Mutex::new(Default::default()),
             discoveries: Mutex::new(Default::default()),
+            retiring: Mutex::default(),
             peers,
+            customers,
+            derived: Mutex::default(),
+            on_peer: Mutex::default(),
+            signed_out,
             #[cfg(test)]
             revocations: Mutex::default(),
-        }))
+            #[cfg(test)]
+            logins: Mutex::default(),
+        }));
+        // Every customer server added before, so its grants and session are
+        // reachable whether or not its communities are still joined.
+        let known = identity.0.customers.as_ref().map(Customers::hosts);
+        for host in known.into_iter().flatten() {
+            if let Err(error) = identity.server_for(&format!("wss://{host}")) {
+                eprintln!("A Builderlab customer's sign-in server was not added: {error}");
+            }
+        }
+        identity
     }
     /// The server for a canonical relay, chosen by its host from the
-    /// compiled list, never by the relay. A community no server covers stays
-    /// with this one, which attaches no token for it.
+    /// compiled list, else the Builderlab customer's server its host names,
+    /// never by the relay. A community no server covers stays with this one,
+    /// which attaches no token for it.
     pub(crate) fn server_for(&self, relay: &str) -> Result<Self, String> {
-        for peer in &self.0.peers {
-            if let Some(config) = &peer.0.config {
+        let compiled = || std::iter::once(self).chain(&self.0.peers);
+        for server in compiled() {
+            if let Some(config) = &server.0.config {
                 if config.matches_relay(relay)? {
-                    return Ok(peer.clone());
+                    return Ok(server.clone());
                 }
             }
         }
-        Ok(self.clone())
+        let (Some(customers), Some(config)) =
+            (&self.0.customers, customers::builderlab_customer(relay))
+        else {
+            return Ok(self.clone());
+        };
+        let same = |server: &Self| server.config().is_some_and(|c| c.id == config.id);
+        // Held while the server is made and prepared, so it is used only once
+        // every `on_peer` hook has run. No hook may route a community or list
+        // servers (`server_for`, `servers`, `peers`): that would deadlock.
+        let mut derived = lock(&self.0.derived);
+        if let Some(server) = derived.iter().find(|server| same(server)) {
+            return Ok(server.clone());
+        }
+        // A compiled server already has that id: the community has none.
+        // Nor does it once the app is closing.
+        if compiled().any(same) || self.closed() {
+            return Ok(self.clone());
+        }
+        let host = config.community_hosts[0].clone();
+        let server = Self::open(Some(config), &customers.profile, Vec::new(), false)?;
+        // Listed first, so no grant is ever stored with a server a later
+        // launch would not add again.
+        customers.remember(&host)?;
+        for prepare in lock(&self.0.on_peer).iter() {
+            prepare(&server);
+        }
+        derived.push(server.clone());
+        Ok(server)
+    }
+    /// Has every server added after startup, and each one added already,
+    /// first get `prepare`. It runs holding the list of added servers, so it
+    /// must not route a community or list servers (see `server_for`).
+    pub(crate) fn on_peer(&self, prepare: OnPeer) {
+        let derived = lock(&self.0.derived);
+        for server in derived.iter() {
+            prepare(server);
+        }
+        lock(&self.0.on_peer).push(prepare);
+    }
+    /// The other servers: compiled peers, then those added since.
+    fn peers(&self) -> Vec<Self> {
+        let mut peers = self.0.peers.clone();
+        peers.extend(lock(&self.0.derived).iter().cloned());
+        peers
     }
     /// This server, then its peers: every configured sign-in server.
-    fn servers(&self) -> impl Iterator<Item = &Self> {
-        std::iter::once(self)
-            .chain(&self.0.peers)
+    fn servers(&self) -> Vec<Self> {
+        std::iter::once(self.clone())
+            .chain(self.peers())
             .filter(|server| server.0.config.is_some())
+            .collect()
     }
     /// The server named by a sign-in command, by community or by id: this
     /// one with neither.
@@ -283,8 +425,8 @@ impl FederatedIdentity {
             (Some(relay), None) => self.server_for(&config::canonical_relay(relay)?),
             (None, Some(id)) => self
                 .servers()
+                .into_iter()
                 .find(|server| server.0.config.as_ref().is_some_and(|c| c.id == id))
-                .cloned()
                 .ok_or_else(|| "Unknown sign-in server".into()),
             (None, None) => Ok(self.clone()),
             (Some(_), Some(_)) => Err("Name a community or a sign-in server, not both".into()),
@@ -298,6 +440,27 @@ impl FederatedIdentity {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    /// Has every sign-out and change of account first record `retiring`
+    /// durably; one it cannot record does not happen.
+    pub(crate) fn on_retire(&self, retiring: Retiring) {
+        *self
+            .0
+            .retiring
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(retiring);
+    }
+    pub(crate) async fn record_retirement(&self) -> Result<Option<RetiringGuard>, String> {
+        let retiring = self
+            .0
+            .retiring
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        match retiring {
+            Some(retiring) => retiring().await,
+            None => Ok(None),
+        }
     }
     fn publish(&self, state: &State) {
         self.0.changes.send_replace(state.snapshot.clone());
@@ -316,6 +479,9 @@ impl FederatedIdentity {
         for peer in &self.0.peers {
             peer.emit(app.clone(), "federated-identity-community");
         }
+        self.on_peer(Arc::new(move |peer| {
+            peer.emit(app.clone(), "federated-identity-community");
+        }));
     }
     fn emit<R: tauri::Runtime>(&self, app: tauri::AppHandle<R>, event: &'static str) {
         let mut changes = self.0.changes.subscribe();
@@ -352,7 +518,8 @@ impl FederatedIdentity {
         state.account = Some(email);
         self.signal(change);
     }
-    /// Make `session` current and watch for its expiry. The caller publishes.
+    /// Make `session` current and watch for its expiry. The caller publishes
+    /// and settles `State::force_login`.
     fn install_session(&self, state: &mut State, session: Arc<Session>) {
         state.snapshot.status = Status::SignedIn;
         state.snapshot.revision = session.record.revision.clone();
@@ -404,6 +571,10 @@ impl FederatedIdentity {
             }
         });
     }
+    /// This server's descriptor, signed in or not.
+    pub(crate) fn config(&self) -> Option<&Config> {
+        self.0.config.as_ref()
+    }
     /// Lend the current session token to `use_session` without letting it escape.
     #[allow(dead_code)] // Consumed by the agent token client.
     pub(crate) fn with_session<T>(
@@ -426,9 +597,30 @@ impl FederatedIdentity {
     pub(crate) fn agent_grant_key(&self, owner: &str, agent: &str) -> String {
         store::agent_grant_key(&self.0.account, owner, agent)
     }
+    /// The account a local pairing is bound to: the secure-store account and
+    /// the signed-in email (`None` without NIP-FI or when signed out). `None`
+    /// overall while that is not settled yet (restoring, signing in, expired,
+    /// unavailable), so nothing is judged against a session still loading.
+    pub(crate) fn pairing_account(&self) -> Option<(String, Option<String>)> {
+        let state = self.state();
+        let email = match state.snapshot.status {
+            Status::SignedIn => state.snapshot.email.clone(),
+            Status::Unconfigured | Status::SignedOut if !state.closed => None,
+            _ => return None,
+        };
+        Some((self.0.account.clone(), email))
+    }
+    /// Whether the sign-in expired and the person must sign in again.
+    pub(crate) fn expired(&self) -> bool {
+        self.state().snapshot.status == Status::ReauthenticationRequired
+    }
     /// How many times derived agent credentials have been retired this run.
     pub(crate) fn retirements(&self) -> u64 {
         self.state().retirements
+    }
+    /// Whether the identity was closed for good; nothing derived acts again.
+    pub(crate) fn closed(&self) -> bool {
+        self.state().closed
     }
     pub(crate) fn current(&self, revision: &str) -> bool {
         let state = self.state();
@@ -465,6 +657,15 @@ impl FederatedIdentity {
         state.snapshot.cleanup = true;
         self.publish(&state);
     }
+    /// Starts or ends a renewal's browser wait, and says so in the snapshot.
+    fn set_renewal(&self, state: &mut State, renewal: Option<CancellationToken>) {
+        let renewing = renewal.is_some();
+        state.renewal = renewal;
+        if state.snapshot.renewing != renewing {
+            state.snapshot.renewing = renewing;
+            self.publish(state);
+        }
+    }
     fn retire_state(
         &self,
         state: &mut State,
@@ -494,6 +695,7 @@ impl FederatedIdentity {
         // Synchronous cleanup lets a replacement login register immediately.
         state.callback.take();
         state.renewal = None;
+        state.snapshot.renewing = false;
         state.cancellation = CancellationToken::new();
     }
     pub(crate) fn close(&self) {
@@ -501,10 +703,16 @@ impl FederatedIdentity {
             peer.close();
         }
         self.clear_discoveries();
-        let mut state = self.state();
-        self.retire_state(&mut state, Status::SignedOut, None);
-        state.closed = true;
-        state.retirements += 1;
+        {
+            let mut state = self.state();
+            self.retire_state(&mut state, Status::SignedOut, None);
+            state.closed = true;
+            state.retirements += 1;
+        }
+        // After closing, so none is added that stays open (`server_for`).
+        for peer in lock(&self.0.derived).iter() {
+            peer.close();
+        }
     }
     async fn storage<T: Send + 'static>(
         &self,
@@ -731,7 +939,10 @@ impl FederatedIdentity {
         };
         state.restored = true;
         match result {
-            Ok(Some(session)) => self.install_session(&mut state, session),
+            Ok(Some(session)) => {
+                self.install_session(&mut state, session);
+                self.reread_signed_out(&mut state);
+            }
             Ok(None) => state.snapshot.status = Status::SignedOut,
             Err(failure) => {
                 if failure.session_denied {
@@ -751,9 +962,11 @@ impl FederatedIdentity {
         revision
     }
     /// A renewal that fails returns its failure code; it changes nothing else.
+    /// `start` is what the browser step asks of the identity provider.
     pub(crate) async fn sign_in<R: tauri::Runtime>(
         &self,
         app: &tauri::AppHandle<R>,
+        start: LoginStart,
     ) -> Result<Snapshot, &'static str> {
         let (observed, attempt) = {
             let state = self.state();
@@ -787,7 +1000,7 @@ impl FederatedIdentity {
             attempt
         };
         let observed = self.restore_locked(attempt).await;
-        let (revision, cancel, renewing) = {
+        let (revision, cancel, renewing, start) = {
             let mut state = self.state();
             if state.closed
                 || state.snapshot.revision != observed
@@ -797,12 +1010,13 @@ impl FederatedIdentity {
             {
                 return Ok(state.snapshot.clone());
             }
+            let start = state.asking(start);
             if state.session.is_some() {
                 // Signing in again keeps the current session live until the
                 // new one is installed; ending that session ends this attempt.
                 let cancel = state.cancellation.child_token();
-                state.renewal = Some(cancel.clone());
-                (state.snapshot.revision.clone(), cancel, true)
+                self.set_renewal(&mut state, Some(cancel.clone()));
+                (state.snapshot.revision.clone(), cancel, true, start)
             } else {
                 // Admission and retirement are atomic with cancellation/sign-out.
                 self.retire_state(&mut state, Status::SigningIn, None);
@@ -810,10 +1024,11 @@ impl FederatedIdentity {
                     state.snapshot.revision.clone(),
                     state.cancellation.clone(),
                     false,
+                    start,
                 )
             }
         };
-        let result = self.login(app, &revision, &cancel, operation).await;
+        let result = self.login(app, &revision, &cancel, operation, start).await;
         if renewing {
             self.renewed(&revision, &cancel, result)?;
         } else if let Err(failure) = result {
@@ -833,7 +1048,7 @@ impl FederatedIdentity {
         if cancel.is_cancelled() || state.closed || state.snapshot.revision != revision {
             return Ok(());
         }
-        state.renewal = None;
+        self.set_renewal(&mut state, None);
         match result {
             Err(failure) if failure.code != "sign-in-canceled" => Err(failure.code),
             _ => Ok(()),
@@ -845,6 +1060,7 @@ impl FederatedIdentity {
         revision: &str,
         cancel: &CancellationToken,
         operation: tokio::sync::MutexGuard<'_, ()>,
+        start: LoginStart,
     ) -> Result<(), Failure> {
         if cancel.is_cancelled() {
             return Err("sign-in-canceled".into());
@@ -854,18 +1070,25 @@ impl FederatedIdentity {
         getrandom::fill(bytes.as_mut()).map_err(|_| "random-unavailable")?;
         let secret = Zeroizing::new(URL_SAFE_NO_PAD.encode(bytes.as_ref()));
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(secret.as_bytes()));
-        let mut login = config.endpoint("/v1/login/start");
-        login
-            .query_pairs_mut()
-            .append_pair("handoff_challenge", &challenge)
-            .append_pair("handoff_challenge_method", "S256");
+        let login = login_start(config, &challenge, start);
+        #[cfg(test)]
+        self.0
+            .logins
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(login.to_string());
         let callback = app.state::<crate::oauth_callback::OAuthCallbackHost>();
         let attempt = callback
-            .begin_federated(&self.0.fingerprint, login.to_string(), |url| {
-                app.opener()
-                    .open_url(url, None::<&str>)
-                    .map_err(|_| "browser-unavailable".into())
-            })
+            .begin_federated(
+                &self.0.fingerprint,
+                login.to_string(),
+                |url| {
+                    app.opener()
+                        .open_url(url, None::<&str>)
+                        .map_err(|_| "browser-unavailable".into())
+                },
+                crate::oauth_callback::capture_browser(app, login.as_str()),
+            )
             .map_err(|_| "browser-unavailable")?;
         // Drop guards cancel only this callback when the whole login future is canceled.
         let _guard = CallbackGuard(callback.inner().clone(), attempt.id.clone());
@@ -880,32 +1103,44 @@ impl FederatedIdentity {
         drop(operation);
         let response = tokio::select! {
             _ = cancel.cancelled() => Err(Failure::from("sign-in-canceled")),
-            result = callback.wait(&attempt.id) => result.map_err(|error| Failure::from(if error == "Sign-in canceled." { "sign-in-canceled" } else { "callback-refused" })),
+            result = callback.wait(&attempt.id) => result.map_err(|error| Failure::from(callback_failure(&error))),
         };
-        {
-            let mut state = self.state();
-            if state
-                .callback
-                .as_ref()
-                .is_some_and(|guard| guard.1 == attempt.id)
-            {
-                state.callback.take();
+        let result = async {
+            let response = response?;
+            if response.parameters.iter().any(|(name, _)| name == "error") {
+                return Err("login-refused".into());
             }
+            let mut codes = response
+                .parameters
+                .into_iter()
+                .filter(|(name, _)| name == "code");
+            let code = Zeroizing::new(codes.next().ok_or("callback-refused")?.1);
+            if codes.next().is_some() || code.is_empty() || code.len() > 4096 {
+                return Err("callback-refused".into());
+            }
+            self.finish_login(code.as_str(), secret.as_str(), revision, cancel)
+                .await
         }
-        let response = response?;
-        if response.parameters.iter().any(|(name, _)| name == "error") {
-            return Err("login-refused".into());
+        .await;
+        if result.is_ok() {
+            let (callback, app, owner) = (callback.inner().clone(), app.clone(), self.clone());
+            // Publish sign-in immediately; the existing return owner handles its reading delay.
+            tauri::async_runtime::spawn(async move {
+                callback.complete(app, attempt.id.clone()).await;
+                owner.clear_callback(&attempt.id);
+                drop(_guard);
+            });
+        } else {
+            self.clear_callback(&attempt.id);
         }
-        let mut codes = response
-            .parameters
-            .into_iter()
-            .filter(|(name, _)| name == "code");
-        let code = Zeroizing::new(codes.next().ok_or("callback-refused")?.1);
-        if codes.next().is_some() || code.is_empty() || code.len() > 4096 {
-            return Err("callback-refused".into());
+        result
+    }
+
+    fn clear_callback(&self, id: &str) {
+        let mut state = self.state();
+        if state.callback.as_ref().is_some_and(|guard| guard.1 == id) {
+            state.callback.take();
         }
-        self.finish_login(code.as_str(), secret.as_str(), revision, cancel)
-            .await
     }
 
     // Verified exchange and conditional installation form one native transaction.
@@ -966,8 +1201,19 @@ impl FederatedIdentity {
             }
             // Commit point: past here a renewal can't be canceled, only ended
             // with its session, so nothing below has to undo a cancel.
-            state.renewal = None;
+            self.set_renewal(&mut state, None);
         }
+        let changing = matches!(&self.state().account, Some(previous) if *previous != record.email);
+        // Held until this renewal installs or fails.
+        let _retiring = if changing {
+            self.record_retirement()
+                .await
+                .map_err(|_| Failure::from("storage-unavailable"))?
+        } else {
+            None
+        };
+        #[cfg(test)]
+        self.pass_install_gate().await;
         let prepared = agent::AgentTokens::preparing_session(self, record.email.clone())
             .await
             .map_err(|_| Failure::from("storage-unavailable"))?;
@@ -1013,8 +1259,13 @@ impl FederatedIdentity {
             let mut state = self.state();
             if state.snapshot.revision == revision && !state.closed {
                 if state.session.is_some() {
+                    // A committed renewal keeps its return permission through the session reset.
+                    let callback = state.callback.take();
                     self.reset(&mut state);
+                    state.callback = callback;
                 }
+                // A completed browser sign-in is the account chosen.
+                self.mark_signed_out(&mut state, false);
                 self.install_session(&mut state, session.clone());
                 self.publish(&state);
                 true
@@ -1051,6 +1302,7 @@ impl FederatedIdentity {
         if let Some(renewal) = state.renewal.take() {
             renewal.cancel();
             state.callback.take();
+            self.set_renewal(&mut state, None);
         } else if state.snapshot.status == Status::SigningIn {
             self.retire_state(&mut state, Status::SignedOut, None);
         }
@@ -1076,10 +1328,46 @@ impl FederatedIdentity {
             state.restore_attempt += 1;
             state.account = None;
             state.retirements += 1;
+            self.mark_signed_out(&mut state, true);
             (session, state.snapshot.revision.clone())
         };
         self.signal(SessionChange::SignedOut);
         Some((session, revision))
+    }
+    /// Sets `State::force_login` and keeps it on disk, in the state lock, so
+    /// the file follows the order of sign-outs and installs. A tiny local
+    /// write, like `Customers::remember` in the `derived` lock. Always written
+    /// or removed, since other Buzz copies with this profile share the file.
+    /// A failed write still asks for credentials until this run ends or
+    /// restores a session; a failed removal asks once more after a restart or
+    /// restore. Neither changes the session.
+    fn mark_signed_out(&self, state: &mut State, signed_out: bool) {
+        state.force_login = signed_out;
+        let Some(path) = &self.0.signed_out else {
+            return;
+        };
+        let written = if signed_out {
+            path.parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .and_then(|()| std::fs::File::create(path))
+                .and_then(|file| file.sync_all())
+        } else {
+            match std::fs::remove_file(path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                removed => removed,
+            }
+        };
+        if written.is_err() {
+            eprintln!("The sign-in server's sign-out mark could not be saved");
+        }
+    }
+    /// Takes `State::force_login` from the shared file, for a restored
+    /// session: the session may be older than another copy's sign-out, so
+    /// only a browser sign-in, here or in another copy, clears it.
+    fn reread_signed_out(&self, state: &mut State) {
+        if let Some(path) = &self.0.signed_out {
+            state.force_login = path.exists();
+        }
     }
     async fn finish_sign_out(
         &self,
@@ -1140,6 +1428,16 @@ impl FederatedIdentity {
     }
 }
 
+/// The failure code for a browser callback that did not arrive. A timeout keeps
+/// its own code: the person may still be signing up or verifying their email.
+fn callback_failure(error: &str) -> &'static str {
+    match error {
+        "Sign-in canceled." => "sign-in-canceled",
+        crate::oauth_callback::TIMED_OUT => "sign-in-timed-out",
+        _ => "callback-refused",
+    }
+}
+
 /// When to warn that a session ends: 72 hours ahead, so a weekend can't
 /// swallow the warning, but no earlier than halfway through its lifetime.
 fn warning_at(issued: i64, expires: i64) -> i64 {
@@ -1172,6 +1470,36 @@ fn due(now: i64, warn: i64, expires: i64, warned: bool) -> Due {
     }
 }
 
+/// What the browser step asks of the identity provider (`login_start`).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct LoginStart {
+    /// The sign-up screen. Only an explicit Create account asks for it: kgoose
+    /// answers the hint with Auth0's sign-up even over an existing session, so
+    /// a restart, which usually follows sign-up, must not.
+    signup: bool,
+    /// Credentials over the browser's session, which would otherwise finish
+    /// the sign-in as the account Use a different account just left. After
+    /// an explicit sign-out the server asks for them whatever the caller
+    /// passes (`State::force_login`).
+    force_login: bool,
+}
+
+/// The browser step's start URL.
+fn login_start(config: &Config, challenge: &str, start: LoginStart) -> url::Url {
+    let mut login = config.endpoint("/v1/login/start");
+    login
+        .query_pairs_mut()
+        .append_pair("handoff_challenge", challenge)
+        .append_pair("handoff_challenge_method", "S256");
+    if start.signup {
+        login.query_pairs_mut().append_pair("screen_hint", "signup");
+    }
+    if start.force_login {
+        login.query_pairs_mut().append_pair("prompt", "login");
+    }
+    login
+}
+
 // `relay` names the community a sign-in is for and `server` a sign-in
 // server's id; with neither, the build's Builderlab.
 #[tauri::command]
@@ -1196,15 +1524,50 @@ pub(crate) async fn federated_identity_servers(
     }
     Ok(snapshots)
 }
+/// Whether a community requires NIP-FI, from the `/info` discovery its
+/// server shares with admission. A community that doesn't is reached with the
+/// key alone, whatever that server's session does.
+#[tauri::command]
+pub(crate) async fn federated_identity_requires(
+    host: tauri::State<'_, FederatedIdentity>,
+    relay: String,
+) -> Result<bool, String> {
+    let relay = config::canonical_relay(&relay)?;
+    host.server_for(&relay)?
+        .requires_federated_identity(&relay)
+        .await
+}
+/// The user asked to try a community again: its next admission asks the
+/// issuer again instead of repeating a refusal cached this session (NIP-FA).
+#[tauri::command]
+pub(crate) fn federated_identity_ask_again(
+    host: tauri::State<'_, FederatedIdentity>,
+    relay: String,
+) -> Result<(), String> {
+    let relay = config::canonical_relay(&relay)?;
+    // Only a server that exists has refusals cached, so asking again never
+    // makes one (or records its host). Keys end with the relay, so other
+    // communities keep theirs.
+    for server in host.servers() {
+        server.forget_refusals(&relay);
+    }
+    Ok(())
+}
 #[tauri::command]
 pub(crate) async fn federated_identity_sign_in<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     host: tauri::State<'_, FederatedIdentity>,
     relay: Option<String>,
     server: Option<String>,
+    signup: Option<bool>,
+    force_login: Option<bool>,
 ) -> Result<Snapshot, String> {
+    let start = LoginStart {
+        signup: signup.unwrap_or(false),
+        force_login: force_login.unwrap_or(false),
+    };
     let server = host.server_for_command(relay.as_deref(), server.as_deref())?;
-    server.sign_in(&app).await.map_err(String::from)
+    server.sign_in(&app, start).await.map_err(String::from)
 }
 #[tauri::command]
 pub(crate) fn federated_identity_cancel_sign_in(

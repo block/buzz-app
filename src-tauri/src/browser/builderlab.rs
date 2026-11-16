@@ -1,7 +1,7 @@
 //! Native-only viewer exchange. Credentials never enter a URL or website JavaScript.
 use crate::federated_identity::FederatedIdentity;
 use reqwest::header::{HeaderName, HeaderValue};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
 use zeroize::Zeroizing;
@@ -50,6 +50,72 @@ impl TryFrom<RawViewerAuth> for ViewerAuth {
     }
 }
 
+/// Why an app could not be opened. `page` names a refusal the panel explains
+/// with its own page instead of the message alone.
+#[derive(Debug, Serialize)]
+pub struct ViewerError {
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<ViewerPage>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ViewerPage {
+    /// Kgoose refused this viewer. Like its own page, give no reason: an
+    /// unknown or deleted app looks the same as one without access.
+    Denied,
+    /// The exchange could not be reached or failed on its side; trying again,
+    /// or opening the app in the system browser, may work.
+    Unavailable,
+}
+
+fn unavailable(message: &str) -> ViewerError {
+    ViewerError {
+        message: message.into(),
+        page: Some(ViewerPage::Unavailable),
+    }
+}
+
+impl From<String> for ViewerError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            page: None,
+        }
+    }
+}
+impl From<&str> for ViewerError {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+
+impl ViewerAuth {
+    fn federated_revision(&self) -> Option<&str> {
+        match self {
+            Self::Federated(revision) => Some(revision),
+            #[cfg(debug_assertions)]
+            Self::Broker(_) => None,
+        }
+    }
+}
+
+/// A 401 alone never ends the shared FI session. As for other granted calls,
+/// ask the adapter's session route once; it retires the session only when it
+/// has really ended, so Settings shows it expired.
+async fn recheck_refused_session(
+    status: reqwest::StatusCode,
+    revision: Option<String>,
+    fi: FederatedIdentity,
+) {
+    if status != reqwest::StatusCode::UNAUTHORIZED {
+        return;
+    }
+    if let Some(revision) = revision {
+        fi.recheck(&revision).await;
+    }
+}
+
 pub(super) struct Bootstrap {
     #[cfg(target_os = "macos")]
     pub cookie: Zeroizing<String>,
@@ -59,7 +125,7 @@ pub(super) struct Bootstrap {
     pub cookie_domain: String,
 }
 
-fn app_root(domain: &str, target: &str) -> Result<String, String> {
+pub(super) fn app_root(domain: &str, target: &str) -> Result<String, String> {
     if domain.is_empty() {
         return Err("Builderlab Apps sign-in is not configured".into());
     }
@@ -112,22 +178,27 @@ fn cookie(
 }
 
 /// Only feature absence permits browser-login fallback. All authorization and transport failures stay closed.
-fn exchange_available(status: reqwest::StatusCode, federated: bool) -> Result<bool, String> {
+fn exchange_available(status: reqwest::StatusCode, federated: bool) -> Result<bool, ViewerError> {
     if status == reqwest::StatusCode::NOT_FOUND {
         return Ok(false);
     }
     if status.is_success() {
         return Ok(true);
     }
+    if status == reqwest::StatusCode::FORBIDDEN {
+        return Err(ViewerError {
+            message: "Your Builderlab account cannot open this app".into(),
+            page: Some(ViewerPage::Denied),
+        });
+    }
     Err(match status.as_u16() {
         401 if federated => {
             "Sign in again in Settings → Identity → Organization sign-in, then reopen this app"
+                .into()
         }
-        401 => "Sign out and sign in to Builderlab again in Settings, then reopen this app",
-        403 => "Your Builderlab account cannot open this app",
-        _ => "Builderlab viewer sign-in is unavailable. Try reopening this app",
-    }
-    .into())
+        401 => "Sign out and sign in to Builderlab again in Settings, then reopen this app".into(),
+        _ => unavailable("Builderlab viewer sign-in is unavailable. Try reopening this app"),
+    })
 }
 
 /// The exchange endpoint and the header authorizing it. A federated token is
@@ -179,7 +250,7 @@ pub(super) async fn prepare(
     target: &str,
     auth: ViewerAuth,
     fi: &FederatedIdentity,
-) -> Result<Option<Bootstrap>, String> {
+) -> Result<Option<Bootstrap>, ViewerError> {
     let domain = buzzodz_plugins::BUILDERLAB_APPS_DOMAIN;
     if domain.is_empty() {
         return Ok(None);
@@ -190,6 +261,7 @@ pub(super) async fn prepare(
     #[cfg(debug_assertions)]
     let development = matches!(auth, ViewerAuth::Broker(_));
     let federated = !development;
+    let revision = auth.federated_revision().map(str::to_owned);
     let (url, header, credential) = exchange_request(auth, fi)?;
     let client = reqwest::Client::builder()
         .https_only(!development)
@@ -214,7 +286,13 @@ pub(super) async fn prepare(
         .body(body.to_string())
         .send()
         .await
-        .map_err(|_| "Builderlab sign-in request failed")?;
+        .map_err(|_| unavailable("Builderlab sign-in request failed"))?;
+    // The refusal shows now; the session route answers in the background.
+    tokio::spawn(recheck_refused_session(
+        response.status(),
+        revision.clone(),
+        fi.clone(),
+    ));
     if !exchange_available(response.status(), federated)? {
         return Ok(None);
     }
@@ -222,10 +300,10 @@ pub(super) async fn prepare(
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|_| "Invalid Builderlab sign-in response")?
+        .map_err(|_| unavailable("Invalid Builderlab sign-in response"))?
     {
         if bytes.len() + chunk.len() > 4096 {
-            return Err("Invalid Builderlab sign-in response".into());
+            return Err(unavailable("Invalid Builderlab sign-in response"));
         }
         bytes.extend_from_slice(&chunk);
     }
@@ -234,8 +312,8 @@ pub(super) async fn prepare(
         credential: String,
         expires_at: String,
     }
-    let reply: Reply =
-        serde_json::from_slice(&bytes).map_err(|_| "Invalid Builderlab sign-in response")?;
+    let reply: Reply = serde_json::from_slice(&bytes)
+        .map_err(|_| unavailable("Invalid Builderlab sign-in response"))?;
     let viewer_credential = Zeroizing::new(reply.credential);
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -368,10 +446,50 @@ mod tests {
         let unauthorized = reqwest::StatusCode::UNAUTHORIZED;
         assert!(exchange_available(unauthorized, true)
             .unwrap_err()
+            .message
             .contains("Identity → Organization sign-in"));
         assert!(exchange_available(unauthorized, false)
             .unwrap_err()
+            .message
             .contains("sign in to Builderlab again"));
+    }
+
+    #[test]
+    fn refusals_and_outages_name_their_panel_pages() {
+        for federated in [false, true] {
+            for code in [400, 401, 403, 429, 500, 503, 302] {
+                let status = reqwest::StatusCode::from_u16(code).unwrap();
+                let error = exchange_available(status, federated).unwrap_err();
+                let page = match code {
+                    403 => Some(ViewerPage::Denied),
+                    401 => None,
+                    _ => Some(ViewerPage::Unavailable),
+                };
+                assert_eq!(error.page, page, "{code}");
+            }
+        }
+        let denied = exchange_available(reqwest::StatusCode::FORBIDDEN, true).unwrap_err();
+        assert_eq!(
+            serde_json::to_value(&denied).unwrap(),
+            serde_json::json!({
+                "message": "Your Builderlab account cannot open this app",
+                "page": "denied",
+            })
+        );
+        // Other failures carry only their message.
+        let outage = exchange_available(reqwest::StatusCode::BAD_GATEWAY, true).unwrap_err();
+        assert_eq!(
+            serde_json::to_value(&outage).unwrap(),
+            serde_json::json!({
+                "message": "Builderlab viewer sign-in is unavailable. Try reopening this app",
+                "page": "unavailable",
+            })
+        );
+        let other = ViewerError::from("Invalid Builderlab viewer credential");
+        assert_eq!(
+            serde_json::to_value(&other).unwrap(),
+            serde_json::json!({ "message": "Invalid Builderlab viewer credential" })
+        );
     }
 
     #[test]
@@ -467,5 +585,75 @@ mod tests {
             expired(false),
             "Builderlab sign-in expired. Sign in again in Settings"
         );
+    }
+
+    /// The adapter's session route answers every request with `status`.
+    async fn adapter(status: u16) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut head = Vec::new();
+                while !head.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    socket.read_exact(&mut byte).await.unwrap();
+                    head.push(byte[0]);
+                }
+                let line = String::from_utf8(head).unwrap();
+                log.lock()
+                    .unwrap()
+                    .push(line.lines().next().unwrap().to_owned());
+                let body = if status == 200 {
+                    r#"{"expires_at":"2099-01-01T00:00:00Z"}"#
+                } else {
+                    r#"{"error":"session_expired"}"#
+                };
+                let reply = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(reply.as_bytes()).await.unwrap();
+            }
+        });
+        (origin, seen)
+    }
+    fn status(fi: &FederatedIdentity) -> serde_json::Value {
+        serde_json::to_value(fi.snapshot()).unwrap()["status"].clone()
+    }
+
+    #[tokio::test]
+    async fn an_exchange_401_ends_the_session_only_when_the_adapter_denies_it() {
+        let unauthorized = reqwest::StatusCode::UNAUTHORIZED;
+        for (adapter_status, expected) in [(200, "signed-in"), (401, "reauthentication-required")] {
+            let (origin, seen) = adapter(adapter_status).await;
+            let fi = crate::federated_identity::testing::signed_in_at(origin);
+            let current = revision(&fi);
+            recheck_refused_session(unauthorized, Some(current), fi.clone()).await;
+            assert_eq!(status(&fi), expected);
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen.len(), 1);
+            assert!(seen[0].starts_with("GET /v1/session "), "{}", seen[0]);
+        }
+    }
+
+    #[tokio::test]
+    async fn other_exchange_refusals_and_other_sessions_ask_nothing() {
+        let (origin, seen) = adapter(401).await;
+        let fi = crate::federated_identity::testing::signed_in_at(origin);
+        let current = revision(&fi);
+        for code in [200, 400, 403, 404, 429, 500, 503] {
+            let refusal = reqwest::StatusCode::from_u16(code).unwrap();
+            recheck_refused_session(refusal, Some(current.clone()), fi.clone()).await;
+        }
+        // A development broker has no shared session, and a replaced one is not asked about.
+        let unauthorized = reqwest::StatusCode::UNAUTHORIZED;
+        recheck_refused_session(unauthorized, None, fi.clone()).await;
+        recheck_refused_session(unauthorized, Some("stale".into()), fi.clone()).await;
+        assert!(seen.lock().unwrap().is_empty());
+        assert_eq!(status(&fi), "signed-in");
     }
 }

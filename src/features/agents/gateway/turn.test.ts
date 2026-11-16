@@ -46,6 +46,43 @@ describe("turnContextFor", () => {
     expect(Object.isFrozen(turn)).toBe(true);
   });
 
+  it("lowercases uppercase thread roots and message IDs, as the contract requires, instead of failing", () => {
+    const upper = { ...event(), id: "C".repeat(64) };
+    expect(
+      turnContextFor(
+        {
+          type: "mention",
+          event: {
+            ...upper,
+            tags: [
+              ["h", CHANNEL],
+              ["e", ROOT.toUpperCase(), "", "root"],
+              ["e", "F".repeat(64), "", "reply"],
+            ],
+          },
+        },
+        { flat: NOT_FLAT },
+      ),
+    ).toEqual({
+      channel_id: CHANNEL,
+      message_id: "c".repeat(64),
+      thread_id: ROOT,
+    });
+    expect(
+      turnContextFor({ type: "watch", event: upper } as Trigger, {
+        wake: { ...wake, root: ROOT.toUpperCase() },
+        flat: NOT_FLAT,
+      }),
+    ).toEqual({
+      channel_id: CHANNEL,
+      message_id: "c".repeat(64),
+      thread_id: ROOT,
+    });
+    expect(
+      turnContextFor({ ...wake, root: ROOT.toUpperCase() }, { flat: NOT_FLAT }),
+    ).toEqual({ channel_id: CHANNEL, message_id: null, thread_id: ROOT });
+  });
+
   it("roots a top-level mention's thread at itself, and a flat DM has none", () => {
     const top = turnContextFor(
       { type: "mention", event: event() },

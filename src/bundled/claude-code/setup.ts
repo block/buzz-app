@@ -1,7 +1,7 @@
-// Claude on this computer: Buzz's own copy, whether it is signed in, and
-// keeping that copy on the latest release. Each step runs as a declared
+// Claude on this computer: Buzz's own copy, whether it can run (`auth.tsx`),
+// and keeping that copy on the latest release. Each step runs as a declared
 // process; the copy lives apart from any `claude` the user installed, and
-// shares their `~/.claude` sign-in and settings.
+// shares their `~/.claude` settings.
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import type { ReviewPrompt } from "../../features/agent-protection/models";
 import type {
@@ -9,6 +9,7 @@ import type {
   HostRequest,
   HostResponse,
 } from "../../features/host/service";
+import { ClaudeAuth } from "./auth";
 import { ClaudeProcess, ENV, type ClaudeModel, type Spawn } from "./claude";
 import script from "./claude.sh?raw";
 import {
@@ -26,12 +27,17 @@ export type ClaudeStatus =
   | Readonly<{ state: "error"; message: string }>;
 
 const CHECK_TIMEOUT_MS = 15_000;
+/** Claude lists the models its account's flags allow, and refreshes those
+ * flags after it starts, so a list can predate a model's rollout: a picker
+ * looks for it again once it is this old. */
+const MODELS_STALE_MS = 60 * 60_000;
 export type Request = (input: HostRequest) => Promise<HostResponse>;
 
 /** Where Anthropic publishes each release with its checksums. */
 const RELEASES = "https://downloads.claude.ai/claude-code-releases";
-/** Model discovery disables customizations with --safe-mode (2.1.169+). */
-export const MIN_VERSION = "2.1.169";
+/** Sessions pass --system-prompt-snapshot (2.1.267+); model discovery also
+ * needs --safe-mode (2.1.169+). */
+export const MIN_VERSION = "2.1.267";
 /** `uname -sm` to the release's platform name. */
 const PLATFORMS: Readonly<Record<string, string>> = {
   "Darwin arm64": "darwin-arm64",
@@ -46,7 +52,6 @@ const STEPS: Readonly<Record<string, string>> = {
   install: "install",
   use: "use",
   review: "review",
-  "review-token": "review-token",
 };
 /** Starts `claude` and its other steps as steps of `claude.sh`, which the
  * manifest grants as `bash -c`; other processes start as declared. */
@@ -144,23 +149,10 @@ const abortable = <T>(work: Promise<T>, signal: AbortSignal) =>
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-const NO_REVIEW_SIGN_IN =
-  "Claude security reviews need their own sign-in. Run claude setup-token in Terminal, then paste the token under Sign in for reviews in Settings → Agent setup → Harness defaults → Claude → Edit configuration. It needs a Claude Pro, Max, Team or Enterprise subscription.";
-const REJECTED_REVIEW_SIGN_IN =
-  "Claude rejected the security-review sign-in. It may have expired (it lasts a year) or been revoked, or the account has no Claude subscription. Run claude setup-token again and paste the new token under Sign in for reviews in Settings → Agent setup → Harness defaults → Claude → Edit configuration.";
-
-/** Security reviews' own Claude folder and the sign-in saved in it, or why
- * there is none to review with. */
-async function reviewSignIn(spawn: Spawn) {
-  const { code, stdout, stderr } = await collect(spawn, "review", []);
-  if (code !== 0)
-    throw new Error(stderr.trim() || "Claude's review sign-in is unreadable");
-  const [home, token] = stdout.split("\n");
-  if (!home?.startsWith("/") || !token) throw new Error(NO_REVIEW_SIGN_IN);
-  return { home, token };
-}
-
-export async function checkClaude(spawn: Spawn): Promise<ClaudeStatus> {
+export async function checkClaude(
+  spawn: Spawn,
+  auth: ClaudeAuth,
+): Promise<ClaudeStatus> {
   let version: string;
   try {
     const result = await collect(spawn, "claude", ["--version"]);
@@ -178,19 +170,9 @@ export async function checkClaude(spawn: Spawn): Promise<ClaudeStatus> {
   if (compareVersions(version, MIN_VERSION) < 0)
     return { state: "outdated", version };
   try {
-    const { stdout } = await collect(spawn, "claude", [
-      "auth",
-      "status",
-      "--json",
-    ]);
-    const status = JSON.parse(stdout) as {
-      loggedIn?: boolean;
-      email?: string;
-      orgName?: string;
-    };
-    if (!status.loggedIn) return { state: "signed-out", version };
-    const account = [status.email, status.orgName].filter(Boolean).join(" · ");
-    return { state: "ready", version, ...(account ? { account } : {}) };
+    const signedIn = await auth.check();
+    if (!signedIn) return { state: "signed-out", version };
+    return { state: "ready", version, ...signedIn };
   } catch {
     return { state: "signed-out", version };
   }
@@ -214,9 +196,22 @@ async function testRelease(spawn: Spawn, version: string) {
   ]);
   if (code !== 0 || !stdout.startsWith(version))
     throw new Error(stderr.trim() || "it did not report its version");
-  const claude = await ClaudeProcess.start(release, {
-    cwd: "~",
-    systemPrompt: "",
+  // Its last words, which say why it quit, e.g. a setting it refused. It
+  // can quit before taking the first request, so this is kept out here.
+  let said = "";
+  const lastWords = () => said.trim().split("\n").at(-1);
+  const claude = await ClaudeProcess.start(
+    (id, options) =>
+      release(id, {
+        ...options,
+        onStderr: (data) => {
+          said = (said + data).slice(-4_000);
+          options?.onStderr?.(data);
+        },
+      }),
+    { cwd: "~", systemPrompt: "" },
+  ).catch((error: unknown) => {
+    throw new Error(lastWords() || message(error));
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -224,11 +219,19 @@ async function testRelease(spawn: Spawn, version: string) {
       claude.models(),
       new Promise<never>((_, reject) => {
         timer = setTimeout(
-          () => reject(new Error("it did not list its models")),
+          () =>
+            reject(
+              new Error(
+                `it did not list its models within ${CHECK_TIMEOUT_MS / 1000} seconds`,
+              ),
+            ),
           CHECK_TIMEOUT_MS,
         );
       }),
     ]);
+    // A release that quits answers nothing, so its stderr is the reason.
+    if (!claude.running)
+      throw new Error(lastWords() || "it quit before listing its models");
     if (!models.length) throw new Error("it did not list its models");
   } finally {
     clearTimeout(timer);
@@ -242,7 +245,7 @@ export type SetupState = Readonly<{
   modelsChecking: boolean;
   modelsError: string;
   checking: boolean;
-  running: "install" | "login" | undefined;
+  running: "install" | "sign-in" | undefined;
   /** The running or last step's output. */
   output: string;
   /** Why the latest release is not the one in use, after it failed its test. */
@@ -268,7 +271,8 @@ export class ClaudeSetup {
   private modelRequest: AbortController | undefined;
   private modelWork: Promise<void> | undefined;
   private cataloging: Promise<SetupState["models"]> | undefined;
-  private modelsLoaded = false;
+  /** When the last discovery ended; undefined until one has. */
+  private modelsLoadedAt: number | undefined;
   /** Cancel was asked for before the running step's process was returned. */
   private cancelled = false;
   /** Releases that failed their test, not downloaded again until restart. */
@@ -277,10 +281,15 @@ export class ClaudeSetup {
    * while Buzz has found no copy to run. */
   private holding: Promise<void> | undefined;
 
+  /** Starts `claude` with the credentials when there are any. */
+  private readonly spawn: Spawn | undefined;
   constructor(
-    private readonly spawn: Spawn | undefined,
+    spawn: Spawn | undefined,
     private readonly request?: Request,
-  ) {}
+    readonly auth = new ClaudeAuth(spawn),
+  ) {
+    this.spawn = spawn && auth.authorize(spawn);
+  }
 
   snapshot = () => this.state;
   providerSnapshot = () => this.health;
@@ -304,11 +313,11 @@ export class ClaudeSetup {
               ...blocking,
               attentionLabel:
                 status.state === "missing"
-                  ? "Install Claude Code"
+                  ? "Install Claude integration"
                   : status.state === "outdated"
                     ? "Update Claude Code"
                     : status.state === "signed-out"
-                      ? "Log in to Claude Code"
+                      ? this.auth.attentionLabel
                       : "Claude Code needs attention",
             },
     );
@@ -331,13 +340,13 @@ export class ClaudeSetup {
     if (this.state.checking || this.state.running) return;
     const previous = this.state.status;
     this.set({ checking: true });
-    const status = await checkClaude(this.spawn);
+    const status = await checkClaude(this.spawn, this.auth);
     const invalidate =
       refreshModels || JSON.stringify(previous) !== JSON.stringify(status);
     if (invalidate) {
       this.modelRequest?.abort();
       this.modelRequest = undefined;
-      this.modelsLoaded = false;
+      this.modelsLoadedAt = undefined;
     }
     this.set({
       status,
@@ -348,47 +357,64 @@ export class ClaudeSetup {
     });
   }
 
-  /** Loads optional model copy only for surfaces that display the catalog.
-   * Callers during a load wait for it. */
+  /** Loads optional model copy only for surfaces that display the catalog,
+   * and again once it is stale. Callers during a load wait for it. */
   loadModels(retry = false) {
     if (this.modelRequest) return this.modelWork;
+    const loadedAt = this.modelsLoadedAt;
     if (
       !this.spawn ||
       this.state.status?.state !== "ready" ||
       this.state.checking ||
-      (this.modelsLoaded && !retry)
+      (loadedAt !== undefined &&
+        !retry &&
+        Date.now() - loadedAt < MODELS_STALE_MS)
     )
       return Promise.resolve();
+    // Refreshing a list it has keeps that list usable, failure included.
+    const quiet = !retry && this.state.models.length > 0;
     const request = new AbortController();
     this.modelRequest = request;
-    this.set({ modelsChecking: true, modelsError: "" });
-    this.modelWork = this.discoverModels(this.spawn, request);
+    if (!quiet) this.set({ modelsChecking: true, modelsError: "" });
+    this.modelWork = this.discoverModels(this.spawn, request, quiet);
     return this.modelWork;
   }
-  private async discoverModels(spawn: Spawn, request: AbortController) {
+  private async discoverModels(
+    spawn: Spawn,
+    request: AbortController,
+    quiet: boolean,
+  ) {
     try {
       const models = await queryModels(spawn, request.signal);
       if (!models.length) throw new Error("Claude did not list its models");
-      if (this.modelRequest === request) this.set({ models });
+      // The same listing keeps the list it has, so nothing keyed on it reruns.
+      if (
+        this.modelRequest === request &&
+        JSON.stringify(models) !== JSON.stringify(this.state.models)
+      )
+        this.set({ models });
     } catch (error) {
-      if (this.modelRequest === request && !request.signal.aborted)
+      if (this.modelRequest === request && !request.signal.aborted && !quiet)
         this.set({
           modelsError: error instanceof Error ? error.message : String(error),
         });
     } finally {
       if (this.modelRequest === request) {
         this.modelRequest = undefined;
-        this.modelsLoaded = true;
+        this.modelsLoadedAt = Date.now();
         this.set({ modelsChecking: false });
       }
     }
   }
-  /** The catalog for a surface that opens without the model picker: found
-   * once, and looked for again only after a discovery that listed nothing. */
+  /** The catalog for a surface that opens without the model picker: looked
+   * for again after a discovery that listed nothing, or once it is stale. A
+   * listed catalog answers at once while its refresh finishes behind it. */
   catalog() {
     this.cataloging ??= (async () => {
       if (!this.state.status) await this.check();
-      await this.loadModels(!this.state.models.length);
+      const listed = this.state.models.length > 0;
+      const loading = this.loadModels(!listed);
+      if (!listed) await loading;
       return this.state.models;
     })().finally(() => {
       this.cataloging = undefined;
@@ -404,7 +430,7 @@ export class ClaudeSetup {
     // Held from the first check: until it answers, there may be no copy.
     return this.hold(
       (async () => {
-        const status = await checkClaude(spawn);
+        const status = await checkClaude(spawn, this.auth);
         this.set({ status });
         if (!needed && status.state === "missing") return;
         await this.run("install", false);
@@ -414,15 +440,17 @@ export class ClaudeSetup {
 
   /** Holds a delivery while Buzz looks for its copy and downloads a first
    * one, so a mention sent meanwhile is answered rather than lost to a
-   * missing copy. Once a copy is found, updating it holds nothing. */
+   * missing copy. A copy too old for Buzz waits for its update too, and
+   * refuses the delivery if it is still too old. Once a usable copy is found,
+   * updating it holds nothing. */
   async installed(signal: AbortSignal) {
-    const found = () => {
-      const status = this.state.status;
-      return status !== undefined && status.state !== "missing";
+    const unusable = () => {
+      const state = this.state.status?.state;
+      return state === "missing" || state === "outdated";
     };
-    // After a first download failed, a mention tries it again.
-    if (!this.holding && this.state.status?.state === "missing")
-      void this.update(true);
+    const found = () => this.state.status !== undefined && !unusable();
+    // After a first download or an update failed, a mention tries it again.
+    if (!this.holding && unusable()) void this.update(true);
     for (let work = this.holding; work && !found(); work = this.holding) {
       const ended = work;
       await new Promise<void>((resolve, reject) => {
@@ -447,6 +475,11 @@ export class ClaudeSetup {
         if (signal.aborted) abort();
       });
     }
+    const status = this.state.status;
+    if (status?.state === "outdated")
+      throw new Error(
+        `Claude ${status.version} is older than Buzz needs (${MIN_VERSION}), and updating it failed. Update it in Settings.`,
+      );
   }
   /** Makes `work` what deliveries wait on, until it ends. */
   private hold(work: Promise<void>) {
@@ -457,17 +490,18 @@ export class ClaudeSetup {
     return held;
   }
 
-  /** Installs or updates Buzz's copy, or runs sign-in; then checks again.
-   * Asked for by the person, it also retries a release that failed its test,
-   * and shows only this step's output. */
-  run(step: "install" | "login", asked = true) {
+  /** Installs or updates Buzz's copy, or runs the interactive sign-in when
+   * there is one; then checks again. Asked for by the person, it also
+   * retries a release that failed its test, and shows only this step's
+   * output. */
+  run(step: "install" | "sign-in", asked = true) {
     if (!this.spawn || this.state.running) return Promise.resolve();
     const work = this.perform(this.spawn, step, asked);
     return step === "install" ? this.hold(work) : work;
   }
   private async perform(
     spawn: Spawn,
-    step: "install" | "login",
+    step: "install" | "sign-in",
     asked: boolean,
   ) {
     this.cancelled = false;
@@ -475,7 +509,10 @@ export class ClaudeSetup {
     this.set({ running: step, ...(asked ? { output: "" } : {}) });
     try {
       if (step === "install") await this.install(spawn);
-      else await this.step(spawn, "claude", ["auth", "login"], "Sign-in");
+      else
+        await this.auth.signIn?.((id, args, label) =>
+          this.step(spawn, id, args, label),
+        );
     } catch (error) {
       this.log(`\n${message(error)}`);
     } finally {
@@ -516,7 +553,7 @@ export class ClaudeSetup {
   /** Downloads the latest release, checks it against its published checksum,
    * tests it, and only then makes it the one new sessions start. */
   private async install(spawn: Spawn) {
-    const status = await checkClaude(spawn);
+    const status = await checkClaude(spawn, this.auth);
     const current = "version" in status ? status.version : undefined;
     const latest = (await this.fetch("latest")).trim();
     if (!/^\d+\.\d+\.\d+$/.test(latest))
@@ -567,9 +604,9 @@ export class ClaudeSetup {
       );
     if (!this.spawn) throw new Error("Claude review needs the desktop app");
     const timeout = AbortSignal.any([signal, AbortSignal.timeout(60_000)]);
-    // Signed in apart from `~/.claude`, which contained agents can write; and
-    // without that sign-in, closed before any download or model.
-    const review = await abortable(reviewSignIn(this.spawn), timeout);
+    // Its own folder in place of `~/.claude`, which contained agents can
+    // write; and without credentials, closed before any download or model.
+    const review = await abortable(this.auth.review(), timeout);
     // A verdict comes only from the release the host verified.
     await this.protectedInstalled(timeout);
     const worker = await ClaudeProcess.start(this.spawn, {
@@ -589,11 +626,9 @@ export class ClaudeSetup {
       timeout.throwIfAborted();
       if (!result.ok)
         throw new Error(
-          /authentication_error|OAuth token .*(expired|revoked)/i.test(
-            result.error ?? "",
-          )
-            ? REJECTED_REVIEW_SIGN_IN
-            : (result.error ?? "The security model did not complete"),
+          result.error
+            ? this.auth.explain(result.error)
+            : "The security model did not complete",
         );
       return {
         text: prompt.outputSchema ? worker.structuredResult : worker.result,
@@ -654,35 +689,6 @@ export class ClaudeSetup {
   /** Sends a line to the running step, such as a sign-in code. */
   answer(text: string) {
     return this.process?.write(`${text}\n`);
-  }
-  /** Saves the token `claude setup-token` printed as security reviews' own
-   * sign-in. Like a sign-in code it goes on stdin, never in an argument, and
-   * the step prints only fixed lines, which this returns or throws. */
-  async saveReviewSignIn(token: string, signal: AbortSignal) {
-    if (!this.spawn) throw new Error("Claude reviews need the desktop app");
-    let output = "";
-    const process = await this.spawn("review-token", {
-      onStdout: (text) => {
-        output += text;
-      },
-      onStderr: (text) => {
-        output += text;
-      },
-    });
-    const stop = () => void process.kill();
-    signal.addEventListener("abort", stop, { once: true });
-    if (signal.aborted) stop();
-    try {
-      await process.end(`${token}\n`);
-      const code = await process.exited;
-      if (code !== 0)
-        throw new Error(
-          output.trim() || `Saving ended (${code ?? "stopped"}).`,
-        );
-      return output.trim();
-    } finally {
-      signal.removeEventListener("abort", stop);
-    }
   }
   cancel() {
     this.cancelled = true;

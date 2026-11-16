@@ -1,3 +1,4 @@
+import type { ReviewText } from "./json-stream";
 export type ReviewModel = Readonly<{
   runtime: string;
   provider?: string;
@@ -12,12 +13,12 @@ import type { HostProcess, HostProcessOptions } from "../host/service";
 /** Launches only a review worker declared by the protecting plugin. It lasts
  * as long as that plugin's protection, which kills what it launched. */
 export type ProtectedSpawn = (
-  options: Omit<HostProcessOptions, "protection">,
+  options: Omit<HostProcessOptions, "protection" | "protectedAgent">,
 ) => Promise<HostProcess>;
 /** Plugin-owned instructions and evidence, separate from runtime credentials. */
 export type ReviewPrompt = Readonly<{
   system: string;
-  input: string;
+  input: ReviewText;
   outputSchema?: Readonly<Record<string, unknown>>;
 }>;
 /** Runtime-owned inference uses its configured credentials, with no tools.

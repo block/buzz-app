@@ -7,6 +7,7 @@ import {
 import { useProfileMessage } from "./useProfileMessage";
 import {
   useState,
+  useSyncExternalStore,
   useEffect,
   useRef,
   useId,
@@ -20,7 +21,13 @@ import { usePresenceStatus } from "../presence/react";
 import type { RelaySession } from "../relay/session";
 import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { ProfileBackdrop } from "./ProfileBackdrop";
+import { ProfileLocalTime } from "./ProfileLocalTime";
 import styles from "./ProfilePeek.module.css";
+import {
+  otherVerifiedName,
+  useNamePreference,
+  verifiedLabel,
+} from "./name-preference";
 
 type ProfilePeekProps = {
   trigger: ReactElement;
@@ -35,6 +42,48 @@ type ProfilePeekProps = {
   onOpen(target: string): boolean;
   onFocusChange?(focused: boolean): void;
 };
+
+/** The verified name this reader does not go by. Mounted only in an open
+ * preview, so closed rows never subscribe to the directory. */
+function OtherName({
+  session,
+  pubkey,
+}: {
+  session: RelaySession;
+  pubkey: string;
+}) {
+  const verified = useSyncExternalStore(
+    session.profiles.subscribe,
+    () => session.profiles.snapshot().get(pubkey)?.verified,
+  );
+  const preference = useNamePreference();
+  const otherName =
+    verified &&
+    otherVerifiedName(verifiedLabel(verified, preference), verified);
+  return otherName ? (
+    <div className="text-caption text-secondary">{otherName}</div>
+  ) : null;
+}
+
+/** Their shared local time, read only while the preview is open. */
+function LocalTime({
+  session,
+  pubkey,
+}: {
+  session: RelaySession;
+  pubkey: string;
+}) {
+  const timeZone = useSyncExternalStore(
+    session.profiles.subscribe,
+    () => session.profiles.snapshot().get(pubkey)?.tz,
+  );
+  return (
+    <ProfileLocalTime
+      timeZone={timeZone}
+      className="text-caption text-secondary"
+    />
+  );
+}
 
 /** A lightweight look at the same identity the avatar opens in the profile panel. */
 export function ProfilePeek({
@@ -213,6 +262,8 @@ export function ProfilePeek({
               {agent && <RobotIcon aria-label="Agent" size={14} />}
               {name}
             </div>
+            {session && <OtherName session={session} pubkey={pubkey} />}
+            {session && <LocalTime session={session} pubkey={pubkey} />}
             {session && (
               <UserStatusDisplay
                 session={session}

@@ -114,6 +114,25 @@ it("fails closed when the native session event listener cannot be registered", a
   expect(invoke).not.toHaveBeenCalledWith("federated_identity_snapshot");
 });
 
+it("asks native for the sign-up screen and a forced login only when the sign-in asks for them", async () => {
+  const { service } = setup();
+  await vi.waitFor(() => expect(service.snapshot()).toBe(signedOut));
+  await service.signIn();
+  await service.signIn({ signup: true });
+  await service.signIn({ forceLogin: true });
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(
+        ([command]) => command === "federated_identity_sign_in",
+      ),
+  ).toEqual([
+    ["federated_identity_sign_in", { signup: false, forceLogin: false }],
+    ["federated_identity_sign_in", { signup: true, forceLogin: false }],
+    ["federated_identity_sign_in", { signup: false, forceLogin: true }],
+  ]);
+});
+
 it("reauthorizes on sign-in and account change, not on startup restore or sign-out", async () => {
   const h = federatedFixture();
   h.publish({ status: "restoring" });

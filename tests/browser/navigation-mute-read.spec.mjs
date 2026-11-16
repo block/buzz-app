@@ -1,7 +1,8 @@
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { holdReadingFocus } from "./reading.mjs";
+import { holdReadingFocus, readJournal } from "./reading.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 // Browser-only boundary: real shared-menu focus/dismissal, production broker,
 // IndexedDB reload and app-global preference startup. Policy matrices live in Vitest.
@@ -37,25 +38,25 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     "aria-label",
     /^6 observed unread messages/,
   );
-  await expect(badge(alpha)).toHaveAttribute(
-    "aria-label",
-    /^8 observed unread messages/,
-  );
+  // The selected channel's row is quiet; read state proves nothing read it.
+  const alphaUnread = async () => {
+    const frontiers = (await readJournal(page))?.state.frontiers ?? {};
+    return frontiers.alpha === undefined && !frontiers["activity:alpha"];
+  };
+  await expect(badge(alpha)).toHaveCount(0);
+  expect(await alphaUnread()).toBe(true);
   await beta.focus();
   await page.keyboard.press("Shift+F10");
   await expect(menu).toBeVisible();
-  // This fixture's legacy "beta" id cannot authorize lifecycle commands. Its
-  // failed permission group must not remove or disable the existing actions.
-  await expect(menu.getByRole("alert")).toHaveText(
-    "Channel actions unavailable",
-  );
+  // This fixture's legacy "beta" id cannot carry lifecycle commands, so the
+  // menu offers none beside the others.
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Move channel",
     "Mute",
     "Mark as read",
     "Copy link",
-    "Retry channel permissions",
   ]);
+  await expect(menu.getByRole("alert")).toHaveCount(0);
   await expect(menu.getByRole("separator")).toHaveCount(0);
   for (const name of ["Mute", "Mark as read"]) {
     await expect(
@@ -118,7 +119,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   ).toBeEnabled();
   await page.keyboard.press("Escape");
   await page.unroute("**/sidebar-mute");
-  // The persistent sidebar keeps retry UI and actions usable outside Messages.
+  // Session-owned retry UI remains usable while the sidebar is hidden.
   await openPage(page, "Workflows");
   await expect(
     page.getByRole("heading", { name: "Workflows", exact: true }),
@@ -127,6 +128,9 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await failure.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(failure).toHaveCount(0);
   await expect(menu).toHaveCount(0);
+  await expect(beta).toBeHidden();
+  await openPage(page, "Messages");
+  await beta.focus();
   await expect(beta).toBeFocused();
   await expect(badge(beta)).toHaveCount(0);
   await expect(
@@ -151,14 +155,9 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   const clickedBefore = await seconds();
   await expect(beta).toBeFocused();
   await expect(badge(beta)).toHaveCount(0);
-  await expect(badge(alpha)).toHaveAttribute(
-    "aria-label",
-    /^8 observed unread messages/,
-  );
-  await expect(alpha).not.toHaveAttribute("aria-current", "page");
-  await expect(
-    page.getByRole("heading", { name: "Workflows", exact: true }),
-  ).toBeVisible();
+  await expect(badge(alpha)).toHaveCount(0);
+  expect(await alphaUnread()).toBe(true);
+  await expect(alpha).toHaveAttribute("aria-current", "page");
   await expect
     .poll(
       () =>
@@ -180,10 +179,8 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await page.keyboard.press("Escape");
   await expect(beta).toBeFocused();
   await expect(beta.getByLabel(/^(Muting;|Muted;)/)).toHaveCount(0);
-  await expect(badge(alpha)).toHaveAttribute(
-    "aria-label",
-    /^8 observed unread messages/,
-  );
+  await expect(badge(alpha)).toHaveCount(0);
+  expect(await alphaUnread()).toBe(true);
   await expect(badge(beta)).toHaveCount(0);
   await beta.click({ button: "right" });
   const markUnread = menu.getByRole("menuitem", {
@@ -239,10 +236,8 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   }
   await expect(localMark).toHaveCount(0);
   await expect(badge(beta)).toHaveCount(0);
-  await expect(badge(alpha)).toHaveAttribute(
-    "aria-label",
-    /^8 observed unread messages/,
-  );
+  await expect(badge(alpha)).toHaveCount(0);
+  expect(await alphaUnread()).toBe(true);
   await page.keyboard.press("Shift+F10");
   await expect(markUnread).toBeVisible();
   const unmute = holdResponse(page, "**/sidebar-mute");
@@ -285,7 +280,6 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     "Mute",
     "Mark as unread",
     "Copy link",
-    "Retry channel permissions",
   ]);
   await expect(menu.getByRole("separator")).toHaveCount(0);
   await page.keyboard.press("Escape");
@@ -345,13 +339,7 @@ function holdResponse(page, pattern) {
 // Capture the real built app menu, without unrelated conversation content.
 async function captureActions(page, menu, path) {
   // Page screenshots do not wait for the menu's entrance transition to finish.
-  await menu.evaluate(async (element) => {
-    await Promise.all(
-      element
-        .getAnimations({ subtree: true })
-        .map((animation) => animation.finished),
-    );
-  });
+  await animationsSettled(menu, { subtree: true });
   const first = await menu.getByRole("menuitem").first().boundingBox();
   const last = await menu
     .getByRole("menuitem", { name: /^Mark as (read|unread)$/ })

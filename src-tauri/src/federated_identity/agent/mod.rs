@@ -57,6 +57,8 @@ pub(super) struct Inner {
     /// The tokens of the build's other sign-in servers, one per peer of
     /// `identity`; only the first server's tokens have them.
     peers: Vec<AgentTokens>,
+    /// The tokens of servers `identity` added after startup, made as each is.
+    derived: Mutex<Vec<AgentTokens>>,
     /// Signalled when the next sign-out waits for a grant write holding `retired`.
     #[cfg(test)]
     contended: Mutex<Option<std::sync::mpsc::Sender<()>>>,
@@ -69,6 +71,8 @@ pub(super) struct Inner {
         )>,
     >,
 }
+/// Each server's grant store, for servers at startup and added later.
+type Stores = Arc<dyn Fn(&FederatedIdentity) -> Arc<dyn GrantStore> + Send + Sync>;
 /// A session being installed, holding the wipe transaction open.
 pub(super) struct Prepared {
     tokens: AgentTokens,
@@ -152,6 +156,14 @@ impl Admission {
     pub(crate) fn header(&self) -> Option<&str> {
         self.cached.as_ref().map(|cached| cached.header.as_str())
     }
+    pub(crate) fn assertion(&self) -> Option<&str> {
+        self.header()
+            .and_then(|header| header.strip_prefix("Bearer "))
+    }
+    /// When its assertion expires; `None` where the community takes none.
+    pub(crate) fn expires_at(&self) -> Option<tokio::time::Instant> {
+        self.cached.as_ref().map(|cached| cached.expires_at)
+    }
     pub(crate) fn dispatch(&self) -> Result<(), String> {
         self.commit(false, || Ok(()))?;
         if self
@@ -216,9 +228,12 @@ impl AgentTokens {
     /// Each server's grants are stored under its own account, so the first
     /// server's grants keep the keys they had as the only server.
     pub(crate) fn new(identity: FederatedIdentity) -> Self {
-        Self::with_stores(identity, &|server| {
-            Arc::new(SecureGrantStore(server.0.account.clone()))
-        })
+        Self::with_stores(
+            identity,
+            Arc::new(|server: &FederatedIdentity| {
+                Arc::new(SecureGrantStore(server.0.account.clone())) as Arc<dyn GrantStore>
+            }),
+        )
     }
     /// Tokens for a build without an organization: agents send no evidence.
     #[cfg(test)]
@@ -228,14 +243,19 @@ impl AgentTokens {
             Arc::new(grant::tests::MemoryGrants::default()),
         )
     }
+    /// Grants kept in memory, for `identity`'s owner.
+    #[cfg(test)]
+    pub(crate) fn in_memory(identity: FederatedIdentity) -> Self {
+        Self::with_store(identity, Arc::new(grant::tests::MemoryGrants::default()))
+    }
     #[cfg(test)]
     fn with_store(identity: FederatedIdentity, store: Arc<dyn GrantStore>) -> Self {
-        Self::with_stores(identity, &|_| store.clone())
+        Self::with_stores(
+            identity,
+            Arc::new(move |_: &FederatedIdentity| store.clone()),
+        )
     }
-    fn with_stores(
-        identity: FederatedIdentity,
-        store: &dyn Fn(&FederatedIdentity) -> Arc<dyn GrantStore>,
-    ) -> Self {
+    fn with_stores(identity: FederatedIdentity, store: Stores) -> Self {
         let (slots, incarnations) = (Arc::default(), Arc::default());
         let peers = identity
             .0
@@ -246,13 +266,30 @@ impl AgentTokens {
                 Self::server(peer.clone(), store(peer), slots, incarnations, Vec::new())
             })
             .collect();
-        Self::server(
+        let tokens = Self::server(
             identity.clone(),
             store(&identity),
             slots,
             incarnations,
             peers,
-        )
+        );
+        let first = Arc::downgrade(&tokens.0);
+        identity.on_peer(Arc::new(move |server| {
+            let Some(first) = first.upgrade() else { return };
+            let (slots, incarnations) = (first.slots.clone(), first.incarnations.clone());
+            let added = Self::server(
+                server.clone(),
+                store(server),
+                slots,
+                incarnations,
+                Vec::new(),
+            );
+            lock(&first.derived).push(added.clone());
+            if let Some(agents) = first.agents.get() {
+                added.follow_account(agents.clone());
+            }
+        }));
+        tokens
     }
     fn server(
         identity: FederatedIdentity,
@@ -267,6 +304,7 @@ impl AgentTokens {
             slots,
             incarnations,
             peers,
+            derived: Mutex::default(),
             retired: Arc::default(),
             wiping: Arc::default(),
             agents: std::sync::OnceLock::new(),
@@ -324,21 +362,22 @@ impl AgentTokens {
     /// The tokens of the server a community's host routes to, never chosen
     /// by the relay. A community no server covers stays with these, which
     /// attach no evidence for it.
-    fn server_for(&self, relay: &str) -> Result<&Self, String> {
-        for peer in &self.0.peers {
-            if let Some(config) = &peer.0.identity.0.config {
-                if config.matches_relay(relay)? {
-                    return Ok(peer);
-                }
-            }
-        }
-        Ok(self)
+    fn server_for(&self, relay: &str) -> Result<Self, String> {
+        let server = self.0.identity.server_for(relay)?;
+        Ok(self.for_server(&server).unwrap_or_else(|| self.clone()))
     }
     /// The tokens of a sign-in server of this build.
-    pub(crate) fn for_server(&self, server: &FederatedIdentity) -> Option<&Self> {
-        std::iter::once(self)
-            .chain(&self.0.peers)
+    pub(crate) fn for_server(&self, server: &FederatedIdentity) -> Option<Self> {
+        self.servers()
+            .into_iter()
             .find(|tokens| tokens.0.identity.is(server))
+    }
+    /// These tokens, then every other server's.
+    fn servers(&self) -> Vec<Self> {
+        let mut servers = vec![self.clone()];
+        servers.extend(self.0.peers.iter().cloned());
+        servers.extend(lock(&self.0.derived).iter().cloned());
+        servers
     }
     fn slot(&self, agent: &str) -> Arc<AsyncMutex<Slot>> {
         lock(&self.0.slots).entry(agent.into()).or_default().clone()
@@ -407,6 +446,31 @@ impl AgentTokens {
         at.generation
     }
 
+    /// Whether work stamped `incarnation` for this agent row may still run:
+    /// neither the agent nor its community row was deleted since.
+    pub(crate) fn admits(&self, agent: &str, relay: &str, incarnation: Stamp) -> bool {
+        let Ok(row) = row_key(agent, relay) else {
+            return false;
+        };
+        let at = lock(&self.0.incarnations);
+        let (key, row) = (
+            at.get(agent).copied().unwrap_or_default(),
+            at.get(&row).copied().unwrap_or_default(),
+        );
+        !key.closed
+            && key.generation == incarnation.key
+            && !row.closed
+            && row.generation == incarnation.row
+    }
+    /// The owner's retirements so far: sign-out, another account, or a
+    /// retired grant each add one.
+    pub(crate) fn retirements(&self) -> u64 {
+        self.0.identity.retirements()
+    }
+    /// Whether the owner's identity was closed for good.
+    pub(crate) fn identity_closed(&self) -> bool {
+        self.0.identity.closed()
+    }
     pub(crate) fn stamp(&self, agent: &str, relay: &str) -> Result<Stamp, String> {
         let row = row_key(agent, relay)?;
         let at = lock(&self.0.incarnations);
@@ -748,6 +812,7 @@ impl AgentTokens {
                 Ok(before)
             })
             .await?;
+        let recorded = self.0.identity.record_retirement().await?;
         // Publish retirement before releasing the wipe lock, then wait for
         // session persistence without holding it (restore takes operation first).
         let Some(retiring) = self.0.identity.begin_sign_out(expected) else {
@@ -761,6 +826,7 @@ impl AgentTokens {
             .await?;
             return Ok(self.0.identity.snapshot());
         };
+        drop(recorded);
         drop(_wiping);
         let snapshot = self.0.identity.finish_sign_out(retiring).await;
         let _wiping = self.0.wiping.lock().await;
@@ -881,7 +947,7 @@ impl AgentTokens {
         let mut slot = slot.lock().await;
         slot.assertion = None;
         // Its grant may be with any server.
-        for tokens in std::iter::once(self).chain(&self.0.peers) {
+        for tokens in self.servers() {
             let at = tokens.0.identity.agent_grant_key(owner, agent);
             tokens.storage(move |store| store.delete(&at)).await?;
         }
@@ -898,12 +964,18 @@ impl AgentTokens {
         agents: impl Fn() -> Result<Vec<(String, String)>, String> + Send + Sync + 'static,
     ) {
         let agents: Arc<Agents> = Arc::new(agents);
-        for tokens in std::iter::once(self).chain(&self.0.peers) {
+        // This server's first: a server added from here on finds its supplier
+        // (`with_stores`), and one added before is in the list below.
+        self.follow_account(agents.clone());
+        for tokens in self.servers() {
             tokens.follow_account(agents.clone());
         }
     }
     fn follow_account(&self, agents: Arc<Agents>) {
-        let _ = self.0.agents.set(agents);
+        // Once: a server added while `watch` runs may be offered twice.
+        if self.0.agents.set(agents).is_err() {
+            return;
+        }
         let tokens = self.clone();
         let mut changes = self.0.identity.account_changes();
         tauri::async_runtime::spawn(async move {

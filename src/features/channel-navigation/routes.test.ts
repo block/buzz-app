@@ -44,9 +44,43 @@ it("rejects foreign route kinds and draft payloads", () => {
     { kind: "solo-draft", agent: "not-a-key" },
     { kind: "solo-draft", text: "private draft" },
     { kind: "solo-draft", linked: "invalid" },
+    { kind: "solo-draft", draft: { context: null } },
+    { kind: "solo-draft", region: "buzz.region:example:tasks", draft: {} },
+    {
+      kind: "solo-draft",
+      region: "buzz.region:example:tasks",
+      draft: { key: "", context: null },
+    },
+    {
+      kind: "solo-draft",
+      region: "buzz.region:example:tasks",
+      draft: { key: "bad/key", context: null },
+    },
+    {
+      kind: "solo-draft",
+      region: "buzz.region:example:tasks",
+      draft: { context: null, extra: true },
+    },
   ]) {
     expect(isChannelRoute(params)).toBe(false);
     expect(soloDraft(params)).toBeUndefined();
+  }
+});
+
+it("retains opaque region context in a saved destination with or without a separate draft key", () => {
+  for (const draft of [
+    { context: null },
+    { key: "item:42", context: { item: 42, flags: [true, "example"] } },
+  ]) {
+    const target = soloDraftTarget(partition, {
+      region: "buzz.region:example:tasks",
+      draft,
+    });
+    const saved = JSON.parse(JSON.stringify(target));
+    expect(soloDraft(saved.route.params)).toEqual({
+      region: "buzz.region:example:tasks",
+      draft,
+    });
   }
 });
 
@@ -55,4 +89,43 @@ it("builds Solo draft destinations in the community", () => {
     page("buzz.channels", "channels", { kind: "solo-draft", agent }),
   );
   expect(() => soloDraftTarget("bad")).toThrow();
+});
+
+it("keeps a region draft's label and refuses a malformed or linked one", () => {
+  const region = "buzz.region:example.tasks:tasks";
+  expect(soloDraft({ kind: "solo-draft", region, project: "p" })).toEqual({
+    region,
+    project: "p",
+    draft: { context: { saved: { kind: "solo-draft", region, project: "p" } } },
+  });
+  for (const params of [
+    { kind: "solo-draft", region: "buzz.solo" },
+    { kind: "solo-draft", region: "buzz.region:Example:tasks" },
+    { kind: "solo-draft", region: 1 },
+    {
+      kind: "solo-draft",
+      region,
+      linked: "00000000-0000-4000-8000-000000000000",
+    },
+  ])
+    expect(soloDraft(params)).toBeUndefined();
+});
+it("retains prior region source fields as opaque unkeyed context", () => {
+  const region = "buzz.region:example:tasks";
+  const saved = { kind: "solo-draft", region, project: "p", mode: "example" };
+  expect(soloDraft(saved)).toEqual({
+    region,
+    project: "p",
+    draft: { context: { saved } },
+  });
+  expect(soloDraft({ ...saved, draft: { context: null } })).toEqual({
+    region,
+    project: "p",
+    draft: { context: null },
+  });
+  for (const draft of [null, {}, { key: "", context: null }])
+    expect(soloDraft({ ...saved, draft })).toBeUndefined();
+  expect(
+    soloDraft({ kind: "solo-draft", project: "p", mode: "example" }),
+  ).toBeUndefined();
 });

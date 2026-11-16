@@ -14,6 +14,10 @@ import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
 import { CANVAS_MAX_EVENT_BYTES } from "../features/channel-templates/canvas-limits.ts";
 import { eventsDto } from "../features/relay/events";
+import {
+  effectiveEditDto,
+  effectiveEditFilter,
+} from "../features/relay/effective-edit";
 import type {
   BuzzClient,
   BuzzEvent,
@@ -166,6 +170,16 @@ export function nodeClient(
     key: pubkey,
     query: async (filters) =>
       eventsDto(await request("/query", JSON.stringify(filters))),
+    async effectiveEdit(id, channel) {
+      return effectiveEditDto(
+        await request(
+          "/query",
+          JSON.stringify(effectiveEditFilter(id, channel)),
+        ),
+        id,
+        channel,
+      );
+    },
     async searchProfiles(query, limit) {
       const response = await send(
         "/profiles/search",
@@ -227,7 +241,7 @@ export function nodeClient(
       const name = input.trim().startsWith(prefix)
         ? input.trim().slice(prefix.length)
         : input.trim();
-      if (!/^[0-9a-f]{64}(\.[a-z0-9]{1,8}|\.thumb\.jpg)?$/.test(name))
+      if (!/^[0-9a-f]{64}(\.[a-z0-9]{1,8}|\.thumb\.(?:jpg|webp))?$/.test(name))
         throw new Error("Agents fetch only their community's media");
       const blossom = sign({
         kind: 24242,
@@ -291,7 +305,7 @@ export function nodeClient(
           createWriteStream(partial),
         );
         if (
-          !name.endsWith(".thumb.jpg") &&
+          !/\.thumb\.(?:jpg|webp)$/.test(name) &&
           hash.digest("hex") !== name.slice(0, 64)
         )
           throw new Error("Media did not match its SHA-256");

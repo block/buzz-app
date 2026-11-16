@@ -2,7 +2,7 @@ import { useState, type Ref } from "react";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { AvatarEditor } from "../profiles/AvatarEditor";
-import { avatarPictureError } from "../profiles/avatar-upload";
+import { profilePictureError } from "../profiles/avatar-upload";
 import type { PersonalProfile } from "./service";
 import type { VerifiedProfile } from "../relay/verified-profile";
 import { PROFILE_ABOUT_MAX_LENGTH } from "./service";
@@ -19,7 +19,7 @@ export function profilesEqual(left: PersonalProfile, right: PersonalProfile) {
 export function canSaveProfile(profile: PersonalProfile) {
   return (
     !!profile.name.trim() &&
-    !avatarPictureError(profile.picture) &&
+    !profilePictureError(profile.picture) &&
     (profile.about?.length ?? 0) <= PROFILE_ABOUT_MAX_LENGTH
   );
 }
@@ -50,7 +50,12 @@ export function ProfileFields({
   nameRef?: Ref<HTMLInputElement>;
   /** A relay-verified name replaces the editable display name. */
   verifiedName?:
-    | { name: string; issuerLabel: string; status: VerifiedProfile["status"] }
+    | {
+        name: string;
+        username?: string;
+        issuerLabel: string;
+        status: VerifiedProfile["status"];
+      }
     | undefined;
 }) {
   // A simplified form must still let people repair an invalid saved description.
@@ -61,6 +66,7 @@ export function ProfileFields({
     <div className="grid gap-4">
       {showAvatar && (
         <AvatarEditor
+          personal
           emptyStyle={emptyAvatarStyle}
           value={profile.picture}
           name={profile.name}
@@ -74,15 +80,23 @@ export function ProfileFields({
         label="Display name"
         description={
           verifiedName
-            ? verifiedName.status === "checked"
-              ? `Name verified by ${verifiedName.issuerLabel}`
-              : `Cached verification from ${verifiedName.issuerLabel}`
+            ? `${
+                verifiedName.status === "checked"
+                  ? `Name verified by ${verifiedName.issuerLabel}`
+                  : `Cached verification from ${verifiedName.issuerLabel}`
+              }${
+                verifiedName.username &&
+                verifiedName.username !== verifiedName.name
+                  ? ` · @${verifiedName.username}`
+                  : ""
+              }`
             : undefined
         }
       >
         <Input
           ref={nameRef}
           autoComplete="nickname"
+          spellCheck={false}
           autoFocus={autoFocus}
           required
           disabled={disabled}

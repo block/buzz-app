@@ -5,10 +5,22 @@ import { byteSize } from "./budget";
 import { DiscoveryState } from "./discovery";
 import { ReadError } from "./errors";
 import type { HeadPersistence, SavedHead, SavedStartup } from "./persistence";
-import { bounds, keypair, message, metadata, roster, profile } from "./testing";
-import type { RelayEvent } from "./events";
+import {
+  bounds,
+  hostSigner,
+  keypair,
+  message,
+  metadata,
+  nativeSignatureChecks,
+  roster,
+  profile,
+  signed,
+} from "./testing";
+import { connectSignedTransport } from "./transport";
+import { eventDto, type RelayEvent } from "./events";
 import type { SidebarPreferences } from "./sidebar-preferences";
 import { readJournal, type ReadJournal } from "./read-state-storage";
+import type { VerifiedProfileSink } from "./verified-profile";
 
 const viewer = keypair(),
   relay = keypair();
@@ -52,10 +64,15 @@ function disk() {
       profiles: [],
     },
   ];
+  let profiles: unknown[] = [];
   const storage: HeadPersistence = {
     readStartup: vi.fn(async () => structuredClone(startup)),
     writeStartup: vi.fn(async (patch) => {
       startup = { ...startup, ...structuredClone(patch) };
+    }),
+    readProfiles: vi.fn(async () => structuredClone(profiles)),
+    writeProfiles: vi.fn(async (events) => {
+      profiles = structuredClone([...events]);
     }),
     read: vi.fn(async () => structuredClone(heads)),
     write: vi.fn(async (value) => {
@@ -70,6 +87,7 @@ function disk() {
     clear: vi.fn(async () => {
       startup = undefined;
       heads = [];
+      profiles = [];
     }),
     close: vi.fn(),
   };
@@ -125,6 +143,7 @@ function setup(
       initialChannelId,
       readPublisherLock: async (_signal, work) => work(),
       readStateStorage: {
+        capture: async () => structuredClone(journal),
         async update(change) {
           journal = readJournal(change(journal), viewer.pubkey);
           return journal;
@@ -241,6 +260,8 @@ describe("device-local startup", () => {
         expect(owner.session.live.snapshot().roster.state).toBe("pending");
         expect(channels.get?.("alpha")?.name).toBe("Alpha");
         expect(channels.get?.("alpha")?.archived).toBeUndefined();
+        // A failed refresh confirmed nothing of the saved metadata.
+        expect(channels.get?.("alpha")?.metadataCached).toBe(true);
       } finally {
         names.resolve([fresh]);
       }
@@ -288,6 +309,12 @@ describe("device-local startup", () => {
         if (!included) {
           await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
           expect(channels.get?.("alpha")?.cached).toBeUndefined();
+          // The roster is fresh; the saved metadata is not confirmed yet.
+          expect(channels.get?.("alpha")?.metadataCached).toBe(true);
+          expect(
+            channels.list().channels.find(({ id }) => id === "alpha")
+              ?.metadataCached,
+          ).toBe(true);
           expect(owner.session.live.snapshot().roster.state).toBe("pending");
         }
       } finally {
@@ -301,12 +328,26 @@ describe("device-local startup", () => {
         archived: true,
       });
       expect(channels.get?.("alpha")?.cached).toBeUndefined();
+      expect(channels.get?.("alpha")?.metadataCached).toBeUndefined();
+      expect(
+        channels.list().channels.find(({ id }) => id === "alpha")
+          ?.metadataCached,
+      ).toBeUndefined();
       expect(
         query.mock.calls
           .flatMap(([filters]) => filters)
           .filter((filter) => filter.kinds?.includes(39000)),
       ).toEqual(
-        included ? [] : [{ kinds: [39000], "#d": ["alpha"], limit: 500 }],
+        included
+          ? []
+          : [
+              {
+                kinds: [39000],
+                authors: [relay.pubkey],
+                "#d": ["alpha"],
+                limit: 500,
+              },
+            ],
       );
     },
   );
@@ -371,10 +412,12 @@ describe("device-local startup", () => {
           savedAt: Date.now(),
           relayAuthor: relay.pubkey,
           events: [...alpha, ...beta],
-          profiles: [profile(participant, { name: "Alpha-only participant" })],
         },
         preferences: { savedAt: Date.now(), data: layout },
       });
+      await storage.writeProfiles?.([
+        profile(participant, { name: "Alpha-only participant" }),
+      ]);
       const { owner, channels, membership, query } = setup(storage);
       await owner.restore();
       expect(
@@ -403,12 +446,12 @@ describe("device-local startup", () => {
       expect((await storage.readStartup?.())?.preferences?.data).toEqual(
         layout,
       );
-      expect((await storage.readStartup?.())?.discovery?.profiles).toEqual([]);
       const next = setup(storage, true);
       await next.owner.restore();
+      // A profile is a global relay event; losing a channel does not drop it.
       expect(
-        next.owner.session.profiles.snapshot().has(participant.pubkey),
-      ).toBe(false);
+        next.owner.session.profiles.snapshot().get(participant.pubkey)?.name,
+      ).toBe("Alpha-only participant");
       expect(
         next.channels.list().channels.map((channel) => channel.id),
       ).toEqual(["beta"]);
@@ -418,6 +461,483 @@ describe("device-local startup", () => {
       expect(next.channels.window("alpha").rows).toEqual([]);
     },
   );
+
+  it("shows saved verified names with the saved profiles, then rechecks and saves them", async () => {
+    const storage = disk();
+    const alice = keypair();
+    const verifiedHead = eventDto(
+      signed(relay, {
+        kind: 30382,
+        content: "",
+        created_at: 1_700_000_000,
+        tags: [
+          ["d", alice.pubkey],
+          ["p", alice.pubkey],
+          ["active", "true"],
+          ["display_name", "Alice"],
+          ["username", "alice"],
+          ["issuer_label", "Example"],
+          ["verified_at", "1700000000"],
+        ],
+      }),
+    );
+    await storage.writeProfiles?.([
+      profile(alice, { name: "Self-chosen" }),
+      verifiedHead,
+    ]);
+    const syncs: { subjects: readonly string[]; sink: VerifiedProfileSink }[] =
+      [];
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        query: async (filters) =>
+          filters.some((filter) => filter.kinds?.includes(39002))
+            ? discovery
+            : [],
+        media: () => undefined,
+        verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
+        subscribe: () => ({
+          update() {},
+          retry() {},
+          dispose() {},
+          syncVerifiedProfiles(filter, sink) {
+            syncs.push({ subjects: filter["#d"], sink });
+            return () => {};
+          },
+        }),
+      },
+      { persistence: storage, prepared: true },
+    );
+    owners.push(owner);
+    const { profiles } = owner.session;
+    const shown: (string | undefined)[] = [];
+    profiles.subscribe(() =>
+      shown.push(profiles.snapshot().get(alice.pubkey)?.name),
+    );
+    const written = vi.spyOn(storage, "writeProfiles");
+    written.mockClear();
+    await owner.restore();
+    // The self-chosen name never shows, not even for one publish.
+    expect(shown).not.toContain("Self-chosen");
+    expect(profiles.snapshot().get(alice.pubkey)).toMatchObject({
+      name: "Alice",
+      verified: { status: "cached" },
+    });
+    await vi.waitFor(() => expect(syncs).toHaveLength(1));
+    expect(syncs[0]?.subjects).toEqual([alice.pubkey]);
+    syncs[0]?.sink.event(verifiedHead);
+    syncs[0]?.sink.eose();
+    await vi.waitFor(() =>
+      expect(profiles.snapshot().get(alice.pubkey)?.verified?.status).toBe(
+        "checked",
+      ),
+    );
+    await vi.waitFor(() => expect(written).toHaveBeenCalled());
+    await vi.waitFor(
+      async () =>
+        expect(
+          (((await storage.readProfiles?.()) ?? []) as RelayEvent[]).map(
+            (event) => event.kind,
+          ),
+        ).toEqual([0, 30382]),
+      { timeout: 3000 },
+    );
+    // The next launch's offline view gets the authority to show them with.
+    await vi.waitFor(
+      async () =>
+        expect((await storage.readStartup?.())?.verifiedProfiles).toEqual({
+          pubkey: relay.pubkey,
+          multipleIssuers: false,
+        }),
+      { timeout: 3000 },
+    );
+  });
+
+  it("keeps the newest saved verified name and records a disable without renewing the roster", async () => {
+    const storage = disk();
+    const savedAt = (await storage.readStartup?.())?.discovery?.savedAt;
+    const alice = keypair();
+    const head = (name: string, at: number) =>
+      eventDto(
+        signed(relay, {
+          kind: 30382,
+          content: "",
+          created_at: at,
+          tags: [
+            ["d", alice.pubkey],
+            ["p", alice.pubkey],
+            ["active", "true"],
+            ["display_name", name],
+            ["username", "alice"],
+            ["issuer_label", "Example"],
+            ["verified_at", String(at)],
+          ],
+        }),
+      );
+    const renamed = head("Alice Renamed", 1_700_000_001);
+    await storage.writeProfiles?.([head("Alice", 1_700_000_000)]);
+    let live: import("./live").LiveCallbacks | undefined;
+    let sink: VerifiedProfileSink | undefined;
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        query: async () => [],
+        media: () => undefined,
+        verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
+        readVerifiedProfileAuthority: async () => null,
+        subscribe(callbacks) {
+          live = callbacks;
+          return {
+            update() {},
+            retry() {},
+            dispose() {},
+            syncVerifiedProfiles(_filter, next) {
+              sink = next;
+              return () => {};
+            },
+          };
+        },
+      },
+      { persistence: storage, prepared: true },
+    );
+    owners.push(owner);
+    const { profiles } = owner.session;
+    live?.state({ status: "connected", routes: [] });
+    await owner.restore();
+    await vi.waitFor(() => expect(sink).toBeDefined());
+    sink?.event(renamed);
+    sink?.eose();
+    const mirrored = async () =>
+      (((await storage.readProfiles?.()) ?? []) as RelayEvent[]).map(
+        (event) => event.id,
+      );
+    await vi.waitFor(
+      async () => expect(await mirrored()).toEqual([renamed.id]),
+      {
+        timeout: 3000,
+      },
+    );
+    // A reconnect rereads discovery, which now disables verified names.
+    live?.state({ status: "connecting", routes: [] });
+    live?.state({ status: "connected", routes: [] });
+    await vi.waitFor(() =>
+      expect(profiles.verifiedAuthority?.()).toBeUndefined(),
+    );
+    await vi.waitFor(
+      async () =>
+        expect((await storage.readStartup?.())?.verifiedProfiles).toBeNull(),
+      { timeout: 3000 },
+    );
+    expect(await mirrored()).toEqual([renamed.id]);
+    expect((await storage.readStartup?.())?.discovery?.savedAt).toBe(savedAt);
+  });
+
+  /** A live session whose discovery disables verified names on reconnect. */
+  function verifiedSession(storage: HeadPersistence) {
+    let live: import("./live").LiveCallbacks | undefined;
+    let sink: VerifiedProfileSink | undefined;
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        query: async () => [],
+        media: () => undefined,
+        verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
+        readVerifiedProfileAuthority: async () => null,
+        subscribe(callbacks) {
+          live = callbacks;
+          return {
+            update() {},
+            retry() {},
+            dispose() {},
+            syncVerifiedProfiles(_filter, next) {
+              sink = next;
+              return () => {};
+            },
+          };
+        },
+      },
+      { persistence: storage, prepared: true },
+    );
+    owners.push(owner);
+    return {
+      owner,
+      live: () => live,
+      sink: () => sink,
+      mirrored: async () =>
+        (((await storage.readProfiles?.()) ?? []) as RelayEvent[]).map(
+          (event) => event.id,
+        ),
+    };
+  }
+  function verifiedHead(subject: string, name: string, at: number) {
+    return eventDto(
+      signed(relay, {
+        kind: 30382,
+        content: "",
+        created_at: at,
+        tags: [
+          ["d", subject],
+          ["p", subject],
+          ["active", "true"],
+          ["display_name", name],
+          ["username", "alice"],
+          ["issuer_label", "Example"],
+          ["verified_at", String(at)],
+        ],
+      }),
+    );
+  }
+
+  it("keeps a removal a sync answered over a late mirror read after a disconnect", async () => {
+    const storage = disk();
+    const alice = keypair();
+    await storage.writeProfiles?.([verifiedHead(alice.pubkey, "Alice", 1)]);
+    const read = deferred<void>();
+    const reading = storage.readProfiles;
+    vi.mocked(storage.readProfiles)?.mockImplementationOnce(async () => {
+      await read.promise;
+      return (await reading?.()) ?? [];
+    });
+    const h = verifiedSession(storage);
+    const { profiles } = h.owner.session;
+    h.live()?.state({ status: "connected", routes: [] });
+    const restored = h.owner.restore();
+    void profiles.ensure([alice.pubkey]).catch(() => {});
+    await vi.waitFor(() => expect(h.sink()).toBeDefined());
+    h.sink()?.eose(); // The relay no longer holds Alice's head.
+    h.live()?.state({ status: "connecting", routes: [] });
+    vi.mocked(storage.writeProfiles)?.mockClear();
+    read.resolve();
+    await restored;
+    await vi.waitFor(() => expect(storage.writeProfiles).toHaveBeenCalled());
+    expect(profiles.snapshot().get(alice.pubkey)?.name).toBeUndefined();
+    expect(await h.mirrored()).toEqual([]);
+  });
+
+  it("records a disable when the mirror could not be read", async () => {
+    const storage = disk();
+    await storage.writeStartup?.({
+      verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
+    });
+    vi.mocked(storage.readProfiles)?.mockRejectedValueOnce(new Error("busy"));
+    const h = verifiedSession(storage);
+    h.live()?.state({ status: "connected", routes: [] });
+    await h.owner.restore();
+    h.live()?.state({ status: "connecting", routes: [] });
+    h.live()?.state({ status: "connected", routes: [] });
+    await vi.waitFor(
+      async () =>
+        expect((await storage.readStartup?.())?.verifiedProfiles).toBeNull(),
+      { timeout: 3000 },
+    );
+  });
+
+  it("saves a rename that a disable follows before the mirror is written", async () => {
+    const storage = disk();
+    const alice = keypair();
+    const renamed = verifiedHead(alice.pubkey, "Alice Renamed", 2);
+    await storage.writeProfiles?.([verifiedHead(alice.pubkey, "Alice", 1)]);
+    const h = verifiedSession(storage);
+    const { profiles } = h.owner.session;
+    h.live()?.state({ status: "connected", routes: [] });
+    await h.owner.restore();
+    await vi.waitFor(() => expect(h.sink()).toBeDefined());
+    h.sink()?.event(renamed);
+    h.sink()?.eose();
+    h.live()?.state({ status: "connecting", routes: [] });
+    h.live()?.state({ status: "connected", routes: [] });
+    await vi.waitFor(() =>
+      expect(profiles.verifiedAuthority?.()).toBeUndefined(),
+    );
+    await vi.waitFor(
+      async () =>
+        expect((await storage.readStartup?.())?.verifiedProfiles).toBeNull(),
+      { timeout: 3000 },
+    );
+    expect(await h.mirrored()).toEqual([renamed.id]);
+  });
+
+  it("publishes a mirror of verified names alone before restore returns", async () => {
+    const storage = disk();
+    const alice = keypair();
+    await storage.writeProfiles?.([
+      signed(relay, {
+        kind: 30382,
+        content: "",
+        tags: [
+          ["d", alice.pubkey],
+          ["p", alice.pubkey],
+          ["active", "true"],
+          ["display_name", "Alice"],
+          ["username", "alice"],
+          ["issuer_label", "Example"],
+          ["verified_at", "1700000000"],
+        ],
+      }),
+    ]);
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        query: async () => [],
+        media: () => undefined,
+        verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
+      },
+      { persistence: storage, prepared: true, cachedOnly: true },
+    );
+    owners.push(owner);
+    await owner.restore();
+    expect(owner.session.profiles.snapshot().get(alice.pubkey)?.name).toBe(
+      "Alice",
+    );
+  });
+
+  it("keeps saved verified names in the mirror while a session cannot check them", async () => {
+    const storage = disk();
+    const alice = keypair();
+    const verifiedHead = signed(relay, {
+      kind: 30382,
+      content: "",
+      tags: [
+        ["d", alice.pubkey],
+        ["p", alice.pubkey],
+        ["active", "true"],
+        ["display_name", "Alice"],
+        ["username", "alice"],
+        ["issuer_label", "Example"],
+        ["verified_at", "1700000000"],
+      ],
+    });
+    await storage.writeProfiles?.([
+      profile(alice, { name: "Self-chosen" }),
+      verifiedHead,
+    ]);
+    const written = vi.spyOn(storage, "writeProfiles");
+    written.mockClear();
+    const { owner } = setup(storage, true);
+    await owner.restore();
+    await vi.waitFor(() => expect(written).toHaveBeenCalled());
+    expect(
+      (((await storage.readProfiles?.()) ?? []) as RelayEvent[]).map(
+        (event) => event.kind,
+      ),
+    ).toEqual([0, 30382]);
+  });
+
+  it("restores names a previous session loaded", async () => {
+    const storage = disk();
+    const stranger = keypair();
+    const first = setup(storage);
+    await first.owner.restore();
+    const reply = first.query.getMockImplementation();
+    first.query.mockImplementation(async (filters) =>
+      filters.some((filter) => filter.kinds?.includes(0))
+        ? [profile(stranger, { name: "Stranger" })]
+        : (reply?.(filters) ?? []),
+    );
+    await first.owner.session.profiles.ensure([stranger.pubkey]);
+    await vi.waitFor(
+      async () => expect(await storage.readProfiles?.()).toHaveLength(1),
+      { timeout: 3000 },
+    );
+    const next = setup(storage, true);
+    await next.owner.restore();
+    expect(
+      next.owner.session.profiles.snapshot().get(stranger.pubkey)?.name,
+    ).toBe("Stranger");
+  });
+
+  it.each([
+    ["accepts every record", "accepts"],
+    ["rejects a forged signature", "rejects"],
+    ["fails", "fails"],
+  ])("restores names when the native check %s", async (_, mode) => {
+    const [first, second, third] = [0, 1, 2].map((index) =>
+      profile(keypair(), { name: `Saved ${index}` }),
+    ) as [RelayEvent, RelayEvent, RelayEvent];
+    const check = vi.fn(async (claims: readonly { sig: string }[]) => {
+      if (mode === "fails") throw new Error("host unavailable");
+      if (mode === "accepts") return claims.map(() => true);
+      return nativeSignatureChecks({ claims });
+    });
+    const transport = await connectSignedTransport(
+      { ...hostSigner(viewer), verifySignatures: check },
+      "https://restore.test",
+      relay.pubkey,
+    );
+    const storage = disk();
+    // Right id, wrong signature: only the host's answer decides it.
+    const forged = { ...second, sig: third.sig };
+    await storage.writeProfiles?.([first, forged, third]);
+    const owner = createRelaySession(transport, {
+      persistence: storage,
+      prepared: true,
+      cachedOnly: true,
+    });
+    owners.push(owner);
+    await owner.restore();
+    const names = owner.session.profiles.snapshot();
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(check.mock.calls[0]?.[0]).toHaveLength(3);
+    expect(names.get(first.pubkey)?.name).toBe("Saved 0");
+    // A host that accepts the record is trusted: the JS check never ran.
+    expect(names.get(second.pubkey)?.name).toBe(
+      mode === "accepts" ? "Saved 1" : undefined,
+    );
+    expect(names.get(third.pubkey)?.name).toBe("Saved 2");
+    // The saved copy survives the restore.
+    expect(await storage.readProfiles?.()).toHaveLength(
+      mode === "accepts" ? 3 : 2,
+    );
+  });
+
+  it("restores a multi-batch mirror when the shorter roster restores first", async () => {
+    const storage = disk();
+    const people = Array.from({ length: 60 }, (_, index) =>
+      profile(keypair(), { name: `Saved ${index}` }),
+    );
+    await storage.writeProfiles?.(people);
+    const { owner } = setup(storage, true);
+    await owner.restore();
+    const snapshot = owner.session.profiles.snapshot();
+    for (const [index, event] of people.entries())
+      expect(snapshot.get(event.pubkey)?.name).toBe(`Saved ${index}`);
+    expect(await storage.readProfiles?.()).toHaveLength(60);
+  });
+
+  it("rereads restored names and saves a newer profile", async () => {
+    const storage = disk();
+    const stranger = keypair();
+    await storage.writeProfiles?.([profile(stranger, { name: "Old" })]);
+    const { owner, query } = setup(storage);
+    const reply = query.getMockImplementation();
+    const renamed = deferred<RelayEvent[]>();
+    query.mockImplementation(async (filters) =>
+      filters.some((filter) => filter.authors?.includes(stranger.pubkey))
+        ? renamed.promise
+        : (reply?.(filters) ?? []),
+    );
+    await owner.restore();
+    expect(owner.session.profiles.snapshot().get(stranger.pubkey)?.name).toBe(
+      "Old",
+    );
+    renamed.resolve([profile(stranger, { name: "New" }, 1_700_000_001)]);
+    await vi.waitFor(() =>
+      expect(owner.session.profiles.snapshot().get(stranger.pubkey)?.name).toBe(
+        "New",
+      ),
+    );
+    await vi.waitFor(
+      async () =>
+        expect(await storage.readProfiles?.()).toEqual([
+          expect.objectContaining({ created_at: 1_700_000_001 }),
+        ]),
+      { timeout: 3000 },
+    );
+  });
 
   it("reveals the selected head before verifying unrelated history", async () => {
     const storage = disk();
@@ -655,11 +1175,14 @@ describe("device-local startup", () => {
       );
       expect(channels.list().coverage).toBe("partial");
       expect(channels.get?.("alpha")?.cached).toBe(true);
-      expect(
-        (await storage.readStartup?.())?.discovery?.events.some((e) =>
-          (e as RelayEvent).tags.some(([k, v]) => k === "d" && v === "alpha"),
-        ),
-      ).toBe(false);
+      // The snapshot write is coalesced behind a short delay.
+      await vi.waitFor(async () =>
+        expect(
+          (await storage.readStartup?.())?.discovery?.events.some((e) =>
+            (e as RelayEvent).tags.some(([k, v]) => k === "d" && v === "alpha"),
+          ),
+        ).toBe(false),
+      );
       channels.ensure("alpha");
       channels.refresh?.("alpha");
       channels.loadOlder("alpha");

@@ -1,5 +1,5 @@
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
-import { canMessageAgent } from "../agents/choices";
+import { agentUnavailable, canMessageAgent } from "../agents/choices";
 import { avatarMedia } from "../../shared/avatar-source";
 import { useChannelWindow } from "../relay/react";
 import type { ChannelSummary } from "../relay/contracts";
@@ -37,6 +37,8 @@ import {
 } from "../profiles/useVerifiedNames";
 import { RecipientPicker } from "./RecipientPicker";
 import type { Recipient } from "./usePeople";
+import { usePassThroughUntilDrafted } from "../messages/draft-visit";
+import type { PageNavigation } from "../navigation/service";
 import styles from "./NewMessage.module.css";
 
 const draftKey = "direct-message:new-draft";
@@ -139,9 +141,12 @@ export function NewMessage({
   host,
   onOpenThread,
   onStarted,
+  visit,
 }: {
   session: RelaySession;
   scope: string;
+  /** The visit presenting this composer, a Back stop only once drafted. */
+  visit?: PageNavigation | undefined;
   extensions?: ConversationExtensions | undefined;
   channels: readonly ChannelSummary[];
   host: ConversationHostServices;
@@ -154,6 +159,17 @@ export function NewMessage({
   ): void;
   onStarted(channelId: string, messageId: string): void;
 }) {
+  // A message held for delivery or retry stays a Back stop even when its
+  // draft view is gone or it carries only attachments.
+  const held = useRef(false);
+  const holds = useCallback(() => held.current, []);
+  const draftEdited = usePassThroughUntilDrafted(
+    visit,
+    session,
+    scope,
+    draftKey,
+    { held: holds },
+  );
   const [recipients, setRecipients] = useState(() =>
     savedRecipients(scope, session.viewer),
   );
@@ -214,6 +230,7 @@ export function NewMessage({
   } catch {
     /* Readiness presents invalid recovery. */
   }
+  held.current = !!pending;
   const failed =
     pending && session.directMessages.delivery(pending.id) === "failed";
   const locked = !ready || !!busy || (!!pending && !failed);
@@ -221,10 +238,11 @@ export function NewMessage({
     clearAttachmentDraft(session, `${scope}:${draftKey}`);
     retiring.current = undefined;
     prepared.current = undefined;
+    draftEdited(undefined);
     setRecipients([]);
     setRestoredDraft(mentionDraft(""));
     setDraftRevision((revision) => revision + 1);
-  }, [session, scope]);
+  }, [session, scope, draftEdited]);
   useLayoutEffect(() => {
     const confirmed = pending && session.directMessages.delivery(pending.id);
     if (pending) {
@@ -284,15 +302,18 @@ export function NewMessage({
     const controlled = new Set(
       session.agentChoices
         .snapshot()
-        .identities.filter(canMessageAgent)
+        // Forward-looking: neither archived nor being deleted.
+        .selectable.filter(canMessageAgent)
         .map((agent) => agent.pubkey),
     );
     if (
       recipients.some(
         (person) =>
-          (person.isAgent ||
+          // By key, whatever its profile says.
+          agentUnavailable(session, person.pubkey) ||
+          ((person.isAgent ||
             session.profiles.snapshot().get(person.pubkey)?.isAgent) &&
-          !controlled.has(person.pubkey),
+            !controlled.has(person.pubkey)),
       )
     )
       throw new Error(
@@ -566,6 +587,7 @@ export function NewMessage({
             attachments: true,
             allowAttachmentOnly: true,
             recoveredDraft: restoredDraft,
+            onDraftChange: draftEdited,
             locked,
             disabled:
               !ready ||

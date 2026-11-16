@@ -7,7 +7,10 @@ import {
 } from "../../buzz-mcp/prompt";
 import type { EventData } from "../../features/relay/events";
 import { messageAuthor } from "../../features/relay/fold";
-import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
+import {
+  basePromptFor,
+  mentionSection,
+} from "../../features/agent-harness/base-prompt";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
 import {
   type ConversationWake,
@@ -21,6 +24,8 @@ import {
 } from "../../features/agent-harness/turn-records";
 import channelModel from "./session_model_channel.md?raw";
 import threadModel from "./session_model_thread.md?raw";
+import channelHandoff from "./session_handoff_channel.md?raw";
+import threadHandoff from "./session_handoff_thread.md?raw";
 
 export type Scope = "thread" | "channel";
 /** Messages of thread context shown with a turn, newest kept. */
@@ -35,6 +40,9 @@ export function systemPrompt(
   input: Readonly<{
     scope: Scope;
     cwd: string;
+    /** The agent's workspace, absolute, when `cwd` is a folder of the
+     * conversation's own instead. */
+    workspace?: string;
     /** Who the agent is, so it can name itself and the session viewer can too. */
     agent?: Readonly<{ name: string; pubkey: string }>;
     instructions?: string;
@@ -49,7 +57,7 @@ export function systemPrompt(
   }>,
 ) {
   const model = input.scope === "thread" ? threadModel : channelModel;
-  const base = [BASE_PROMPT, BUZZ_PROMPT, model];
+  const base = [basePromptFor(input.workspace), BUZZ_PROMPT, model];
   return [
     input.agent
       ? section(
@@ -195,13 +203,20 @@ export function turnPrompt(input: TurnInput) {
     ),
   );
   if (input.project) parts.push(input.project);
+  // A wake is not a mention, so only a delivered message says what the agent
+  // owes it. The event stays last.
   parts.push(
-    input.wake
-      ? wakeSection(input.wake)
-      : section(
-          EVENT,
-          eventBody(event, event.content, input.names?.(event.pubkey)),
-        ),
+    ...(input.wake
+      ? [wakeSection(input.wake)]
+      : [
+          mentionSection(
+            input.scope === "thread" ? threadHandoff : channelHandoff,
+          ),
+          section(
+            EVENT,
+            eventBody(event, event.content, input.names?.(event.pubkey)),
+          ),
+        ]),
   );
   return parts.join("\n\n");
 }

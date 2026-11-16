@@ -21,6 +21,7 @@ import {
   composerMarkdownContext,
 } from "./composer-document";
 import { messageLinkParts } from "./message-link-parts";
+import { parseBuzzLink } from "../navigation/buzz-links";
 import { messageReferences } from "./message-references";
 import { EditableInput, type EditableInputProps } from "./EditableInput";
 
@@ -215,11 +216,23 @@ export function RichComposerInput({
     () => emoji.filter((entry) => !!session.media(entry.url)),
     [emoji, session],
   );
+  const shortcodes = useMemo(
+    () =>
+      new Set(renderableEmoji.map((entry) => entry.shortcode.toLowerCase())),
+    [renderableEmoji],
+  );
   // The normalizer, the render and the token reconcile decorate the same
   // document in one keystroke; parse its Markdown once.
   const scanned = useRef<{
     text: string;
     scan: ReturnType<typeof scanMarkdown>;
+  }>(undefined);
+  // Channel references scan every channel name against the text; reuse them
+  // until the text or the directory changes.
+  const referenced = useRef<{
+    text: string;
+    inputs: unknown[];
+    references: ReturnType<typeof messageReferences>;
   }>(undefined);
   useLayoutEffect(() => {
     previous.current = labels;
@@ -322,20 +335,39 @@ export function RichComposerInput({
       profileLinks.set(start, { pubkey, label: label.replace(/^@/, "") });
       add(start, end, undefined, true);
     }
-    messageLinkParts(context.text, undefined, (start, end) =>
-      add(start, end, undefined, true),
-    );
-    for (const reference of messageReferences(
+    // A labeled channel link is one chip, like a mention: editing never
+    // exposes its Markdown or separates its label from its channel.
+    messageLinkParts(
       context.text,
-      [],
-      profiles,
-      directory.named,
-      directory.agents,
-    ))
-      add(reference.start, reference.end, undefined, true);
-    const shortcodes = new Set(
-      renderableEmoji.map((entry) => entry.shortcode.toLowerCase()),
+      (start, end, _label, url) => {
+        const link = parseBuzzLink(url);
+        add(
+          start,
+          end,
+          undefined,
+          !(link?.format === "legacy" && !link.messageId),
+        );
+      },
+      (start, end) => add(start, end, undefined, true),
     );
+    const inputs = [profiles, directory.named, directory.agents];
+    if (
+      referenced.current?.text !== context.text ||
+      referenced.current.inputs.some((input, i) => input !== inputs[i])
+    )
+      referenced.current = {
+        text: context.text,
+        inputs,
+        references: messageReferences(
+          context.text,
+          [],
+          profiles,
+          directory.named,
+          directory.agents,
+        ),
+      };
+    for (const reference of referenced.current.references)
+      add(reference.start, reference.end, undefined, true);
     for (const match of context.text.matchAll(/:([a-z0-9_-]{1,64}):/gi))
       if (shortcodes.has(match[1]?.toLowerCase() ?? ""))
         add(match.index, match.index + match[0].length);

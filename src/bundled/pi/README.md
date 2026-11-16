@@ -46,8 +46,10 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
 A Pi agent whose route the configured model gateway makes eligible, and which
 that gateway enables for Pi, sends a gateway run's requests to the gateway:
 Pi's own built-in Anthropic or OpenAI model, by its own ID, under the Pi
-upstream base of the build's `BUZZ_AGENT_GATEWAY` descriptor. That base is
-the gateway's ingress that resolves those IDs. Without that descriptor, or
+upstream base of the build's `BUZZ_AGENT_GATEWAY` descriptor. That base must be
+the gateway's routed ingress, which resolves Pi's own IDs (such as
+`claude-haiku-4-5` or `gpt-5.4-mini`) to its endpoints. A raw Databricks
+pass-through base rejects them, and Buzz does no name mapping of its own. Without that descriptor, or
 without a Pi upstream in it, every route is external. Pi's providers, models
 and setup are as without the gateway: the gateway lists nothing, and a saved
 choice is an ordinary `anthropic/…` or `openai/…` model.
@@ -59,12 +61,13 @@ access is revoked is refused visibly, so revocation during a gateway run
 stops it visibly at its next request.
 
 When the runner sends a turn without the gateway (a blocked route: readiness,
-identity, auth or network failure), Pi runs it on the agent's own provider
-and model, with the runner's shared fallback notice on the prompt. The saved
+identity or network failure; a 401/403 fails the turn instead), Pi runs it
+on the agent's own provider and model, with the runner's shared fallback
+notice on the prompt. The saved
 choice is never rewritten. A request already bound to the gateway keeps that
 mode when asked again and is never resent without it.
 
-Each provider uses one protocol, with pi-ai 1.4.0's own client. Nothing
+Each provider uses one protocol, with pi-ai 1.5.0's own client. Nothing
 retries a request on another protocol:
 
 | Pi provider | Protocol under the base | pi-ai API |

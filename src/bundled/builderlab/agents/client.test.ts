@@ -65,12 +65,52 @@ async function fixture(subject = "user", canUseRemoteAgents = true) {
 }
 it("refuses remote reads and creation before sending requests or retaining replay state", async () => {
   const h = await fixture("user", false);
-  await expect(h.client.list(h.signal)).rejects.toThrow("coming soon");
+  await expect(h.client.list(h.signal)).rejects.toThrow(
+    "unavailable for this account",
+  );
   await expect(h.client.register("Helper", h.signal, h.retain)).rejects.toThrow(
-    "coming soon",
+    "unavailable for this account",
   );
   expect(h.host.request).not.toHaveBeenCalled();
   expect(h.retain).not.toHaveBeenCalled();
+});
+it("reads terminal task status only for the requested task IDs", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({
+      outcomes: {
+        done: "completed",
+        failed: "failed",
+        stopped: "cancelled",
+        terminated: "terminated",
+      },
+    }),
+  );
+  expect(
+    await h.client.turnStatus(
+      "session",
+      ["done", "failed", "stopped", "terminated"],
+      h.signal,
+    ),
+  ).toEqual(
+    new Map([
+      ["done", "ended"],
+      ["failed", "error"],
+      ["stopped", "stopped"],
+      ["terminated", "error"],
+    ]),
+  );
+  for (const outcomes of [
+    { other: "completed" },
+    { done: "new-status" },
+    { done: null },
+    [],
+  ]) {
+    vi.mocked(h.host.request).mockResolvedValueOnce(response({ outcomes }));
+    await expect(
+      h.client.turnStatus("session", ["done"], h.signal),
+    ).rejects.toThrow("invalid turn status");
+  }
 });
 it("lists the authenticated account through the configured native host", async () => {
   const h = await fixture();
@@ -109,6 +149,44 @@ it.each([{}, { agents: [] }])(
     expect(await h.client.list(h.signal)).toEqual([]);
   },
 );
+it("normalizes optional creation dates from JSON without inventing dates", async () => {
+  const h = await fixture();
+  const millis = Date.UTC(2026, 6, 15, 12);
+  const values = [
+    millis,
+    millis / 1000,
+    String(millis),
+    String(millis / 1000),
+    "2026-07-15T12:00:00Z",
+    null,
+    "",
+    "bad date",
+    undefined,
+    true,
+    1e20,
+  ];
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({
+      status: 1,
+      agents: values.map((created_at) => ({ ...row, created_at })),
+    }),
+  );
+  expect(
+    (await h.client.list(h.signal)).map(({ createdAt }) => createdAt),
+  ).toEqual([
+    millis,
+    millis,
+    millis,
+    millis,
+    millis,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+  ]);
+});
 it.each([
   ["AGENT_STATUS_UNATTESTED", "Unattested"],
   [1, "Unattested"],
@@ -167,22 +245,33 @@ it.each(["sign-out", "new-login", "cancel", "dispose"])(
   async (action) => {
     const h = await fixture();
     const held = deferred<HostResponse>();
-    vi.mocked(h.host.request).mockReturnValue(held.promise);
+    const started = deferred<void>();
+    vi.mocked(h.host.request).mockImplementation(() => {
+      started.resolve();
+      return held.promise;
+    });
     const controller = new AbortController();
     const pending = h.client.list(controller.signal);
-    if (action === "cancel") controller.abort();
-    else if (action === "dispose") h.session.dispose();
-    else {
-      h.session.signOut();
-      if (action === "new-login") await h.session.signIn();
+    const rejected = expect(pending).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await started.promise;
+    try {
+      if (action === "cancel") controller.abort();
+      else if (action === "dispose") h.session.dispose();
+      else {
+        h.session.signOut();
+        if (action === "new-login") await h.session.signIn();
+      }
+    } finally {
+      held.resolve(
+        response(
+          { status: 1, agents: [row] },
+          action === "new-login" ? 401 : 200,
+        ),
+      );
     }
-    held.resolve(
-      response(
-        { status: 1, agents: [row] },
-        action === "new-login" ? 401 : 200,
-      ),
-    );
-    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    await rejected;
     if (action === "new-login")
       expect(h.session.snapshot().status).toBe("signed-in");
   },
@@ -216,20 +305,63 @@ it("loads the standalone catalog with model-specific effort identifiers", async 
           display_name: "Friendly Model",
           supported_reasoning_efforts: ["none", "max"],
         },
+        {
+          id: "model-two",
+          display_name: "Fast Model",
+          supported_reasoning_efforts: ["low"],
+          fast: true,
+        },
       ],
     }),
   );
-  expect(await h.client.modelCatalog(h.signal)).toEqual([
-    {
-      id: "model-one",
-      displayName: "Friendly Model",
-      supportedReasoningEfforts: ["none", "max"],
-    },
-  ]);
+  expect(await h.client.modelCatalog(h.signal)).toEqual({
+    models: [
+      {
+        id: "model-one",
+        displayName: "Friendly Model",
+        supportedReasoningEfforts: ["none", "max"],
+        fast: false,
+      },
+      {
+        id: "model-two",
+        displayName: "Fast Model",
+        supportedReasoningEfforts: ["low"],
+        fast: true,
+      },
+    ],
+  });
   expect(vi.mocked(h.host.request).mock.calls[0]?.[0].url).toBe(
     "https://builderlab.example/api/goose/v3/beekeeper/get-model-catalog",
   );
 });
+it.each([
+  [{ model_id: "model-one", reasoning_effort: "max" }, true],
+  [{ model_id: "model-one", reasoning_effort: "high" }, false],
+  [{ model_id: "missing", reasoning_effort: "max" }, false],
+  [{ model_id: "model-one" }, false],
+  ["model-one", false],
+  [null, false],
+])(
+  "keeps only a recommendation the catalog offers: %j",
+  async (recommended_selection, kept) => {
+    const h = await fixture();
+    vi.mocked(h.host.request).mockResolvedValueOnce(
+      response({
+        models: [
+          {
+            id: "model-one",
+            display_name: "Friendly Model",
+            supported_reasoning_efforts: ["none", "max"],
+          },
+        ],
+        recommended_selection,
+      }),
+    );
+    expect((await h.client.modelCatalog(h.signal)).recommended).toEqual(
+      kept ? { modelId: "model-one", reasoningEffort: "max" } : undefined,
+    );
+  },
+);
 it.each([
   null,
   [null],
@@ -239,7 +371,7 @@ it.each([
   const h = await fixture();
   vi.mocked(h.host.request).mockResolvedValueOnce(response({ models }));
   if (models === null)
-    expect(await h.client.modelCatalog(h.signal)).toEqual([]);
+    expect(await h.client.modelCatalog(h.signal)).toEqual({ models: [] });
   else
     await expect(h.client.modelCatalog(h.signal)).rejects.toThrow(
       "invalid model catalog",
@@ -710,12 +842,15 @@ it("refuses to link without a local Buzz identity", async () => {
   );
   expect(h.host.request).not.toHaveBeenCalled();
 });
-it("refuses activation, keeping the session, when the identity check finds it expired", async () => {
+it("refuses activation with a 401, keeping the session and claiming no expiry", async () => {
   const h = await fixture();
   vi.mocked(h.host.request).mockResolvedValueOnce(response({}, 401));
   await expect(
     h.client.activate(row.agent_pubkey, proof, undefined, h.signal),
-  ).rejects.toThrow("session expired");
+  ).rejects.toMatchObject({
+    message: "Builderlab didn’t accept this request. Try again.",
+    status: 401,
+  });
   expect(h.session.snapshot().status).toBe("signed-in");
   expect(h.host.request).toHaveBeenCalledTimes(1);
 });

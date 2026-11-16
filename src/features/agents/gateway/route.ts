@@ -12,8 +12,16 @@ import { gatewayDescriptor, type GatewayDescriptor } from "./descriptor";
 // through the agent gateway. Only an origin the descriptor doesn't name
 // is external. A named community stays blocked until its exact NIP-11 ID,
 // the agent's identity and the access check are all confirmed, and goes back
-// to pending on any change, so it never passes through external (direct
-// providers) or a stale eligible route on the way.
+// to pending on any change, so the route itself never reads as external or
+// as a stale eligible route on the way.
+//
+// What a turn does with a blocked route is the runner's policy, decided
+// before dispatch: `auth` (a 401 or 403) fails the turn. Every other reason,
+// including a route still pending after the bounded wait
+// (`TURN_READINESS_WAIT_MS`), runs the turn on the harness's own
+// configuration (direct providers) with a notice. An invalid runtime
+// descriptor gives no upstream, so its turns run unchanged with no notice:
+// that fails open, and the build-time descriptor checks keep it rare.
 //
 // Every route carries the membership's eligibility revision. It rises
 // synchronously whenever the route returns to pending (a membership change,
@@ -84,29 +92,38 @@ const MESSAGES: Record<BlockedReason, string> = {
     "This community's ID doesn't match this build's agent gateway configuration, so its agents can't run.",
   identity_invalid:
     "This agent's owner or key isn't valid for gateway routing.",
-  auth: "The agent gateway didn't accept your sign-in. Check that you're signed in, then try again.",
+  auth: "The agent gateway didn't accept your sign-in or denied this agent. Sign in again, then retry.",
   network:
     "Buzz couldn't reach the agent gateway. Check your network connection, then try again.",
   gateway_error:
     "The agent gateway couldn't confirm model access. Try again shortly.",
 };
 
+/** A blocked reason a turn falls back on; `auth` fails the turn instead. */
+export type FallbackReason = Exclude<BlockedReason, "auth">;
 /** Why a turn ran without the gateway, as its per-turn notice says. */
-const FALLBACK: Record<BlockedReason, string> = {
+const FALLBACK: Record<FallbackReason, string> = {
   readiness_pending: "gateway access was still being checked",
   descriptor_invalid: "this build's agent gateway configuration is invalid",
   community_id_missing: "this community didn't identify itself",
   community_id_mismatch:
     "this community doesn't match this build's agent gateway configuration",
   identity_invalid: "this agent's owner or key isn't valid for the gateway",
-  auth: "the gateway didn't accept your sign-in",
   network: "Buzz couldn't reach the gateway",
   gateway_error: "the gateway couldn't confirm model access",
 };
 /** The notice on a turn that a blocked route sent to the harness's own
  * configuration before dispatch, instead of failing it. */
-export const fallbackNotice = (route: BlockedRoute) =>
-  `Ran without the agent gateway: ${FALLBACK[route.reason]}.`;
+export const fallbackNotice = (reason: FallbackReason) =>
+  `Ran without the agent gateway: ${FALLBACK[reason]}.`;
+
+/** How long a turn waits for an access check already in flight, such as the
+ * first one at cold start, before it falls back. Below the probe's own
+ * request timeout, so a hung gateway delays a turn by this much at most. */
+export const TURN_READINESS_WAIT_MS = 5_000;
+/** The pause before a failed access check (anything but a 401 or 403) is
+ * tried once more. */
+export const PROBE_RETRY_DELAY_MS = 500;
 
 type Readiness =
   | Readonly<{ status: "probing"; settled: Promise<void> }>
@@ -220,24 +237,41 @@ export class GatewayRoutes {
         );
   }
 
-  /** The membership's route for a turn starting now, without waiting on
-   * readiness: a turn never stalls on the gateway, and one that finds it
-   * pending or failed falls back. A failed probe is retried in the
-   * background, so a later turn can route after a network blip. */
-  routeForTurn(key: AgentKey): GatewayRoute {
+  /** The membership's route for a turn starting now. While an access check
+   * is in flight (pending at cold start, or after `invalidate`), the turn
+   * waits for it until `wait` aborts, then takes the route as it stands; it
+   * never starts a probe to wait on, so with no request bound or nothing in
+   * flight it doesn't wait at all. A route that is already failed is
+   * returned at once and retried in the background, so a later turn can
+   * route after a network blip. The caller owns the wait's cap and any
+   * cancellation, and checks its own signal afterwards. */
+  async routeForTurn(key: AgentKey, wait?: AbortSignal): Promise<GatewayRoute> {
     const route = this.routeFor(key);
     const decided = this.decide(key);
-    if (
-      decided.kind === "pending" &&
-      this.readiness.get(decided.cache)?.status === "failed"
-    ) {
+    if (decided.kind !== "pending") return route;
+    const state = this.readiness.get(decided.cache);
+    if (state?.status === "failed") {
       // Nothing is admitted at a failed revision, so retrying revokes nothing.
-      this.readiness.delete(decided.cache);
-      this.bump(key);
-      this.probe(key);
-      this.notify(key);
+      // Without a request path the failure stands, so a 401/403 can't be
+      // forgotten into a pending route that falls back.
+      if (this.request) {
+        this.readiness.delete(decided.cache);
+        this.bump(key);
+        this.probe(key);
+        this.notify(key);
+      }
+      return route;
     }
-    return route;
+    if (!wait) return route;
+    // A probe discarded because the membership changed meanwhile leaves a
+    // newer one in flight: wait for that too, under the same cap.
+    for (
+      let probing = this.inFlight(key);
+      probing && !wait.aborted;
+      probing = this.inFlight(key)
+    )
+      await settledOrAborted(probing, wait);
+    return this.routeFor(key);
   }
 
   /** The membership's route once readiness has settled, for an explicit
@@ -257,15 +291,8 @@ export class GatewayRoutes {
     // A probe discarded because the membership changed meanwhile leaves a
     // newer one in flight: wait for that too.
     for (let probing = this.probe(key); probing; probing = this.probe(key)) {
-      const settled = probing;
-      await new Promise<void>((resolve, reject) => {
-        const abort = () => reject(signal.reason);
-        signal.addEventListener("abort", abort, { once: true });
-        void settled.finally(() => {
-          signal.removeEventListener("abort", abort);
-          resolve();
-        });
-      });
+      await settledOrAborted(probing, signal);
+      signal.throwIfAborted();
     }
     return this.routeFor(key);
   }
@@ -345,6 +372,14 @@ export class GatewayRoutes {
     };
   }
 
+  /** The membership's access check in flight, if any, without starting one. */
+  private inFlight(key: AgentKey): Promise<void> | undefined {
+    const decided = this.decide(key);
+    if (decided.kind !== "pending") return;
+    const state = this.readiness.get(decided.cache);
+    return state?.status === "probing" ? state.settled : undefined;
+  }
+
   /** Starts an access check for the membership when it needs one and a
    * request path is bound; returns the probe in flight, if any. */
   private probe(key: AgentKey): Promise<void> | undefined {
@@ -402,10 +437,24 @@ export class GatewayRoutes {
   }
 }
 
-/** The gateway's access answer for this caller, or why it failed. An
- * absent `harnesses` enables none, so a gateway without the rollout flag
- * leaves every harness on its existing behavior. */
+/** The gateway's access answer for this caller, or why it failed. A failure
+ * other than a 401 or 403 (a network error, another non-200 status, or a
+ * malformed body) is tried exactly once more after `PROBE_RETRY_DELAY_MS`,
+ * so a blip doesn't fail the route; the second result stands. An absent
+ * `harnesses` enables none, so a gateway without the rollout flag leaves
+ * every harness on its existing behavior. */
 export async function probeAccess(
+  request: GatewayRequest,
+  url: string,
+  headers: Readonly<Record<string, string>>,
+): Promise<AccessAnswer | Readonly<{ reason: BlockedReason }>> {
+  const first = await probeOnce(request, url, headers);
+  if (!("reason" in first) || first.reason === "auth") return first;
+  await new Promise((resolve) => setTimeout(resolve, PROBE_RETRY_DELAY_MS));
+  return probeOnce(request, url, headers);
+}
+
+async function probeOnce(
   request: GatewayRequest,
   url: string,
   headers: Readonly<Record<string, string>>,
@@ -448,6 +497,18 @@ export async function probeAccess(
 }
 /** A harness name a type declares and the gateway's flag lists. */
 export const HARNESS = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/** Resolves once `settled` does or `signal` aborts, whichever is first. */
+const settledOrAborted = (settled: Promise<void>, signal: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    if (signal.aborted) return resolve();
+    const done = () => {
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    signal.addEventListener("abort", done, { once: true });
+    void settled.then(done, done);
+  });
 
 const blocked = (
   gatewayOrigin: string,

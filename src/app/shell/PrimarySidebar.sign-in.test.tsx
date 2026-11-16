@@ -53,41 +53,80 @@ async function refusedLive(refusal: string) {
     },
   );
   await waitFor(() => expect(f.session.live.snapshot().status).toBe("error"));
-  return { identity, connects: () => connects };
+  return { f, identity, connects: () => connects };
 }
 
 it("offers explicit sign-in when the live socket refuses a protected community", async () => {
   const h = await refusedLive("Federated sign-in is required");
   // The cached channel list stays; nothing signs in on its own.
   expect(screen.getByRole("button", { name: "Chats" })).toBeVisible();
+  expect(
+    await screen.findByText(
+      "This community requires builderlab.example sign-in.",
+    ),
+  ).toBeVisible();
   expect(h.identity.service.signIn).not.toHaveBeenCalled();
   expect(h.connects()).toBe(1);
-  await userEvent
-    .setup()
-    .click(await screen.findByRole("button", { name: "Sign in" }));
+  await userEvent.setup().click(
+    await screen.findByRole("button", {
+      name: "Sign in with builderlab.example",
+    }),
+  );
   expect(h.identity.service.signIn).toHaveBeenCalledOnce();
   // A completed sign-in reconnects the live socket with the new session.
   await waitFor(() => expect(h.connects()).toBe(2));
 });
 
+/** Try again is the relay's person-initiated retry (it asks the issuer
+ * again; see service.test.ts), which retries every failed source, the live
+ * socket among them. */
+async function tryAgainReconnects(h: Awaited<ReturnType<typeof refusedLive>>) {
+  const tryAgain = vi
+    .spyOn(h.f.relay, "tryAgain")
+    .mockImplementation(() => h.f.session.recovery?.retryAll());
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Try again" }));
+  expect(tryAgain).toHaveBeenCalledOnce();
+  await waitFor(() => expect(h.connects()).toBe(2));
+}
+
 it.each([
   ["binding-mismatch", "identity link"],
   ["authorization-denied", "administrator"],
 ])("shows %s recovery from the live socket", async (refusal, text) => {
-  await refusedLive(refusal);
+  const h = await refusedLive(refusal);
   expect(await screen.findByRole("alert")).toHaveTextContent(text);
-  expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Sign in with builderlab.example" }),
+  ).toBeNull();
+  // An administrator may have fixed it since: nothing retries on its own.
+  expect(h.connects()).toBe(1);
+  await tryAgainReconnects(h);
 });
 
 it.each(["adapter-refused", "grant-refused", "invalid-response"])(
-  "explains a final %s issuer refusal without offering sign-in",
+  "explains a %s issuer refusal and offers Try again, not sign-in",
   async (refusal) => {
     const h = await refusedLive(refusal);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Restart Buzz to try again",
+      "Buzz couldn’t confirm your organization sign-in for this community. Try again. If it keeps happening, contact your administrator.",
     );
     expect(screen.getByRole("button", { name: "Chats" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Sign in with builderlab.example" }),
+    ).toBeNull();
     expect(h.connects()).toBe(1);
+    await tryAgainReconnects(h);
   },
 );
+
+it("offers no Try again for a live refusal that sign-in fixes", async () => {
+  await refusedLive("Federated sign-in is required");
+  expect(
+    await screen.findByRole("button", {
+      name: "Sign in with builderlab.example",
+    }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+});

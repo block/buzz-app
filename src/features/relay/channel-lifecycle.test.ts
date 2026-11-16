@@ -13,6 +13,8 @@ import {
   vi,
 } from "vitest";
 import { ReadError } from "./errors";
+import { ApiPaused } from "./http-admission";
+import { FRESH_FOR } from "./store";
 import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { PublishRejected } from "./outbox";
 import {
@@ -264,6 +266,37 @@ describe("bounded visibility recovery", () => {
     });
     await vi.advanceTimersByTimeAsync(120_000);
     expect(h.read).toHaveBeenCalledOnce();
+    h.owner.dispose();
+  });
+
+  it("lets a recent read answer a stale-only trigger until FRESH_FOR passes", async () => {
+    const h = harness();
+    const lifecycle = h.owner.capability;
+    const stale = () =>
+      lifecycle.refreshVisibility(undefined, { ifStale: true });
+    await stale();
+    expect(h.read).toHaveBeenCalledOnce();
+    await stale();
+    await vi.advanceTimersByTimeAsync(FRESH_FOR - 1);
+    await stale();
+    expect(h.read).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    await stale();
+    expect(h.read).toHaveBeenCalledTimes(2);
+    // An explicit refresh always reads.
+    await lifecycle.refreshVisibility();
+    expect(h.read).toHaveBeenCalledTimes(3);
+    // A failed read is not recent evidence.
+    h.read.mockRejectedValueOnce(new ReadError("denied", "denied", 403));
+    await lifecycle.refreshVisibility();
+    expect(lifecycle.snapshot().status).toBe("error");
+    await stale();
+    expect(h.read).toHaveBeenCalledTimes(5);
+    expect(lifecycle.snapshot().status).toBe("ready");
+    // A cleared session's read answers nothing for the next one.
+    h.owner.clear();
+    await stale();
+    expect(h.read).toHaveBeenCalledTimes(6);
     h.owner.dispose();
   });
 
@@ -1066,6 +1099,33 @@ it("distinguishes a rejected publication from an uncertain delivery without repl
   expect(h.removed).not.toHaveBeenCalled();
   h.owner.dispose();
 });
+it("surfaces a pause bare only before publication; after it, the delete is uncertain", async () => {
+  // The delete dialog offers Retry only for a bare pause, so this boundary
+  // decides whether "nothing was deleted" is true.
+  const h = harness();
+  h.read.mockRejectedValueOnce(new ApiPaused(1000));
+  const before = await h.owner.capability
+    .run("delete", id)
+    .catch((error: unknown) => error);
+  expect(before).toBeInstanceOf(ApiPaused);
+  expect(h.publish).not.toHaveBeenCalled();
+  h.publish.mockImplementationOnce(async () => {
+    h.read.mockRejectedValueOnce(new ApiPaused(1000));
+  });
+  const after = await h.owner.capability
+    .run("delete", id)
+    .catch((error: unknown) => error);
+  expect(after).toBeInstanceOf(ChannelLifecycleUnconfirmed);
+  expect(h.publish).toHaveBeenCalledOnce();
+  h.publish.mockRejectedValueOnce(new ApiPaused(1000));
+  const during = await h.owner.capability
+    .run("delete", id)
+    .catch((error: unknown) => error);
+  expect(during).toBeInstanceOf(ChannelLifecycleUnconfirmed);
+  expect(h.publish).toHaveBeenCalledTimes(2);
+  expect(h.removed).not.toHaveBeenCalled();
+  h.owner.dispose();
+});
 it("an accepted command without side effects remains uncertain, never replayed", async () => {
   vi.useFakeTimers();
   const h = harness();
@@ -1389,6 +1449,27 @@ describe("channel owner-agent Archive and Delete eligibility", () => {
         ["archived", "false"],
       ],
     });
+    h.owner.dispose();
+  });
+  it("judges channel records the caller already read, not a lagging replica", async () => {
+    const h = ownedAgent("member");
+    // The caller's writer-backed read saw the archive; the replica has not.
+    const records = [
+      h.metadata(true),
+      ...h.getEvents().filter((event) => [39001, 39002].includes(event.kind)),
+    ];
+    expect(await h.owner.capability.load(id, undefined, records)).toMatchObject(
+      {
+        canArchive: false,
+        canUnarchive: true,
+        canDelete: false,
+      },
+    );
+    expect(
+      h.read.mock.calls.flatMap(([filters]) =>
+        filters.flatMap((filter) => filter.kinds ?? []),
+      ),
+    ).toEqual([0]);
     h.owner.dispose();
   });
   it("a direct admin archives without owner-profile reads", async () => {

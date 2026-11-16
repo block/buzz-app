@@ -3,7 +3,10 @@ import {
   TOP_LEVEL_PROMPT,
   CHANNEL_LEVEL_PROMPT,
 } from "../../buzz-mcp/prompt";
-import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
+import {
+  basePromptFor,
+  MENTION_PROMPT,
+} from "../../features/agent-harness/base-prompt";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
 import {
   type ConversationWake,
@@ -35,11 +38,14 @@ export const rootOf = (event: EventData) =>
   threadReference(event)?.rootId ?? event.id;
 export function developerInstructions(
   agent: Pick<AgentHandle, "name" | "pubkey">,
+  /** The agent's workspace, absolute, when the thread runs in a folder of
+   * the conversation's own instead. */
+  workspace?: string,
 ) {
   return `You are ${agent.name} (pubkey ${agent.pubkey}), a coding agent in Buzz.
-The buzz namespace provides the shared Buzz tools, including messages, reactions, reads, uploads, canvas, and encrypted memory. Buzz access and signing are handled by the host. Do not invoke the buzz CLI or look for credentials. Use Codex's native coding tools in the workspace.
+The buzz namespace provides the shared Buzz tools, including messages, reactions, reads, uploads, canvas, and encrypted memory. Prefer these tools for Buzz operations. You may use the buzz CLI through the agent-specific BUZZ_CREDENTIAL_PROVIDER supplied by the runtime to this thread's shell commands. The host handles access and signing as this agent without exposing private keys. If that provider is unavailable or refuses an operation, use the available Buzz tools or report the blocker. Do not look for credentials, read private keys, change the provider, or pair the CLI as your owner. Use Codex's native coding tools in the workspace.
 
-${BASE_PROMPT}
+${basePromptFor(workspace)}
 
 ${BUZZ_PROMPT}`;
 }
@@ -111,7 +117,7 @@ export function turnInput(
   const routing = conversation.topLevel
     ? { posting: "top-level" }
     : { session_thread: conversation.root, reply_to: rootOf(event) };
-  return `<context>\n${quoted({ agent, channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", ...routing })}\n</context>\n${conversation.topLevel ? `${conversation.threadReplies ? CHANNEL_LEVEL_PROMPT : TOP_LEVEL_PROMPT}\n` : ""}${wake && !steering ? body : `<${section}>\n${body}\n</${section}>`}${note ? `\n\n${note}` : ""}`;
+  return `<context>\n${quoted({ agent, channel_id: conversation.channelId, channel_name: conversation.name, session_scope: conversation.root ? "thread" : "channel", ...routing })}\n</context>\n${conversation.topLevel ? `${conversation.threadReplies ? CHANNEL_LEVEL_PROMPT : TOP_LEVEL_PROMPT}\n` : ""}${wake ? "" : `${MENTION_PROMPT}\n`}${wake && !steering ? body : `<${section}>\n${body}\n</${section}>`}${note ? `\n\n${note}` : ""}`;
 }
 /** The readable part of a conversation's thread name; earlier versions used
  * it alone. */

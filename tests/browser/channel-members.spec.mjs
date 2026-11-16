@@ -1,6 +1,7 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 test.use({ pluginFixtures: true });
 
@@ -14,10 +15,13 @@ test("channel members opens from the header, fits each viewport, and returns key
   await openPage(page, "Messages");
   const conversation = page.getByRole("article", { name: "Conversation" });
   await expect(
-    conversation.getByRole("tab", { name: "Alpha", exact: true }),
+    conversation.getByRole("button", {
+      name: "Manage members of Alpha",
+      exact: true,
+    }),
   ).toBeVisible();
   const trigger = conversation.getByRole("button", {
-    name: "Manage members",
+    name: /^Manage members of /,
     exact: true,
   });
   for (const [width, height, mode] of [
@@ -32,7 +36,13 @@ test("channel members opens from the header, fits each viewport, and returns key
         document.documentElement.setAttribute("data-color-mode", value),
       mode,
     );
-    await trigger.click();
+    // The avatar’s leading edge must open members, clear of the resize strip.
+    const inset = await trigger.evaluate((node) =>
+      Number.parseFloat(getComputedStyle(node).paddingLeft),
+    );
+    await trigger.click({
+      position: { x: inset + 1, y: (await trigger.boundingBox()).height / 2 },
+    });
     const dialog = page.getByRole("dialog", {
       name: "Manage members",
       exact: true,
@@ -42,11 +52,7 @@ test("channel members opens from the header, fits each viewport, and returns key
     await expect(dialog.getByText(/People ·/)).toBeVisible();
     await expect(dialog.getByText("Loading members…")).toHaveCount(0);
     // Finish the entrance before measuring; content changes must not recenter it.
-    await dialog.evaluate(async (node) => {
-      await Promise.all(
-        node.getAnimations().map((animation) => animation.finished),
-      );
-    });
+    await animationsSettled(dialog);
     const box = await dialog.boundingBox();
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(width);
@@ -138,7 +144,7 @@ test("Members closes passively on Back, restores on Forward, and retires on expl
     exact: true,
   });
   const trigger = conversation.getByRole("button", {
-    name: "Manage members",
+    name: /^Manage members of /,
     exact: true,
   });
   const composer = conversation.getByRole("textbox", {
@@ -297,7 +303,7 @@ test.describe("scoped Members history", () => {
       ),
     ).toEqual({ status: "opened" });
     await page
-      .getByRole("button", { name: "Manage members", exact: true })
+      .getByRole("button", { name: /^Manage members of /, exact: true })
       .click();
     const dialog = page.getByRole("dialog", {
       name: "Manage members",

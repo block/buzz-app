@@ -36,7 +36,7 @@ export const isLiteralMarkdownContext = (type: string) =>
     "html",
   ].includes(type);
 
-function literalRanges(
+export function literalRanges(
   tree: MarkdownNode,
   includeLinks: boolean,
 ): readonly LiteralRange[] {
@@ -86,10 +86,50 @@ function spoilerDelimiters(content: string): readonly number[] {
   return Object.freeze(positions);
 }
 
-/** Pure, immutable Markdown work; MessageMarkdown keeps recent results. */
-export function prepareMarkdown(content: string): PreparedMarkdown {
+/** Prose that no Markdown, GFM or message syntax acts on: no syntax characters,
+ * `:` (shortcodes, URL schemes), `@`, `www.`, private-use placeholders, tabs or
+ * other controls, line-start list or indent markers, or a space before a line
+ * ending. Its tree is paragraphs of text, which `plainProseTree` builds. */
+export const isPlainProse = (content: string) =>
+  !/(?![\n\r])\p{Cc}|[*_`~[\]<>|#\\&!=:@\p{Co}\p{Zl}\p{Zp}\ufeff\ufffc]|www\.| [\n\r]|^ *(?:[-+]|\d+[.)])|^ {4}/imu.test(
+    content,
+  );
+
+/** The tree micromark builds for `isPlainProse` content. */
+export const plainProseTree = (content: string) => ({
+  type: "root",
+  children: content
+    .split(/(?:\r\n|\r(?!\n)|\n){2,}/)
+    .map((block) =>
+      block
+        .replace(/^ +/gm, "")
+        // The lookbehind starts the tail match only at a run's start, so a long
+        // mid-line space run is scanned once, not once per space.
+        .replace(/^(?:\r\n?|\n)+|(?<![\r\n ])[\r\n ]+$/g, ""),
+    )
+    .filter(Boolean)
+    .map((value) => ({
+      type: "paragraph",
+      children: [{ type: "text", value }],
+    })),
+});
+
+/** Pure, immutable Markdown work; `preparedMarkdown` keeps recent results.
+ * `scanned` receives the prepared content's scan when one was made. */
+export function prepareMarkdown(
+  content: string,
+  scanned?: (scan: ReturnType<typeof scanMarkdown>) => void,
+): PreparedMarkdown {
   if (content.length > MAX_MARKDOWN_LENGTH)
     return Object.freeze({ kind: "plain", content });
+  // Nothing in plain prose is literal, a wrapped link or a spoiler.
+  if (isPlainProse(content))
+    return Object.freeze({
+      kind: "markdown",
+      content,
+      literalRanges: Object.freeze([]),
+      spoilerDelimiters: Object.freeze([]),
+    });
 
   let scan = scanMarkdown(content);
   if (scan.tooDeep) return Object.freeze({ kind: "plain", content });
@@ -105,6 +145,7 @@ export function prepareMarkdown(content: string): PreparedMarkdown {
     if (scan.tooDeep) return Object.freeze({ kind: "plain", content });
   }
 
+  scanned?.(scan);
   return Object.freeze({
     kind: "markdown",
     content: normalized,
@@ -112,3 +153,43 @@ export function prepareMarkdown(content: string): PreparedMarkdown {
     spoilerDelimiters: spoilerDelimiters(normalized),
   });
 }
+
+/** Switching channels remounts every row. Keep recent results so a revisit
+ * does not prepare and parse unchanged bodies again. */
+export function recentResults<T>(
+  budget: number,
+  weigh: (key: string, value: T) => number,
+) {
+  const results = new Map<string, Readonly<{ value: T; weight: number }>>();
+  let total = 0;
+  return (key: string, make: () => T) => {
+    let entry = results.get(key);
+    if (entry) results.delete(key);
+    else {
+      const value = make();
+      entry = { value, weight: weigh(key, value) };
+      // Keeping a result heavier than the budget would evict all the others.
+      if (entry.weight > budget) return value;
+      total += entry.weight;
+    }
+    results.set(key, entry);
+    for (const [oldest, { weight }] of results) {
+      if (total <= budget) break;
+      results.delete(oldest);
+      total -= weight;
+    }
+    return entry.value;
+  };
+}
+// A prepared body keeps its content and literal ranges: ~200k characters.
+const preparedBodies = recentResults<PreparedMarkdown>(
+  200_000,
+  (content) => 100 + content.length,
+);
+
+/** A message body's prepared Markdown, shared by its renderer and link
+ * previews so a row prepares it once. */
+export const preparedMarkdown = (
+  content: string,
+  scanned?: Parameters<typeof prepareMarkdown>[1],
+) => preparedBodies(content, () => prepareMarkdown(content, scanned));

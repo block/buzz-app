@@ -10,6 +10,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { SmileyIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
 import { ReactionDelivery, ReactionTool } from "../conversation/ReactionTool";
@@ -23,12 +24,13 @@ import type {
   MessageReaction,
   Profile,
 } from "../relay/contracts";
-import type { CustomEmoji } from "../relay/emoji";
+import { isReactionShortcode, type CustomEmoji } from "../relay/emoji";
 import type { RelaySession } from "../relay/session";
 import type { OutgoingEvent } from "../relay/outbox";
 import { selectProfiles } from "../relay/profile-selection";
 import styles from "./Messages.module.css";
 import { isUnicodeEmojiOnly } from "./emoji-size";
+import { catalogEmoji, useReactionEmoji } from "./reaction-emoji";
 
 type Props = {
   row: ChannelMessage;
@@ -90,22 +92,7 @@ function useReactionAction({ row, session, disabled }: Props) {
       return false;
     }
   };
-  return { toggle, disabled: disabled || busy, error };
-}
-
-const catalogIndexes = new WeakMap<
-  readonly CustomEmoji[],
-  ReadonlyMap<string, CustomEmoji>
->();
-/** Resolve picker selections against one index per custom-emoji catalog snapshot. */
-function catalogEmoji(entries: readonly CustomEmoji[], content: string) {
-  if (!content.startsWith(":")) return undefined;
-  let index = catalogIndexes.get(entries);
-  if (!index) {
-    index = new Map(entries.map((entry) => [`:${entry.shortcode}:`, entry]));
-    catalogIndexes.set(entries, index);
-  }
-  return index.get(content.toLowerCase());
+  return { toggle, disabled: disabled || busy, busy, error };
 }
 
 /** The emoji contribution owns the single reaction-picker action. */
@@ -142,29 +129,30 @@ function ReactionGlyph({
   reaction: MessageReaction;
   session: RelaySession;
 }) {
-  const source = reaction.emoji ? session.media(reaction.emoji.url) : undefined;
+  const emoji = useReactionEmoji(reaction, session);
+  const source = emoji ? session.media(emoji.url) : undefined;
   const [failed, setFailed] = useState<string>();
-  return source && source !== failed ? (
-    <img
-      className={styles.reactionCustomEmoji}
-      src={source}
-      alt=""
-      draggable={false}
-      onError={() => setFailed(source)}
-    />
-  ) : (
+  if (source && source !== failed)
+    return (
+      <img
+        className={styles.reactionCustomEmoji}
+        src={source}
+        alt=""
+        draggable={false}
+        onError={() => setFailed(source)}
+      />
+    );
+  // A shortcode is never a reaction's visible content: refused, failed and
+  // unknown images get a neutral glyph, and the shortcode stays in the label.
+  if (isReactionShortcode(reaction.content))
+    return <SmileyIcon className={styles.reactionPlaceholder} />;
+  return (
     <span
-      className={
-        reaction.emoji
-          ? styles.reactionFallbackEmoji
-          : styles.reactionNativeEmoji
-      }
-      data-reaction-artwork={
-        (!reaction.emoji && isUnicodeEmojiOnly(reaction.content)) || undefined
-      }
+      className={styles.reactionNativeEmoji}
+      data-reaction-artwork={isUnicodeEmojiOnly(reaction.content) || undefined}
       aria-hidden="true"
     >
-      {reaction.emoji ? `:${reaction.emoji.shortcode}:` : reaction.content}
+      {reaction.content}
     </span>
   );
 }
@@ -294,7 +282,7 @@ function ReactionEmoji({
   session,
   profiles,
   disabled,
-  unavailable,
+  busy,
   toggle,
   onFocusedRemoval,
   previewWarm,
@@ -308,7 +296,7 @@ function ReactionEmoji({
   session: RelaySession;
   profiles?: ReadonlyMap<string, Profile> | undefined;
   disabled: boolean;
-  unavailable: boolean;
+  busy: boolean;
   toggle(content: string, emoji?: CustomEmoji): boolean;
   onFocusedRemoval?: (() => void) | undefined;
   previewWarm: boolean;
@@ -324,7 +312,9 @@ function ReactionEmoji({
   const emojiAnchor = useRef<HTMLSpanElement>(null);
   const peopleList = useRef<HTMLElement>(null);
   const [overflowing, setOverflowing] = useState(false);
-  const shown = previewOpen && !previewDismissed && !unavailable;
+  const unavailable = disabled || busy;
+  // Who reacted stays readable to people who cannot react.
+  const shown = previewOpen && !previewDismissed && !busy;
   const grouped = authorIds.length > 1;
   const labelProfiles = useMemo(
     () => selectProfiles(session.profiles, grouped ? [] : authorIds),
@@ -349,7 +339,10 @@ function ReactionEmoji({
     );
   };
   return (
-    <span className={`${styles.reactionItem} buzz-compact-controls`}>
+    <span
+      className={`${styles.reactionItem} buzz-compact-controls`}
+      data-mine={mine || undefined}
+    >
       <PreviewCard
         side="top"
         align="center"
@@ -379,8 +372,9 @@ function ReactionEmoji({
             data-reaction-url={reaction.emoji?.url}
             aria-label={`${reaction.content}: ${grouped ? `${authorIds.length} people` : user}`}
             aria-pressed={mine}
+            // Not disabled: hover, focus and Tab into the preview stay
+            // available, and keys reach ancestors. onClick rejects activation.
             aria-disabled={unavailable}
-            disabled={disabled}
             onMouseEnter={(event) => {
               setPreviewDismissed(false);
               const tilt = `${Math.random() * 20 - 10}deg`;
@@ -507,7 +501,7 @@ export function MessageReactions(
               session={session}
               profiles={props.profiles}
               disabled={props.disabled}
-              unavailable={action.disabled}
+              busy={action.busy}
               toggle={action.toggle}
               onFocusedRemoval={props.onFocusedRemoval}
               // Who reacted is a preview (DESIGN.md "Hover timing"): once one is

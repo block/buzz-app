@@ -333,8 +333,8 @@ it("isolates a sidebar failure and recovers it on target change before restoring
     await openSidebarPage("plain");
     expect(await screen.findByText("Plain page content")).toBeVisible();
     expect(
-      screen.getByRole("complementary", { name: "Sidebar" }),
-    ).toBeVisible();
+      screen.queryByRole("complementary", { name: "Sidebar" }),
+    ).not.toBeInTheDocument();
   } finally {
     error.mockRestore();
   }
@@ -792,8 +792,8 @@ it("keeps the same unsent conversation and companion panel through Settings sect
   const workspace = frame?.parentElement;
   expect(workspace).toContainElement(composing);
   expect(workspace).toContainElement(panel);
-  // The community switcher lives in the app header, which the frame excludes.
-  expect(workspace).not.toContainElement(communities);
+  // The dock remains in the workspace alongside the Settings frame.
+  expect(workspace).toContainElement(communities);
   expect(modal.closest('[aria-hidden="true"], [inert]')).toBeNull();
   await waitFor(() =>
     expect(modal).toContainElement(document.activeElement as HTMLElement),
@@ -960,7 +960,9 @@ it.each(["pending", "unavailable"] as const)(
     const name = await screen.findByRole("textbox", { name: "Display name" });
     await waitFor(() => expect(name).toHaveValue("Community name"));
     await user.clear(name);
-    await user.type(name, "Keep this draft");
+    // The draft's content matters here, not how it was entered; each typed
+    // keystroke renders the whole app again.
+    await user.paste("Keep this draft");
     if (state === "pending") {
       const snapshot = current.plugins.snapshot();
       const sidebar = snapshot.activation["test.sidebar"];
@@ -992,6 +994,9 @@ it.each(["pending", "unavailable"] as const)(
     );
     expect(name).toHaveValue("Keep this draft");
   },
+  // Each Settings navigation here renders the whole app again, about a second
+  // apiece on a loaded runner, as in the neighbouring tests.
+  15_000,
 );
 
 it("drops the retained draft after an accepted departure to another account's unavailable Settings", async () => {

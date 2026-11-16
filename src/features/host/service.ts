@@ -2,6 +2,8 @@ import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type {} from "../../plugins/api";
 import { nativeIdentityEnabled } from "../identity/service";
+import type { SoloRegionBinding } from "../channel-navigation/solo-navigation-contract";
+import { repositoryFolders } from "../communities/repositories";
 
 export type HostRequest = Readonly<{
   url: string;
@@ -62,6 +64,23 @@ export type HostByteResponse = Readonly<{
   headers: Readonly<Record<string, string>>;
   body: Uint8Array;
 }>;
+/** What a public page names in its head for a link preview. URLs are
+ * absolute HTTPS; read the image with `requestBytes` and `host.publicImages`. */
+export type HostPagePreview = Readonly<{
+  title?: string;
+  description?: string;
+  siteName?: string;
+  image?: string;
+  imageAlt?: string;
+  icon?: string;
+}>;
+/** A redirect's `location` to check before asking again, a page's `preview`,
+ * or for anything else its status alone. */
+export type HostPage = Readonly<{
+  status: number;
+  location?: string;
+  preview?: HostPagePreview;
+}>;
 export type HostSavedBytes = Readonly<{
   path: string;
   size: number;
@@ -80,6 +99,8 @@ export type ProcessProtection = Readonly<{
   readOnlyPaths: readonly string[];
   hiddenPaths: readonly string[];
 }>;
+/** The variable a Buzz credential is handed over in. */
+export const CREDENTIAL_ENV = "BUZZ_CREDENTIAL_PROVIDER";
 export type HostProcessOptions = Readonly<{
   /** Follow the arguments the manifest declares. */
   args?: readonly string[];
@@ -91,15 +112,36 @@ export type HostProcessOptions = Readonly<{
   mcp?: Pick<HostMcpServer, "url" | "headers">;
   /** Native macOS containment for a protected worker and its descendants. */
   protection?: ProcessProtection;
+  /** Hand it a Buzz credential (`BUZZ_CREDENTIAL_PROVIDER`) that acts for no
+   * one until `actAs` names one of the plugin's agents. Not on Windows. */
+  agentCredential?: boolean;
+  /** Set by agent protection: the agent a protected engine is launched for.
+   * Native checks that the agent's saved protection names this plugin. */
+  protectedAgent?: Readonly<{ pubkey: string; relay: string }>;
+  /** Secrets native code holds, set in its environment after `env`; one that
+   * is not saved is left unset. Each is only for the processes it belongs
+   * to: `anthropic-api-key` (`ANTHROPIC_API_KEY`) for Buzz's Claude. */
+  secrets?: readonly "anthropic-api-key"[];
   onStdout?(data: string): void;
   onStderr?(data: string): void;
 }>;
 export type HostProcess = Readonly<{
   write(data: string): Promise<void>;
+  /** Queue one complete streamed message without interleaving other writes. */
+  writeStream?(data: AsyncIterable<string>): Promise<void>;
   /** Writes any final `data`, then closes stdin. */
   end(data?: string): Promise<void>;
   /** Asks it to stop, then kills it and its descendants. */
   kill(): Promise<void>;
+  /** Only with `agentCredential`: lets its credential act as this agent of
+   * the plugin's type from now on. A process acts as one agent only. */
+  actAs?(agent: Readonly<{ pubkey: string; relay: string }>): Promise<void>;
+  /** For a host several agents share: the `BUZZ_CREDENTIAL_PROVIDER` value
+   * for only this agent's tool processes, never the host's own environment.
+   * The same each call; revoked once the host exits. Undefined on Windows. */
+  toolCredential?(
+    agent: Readonly<{ pubkey: string; relay: string }>,
+  ): Promise<string | undefined>;
   /** The exit code once it exits; null when a signal ended it. */
   exited: Promise<number | null>;
 }>;
@@ -138,7 +180,7 @@ export type McpApproval = Readonly<{
   viewer: string;
   agent: string;
   community: string;
-  scopes: readonly ("read" | "post" | "create")[];
+  scopes: readonly ("read" | "post" | "create" | "agent")[];
 }>;
 export type McpPairing = Readonly<{
   id: string;
@@ -152,6 +194,11 @@ type McpEvent =
  * This permits token reuse after initialization. The handler must bind identity
  * itself and grant every client the same authority. Defaults to false. */
 export type HostMcpOptions = Readonly<{ sharedSession?: boolean }>;
+export type HostRepositoryFolder = Readonly<{
+  name: string;
+  path: string;
+  displayPath: string;
+}>;
 export interface Host {
   externalMcpPairing?(
     operation: "get" | "resume" | "revoke",
@@ -178,8 +225,20 @@ export interface Host {
   ) => Promise<Uint8Array>;
   /** `path`, absolute or `~/…`, as an absolute directory without symbolic
    * links, created if missing, for a plugin whose manifest declares
-   * `host.files`. Desktop only. */
-  resolveDirectory?: (path: string) => Promise<string>;
+   * `host.files`. With `create: false`, a missing path or one that is not a
+   * directory rejects instead. Desktop only. */
+  resolveDirectory?: (
+    path: string,
+    options?: Readonly<{ create?: boolean }>,
+  ) => Promise<string>;
+  /** The immediate folders, sorted by name, of the repositories folder that
+   * `binding`'s community and account configured, for a plugin whose manifest
+   * declares `host.files`. Never creates it or follows a linked child. Rejects
+   * past 4096 entries or a 1 MiB listing. Desktop only. */
+  repositoryFolders?: (
+    binding: SoloRegionBinding,
+    signal: AbortSignal,
+  ) => Promise<readonly HostRepositoryFolder[]>;
   request(input: HostRequest): Promise<HostResponse>;
   /** POST-only, desktop and compatible native host required. A repeated call
    * authority rejects with unknown outcome, never resubmits or caches success.
@@ -198,6 +257,12 @@ export interface Host {
   ) => Promise<HostResponse>;
   /** No automatic replay protection or text/array fallback. */
   requestBytes?: (input: HostByteRequest) => Promise<HostByteResponse>;
+  /** One GET for a public HTTPS page, for a plugin whose manifest declares
+   * `host.publicPages`. No cookies and no redirects followed. Desktop only. */
+  readPage?: (
+    url: string,
+    options?: Readonly<{ timeoutMs?: number }>,
+  ) => Promise<HostPage>;
   /** Requires host.managedFiles, not host.files. Keep bytes immutable through
    * hashing/save. An ambiguous failure must not be automatically retried. */
   saveBytes?: (
@@ -351,31 +416,52 @@ export class HostService extends Service implements Host {
       env: options.env ?? null,
       mcp: options.mcp ?? null,
       protection: options.protection ?? null,
+      agentCredential: options.agentCredential ?? false,
+      protectedAgent: options.protectedAgent ?? null,
+      ...(options.secrets?.length && { secrets: options.secrets }),
       onEvent,
     });
     // The host takes at most 1 MiB a write, so a longer one goes in pieces,
     // queued so no other write lands between them.
     let queue: Promise<unknown> = Promise.resolve();
-    const write = (data: string, close: boolean) => {
-      const written = queue.then(async () => {
-        let at = 0;
-        do {
-          let end = Math.min(data.length, at + WRITE_UNITS);
-          // A piece must not split a surrogate pair.
-          if (end < data.length && /[\uD800-\uDBFF]/.test(data[end - 1] ?? ""))
-            end--;
-          await invoke<void>("plugin_host_process_write", {
-            id: owner.id,
-            handle,
-            data: data.slice(at, end),
-            close: close && end === data.length,
-          });
-          at = end;
-        } while (at < data.length);
+    let writeFailure: unknown;
+    const writePiece = async (data: string, close: boolean) => {
+      let at = 0;
+      do {
+        let end = Math.min(data.length, at + WRITE_UNITS);
+        if (end < data.length && /[\uD800-\uDBFF]/.test(data[end - 1] ?? ""))
+          end--;
+        await invoke<void>("plugin_host_process_write", {
+          id: owner.id,
+          handle,
+          data: data.slice(at, end),
+          close: close && end === data.length,
+        });
+        at = end;
+      } while (at < data.length);
+    };
+    const enqueue = (operation: () => Promise<void>) => {
+      const written = queue.then(() => {
+        if (writeFailure) throw writeFailure;
+        return operation();
       });
       queue = written.catch(() => undefined);
       return written;
     };
+    const write = (data: string, close: boolean) =>
+      enqueue(() => writePiece(data, close));
+    const writeStream = (data: AsyncIterable<string>) =>
+      enqueue(async () => {
+        try {
+          for await (const part of data) await writePiece(part, false);
+        } catch (error) {
+          // Partial protocol frames cannot be followed by another message.
+          writeFailure =
+            error instanceof Error ? error : new Error(String(error));
+          await kill();
+          throw writeFailure;
+        }
+      });
     const kill = () =>
       invoke<void>("plugin_host_process_kill", { id: owner.id, handle }).catch(
         // Already gone.
@@ -393,8 +479,31 @@ export class HostService extends Service implements Host {
     void exited.then(() => release());
     return Object.freeze({
       write: (data: string) => write(data, false),
+      writeStream,
       end: (data = "") => write(data, true),
       kill,
+      ...(options.agentCredential && {
+        actAs: ({
+          pubkey,
+          relay,
+        }: Readonly<{ pubkey: string; relay: string }>) =>
+          invoke<void>("plugin_host_process_bind_agent", {
+            id: owner.id,
+            handle,
+            pubkey,
+            relay,
+          }),
+      }),
+      toolCredential: async ({
+        pubkey,
+        relay,
+      }: Readonly<{ pubkey: string; relay: string }>) =>
+        (await invoke<string | null>("plugin_host_process_tool_credential", {
+          id: owner.id,
+          handle,
+          pubkey,
+          relay,
+        })) ?? undefined,
       exited,
     });
   }
@@ -533,7 +642,10 @@ export class HostService extends Service implements Host {
     return new Uint8Array(data);
   }
 
-  async resolveDirectory(path: string): Promise<string> {
+  async resolveDirectory(
+    path: string,
+    { create = true }: Readonly<{ create?: boolean }> = {},
+  ): Promise<string> {
     const owner = this.ctx.pluginOwner;
     if (!owner || !isTauri())
       throw new Error("Files require an installed desktop plugin");
@@ -541,7 +653,27 @@ export class HostService extends Service implements Host {
       id: owner.id,
       revision: owner.revision,
       path,
+      ...(create ? {} : { create }),
     }).catch(rethrow);
+  }
+
+  async repositoryFolders(
+    binding: SoloRegionBinding,
+    signal: AbortSignal,
+  ): Promise<readonly HostRepositoryFolder[]> {
+    const owner = this.ctx.pluginOwner;
+    if (!owner || !isTauri())
+      throw new Error("Files require an installed desktop plugin");
+    return repositoryFolders(binding.scope, signal, (path) =>
+      invoke<readonly HostRepositoryFolder[]>(
+        "plugin_host_repository_folders",
+        {
+          id: owner.id,
+          revision: owner.revision,
+          path,
+        },
+      ).catch(rethrow),
+    );
   }
 
   async request(input: HostRequest): Promise<HostResponse> {
@@ -633,6 +765,36 @@ export class HostService extends Service implements Host {
       }).catch(rethrow);
       lifetime.active();
       return decodeByteFrame(frame, input.maxBytes);
+    } finally {
+      lifetime.release();
+    }
+  }
+
+  async readPage(
+    url: string,
+    options?: Readonly<{ timeoutMs?: number }>,
+  ): Promise<HostPage> {
+    const ctx = this.ctx;
+    const owner = ctx.pluginOwner;
+    if (!owner || !isTauri())
+      throw new Error("Page reads require an installed desktop plugin");
+    const timeoutMs = options?.timeoutMs;
+    if (
+      typeof url !== "string" ||
+      (timeoutMs !== undefined &&
+        (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000))
+    )
+      throw new Error("Invalid page request");
+    const lifetime = byteLifetime(ctx);
+    try {
+      const page = await invoke<HostPage>("plugin_host_read_page", {
+        id: owner.id,
+        revision: owner.revision,
+        url,
+        timeoutMs,
+      }).catch(rethrow);
+      lifetime.active();
+      return page;
     } finally {
       lifetime.release();
     }

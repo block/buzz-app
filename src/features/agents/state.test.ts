@@ -7,6 +7,7 @@ import {
 } from "./state";
 import { memoryStorage } from "./test-fakes";
 import { SyncedTeams, teamSources } from "./team-config";
+import { TeamMoves } from "./team-migration";
 
 const files = (items: Record<string, string> = {}) => {
   const saved = new Map(Object.entries(items));
@@ -32,6 +33,10 @@ it("moves agent state from localStorage, which replaces what agent storage has",
   local.setItem("buzz.agents.catch-up.v1", "checkpoints");
   local.setItem("buzz.agents.catch-up.v1:aa", "agent checkpoints");
   local.setItem("buzz.agent.execution.v1:aa", "binding");
+  local.setItem(
+    'buzz.agents.conversation-instructions.v1:["s","aa","c"]',
+    "do",
+  );
   local.setItem("buzz.theme", "dark");
   const native = files({
     "buzz.agents.teams.v1": "stale teams",
@@ -50,6 +55,7 @@ it("moves agent state from localStorage, which replaces what agent storage has",
     "buzz.agents.catch-up.v1": "checkpoints",
     "buzz.agents.catch-up.v1:aa": "agent checkpoints",
     "buzz.agent.execution.v1:aa": "binding",
+    'buzz.agents.conversation-instructions.v1:["s","aa","c"]': "do",
     [MOVED_KEY]: "1",
   });
   expect(storage.get("buzz.agents.teams.v1")).toBe("new teams");
@@ -137,6 +143,30 @@ it("keeps synced team rosters a start without agent storage saved", async () => 
   expect(
     teamSources(new SyncedTeams(next), "o", "a").map((team) => team.id),
   ).toEqual(["crew"]);
+  expect(local.length).toBe(0);
+});
+
+it("keeps a partial team move a start without agent storage saved, so Delete still finds its relay copy", async () => {
+  const local = memoryStorage();
+  const native = files();
+  await loadAgentStorage(local, native);
+
+  native.load.mockRejectedValueOnce(new Error("denied"));
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const fallback = await loadAgentStorage(local, native);
+  error.mockRestore();
+  await new TeamMoves(fallback).set("local-1", {
+    community: "wss://home",
+    failed: true,
+    created: true,
+  });
+
+  const next = await loadAgentStorage(local, native);
+  expect(new TeamMoves(next).get("local-1")).toEqual({
+    community: "wss://home",
+    failed: true,
+    created: true,
+  });
   expect(local.length).toBe(0);
 });
 

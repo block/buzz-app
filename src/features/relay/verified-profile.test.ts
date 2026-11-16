@@ -178,6 +178,7 @@ function harness(
 ) {
   const subscriptions: {
     subjects: readonly string[];
+    since: number | undefined;
     sink: VerifiedProfileSink;
     stopped: boolean;
   }[] = [];
@@ -187,7 +188,12 @@ function harness(
     (filter, sink) => {
       expect(filter.limit).toBe(filter["#d"].length);
       expect(filter).not.toHaveProperty("#p"); // malformed p must still invalidate the address
-      const item = { subjects: filter["#d"], sink, stopped: false };
+      const item = {
+        subjects: filter["#d"],
+        since: filter.since,
+        sink,
+        stopped: false,
+      };
       subscriptions.push(item);
       return () => {
         item.stopped = true;
@@ -304,15 +310,19 @@ it("does not re-send a batch an outage ended", async () => {
     assert(first);
     first.sink.event(projection());
     first.sink.eose();
-    // An outage ends the sync, then reports the connection down.
-    first.sink.closed("disconnected: live connection lost");
+    // An outage ends the sync, with the socket's resume point, then reports
+    // the connection down in the same task.
+    first.sink.closed("disconnected: live connection lost", { since: 500 });
     h.directory.connected(false);
     await Promise.resolve();
     expect(h.subscriptions).toHaveLength(1);
     expect(h.directory.snapshot().get(alice.pubkey)?.status).toBe("cached");
     h.directory.connected(true);
     await Promise.resolve();
-    expect(h.subscriptions.filter((item) => !item.stopped)).toHaveLength(1);
+    const active = h.subscriptions.filter((item) => !item.stopped);
+    expect(active).toHaveLength(1);
+    // Recovery re-reads every head.
+    expect(active[0]?.since).toBeUndefined();
   } finally {
     h.directory.dispose();
   }
@@ -1186,5 +1196,214 @@ it("notifies profile subscribers when discovery withdraws the authority, even wi
   } finally {
     owner.dispose();
     vi.useRealTimers();
+  }
+});
+
+it("resumes a renewed batch from its cursor and reads an omitted subject as unchanged", async () => {
+  const h = harness();
+  const active = () => h.subscriptions.filter((item) => !item.stopped);
+  try {
+    h.directory.ensure([alice.pubkey, bob.pubkey]);
+    await Promise.resolve();
+    const first = active()[0];
+    assert(first);
+    expect(first.since).toBeUndefined();
+    first.sink.event(projection());
+    first.sink.event(projection(10, bob.pubkey));
+    first.sink.eose();
+    const shown = h.directory.snapshot();
+    h.changed.mockClear();
+    first.sink.closed("disconnected: live connection lost", { since: 500 });
+    await Promise.resolve();
+    const resumed = active()[0];
+    assert(resumed && resumed !== first);
+    expect(resumed.subjects).toEqual([alice.pubkey, bob.pubkey]);
+    expect(resumed.since).toBe(500);
+    // Nothing changed since the cursor: an empty resume keeps every name.
+    resumed.sink.eose();
+    expect(h.changed).not.toHaveBeenCalled();
+    expect(h.directory.snapshot()).toEqual(shown);
+    expect(h.directory.snapshot().get(bob.pubkey)?.status).toBe("checked");
+    // A changed head arrives; the omitted subject keeps its head and check.
+    resumed.sink.closed("disconnected: live connection lost", { since: 800 });
+    await Promise.resolve();
+    const next = active()[0];
+    assert(next && next !== resumed);
+    expect(next.since).toBe(800);
+    next.sink.event(projection(12));
+    next.sink.eose();
+    expect(h.changed).toHaveBeenCalledTimes(1);
+    expect(h.directory.snapshot().get(alice.pubkey)?.verifiedAt).toBe(12);
+    expect(h.directory.snapshot().get(bob.pubkey)).toEqual(
+      shown.get(bob.pubkey),
+    );
+    // A retraction is a newer head, so a resume still delivers it.
+    next.sink.event(retract(13, bob.pubkey));
+    expect(h.directory.snapshot().has(bob.pubkey)).toBe(false);
+  } finally {
+    h.directory.dispose();
+  }
+});
+
+it("keeps a resume's start point until a resumed batch reaches EOSE", async () => {
+  const h = harness();
+  const active = () => h.subscriptions.filter((item) => !item.stopped);
+  try {
+    h.directory.ensure([alice.pubkey]);
+    await Promise.resolve();
+    const first = active()[0];
+    assert(first);
+    first.sink.event(projection());
+    first.sink.eose();
+    first.sink.closed("disconnected: live connection lost", { since: 500 });
+    await Promise.resolve();
+    const resumed = active()[0];
+    assert(resumed);
+    // The next socket ends before this resume completes: no new cursor.
+    resumed.sink.closed("disconnected: live connection lost");
+    await Promise.resolve();
+    const again = active()[0];
+    assert(again && again !== resumed);
+    expect(again.since).toBe(500);
+  } finally {
+    h.directory.dispose();
+  }
+});
+
+it("replays in full a batch that had not reached EOSE or was rebuilt", async () => {
+  const h = harness();
+  const active = () => h.subscriptions.filter((item) => !item.stopped);
+  try {
+    h.directory.ensure([alice.pubkey]);
+    await Promise.resolve();
+    const first = active()[0];
+    assert(first);
+    // Not live yet: a cursor from the socket cannot cover this batch.
+    first.sink.closed("disconnected: live connection lost", { since: 500 });
+    await Promise.resolve();
+    const full = active()[0];
+    assert(full && full !== first);
+    expect(full.since).toBeUndefined();
+    full.sink.event(projection());
+    full.sink.eose();
+    full.sink.closed("disconnected: live connection lost", { since: 600 });
+    await Promise.resolve();
+    expect(active()[0]?.since).toBe(600);
+    // A new subject rebuilds the open batch, which needs every head again.
+    h.directory.ensure([bob.pubkey]);
+    await Promise.resolve();
+    const rebuilt = active()[0];
+    assert(rebuilt);
+    expect(rebuilt.subjects).toEqual([alice.pubkey, bob.pubkey]);
+    expect(rebuilt.since).toBeUndefined();
+  } finally {
+    h.directory.dispose();
+  }
+});
+
+it("restores saved heads as cached until a sync answers, never over a sync's answer", async () => {
+  const h = harness();
+  try {
+    h.directory.ensure([bob.pubkey]);
+    await Promise.resolve();
+    const first = h.subscriptions[0];
+    assert(first);
+    first.sink.eose(); // Bob has no head.
+    const carol = keypair();
+    const {
+      id: _id,
+      sig: _sig,
+      pubkey: _pubkey,
+      ...template
+    } = projection(10, carol.pubkey);
+    const foreign = eventDto(signed(keypair(), template));
+    // Right id and bytes, but no proof: a record must be checked to restore.
+    const unchecked = JSON.parse(JSON.stringify(projection(10, carol.pubkey)));
+    h.changed.mockClear();
+    const saved = projection(10);
+    h.directory.restore([
+      saved,
+      projection(10, bob.pubkey, [], "Bob"),
+      foreign,
+      unchecked,
+    ]);
+    expect(h.changed).toHaveBeenCalledTimes(1);
+    expect([...h.directory.snapshot()]).toEqual([
+      [alice.pubkey, expect.objectContaining({ status: "cached" })],
+    ]);
+    expect(h.directory.heads(10)).toEqual([saved]);
+    await Promise.resolve();
+    const second = h.subscriptions[1];
+    assert(second);
+    // Alice joins the open batch, so a sync rechecks her.
+    expect(second.subjects).toEqual([bob.pubkey, alice.pubkey]);
+    second.sink.eose(); // The relay no longer holds Alice's head.
+    expect(h.directory.snapshot().size).toBe(0);
+    h.directory.restore([saved]);
+    expect(h.directory.snapshot().size).toBe(0);
+  } finally {
+    h.directory.dispose();
+  }
+});
+
+it("keeps a sync's removal over a restored head after a disconnect", async () => {
+  const h = harness();
+  try {
+    h.directory.ensure([alice.pubkey]);
+    await Promise.resolve();
+    const sink = h.subscriptions[0]?.sink;
+    assert(sink);
+    sink.eose(); // The relay no longer holds Alice's head.
+    h.directory.connected(false);
+    // The disk copy is read after the disconnect cleared checked status.
+    h.directory.restore([projection(10)]);
+    expect(h.directory.snapshot().size).toBe(0);
+    expect(h.directory.heads(10)).toEqual([]);
+  } finally {
+    h.directory.dispose();
+  }
+});
+
+it("restores nothing while discovery has no authority", async () => {
+  const subscribe = vi.fn(() => () => {});
+  const changed = vi.fn();
+  const directory = createVerifiedProfileDirectory(
+    undefined,
+    subscribe,
+    changed,
+  );
+  try {
+    directory.restore([projection(10)]);
+    await Promise.resolve();
+    expect(directory.snapshot().size).toBe(0);
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(changed).not.toHaveBeenCalled();
+  } finally {
+    directory.dispose();
+  }
+});
+
+it("restores only into room the limit leaves, never over a checked head", async () => {
+  const h = harness();
+  try {
+    h.directory.resize(3);
+    h.directory.ensure([alice.pubkey, bob.pubkey]);
+    await Promise.resolve();
+    const sink = h.subscriptions[0]?.sink;
+    assert(sink);
+    sink.event(projection(10));
+    sink.event(projection(10, bob.pubkey, [], "Bob"));
+    sink.eose();
+    const [carol, dave] = [keypair(), keypair()];
+    h.directory.restore([
+      projection(10, carol.pubkey, [], "Carol"),
+      projection(10, dave.pubkey, [], "Dave"),
+    ]);
+    const shown = h.directory.snapshot();
+    expect(shown.get(alice.pubkey)?.status).toBe("checked");
+    expect(shown.get(bob.pubkey)?.status).toBe("checked");
+    expect(shown.size).toBe(3);
+  } finally {
+    h.directory.dispose();
   }
 });

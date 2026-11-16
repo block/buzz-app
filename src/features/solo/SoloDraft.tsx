@@ -1,4 +1,4 @@
-import { linkedDraftKey, type LinkedChat } from "./linked-chat";
+import { linkedDraftKey, readLinkedChat, type LinkedChat } from "./linked-chat";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -7,6 +7,7 @@ import { startingChatTitle } from "./chat-title";
 import { ChatNotStarted } from "../relay/channel-writes";
 import { DraftSettings } from "./DraftSettings";
 import { SoloDraftView } from "./SoloPresentation";
+import type { SoloDraftStart } from "../channel-navigation/solo-navigation-contract";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { GearIcon } from "../../shared/design-system/icons";
@@ -16,7 +17,7 @@ import {
   parseChatSetup,
   type ChatSetup,
 } from "./workspace";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import {
   readView,
@@ -37,9 +38,11 @@ import {
 import type { DraftPicks } from "../messages/ComposerModels";
 import type { MentionPicks } from "../relay/messages";
 import { useDefaultAgent } from "./default-agent";
+import { draftLifetime } from "./default-lifetime";
 import { WorkspaceControl } from "./WorkspaceControl";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
+import { draftTokens, signMessageTokens } from "../messages/message-tokens";
 import {
   addressingOnly,
   followupDraft,
@@ -56,6 +59,14 @@ import {
   type AttachmentDraft,
 } from "../messages/attachment-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
+import { usePassThroughUntilDrafted } from "../messages/draft-visit";
+import type { PageNavigation } from "../navigation/service";
+import {
+  regionDraftKey,
+  regionStartKey,
+  soloNavigationFor,
+} from "../channel-navigation/solo-navigation";
+import { useSoloNavigation } from "../channel-navigation/solo-navigation-react";
 import styles from "./Solo.module.css";
 
 /** Starting a new chat from a project starts it in that project, even when an
@@ -73,6 +84,11 @@ function readDraftSettings(scope: string, draftKey: string) {
     ttlSeconds: ("ttlSeconds" in settings ? settings.ttlSeconds : undefined) as
       | number
       | undefined,
+    // A chosen Ongoing saves no ttlSeconds, which older builds also read as
+    // Ongoing. Without either, the draft follows the default for new chats.
+    ...("lifetimeChosen" in settings && settings.lifetimeChosen === true
+      ? { lifetimeChosen: true as const }
+      : {}),
   };
 }
 
@@ -153,6 +169,8 @@ const openNewChats = new Set<{
 /** The prompt last given back to each New chat, as saved, so a later refusal
  * that finds it still there can say so. */
 const restoredPrompts = new Map<string, string>();
+const REGION_UNAVAILABLE =
+  "This chat's plugin is unavailable. Your draft is saved.";
 
 export function SoloDraft({
   session,
@@ -165,7 +183,15 @@ export function SoloDraft({
   agent,
   linkedId,
   source,
+  visit,
+  region,
+  draft: regionDraft,
 }: {
+  draft?: SoloDraftStart["draft"];
+  /** The Solo region whose source opened this draft; its chat gets that label. */
+  region?: string | undefined;
+  /** The visit presenting this draft, a Back stop only once drafted. */
+  visit?: PageNavigation | undefined;
   linkedId?: string | undefined;
   source?: LinkedChat | undefined;
   /** Start with this agent chosen, as when search opens a new chat with it. */
@@ -184,16 +210,32 @@ export function SoloDraft({
     | undefined;
   projectId?: string | undefined;
 }) {
-  const draftKey = linkedId
-    ? linkedDraftKey(linkedId)
-    : projectId
-      ? `solo:project:${projectId}`
-      : "solo";
+  const draftKey = region
+    ? regionDraftKey(region, projectId, regionDraft?.key)
+    : linkedId
+      ? linkedDraftKey(linkedId)
+      : projectId
+        ? `solo:project:${projectId}`
+        : "solo";
   const notify = useToastNotification();
   // Before the composer reads it: a named agent replaces a saved draft that
   // only tags another agent, since that tag was the earlier default.
   useState(() => dropOtherAgentTag(scope, `${draftKey}:new-draft`, agent));
+  // Read the source live: starting the chat consumes it.
+  const linkedSource = useCallback(
+    () => (source ? readLinkedChat(scope, draftKey)?.link : undefined),
+    [source, scope, draftKey],
+  );
+  const draftEdited = usePassThroughUntilDrafted(
+    visit,
+    session,
+    scope,
+    `${draftKey}:new-draft`,
+    { initialDraft: linkedSource },
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The lifetime Chat settings opened with.
+  const [settingsLifetime, setSettingsLifetime] = useState<number>();
   // New chats tag their agent in the draft: the one the route names, else the
   // default.
   const defaultAgent = useDefaultAgent(session, scope, agent);
@@ -263,7 +305,19 @@ export function SoloDraft({
       openNewChats.delete(chat);
     };
   }, [scope, draftKey, settingsOpen]);
-  const available = session.channelWrites.available;
+  // Re-reads the region's owner as its source starts and stops.
+  useSoloNavigation(session);
+  const owner = region
+    ? soloNavigationFor(session)?.draftRegion(region)
+    : undefined;
+  const draftAgent = owner?.source.draftAgent;
+  const ownerBinding = owner?.binding;
+  const agentFilter = useCallback(
+    (pubkey: string) =>
+      !draftAgent || !ownerBinding || draftAgent(ownerBinding, pubkey),
+    [draftAgent, ownerBinding],
+  );
+  const available = session.channelWrites.available && (!region || !!owner);
   const [channelId] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -315,7 +369,7 @@ export function SoloDraft({
       typeof draftSettings.name === "string"
         ? canonicalDetailsName(draftSettings.name) || startingChatTitle(draft)
         : draftSettings.name;
-    const { ttlSeconds } = draftSettings;
+    const ttlSeconds = draftLifetime(scope, draftSettings);
     const project = selectedProject;
     const canvas = draftCanvas;
     const draftModelPicksKey = soloModelPicksKey(`${draftKey}:new-draft`);
@@ -372,35 +426,77 @@ export function SoloDraft({
             "Solo chats can only use your available agents. Check mentions and workspace defaults.",
           );
       }
+      // Read at Send: the region's source may have stopped since.
+      const regionOwner = () => {
+        const current = region
+          ? soloNavigationFor(session)?.draftRegion(region)
+          : undefined;
+        if (region && !current) throw new Error(REGION_UNAVAILABLE);
+        return current;
+      };
+      const eligible = regionOwner();
+      const accepts = eligible?.source.draftAgent;
+      if (
+        eligible &&
+        accepts &&
+        members.some((key) => !accepts(eligible.binding, key))
+      )
+        throw new Error(
+          "This chat's plugin can't use one of these agents. Choose another agent.",
+        );
       // Finish uploads before anything is created, so a failed file blocks
       // the start instead of leaving an empty chat behind.
       const uploaded = await files.prepareForSend(new AbortController().signal);
       if (!mounted.current) return;
+      regionOwner();
+      // The region's source finds how its chat started, even after a restart.
+      const startKey = region ? regionStartKey(channelId) : undefined;
+      if (
+        startKey &&
+        !writeView(scope, startKey, {
+          region,
+          ...(regionDraft ? { draft: regionDraft } : {}),
+          ...(project ? { workspace: project } : {}),
+        })
+      )
+        throw new Error(
+          "This chat couldn't be saved on this device. Your draft is kept.",
+        );
       const attached = files.snapshot();
       // The chat lists at once, in its workspace, and its message goes out
       // behind the create, so the agents start on it without waiting for the
       // relay. Its Canvas is saved once the chat exists; until then local
       // agents read it from the start.
-      if (setup?.projectId)
+      // A region files its own chats.
+      if (setup?.projectId && !region)
         void session.soloPreferences
           .assign(channelId, setup.projectId)
           .catch((reason) =>
             console.warn("Solo chat could not join its workspace", reason),
           );
-      const { ready } = session.channelWrites.start(
-        channelId,
-        name,
-        members,
-        ttlSeconds,
-        named,
-        setup?.canvas
-          ? {
-              canvas: setup.canvas,
-              apply: () =>
-                session.canvas.save(channelId, setup.canvas, undefined),
-            }
-          : undefined,
-      );
+      let starting: ReturnType<typeof session.channelWrites.start>;
+      try {
+        starting = session.channelWrites.start(
+          channelId,
+          name,
+          members,
+          ttlSeconds,
+          named,
+          setup?.canvas
+            ? {
+                canvas: setup.canvas,
+                apply: () =>
+                  session.canvas.save(channelId, setup.canvas, undefined),
+              }
+            : undefined,
+          // Unguarded, so a restart can retry it like any New chat.
+          ...(region ? [{ labels: [region] }] : []),
+        );
+      } catch (reason) {
+        if (startKey) writeView(scope, startKey, null);
+        throw reason;
+      }
+      const { ready } = starting;
       // Observe admission immediately, even while local persistence awaits ownership.
       void ready.catch(() => {});
       const firstPicks: MentionPicks = Object.fromEntries(
@@ -414,23 +510,24 @@ export function SoloDraft({
         recipients,
       );
       try {
-        if (Object.keys(firstPicks).length)
-          session.messages.send(
-            channelId,
-            text,
-            recipients,
-            uploaded,
-            undefined,
-            [],
-            firstPicks,
-          );
-        else
-          session.messages.send(
-            channelId,
-            text,
-            recipients,
-            ...(uploaded.length ? [uploaded] : []),
-          );
+        signMessageTokens(draftTokens(draft), () =>
+          Object.keys(firstPicks).length
+            ? session.messages.send(
+                channelId,
+                text,
+                recipients,
+                uploaded,
+                undefined,
+                [],
+                firstPicks,
+              )
+            : session.messages.send(
+                channelId,
+                text,
+                recipients,
+                ...(uploaded.length ? [uploaded] : []),
+              ),
+        );
         files.clear();
         writeView(
           scope,
@@ -487,6 +584,7 @@ export function SoloDraft({
       } catch {
         // Delivery retains its frozen choices; neither shared map is changed unlocked.
       }
+      draftEdited(undefined);
       if (mounted.current) onStarted(channelId);
       if (clearedPicks === "failed")
         notify(
@@ -504,6 +602,7 @@ export function SoloDraft({
       // messages' own Retry.
       void ready.catch((reason: unknown) => {
         if (!(reason instanceof ChatNotStarted)) return;
+        if (startKey) writeView(scope, startKey, null);
         let restoring = false;
         let restored = false;
         let prepared: { before: string | null; written: string } | undefined;
@@ -657,6 +756,22 @@ export function SoloDraft({
       if (mounted.current) setBusy(false);
     }
   }
+  // The workspace control and `#` in the prompt both choose with this.
+  const chooseProject = (project: string) => {
+    if (project === selectedProject) return;
+    setSelectedProject(project);
+    writeView(scope, `${draftKey}:new-project`, project);
+    const next = {
+      name: draftSettings.name,
+      ttlSeconds: draftSettings.ttlSeconds,
+      ...(draftSettings.lifetimeChosen
+        ? { lifetimeChosen: true as const }
+        : {}),
+      canvas: undefined,
+    };
+    setDraftSettings(next);
+    writeView(scope, `${draftKey}:settings`, next);
+  };
   const composer = (
     <div id="new-chat-prompt" ref={prompt}>
       <MessageComposer
@@ -671,6 +786,7 @@ export function SoloDraft({
         channelName="this chat"
         label="Message your agents"
         inviteAgents
+        agentFilter={draftAgent ? agentFilter : undefined}
         defaultMention={defaultAgent}
         requireMention
         trailingTool={
@@ -678,21 +794,15 @@ export function SoloDraft({
             <WorkspaceControl
               session={session}
               value={selectedProject}
-              onChange={(project) => {
-                if (project === selectedProject) return;
-                setSelectedProject(project);
-                writeView(scope, `${draftKey}:new-project`, project);
-                const next = {
-                  name: draftSettings.name,
-                  ttlSeconds: draftSettings.ttlSeconds,
-                  canvas: undefined,
-                };
-                setDraftSettings(next);
-                writeView(scope, `${draftKey}:settings`, next);
-              }}
+              onChange={chooseProject}
               disabled={busy}
             />
           ) : undefined
+        }
+        workspace={
+          session.soloPreferences && !busy
+            ? { preferences: session.soloPreferences, choose: chooseProject }
+            : undefined
         }
         submission={{
           draftKey: `${draftKey}:new-draft`,
@@ -705,6 +815,7 @@ export function SoloDraft({
           unsaved: (held) => {
             unsaved.current = held;
           },
+          onDraftChange: draftEdited,
           submit: (draft, files, addressed, picks, draftPicks, revision) => {
             void start(draft, files, addressed, picks, draftPicks, revision);
           },
@@ -712,8 +823,9 @@ export function SoloDraft({
       />
       {!available && (
         <p className={styles.availability} role="status">
-          Solo preferences or channel creation are unavailable. Your draft is
-          saved.
+          {region && !owner
+            ? REGION_UNAVAILABLE
+            : "Solo preferences or channel creation are unavailable. Your draft is saved."}
         </p>
       )}
       {error && <p role="alert">{error}</p>}
@@ -729,7 +841,10 @@ export function SoloDraft({
           title="Chat settings"
           icon={<GearIcon size="1rem" aria-hidden="true" />}
           disabled={busy}
-          onClick={() => setSettingsOpen(true)}
+          onClick={() => {
+            setSettingsLifetime(draftLifetime(scope, draftSettings));
+            setSettingsOpen(true);
+          }}
         />
       }
     >
@@ -741,10 +856,21 @@ export function SoloDraft({
           projectId={selectedProject || undefined}
           canvas={draftCanvas}
           name={draftSettings.name}
-          ttlSeconds={draftSettings.ttlSeconds}
+          ttlSeconds={settingsLifetime}
           close={() => setSettingsOpen(false)}
           save={(canvas, ttlSeconds, name) => {
-            const next = { canvas, ttlSeconds, name: name ?? "" };
+            // A lifetime changed here, or chosen before, stays chosen; an
+            // unchanged one keeps following the default.
+            const chosen =
+              !!draftSettings.lifetimeChosen ||
+              draftSettings.ttlSeconds !== undefined ||
+              ttlSeconds !== settingsLifetime;
+            const next = {
+              canvas,
+              ttlSeconds: chosen ? ttlSeconds : undefined,
+              ...(chosen ? { lifetimeChosen: true as const } : {}),
+              name: name ?? "",
+            };
             if (!writeView(scope, `${draftKey}:settings`, next))
               throw new Error(
                 "Settings couldn’t be saved on this device. Try again.",

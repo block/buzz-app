@@ -12,20 +12,20 @@ Find and mention people, agents, and teams while you write.
 
 # Mention rules
 
-`version 2` · `client contract` · `uses existing tags`
+`version 4` · `client contract` · `uses existing tags`
 
 ## Abstract
 
 This contract says who a user can mention in a channel message, how a client
-orders the choices, when Space completes a mention, and what a client sends when
-the user mentions someone outside the channel. Clients that follow it give the
-same search the same list and send the same tags.
+orders the choices, when Space or closing punctuation completes a mention, and
+what a client sends when the user mentions someone outside the channel. Clients
+that follow it give the same search the same list and send the same tags.
 
 The built-in Mentions feature implements the chooser: the choice set, matching,
-order, and Space. The composer decides which keys a draft may address and asks
-before sending to people outside the channel. The relay message writer and
-message fold implement the tags. This directory owns the spec and the
-[portable fixtures](mention-rules.fixtures.json).
+order, and selection by Space or closing punctuation. The composer decides which
+keys a draft may address and asks before sending to people outside the channel.
+The relay message writer and message fold implement the tags. This directory
+owns the spec and the [portable fixtures](mention-rules.fixtures.json).
 
 This is an extraction of the behavior in
 [buzz-app #257](https://github.com/block/buzz-app/pull/257) and
@@ -41,6 +41,11 @@ MUST, MUST NOT, SHOULD, and MAY have their RFC 2119 meanings.
 ## Terms
 
 - **Key**: a Nostr public key, as 64 lowercase hex characters.
+- **Exact public key**: a query that, ignoring surrounding whitespace, is 64
+  hex characters in either case, or a complete all-lowercase or all-uppercase
+  npub, with or without a `nostr:` prefix in any case, that decodes to a
+  32-byte key. A partly typed npub, or one with mixed case, a bad checksum or a
+  payload of another length, is a name search.
 - **Choice**: one key the user can mention. It has a **name** (the identity's own
   name), a **label** (the name shown in the chooser, possibly qualified, for
   example `Wes’s Honey` or `Honey · 4prr`), and **aliases** (the real names known
@@ -158,8 +163,9 @@ at tiers 0 and 1. Nothing else matches. Text inside a word does not match:
 
 A choice's **match** is the tier of its label. If the label does not match, the
 match is 4 plus the best tier among its aliases. A choice with no aliases never
-matches a non-empty query. Public keys, npubs, and key fallback labels MUST NOT
-be searchable.
+matches a non-empty name query. An exact public key (Terms) is not a name
+query: it matches only the choice with that key, at tier 0, even one with no
+aliases. Partial keys, partial npubs and key fallback labels MUST NOT match.
 
 ## 4. Order (normative)
 
@@ -191,7 +197,7 @@ and recency never override membership or match. Recency is the
 client's memory of explicit selections in this channel. The desktop keeps it in
 memory for 100 channels and 100 keys each.
 
-## 5. Space selects only an exact, unique name
+## 5. Space or closing punctuation selects only an exact, unique name
 
 When the user types Space after a query, a choice is the **exact name** among a
 set of choices when all of these are true:
@@ -208,7 +214,15 @@ set of choices when all of these are true:
   A literal name `Honey (agent)` still continues `honey`. A choice's own longer
   name does not continue the query when that same choice also has an alias or
   label equal to it: an agent known as both `Example` and `Example Agent` is one
-  identity, not a namesake of itself, so `example` selects it.
+  identity, not a namesake of itself, so `example` selects it. When a member
+  with aliases has an alias or label equal to the query, only members' names
+  count here: an outside choice's longer name never keeps a member's name from
+  selecting (`Honey Bee` outside the channel does not block a member `Honey`).
+
+An exact public key (Terms) is the exact name of the choice with that key, even
+one with no aliases, and of no other choice, and no name continues it: a key
+has no namesakes. Nor does a saved team with the same or a longer name keep it
+from selecting. The steps below then apply as for a name.
 
 The **local** choices are the ones known without the directory search: the
 channel's members and the agents the client offers for mention (section 1, items
@@ -225,14 +239,38 @@ the whole set, not only the shown rows.
 
 Local choices show before directory results (section 6), so a unique local name
 selects at once: directory results cannot make it ambiguous, whether or not the
-search has found them yet. A longer directory name still blocks Space once the
-search reports it, but not before. A member whose name is not known yet may be a
-namesake, so until it is, only step 2 applies. A member whose profile read
-completed without finding a profile has no name, so it cannot be a namesake and
-does not hold step 1 back; a failed read is not evidence. A name that only a
-directory result has could still gain a namesake from a pending search, so Space
-MUST NOT select it before the search finishes. Otherwise Space is a normal
+search has found them yet. A longer directory name never blocks a member's
+name; it blocks another local name once the search reports it, but not before.
+A member whose name is not known yet may be a namesake, so until it is, only
+step 2 applies. A member whose profile read completed without finding a profile
+has no name, so it cannot be a namesake and does not hold step 1 back; a failed
+read is not evidence. A name that only a directory result has could still gain
+a namesake from a pending search, so Space MUST NOT select it before the search
+finishes. Otherwise Space is a normal
 space. Tab, Enter, and a click select the highlighted row.
+
+Closing punctuation typed straight after the query (`,` `.` `!` `?` `;` `:` `)`
+or a closing quote `'` `’` `"` `”`) SHOULD select exactly as Space does, and the
+client keeps the character after the mention in place of the space, so
+`@Honey's` mentions Honey. Where Space would not select, the character is typed
+into the query instead. A longer known name that blocks Space blocks every one
+of these characters too, whichever character comes next in that name: `'`
+after `Pat O` while a member `Pat O'Brien` is known stays in the query, and so
+does `,` after `Wes` while a member `Wes Smith` is known. A saved team with
+the same or a longer name blocks them too. Since an outside choice's longer
+name never blocks a member's exact name, it cannot be typed out past one of
+these characters or Space: with a member `Wes`, `@Wes Smith` mentions Wes,
+followed by the text ` Smith`, even while `Wes Smith` outside the channel is
+listed, and a member `Pat O` takes `@Pat O'Brien` the same way. This holds
+for the agents the client offers outside the channel (section 1, items 2 and
+3, or a Solo chat's own agent list) as for directory results: with a member
+agent `Claude` and the viewer's offered `Claude Code`, `@Claude Code` mentions
+Claude. The user picks such a choice from the list instead. One that
+continues the member's name with another character, such as `Wes-Smith`, can
+still be typed in full. Where
+Space may hold a pending mention, so may this character, kept after the chip.
+A selected or pending mention ends at a name boundary: the next character that
+is not a letter, mark, digit or underscore.
 
 While the client cannot yet decide — the member list, member names or agent
 list is still loading, or a directory search for the query is waiting or
@@ -244,13 +282,16 @@ anything else, including a failed or truncated search or a bounded wait
 expiring (desktop: 8 s), returns the text to prose. A name the client has
 already declined is not pending: a trailing space or punctuation, a multi-word
 query that continues no name, a saved team with the same or a longer name, or
-a known choice whose name continues the query (a loaded member `Mira Example`
-for `mira`) keeps Space a normal space. Such a longer name blocks whatever
-else arrives, and the next word may complete it (`@mira Example ` selects the
-member), which a chip that ended the query could not. A pending name that,
-once the full choice set is known, only longer known names keep from selecting
-(`Mira Example`, found by the directory search for `mira` after the chip was
-held) MAY instead extend over the words typed after the chip when they spell
+a known choice whose name continues the query and blocks it whatever else
+arrives (a loaded member `Mira Example` for `mira`) keeps Space a normal
+space. The next word may complete the longer name (`@mira Example ` selects
+the member), which a chip that ended the query could not. An outside choice's
+longer name declines Space only once every member's name is known or known to
+be absent: until then a member may still have the exact name, which an outside
+name does not block. A pending name that, once the full choice set is known,
+only longer known names keep from selecting (`Mira Example`, found by the
+directory search for `mira` after the chip was held, while no member is named
+`mira`) MAY instead extend over the words typed after the chip when they spell
 one of those names up to a name boundary (`@mira Example hi` becomes a pending
 `@mira Example` with ` hi` outside it), taking the longest name the words
 complete, as Space would have needed all of it typed; this section then applies
@@ -296,12 +337,12 @@ These rules keep a row from moving under the user's pointer or keyboard.
   with no search and no typing pause; the directory is then settled for it
   (section 5). A search that reported more pages, or failed, answers nothing
   beyond its own query; the listing shown for an empty query is not a name
-  search and answers no query but its own; and an exact 64-hex key is never
-  answered this way. A retry searches afresh.
+  search and answers no query but its own; and an exact public key (Terms) is
+  never answered this way. A retry searches afresh.
 - A search refutes its query when it finds no one, reports no more pages, and
   the query contains a letter or digit. After that, a client MAY skip the
   directory search for a longer query that starts with the refuted query, and
-  treat it as finding no one. It MUST NOT skip the search for an exact 64-hex
+  treat it as finding no one. It MUST NOT skip the search for an exact public
   key, because that is an author lookup that name prefixes cannot refute. A
   retry, or any new search, clears the refutation.
 

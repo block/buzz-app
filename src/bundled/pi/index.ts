@@ -104,6 +104,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
     CreateModel,
+    createModelReportsReadiness: true,
     importShared: (source) =>
       source.runtime === "pi"
         ? {
@@ -164,6 +165,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     models: (agent) => runtime.models(agent),
     run: (delivery) => runtime.run(delivery),
     runOnce: (turn) => runtime.runOnce(turn),
+    // Its host reader cannot be stopped once started.
+    readFile: (agent, path, signal) => {
+      signal.throwIfAborted();
+      return runtime.workspaceFile(agent, path);
+    },
     timeoutMs: HANDOVER_MS,
     // Memberships whose gateway enables Pi route through it; none do while
     // this build has no gateway descriptor.

@@ -12,6 +12,8 @@ import {
   type RefObject,
 } from "react";
 import { SoloTitle } from "../../features/solo/SoloPresentation";
+import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import identityStyles from "./ChannelHeaderIdentity.module.css";
 import { WorkspaceSettings } from "../../features/solo/WorkspaceSettings";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -63,10 +65,27 @@ type SoloToolbarProps = {
 
 /** The header of a conversation shown with the Solo treatment. */
 export function SoloHeading(props: SoloToolbarProps) {
-  return (
+  const owner = useSoloOwner(props.session, props.channel);
+  return props.channel.archived ? (
     <SoloTitle channel={props.channel}>
       <SoloToolbar {...props} />
     </SoloTitle>
+  ) : (
+    <div className={identityStyles.soloHeader}>
+      <PanelHeader
+        title={
+          <ChannelMembersButton
+            session={props.session}
+            channelId={props.channel.id}
+            conversationName={props.channel.name}
+            owner={owner}
+            navigator={props.navigator}
+            signal={props.signal}
+          />
+        }
+        actions={<SoloToolbar {...props} membershipInHeader />}
+      />
+    </div>
   );
 }
 
@@ -84,14 +103,17 @@ export function SoloToolbar({
   onConvert,
   onLifecycle,
   onMove,
-}: SoloToolbarProps) {
+  membershipInHeader = false,
+}: SoloToolbarProps & { membershipInHeader?: boolean }) {
   const menus = useSyncExternalStore(
     chatMenus?.subscribe ?? noSubscription,
     () => chatMenus?.snapshot(),
   );
   const regions = useSoloNavigation(session);
-  const region = regions.regions.find((region) =>
-    region.channels.some((item) => item.id === channel.id),
+  const region = regions.regions.find(
+    (region) =>
+      region.reason !== "disabled" &&
+      region.channels.some((item) => item.id === channel.id),
   );
   const actionsTrigger = useRef<HTMLButtonElement>(null);
   // Each dialog returns focus to the control that opened it.
@@ -108,7 +130,7 @@ export function SoloToolbar({
     !channel.cached && (!channel.readOnly || channel.viewerRole === "guest");
   return (
     <>
-      {region && (
+      {region && !region.hidden && (
         <Button
           size="sm"
           variant="ghost"
@@ -122,14 +144,16 @@ export function SoloToolbar({
         <span>Archived</span>
       ) : (
         <>
-          <ChannelMembersButton
-            session={session}
-            channelId={channel.id}
-            label="Share access"
-            owner={owner}
-            navigator={navigator}
-            signal={signal}
-          />
+          {!membershipInHeader && (
+            <ChannelMembersButton
+              session={session}
+              channelId={channel.id}
+              label="Share access"
+              owner={owner}
+              navigator={navigator}
+              signal={signal}
+            />
+          )}
           {children}
         </>
       )}

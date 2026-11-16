@@ -194,6 +194,7 @@ const PAIRS = [
   ].map((role) => [role, "--affordance-navigation-selected"]),
   // Small status/count badges on a selected row keep their own readable pair.
   ["--text-row-selected-detail", "--surface-row-selected-detail"],
+  ["--text-dock-count", "--surface-dock-count"],
   ["--text-subtle", "--affordance-popover-selected"],
   ...["control", "control-hover", "control-pressed", "selected"].map(
     (state) => ["--text-standard", `--affordance-floating-${state}`],
@@ -201,6 +202,8 @@ const PAIRS = [
   ["--text-standard", "--affordance-floating-hover"],
   ["--text-danger", "--affordance-floating-hover"],
   ["--text-inverse", "--surface-inverse"],
+  ["--text-on-status-success", "--surface-status-success"],
+  ["--text-on-status", "--surface-status-danger"],
   ["--text-link", "--affordance-link-hover"],
   // Mentions: ink on the highlight, and the own-bubble pairing, at rest and hover.
   ...["", "-hover"].flatMap((state) => [
@@ -212,6 +215,8 @@ const PAIRS = [
   // quieter overlay under the pointer.
   ["--text-standard", "--affordance-reaction"],
   ["--text-message-own", "--affordance-reaction-own"],
+  ["--text-reaction-self", "--affordance-reaction-self"],
+  ["--text-reaction-self-own", "--affordance-reaction-self-own"],
   ["--text-message-own", "--affordance-message-own-hover"],
   // An arrival cue lays the regular step across the whole bubble.
   ["--text-standard", "--affordance-message-highlight"],
@@ -281,6 +286,8 @@ const BOUNDARY_ROLES = [
 
 const TINT_PAIRS = [
   ["--text-warning", "--affordance-warning"],
+  ["--text-on-find-match", "--surface-find-match"],
+  ["--text-on-find-match", "--surface-find-match-active"],
   ["--text-success", "--affordance-success"],
   ["--text-success", "--affordance-success-hover"],
   ["--text-success", "--affordance-success-pressed"],
@@ -530,6 +537,7 @@ const accentFamilies = [
   ),
 ];
 const ACCENT_PAIRS = [
+  ["--text-dock-count", "--surface-dock-count"],
   ["--text-on-selection", "--surface-text-selection"],
   ["--text-on-selection-own", "--surface-text-selection-own"],
   ["--text-sidebar-selected", "--surface-sidebar-selected"],

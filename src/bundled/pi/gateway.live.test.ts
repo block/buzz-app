@@ -88,12 +88,21 @@ const reads={inspect:0,gateway:0};
 /** Armed before a delivery: settles once it has read the other mode's work
  * and waits for it, every step it takes before waiting having run. */
 const parking=()=>{const read=Promise.withResolvers();modeChecked=()=>{modeChecked=undefined;read.resolve();};return read.promise.then(()=>new Promise(r=>setImmediate(r)));};
-{const {CommittedWatch}=await import(new URL('./node_modules/@earendil-works/pi-durable/dist/session/observation.js',import.meta.url));
- const start=CommittedWatch.prototype.start;
- CommittedWatch.prototype.start=function(listener){return start.call(this,async(...args)=>{if(runStart&&Array.isArray(args[0])&&args[0].some(e=>e.type==='run_start'))await runStart();return listener(...args);});};}
 const open=Harness.open;
 Harness.open=async(...a)=>{
  const opened=await open.call(Harness,...a);harness=opened;
+ // A held run start: the host's observer is told of the commit that starts
+ // a run, and every later one, only once the test lets it go.
+ const observeConversation=opened.observeConversation.bind(opened);
+ opened.observeConversation=(id,observer,...b)=>{
+  let running=false,pending;
+  return observeConversation(id,{...observer,advance:(call)=>{
+   const run=Boolean(call.kind==='value'&&call.value?.docs?.['pi.live']?.run),starts=run&&!running;running=run;
+   if(!pending&&!(starts&&runStart))return observer.advance(call);
+   const mine=pending=(pending??Promise.resolve()).then(async()=>{if(starts&&runStart)await runStart();observer.advance(call);});
+   void mine.then(()=>{if(pending===mine)pending=undefined;});
+  }},...b);
+ };
  // A mode check reads what Pi holds, then the gateway's records.
  const inspect=opened.inspect.bind(opened),snapshot=opened.snapshot.bind(opened);let inspected=false;
  opened.inspect=async(...b)=>{reads.inspect++;const value=await inspect(...b);await modeRead?.();inspected=Boolean(modeChecked);return value;};
@@ -131,7 +140,7 @@ const identityOf=who=>({...IDENTITY,agent_pubkey:who});
 // Admitted, a request goes to the gateway's root for Pi, under its profile.
 const admitted=(binding,who=agent)=>{const r=bindingAdmits({kind:'eligible',identity:identityOf(who),revision},binding);return r.ok?{ok:true,revision:r.revision,root:ROOT,profile:P}:{ok:false,message:r.message};};
 let admit=admitted;
-const binds=[], actions=[], denies=[], toolCalls=[];
+const binds=[], actions=[], denies=[], toolCalls=[], transfers=new Map();
 function start(protectedAgent,options={}) {
  const input=new PassThrough(),output=new PassThrough(),pending=new Map();let id=0;
  const answer=(m,value)=>input.write(JSON.stringify({id:m.id,result:value})+'\n');
@@ -148,7 +157,14 @@ function start(protectedAgent,options={}) {
    const bundle=inferenceBundle(P,bound.binding,turn);
    if(!bundle.ok)return answer(m,{ok:false,message:bundle.message});
    answer(m,{ok:true,binding:bound.binding,persist:bound.persist,bundle:bundle.value});
-  } else if(m.method==='security'){actions.push(m.params.action.kind);answer(m,true);}
+  } else if(m.method?.startsWith('buzz/security/evidence/')){
+   // Protected Pi streams each action's evidence; the policy allows it.
+   const operation=m.method.split('/').at(-1),p=m.params;
+   if(operation==='begin'){transfers.set(p.id,p.kind);answer(m,{id:p.id,chunkBytes:65536});}
+   else if(operation==='chunk')answer(m,{accepted:true});
+   else if(operation==='finish'){actions.push(transfers.get(p.id));transfers.delete(p.id);answer(m,{allowed:true});}
+   else{transfers.delete(p.id);answer(m,{allowed:false});}
+  }
   else if(m.method==='tool'){toolCalls.push(m.params);answer(m,{content:[{type:'text',text:POSTED}]});}
   else if(m.method==='hook')answer(m,null);
   else if(m.id!==undefined){const p=pending.get(m.id);pending.delete(m.id);m.error?p?.reject(new Error(m.error)):p?.resolve(m.result);}

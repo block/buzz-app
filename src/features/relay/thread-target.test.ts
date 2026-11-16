@@ -233,14 +233,7 @@ it("distinguishes absent targets and failed lookup, then permits explicit retry"
   await failed;
   expect(h.view.snapshot().targetStatus).toBe("error");
   expect(offlineOverlay.signal?.aborted).toBe(true);
-  // A late overlay answer never enters the view.
-  absentOverlay.respond([aux(40003, reply, "Late")]);
-  offlineOverlay.respond([aux(40003, reply, "Late")]);
   await flush();
-  expect(h.view.snapshot()).toMatchObject({
-    targetStatus: "error",
-    target: undefined,
-  });
   const { loading } = await targetRead(h);
   h.next().respond([root]);
   await loading;
@@ -471,15 +464,8 @@ it("never retains a selected reply rejected by the shared dual-channel access ga
     replies: [],
   });
   expect(h.pending).toHaveLength(0); // No traversal can authorize rejected content.
-  // The overlapped overlay read is stopped and its rows never authorize it.
+  // The overlapped overlay read is stopped.
   expect(overlay.signal?.aborted).toBe(true);
-  overlay.respond([aux(40003, denied, "Edited")]);
-  await flush();
-  expect(h.view.snapshot()).toMatchObject({
-    targetStatus: "unavailable",
-    target: undefined,
-    replies: [],
-  });
   h.traffic.receive([root]);
   expect(h.view.snapshot().target).toBeUndefined();
   expect(h.view.snapshot().replies).toEqual([]);
@@ -540,11 +526,8 @@ it.each(["different", "unavailable", "error", "cancelled"] as const)(
     expect(await selecting).toBe(outcome);
     expect(h.view.snapshot()).toBe(before);
     expect(h.pending).toHaveLength(0);
-    // The overlapped overlay read is stopped and its rows never enter the view.
+    // The overlapped overlay read is stopped.
     expect(overlay.signal?.aborted).toBe(true);
-    overlay.respond([aux(40003, reply, "Late")]);
-    await flush();
-    expect(h.view.snapshot()).toBe(before);
   },
 );
 

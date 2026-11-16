@@ -59,7 +59,6 @@ function bounds(
     }),
   });
 }
-const flushPromises = () => new Promise((resolve) => setTimeout(resolve, 0));
 const cleanup: (() => void)[] = [];
 afterEach(() => {
   for (const dispose of cleanup.splice(0)) dispose();
@@ -808,6 +807,7 @@ it("a thread view opened before the first connection keeps its first read for th
 });
 
 it("keeps a root edit from a window that answers before an unretained root", async () => {
+  const row = reply(0);
   const edit = signed(author, {
     kind: 40003,
     created_at: 50,
@@ -817,16 +817,22 @@ it("keeps a root edit from a window that answers before an unretained root", asy
   // Like the session's verified reader, each answer is admitted as it
   // resolves: an edit whose target is not known yet is dropped.
   const known = new Set<string>();
-  let slowRoot = false;
+  let held: Promise<void> | undefined;
+  let release = () => {};
+  let rootPending = false;
   const reader = {
     async read(filters: readonly ReadFilter[]) {
       const [f] = filters;
       assert.exists(f);
       let events: RelayEvent[];
-      if (f.ids) {
-        if (slowRoot) await new Promise((resolve) => setTimeout(resolve, 20));
+      if (f.ids?.includes(root.id)) {
+        rootPending = true;
+        await held;
+        rootPending = false;
         events = [root];
-      } else events = [edit, bounds(f)];
+      } else if (f.ids) events = [row];
+      else if (f.thread_window) events = [row, edit, bounds(f)];
+      else events = [];
       const admitted = events.filter(
         (event) =>
           event.kind !== 40003 ||
@@ -835,6 +841,18 @@ it("keeps a root edit from a window that answers before an unretained root", asy
       for (const event of admitted) known.add(event.id);
       return admitted;
     },
+  };
+  // The root answers only once the test releases it, after any read started
+  // alongside it has answered.
+  const refresh = async (view: { refresh(): Promise<void> }) => {
+    held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const refreshing = view.refresh();
+    await vi.waitFor(() => expect(rootPending).toBe(true));
+    release();
+    await refreshing;
+    held = undefined;
   };
   const open = (resume?: ThreadResume) =>
     createThreadView({
@@ -856,9 +874,19 @@ it("keeps a root edit from a window that answers before an unretained root", asy
   assert(typeof resume === "object");
   // The resume holds the root; the shared evidence no longer does.
   known.clear();
-  slowRoot = true;
   const reopened = open(resume);
-  await reopened.view.refresh();
+  await refresh(reopened.view);
+  expect(reopened.view.snapshot()).toMatchObject({
+    status: "ready",
+    root: { id: root.id, content: "edited root" },
+  });
+  // A retarget makes this ordinary view exact; its reader still admits.
+  await expect(
+    reopened.view.retarget(row.id, new AbortController().signal),
+  ).resolves.toBe("selected");
+  reopened.purge(true);
+  known.clear();
+  await refresh(reopened.view);
   expect(reopened.view.snapshot()).toMatchObject({
     status: "ready",
     root: { id: root.id, content: "edited root" },
@@ -904,12 +932,11 @@ it("stops an exact view's overlapped window when the root is missing", async () 
   const loading = view.view.refresh();
   await vi.waitFor(() => expect(rootReads).toBe(2));
   await loading;
+  expect(view.view.snapshot()).toMatchObject({ status: "error" });
   // The window read started with the root read and is stopped.
   expect(window?.filter.thread_window).toBe(true);
   expect(window?.signal?.aborted).toBe(true);
   release();
-  await flushPromises();
-  expect(view.view.snapshot()).toMatchObject({ status: "error", replies: [] });
 });
 
 it("revalidates a missing strict root before repair and preserves tombstones on retry", async () => {

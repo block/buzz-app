@@ -181,6 +181,9 @@ export function createThreadView({
   const reader = retrying(sourceReader);
   const targetReader = retrying(sourceTargetReader);
   const acceptTarget = admitTarget ?? admit;
+  // Only a view created exact reads through a reader that returns rows
+  // unadmitted; a retarget makes a view exact but keeps its reader.
+  const unadmitted = exact;
   let disposed = false;
   let rootId: string | undefined;
   let rootUnavailable = false;
@@ -492,8 +495,6 @@ export function createThreadView({
   async function readTarget(
     id: string,
     owned: AbortController,
-    /** Stops the overlay read when the caller is done without its rows. */
-    overlapped: AbortSignal,
     expectedRoot?: string,
   ): Promise<ThreadRetarget> {
     const active = () =>
@@ -515,7 +516,7 @@ export function createThreadView({
     // after the target is.
     const overlaysRead = targetReader.read(
       [{ kinds: [5, 7, 9005, 40003, 39005], "#e": [id], limit: 500 }],
-      { signal: AbortSignal.any([owned.signal, overlapped]) },
+      { signal: owned.signal },
     );
     overlaysRead.catch(() => undefined);
     const response = await target;
@@ -604,12 +605,11 @@ export function createThreadView({
     selectionController?.abort();
     selectionStaged = [];
     const owned = new AbortController();
-    const overlapped = new AbortController();
     const cancel = () => owned.abort();
     signal.addEventListener("abort", cancel, { once: true });
     selectionController = owned;
     try {
-      const result = await readTarget(id, owned, overlapped.signal, rootId);
+      const result = await readTarget(id, owned, rootId);
       if (disposed || owned.signal.aborted || selectionController !== owned)
         return "cancelled";
       if (result !== "selected") return result;
@@ -628,7 +628,8 @@ export function createThreadView({
         ? "cancelled"
         : "error";
     } finally {
-      overlapped.abort();
+      // Stops a read started alongside another that this ended without.
+      owned.abort();
       signal.removeEventListener("abort", cancel);
       if (selectionController === owned) {
         selectionStaged = [];
@@ -666,8 +667,6 @@ export function createThreadView({
     let nextCursor = replace ? undefined : cursor;
     let nextPages = replace ? 0 : pages;
     let fetched: readonly RelayEvent[] = [];
-    // Stops a read started alongside another when the run ends without its rows.
-    const overlapped = new AbortController();
     // Repair retains already-verified presentation; only a new/unavailable
     // selection waits for its initial fold. Never unmount a reader on reconnect.
     if (exact && replace && targetStatus !== "ready") targetStatus = "loading";
@@ -682,7 +681,7 @@ export function createThreadView({
     try {
       if (exact && replace) {
         const revision = selectionRevision;
-        const result = await readTarget(messageId, owned, overlapped.signal);
+        const result = await readTarget(messageId, owned);
         if (!active()) return;
         if (revision === selectionRevision && result !== "selected") {
           targetStatus = "unavailable";
@@ -749,13 +748,10 @@ export function createThreadView({
         // the first window's rows are read only after it.
         // Revalidate once per run, not once per page of a retained-range repair.
         const rootRead = reader.read([rootFilter], { signal: owned.signal });
-        // Only an exact view's reader returns rows unadmitted. An ordinary
-        // view's reader admits as it resolves, so a window answered before
-        // the root would drop root aux; it reads the window after the root.
-        if (exact) {
-          firstWindow = windowRead(
-            AbortSignal.any([owned.signal, overlapped.signal]),
-          );
+        // An admitting reader would drop root aux from a window answered
+        // before the root; only an unadmitting one overlaps the window.
+        if (unadmitted) {
+          firstWindow = windowRead(owned.signal);
           firstWindow.catch(() => undefined);
         }
         const rootResponse = await rootRead;
@@ -942,7 +938,8 @@ export function createThreadView({
         publishStatus({ status: "error", error: String(error) });
       }
     } finally {
-      overlapped.abort();
+      // Stops a read started alongside another that the run ended without.
+      owned.abort();
       if (controller === owned) {
         staged = [];
         controller = undefined;

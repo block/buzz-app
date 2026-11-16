@@ -498,6 +498,22 @@ describe("paging stored sessions", () => {
     expect(cursors(reader)).toEqual([undefined, "p2"]);
   });
 
+  it("keeps a session sent on two pages once, counting it once", async () => {
+    const moved = { ...session, sessionId: "s5", updatedAt: 1 };
+    const reader = pages(
+      { sessions: rows(20), cursor: "p2" },
+      // 30 rows, but 29 sessions: one more page is read.
+      { sessions: [moved, ...rows(9, 20)], cursor: "p3" },
+      { sessions: rows(10, 29), cursor: "p4" },
+    );
+    const list = await listSessions(reader, signedIn, "a".repeat(64), signal);
+    if (list.status !== "loaded") throw new Error("not loaded");
+    const ids = list.sessions.map((row) => row.sessionId);
+    expect(ids).toEqual(rows(39).map((row) => row.sessionId));
+    expect(list.sessions[5]).toEqual(rows(20)[5]);
+    expect(cursors(reader)).toEqual([undefined, "p2", "p3"]);
+  });
+
   it("stops after five pages while a cursor remains", async () => {
     const reader = pages(
       ...Array.from({ length: 6 }, (_, index) => ({

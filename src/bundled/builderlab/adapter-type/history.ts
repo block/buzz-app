@@ -277,7 +277,8 @@ export const canReadSessions = (login: LoginSnapshot) =>
 
 /** The signed-in owner's stored sessions of an agent, most recently active
  * first: pages until {@link CONVERSATION_LIMIT} are read, none remain, or
- * {@link PAGE_LIMIT} were read. `more` when older ones remain. */
+ * {@link PAGE_LIMIT} were read. `more` when older ones remain. A session
+ * that became active between reads can arrive twice; its first stays. */
 export async function listSessions(
   client: AgentClient,
   session: BuilderlabSession,
@@ -289,21 +290,27 @@ export async function listSessions(
     (row) => row.pubkey === pubkey,
   );
   if (!agent) return { status: "loaded", sessions: [], more: false };
-  const sessions: AgentSession[] = [];
+  const listed = new Map<string, AgentSession>();
   let cursor: string | undefined;
   try {
     for (let page = 0; page < PAGE_LIMIT; page++) {
       const next = await client.sessions(agent.id, signal, undefined, cursor);
-      sessions.push(...next.sessions);
+      for (const row of next.sessions)
+        if (!listed.has(row.sessionId)) listed.set(row.sessionId, row);
       cursor = next.cursor;
-      if (!cursor || sessions.length >= CONVERSATION_LIMIT) break;
+      if (!cursor || listed.size >= CONVERSATION_LIMIT) break;
     }
   } catch (error) {
     // A Builderlab without stored sessions has no such route.
     if (notFound(error)) return { status: "unsupported" };
     throw error;
   }
-  return { status: "loaded", agentId: agent.id, sessions, more: !!cursor };
+  return {
+    status: "loaded",
+    agentId: agent.id,
+    sessions: [...listed.values()],
+    more: !!cursor,
+  };
 }
 
 /** Turns a stored transcript shows at most, as local transcripts do. */

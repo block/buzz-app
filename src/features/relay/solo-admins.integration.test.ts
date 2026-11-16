@@ -134,7 +134,7 @@ function setup() {
   };
 }
 
-it("holds the opening message and local wake until all admins are ready through the existing host route", async () => {
+it("confirms a lost grant ACK and holds the opening message and local wake until every admin is ready", async () => {
   const h = setup();
   const owner = await h.open();
   const heard = vi.fn();
@@ -145,13 +145,20 @@ it("holds the opening message and local wake until all admins are ready through 
   });
   const publish = h.adminPublish.getMockImplementation();
   assert.exists(publish);
-  h.adminPublish.mockImplementation(async (event) => {
-    await held;
-    await publish(event);
-  });
+  h.adminPublish
+    .mockImplementationOnce(async (event) => {
+      await publish(event);
+      throw new Error("ACK lost");
+    })
+    .mockImplementationOnce(async (event) => {
+      await held;
+      await publish(event);
+    });
   try {
     const { message } = h.start(owner);
-    await vi.waitFor(() => expect(h.adminPublish).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(h.adminPublish).toHaveBeenCalledTimes(2));
+    expect(h.roles.get(h.agents[0])).toBe("admin");
+    expect(h.roles.get(h.agents[1])).toBe("member");
     expect(h.genericPublish.mock.calls.map(([event]) => event.kind)).toEqual([
       9007,
     ]);
@@ -167,6 +174,24 @@ it("holds the opening message and local wake until all admins are ready through 
     expect(h.roles.get(h.workspaceAgent)).toBe("member");
     expect(h.roles.get(h.viewer.pubkey)).toBe("owner");
     expect(h.adminPublish).toHaveBeenCalledTimes(2);
+    expect(h.adminPublish.mock.calls.map(([event]) => event.tags)).toEqual(
+      h.agents.map((key) => [
+        ["h", h.channel],
+        ["p", key],
+        ["role", "admin"],
+      ]),
+    );
+    const create = h.genericPublish.mock.calls.find(
+      ([event]) => event.kind === 9007,
+    )?.[0];
+    assert.exists(create);
+    expect(
+      h.adminPublish.mock.calls.every(
+        ([event]) =>
+          event.pubkey === h.viewer.pubkey &&
+          event.created_at === create.created_at,
+      ),
+    ).toBe(true);
     expect(
       owner.session.outbox
         ?.snapshot()

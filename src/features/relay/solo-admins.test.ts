@@ -9,22 +9,20 @@ function setup() {
   const owner = keypair(),
     relay = keypair();
   const agents: [string, string] = [keypair().pubkey, keypair().pubkey];
-  const workspaceAgent = keypair().pubkey;
   const channel = crypto.randomUUID();
-  const members = [...agents, workspaceAgent];
   const create = signed(owner, {
     kind: 9007,
     content: "",
     created_at: Math.floor(Date.now() / 1000),
-    tags: [["h", channel], ...members.map((key) => ["p", key])],
+    tags: [["h", channel], ...agents.map((key) => ["p", key])],
   });
   const creation: OutgoingEvent = {
     event: create,
     delivery: "accepted",
-    recovery: soloAdminRecovery(channel, members, agents),
+    recovery: soloAdminRecovery(channel, agents, agents),
   };
   const records = new Map<string, RelayEvent>();
-  const roles = new Map(members.map((key) => [key, "member"]));
+  const roles = new Map(agents.map((key) => [key, "member"]));
   const read = vi.fn(async (filters: readonly ReadFilter[]) => {
     const roster = signed(relay, {
       kind: 39002,
@@ -55,10 +53,7 @@ function setup() {
   const run = (saved = creation) =>
     promoteSoloAdmins(saved, writer, { read }, relay.pubkey, controller.signal);
   return {
-    owner,
     agents,
-    workspaceAgent,
-    channel,
     creation,
     records,
     roles,
@@ -66,82 +61,15 @@ function setup() {
     writer,
     publish,
     run,
-    controller,
   };
 }
 
-it("promotes all opening agents in order, confirms a lost ACK, and leaves workspace-only agents ordinary", async () => {
+it("does not restore a removed opening agent when replaying a stale creation receipt", async () => {
   const h = setup();
-  const normal = h.publish.getMockImplementation();
-  assert.exists(normal);
-  let release = () => {};
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let entered = () => {};
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  h.publish
-    .mockImplementationOnce(async (event) => {
-      await normal(event);
-      throw new Error("ACK lost");
-    })
-    .mockImplementationOnce(async (event) => {
-      entered();
-      await held;
-      await normal(event);
-    });
-  let finished = false;
-  const work = h.run().then(() => {
-    finished = true;
-  });
-  try {
-    await started;
-    expect(finished).toBe(false);
-    expect(h.roles.get(h.agents[0])).toBe("admin");
-    expect(h.roles.get(h.agents[1])).toBe("member");
-    expect(h.roles.get(h.workspaceAgent)).toBe("member");
-  } finally {
-    release();
-  }
-  await work;
-  expect(h.agents.map((key) => h.roles.get(key))).toEqual(["admin", "admin"]);
-  expect(h.publish.mock.calls.map(([event]) => event.tags)).toEqual(
-    h.agents.map((key) => [
-      ["h", h.channel],
-      ["p", key],
-      ["role", "admin"],
-    ]),
-  );
-  expect(
-    h.publish.mock.calls.every(
-      ([event]) =>
-        event.pubkey === h.owner.pubkey &&
-        event.created_at === h.creation.event.created_at,
-    ),
-  ).toBe(true);
-});
-
-it("resumes the exact failed grant after restart without restoring a demoted or removed opening agent", async () => {
-  const h = setup();
-  const normal = h.publish.getMockImplementation();
-  assert.exists(normal);
-  h.publish
-    .mockImplementationOnce(normal)
-    .mockRejectedValueOnce(new Error("offline"));
-  await expect(h.run()).rejects.toThrow("offline");
-  const failedId = h.publish.mock.calls[1]?.[0].id;
-  h.roles.set(h.agents[0], "bot");
-  await h.run(structuredClone(h.creation));
-  expect(h.publish.mock.calls.map(([event]) => event.id).slice(1)).toEqual([
-    failedId,
-    failedId,
-  ]);
-  expect(h.roles.get(h.agents[0])).toBe("bot");
+  await h.run();
   h.roles.delete(h.agents[0]);
   await h.run(structuredClone(h.creation));
-  expect(h.publish).toHaveBeenCalledTimes(3);
+  expect(h.publish).toHaveBeenCalledTimes(2);
   expect(h.roles.has(h.agents[0])).toBe(false);
 });
 

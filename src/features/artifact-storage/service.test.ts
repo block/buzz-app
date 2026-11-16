@@ -4,7 +4,11 @@ import { ArtifactStorageService } from "./service";
 
 it("binds collection ownership to the calling plugin and fences scope changes", async () => {
   const root = new Context();
-  let scope = { viewer: "viewer", selected: "https://relay.test" };
+  let scope = {
+    viewer: "viewer",
+    selected: "https://relay.test",
+    memberships: [{ id: "https://relay.test" }],
+  };
   const subscribers = new Set<() => void>();
   root.provide("communityReader", {
     snapshot: () => scope,
@@ -53,7 +57,11 @@ it("binds collection ownership to the calling plugin and fences scope changes", 
   }
   listener.mockClear();
   const handle = plugin.artifactStorage.open(definition);
-  expect(factory).toHaveBeenCalledWith("test.plugin", definition);
+  expect(factory).toHaveBeenCalledWith(
+    "test.plugin",
+    definition,
+    expect.any(Function),
+  );
   expect(listener.mock.calls[0]?.[0]).toMatchObject({
     owner: "test.plugin",
     viewer: "viewer",
@@ -66,10 +74,20 @@ it("binds collection ownership to the calling plugin and fences scope changes", 
   expect(refreshError).toHaveBeenCalledOnce();
   await handle.get("task");
   expect(get).toHaveBeenCalledWith("task");
-  scope = { viewer: "other", selected: "https://relay.test" };
+  let finishRead!: () => void;
+  get.mockImplementationOnce(
+    () =>
+      new Promise<undefined>((resolve) => {
+        finishRead = () => resolve(undefined);
+      }),
+  );
+  const pending = handle.get("task");
+  scope = { ...scope, viewer: "other" };
   for (const listener of subscribers) listener();
   expect(listener.mock.calls[0]?.[0].signal.aborted).toBe(true);
   expect(close).toHaveBeenCalled();
   expect(() => handle.get("task")).toThrow("scope changed");
+  finishRead();
+  await expect(pending).rejects.toThrow("scope changed");
   await root.fiber.dispose();
 });

@@ -968,18 +968,19 @@ function ThreadMessages({
       ].find((row) => row.dataset.messageId === messageId),
     [messageId],
   );
-  // A late ancestor reparents the exact row. Transfer only focus owned at detach,
-  // within this commit/layout expansion; a later user expansion must not restore it.
-  const selectedBranchRef = useMemo(() => {
+  // One commit can replace the exact row: a late ancestor reparents it, or an
+  // activity history absorbs, releases or regroups it. Transfer only focus the
+  // row owned when it was removed, within this commit/layout expansion; a
+  // later user expansion must not restore it.
+  const selectedHandoff = useMemo(() => {
     let restore = false;
-    return (branch: HTMLElement | null) => {
-      if (!branch) return;
-      const row = branch.querySelector<HTMLElement>("[data-message-id]");
+    return () => {
+      const row = selectedRow();
       if (
         restore &&
         row &&
         !navigation?.signal.aborted &&
-        !branch.closest("[inert]") &&
+        !row.closest("[inert]") &&
         document.activeElement === document.body
       ) {
         row.tabIndex = -1;
@@ -987,9 +988,11 @@ function ThreadMessages({
       }
       restore = false;
       return () => {
+        // The replacement may already be in the document.
+        const focused = document.activeElement;
         restore =
-          row?.dataset.messageId === messageId &&
-          document.activeElement === row;
+          focused?.getAttribute("data-message-id") === messageId &&
+          !!scroller.current?.contains(focused);
         // Ancestor expansion happens synchronously in a layout effect. Do not
         // retain focus intent after this update (deletion or unmount).
         queueMicrotask(() => {
@@ -997,7 +1000,7 @@ function ThreadMessages({
         });
       };
     };
-  }, [messageId, navigation?.signal]);
+  }, [messageId, navigation?.signal, selectedRow]);
   const selectedOffset = useCallback(() => {
     const row = selectedRow();
     const container = scroller.current;
@@ -2129,9 +2132,11 @@ function ThreadMessages({
         );
       };
       const renderHistory = (entry: ChannelMessage) => (
-        <div ref={entry.id === messageId ? selectedBranchRef : undefined}>
-          {renderMessage(entry, true)}
-        </div>
+        <RowLifetime
+          handoff={entry.id === messageId ? selectedHandoff : undefined}
+        >
+          <div>{renderMessage(entry, true)}</div>
+        </RowLifetime>
       );
       const toggleGroup = () => {
         follow.current = false;
@@ -2156,17 +2161,16 @@ function ThreadMessages({
           open={!hidden.has(row.id) && !groupedIds.has(row.id)}
           enabled={row.audience === "agents" || !!row.relayedFrom?.verified}
         >
-          {renderMessage(row)}
+          <RowLifetime
+            handoff={row.id === messageId ? selectedHandoff : undefined}
+          >
+            {renderMessage(row)}
+          </RowLifetime>
         </ActivityExpansion>
       );
       return (
         <li
           key={row.id}
-          ref={
-            row.id === messageId && !groupedIds.has(row.id)
-              ? selectedBranchRef
-              : undefined
-          }
           className={styles.replyItem}
           data-layout={continuation ? "continuation" : "thread"}
         >
@@ -2837,6 +2841,21 @@ function ThreadMessages({
       )}
     </MessageEditScope>
   );
+}
+/**
+ * Brackets a row's time in the document. Unlike a ref on an element that
+ * stays mounted, which detaches only after its children are removed, the
+ * cleanup of `handoff` runs while a row being removed is still in place.
+ */
+function RowLifetime({
+  handoff,
+  children,
+}: {
+  handoff: (() => () => void) | undefined;
+  children: ReactNode;
+}) {
+  useLayoutEffect(() => handoff?.(), [handoff]);
+  return children;
 }
 /** Holds the thread's area with the Buzz mark until its first page can show. */
 // How far a saved reading row has moved from its saved viewport offset. WebKit

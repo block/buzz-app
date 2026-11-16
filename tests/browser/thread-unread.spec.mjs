@@ -527,11 +527,11 @@ test("opening an absorbed failure from Activity expands its activity history, th
 // A cold exact visit verifies the failure before it reads the thread window,
 // so the thread first shows the failure alone and only then the update that
 // absorbs it. The expansion must still happen once that group forms; otherwise
-// the revealed failure vanishes into the collapsed history.
-test("a cold link to an absorbed failure expands its activity history once the window arrives, then reads it", async ({
-  page,
-  app,
-}) => {
+// the revealed failure vanishes into the collapsed history. The failure's
+// standalone row gives way to its row in the history, which must take the
+// focus that row held. With `opened`, the visit first completes on the failure
+// alone, so its reveal has stopped watching by the time the history forms.
+async function coldAbsorbedFailure({ page, app }, opened) {
   const key = generateSecretKey();
   app.serveProfile(key, { name: "Remote tester", is_agent: true });
   const root = app.histories
@@ -593,6 +593,14 @@ test("a cold link to an absorbed failure expands its activity history once the w
     await expect(
       thread.getByRole("button", { name: /^Collapse activity history:/ }),
     ).toHaveCount(0);
+    if (opened) {
+      await expect(row).toBeFocused();
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.fixtureNavigation.snapshot().status),
+        )
+        .toBe("opened");
+    }
   } finally {
     held.resolve();
   }
@@ -614,7 +622,15 @@ test("a cold link to an absorbed failure expands its activity history once the w
       ),
     )
     .not.toContain(failure.content);
-});
+}
+test("a cold link to an absorbed failure expands its activity history once the window arrives, then reads it", ({
+  page,
+  app,
+}) => coldAbsorbedFailure({ page, app }, false));
+test("a cold link to a failure keeps it focused when the window's activity history absorbs it after the visit opened", ({
+  page,
+  app,
+}) => coldAbsorbedFailure({ page, app }, true));
 
 // A normal agent send signs the request it answers but links its reply to the
 // thread root. The first agent's update claims a request nested under another

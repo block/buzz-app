@@ -3790,9 +3790,70 @@ function splitHistoryFixture() {
     createdAt: 6,
   });
   return {
+    update,
     target,
     before: [sibling, claimed, update, target],
     after: [sibling, request, claimed, update, target],
+  };
+}
+
+/** An exact visit to `target` whose reveal the test controls. A reveal
+ * completes only once its row is on screen: unless `completed`, the row is
+ * held off screen until `arrive`. */
+function exactVisit(
+  target: ChannelMessage,
+  replies: ChannelMessage[],
+  completed: boolean,
+) {
+  const navigation = visitPlaces().linked("thread-visit", undefined, target.id);
+  const h = messagesHarness(navigation);
+  h.props.messageId = target.id;
+  h.snapshot.replies = replies;
+  h.snapshot.target = target;
+  h.snapshot.targetStatus = "ready";
+  let onScreen = completed;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    () => new DOMRect(0, onScreen ? 0 : 2000, 500, 500),
+  );
+  // The rows the reveal waits to see arrive.
+  const awaited = new Map<IntersectionObserverCallback, Element>();
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      constructor(private callback: IntersectionObserverCallback) {}
+      observe(row: Element) {
+        awaited.set(this.callback, row);
+      }
+      disconnect() {
+        awaited.delete(this.callback);
+      }
+    },
+  );
+  const shown = () =>
+    h.element.querySelector(`[data-message-id="${target.id}"]`);
+  const opened = () =>
+    expect(navigation.complete).toHaveBeenCalledExactlyOnceWith({
+      status: "opened",
+    });
+  return {
+    h,
+    navigation,
+    shown,
+    opened,
+    /** The reveal verified the row it focused and found it off screen. */
+    held: () => waitFor(() => expect([...awaited.values()]).toEqual([shown()])),
+    arrive() {
+      onScreen = true;
+      for (const arrive of [...awaited.keys()])
+        arrive(
+          [
+            {
+              intersectionRect: { width: 500, height: 500 },
+            } as IntersectionObserverEntry,
+          ],
+          {} as IntersectionObserver,
+        );
+    },
   };
 }
 
@@ -3807,44 +3868,11 @@ it.each([
   "keeps an exact failure target shown and focused when a late request splits its activity history %s",
   async (_, completed) => {
     const { target, before, after } = splitHistoryFixture();
-    const navigation = visitPlaces().linked(
-      "thread-visit",
-      undefined,
-      target.id,
+    const { h, navigation, shown, opened, held, arrive } = exactVisit(
+      target,
+      before,
+      completed,
     );
-    const h = messagesHarness(navigation);
-    h.props.messageId = target.id;
-    h.snapshot.replies = before;
-    h.snapshot.target = target;
-    h.snapshot.targetStatus = "ready";
-    // A reveal completes only once its row is on screen. Hold the row off
-    // screen, and record the rows the reveal then waits to see arrive.
-    let onScreen = completed;
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-      () => new DOMRect(0, onScreen ? 0 : 2000, 500, 500),
-    );
-    const awaited = new Map<IntersectionObserverCallback, Element>();
-    vi.stubGlobal(
-      "IntersectionObserver",
-      class {
-        constructor(private callback: IntersectionObserverCallback) {}
-        observe(row: Element) {
-          awaited.set(this.callback, row);
-        }
-        disconnect() {
-          awaited.delete(this.callback);
-        }
-      },
-    );
-    const shown = () =>
-      h.element.querySelector(`[data-message-id="${target.id}"]`);
-    const opened = () =>
-      expect(navigation.complete).toHaveBeenCalledExactlyOnceWith({
-        status: "opened",
-      });
-    // The reveal verified the row it focused and found it off screen.
-    const held = () =>
-      waitFor(() => expect([...awaited.values()]).toEqual([shown()]));
     h.render();
     if (completed) await waitFor(opened);
     else await held();
@@ -3871,21 +3899,91 @@ it.each([
     // The reveal follows the row to its new place and still waits for it.
     await held();
     expect(navigation.complete).not.toHaveBeenCalled();
-    onScreen = true;
-    for (const arrive of [...awaited.keys()])
-      arrive(
-        [
-          {
-            intersectionRect: { width: 500, height: 500 },
-          } as IntersectionObserverEntry,
-        ],
-        {} as IntersectionObserver,
-      );
+    arrive();
     await waitFor(opened);
     expect(shown()).toHaveFocus();
     expect(screen.getByText(target.content)).toBeVisible();
   },
 );
+
+// A cold exact visit verifies and focuses the failure before the thread window
+// supplies the update that absorbs it. The failure's standalone row is then
+// removed from a reply item that stays mounted, and its replacement mounts in
+// the history in the same commit. The replacement takes the focus the row
+// held, whether the reveal still waits for its row or the visit completed.
+// Focus the reader moved elsewhere meanwhile stays where they put it.
+it.each([
+  ["before the reveal completes", false, false],
+  ["after the reveal completes", true, false],
+  ["before the reveal completes, leaving focus the reader moved", false, true],
+  ["after the reveal completes, leaving focus the reader moved", true, true],
+])(
+  "hands an exact failure target's focus to its row in the activity history that absorbs it %s",
+  async (_, completed, moved) => {
+    const { update, target } = splitHistoryFixture();
+    const { h, navigation, shown, opened, held, arrive } = exactVisit(
+      target,
+      [target],
+      completed,
+    );
+    h.render();
+    if (completed) await waitFor(opened);
+    else await held();
+    const first = shown();
+    expect(first).toHaveFocus();
+    expect(
+      screen.queryByRole("button", { name: /activity history/ }),
+    ).toBeNull();
+    const history = screen.getByRole("region", { name: "Thread messages" });
+    if (moved) history.focus();
+    const owner = () => (moved ? history : shown());
+
+    h.snapshot.replies = [update, target];
+    h.render();
+    expect(
+      screen.getByRole("button", { name: /Collapse activity history/ }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(first).not.toBeInTheDocument();
+    expect(screen.getByText(target.content)).toBeVisible();
+    expect(owner()).toHaveFocus();
+    if (completed) return opened();
+
+    // The reveal follows the row into the history and still waits for it.
+    await held();
+    expect(navigation.complete).not.toHaveBeenCalled();
+    expect(owner()).toHaveFocus();
+    arrive();
+    await waitFor(opened);
+    expect(owner()).toHaveFocus();
+  },
+);
+
+// The same handoff serves a row that moves without any history: an exact reply
+// whose parent loads late leaves the top level, and the ancestor expansion
+// remounts it under that parent within the same update.
+it("hands an exact reply's focus to its row under a parent that loads late", async () => {
+  const reply = (id: string, replyParentId: string, content: string) => ({
+    ...row,
+    id: id.repeat(64),
+    content,
+    threadRootId: row.id,
+    replyParentId,
+    createdAt: 2,
+  });
+  const parent = reply("1", row.id, "A late parent");
+  const target = reply("2", parent.id, "An exact nested reply");
+  const { h, shown, opened } = exactVisit(target, [target], true);
+  h.render();
+  await waitFor(opened);
+  const first = shown();
+  expect(first).toHaveFocus();
+
+  h.snapshot.replies = [parent, target];
+  h.render();
+  expect(first).not.toBeInTheDocument();
+  expect(shown()?.closest("[data-depth]")).toHaveAttribute("data-depth", "1");
+  expect(shown()).toHaveFocus();
+});
 
 it("keeps a reader's collapse of an exact failure target's activity history when a late request splits it", async () => {
   const { target, before, after } = splitHistoryFixture();

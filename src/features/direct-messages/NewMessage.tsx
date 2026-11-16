@@ -4,6 +4,7 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { useChannelWindow } from "../relay/react";
 import type { ChannelSummary } from "../relay/contracts";
 import { sameDirectMessage } from "../relay/direct-message-policy";
+import { NeedsHistoryChoice } from "../relay/direct-messages";
 import {
   ConversationChannel,
   ConversationTimeline,
@@ -219,6 +220,9 @@ export function NewMessage({
   const [draftChannel] = useState(() => crypto.randomUUID());
   const attempt = useRef<AbortController | null>(null);
   const prepared = useRef<{ key: string; id: string } | undefined>(undefined);
+  // The recipients for whom the relay found an existing DM that named agents
+  // would join; sending again shares its history with them.
+  const [historyAsked, setHistoryAsked] = useState<string>();
   const outbox = session.outbox;
   const operations = useSyncExternalStore(
     outbox?.subscribe ?? noSubscribe,
@@ -324,6 +328,7 @@ export function NewMessage({
   function change(people: Recipient[]) {
     if (locked || attempt.current) return;
     prepared.current = undefined;
+    setHistoryAsked(undefined);
     setRecipients(people);
     writeView(scope, "direct-message:recipients", people.map(recipientView));
     setError("");
@@ -395,12 +400,13 @@ export function NewMessage({
           prepared.current?.key === key
             ? prepared.current.id
             : // The relay picks the DM of these people, which can differ
-              // from the one shown, and named agents join it with its
-              // history. The message goes where the relay says.
+              // from the one shown, and the message goes where it says. It
+              // asks first when named agents would join that DM, and they
+              // join with its history only once the page has said so.
               await session.directMessages.open(
                 recipients.map((person) => person.pubkey),
                 controller.signal,
-                true,
+                historyAsked === key || "ask",
               );
         controller.signal.throwIfAborted();
         prepared.current = { key, id };
@@ -449,6 +455,11 @@ export function NewMessage({
       onStarted(current.channelId, current.id);
     } catch (reason) {
       if (!controller.signal.aborted && preparingFiles) setUploadFailed(true);
+      else if (
+        !controller.signal.aborted &&
+        reason instanceof NeedsHistoryChoice
+      )
+        setHistoryAsked(key);
       else if (!controller.signal.aborted)
         setError(
           reason instanceof Error
@@ -503,6 +514,16 @@ export function NewMessage({
   const joining = existing
     ? named.filter((person) => !existing.members?.includes(person.pubkey))
     : [];
+  // The relay asked about these recipients; who is an agent is only wording.
+  const asked = historyAsked === keyFor(recipients);
+  const isAgent = (person: Recipient) =>
+    !!(person.isAgent || profiles.get(person.pubkey)?.isAgent);
+  const askedAgents = named.filter(isAgent);
+  const one = askedAgents.length === 1;
+  const list = (people: readonly Recipient[]) =>
+    new Intl.ListFormat(undefined, { type: "conjunction" }).format(
+      people.map((person) => person.name),
+    );
   return (
     <section
       className={styles.page}
@@ -550,15 +571,22 @@ export function NewMessage({
         ) : null}
       </div>
       <div className={styles.feedback}>
-        {joining.length > 0 && (
+        {asked ? (
           <p role="status">
-            Sending adds{" "}
-            {new Intl.ListFormat(undefined, { type: "conjunction" }).format(
-              joining.map((person) => person.name),
-            )}{" "}
-            to this DM. {joining.length === 1 ? "It" : "They"} can read its
-            earlier messages.
+            {askedAgents.length
+              ? `Sending adds ${list(askedAgents)} to your existing DM with ${list(named.filter((person) => !isAgent(person)))}.`
+              : "Sending adds the agents you chose to an existing DM."}{" "}
+            {one ? "It" : "They"} can read its earlier messages. Send again to
+            add {one ? "it" : "them"}.
           </p>
+        ) : (
+          joining.length > 0 && (
+            <p role="status">
+              Sending adds {list(joining)} to this DM.{" "}
+              {joining.length === 1 ? "It" : "They"} can read its earlier
+              messages.
+            </p>
+          )
         )}
         {busy && (
           <p role="status">

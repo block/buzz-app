@@ -884,6 +884,9 @@ and are asked to sign in again in Buzz.
 - **Link boundaries**: a bare http(s) or buzz link ends at whitespace and at
   fullwidth, CJK or curly-quote punctuation such as `，`, `。`, `」` or `’`. In a
   host name, `。` works as a dot. Wrap it as `<url>` to keep them in it.
+  In messages, a host with no scheme, such as `example.com/docs`, links to
+  `https://` when it ends in a common web TLD (`.com`, `.io`, `.dev`, `.xyz`
+  and similar), so file names like `main.rs` stay text.
 - **Approving a Builderlab tool app**: the first time a tool app asks for
   approval, Buzz opens the approval page in your default browser, where you
   are signed in to Builderlab. Approve it there and return to Buzz; the app

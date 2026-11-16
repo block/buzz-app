@@ -19,7 +19,7 @@ import {
   type Panels,
 } from "../../features/panels/service";
 import { useTabDrag } from "../../features/panels/useTabDrag";
-import { PanelCard } from "../../features/panels/PanelCard";
+import { PanelMediaCard } from "./PanelMediaCard";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import {
   BrowserIcon,
@@ -898,7 +898,11 @@ export function useConversationTabs({
       instance: entry,
       label: entry.panel.title,
       ...(entry.channelContext && {
-        icon: <InfoIcon size="1rem" />,
+        icon: entry.panel.tabIcon ? (
+          <entry.panel.tabIcon />
+        ) : (
+          <InfoIcon size="1rem" />
+        ),
       }),
       close: () => closeTab(entry),
       // Panel tabs cross panes at the edge between them, never reorder.
@@ -910,7 +914,15 @@ export function useConversationTabs({
       }),
       content:
         !entry.panel.deferUntilShown || visitTab.shown.has(id) ? (
-          <PanelCard
+          <PanelMediaCard
+            session={queries}
+            scope={scope}
+            channelId={entry.channelId}
+            channelName={
+              entry.channelContext?.channelName ?? current?.name ?? ""
+            }
+            extensions={extensions}
+            isActive={() => panelActive(entry)}
             panel={entry.panel}
             contentKey={panelContentTarget(entry)}
             target={entry.target}

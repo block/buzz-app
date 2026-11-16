@@ -431,3 +431,26 @@ it("reads a session whose removal state is unspecified", async () => {
   expect(await read(0)).toMatchObject({ turns: [{ turnId: "t" }] });
   expect(await read("SESSION_REMOVAL_STATE_REMOVED")).toBeUndefined();
 });
+
+it("drops any owner note after a sender's keys", () => {
+  const hex = "c".repeat(64);
+  const [turn] = sessionTurns(session, {
+    turns: [{ turn_id: "t", mention_event_id: mention, created_at: at(0) }],
+    messages: [
+      {
+        id: "p",
+        role: 1,
+        created: at(1),
+        content: [
+          text(
+            prompt.replace(
+              "From: Ada. This sender is your owner.",
+              `From: Ada (npub: npub1ada, hex: ${hex}). This sender was checked against the owner list.`,
+            ),
+          ),
+        ],
+      },
+    ],
+  });
+  expect(turn?.items[0]).toMatchObject({ author: "Ada" });
+});

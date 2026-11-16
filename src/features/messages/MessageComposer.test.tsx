@@ -14835,6 +14835,59 @@ it("takes an agent a partial read lists as an agent, even when an older complete
   expect(h.messages.send.mock.calls[0]?.[5] ?? []).toEqual([]);
 });
 
+it("sends only to a restored agent chip a cold partial read has not listed yet", async () => {
+  // An earlier session saved a draft tagging Bea, the viewer's agent outside
+  // the chat.
+  const before = mountSoloAgents({ members: [first.pubkey] });
+  act(() => {
+    before.h.commands().insertMention(before.bea);
+    before.h.commands().insertText("hi");
+  });
+  before.h.unmount();
+  // The draft's saved pick is Ada.
+  writeView("scope", "draft:channel:agents", [before.ada]);
+  // A fresh session: its first read lists Ada but not Bea, and no read has
+  // completed.
+  const h = mount({}, undefined, "viewer");
+  h.setLibrary([first], "ready", "Relay inventory unavailable");
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  const list = {
+    ...soloList,
+    channels: [{ ...soloList.channels[0], members: [first.pubkey] }],
+  };
+  h.retarget({
+    soloConversation: true,
+    session: {
+      ...h.session,
+      viewer: "viewer",
+      channels: { ...h.session.channels, list: () => list },
+      channelWrites: {
+        refreshMembership: async () => ({
+          id: "channel",
+          channelType: "solo",
+          members: [first.pubkey],
+        }),
+        addAgents: vi.fn(),
+      },
+    } as unknown as RelaySession,
+  });
+  expect(h.input()).toHaveTextContent("@Bea hi");
+  // The send's refresh completes the read, and it lists Bea.
+  vi.mocked(h.session.agentLibrary.refresh).mockImplementation(async () =>
+    h.setLibrary([first, second]),
+  );
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  // Bea is the only recipient: the pill's Ada does not join her.
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
+  expect(h.messages.send.mock.calls[0]?.[5] ?? []).toEqual([]);
+});
+
 it("does not seed the pill with another person's agent outside the Solo chat", () => {
   setDefaultAgent("scope", first.pubkey);
   const viewer = "f".repeat(64);

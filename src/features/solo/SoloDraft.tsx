@@ -335,14 +335,17 @@ export function SoloDraft({
   const [channelId] = useState(() => crypto.randomUUID());
   // The first message references people as the chat's later ones do. The
   // reservation is in place before the composer first renders, so a restored
-  // draft's references are known at once; the effect's reservation replaces
-  // it and is the one released. An abandoned render leaves one entry for an
-  // id nothing reuses.
-  useState(() => reserveSoloMentions(session, channelId));
-  useEffect(
-    () => reserveSoloMentions(session, channelId),
-    [session, channelId],
-  );
+  // draft's references are known at once; the effect owns and releases it.
+  const reservation = useRef<() => void>(undefined);
+  reservation.current ??= reserveSoloMentions(session, channelId);
+  useEffect(() => {
+    reservation.current ??= reserveSoloMentions(session, channelId);
+    const release = reservation.current;
+    return () => {
+      release();
+      reservation.current = undefined;
+    };
+  }, [session, channelId]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const submitting = useRef(false);

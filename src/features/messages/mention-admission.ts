@@ -55,10 +55,12 @@ type AgentRead = {
 const completeReads = new WeakMap<object, AgentRead["identities"]>();
 
 /**
- * The agents that classify names already picked. A refresh or a failed source
- * drops agents until a read completes. Until then, an agent the current read
- * lists or the session's last complete read listed stays an agent: admission
- * picked it from a complete read, and the send reads again before it goes.
+ * The agents that classify names already picked, or undefined until the
+ * session has read every agent source once: before that, any outside name may
+ * be one of the viewer's agents. A refresh or a failed source drops agents
+ * until a read completes. Until then, an agent the current read lists or the
+ * session's last complete read listed stays an agent: admission picked it
+ * from a complete read, and the send reads again before it goes.
  */
 export function pickedAgents(choices: { snapshot(): AgentRead }) {
   const read = choices.snapshot();
@@ -67,7 +69,7 @@ export function pickedAgents(choices: { snapshot(): AgentRead }) {
     return read.identities;
   }
   const kept = completeReads.get(choices);
-  return kept ? [...read.identities, ...kept] : read.identities;
+  return kept && [...read.identities, ...kept];
 }
 
 /** Solo chats a New chat is about to start, by their reserved ids. */

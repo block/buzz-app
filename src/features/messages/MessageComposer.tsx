@@ -1205,15 +1205,21 @@ function Composer({
   // person: routing stays off and mentions in the text decide.
   const routing = solo && !withPeople && agentsOnly && !editing.target;
   /** A Solo chat only references a person outside it: that tag notifies
-   * nobody, so it neither replaces the toolbar's agents nor joins them. */
+   * nobody, so it neither replaces the toolbar's agents nor joins them. Until
+   * the session has read all its agents, an outside name may be the viewer's
+   * agent, so it is named, not a reference: the send reads again. */
   function referenced(pubkey: string) {
     if (!solo) return false;
     const chat = mentionChannel(session, channelId);
+    const agents = pickedAgents(session.agentChoices);
     return (
+      !!agents &&
       !chat?.members?.includes(pubkey) &&
-      outsideMentionReferences(chat, pickedAgents(session.agentChoices), pubkey)
+      outsideMentionReferences(chat, agents, pubkey)
     );
   }
+  // Whether the text's tags name anyone is settled once agents are known.
+  const tagsSettled = !solo || !!pickedAgents(session.agentChoices);
   const named = routing
     ? recipients.filter((person) => !referenced(person.pubkey))
     : recipients;
@@ -1296,6 +1302,7 @@ function Composer({
   // agents are set aside for good; a draft that already has mentions when the
   // pill takes over (restored, or before its agents were known) starts so.
   useEffect(() => {
+    if (!tagsSettled) return;
     const before = mentionCount.current;
     mentionCount.current = routing ? named.length : 0;
     if (!routing || !named.length || before) return;
@@ -1305,7 +1312,7 @@ function Composer({
     setReplacedKey(draftKey);
     setRouted([]);
     writeView(scope, pillKey, null);
-  }, [routing, named.length, draftKey, scope, pillKey]);
+  }, [tagsSettled, routing, named.length, draftKey, scope, pillKey]);
   const editLocked = useListedChannel(
     listed,
     channelId,
@@ -2856,9 +2863,11 @@ function Composer({
             ? "An agent you're sending to is archived or being deleted. Choose another agent to send."
             : "A selected recipient is archived or being deleted. Remove it before sending.",
         );
+      // Until agents are known, the new chat's start reads them and decides.
       if (
         ownSoloConversation &&
         submission &&
+        pickedAgents(session.agentChoices) &&
         capturedRecipients.some(
           (person) =>
             !referenced(person.pubkey) &&

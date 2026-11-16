@@ -117,14 +117,14 @@ it("installs the pinned commit only after the owner confirms, then tells the age
   expect(imports.git).not.toHaveBeenCalled();
   fireEvent.click(within(group).getByRole("button", { name: "Review Tasks" }));
   const dialog = await screen.findByRole("dialog", {
-    name: "Review plugin access",
+    name: "Review Tasks Plugin access",
   });
   await within(dialog).findByText(`Commit: ${commit}`);
   expect(imports.git).toHaveBeenCalledExactlyOnceWith(
     "https://example.com/plugins",
     "main",
     undefined,
-    commit,
+    { commit, path: "tasks" },
   );
   expect(
     within(dialog).getByText(
@@ -198,7 +198,7 @@ it("updates at the pinned commit and keeps the plugin's enabled state", async ()
     "https://example.com/plugins",
     "main",
     undefined,
-    commit,
+    { commit, path: "tasks" },
   );
   expect(within(dialog).getByText(`Builder: ${reason}`)).toBeVisible();
   fireEvent.click(within(dialog).getByRole("button", { name: "Update" }));

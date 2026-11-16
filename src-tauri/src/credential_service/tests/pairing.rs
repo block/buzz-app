@@ -89,6 +89,65 @@ async fn a_declined_pairing_is_denied_and_saves_nothing() {
     assert!(fixture.keychain.value.lock().unwrap().is_none());
 }
 
+#[tokio::test]
+async fn nothing_is_asked_while_no_prompt_is_mounted() {
+    let fixture = fixture();
+    // One unmount more than mounted leaves none, not a negative count.
+    fixture.service.0.pairings.prompt(false);
+    fixture.service.0.pairings.prompt(false);
+    for _ in 0..3 {
+        let reply = pair_request(&fixture.service, &[CLIENT, RELAY]).await;
+        assert_eq!(
+            error(&reply),
+            (StatusCode::SERVICE_UNAVAILABLE, "unavailable")
+        );
+        assert_eq!(
+            reply.1["message"],
+            "Buzz can't ask you yet; finish signing in or setting up in Buzz, then pair again"
+        );
+    }
+    assert!(!fixture
+        .notices
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|notice| matches!(notice, Notice::Ask(_))));
+    // A fourth request in the window pairs: the refusals spent no rate slot.
+    fixture.service.0.pairings.prompt(true);
+    paired(&fixture).await;
+}
+
+#[tokio::test]
+async fn a_page_load_unmounts_every_prompt() {
+    let fixture = fixture();
+    fixture.service.0.pairings.prompt(true);
+    fixture.service.page_load();
+    let reply = pair_request(&fixture.service, &[CLIENT, RELAY]).await;
+    assert_eq!(
+        error(&reply),
+        (StatusCode::SERVICE_UNAVAILABLE, "unavailable")
+    );
+    // The new page's prompt.
+    fixture.service.0.pairings.prompt(true);
+    paired(&fixture).await;
+}
+
+#[tokio::test]
+async fn a_page_load_declines_the_request_it_left_waiting() {
+    let fixture = fixture();
+    let service = fixture.service.clone();
+    let pairing = tokio::spawn(async move { pair_request(&service, &[CLIENT, RELAY]).await });
+    asked(&fixture.notices).await;
+    // The new page never heard it, so nobody can answer it.
+    fixture.service.page_load();
+    let reply = pairing.await.unwrap();
+    assert_eq!(error(&reply), (StatusCode::FORBIDDEN, "denied"));
+    assert_eq!(reply.1["message"], "Pairing was declined in Buzz");
+    // A retry isn't held behind it as "another pairing request is waiting".
+    fixture.service.0.pairings.prompt(true);
+    paired(&fixture).await;
+}
+
 #[tokio::test(start_paused = true)]
 async fn an_unanswered_pairing_needs_approval_and_closes_its_prompt() {
     let fixture = fixture();
@@ -143,13 +202,39 @@ async fn one_request_waits_at_a_time_and_three_per_window() {
     assert!(fourth.1["retry_after"].as_u64().is_some());
 }
 
+/// A tool that names no relay pairs for the community open in Buzz, and is
+/// refused without asking while none is open.
+#[tokio::test]
+async fn a_pairing_without_a_relay_uses_the_open_community() {
+    let fixture = fixture();
+    let refused = pair_request(&fixture.service, &[CLIENT]).await;
+    assert_eq!(
+        error(&refused),
+        (StatusCode::SERVICE_UNAVAILABLE, "unavailable")
+    );
+    assert!(fixture.notices.lock().unwrap().is_empty());
+    fixture
+        .service
+        .0
+        .pairings
+        .set_active(Some("https://relay.example".into()));
+    let service = fixture.service.clone();
+    let pairing = tokio::spawn(async move { pair_request(&service, &[CLIENT]).await });
+    let id = asked(&fixture.notices).await;
+    fixture.service.0.pairings.answer(&id, true);
+    let (status, reply) = pairing.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    let result: Value = serde_json::from_str(reply["result"].as_str().unwrap()).unwrap();
+    assert_eq!(result["relays"], json!([RELAY]));
+}
+
 #[tokio::test]
 async fn bad_pairing_parameters_never_reach_the_page() {
     let fixture = fixture();
     for params in [
         &["", RELAY][..],
         &[CLIENT, "https://relay.example"],
-        &[CLIENT],
+        &[CLIENT, RELAY, RELAY],
     ] {
         let reply = pair_request(&fixture.service, params).await;
         assert_eq!(error(&reply).1, "invalid_request", "{params:?}");
@@ -192,6 +277,75 @@ async fn a_pairing_survives_a_restart_once_the_session_restores() {
     session.finish_restore_for_test();
     let reply = ask(&fixture, &token, "get_public_key", &[]).await;
     assert_eq!(reply.1["result"], human_pubkey().await);
+}
+
+/// The sign-in expired and was removed, then Buzz restarted: signed out with
+/// no sign-out, so the pairing waits for the sign-in instead of being deleted.
+#[tokio::test]
+async fn a_pairing_survives_a_lapsed_sign_in_and_a_restart() {
+    let mut fixture = fixture();
+    let session = testing::restoring();
+    session.finish_restore_as_for_test("ada@example.com");
+    let relaunch = |fixture: &Fixture, session: &FederatedIdentity| {
+        service_over(
+            &fixture.host,
+            session,
+            &fixture.keychain,
+            &fixture.notices,
+            IdentityHost::fixture(),
+        )
+    };
+    fixture.service = relaunch(&fixture, &session);
+    let token = paired(&fixture).await;
+    let session = testing::restoring();
+    session.finish_restore_signed_out_for_test();
+    fixture.service = relaunch(&fixture, &session);
+    let lapsed = ask(&fixture, &token, "describe", &[]).await;
+    assert_eq!(
+        error(&lapsed),
+        (StatusCode::SERVICE_UNAVAILABLE, "unavailable")
+    );
+    assert_eq!(lapsed.1["message"], super::super::pairing::SIGN_IN_AGAIN);
+    assert!(
+        fixture.keychain.value.lock().unwrap().is_some(),
+        "kept while signed out"
+    );
+    session.finish_restore_as_for_test("ada@example.com");
+    let reply = ask(&fixture, &token, "get_public_key", &[]).await;
+    assert_eq!(reply.1["result"], human_pubkey().await);
+}
+
+/// Past its disuse period, a lapsed sign-in revokes it rather than asking
+/// for a sign-in that would only find it expired.
+#[tokio::test]
+async fn a_lapsed_sign_in_revokes_a_pairing_past_its_disuse_period() {
+    let mut fixture = fixture();
+    let session = testing::restoring();
+    session.finish_restore_as_for_test("ada@example.com");
+    fixture.service = service_over(
+        &fixture.host,
+        &session,
+        &fixture.keychain,
+        &fixture.notices,
+        IdentityHost::fixture(),
+    );
+    let token = paired(&fixture).await;
+    let mut saved: Vec<Value> =
+        serde_json::from_slice(fixture.keychain.value.lock().unwrap().as_ref().unwrap()).unwrap();
+    saved[0]["last_used"] = json!(now() - super::super::pairing::DISUSE - 1);
+    *fixture.keychain.value.lock().unwrap() = Some(serde_json::to_vec(&saved).unwrap());
+    let session = testing::restoring();
+    session.finish_restore_signed_out_for_test();
+    fixture.service = service_over(
+        &fixture.host,
+        &session,
+        &fixture.keychain,
+        &fixture.notices,
+        IdentityHost::fixture(),
+    );
+    let reply = ask(&fixture, &token, "describe", &[]).await;
+    assert_eq!(error(&reply), (StatusCode::UNAUTHORIZED, "revoked"));
+    assert!(fixture.keychain.value.lock().unwrap().is_none());
 }
 
 #[tokio::test]

@@ -29,6 +29,7 @@ import {
   profileActivityViewTarget,
   profileTranscriptRequest,
   claimProfileTranscript,
+  claimTranscriptFocus,
 } from "../profiles/target";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
@@ -44,10 +45,12 @@ import {
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
+import { MessageContextMenus } from "./MessageActionBar";
 import { ReplySummary } from "./ReplySummary";
 import { setClockPreference } from "../../shared/clock-preference";
 import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage, Profile } from "../relay/contracts";
+import type { AttachmentRendererProps } from "../conversation/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
@@ -87,7 +90,7 @@ it("discloses an automatic failure reply while keeping its original text availab
   try {
     const view = renderDom(<MessageRow {...props} />);
     const details = screen.getByRole("button", {
-      name: "Spongebob: Couldn’t finish · Details",
+      name: "Show activity history: Spongebob: Couldn’t finish",
     });
     expect(details).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText(content)).not.toBeInTheDocument();
@@ -95,7 +98,7 @@ it("discloses an automatic failure reply while keeping its original text availab
     expect(screen.getByText(content)).toBeVisible();
     expect(details).toHaveAttribute("aria-expanded", "true");
     expect(details).toHaveAccessibleName(
-      "Spongebob: Couldn’t finish · Hide details",
+      "Collapse activity history: Spongebob: Couldn’t finish",
     );
     fireEvent.click(details);
     expect(details).toHaveAttribute("aria-expanded", "false");
@@ -111,7 +114,9 @@ it("discloses an automatic failure reply while keeping its original text availab
     );
     expect(screen.getByText("Here is the useful result.")).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: /Couldn’t finish · Details/ }),
+      screen.queryByRole("button", {
+        name: /activity history: Spongebob: Couldn’t finish/,
+      }),
     ).not.toBeInTheDocument();
     view.rerender(<MessageRow {...props} row={{ ...row, content }} />);
     expect(screen.getByText(content)).toBeVisible();
@@ -120,7 +125,7 @@ it("discloses an automatic failure reply while keeping its original text availab
   }
 });
 
-it("aligns a failure caption with its request rather than the agent author", () => {
+it("keeps automatic failure explanations in the incoming agent frame for every request author", () => {
   const request = { ...row, id: "request", authorId: "viewer" };
   const props = {
     row: { ...row, notice: "execution-failure" as const },
@@ -137,10 +142,13 @@ it("aligns a failure caption with its request rather than the agent author", () 
     const caption = () =>
       screen
         .getByRole("button", {
-          name: "Spongebob: Couldn’t finish · Details",
+          name: "Show activity history: Spongebob: Couldn’t finish",
         })
         .closest("[data-message-notice]");
-    expect(caption()).toHaveAttribute("data-viewer-message");
+    expect(caption()).not.toHaveAttribute("data-viewer-message");
+    expect(
+      caption()?.closest("[data-agent-response-preview]"),
+    ).toBeInTheDocument();
     view.rerender(
       <MessageRow
         {...props}
@@ -1163,6 +1171,86 @@ it("lets a plugin draw an image it claims, apart from the gallery", () => {
     "card from /api/relay/media?url=https%3A%2F%2Fimage.test%2Fada.png",
     "1 image",
   ]);
+});
+
+it("lets a plugin open a file from the host file card, keeping Download", () => {
+  const placements: unknown[] = [];
+  const messages: unknown[] = [];
+  const viewer = {
+    id: "pdf",
+    title: "PDF",
+    key: "test.plugin/pdf",
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: (attachment: { name?: string }) =>
+      !!attachment.name?.endsWith(".pdf"),
+    component: ({
+      attachment,
+      source,
+      placement,
+      message,
+      FileCard,
+      open,
+    }: AttachmentRendererProps) => {
+      placements.push(placement);
+      messages.push(message?.id);
+      return FileCard ? (
+        <FileCard
+          attachment={attachment}
+          source={source}
+          onOpenLink={open}
+          typeLabel="PDF"
+          onPreview={() => open(`panel:${attachment.name}`)}
+        />
+      ) : null;
+    },
+  };
+  const viewers = [viewer];
+  const none: never[] = [];
+  const open = vi.fn(() => true);
+  const media = (url: string) =>
+    `/api/relay/media?url=${encodeURIComponent(url)}`;
+  renderDom(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://relay.test/report",
+            kind: "file",
+            name: "report.pdf",
+            size: 2048,
+          },
+          { url: "https://relay.test/notes", kind: "file", name: "notes.zip" },
+        ],
+      }}
+      profile={undefined}
+      media={media}
+      onOpenLink={open}
+      canOpenLink={(target) => target.startsWith("panel:")}
+      day={false}
+      retry={undefined}
+      extensions={{
+        tools: { snapshot: () => none, subscribe: () => () => {} },
+        inline: { snapshot: () => none, subscribe: () => () => {} },
+        attachments: { snapshot: () => viewers, subscribe: () => () => {} },
+      }}
+    />,
+  );
+  expect(placements).toContain("message");
+  expect(messages).toContain(row.id);
+  expect(screen.getByText("PDF · 2 KB")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Preview report.pdf" }));
+  expect(open).toHaveBeenCalledWith("panel:report.pdf", { rootId: "root" });
+  expect(
+    screen.getByRole("link", { name: "Download report.pdf" }),
+  ).toHaveAttribute("href", media("https://relay.test/report"));
+  expect(
+    screen.getByRole("link", { name: "Download notes.zip" }),
+  ).toHaveAttribute("href", media("https://relay.test/notes"));
+  expect(
+    screen.queryByRole("button", { name: "Preview notes.zip" }),
+  ).toBeNull();
 });
 
 it("renders external audio sources as open file cards", () => {
@@ -2367,7 +2455,7 @@ it("keeps audio and video players between their original image runs", () => {
 });
 
 it.each([true, false])(
-  "uses smaller shared avatars without shrinking thread profile controls (clickable=%s)",
+  "keeps timeline-sized thread avatars and one step smaller nested ones (clickable=%s)",
   (clickable) => {
     const props = {
       row: { ...row, authorId: "a".repeat(64) },
@@ -2382,7 +2470,7 @@ it.each([true, false])(
     const view = renderDom(<MessageRow {...props} compactAvatar />);
     expect(view.container.querySelector(".buzz-avatar")).toHaveAttribute(
       "data-size",
-      "tiny",
+      "small",
     );
     if (clickable) {
       expect(
@@ -2392,7 +2480,7 @@ it.each([true, false])(
     view.rerender(<MessageRow {...props} />);
     expect(view.container.querySelector(".buzz-avatar")).toHaveAttribute(
       "data-size",
-      "small",
+      "default",
     );
     view.unmount();
   },
@@ -2970,6 +3058,81 @@ it.each(["menu", "toolbar", "coordination"] as const)(
   },
 );
 
+it("lets a menu action in a list's shared menu open targets as its row", async () => {
+  const actions = [
+    {
+      id: "open",
+      title: "Open",
+      key: "test.plugin/open",
+      pluginId: "test.plugin",
+      revision: "one",
+      placement: "menu" as const,
+      matches: () => true,
+      component: ({
+        canOpen,
+        open,
+      }: {
+        canOpen(target: string): boolean;
+        open(target: string): boolean;
+      }) => (
+        <button type="button" onClick={() => open("buzz://target")}>
+          {canOpen("buzz://target") ? "Open target" : "Target unavailable"}
+        </button>
+      ),
+    },
+  ];
+  const none: never[] = [];
+  const empty = { snapshot: () => none, subscribe: () => () => {} };
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+  } as unknown as RelaySession;
+  const onOpenLink = vi.fn(() => true);
+  try {
+    renderDom(
+      <MessageContextMenus>
+        <div>
+          <MessageRow
+            row={{ ...row, replyCount: 0, threadRootId: "thread" }}
+            session={session}
+            profile={undefined}
+            media={() => undefined}
+            onOpenLink={onOpenLink}
+            canOpenLink={(target) => target === "buzz://target"}
+            day={false}
+            retry={undefined}
+            extensions={{
+              tools: empty,
+              inline: empty,
+              actions: { snapshot: () => actions, subscribe: () => () => {} },
+            }}
+          />
+        </div>
+      </MessageContextMenus>,
+    );
+    fireEvent.contextMenu(screen.getByText("Root"));
+    fireEvent.click(await screen.findByRole("button", { name: "Open target" }));
+    expect(onOpenLink).toHaveBeenCalledWith("buzz://target", {
+      rootId: "thread",
+    });
+  } finally {
+    cleanup();
+  }
+});
+
 it.each(["timeline", "thread", "continuation"] as const)(
   "right-aligns own %s rows and keeps only the last grouped avatar",
   (layout) => {
@@ -3065,7 +3228,7 @@ it.each(["timeline", "thread", "continuation"] as const)(
       expect(container.querySelector("[data-own]")).toHaveTextContent("Root");
       expect(container.querySelector(".buzz-avatar")).toHaveAttribute(
         "data-size",
-        "tiny",
+        "small",
       );
       expect(
         screen.getByRole("button", { name: "View author profile" }),
@@ -3617,7 +3780,7 @@ it.each(["available", "human", "profiles disabled", "retired"])(
         retired = mode === "retired";
         fireEvent.click(item);
         if (retired) expect(open).not.toHaveBeenCalled();
-        else expect(open).toHaveBeenCalledWith(target);
+        else expect(open).toHaveBeenCalledWith(target, { rootId: row.id });
       } else
         expect(
           screen.queryByRole("menuitem", { name: "View activity" }),
@@ -3627,6 +3790,162 @@ it.each(["available", "human", "profiles disabled", "retired"])(
     }
   },
 );
+
+it("opens an agent reply's activity at the turn of the message it answers", async () => {
+  const author = "ab".repeat(32);
+  const target = profileActivityViewTarget(author) as string;
+  const open = vi.fn(() => true);
+  try {
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          id: "reply",
+          authorId: author,
+          agentEnvelope: true,
+          threadRootId: "thread",
+          request: "prompt",
+        }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={open}
+        canOpenLink={() => true}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "View activity" }),
+    );
+    expect(open).toHaveBeenCalledExactlyOnceWith(target, { rootId: "thread" });
+    const opening = claimProfileTranscript(target) as number;
+    expect(claimTranscriptFocus(opening)).toEqual(["reply", "prompt"]);
+  } finally {
+    cleanup();
+  }
+});
+
+it("offers the viewer's own message the activity of each agent it names", async () => {
+  const viewer = "cd".repeat(32);
+  const first = "ab".repeat(32);
+  const second = "ef".repeat(32);
+  const person = "12".repeat(32);
+  const open = vi.fn(() => true);
+  const render = (
+    mentions: string[],
+    authorId = viewer,
+    channel?: { channelType: "dm"; members: string[] },
+  ) => {
+    const list = {
+      channels: channel ? [{ id: row.channelId, ...channel }] : [],
+      status: "ready",
+    };
+    return renderDom(
+      <MessageRow
+        row={{ ...row, id: "prompt", authorId, mentions }}
+        profile={undefined}
+        viewer={viewer}
+        agentPubkeys={new Set([first, second])}
+        participantProfiles={
+          new Map([[first, { name: "Carl", isAgent: true }]])
+        }
+        references={
+          {
+            channels: { list: () => list, subscribeList: () => () => {} },
+          } as unknown as RelaySession
+        }
+        media={() => undefined}
+        onOpenLink={open}
+        canOpenLink={() => true}
+        day={false}
+        retry={undefined}
+      />,
+    );
+  };
+  const menu = async () => {
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    await screen.findByRole("menu");
+  };
+  const activityItems = () =>
+    screen
+      .getAllByRole("menuitem")
+      .map((item) => item.textContent)
+      .filter((text) => text?.includes("activity"));
+  try {
+    // One agent: the item says whose activity it opens.
+    render([first, person]);
+    await menu();
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "View Carl’s activity" }),
+    );
+    const target = profileActivityViewTarget(first) as string;
+    expect(open).toHaveBeenCalledExactlyOnceWith(target, { rootId: "prompt" });
+    expect(
+      claimTranscriptFocus(claimProfileTranscript(target) as number),
+    ).toEqual(["prompt"]);
+    cleanup();
+
+    // An agent without a name is called Agent, not a key fragment.
+    render([second]);
+    await menu();
+    expect(activityItems()).toEqual(["View Agent’s activity"]);
+    cleanup();
+
+    // Several agents share one item, listing them by name in its submenu.
+    open.mockClear();
+    render([first, second]);
+    await menu();
+    expect(activityItems()).toEqual(["View activity"]);
+    const trigger = screen.getByRole("menuitem", { name: "View activity" });
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    act(() => trigger.focus());
+    fireEvent.keyDown(trigger, { key: "ArrowRight" });
+    const agents = await screen.findByRole("menu", { name: "View activity" });
+    expect(
+      within(agents)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual(["Carl", "Agent"]);
+    fireEvent.click(within(agents).getByRole("menuitem", { name: "Agent" }));
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      profileActivityViewTarget(second),
+      { rootId: "prompt" },
+    );
+    cleanup();
+
+    // A one-to-one DM wakes its agent without a mention.
+    render([], viewer, { channelType: "dm", members: [viewer, first] });
+    await menu();
+    expect(activityItems()).toEqual(["View Carl’s activity"]);
+    cleanup();
+
+    // Someone else's message, or one naming no agent, has no activity; nor
+    // does a group DM's unnamed agent.
+    for (const [mentions, author, channel] of [
+      [[first], person, undefined],
+      [[person], viewer, undefined],
+      [[], viewer, { channelType: "dm", members: [viewer, first, person] }],
+    ] as const) {
+      render(
+        [...mentions],
+        author,
+        channel && { ...channel, members: [...channel.members] },
+      );
+      await menu();
+      expect(
+        screen.queryByRole("menuitem", { name: /activity/ }),
+      ).not.toBeInTheDocument();
+      cleanup();
+    }
+  } finally {
+    cleanup();
+  }
+});
 
 it("keeps agent and human emoji reactions ordinary, without treating them as activity", () => {
   const agent = { id: "agent-reaction", authorId: "agent" };

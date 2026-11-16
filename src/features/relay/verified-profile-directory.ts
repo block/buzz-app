@@ -28,6 +28,9 @@ export function createVerifiedProfileDirectory(
   // Least recently ensured first.
   const wanted = new Set<string>();
   const checked = new Set<string>();
+  // Subjects a sync answered under this authority. Unlike checked status, a
+  // disconnect keeps them: a restored disk head never overrides an answer.
+  const answered = new Set<string>();
   // Subjects whose head changed since the owner last took them.
   const accepted = new Set<string>();
   type Batch = {
@@ -84,6 +87,7 @@ export function createVerifiedProfileDirectory(
         if (authority?.pubkey !== next.pubkey) {
           stopBatches();
           heads.clear();
+          answered.clear();
         }
         // An equal refresh keeps the current object, so unchanged heads keep
         // their projections. Re-enabling starts a new one: whatever was checked
@@ -146,6 +150,8 @@ export function createVerifiedProfileDirectory(
     chunk: readonly string[],
     // A change accepted before EOSE that is not yet published.
     dirty = false,
+    // A resume after a planned renewal: heads changed since this cursor only.
+    since?: number,
   ) {
     let active = true;
     let ready = false;
@@ -173,7 +179,7 @@ export function createVerifiedProfileDirectory(
     batches.add(batch);
     try {
       stopWire = subscribe(
-        verifiedProfileFilter(currentAuthority.pubkey, chunk),
+        verifiedProfileFilter(currentAuthority.pubkey, chunk, since),
         {
           event(event) {
             if (!active) return;
@@ -191,13 +197,27 @@ export function createVerifiedProfileDirectory(
             if (!active) return;
             clearTimeout(timeout);
             ready = true;
+            if (since !== undefined) {
+              // A resume sends only changed heads; the batch was live until
+              // its cursor, so an omitted subject keeps its status and head.
+              for (const subject of seen) {
+                if (!wanted.has(subject) || checked.has(subject)) continue;
+                checked.add(subject);
+                answered.add(subject);
+                dirty = true;
+              }
+              if (dirty) changed();
+              return;
+            }
             // A full response with missing subjects may be truncated. It is
             // never evidence that an omitted key has no current projection.
             const complete = count < chunk.length || seen.size === chunk.length;
             for (const subject of chunk) {
               const had = checked.has(subject);
-              if (wanted.has(subject) && (seen.has(subject) || complete))
+              if (wanted.has(subject) && (seen.has(subject) || complete)) {
                 checked.add(subject);
+                answered.add(subject);
+              }
               // An incomplete replacement cannot confirm inherited status.
               else checked.delete(subject);
               if (had !== checked.has(subject)) dirty = true;
@@ -209,18 +229,20 @@ export function createVerifiedProfileDirectory(
             // A replay that confirmed what was already shown changes nothing.
             if (dirty) changed();
           },
-          closed(reason) {
+          closed(reason, resume) {
             if (!reason.startsWith("disconnected:")) return fail();
             // A replaced socket ends every sent sync. An outage then reports
             // the connection down in the same task, which stops every batch.
             // A planned renewal keeps it up: send the batch again and keep
             // its checked status until the replacement answers, as a rebuilt
-            // batch does.
+            // batch does. One that reached EOSE resumes from the socket's
+            // cursor; a resume that did not keeps its own start point.
+            const next = ready ? resume?.since : since;
             queueMicrotask(() => {
               if (!active || !online) return fail();
               batch.stop();
               batches.delete(batch);
-              start(currentAuthority, batch.subjects, batch.pending());
+              start(currentAuthority, batch.subjects, batch.pending(), next);
             });
           },
         },
@@ -296,6 +318,7 @@ export function createVerifiedProfileDirectory(
       wanted.delete(subject);
       heads.delete(subject);
       checked.delete(subject);
+      answered.delete(subject);
     }
     evicted = true;
     // A later ensure must issue a fresh REQ; the old one is past EOSE.
@@ -337,6 +360,40 @@ export function createVerifiedProfileDirectory(
     /** Whether a head is held for `subject`: its snapshot entry, or its absence
      * for an inactive or malformed head, is then the answer. */
     holds: (subject: string) => enabled && !!heads.peek(subject),
+    /** Up to `count` held heads, most recently ensured last, for the device mirror. */
+    heads: (count: number) =>
+      [...wanted.keys()]
+        .flatMap((subject) => {
+          const event = heads.peek(subject);
+          return event ? [event] : [];
+        })
+        .slice(-count),
+    /** Heads an earlier session saved, shown as cached until a sync answers.
+     * Restored subjects are the least recently ensured. A subject a sync has
+     * already answered keeps that answer, even after a disconnect, so a
+     * removed head cannot return. */
+    restore(events: readonly RelayEvent[]) {
+      const current = authority;
+      if (closed || !enabled || !current) return;
+      const restored = events.flatMap((event) => {
+        const subject = verifiedProfileSubject(event, current);
+        return subject && !answered.has(subject) ? [{ subject, event }] : [];
+      });
+      if (!restored.length) return;
+      const ensured = [...wanted];
+      wanted.clear();
+      for (const subject of [...restored.map((r) => r.subject), ...ensured]) {
+        wanted.delete(subject);
+        wanted.add(subject);
+      }
+      // Trim first: past the limit, the restored subjects go, and a restored
+      // head can never push out a head a sync already answered.
+      trim();
+      let shown = false;
+      for (const { event } of restored) shown = accept(event) || shown;
+      schedule();
+      if (shown) changed();
+    },
     /** Subjects whose head changed since the last call, held or since evicted. */
     takeAccepted() {
       const taken = [...accepted];
@@ -384,6 +441,7 @@ export function createVerifiedProfileDirectory(
       refreshTimer = undefined;
       wanted.clear();
       heads.clear();
+      answered.clear();
       changed();
     },
     dispose() {

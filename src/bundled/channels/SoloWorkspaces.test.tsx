@@ -9,6 +9,14 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { useState } from "react";
+import {
+  WorkspaceCompositionContext,
+  RegionWorkspace,
+  RegionChats,
+  RegionChatList,
+  type ComposeWorkspaces,
+} from "../../features/channel-navigation/WorkspaceComposition";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createSidebarPreferencesStore } from "../../features/relay/sidebar-preferences-store";
@@ -34,6 +42,14 @@ afterEach(() => {
   localStorage.clear();
 });
 
+/** A workspace heading's row, which also holds its actions. */
+const PROJECT_HEADER = '[data-solo-menu-id^="project-"]';
+/** The workspace containing a heading: its row and its chats. */
+function projectOf(heading: HTMLElement) {
+  const project = heading.closest(PROJECT_HEADER)?.parentElement;
+  if (!project) throw new Error("Missing project");
+  return project;
+}
 function fixture(projectName = "Work") {
   const owner = createRelaySession(null);
   const details = { ...owner.session.channelDetails };
@@ -77,16 +93,28 @@ function fixture(projectName = "Work") {
     };
     return saved;
   });
+  const read = vi.fn(async () => saved);
   const store = () =>
     createSidebarPreferencesStore({
-      read: async () => saved,
+      read,
       available: true,
       write,
       writeStar: async () => [],
       removeSection: remove,
+      writeOrder: order,
       // Groups-only chats have no Messages sort coordinate.
       groupsOnly: true,
     });
+  const order = vi.fn(async (ids: readonly string[]) => {
+    saved = {
+      ...saved,
+      sections: ids.flatMap((id, order) => {
+        const section = saved.sections.find((section) => section.id === id);
+        return section ? [{ ...section, order }] : [];
+      }),
+    };
+    return saved;
+  });
   const onNew = vi.fn();
   const channels = {
     status: "ready",
@@ -103,8 +131,10 @@ function fixture(projectName = "Work") {
       { id: "chat", title: "Planning" },
       { id: "other", title: "Existing chat" },
     ],
+    compose?: ComposeWorkspaces,
   ) => (
     <SoloWorkspaces
+      compose={compose}
       onNew={onNew}
       session={
         {
@@ -131,10 +161,81 @@ function fixture(projectName = "Work") {
     view,
     write,
     remove,
+    order,
+    read,
+    setSaved: (value: SidebarPreferences) => {
+      saved = value;
+    },
     onNew,
     saved: () => saved,
   };
 }
+
+it("moves workspaces with the section menu, keeps collapse and filing, and retries failed order", async () => {
+  const h = fixture();
+  h.setSaved({
+    ...h.saved(),
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id: "home", name: "Home", order: 1 },
+    ],
+    assignments: { chat: "work", other: "home" },
+  });
+  const first = h.store();
+  const user = userEvent.setup();
+  const mounted = render(h.view(first.queries));
+  const heading = await screen.findByRole("button", {
+    name: "Home",
+  });
+  await user.click(heading);
+  await user.click(screen.getByRole("button", { name: "Actions for Home" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Move down" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  h.order.mockRejectedValueOnce(new Error("Order was refused"));
+  await user.click(screen.getByRole("menuitem", { name: "Move up" }));
+  const error = await screen.findByRole("alert");
+  expect(error).toHaveTextContent(
+    "Couldn’t save the move for Home. Order was refused",
+  );
+  expect(first.queries.snapshot().data?.sections.map(({ id }) => id)).toEqual([
+    "work",
+    "home",
+  ]);
+  const retry = within(error).getByRole("button", { name: "Retry move" });
+  expect(retry).toBeEnabled();
+  h.read.mockRejectedValueOnce(new Error("Saved preferences unavailable"));
+  await act(() => first.queries.refresh());
+  expect(retry).toBeDisabled();
+  expect(error).toHaveTextContent(
+    "Refresh saved workspace preferences before retrying this move.",
+  );
+  expect(h.order).toHaveBeenCalledOnce();
+  await user.click(screen.getByRole("button", { name: "Retry workspaces" }));
+  await waitFor(() => expect(retry).toBeEnabled());
+  expect(error).not.toHaveTextContent("Refresh saved workspace preferences");
+  const leaving = document.createElement("div");
+  leaving.setAttribute("inert", "");
+  leaving.setAttribute("aria-hidden", "true");
+  const header = heading.closest(PROJECT_HEADER);
+  if (!header) throw new Error("Missing workspace header");
+  leaving.append(header.cloneNode(true));
+  mounted.container.prepend(leaving);
+  await user.click(retry);
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  expect(h.order).toHaveBeenCalledTimes(2);
+  expect(heading).toHaveFocus();
+  expect(first.queries.snapshot().data?.sections.map(({ id }) => id)).toEqual([
+    "home",
+    "work",
+  ]);
+  expect(heading).toHaveAttribute("aria-expanded", "false");
+  expect(h.write).not.toHaveBeenCalled();
+  mounted.unmount();
+  first.dispose();
+});
 
 it("creates and moves through the relay service, then restores in a fresh store", async () => {
   const h = fixture();
@@ -180,7 +281,7 @@ it("creates and moves through the relay service, then restores in a fresh store"
   const second = h.store();
   render(h.view(second.queries, "other-device"));
   const project = await screen.findByRole("button", { name: "Projects" });
-  expect(project.parentElement?.parentElement).toHaveTextContent("Planning");
+  expect(projectOf(project)).toHaveTextContent("Planning");
   fireEvent.click(project);
   expect(screen.queryByRole("button", { name: "Planning" })).toBeNull();
   expect(screen.getByRole("button", { name: "Existing chat" })).toBeVisible();
@@ -206,7 +307,7 @@ it("rolls back a rejected move and keeps retry available", async () => {
   await user.click(await screen.findByRole("menuitem", { name: "Work" }));
   expect(await screen.findByText("Relay unavailable")).toBeVisible();
   expect(
-    screen.getByRole("button", { name: "Chats" }).parentElement?.parentElement,
+    projectOf(screen.getByRole("button", { name: "Chats" })),
   ).toHaveTextContent("Planning");
   await user.click(screen.getByRole("button", { name: "Retry move" }));
   await waitFor(() => expect(h.saved().assignments.chat).toBe("work"));
@@ -214,7 +315,7 @@ it("rolls back a rejected move and keeps retry available", async () => {
     expect(screen.queryByText("Relay unavailable")).toBeNull(),
   );
   expect(
-    screen.getByRole("button", { name: "Work" }).parentElement?.parentElement,
+    projectOf(screen.getByRole("button", { name: "Work" })),
   ).toHaveTextContent("Planning");
   store.dispose();
 });
@@ -242,7 +343,9 @@ it("keeps chats after project deletion and allows retry after a rejected deletio
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: "Work" })).toBeNull(),
   );
-  expect(screen.getByRole("button", { name: "Planning" })).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Planning" })).toBeVisible(),
+  );
   expect(h.saved().assignments).toEqual({});
   owner.dispose();
 });
@@ -320,7 +423,7 @@ it("starts a chat in a project from its heading plus", async () => {
   render(h.view(store.queries));
   try {
     const heading = await screen.findByRole("button", { name: "Work" });
-    const header = heading.parentElement;
+    const header = heading.closest<HTMLElement>(PROJECT_HEADER);
     if (!header) throw new Error("Missing project header");
     await user.click(
       within(header).getByRole("button", { name: "New chat in Work" }),
@@ -348,6 +451,161 @@ it("opens the exact project from an empty project's New chat row", async () => {
     row.focus();
     await user.keyboard("{Enter}");
     expect(h.onNew).toHaveBeenCalledExactlyOnceWith("work");
+  } finally {
+    store.dispose();
+  }
+});
+
+it("shares a workspace frame while keeping selection, disclosure and chat creation separate", async () => {
+  const h = fixture();
+  const store = h.store();
+  const onTask = vi.fn();
+  const onSelect = vi.fn();
+  await store.queries.ensure();
+  await store.queries.assign("chat", "work");
+  function View() {
+    const [selected, select] = useState(false);
+    return h.view(
+      store.queries,
+      "workspace-composition",
+      undefined,
+      undefined,
+      (parts) => (
+        <WorkspaceCompositionContext value={parts}>
+          <RegionWorkspace
+            id="work"
+            selected={selected}
+            onSelect={() => {
+              onSelect();
+              select(true);
+            }}
+            onNewTask={onTask}
+          >
+            <button type="button">Workspace task</button>
+          </RegionWorkspace>
+          <RegionChats />
+        </WorkspaceCompositionContext>
+      ),
+    );
+  }
+  render(<View />);
+  const user = userEvent.setup();
+  try {
+    const title = await screen.findByRole("button", { name: "Work" });
+    expect(screen.getAllByRole("button", { name: "Work" })).toHaveLength(1);
+    await user.click(
+      screen.getByRole("button", { name: "Hide tasks and chats in Work" }),
+    );
+    expect(screen.queryByRole("button", { name: "Workspace task" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Planning" })).toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+    await user.click(title);
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(title).toHaveAttribute("aria-current", "page");
+    expect(
+      screen.getByRole("button", { name: "Show tasks and chats in Work" }),
+    ).toHaveAttribute("aria-expanded", "false");
+    const card = title.closest("[data-navigation-card]");
+    expect(card).toHaveAttribute("data-tone", "tonal");
+    await user.click(
+      screen.getByRole("button", { name: "Show tasks and chats in Work" }),
+    );
+    expect(card).toContainElement(
+      screen.getByRole("button", { name: "Workspace task" }),
+    );
+    expect(card).toContainElement(
+      screen.getByRole("button", { name: "Planning" }),
+    );
+    await user.click(screen.getByRole("button", { name: "New task in Work" }));
+    expect(onTask).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+    expect(screen.queryByRole("menuitem", { name: "New task" })).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole("button", { name: "New chat in Work" }),
+    ).toBeNull();
+    const create = screen.getAllByRole("button", { name: /New chat/ });
+    expect(create).toHaveLength(1);
+    expect(create[0]).toHaveAccessibleName("New chat in Chats");
+    await user.click(screen.getByRole("button", { name: "New chat in Chats" }));
+    expect(h.onNew).toHaveBeenCalledExactlyOnceWith(undefined);
+  } finally {
+    store.dispose();
+  }
+});
+
+it("lists filed and unfiled chats without workspace chrome while preserving filing and pagination", async () => {
+  const h = fixture();
+  const store = h.store();
+  const filed = Array.from({ length: SOLO_CHAT_CAP + 1 }, (_, index) => ({
+    id: index === 0 ? "chat" : `filed-${index}`,
+    title: `Filed chat ${index}`,
+  }));
+  await store.queries.ensure();
+  for (const item of filed) await store.queries.assign(item.id, "work");
+  const assignments = { ...h.saved().assignments };
+  h.write.mockClear();
+  function View() {
+    const [list, setList] = useState(false);
+    return (
+      <>
+        <button type="button" onClick={() => setList(!list)}>
+          Switch layout
+        </button>
+        {h.view(
+          store.queries,
+          "chat-list",
+          undefined,
+          [...filed, { id: "other", title: "Unfiled chat" }],
+          (parts) => (
+            <WorkspaceCompositionContext value={parts}>
+              {list ? <RegionChatList /> : <RegionChats all />}
+            </WorkspaceCompositionContext>
+          ),
+        )}
+      </>
+    );
+  }
+  render(<View />);
+  const user = userEvent.setup();
+  try {
+    await user.click(await screen.findByRole("button", { name: "Work" }));
+    expect(screen.queryByRole("button", { name: "Filed chat 0" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Switch layout" }));
+    expect(screen.queryByRole("button", { name: "Work" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Chats" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Unfiled chat" })).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: /^Filed chat \d+$/ }),
+    ).toHaveLength(SOLO_CHAT_CAP);
+    await user.click(
+      screen.getByRole("button", { name: "Show more chats in Work" }),
+    );
+    expect(
+      screen.getAllByRole("button", { name: /^Filed chat \d+$/ }),
+    ).toHaveLength(filed.length);
+    await user.click(
+      screen.getByRole("button", { name: "Show fewer chats in Work" }),
+    );
+    expect(
+      screen.getAllByRole("button", { name: /^Filed chat \d+$/ }),
+    ).toHaveLength(SOLO_CHAT_CAP);
+    await user.click(
+      screen.getByRole("button", { name: "Actions for Filed chat 0" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Move to" }),
+    ).toBeVisible();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Switch layout" }));
+    expect(screen.getByRole("button", { name: "Work" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.queryByRole("button", { name: "Filed chat 0" })).toBeNull();
+    expect(h.saved().assignments).toEqual(assignments);
+    expect(h.write).not.toHaveBeenCalled();
   } finally {
     store.dispose();
   }
@@ -732,7 +990,15 @@ it("lists and focuses a chat moved into a full workspace", async () => {
   await owner.queries.ensure();
   for (const chat of chats.slice(0, SOLO_CHAT_CAP))
     await owner.queries.assign(chat.id, "work");
-  render(h.view(owner.queries, undefined, undefined, chats));
+  const view = render(h.view(owner.queries, undefined, undefined, chats));
+  // A leaving presence copy can precede the active destination in DOM order.
+  const leaving = document.createElement("div");
+  leaving.setAttribute("inert", "");
+  leaving.setAttribute("aria-hidden", "true");
+  const old = view.container.querySelector('[data-solo-menu-id="chat"]');
+  if (!old) throw new Error("Missing source chat row");
+  leaving.append(old.cloneNode(true));
+  view.container.prepend(leaving);
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Actions for Planning" }),
@@ -745,8 +1011,7 @@ it("lists and focuses a chat moved into a full workspace", async () => {
   await user.keyboard("{ArrowRight}");
   await user.click(await screen.findByRole("menuitem", { name: "Work" }));
   await waitFor(() => expect(h.saved().assignments.chat).toBe("work"));
-  const work = screen.getByRole("button", { name: "Work" }).parentElement
-    ?.parentElement as HTMLElement;
+  const work = projectOf(screen.getByRole("button", { name: "Work" }));
   await waitFor(() =>
     expect(
       within(work).getByRole("button", { name: "Planning" }),

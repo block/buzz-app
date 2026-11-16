@@ -83,8 +83,9 @@ remain distinct. Shared tabs connect related views of one object; route destinat
 retain navigation semantics except for the shell dock described in
 [Chrome route navigation](#chrome-route-navigation). When replacing a focused page heading with shared
 chrome, preserve a meaningful destination focus target, such as a named content
-region. Do not add a duplicate title or discard the focus handoff just because the
-shared heading has no ref or tabIndex prop. [Inbox](../../bundled/inbox/InboxPage.tsx) demonstrates
+region. Do not add a duplicate title or discard the focus handoff: pass `ref` and
+`tabIndex={-1}` to the shared heading to make it a focus landing after an action
+removes the controls it introduces; its recipe draws the keyboard-only ring. [Inbox](../../bundled/inbox/InboxPage.tsx) demonstrates
 body filters and list/detail ownership; [Solo chats](../../bundled/channels/ChannelsPage.tsx)
 demonstrates a working area with a persistent composer. Neither is a blanket visual
 template: check the adoption review before copying their surrounding chrome.
@@ -114,6 +115,8 @@ Settings is a reading/form column inside host-owned navigation. Reuse its center
 page surface, sidebar, fixed viewport width, or nested settings scroll container.
 A Settings destination starts with `Header`, then named groups with `InlineHeader`.
 Align headings with their groups' content, not just their outer borders.
+At narrow Settings widths, an end-aligned Header puts its actions below the
+title.
 
 Choose the group by how it behaves:
 
@@ -129,6 +132,13 @@ Keep group headings outside SettingsGroup, and use the documented field/section
 gaps rather than each plugin inventing its own rhythm. Dependent preferences retain
 the row's alignment. A row is not an extra click target around its input. Preserve
 visible labels and connect help/error text; placeholders cannot replace labels.
+When a choice in a row reveals more settings, such as Manual under an Automatic
+or Manual select, wrap those rows in `SettingsGroupExpand` inside the same `rows`
+group rather than opening a second group or a disclosure. The revealed rows line
+up with the choice's title after its icon, enter with the panel motion (none
+with reduced motion), mount when first opened, and then stay mounted but inert
+while closed, so a draft survives switching back. Show what a choice picked as a `ValueChip` in the row's
+subtitle; keep it to the value itself, not how it was chosen.
 Use `Accordion` for optional details, retaining mounted draft input where needed.
 Use `Accordion variant="settings"` for disclosures alongside preference rows.
 Inside a row-layout `SettingsGroup`, it shares the group's frame and content inset,
@@ -255,6 +265,15 @@ AlertDialog leaves initial focus selection to Base UI, excluding header Close
 until focus enters. This preserves body-field or first-action focus; Base UI
 retains ownership of touch behavior. Explicit `initialFocus` overrides remain
 authoritative. Close then participates in the normal Tab cycle.
+
+For a simple confirmation, generally pass an explicit `initialFocus` ref to
+Cancel (or its equivalent safe dismissal action), so the focused footer action
+makes it clear that Enter cancels. Preserve intentional primary-action defaults.
+When a confirmation requires a field or checkbox gate, start at the relevant
+body control instead; the gate prevents accidental submission. Keep existing
+form-field focus targets. Do not let header Close become an accidental
+alternative default when Cancel is the intended starting point. A dialog
+without a separate cancellation action can retain Close as its starting point.
 
 Preserve initial focus, return focus, Escape, outside-click, dirty-draft, and pending
 behavior explicitly. An asynchronous operation must not gain a dismissal path that
@@ -488,8 +507,32 @@ framing and scrolling. `wrapSections` lets Settings groups wrap in one shared
 responsive layout when their host becomes narrow; do not reproduce that grid or
 its margin reset in the modal or feature stylesheet. Shared selector rules live globally in the design system,
 never nested inside feature CSS Modules via `@apply` (which renames their targets).
-Features keep unread cues, branded headers, collapsible groups, drag targets and
-composite row/scrollbar geometry; their existing layout rules remain in charge.
+Features keep unread cues, branded headers, drag targets and composite
+row/scrollbar geometry; their existing layout rules remain in charge.
+
+A scrolling list under sticky chrome with no material behind it, such as the
+sidebar below its tabs or message history below its header, feathers its edges
+with the scroll fade instead of cutting rows at a hard line. Set
+`data-scroll-fade` on the scroller. `always` feathers both edges, as message
+history does. `scrolled` feathers only an edge with content past it, marked by
+`useScrollEdges("block")`, so a list at rest keeps its first row crisp; the
+sidebar uses it. A host whose scroller cannot carry the attribute applies
+`--scroll-fade-always`. Reduced transparency and forced colors remove the fade.
+Tab strips keep their own wider horizontal fade.
+
+Every sidebar heading row, including collapsible channel groups and Solo
+workspaces, is a `NavigationSectionHeading`. It is auto layout: the label fills
+and truncates, actions hug the trailing edge, and the row fills its list. Never
+position heading actions absolutely or reserve trailing padding for them; a
+row that must work at every sidebar width cannot depend on a fixed gap. Use
+`disclosure` when the label is the feature's own collapse trigger, and
+`revealActions` or `data-navigation-reveal` for quiet parts such as the chevron.
+Revealed parts show on hover, keyboard focus, an open heading menu or while
+one of them has focus, and always show on touch; a focused control is never
+invisible. Hidden actions take no width, like a hidden auto layout
+child, so a long label keeps its words at large text sizes and narrow widths. When a host already names a list, as
+the sidebar's Team and Solo tabs do, omit its heading rather than hiding or
+overlaying it; any actions it still needs take a headingless heading row.
 Top-bar pills and picker options are not sidebar rows and keep their own recipes.
 
 Omit NavigationSection’s `label` for a headingless reference group: it keeps
@@ -720,6 +763,10 @@ has a creation sidebar. The sidebar and detail pane share one joined surface; th
 resize seam is a persistent `border-standard` hairline. Layout and overflow
 remain shell-owned.
 
+Use `Tabs variant="capsule"` for outlined filters with no filled track and a
+wrapping trailing action, as in Hosted Communities. `Header align="end"`
+bottom-aligns its title and trailing action without changing spacing.
+
 Use `Tabs variant="segmented"` for grouped filters on an opaque surface, with
 a capsule track and raised capsule selection (for example, sidebar scope).
 Segmented tracks default to `size="md"` (40px); `size="sm"` uses the 32px
@@ -753,10 +800,17 @@ panel grid must have a shrinkable column so tabs do not widen other content.
 ## Focus appearance
 
 Keyboard focus is visible, and the component recipes in this guide own the ring.
-Every recipe is gated on the app-root modality fact `html[data-keyboard-navigation]`,
-so a pointer press leaves nothing behind. Keep focusability, Tab order, input
-modality, selection, and focus restoration intact, and do not add a local
-replacement ring where a component recipe already exists.
+Buttons use a 2px `border-focus` outline with a 2px offset, fitting the existing
+4px focus allowance in scrolling dialog footers. In Dialog and AlertDialog,
+the focused button always shows this ring, including automatic focus after pointer
+entry: it identifies what Enter will activate without changing the primary and
+secondary action styling. This applies to focused body and header buttons as well
+as footer actions. A focused split-button half paints its ring above its neighbour.
+Other button contexts and control recipes are gated on
+the app-root modality fact `html[data-keyboard-navigation]`, so ordinary pointer
+use leaves no keyboard ring. Keep focusability, Tab order, input modality, selection,
+and focus restoration intact, and do not add a local replacement ring where a
+component recipe already exists.
 
 Shared text fields are the one deliberate exception, and they replace the ring
 rather than removing it. `styles/forms.css` drops the outline for editable
@@ -846,7 +900,9 @@ are unchanged. No extra hover affordance is added to static content.
 
 The floating control mappings are proposed, not an accessibility certification.
 Dark floating action fills are neutral-6/7/8 at rest/hover/press, on the
-neutral-raised (#282828) floating surface; those fill edges are below 3:1. The contextual control
+neutral-raised (#282828) floating surface; those fill edges are below 3:1.
+Light floating action fills are neutral-3/4/5, one step above the panel's
+neutral-2 subtle fill, which nearly disappears on a white floating surface. The contextual control
 stroke uses neutral-9 and clears 3:1 against that outer surface. This proof does
 not change the shared [focus appearance policy](#focus-appearance), which applies
 in both the app and viewer. Glass/inverse/media surfaces retain their existing
@@ -856,6 +912,10 @@ The Floating surfaces viewer shows actions, rows, fields and choices in actual
 shared Panel/Dialog/Popover components, including a nested Panel reset. Verify
 both themes, portals, supported states and actual product flows before adoption
 is called complete; token math alone cannot validate the CSS cascade.
+
+Body-copy links use `Button variant="link" size="text"`: small label type,
+no insets, and the shared keyboard focus treatment. Caption-sized `inline`
+buttons remain for compact controls such as composer choices.
 
 ## Controls
 
@@ -896,7 +956,9 @@ Floating unread cues and Jump to latest use Button's `shape="control"` with
 same radius so its painted edges align with the button.
 A sidebar unread cue is strong (`prominent`) only when a DM, a mention of you or
 a thread reply waits past its edge; ordinary unread uses the `subtle` Button,
-whose light gray fill holds up over the list where glass would disappear.
+whose light gray fill holds up over the list where glass would disappear. The
+cue opts into `interaction-floating`, so that fill steps up to the floating
+control fill instead of the panel's near-match in either theme.
 
 Arriving at a message, by link, search, the inbox or closing its thread,
 briefly marks it. A filled bubble takes `affordance-message-highlight` (your
@@ -976,6 +1038,8 @@ selection changes. Standalone icon actions continue to use `IconButton`.
 Disabled controls retain their filled, outline, or unfilled treatment and cannot
 activate. Loading retains the label's geometry, accessible name, focus and variant
 colors while blocking activation; never swap in a differently sized loading label.
+For a visibly unavailable busy action, `loadingAppearance="disabled"` opts into
+the existing disabled color roles while retaining the spinner and geometry.
 Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
 Keep keyboard-only focus and reduced-motion behavior owned by the system.
 
@@ -1028,6 +1092,11 @@ Field groups label, input, help and error using Base UI. Input and Textarea
 carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
 independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
+
+`FieldButton appearance="masked"` centers larger, spaced, subtle placeholder dots that
+cannot be selected. It opens the field’s action menu. The feature owns masking;
+a revealed value uses the ordinary Input and can pair with a trailing menu in
+InputGroup. Use `prefix` for ordinary text before masked dots.
 
 `Checkbox` and `Radio` default to 40px rows with 20px controls. For compact
 inline choices, use `size="sm"`: 32px rows, 16px controls, and an 8px label gap.
@@ -1103,6 +1172,12 @@ while the frame owns the active perimeter stroke. Read-only values can be
 read and copied; disabled actions cannot change a value. Search clear restores
 input focus. SearchField `trailing` places auxiliary actions after Clear inside
 the shared frame. Features still own filtering, custom values, and async recovery.
+
+For a prominent composed value, use `Input textSize="large"` for the complete
+20px body-lg role. `InputGroup wrap` keeps fixed text affixes inside the same
+frame, reserving twelve characters for editing before moving an affix to its
+own line. Keep the affix at the input's type size and connect it through
+`aria-describedby`; it remains readable when enlarged text wraps.
 
 SearchField, Combobox.Control, and code Textarea default to no autocorrection,
 capitalization, or spellcheck. Callers can override these defaults explicitly.
@@ -1330,15 +1405,20 @@ or explicit-save actions inside the content, rather than a modal-wide Save foote
 
 Use `text-label` (16px, 500 weight at the default scale) for the shared Dialog
 title. Group the title and optional description with `--space-2` (8px), beside
-the close button so its hit area does not enlarge the text gap. The body owns
-vertical padding matching the dialog's horizontal `--dialog-padding`: `2rem`,
-or `1rem` at viewport widths up to `30rem`. Do not add an outer flex gap
-on top of that body padding. Footers following body content also reserve a fixed
+the close button so its hit area does not enlarge the text gap. Dialog uses one
+`--space-3` (12px) heading-to-body gap at every breakpoint. Sticky headers do not
+add another gap; omit `headerGap` in callers. `headerGap="compact"` remains a
+compatible alias. AlertDialog
+retains its body inset matching the horizontal `--dialog-padding`: `2rem`, or
+`1rem` at viewport widths up to `30rem`. Dialog body-bottom padding also retains
+that responsive inset. Do not add an outer flex gap on top of the shared spacing.
+Search and integrated navigation retain their own framing.
+Padded chrome keeps the gap on its fixed header rather than inside the body
+scrollport.
+Footers following body content also reserve a fixed
 `--space-4` (`1rem`) top gutter outside the scrollport, so scrolling content never
 meets the buttons directly. Header-only confirmations retain their header-to-action
-gap. Create/Edit channel forms and plugin update reviews opt into
-`headerGap="compact"` for a 12px heading-to-body gap at every breakpoint;
-other dialog compositions retain their default spacing. Channel privacy confirmation
+gap. Channel privacy confirmation
 steps also opt into `footerGap="compact"` for `0.5rem` of body-bottom padding
 before the fixed footer gutter; returning to the form restores the normal
 body-bottom padding.
@@ -1442,10 +1522,16 @@ Sonner is the toast behavior owner; other matching controls use Base UI. ToastNo
 owns its state and recovery: unmounting the source removes its notification,
 without reporting user dismissal. Gate notices from hidden Settings sections
 explicitly; portals do not inherit a hidden ancestor. Keep form errors and
-blocked-page recovery inline. Channel LiveStatus is lasting, feature-owned recovery:
-keep it in the conversation flow immediately above the composer, with bounded
-overflow, so Send and companion-panel controls remain usable. Its retry policy
-and diagnostics belong to Channels; it does not enter the floating toast stack.
+blocked-page recovery inline. Relay connection recovery is the exception: it
+retries on its own, so after a 30-second quiet delay it shows one buttonless
+notice in the toast stack on every page, and other surfaces do not repeat it.
+A community's refusal of the account is the other exception: it affects every
+page, so its one notice stays in the toast stack with the actions that
+fixes it, and pages it leaves empty only say why.
+Channel LiveStatus keeps failures that recovery does not retry in the
+conversation flow immediately above the composer, with bounded overflow, so Send
+and companion-panel controls remain usable. Its retry policy and diagnostics
+belong to Channels; it does not enter the floating toast stack.
 
 A notice can make its body open a related destination with `navigation`. The
 body has a hover state and a keyboard action. Its explicit buttons and Dismiss
@@ -1459,8 +1545,10 @@ Use a finite timeout for transient feedback. Recovery defaults to no expiry and
 no dismissal unless the source supplies onDismiss; preserve all recovery actions.
 The expanded, bounded, scrollable stack keeps every recovery action available.
 It sits at the bottom right with safe-area insets, including narrow windows; do
-not add feature-specific top offsets. F6 enters notifications, Tab reaches actions. Modals
-remain above the stack. Content updates do not restart expiry; timeout changes do.
+not add feature-specific top offsets. Surfaces docked at the bottom of the
+window (the composer, the preview's Join notice) call `useToastClearance` with
+their element, and the stack rises above them so a notice never covers Send.
+F6 enters notifications, Tab reaches actions. Modals remain above the stack. Content updates do not restart expiry; timeout changes do.
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
 Route navigation uses NavigationItem with aria-current instead, except for the
@@ -1876,11 +1964,13 @@ or white 10%, in the same direction as the chips. Hovering the add control lays
 the same overlay again on top of the strip. Inside your bubble reactions take
 its ink and `affordance-reaction-own`; outside it, under an emoji-only message,
 they keep the standard ink and overlay of the panel they sit on. A reaction you
-made stays marked as yours: `affordance-reaction-self` (accent step 3) with a
-1px inset `border-reaction-self` ring in the accent link ink, which clears 3:1 on
-the tint and its host where step 9 would not (Citrus, Bee). Inside your bubble
-it takes the `-own` pair, which at Buzzin’ is the accent's strong overlay ringed
-in the bubble's ink, since an accent ring would vanish on the accent fill.
+made swaps bubble fills, with no ring: on a received bubble or the panel it
+takes `affordance-reaction-self`, your own bubble's fill, with its ink
+`text-reaction-self`; inside your bubble it takes `affordance-reaction-self-own`,
+the received bubble's fill, with `text-reaction-self-own`. A highlight on a
+highlight would barely show. At Chillin’ the tinted bubble is too faint for
+that, so a reaction you made takes the solid `accent-9` with the accent ink, as
+at Buzzin’, and inside your bubble the panel white (`neutral-7` in dark mode).
 
 When message actions show, both received and own bubbles use their
 `surface-message-hover` or `surface-message-own-hover` fill: 5% toward black in
@@ -1983,7 +2073,7 @@ Reuse and compose existing components before adding another.
 - **Variants:** add a missing visual variant for a real use and mark it proposed. Do not cancel several existing states to force an unsuitable variant to fit.
 - **Props:** use named variants for visual differences, never a new boolean appearance prop. Keep data and behavior props distinct from appearance choices.
 - **Ownership:** keep a component with its first feature. A second real use can justify proposing it as shared.
-- **Focus recipes:** require `html[data-keyboard-navigation]` and `:focus-visible` on the control. Do not rely on a base-layer reset to override component-layer styles, and do not add a `:focus-within` ring around a container that already has a control recipe. Where a scrolling list would clip an offset ring, inset it with `outline-offset: -2px` instead of shrinking it. Shared fields and the composer follow the exceptions documented above.
+- **Focus recipes:** require `html[data-keyboard-navigation]` and `:focus-visible` on the control, except the always-visible focused dialog Button ring documented above. Do not rely on a base-layer reset to override component-layer styles, and do not add a `:focus-within` ring around a container that already has a control recipe. Where a scrolling list would clip an offset ring, inset it with `outline-offset: -2px` instead of shrinking it. Shared fields and the composer follow the exceptions documented above.
 
 ## Using the system
 
@@ -2071,8 +2161,11 @@ accessible selected state.
 Dock artwork stays still on hover and press. Bestie uses its configured avatar
 from the shared page presentation, at the standard avatar size.
 Dock labels remain accessible and use the dock label hover bucket to the right of each vertical dock
-button (beneath horizontal docks); badges overlay the tile. A tile with a page
-preview shows its label on keyboard focus and while its preview is closed.
+button (beneath horizontal docks); badges overlay the tile. CountBadge uses a compact
+corner capsule straddling the top-right edge, with `surface-dock-count` and
+`text-dock-count` keeping dark fill and readable accent ink in both modes. The
+shell scrollport preserves gutter space for the full capsule and focus ring.
+A tile with a page preview shows its label on keyboard focus and while its preview is closed.
 Up/Down arrow keys move focus in the side dock without selecting; Enter, Space or
 pointer selection changes the page while focus stays on its tab. Horizontal dock
 compositions use Left/Right. The host passes per-opening focus intent so page
@@ -2142,8 +2235,9 @@ Inline search settings use the search variant of PreferenceRow with a gear icon 
 
 Proposed pending designer sign-off, as a narrow exception to the chat and
 conversation icon rule under Icons. Use `ChatCircleIcon` for a Solo chat in navigation, headers, tabs and chat cards.
-Use `MessageReplyIcon` (Tabler MessageReply) for thread tabs, thread links and
-Reply actions. Keep private Team channels' lock icon; privacy alone does not
+Use `ThreadIcon` (Tabler Message2) for thread tabs, thread links and Reply actions.
+Its text lines identify a conversation without the forward-like arrow in MessageReply.
+Keep private Team channels' lock icon; privacy alone does not
 replace a Solo chat's identity icon. Accessible chat cards end with a right
 chevron. Unavailable chat cards retain a lock and unavailable accessible text;
 unknown access does not earn a chevron. Display chat cards as **Chat:**, while

@@ -406,7 +406,8 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     let key = agent.read_key(&credentials).unwrap();
     let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
     for kind in [
-        5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 30617, 40003, 40100, 41010,
+        5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 30617, 40003, 40100,
+        41010, 45010,
     ] {
         let tags = vec![
             vec!["auth".to_owned(), "forged".to_owned()],
@@ -417,9 +418,13 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
         assert_eq!(event["kind"], kind);
         assert_eq!(event["pubkey"], agent.pubkey);
         let mut tags: Vec<Vec<String>> = serde_json::from_value(event["tags"].clone()).unwrap();
-        let ms = tags.remove(tags.iter().position(|tag| tag[0] == "ms").unwrap());
-        assert_eq!(ms[0], "ms");
-        assert!(ms[1].parse::<u16>().unwrap() < 1000);
+        if kind == 45010 {
+            assert!(!tags.iter().any(|tag| tag[0] == "ms"));
+        } else {
+            let ms = tags.remove(tags.iter().position(|tag| tag[0] == "ms").unwrap());
+            assert_eq!(ms[0], "ms");
+            assert!(ms[1].parse::<u16>().unwrap() < 1000);
+        }
         assert_eq!(
             tags,
             [
@@ -533,6 +538,9 @@ fn signs_artifact_revisions_without_a_timeline_ms_tag() {
     let mut expected = envelope;
     expected.push(saved);
     assert_eq!(tags, expected);
+    assert_eq!(event["content"], "");
+    let signed: nostr::event::Event = serde_json::from_value(event).unwrap();
+    signed.verify().unwrap();
 }
 
 #[test]
@@ -1836,4 +1844,35 @@ fn protected_clock_rejects_missing_invalid_or_exhausted_state_without_partial_wr
         agents.read().unwrap().1.protection_clock,
         MAX_PROTECTION_REVISION
     );
+}
+
+#[test]
+fn a_forced_profile_republishes_a_current_one_with_its_saved_owner_proof() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    let key = agent.read_key(&credentials).unwrap();
+    let first = agent.profile_event(&key).unwrap();
+    agents
+        .published(
+            &agent.pubkey,
+            RELAY,
+            Published {
+                name: agent.name.clone(),
+                picture: agent.picture.clone(),
+                about: agent.about.clone(),
+                created_at: first["created_at"].as_u64().unwrap(),
+            },
+        )
+        .unwrap();
+    let current = agents.get(&agent.pubkey, RELAY).unwrap();
+    assert!(current.profile_is_current());
+    assert!(!current.profile_due(false));
+    assert!(current.profile_due(true));
+    let event = current.profile_event(&key).unwrap();
+    assert_eq!(event["kind"], 0);
+    assert_eq!(event["pubkey"], agent.pubkey.as_str());
+    let saved: Vec<String> = serde_json::from_str(&current.auth).unwrap();
+    assert_eq!(event["tags"], serde_json::json!([saved]));
+    assert!(event["created_at"].as_u64() > first["created_at"].as_u64());
 }

@@ -126,7 +126,7 @@ it("reviews in place at the pinned commit, then shows the outcome and tells the 
   show(requestId);
   fireEvent.click(screen.getByRole("button", { name: "Review Browser" }));
   const dialog = await screen.findByRole("dialog", {
-    name: "Review plugin access",
+    name: "Review Browser Plugin access",
   });
   await within(dialog).findByText(`Commit: ${commit}`);
   expect(

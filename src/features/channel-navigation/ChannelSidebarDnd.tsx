@@ -18,6 +18,7 @@ import {
   useState,
   useRef,
   type ComponentProps,
+  type PointerEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -231,34 +232,20 @@ export function DraggableChannel({
   );
 }
 
-/** A reorderable saved group drags by its header, never its rows or actions. */
-export function DroppableSidebarSection({
-  disabled,
+/** Shared header drag and post-drag click suppression for Team and Solo. */
+export function useSidebarSectionDrag({
+  sectionKey,
   reorderable,
   groupIndex,
   groupDomain = "channels",
-  createSectionTarget,
-  ...section
-}: ComponentProps<typeof SidebarSection> & {
-  disabled: boolean;
+}: {
+  sectionKey: string;
   reorderable: boolean;
   groupIndex: number;
   groupDomain?: string;
-  createSectionTarget?: boolean;
 }) {
-  const { setNodeRef, isOver, active } = useDroppable({
-    id: section.sectionKey,
-    data: { group: reorderable, groupIndex, groupDomain },
-    disabled,
-    // dnd-kit queues a re-measure of only the droppable that resized and clears
-    // that queue after each render, losing ids queued in between: a section
-    // resized mid-drag (text size) could keep a stale drop target. An empty list
-    // keeps dnd-kit's drag-start queue: any section's resize re-measures every
-    // enabled droppable.
-    resizeObserverConfig: { updateMeasurementsFor: [] },
-  });
   const drag = useDraggable({
-    id: section.sectionKey,
+    id: sectionKey,
     data: { group: true, groupIndex, groupDomain },
     disabled: !reorderable,
   });
@@ -286,8 +273,60 @@ export function DroppableSidebarSection({
   }, [reorderable]);
   useDndMonitor({
     onDragStart: ({ active }) => {
-      if (active.id === section.sectionKey) suppressClick.current = true;
+      if (active.id === sectionKey) suppressClick.current = true;
     },
+  });
+  return {
+    isDragging: drag.isDragging,
+    handle: reorderable
+      ? {
+          ref: (node: HTMLElement | null) => {
+            handle.current = node;
+            drag.setNodeRef(node);
+          },
+          listeners: {
+            ...drag.listeners,
+            onPointerDown: (event: PointerEvent<HTMLElement>) => {
+              suppressClick.current = false;
+              drag.listeners?.onPointerDown?.(event);
+            },
+          },
+        }
+      : undefined,
+  };
+}
+
+/** A reorderable saved group drags by its header, never its rows or actions. */
+export function DroppableSidebarSection({
+  disabled,
+  reorderable,
+  groupIndex,
+  groupDomain = "channels",
+  createSectionTarget,
+  ...section
+}: ComponentProps<typeof SidebarSection> & {
+  disabled: boolean;
+  reorderable: boolean;
+  groupIndex: number;
+  groupDomain?: string;
+  createSectionTarget?: boolean;
+}) {
+  const { setNodeRef, isOver, active } = useDroppable({
+    id: section.sectionKey,
+    data: { group: reorderable, groupIndex, groupDomain },
+    disabled,
+    // dnd-kit queues a re-measure of only the droppable that resized and clears
+    // that queue after each render, losing ids queued in between: a section
+    // resized mid-drag (text size) could keep a stale drop target. An empty list
+    // keeps dnd-kit's drag-start queue: any section's resize re-measures every
+    // enabled droppable.
+    resizeObserverConfig: { updateMeasurementsFor: [] },
+  });
+  const drag = useSidebarSectionDrag({
+    sectionKey: section.sectionKey,
+    reorderable,
+    groupIndex,
+    groupDomain,
   });
   const group = !!active?.data.current?.group;
   const from = active?.data.current?.groupIndex;
@@ -309,23 +348,7 @@ export function DroppableSidebarSection({
               : "before"
             : undefined
         }
-        dragHandle={
-          reorderable
-            ? {
-                ref: (node) => {
-                  handle.current = node;
-                  drag.setNodeRef(node);
-                },
-                listeners: {
-                  ...drag.listeners,
-                  onPointerDown: (event) => {
-                    suppressClick.current = false;
-                    drag.listeners?.onPointerDown?.(event);
-                  },
-                },
-              }
-            : undefined
-        }
+        dragHandle={drag.handle}
         dragging={drag.isDragging}
       />
     </>

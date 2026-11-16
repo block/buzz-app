@@ -1,15 +1,27 @@
 import type { ChannelKit } from "../channel-templates/capability";
 import {
+  emptyLineup,
   kitRecordFits,
   soloCapacityMessage,
   type Groups,
   type KitEntry,
 } from "../channel-templates/model";
+import { projectTemplateId, templateEntry } from "../solo/workspace";
+import { ReadError } from "./errors";
+import { validSidebarSectionOrder } from "./sidebar-edits";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import type {
   SidebarAssignmentIntent,
   SidebarGroups,
 } from "./sidebar-preferences";
+
+export class WorkspaceNameConflict extends Error {
+  constructor() {
+    super(
+      "The saved workspace name needs review. Your draft is kept; copy it before reloading saved settings.",
+    );
+  }
+}
 
 export function soloGroups(entries: readonly KitEntry[]) {
   return entries.find(
@@ -44,15 +56,19 @@ function comparable(value: Groups) {
   ]);
 }
 
-function admit(value: Groups, entry: KitEntry | undefined) {
-  // With no saved record, any filing fits. Existing records retain their
-  // exact community envelope, including its UTF-8 byte cost.
-  if (entry && !kitRecordFits({ ...entry.record, deleted: false, value }))
-    throw new Error(soloCapacityMessage);
-}
+// With no saved record, any filing fits. Existing records retain their
+// exact community envelope, including its UTF-8 byte cost.
+const fits = (value: Groups, entry: KitEntry | undefined) =>
+  !entry || kitRecordFits({ ...entry.record, deleted: false, value });
 
-/** Reuse recipe revision checks/outbox and preference lifecycle; never read Messages groups. */
-export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
+/** Reuse recipe revision checks/outbox and preference lifecycle; never read Messages groups.
+ * `gone` names the given chats that are known to be archived or deleted, and
+ * none when that isn't known. A full record drops their filings to make room. */
+export function createSoloPreferences(
+  kit: ChannelKit,
+  lifetime: AbortSignal,
+  gone: (chats: readonly string[]) => readonly string[] = () => [],
+) {
   let mutations = Promise.resolve();
   let generation = new AbortController();
   const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -74,8 +90,14 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
     if (fresh || kit.snapshot().status !== "ready") await kit.refresh();
     active.throwIfAborted();
     const state = kit.snapshot();
-    if (state.status !== "ready")
-      throw new Error(state.error ?? "Solo groups are unavailable");
+    if (state.status !== "ready") {
+      const message = state.error ?? "Solo groups are unavailable";
+      // Keep a retryable catalog failure retryable, so session recovery
+      // reloads the workspaces once the relay answers again.
+      throw state.transient
+        ? new ReadError("unavailable", message)
+        : new Error(message);
+    }
     const entry = soloGroups(state.entries);
     return {
       entry,
@@ -90,8 +112,34 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
     value: Groups,
     entry: KitEntry | undefined,
     active: AbortSignal,
+    filing?: string,
   ) {
-    admit(value, entry);
+    if (!fits(value, entry)) {
+      // The chat being filed may be too new for the channel list to know it.
+      const assignments = { ...value.assignments };
+      for (const chat of gone(Object.keys(assignments)))
+        if (chat !== filing) delete assignments[chat];
+      value = { ...value, assignments };
+      if (!fits(value, entry)) throw new Error(soloCapacityMessage);
+    }
+    // Serialized Solo edits still need a later second for replaceable records.
+    // Future-dated heads remain subject to the kit's existing refusal.
+    const delay = entry ? (entry.createdAt + 1) * 1000 - Date.now() : 0;
+    if (delay > 0 && delay <= 1000) {
+      active.throwIfAborted();
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => {
+          clearTimeout(timer);
+          reject(active.reason);
+        };
+        const timer = setTimeout(() => {
+          active.removeEventListener("abort", abort);
+          resolve();
+        }, delay);
+        active.addEventListener("abort", abort, { once: true });
+      });
+    }
+    active.throwIfAborted();
     await kit.save(value, entry?.eventId, false, active);
     active.throwIfAborted();
     const confirmed = soloGroups(kit.snapshot().entries);
@@ -142,28 +190,95 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
             value.assignments[intent.channelId] === target)
         )
           return project(value);
-        return save({ ...value, groups, assignments }, entry, active);
+        return save(
+          { ...value, groups, assignments },
+          entry,
+          active,
+          intent.channelId,
+        );
       }),
     removeSection: (id, signal) =>
       serialize(async () => {
         const { value, entry, active } = await current(signal);
-        if (!value.groups.some((group) => group.id === id))
+        const groups = {
+          ...value,
+          groups: value.groups.filter((group) => group.id !== id),
+          assignments: Object.fromEntries(
+            Object.entries(value.assignments).filter(
+              ([, group]) => group !== id,
+            ),
+          ),
+        };
+        const saved = value.groups.some((group) => group.id === id)
+          ? await save(groups, entry, active)
+          : project(value);
+        // Best effort, once the workspace is gone: delete its settings (name,
+        // instructions, folders, agents). A record left behind is unreachable.
+        // An already-absent workspace gets this too: a groups write can land
+        // after failing to confirm, and its retry finds the workspace gone.
+        void serialize(async () => {
+          const cleanup = AbortSignal.any([lifetime, generation.signal]);
+          const settings = templateEntry(
+            kit.snapshot().entries,
+            await projectTemplateId(id),
+          );
+          if (settings?.record.value.type === "template")
+            await kit.save(
+              {
+                ...settings.record.value,
+                ...emptyLineup(),
+                name: "Deleted workspace",
+              },
+              settings.eventId,
+              true,
+              cleanup,
+            );
+        }).catch((error: unknown) => {
+          console.warn("The deleted workspace's settings were kept", error);
+        });
+        return saved;
+      }),
+    groupsOnly: true,
+    writeOrder: (sectionIds, signal) =>
+      serialize(async () => {
+        if (!validSidebarSectionOrder(sectionIds))
+          throw new Error("Invalid Solo workspace order");
+        const { value, entry, active } = await current(signal);
+        const byId = new Map(value.groups.map((group) => [group.id, group]));
+        const wanted = new Set(sectionIds);
+        const groups = [
+          ...sectionIds.flatMap((id) => {
+            const group = byId.get(id);
+            return group ? [group] : [];
+          }),
+          ...value.groups.filter((group) => !wanted.has(group.id)),
+        ];
+        if (groups.every((group, index) => group === value.groups[index]))
           return project(value);
+        return save({ ...value, groups }, entry, active);
+      }),
+    renameSection: ({ sectionId, name, expectedName }, signal) =>
+      serialize(async () => {
+        const next = name.trim();
+        if (!next || next.length > 120)
+          throw new Error("Use a workspace name of 1–120 characters.");
+        const { value, entry, active } = await current(signal);
+        const group = value.groups.find((group) => group.id === sectionId);
+        if (!group) throw new Error("This workspace no longer exists.");
+        if (group.name === next) return project(value);
+        if (expectedName !== undefined && group.name !== expectedName)
+          throw new WorkspaceNameConflict();
         return save(
           {
             ...value,
-            groups: value.groups.filter((group) => group.id !== id),
-            assignments: Object.fromEntries(
-              Object.entries(value.assignments).filter(
-                ([, group]) => group !== id,
-              ),
+            groups: value.groups.map((item) =>
+              item.id === sectionId ? { ...item, name: next } : item,
             ),
           },
           entry,
           active,
         );
       }),
-    groupsOnly: true,
     createSection: (section, signal) =>
       serialize(async () => {
         const { value, entry, active } = await current(signal);

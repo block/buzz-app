@@ -17,10 +17,10 @@ use crate::{with_manager, PluginManager};
 use buzzodz_plugins::{HostProcess, ProcessArtifact};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -389,6 +389,8 @@ enum Stream {
 /// Starts the declared process `process_id` with `args` after its declared
 /// arguments. `env` adds variables (`null` removes one) to the app's own
 /// environment, less any Buzz identity: an agent's key never leaves the app.
+/// `secrets` names native-held secrets set after `env`, each only for the
+/// processes it belongs to; a secret that is not saved is left unset.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
@@ -406,6 +408,7 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     protection: Option<ProcessProtection>,
     agent_credential: Option<bool>,
     protected_agent: Option<ProtectedAgent>,
+    secrets: Option<Vec<String>>,
 ) -> Result<u64, String> {
     // Any plugin process with either ID conservatively blocks managed deletion
     // app-wide, regardless of program/path. Attachment adapters use these IDs.
@@ -530,6 +533,16 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
             }
         }
     }
+    for secret in secrets.unwrap_or_default() {
+        if secret != crate::claude_key::SECRET
+            || !crate::claude_key::may_have(&plugin, &declared.id)
+        {
+            return Err("That secret is not available to this process".into());
+        }
+        if let Some(key) = app.state::<crate::claude_key::ClaudeKey>().key().await? {
+            command.env(crate::claude_key::ENV, &*key);
+        }
+    }
     if let Some(mcp) = mcp {
         command.env(
             "BUZZ_AGENT_CONNECTION",
@@ -581,15 +594,28 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
 }
 
 /// Sets a process's environment: the app's own, less any Buzz identity it was
-/// started with, plus the plugin's `environment` (`None` removes a variable).
-/// `BUZZ_VERSION` is always this app's version, so a command can tell it runs
-/// under Buzz.
+/// started with and any AppImage bundle paths, plus the plugin's `environment`
+/// (`None` removes a variable). `BUZZ_VERSION` is always this app's version,
+/// so a command can tell it runs under Buzz.
 fn set_environment(
     command: &mut Command,
     path: &OsStr,
     environment: &HashMap<String, Option<String>>,
     version: &str,
 ) -> Result<(), String> {
+    // An AppImage's launcher points library, data and program paths into its
+    // bundle for the app alone; a host program loading the bundle's older
+    // OpenSSL fails. First, so nothing below can be undone by it.
+    let bundle = appimage_bundle();
+    if let Some(bundle) = &bundle {
+        for (name, value) in std::env::vars_os() {
+            match without_bundle_paths(&value, bundle) {
+                Some(Some(kept)) => command.env(&name, kept),
+                Some(None) => command.env_remove(&name),
+                None => command,
+            };
+        }
+    }
     // Never pass on an identity the app itself was started with.
     for (name, _) in std::env::vars_os() {
         let text = name.to_string_lossy();
@@ -597,7 +623,10 @@ fn set_environment(
             command.env_remove(&name);
         }
     }
-    command.env("PATH", path);
+    match bundle.and_then(|bundle| without_bundle_paths(path, &bundle)) {
+        Some(Some(kept)) => command.env("PATH", kept),
+        _ => command.env("PATH", path),
+    };
     for (name, value) in environment {
         if name.is_empty() || name.contains(['=', '\0']) {
             return Err("Invalid environment variable".into());
@@ -609,6 +638,37 @@ fn set_environment(
     }
     command.env("BUZZ_VERSION", version);
     Ok(())
+}
+
+/// The mounted or extracted AppImage this app runs from: `APPDIR` only when
+/// it holds this executable, not one inherited from another AppImage.
+fn appimage_bundle() -> Option<PathBuf> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let bundle = PathBuf::from(std::env::var_os("APPDIR")?);
+    // A root `APPDIR` would hold every path, so it names no bundle.
+    (bundle.is_absolute()
+        && bundle.parent().is_some()
+        && std::env::current_exe().ok()?.starts_with(&bundle))
+    .then_some(bundle)
+}
+
+/// `value`'s path list less its entries in the bundle at `appdir`, when it
+/// has any there: `Some(None)` when none of the person's own are left.
+fn without_bundle_paths(value: &OsStr, appdir: &Path) -> Option<Option<OsString>> {
+    let paths: Vec<PathBuf> = std::env::split_paths(value).collect();
+    if !paths.iter().any(|path| path.starts_with(appdir)) {
+        return None;
+    }
+    // Also drops an empty entry, which a launcher's `$APPDIR/usr/lib:$LD_LIBRARY_PATH`
+    // leaves and which would mean the current folder.
+    let kept: Vec<PathBuf> = paths
+        .into_iter()
+        .filter(|path| !path.as_os_str().is_empty() && !path.starts_with(appdir))
+        .collect();
+    let joined = std::env::join_paths(kept).ok()?;
+    Some((!joined.is_empty()).then_some(joined))
 }
 
 /// The verified target stays inside the MCP prefix and the same containment.

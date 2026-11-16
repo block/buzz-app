@@ -490,8 +490,8 @@ export function followCommunity(
         snapshot: server.snapshot,
         subscribe: server.subscribe,
         signIn: () => server.signIn(),
-        signInLink: () => server.signInLink(),
         cancelSignIn: () => server.cancelSignIn(),
+        signInLink: () => server.signInLink(),
         signOut: (options) => server.signOut(options),
         request: (input) => identity.request({ ...input, relay: named }),
       });

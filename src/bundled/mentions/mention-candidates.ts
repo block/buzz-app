@@ -10,6 +10,7 @@ import type { Agent } from "../../features/agents/service";
 import { communityHost } from "../../features/messages/community-host";
 import {
   allowsOutsideMentions,
+  mentionChannel,
   archivedMention,
   mentionAdmission,
 } from "../../features/messages/mention-admission";
@@ -35,7 +36,8 @@ function availableMentionAgents<T extends { pubkey: string }>(
   return agents.filter((agent) => !members.has(agent.pubkey));
 }
 
-/** Row detail for an outside choice. Nobody can be added to a DM. */
+/** Row detail for an outside choice. Nobody can be added to a DM, and a Solo
+ * chat adds only the viewer's agents (outsideMentionReferences). */
 export function outsideMentionDetail(
   channel: Pick<ChannelSummary, "channelType"> | undefined,
   elsewhere?: string,
@@ -43,7 +45,9 @@ export function outsideMentionDetail(
   if (elsewhere) return `In ${elsewhere}`;
   return channel?.channelType === "dm"
     ? "Not in DM · Will not be notified"
-    : "Not in channel";
+    : channel?.channelType === "solo"
+      ? "Not in chat · Will not be notified"
+      : "Not in channel";
 }
 
 /**
@@ -114,7 +118,7 @@ export function mentionCandidates(
   // test fails when they read one more. The viewer is fixed per session.
   const sources = [
     // Only this channel's row; activity elsewhere replaces the list, not it.
-    session.channels.list().channels.find((c) => c.id === channelId),
+    mentionChannel(session, channelId),
     session.agentChoices.snapshot(),
     session.profiles.snapshot(),
     session.archives?.snapshot(),
@@ -183,9 +187,7 @@ function buildCandidates(
   directory: readonly DirectoryPerson[],
   elsewhere: readonly ElsewhereAgent[],
 ) {
-  const channel = session.channels
-    .list()
-    .channels.find((c) => c.id === channelId);
+  const channel = mentionChannel(session, channelId);
   const members = roster?.map((p) => p.pubkey) ?? channel?.members ?? [];
   const memberKeys = new Set(members);
   // A saved chat's roster also offers agents that are not in the chat. Its
@@ -212,7 +214,7 @@ function buildCandidates(
           true,
         )))
     choices.set(person.pubkey, { pubkey: person.pubkey, name: person.name });
-  if (!roster && !inviteAgents && allowsOutsideMentions(channel))
+  if (allowsOutsideMentions(channel, roster, inviteAgents))
     for (const person of directory) choices.set(person.pubkey, person);
   // Another community's agent is never a member or an agent here; it only
   // takes a row no one in this community has. Sending asks before it joins.

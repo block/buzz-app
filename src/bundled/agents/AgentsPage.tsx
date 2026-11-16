@@ -2309,7 +2309,6 @@ function CommunityImportDialog({
     <Dialog
       open
       size="compact"
-      headerGap="compact"
       footerGap="compact"
       title={`Import ${name}`}
       artwork={

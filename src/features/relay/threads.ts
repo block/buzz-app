@@ -181,6 +181,9 @@ export function createThreadView({
   const reader = retrying(sourceReader);
   const targetReader = retrying(sourceTargetReader);
   const acceptTarget = admitTarget ?? admit;
+  // Only a view created exact reads through a reader that returns rows
+  // unadmitted; a retarget makes a view exact but keeps its reader.
+  const unadmitted = exact;
   let disposed = false;
   let rootId: string | undefined;
   let rootUnavailable = false;
@@ -505,10 +508,18 @@ export function createThreadView({
       else staged = events;
       return retain(union(remote, staged, selectionStaged), false);
     };
-    const response = await targetReader.read(
+    const target = targetReader.read(
       [{ ids: [id], "#h": [channelId], limit: 1 }],
       { signal: owned.signal },
     );
+    // The overlay read overlaps the target read; its rows are staged only
+    // after the target is.
+    const overlaysRead = targetReader.read(
+      [{ kinds: [5, 7, 9005, 40003, 39005], "#e": [id], limit: 500 }],
+      { signal: owned.signal },
+    );
+    overlaysRead.catch(() => undefined);
+    const response = await target;
     if (!active()) return "cancelled";
     // The reader verifies the wire response; this pure visibility check does
     // not reconcile the bare candidate into this or another published view.
@@ -524,10 +535,7 @@ export function createThreadView({
     // Staging makes live overlay deletions resolvable without exposing an
     // incomplete selected fold. Existing displayed content remains untouched.
     if (!stage([event])) return "error";
-    const overlays = await targetReader.read(
-      [{ kinds: [5, 7, 9005, 40003, 39005], "#e": [id], limit: 500 }],
-      { signal: owned.signal },
-    );
+    const overlays = await overlaysRead;
     if (!active()) return "cancelled";
     if (!stage(union(pending, related(overlays, id)))) return "error";
     const ids = union(remote, pending)
@@ -620,6 +628,8 @@ export function createThreadView({
         ? "cancelled"
         : "error";
     } finally {
+      // Stops a read started alongside another that this ended without.
+      owned.abort();
       signal.removeEventListener("abort", cancel);
       if (selectionController === owned) {
         selectionStaged = [];
@@ -707,14 +717,44 @@ export function createThreadView({
         "#h": [channelId],
         limit: 1,
       };
+      const filter: ReadFilter = {
+        kinds: [9, 40002, 40008],
+        "#h": [channelId],
+        "#e": [rootId],
+        depth_limit: 100,
+        limit: PAGE_SIZE,
+        include_aux: true,
+      };
+      const windowRead = (signal: AbortSignal) =>
+        reader.read(
+          [
+            {
+              ...filter,
+              kinds: STRICT_WINDOW_KINDS,
+              limit: nextPages === 0 ? INITIAL_WINDOW_SIZE : PAGE_SIZE,
+              thread_window: true,
+              ...(nextCursor
+                ? { until: nextCursor.created_at, before_id: nextCursor.id }
+                : {}),
+            },
+          ],
+          { signal },
+        );
+      let firstWindow: ReturnType<typeof windowRead> | undefined;
       let root: readonly RelayEvent[] = [];
       if (mode !== "legacy") {
         // Strict requests cannot batch an ID lookup with a window. Admit the
-        // verified root first so channel-less root aux has visibility evidence.
+        // verified root first so channel-less root aux has visibility evidence:
+        // the first window's rows are read only after it.
         // Revalidate once per run, not once per page of a retained-range repair.
-        const rootResponse = await reader.read([rootFilter], {
-          signal: owned.signal,
-        });
+        const rootRead = reader.read([rootFilter], { signal: owned.signal });
+        // An admitting reader would drop root aux from a window answered
+        // before the root; only an unadmitting one overlaps the window.
+        if (unadmitted) {
+          firstWindow = windowRead(owned.signal);
+          firstWindow.catch(() => undefined);
+        }
+        const rootResponse = await rootRead;
         if (!active()) return;
         root = admit(rootResponse);
         if (!active()) return;
@@ -750,32 +790,13 @@ export function createThreadView({
         (mode === "older" && !reached && page < MAX_PAGES);
         page++
       ) {
-        const filter: ReadFilter = {
-          kinds: [9, 40002, 40008],
-          "#h": [channelId],
-          "#e": [rootId],
-          depth_limit: 100,
-          limit: PAGE_SIZE,
-          include_aux: true,
-        };
         let response: readonly RelayEvent[];
         let bounds: ReturnType<typeof threadBounds> | undefined;
         if (mode !== "legacy") {
           try {
-            const page = await reader.read(
-              [
-                {
-                  ...filter,
-                  kinds: STRICT_WINDOW_KINDS,
-                  limit: nextPages === 0 ? INITIAL_WINDOW_SIZE : PAGE_SIZE,
-                  thread_window: true,
-                  ...(nextCursor
-                    ? { until: nextCursor.created_at, before_id: nextCursor.id }
-                    : {}),
-                },
-              ],
-              { signal: owned.signal },
-            );
+            const read = firstWindow ?? windowRead(owned.signal);
+            firstWindow = undefined;
+            const page = await read;
             if (!active()) return;
             const bound = page.find((event) => event.kind === 39007);
             if (!bound) throw new MissingThreadBounds();
@@ -917,6 +938,8 @@ export function createThreadView({
         publishStatus({ status: "error", error: String(error) });
       }
     } finally {
+      // Stops a read started alongside another that the run ended without.
+      owned.abort();
       if (controller === owned) {
         staged = [];
         controller = undefined;

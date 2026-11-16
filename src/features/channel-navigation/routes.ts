@@ -147,6 +147,14 @@ export function conversationTarget(
   return { version: 1, kind: "conversation", scope: parts, channelId };
 }
 
+/** The sidebar reads only which conversation is open, never what is open
+ * within it: a thread, message, panel or detail there is not a destination. */
+export function sidebarTarget(target: OpenTarget): OpenTarget {
+  if (target.kind !== "conversation") return target;
+  const { version, kind, scope, channelId } = target;
+  return { version, kind, scope, channelId };
+}
+
 /** A reopened conversation must still belong to this community and viewer. */
 export function matchesConversation(
   target: OpenTarget | undefined,

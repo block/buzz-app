@@ -1,4 +1,4 @@
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { TranscriptTurn } from "../../../features/agents/activity-transcript";
 import type { AgentClient, AgentSession } from "../agents/client";
 import type { BuilderlabSession } from "../session";
@@ -193,7 +193,7 @@ const signedIn = {
 function client(overrides: Partial<Record<keyof AgentClient, unknown>> = {}) {
   return {
     list: vi.fn(async () => [{ id: "agent-1", pubkey: "a".repeat(64) }]),
-    sessions: vi.fn(async () => ({ sessions: [session], more: true })),
+    sessions: vi.fn(async () => ({ sessions: [session] })),
     sessionMessages: vi.fn(async () => ({ turns: [], messages: [] })),
     ...overrides,
   } as unknown as AgentClient;
@@ -205,9 +205,14 @@ it("lists the signed-in owner's stored sessions of an agent", async () => {
     status: "loaded",
     agentId: "agent-1",
     sessions: [session],
-    more: true,
+    more: false,
   });
-  expect(reader.sessions).toHaveBeenCalledWith("agent-1", signal);
+  expect(reader.sessions).toHaveBeenCalledExactlyOnceWith(
+    "agent-1",
+    signal,
+    undefined,
+    undefined,
+  );
 });
 
 it("lists nothing for an agent outside the signed-in account", async () => {
@@ -453,4 +458,56 @@ it("drops any owner note after a sender's keys", () => {
     ],
   });
   expect(turn?.items[0]).toMatchObject({ author: "Ada" });
+});
+
+describe("paging stored sessions", () => {
+  const rows = (count: number, from = 0) =>
+    Array.from({ length: count }, (_, index) => ({
+      ...session,
+      sessionId: `s${from + index}`,
+    }));
+  const pages = (...sent: { sessions: AgentSession[]; cursor?: string }[]) => {
+    const sessions = vi.fn();
+    for (const page of sent) sessions.mockResolvedValueOnce(page);
+    return client({ sessions });
+  };
+  const cursors = (reader: AgentClient) =>
+    vi.mocked(reader.sessions).mock.calls.map((call) => call[3]);
+
+  it("reads past a short page until enough are listed", async () => {
+    const reader = pages(
+      { sessions: rows(10), cursor: "p2" },
+      { sessions: rows(25, 10), cursor: "p3" },
+    );
+    const list = await listSessions(reader, signedIn, "a".repeat(64), signal);
+    expect(list).toMatchObject({ status: "loaded", more: true });
+    expect(list.status === "loaded" && list.sessions).toHaveLength(35);
+    expect(cursors(reader)).toEqual([undefined, "p2"]);
+  });
+
+  it("reads past an empty page, and stops when no cursor remains", async () => {
+    const reader = pages({ sessions: [], cursor: "p2" }, { sessions: rows(3) });
+    expect(
+      await listSessions(reader, signedIn, "a".repeat(64), signal),
+    ).toEqual({
+      status: "loaded",
+      agentId: "agent-1",
+      sessions: rows(3),
+      more: false,
+    });
+    expect(cursors(reader)).toEqual([undefined, "p2"]);
+  });
+
+  it("stops after five pages while a cursor remains", async () => {
+    const reader = pages(
+      ...Array.from({ length: 6 }, (_, index) => ({
+        sessions: rows(1, index),
+        cursor: `p${index + 2}`,
+      })),
+    );
+    const list = await listSessions(reader, signedIn, "a".repeat(64), signal);
+    expect(list).toMatchObject({ status: "loaded", more: true });
+    expect(list.status === "loaded" && list.sessions).toHaveLength(5);
+    expect(cursors(reader)).toEqual([undefined, "p2", "p3", "p4", "p5"]);
+  });
 });

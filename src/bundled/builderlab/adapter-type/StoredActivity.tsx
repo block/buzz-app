@@ -22,7 +22,7 @@ import { InlineHeader } from "../../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import type { AgentClient, AgentSession } from "../agents/client";
 import type { AgentActivity } from "./Activity";
-import { readSession, type SessionList } from "./history";
+import { CONVERSATION_LIMIT, readSession, type SessionList } from "./history";
 
 export type ListedSessions = Promise<
   Extract<SessionList, { status: "loaded" }>
@@ -32,7 +32,6 @@ type Row = AgentSession &
   Readonly<{ key: string; root?: string; at: number }>;
 type Place = Readonly<{ channelId: string; root?: string }>;
 
-const CONVERSATION_LIMIT = 30;
 const label = ({ channelId, name, root }: Row) =>
   `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 const message = (error: unknown) =>
@@ -252,6 +251,9 @@ export function StoredActivity({
             read={(signal) => readSession(client, open, signal, name)}
             readKey={open.sessionId}
             working={working(open)}
+            // Each read sends the whole session, so a running turn reads
+            // again only when it ends.
+            refreshWhileWorking={false}
             reading="Reading the stored session…"
             failed="Could not read the stored session"
             missing={

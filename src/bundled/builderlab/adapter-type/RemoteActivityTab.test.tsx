@@ -81,7 +81,7 @@ it("answers a pending transcript request when Builderlab stores no sessions", as
 });
 
 it("drops the list read StrictMode aborts", async () => {
-  const Tab = tab(async () => ({ sessions: [], more: false }));
+  const Tab = tab(async () => ({ sessions: [], cursor: undefined }));
   render(
     <StrictMode>
       <Tab agent={agent} save={vi.fn()} />

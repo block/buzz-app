@@ -1602,16 +1602,18 @@ nor restores history after reload. Older servers without the endpoint leave
 tasks unknown.
 
 A remote agent's Activity tab also lists the sessions Builderlab stored, above
-the live feed. Each time the tab opens it reads one page of
-`/v3/beekeeper/list-agent-sessions` (50, most recently active first) and
-shows up to 30, saying when older ones aren't shown. The conversation it was
+the live feed. Each time the tab opens it reads
+`/v3/beekeeper/list-agent-sessions` (pages of 50, most recently active first),
+following `next_cursor` past short or empty pages until it has 30, no cursor
+remains, or five pages were read. It shows up to 30, saying when older ones
+aren't shown. The conversation it was
 opened from comes first: its thread's session, else its channel's, which a DM
 or channel-scoped agent shares. When that session is not on the page, the tab
 asks for it by `channel_id` and `thread_root_event_id`. A session's messages
 are read from `/v3/beekeeper/get-agent-session-messages` only when its
-transcript opens, and again while the live feed shows one of its turns
-working; with the live feed off or connecting, an open transcript doesn't
-refresh on its own. Messages carry no turn: a prompt joins the turn its mention
+transcript opens, and again when the live feed shows one of its turns start or
+end. Each read returns the whole session, so a running turn isn't polled; with
+the live feed off or connecting, an open transcript doesn't refresh on its own. Messages carry no turn: a prompt joins the turn its mention
 started, and any other message the latest stored turn started at or before it,
 never one before the last prompt's turn. A message older than every turn joins
 the first. Tool requests join their responses by ID, and a message tool's text

@@ -2,13 +2,17 @@ import { soloNavigationFor } from "../../features/channel-navigation/solo-naviga
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { SoloRegions } from "../../features/channel-navigation/SoloRegions";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
-import { soloDraft } from "../../features/channel-navigation/routes";
+import {
+  sidebarTarget,
+  soloDraft,
+} from "../../features/channel-navigation/routes";
 import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
 import {
   ChannelInventory,
@@ -43,11 +47,40 @@ import type { ContributionReader } from "../../features/conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
 import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
-import { CommunitySignIn } from "../../features/federated-identity/CommunitySignIn";
+import {
+  CommunityRefusalNotice,
+  CommunitySignIn,
+  issuerMayAnswerAgain,
+} from "../../features/federated-identity/CommunitySignIn";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import type { Membership } from "../../features/communities/service";
 
 const noSubscription = () => () => {};
+
+const sameConversation = (a: OpenTarget, b: OpenTarget) =>
+  a.kind === "conversation" &&
+  b.kind === "conversation" &&
+  targetKey(a) !== targetKey(b) &&
+  targetKey(sidebarTarget(a)) === targetKey(sidebarTarget(b));
+/** The latest attempt that opened a destination. Moving within the open
+ * conversation, as opening or closing a thread does, keeps the previous one,
+ * so it renders nothing here; reopening the same target is a new one. A
+ * preserved opening applies only to itself, so entering or leaving one is. */
+function destinationAttempt(navigator: Navigation) {
+  let previous = navigator.snapshot();
+  let shown = previous.attempt;
+  return () => {
+    const next = navigator.snapshot();
+    if (
+      next.attempt.id !== previous.attempt.id &&
+      (next.attempt.sidebar !== shown.sidebar ||
+        !sameConversation(previous.entry.target, next.entry.target))
+    )
+      shown = next.attempt;
+    previous = next;
+    return shown;
+  };
+}
 
 type Filter = "all" | "solo" | "team";
 const filters = [
@@ -96,10 +129,16 @@ function ScopedSidebar({
   scope: string;
   connection: ReturnType<typeof useRelayConnection>;
 }) {
-  const attempt = useSyncExternalStore(
-    props.navigator.subscribe,
-    () => props.navigator.snapshot().attempt.id,
+  const attemptView = useMemo(
+    () => destinationAttempt(props.navigator),
+    [props.navigator],
   );
+  const shownAttempt = useSyncExternalStore(
+    props.navigator.subscribe,
+    attemptView,
+  );
+  const attempt = shownAttempt.id;
+  const preserveSidebar = shownAttempt.sidebar === "preserve";
   const [observedAttempt, setObservedAttempt] = useState(attempt);
   const [view, setView] = useState(() => {
     const saved = readView<{ filter?: unknown; location?: unknown } | null>(
@@ -139,8 +178,10 @@ function ScopedSidebar({
   const soloTitle = useSyncExternalStore(
     soloNavigation?.subscribe ?? noSubscription,
     () =>
-      soloNavigation?.snapshot().regions.find((region) => region.source)
-        ?.title ?? "Solo",
+      soloNavigation
+        ?.snapshot()
+        .regions.find((region) => region.source && !region.hidden)?.title ??
+      "Solo",
   );
   const target = props.target;
   const local =
@@ -161,6 +202,10 @@ function ScopedSidebar({
     preferences?.subscribe ?? noSubscription,
     () => preferences?.snapshot(),
   );
+  // The community refused this account: one notice on every page says what
+  // fixes it, so the sidebar keeps no notice or Try again of its own.
+  const refused =
+    connection.status === "error" && connection.denied && !connection.retrying;
   // A cached startup session has no Solo capabilities yet; its unavailable
   // placeholders still change height when the live inventories arrive.
   const soloReady =
@@ -171,11 +216,9 @@ function ScopedSidebar({
     ? target.kind === "conversation"
       ? listedDestination
       : target.kind === "page" && target.pluginId === "buzz.channels"
-        ? target.route?.params === "drafts-sent"
-          ? undefined
-          : soloDraft(target.route?.params)
-            ? "solo"
-            : "team"
+        ? soloDraft(target.route?.params)
+          ? "solo"
+          : "team"
         : undefined
     : undefined;
   const location = destination ? targetKey(target) : undefined;
@@ -195,7 +238,10 @@ function ScopedSidebar({
   ) {
     // A restriction keeps the saved filter for when it ends.
     setView({
-      filter: view.filter === "all" || restriction ? view.filter : destination,
+      filter:
+        view.filter === "all" || restriction || preserveSidebar
+          ? view.filter
+          : destination,
       location,
     });
   }
@@ -261,6 +307,7 @@ function ScopedSidebar({
           sidebarRows={props.sidebarRows}
           cached={!!connection.cached}
           layoutReady={filter === "team" || soloReady}
+          preserveSidebar={preserveSidebar}
           connectionError={connection.error}
           render={({
             sidebar,
@@ -279,7 +326,7 @@ function ScopedSidebar({
                 {...frame}
               >
                 {/* Relay outages for every inventory recover through one
-                    automatic owner; its notice is the single Retry. */}
+                    automatic owner; its one notice shows on every page. */}
                 {!connection.cached && (
                   <RecoveryNotice recovery={connection.session.recovery} />
                 )}
@@ -291,6 +338,7 @@ function ScopedSidebar({
                   )}
                   relay={connection.origin}
                   memberships={props.memberships}
+                  tryAgain={() => props.relay.tryAgain()}
                 />
                 {before}
                 <SidebarUnread listRef={sidebar.list} dmPreviews={dmPreviews}>
@@ -307,13 +355,12 @@ function ScopedSidebar({
                       target={props.target}
                       chatIcons={props.chatIcons}
                       chatMenus={props.chatMenus}
+                      sidebarRows={props.sidebarRows}
                       renderContents={(
                         ordinary,
-                        ordinaryActions,
                         header,
-                        creationTrigger,
                         pendingClick,
-                        headerActions,
+                        composeOrdinary,
                       ) => (
                         <SoloRegions
                           key={`regions:${scope}:${connection.generation}`}
@@ -323,8 +370,7 @@ function ScopedSidebar({
                           target={props.target}
                           sidebar={sidebar}
                           ordinary={ordinary}
-                          ordinaryActions={ordinaryActions}
-                          creationTrigger={creationTrigger}
+                          composeOrdinary={composeOrdinary}
                           pendingClick={pendingClick}
                           groupDisclosure={
                             filter === "all"
@@ -339,7 +385,6 @@ function ScopedSidebar({
                               : undefined
                           }
                           hidePrimaryHeading={filter === "solo"}
-                          fallbackHeaderActions={headerActions}
                           fallback={
                             <>
                               {header}
@@ -359,7 +404,7 @@ function ScopedSidebar({
                         sidebar={sidebar}
                         sectionKey="scope:team"
                         title="Team"
-                        ownsCurrent={destination === "team"}
+                        ownsCurrent={destination === "team" && !preserveSidebar}
                         location={sidebarLocation}
                       >
                         {content}
@@ -388,32 +433,45 @@ function ScopedSidebar({
             <SidebarList>
               {/* A connection retrying by itself is still connecting; only a
                   settled failure asks for Try again, right beside its notice. */}
-              <div className={styles.connectionStatus}>
-                <p>
-                  {connection.status === "connecting" || connection.retrying
-                    ? "Connecting…"
-                    : connection.denied
-                      ? "You don’t have access to this community."
+              {refused ? (
+                <CommunityRefusalNotice
+                  // A refusal while connecting is the relay's about access.
+                  refusal={connection.refusal ?? "access"}
+                  identity={communityIdentity(
+                    props.federatedIdentity,
+                    connection.origin,
+                  )}
+                  retry={props.relay.tryAgain}
+                  relay={connection.origin}
+                  memberships={props.memberships}
+                />
+              ) : (
+                <div className={styles.connectionStatus}>
+                  <p>
+                    {connection.status === "connecting" || connection.retrying
+                      ? "Connecting…"
                       : connection.status === "error"
                         ? "Couldn’t load channels."
                         : "Choose a community to see channels."}
-                </p>
-                {connection.status === "error" && !connection.retrying && (
-                  <>
-                    <CommunitySignIn
-                      identity={communityIdentity(
-                        props.federatedIdentity,
-                        connection.origin,
-                      )}
-                      error={connection.error}
-                      retry={props.relay.retry}
-                      relay={connection.origin}
-                      memberships={props.memberships}
-                    />
-                    <Button onClick={props.relay.retry}>Try again</Button>
-                  </>
-                )}
-              </div>
+                  </p>
+                  {connection.status === "error" && !connection.retrying && (
+                    <>
+                      <CommunitySignIn
+                        identity={communityIdentity(
+                          props.federatedIdentity,
+                          connection.origin,
+                        )}
+                        error={connection.error}
+                        retry={props.relay.tryAgain}
+                        relay={connection.origin}
+                        memberships={props.memberships}
+                        asksAgain
+                      />
+                      <Button onClick={props.relay.tryAgain}>Try again</Button>
+                    </>
+                  )}
+                </div>
+              )}
             </SidebarList>
           </SidebarFrame>
         </div>
@@ -478,17 +536,20 @@ function InventoryGroup({
 
 /** A protected community can refuse after its channel list is shown: native
  * discovery hands back the transport before NIP-FI admission, so the refusal
- * arrives on the live socket. Its recovery reconnects only that socket. */
+ * arrives on the live socket. Its recovery reconnects only that socket; a
+ * refusal its sign-in server may change offers Try again, which asks it. */
 function LiveSignIn({
   session,
   identity,
   relay,
   memberships,
+  tryAgain,
 }: {
   session: RelaySession;
   identity: FederatedIdentity | undefined;
   relay: string | undefined;
   memberships: readonly Membership[] | undefined;
+  tryAgain: () => void;
 }) {
   const live = useSyncExternalStore(
     session.live.subscribe,
@@ -496,14 +557,19 @@ function LiveSignIn({
     session.live.snapshot,
   );
   if (live.status !== "error") return null;
+  const asksAgain = !!identity && issuerMayAnswerAgain(live.error);
   return (
-    <CommunitySignIn
-      identity={identity}
-      error={live.error}
-      retry={session.live.retry}
-      relay={relay}
-      memberships={memberships}
-    />
+    <>
+      <CommunitySignIn
+        identity={identity}
+        error={live.error}
+        retry={session.live.retry}
+        relay={relay}
+        memberships={memberships}
+        asksAgain={asksAgain}
+      />
+      {asksAgain && <Button onClick={tryAgain}>Try again</Button>}
+    </>
   );
 }
 

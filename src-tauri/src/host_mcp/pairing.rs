@@ -254,11 +254,6 @@ fn load(account: &Path) -> Result<Option<Grant>, String> {
 fn save(account: &Path, grant: &Grant) -> Result<(), String> {
     let bytes =
         zeroize::Zeroizing::new(serde_json::to_vec(grant).map_err(|_| "Cannot encode pairing")?);
-    #[cfg(target_os = "macos")]
-    return security_framework::os::macos::keychain::SecKeychain::default()
-        .and_then(|keychain| keychain.set_generic_password(SERVICE, &account_id(account), &bytes))
-        .map_err(|_| "Cannot save the Buzz approval".into());
-    #[cfg(not(target_os = "macos"))]
     buzz_credential_store::replace(SERVICE, &account_id(account), &bytes)
         .map_err(|_| "Cannot save the Buzz approval".into())
 }

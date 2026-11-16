@@ -137,9 +137,39 @@ test.each([undefined, "toolbar"] as const)(
         primary: true,
         ...(placement ? { placement } : {}),
       }),
-    ).toBe("topbar");
+    ).toBe("dock");
   },
 );
+
+test.each([undefined, "dock"] as const)(
+  "bundled Activity is a Messages sidebar row regardless of registered %s placement",
+  (placement) => {
+    expect(
+      pagePlacement({
+        ...inbox,
+        primary: true,
+        ...(placement ? { placement } : {}),
+      }),
+    ).toBe("sidebar");
+  },
+);
+
+test.each([
+  [undefined, "sidebar"],
+  ["sidebar", "sidebar"],
+  ["dock", "dock"],
+  // Pre-dock names stay accepted and resolve to the dock.
+  ["topbar", "dock"],
+  ["toolbar", "dock"],
+] as const)("a plugin's %s placement resolves to %s", (placement, expected) => {
+  expect(
+    pagePlacement({
+      ...page("example.plugin/main", "Plugin"),
+      primary: true,
+      ...(placement ? { placement } : {}),
+    }),
+  ).toBe(expected);
+});
 
 describe("navigation owner", () => {
   const primary = (
@@ -182,4 +212,17 @@ describe("navigation owner", () => {
       expect(navigationOwner(pages, selected)).toBe(selected);
     },
   );
+});
+
+test("unlisted conversation pages keep Messages without adding a navigation row", () => {
+  const taskPage = {
+    ...page("example.task/main", "Task"),
+    primary: false,
+    conversationNavigation: true,
+  };
+  expect(pagePlacement(taskPage)).toBeUndefined();
+  expect(
+    navigationOwner([{ ...messages, primary: true }, taskPage], taskPage.key),
+  ).toBe(messages.key);
+  expect(navigationOwner([taskPage], taskPage.key)).toBe(taskPage.key);
 });

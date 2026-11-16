@@ -32,6 +32,8 @@ export type Page = Readonly<{
   component: ComponentType<PageProps>;
   /** Replace the conversation sidebar while this page is selected. */
   sidebar?: ComponentType<PageSidebarProps>;
+  /** Keep the Messages sidebar and dock selection while this page is open. */
+  conversationNavigation?: boolean;
   layout?: "document" | "workspace";
   // Opt in only when every page state places the supplied companion card.
   companion?: boolean;
@@ -47,10 +49,11 @@ export type Page = Readonly<{
    * listed in search and reachable by deep link or from another page.
    */
   primary?: boolean;
-  /** Preferred navigation location for a primary page; omitted means sidebar.
-   * The host renders topbar and toolbar entries in its app dock.
+  /** Preferred navigation location for a primary page: a row in the Messages
+   * sidebar (the default) or an app in the dock. `topbar` and `toolbar` are
+   * pre-dock aliases for `dock`, still accepted.
    */
-  placement?: "sidebar" | "topbar" | "toolbar";
+  placement?: "sidebar" | "dock" | "topbar" | "toolbar";
   /**
    * A `data:image/<subtype>[;params],<payload>` URL shown beside the page in
    * search and primary navigation. Any other value is dropped with a warning,
@@ -100,6 +103,8 @@ export class PagesService extends Service implements Pages {
       !page.title.trim() ||
       typeof page.component !== "function" ||
       (page.sidebar !== undefined && typeof page.sidebar !== "function") ||
+      (page.conversationNavigation !== undefined &&
+        typeof page.conversationNavigation !== "boolean") ||
       (page.layout !== undefined &&
         page.layout !== "document" &&
         page.layout !== "workspace") ||
@@ -129,12 +134,13 @@ export class PagesService extends Service implements Pages {
     if (
       placement === undefined ||
       placement === "sidebar" ||
+      placement === "dock" ||
       placement === "topbar" ||
       placement === "toolbar"
     )
       return page;
     console.warn(
-      `Ignoring page placement for ${this.ctx.pluginOwner?.id}/${page.id}: expected sidebar, topbar, or toolbar`,
+      `Ignoring page placement for ${this.ctx.pluginOwner?.id}/${page.id}: expected sidebar or dock`,
     );
     return rest;
   }

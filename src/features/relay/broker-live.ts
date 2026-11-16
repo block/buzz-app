@@ -64,6 +64,7 @@ export function subscribeBrokerTraffic(
   let receiving = false;
   const routeState = new Map<string, LiveRoute>();
   let latest: LiveSnapshot = { status: "connecting", routes: [] };
+  let retryControlError: string | undefined;
   const publish = (snapshot: LiveSnapshot) => {
     latest = snapshot;
     callbacks.state(snapshot);
@@ -731,18 +732,24 @@ export function subscribeBrokerTraffic(
         ]),
       })
         .then((response) => {
-          if (!closed && current === generation && !response.ok)
+          if (closed || current !== generation) return;
+          if (!response.ok)
             throw new Error(`Live retry control failed (${response.status})`);
+          if (retryControlError && latest.error === retryControlError) {
+            const { error: _error, ...recovered } = latest;
+            publish(recovered);
+          }
+          retryControlError = undefined;
         })
         .catch((error) => {
-          if (!closed && current === generation)
+          if (!closed && current === generation) {
+            retryControlError =
+              error instanceof Error ? error.message : "Live retry unavailable";
             publish({
               ...latest,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Live retry unavailable",
+              error: retryControlError,
             });
+          }
         })
         .finally(() => {
           if (current === generation) controlPending = false;

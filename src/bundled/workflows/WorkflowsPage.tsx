@@ -5,6 +5,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useWorkflowAgentMentions } from "./useWorkflowAgentMentions";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { WorkflowDefinition } from "../../features/workflows/types";
@@ -56,7 +57,7 @@ export function WorkflowsPage({ relay }: { relay: RelayData }) {
         {connection.status === "error" && (
           <>
             <p role="alert">{connection.error}</p>
-            <Button onClick={() => relay.retry()}>Retry connection</Button>
+            <Button onClick={() => relay.tryAgain()}>Retry connection</Button>
           </>
         )}
       </div>
@@ -83,6 +84,9 @@ export function WorkflowCommunity({
   const eligible = channels.channels.filter(
     (item) => !item.huddle && !item.metadataPending,
   );
+  // Archived channels stay eligible, so their workflows can still be found,
+  // turned off and deleted, and an open editor keeps its draft.
+  const creatable = eligible.filter((item) => !item.archived);
   const [selected, setSelected] = useState("");
   const [selectedDefinition, setSelectedDefinition] = useState<
     WorkflowDefinition | "new" | undefined
@@ -128,6 +132,7 @@ export function WorkflowCommunity({
   }, [open, detailTarget]);
   const channel = eligible.find((item) => item.id === selected);
   const mentionMembers = useWorkflowMentionMembers(session, channel);
+  const agentMentions = useWorkflowAgentMentions(session.scope);
   useEffect(() => {
     if (
       !selected ||
@@ -162,7 +167,11 @@ export function WorkflowCommunity({
     setSelectedDefinition(definition);
     setSelected(next);
   };
-  const beginCreate = () => setCreateOpen(true);
+  // The one owner of New workflow's availability, in the header and the landing.
+  const beginCreate =
+    capability.availability.save && creatable.length
+      ? () => setCreateOpen(true)
+      : undefined;
   const deleteWorkflow = (definition: WorkflowDefinition) => {
     if (deleting.current) return;
     const locked = workflowOperationLocked(
@@ -218,7 +227,7 @@ export function WorkflowCommunity({
                     aria-label="New workflow"
                     title="New workflow"
                     aria-haspopup="dialog"
-                    disabled={!capability.availability.save || !eligible.length}
+                    disabled={!beginCreate}
                     icon={<PlusIcon size="1rem" aria-hidden="true" />}
                     onClick={beginCreate}
                   />
@@ -333,6 +342,7 @@ export function WorkflowCommunity({
             onSaveReadback={setSaveReadback}
             onDelete={deleteWorkflow}
             viewer={viewer}
+            agentMentions={agentMentions}
             onClose={() => openChannel("")}
           />
         </WorkflowMentionMembers.Provider>
@@ -351,7 +361,9 @@ export function WorkflowCommunity({
           onCancel={() => setCreateOpen(false)}
           scope={
             <WorkflowChannelPicker
-              channels={eligible}
+              channels={creatable}
+              profiles={session.profiles}
+              names={session.names}
               onSelect={(id) => {
                 setCreateOpen(false);
                 openChannel(id, "new");

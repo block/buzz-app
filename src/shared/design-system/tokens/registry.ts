@@ -417,16 +417,16 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "--affordance-reaction-self",
         variable: "--affordance-reaction-self",
-        pointsAt: "accent step 3",
-        use: "A reaction you made, on received bubbles and the panel, paired with --border-reaction-self.",
+        pointsAt: "surface-message-own at Buzzin’; accent-9 at Chillin’",
+        use: "A reaction you made, on received bubbles and the panel: your own bubble's fill, paired with text-reaction-self.",
         status: "core",
       },
       {
         token: "--affordance-reaction-self-own",
         variable: "--affordance-reaction-self-own",
         pointsAt:
-          "affordance-reaction-self; at Buzzin’, the accent's strong overlay on its fill",
-        use: "A reaction you made inside your own bubble, paired with --border-reaction-self-own.",
+          "surface-message at Buzzin’; neutral-1 at Chillin’ (neutral-7 in dark mode)",
+        use: "A reaction you made inside your own bubble: the received bubble's fill, paired with text-reaction-self-own.",
         status: "core",
       },
       {
@@ -512,6 +512,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "proposed",
       },
       {
+        token: "bg-surface-dock-count",
+        variable: "--surface-dock-count",
+        pointsAt: "dark mono 2 in both modes",
+        use: "Dark corner count capsules on dock tiles; pair with text-dock-count.",
+        status: "core",
+      },
+      {
+        token: "text-dock-count",
+        variable: "--text-dock-count",
+        pointsAt: "dark-mode accent link ink in both modes",
+        use: "Readable accent numerals on surface-dock-count.",
+        status: "core",
+      },
+      {
         token: "bg-surface-row-selected-detail",
         variable: "--surface-row-selected-detail",
         pointsAt: "neutral-2 light / neutral-6 dark",
@@ -565,6 +579,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--text-on-selection-own",
         pointsAt: "neutral-1 / own bubble fill at Buzzin’",
         use: "Selected text inside outgoing bubbles, paired with surface-text-selection-own.",
+        status: "core",
+      },
+      {
+        token: "--text-on-find-match",
+        variable: "--text-on-find-match",
+        pointsAt: "neutral-12 light / neutral-1 dark",
+        use: "Text over find-on-screen match fills: dark in both modes.",
         status: "core",
       },
       {
@@ -672,6 +693,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--text-message-link-own",
         pointsAt: "accent link at Chillin’; accent ink at Buzzin’",
         use: "Links on the selected outgoing message surface.",
+        status: "core",
+      },
+      {
+        token: "text-reaction-self",
+        variable: "--text-reaction-self",
+        pointsAt: "text-message-own at Buzzin’; accent ink at Chillin’",
+        use: "Count of a reaction you made on received bubbles and the panel, paired with bg-affordance-reaction-self.",
+        status: "core",
+      },
+      {
+        token: "text-reaction-self-own",
+        variable: "--text-reaction-self-own",
+        pointsAt: "text-standard",
+        use: "Count of a reaction you made inside your own bubble, paired with bg-affordance-reaction-self-own.",
         status: "core",
       },
       {
@@ -909,20 +944,6 @@ export const ROLE_GROUPS: RoleGroup[] = [
         use: "An identity accent boundary.",
         status: "core",
       },
-      {
-        token: "border-reaction-self",
-        variable: "--border-reaction-self",
-        pointsAt: "accent-link",
-        use: "Ring around a reaction you made, on received bubbles and the panel. It clears 3:1 on the tint and its host.",
-        status: "core",
-      },
-      {
-        token: "border-reaction-self-own",
-        variable: "--border-reaction-self-own",
-        pointsAt: "border-reaction-self; at Buzzin’, text-message-own",
-        use: "Ring around a reaction you made inside your own bubble, where the accent ring would vanish at Buzzin’.",
-        status: "core",
-      },
     ],
   },
   {
@@ -1127,21 +1148,21 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-floating-control",
         variable: "--affordance-floating-control",
-        pointsAt: "affordance-subtle light / neutral-6 dark",
+        pointsAt: "neutral-3 light / neutral-6 dark",
         use: "Secondary action at rest on floating surfaces.",
         status: "proposed",
       },
       {
         token: "bg-affordance-floating-control-hover",
         variable: "--affordance-floating-control-hover",
-        pointsAt: "affordance-subtle-hover light / neutral-7 dark",
+        pointsAt: "neutral-4 light / neutral-7 dark",
         use: "Secondary action hover on floating surfaces; pair with standard text.",
         status: "proposed",
       },
       {
         token: "bg-affordance-floating-control-pressed",
         variable: "--affordance-floating-control-pressed",
-        pointsAt: "affordance-subtle-pressed light / neutral-8 dark",
+        pointsAt: "neutral-5 light / neutral-8 dark",
         use: "Pressed action on floating surfaces; pair with standard text.",
         status: "proposed",
       },
@@ -1294,6 +1315,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--surface-text-selection-own",
         pointsAt: "neutral-12 / accent ink at Buzzin’",
         use: "Neutral selection fill that contrasts with the outgoing bubble at either vibe.",
+        status: "core",
+      },
+      {
+        token: "--surface-find-match",
+        variable: "--surface-find-match",
+        pointsAt: "amber-5 light / amber-9 dark",
+        use: "Find on screen: a match other than the active one; pair with text-on-find-match.",
+        status: "core",
+      },
+      {
+        token: "--surface-find-match-active",
+        variable: "--surface-find-match-active",
+        pointsAt: "orange-7 light / orange-11 dark",
+        use: "Find on screen: the active match; pair with text-on-find-match.",
         status: "core",
       },
       {

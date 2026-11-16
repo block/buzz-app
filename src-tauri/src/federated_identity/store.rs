@@ -102,7 +102,7 @@ fn error(error: buzz_credential_store::Error) -> &'static str {
     use buzz_credential_store::Error;
     match error {
         Error::Denied => "storage-denied",
-        Error::Corrupt => "storage-corrupt",
+        Error::Corrupt | Error::Ambiguous => "storage-corrupt",
         Error::Busy => "storage-busy",
         Error::Changed | Error::Occupied => "session-changed",
         _ => "storage-unavailable",
@@ -514,7 +514,17 @@ pub(crate) fn remove_all(root: PathBuf) -> Result<(), String> {
     for entry in entries {
         let entry = entry.map_err(|_| "Federated session removal failed")?;
         let path = entry.path();
-        if path.extension().and_then(|value| value.to_str()) != Some("record") {
+        let extension = path.extension().and_then(|value| value.to_str());
+        // Builderlab customers' servers, listed so each launch adds them
+        // (`Customers`): with their sessions and grants gone, so is the list.
+        if extension == Some("customers") {
+            match fs::remove_file(&path) {
+                Ok(()) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => return Err("Federated session removal failed".into()),
+            }
+        }
+        if extension != Some("record") {
             continue;
         }
         let account = path.file_stem().and_then(|value| value.to_str());

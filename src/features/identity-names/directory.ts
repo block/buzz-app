@@ -42,18 +42,24 @@ export function createNameProvider(
         // and a sidebar pass over every DM's participants hits on the next pass.
         scopes: Map<
           string | undefined,
-          { displayFacts: unknown; labels: ReturnType<NamingPolicy["resolve"]> }
+          {
+            facts: string | undefined;
+            labels: ReturnType<NamingPolicy["resolve"]>;
+          }
         >;
         // Recently used scopes' labels for historical keys outside them (LRU).
         // A view can show many, so they stay out of the scope LRU above.
         outsiders: Map<
           string | undefined,
           {
-            displayFacts: unknown;
+            facts: string | undefined;
             labels: Map<
               string,
               ReturnType<ReturnType<NamingPolicy["resolve"]>["get"]>
             >;
+            // The scope's keys with a name: those without one cannot label
+            // or collide, so an outside lookup does not pay for them.
+            named?: readonly string[];
           }
         >;
       }
@@ -168,10 +174,11 @@ export function createNameProvider(
     selection: readonly string[] | undefined,
     id: string | undefined,
     displayFacts: readonly NamingIdentity[] | undefined,
+    facts: string | undefined,
   ) => {
     const { scopes } = current(source);
     const cached = scopes.get(id);
-    if (cached && cached.displayFacts === displayFacts) {
+    if (cached && cached.facts === facts) {
       scopes.delete(id);
       scopes.set(id, cached);
       return cached.labels;
@@ -179,7 +186,7 @@ export function createNameProvider(
     const resolved = resolveLabels(source, selection, displayFacts);
     scopes.delete(id);
     if (scopes.size >= 256) scopes.delete(scopes.keys().next().value);
-    scopes.set(id, { displayFacts, labels: resolved });
+    scopes.set(id, { facts, labels: resolved });
     return resolved;
   };
   return {
@@ -191,22 +198,46 @@ export function createNameProvider(
     scope(source, candidates, displayFacts) {
       const { selected, selection, id } =
         (candidates && normalize(candidates)) ?? {};
+      // Views rebuild equal display facts on every render, so scopes compare
+      // the fields that naming reads.
+      const facts =
+        displayFacts &&
+        JSON.stringify(
+          displayFacts.map((fact) => [
+            fact.pubkey,
+            fact.name,
+            fact.isAgent,
+            fact.ownerPubkey,
+          ]),
+        );
       // Include the requested identity even for historical non-member references.
       const outside = (selected: ReadonlySet<string>, key: string) => {
         const { outsiders } = current(source);
         let scoped = outsiders.get(id);
         outsiders.delete(id);
-        if (!scoped || scoped.displayFacts !== displayFacts) {
-          scoped = { displayFacts, labels: new Map() };
+        if (!scoped || scoped.facts !== facts) {
+          scoped = { facts, labels: new Map() };
           if (outsiders.size >= 8)
             outsiders.delete(outsiders.keys().next().value);
         }
         outsiders.set(id, scoped);
-        if (!scoped.labels.has(key))
+        if (!scoped.labels.has(key)) {
+          if (!scoped.named) {
+            const { identities } = current(source);
+            const shown = new Set(
+              displayFacts?.map((fact) => fact.pubkey.toLowerCase()),
+            );
+            scoped.named = [...selected].filter(
+              (member) => identities.has(member) || shown.has(member),
+            );
+          }
           scoped.labels.set(
             key,
-            resolveLabels(source, [...selected, key], displayFacts).get(key),
+            resolveLabels(source, [...scoped.named, key], displayFacts).get(
+              key,
+            ),
           );
+        }
         return scoped.labels.get(key);
       };
       return (pubkey) => {
@@ -214,7 +245,7 @@ export function createNameProvider(
         const label =
           selected && !selected.has(key)
             ? outside(selected, key)
-            : labels(source, selection, id, displayFacts).get(key);
+            : labels(source, selection, id, displayFacts, facts).get(key);
         if (label) return label;
         const name = current(source).names.get(key);
         return name ? { name } : undefined;

@@ -177,6 +177,48 @@ it("pre-header clicks preserve in-progress POST; duplicate controls coalesce", a
     owner.dispose();
   }
 });
+it.each([false, true])(
+  "successful retry clears its old control error without erasing a newer failure: %s",
+  async (newerFailure) => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const transport = await connectBrokerTransport();
+    const owner = required(transport.subscribe)(f.callbacks);
+    try {
+      f.accept(0);
+      await tick();
+      f.publish(0);
+      await tick();
+      owner.retry();
+      required(f.controls[0]).resolve(new Response(null, { status: 503 }));
+      await tick();
+      expect(f.snapshots.at(-1)).toMatchObject({
+        error: "Live retry control failed (503)",
+      });
+      if (newerFailure) {
+        f.publish(0, {
+          status: "connected",
+          routes: [],
+          error: "restricted: account needs attention",
+        });
+        await tick();
+      }
+      owner.retry();
+      required(f.controls[1]).resolve(new Response(null, { status: 200 }));
+      await tick();
+      expect(f.snapshots.at(-1)).toEqual({
+        status: "connected",
+        routes: [],
+        ...(newerFailure
+          ? { error: "restricted: account needs attention" }
+          : {}),
+      });
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
 for (const finish of ["replacement", "dispose"] as const)
   for (const outcome of ["status", "reject"] as const)
     it(`late retry ${outcome} cannot update ${finish}`, async () => {

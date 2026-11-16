@@ -44,8 +44,10 @@ it("gives every bundled page to the app whose navigation lists it", async () => 
   expect(owners).toMatchObject({
     // Channels, DMs, threads and Solo chats all open the Messages page.
     [messages]: messages,
+    // Pages listed in the Messages sidebar keep Messages selected.
+    "buzz.drafts-and-sent/drafts-sent": messages,
+    "buzz.inbox/inbox": messages,
     // Dock apps own themselves.
-    "buzz.inbox/inbox": "buzz.inbox/inbox",
     "buzz.bestie/bestie": "buzz.bestie/bestie",
     "buzz.reminders/reminders": "buzz.reminders/reminders",
     "buzz.agents/agents": "buzz.agents/agents",

@@ -27,6 +27,7 @@ import {
 } from "./events.ts";
 import { yieldToHost } from "./yield.ts";
 import { EMOJI_SET } from "./emoji.ts";
+import { SIDEBAR_COORDINATES } from "./sidebar-preferences.ts";
 import {
   ARTIFACT_SYNC_MAX_VIEWS,
   type ArtifactSyncFilter,
@@ -43,6 +44,10 @@ const REPLAY_BATCH_SIZE = 10; // Relay limit for filters per REQ.
 const COMBINED_REPLAY_CHANNELS = 256;
 export const LIVE_REPLAY_LIMIT = 500;
 export const LIVE_RECOVERY_INTERVAL = 60_000;
+/** How long a socket asked to prove itself (`check`) has to answer. */
+export const LIVE_CHECK_TIMEOUT_MS = 5_000;
+/** A probe answered this recently already proves the socket; `check` skips. */
+const LIVE_CHECK_FRESH_MS = 15_000;
 /** A live batch is re-sent after this long even with no grant, in case a
  * grant notice never arrived (a dropped frame, or a duplicate notice the
  * relay stored once and did not fan out again). */
@@ -301,6 +306,10 @@ export type LiveSubscription = {
     sink: VerifiedProfileSink,
   ): () => void;
   retry(): void;
+  /** A hint (wake, network, focus) that an open socket may have died unseen:
+   * probe it now and replace it if it does not answer in time. `network`: the
+   * network changed, so an earlier answer no longer proves this socket. */
+  check?(network?: boolean): void;
   dispose(): void;
 };
 /** Demand-scoped ephemeral authors, never a channel/history interest. */
@@ -456,6 +465,10 @@ export function subscribeRelayTraffic(
   let tickedAt = 0;
   let provenAt = 0;
   let probe: string | undefined;
+  // A `check` waiting for a probe answer, and when a probe was last answered.
+  // Only a probe answer proves the socket: other frames may predate a sleep.
+  let checkDeadline: ReturnType<typeof setTimeout> | undefined;
+  let answeredAt = 0;
   let unresponsive: ((reason: string) => void) | undefined;
   // A policy close (1008) gets one fresh-evidence reconnect; only NIP-42
   // admission restores it, so a post-admission denial cannot loop.
@@ -519,21 +532,35 @@ export function subscribeRelayTraffic(
     const cursor = cursors.get(key);
     return !!cursor && route.since <= cursor.liveUntil - LIVE_RESUME_LAG;
   };
-  type SyncWire = {
-    filter: ArtifactSyncFilter | VerifiedProfileFilter;
-    sink: ArtifactSyncSink;
+  type SyncWire = (
+    | { filter: ArtifactSyncFilter; sink: ArtifactSyncSink; resumable?: never }
+    | {
+        filter: VerifiedProfileFilter;
+        sink: VerifiedProfileSink;
+        /** An ordinary REQ (NIP-FI), not a NIP-AR sync, which has no resume. */
+        resumable: true;
+      }
+  ) & {
     wire?: string;
+    /** EOSE arrived on `wire`. */
+    eose?: true;
   };
   const syncs = new Set<SyncWire>();
   // Artifact and verified-profile syncs share the wire budget but are admitted
   // from separate pools, so a large roster cannot refuse an artifact view.
   const profileSyncs = new Set<SyncWire>();
   const syncWires = new Map<string, SyncWire>();
-  function endSync(sync: SyncWire, reason: string) {
+  function endSync(
+    sync: SyncWire,
+    reason: string,
+    resume?: Readonly<{ since: number }>,
+  ) {
     profileSyncs.delete(sync);
     if (!syncs.delete(sync)) return;
     if (sync.wire) syncWires.delete(sync.wire);
-    sync.sink.closed(reason);
+    // A NIP-AR sink keeps its one-argument contract; only a resume adds one.
+    if (sync.resumable && resume) sync.sink.closed(reason, resume);
+    else sync.sink.closed(reason);
     syncInterests();
   }
   const replayQueue = new Map<string, number>();
@@ -750,6 +777,11 @@ export function subscribeRelayTraffic(
     pump();
     notify();
   }
+  function sendProbe() {
+    if (probe) send(["CLOSE", probe]);
+    probe = `probe-${++serial}`;
+    send(["REQ", probe, { kinds: [44100], "#p": [viewer], limit: 0 }]);
+  }
   function recover() {
     if (closed || !authenticated) return;
     provenAt = tickedAt;
@@ -759,9 +791,7 @@ export function subscribeRelayTraffic(
     // no answer at all means the socket is dead, so replace it. A probe is a
     // request too: during a relay cooldown it waits for a later silent minute.
     if (!heard && !admission.delay()) {
-      if (probe) send(["CLOSE", probe]);
-      probe = `probe-${++serial}`;
-      send(["REQ", probe, { kinds: [44100], "#p": [viewer], limit: 0 }]);
+      sendProbe();
       clearTimeout(deadline);
       deadline = setTimeout(
         () => unresponsive?.("Live connection stopped answering"),
@@ -1330,9 +1360,21 @@ export function subscribeRelayTraffic(
         ...(route.id === "membership"
           ? [
               {
+                kinds: [13534],
+                since: route.since,
+                limit: 1,
+              },
+              {
                 kinds: [30078],
                 authors: [viewer],
                 "#t": ["read-state"],
+                since: route.since,
+                limit: LIVE_REPLAY_LIMIT,
+              },
+              {
+                kinds: [30078],
+                authors: [viewer],
+                "#d": [...SIDEBAR_COORDINATES],
                 since: route.since,
                 limit: LIVE_REPLAY_LIMIT,
               },
@@ -1365,14 +1407,14 @@ export function subscribeRelayTraffic(
     }
   }
   function clearSocket() {
-    if (authenticated) {
+    // Receiving a frame is not delivery while its native check is pending.
+    const liveUntil = authenticated
+      ? Math.floor(Math.min(heardAt, pendingSince ?? heardAt) / 1000)
+      : undefined;
+    if (liveUntil !== undefined) {
       // EOSE on this connection is the only evidence a route was live. A
       // renewal, pending or failed, still streams through the established wire
       // it kept, but only for the channels the route still covers.
-      // Receiving a frame is not delivery while its native check is pending.
-      const liveUntil = Math.floor(
-        Math.min(heardAt, pendingSince ?? heardAt) / 1000,
-      );
       // A channel whose replay has not ended closed no gap on this connection,
       // so it keeps the cursor of the last connection that did.
       const unproven = new Set([...awaitingReplay, ...replayQueue.keys()]);
@@ -1404,6 +1446,8 @@ export function subscribeRelayTraffic(
     clearTimeout(dispatchTimer);
     clearTimeout(recoveryTimer);
     clearTimeout(deadline);
+    clearTimeout(checkDeadline);
+    checkDeadline = undefined;
     for (const route of routes.values()) clearTimeout(route.deadline);
     awaitingReplay.clear();
     replayQueue.clear();
@@ -1411,11 +1455,19 @@ export function subscribeRelayTraffic(
     replayStopped = false;
     wires.clear();
     requests.clear();
-    // A sync has no resume: every sent one ends; unsent ones wait for the next socket.
+    // Every sent sync ends; unsent ones wait for the next socket. A NIP-AR
+    // sync has no resume. A resumable one that reached EOSE was delivered live
+    // until `liveUntil`, so its owner can resume it with the routes' overlap.
     const lost = [...syncs].filter((sync) => sync.wire);
     syncWires.clear();
     for (const sync of lost)
-      endSync(sync, "disconnected: live connection lost");
+      endSync(
+        sync,
+        "disconnected: live connection lost",
+        sync.resumable && sync.eose && liveUntil !== undefined
+          ? { since: Math.max(0, liveUntil - LIVE_RESUME_LAG) }
+          : undefined,
+      );
     if (socket) log.info(`${peer} disconnect`);
     socket?.close();
     socket = undefined;
@@ -1613,6 +1665,9 @@ export function subscribeRelayTraffic(
           admission.pause(hint ? Math.min(Number(hint[1]), 86400) : 5);
         }
         probe = undefined;
+        clearTimeout(checkDeadline);
+        checkDeadline = undefined;
+        answeredAt = Date.now();
         return;
       }
       if (
@@ -1735,8 +1790,10 @@ export function subscribeRelayTraffic(
             return;
           }
           sync.sink.event(checked);
-        } else if (data[0] === "EOSE") sync.sink.eose();
-        else if (data[0] === "CLOSED") {
+        } else if (data[0] === "EOSE") {
+          sync.eose = true;
+          sync.sink.eose();
+        } else if (data[0] === "CLOSED") {
           // `disconnected:` is reserved for local socket loss.
           const reason =
             typeof data[2] === "string" && !data[2].startsWith("disconnected:")
@@ -2091,8 +2148,12 @@ export function subscribeRelayTraffic(
       };
     },
     syncVerifiedProfiles(filter, sink) {
-      const checked = verifiedProfileFilter(filter.authors[0], filter["#d"]);
-      const sync: SyncWire = { filter: checked, sink };
+      const checked = verifiedProfileFilter(
+        filter.authors[0],
+        filter["#d"],
+        filter.since,
+      );
+      const sync: SyncWire = { filter: checked, sink, resumable: true };
       if (closed) {
         queueMicrotask(() =>
           sink.closed("unsupported: relay session disposed"),
@@ -2261,6 +2322,17 @@ export function subscribeRelayTraffic(
         pump();
         notify();
       } else connect();
+    },
+    check(network = false) {
+      // A socket not yet admitted has its own deadline; a cooldown forbids requests.
+      if (closed || !authenticated || checkDeadline || admission.delay())
+        return;
+      if (!network && Date.now() - answeredAt < LIVE_CHECK_FRESH_MS) return;
+      sendProbe();
+      checkDeadline = setTimeout(() => {
+        checkDeadline = undefined;
+        unresponsive?.("Live connection did not answer a wake check");
+      }, LIVE_CHECK_TIMEOUT_MS);
     },
     dispose() {
       if (closed) return;

@@ -7,6 +7,7 @@ import {
   GearIcon,
   LightningIcon,
   RobotIcon,
+  SendIcon,
 } from "../../shared/design-system/icons/index";
 import type { RegisteredPage } from "../../features/pages/service";
 
@@ -22,12 +23,12 @@ export const shellPresentation = {
 const bundledOrder = [
   "buzz.channels/channels",
   "buzz.inbox/inbox",
+  "buzz.drafts-and-sent/drafts-sent",
   "buzz.reminders/reminders",
   "buzz.bestie/bestie",
 ];
 const dockOrder = [
   "buzz.bestie/bestie",
-  "buzz.inbox/inbox",
   "buzz.channels/channels",
   "buzz.reminders/reminders",
 ];
@@ -53,6 +54,7 @@ export function orderPages(
 
 const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.inbox/inbox", BellIcon],
+  ["buzz.drafts-and-sent/drafts-sent", SendIcon],
   ["buzz.reminders/reminders", AlarmIcon],
   ["buzz.agents/agents", RobotIcon],
   ["buzz.workflows/workflows", LightningIcon],
@@ -62,15 +64,20 @@ const bundledIcons = new Map<string, typeof BrowserIcon>([
 export function pagePlacement(page: RegisteredPage) {
   if (!page.primary) return undefined;
   switch (page.key) {
-    case "buzz.channels/channels":
+    // Activity is a row at the top of the Messages sidebar.
     case "buzz.inbox/inbox":
+      return "sidebar";
+    case "buzz.channels/channels":
     case "buzz.bestie/bestie":
     case "buzz.reminders/reminders":
     case "buzz.agents/agents":
     case "buzz.workflows/workflows":
-      return "topbar";
+      return "dock";
     default:
-      return page.placement ?? "sidebar";
+      // `topbar` and `toolbar` predate the dock; both mean it.
+      return page.placement === undefined || page.placement === "sidebar"
+        ? "sidebar"
+        : "dock";
   }
 }
 
@@ -86,7 +93,7 @@ export function navigationOwner(
   const messages = "buzz.channels/channels";
   const page = pages.find((page) => page.key === selected);
   return page &&
-    pagePlacement(page) === "sidebar" &&
+    (page.conversationNavigation || pagePlacement(page) === "sidebar") &&
     pages.some((page) => page.key === messages)
     ? messages
     : selected;

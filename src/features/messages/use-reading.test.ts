@@ -199,6 +199,24 @@ it("reports only fully visible settled evidence after dwell, not mounted oversca
   vi.advanceTimersByTime(1);
   expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
 });
+it("a row within a pixel of the viewport's edge is fully visible; one clipped further is not", () => {
+  const h = setup();
+  // Scroll offsets snap to whole pixels but rows sit at fractional offsets, so
+  // an exact reveal can leave its row a sliver above the scroller's top.
+  h.setRows([
+    row("revealed", -0.047, 40),
+    row("above", -1.5, 40),
+    row("last", 460, 500.5),
+    row("below", 460, 501.5),
+  ]);
+  h.mutation();
+  vi.advanceTimersToNextFrame(); // Row changes are measured in the next frame.
+  vi.advanceTimersByTime(300);
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith([
+    "revealed",
+    "last",
+  ]);
+});
 it("a burst of scrolls and row changes cancels dwell at once but measures rows once, in the next frame", () => {
   const h = setup();
   const measured = vi.spyOn(h.element, "getBoundingClientRect");

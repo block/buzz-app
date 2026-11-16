@@ -6,7 +6,6 @@ import {
   useContext,
   useMemo,
   useState,
-  useSyncExternalStore,
   type ComponentPropsWithoutRef,
   type ReactElement,
   type ReactNode,
@@ -22,30 +21,16 @@ import {
   channelForLink,
   channelLinkLabel,
   emptyReferenceDirectory,
+  MentionLabel,
 } from "./ReferenceText";
-import {
-  AtIcon,
-  CopyIcon,
-  RobotIcon,
-} from "../../shared/design-system/icons/index";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { profileKey } from "../profiles/target";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { remarkSpoilers } from "./remark-spoilers";
-import type {
-  CodeBlockRenderer,
-  ContributionReader,
-  ConversationExtensions,
-} from "../conversation/contracts";
-import {
-  ContributionBoundary,
-  contributionKey,
-} from "../conversation/ContributionBoundary";
-import { resolveMatch } from "../../plugins/contributions";
+import type { ConversationExtensions } from "../conversation/contracts";
+import { CodeFence, observeTableOverflow } from "../markdown/code-blocks";
 import { InlineText } from "../conversation/InlineText";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { emojiMatches, linkPart, messageParts } from "../relay/emoji";
@@ -56,11 +41,11 @@ import {
   isLiteralMarkdownContext,
   isPlainProse,
   plainProseTree,
-  prepareMarkdown,
+  preparedMarkdown,
+  recentResults,
   type LiteralRange,
   type PreparedMarkdown,
 } from "./markdown-preparation";
-import { writeClipboardText } from "../../shared/clipboard";
 
 type MarkdownNode = {
   type: string;
@@ -309,7 +294,35 @@ type HtmlNode = {
   tagName?: string;
   properties?: Record<string, unknown>;
   children?: HtmlNode[];
+  value?: string;
 };
+const blockTags = new Set([
+  ...["p", "ul", "ol", "li", "blockquote", "pre", "hr", "section"],
+  ...["table", "h1", "h2", "h3", "h4", "h5", "h6"],
+]);
+const isBlock = (node: HtmlNode | undefined) =>
+  node?.type === "root" || blockTags.has(node?.tagName ?? "");
+/** Bodies keep authored spaces (`white-space: pre-wrap`), so drop the newlines
+ * the renderer writes only as markup: between blocks and after a `<br>`. */
+function rehypeMarkupNewlines() {
+  return function visit(node: HtmlNode) {
+    const children = node.children;
+    if (!children) return;
+    node.children = children.flatMap((child, index) => {
+      if (child.type !== "text") {
+        visit(child);
+        return [child];
+      }
+      const before = index ? children[index - 1] : node;
+      const after = children[index + 1] ?? node;
+      let value = child.value ?? "";
+      if (before?.tagName === "br" || isBlock(before))
+        value = value.replace(/^\n/, "");
+      if (isBlock(after)) value = value.replace(/\n$/, "");
+      return value ? [{ ...child, value }] : [];
+    });
+  };
+}
 /** Lists and quotes the slot descends into, so their last line keeps it. */
 const editedSlotContainers = new Set(["ul", "ol", "li", "blockquote"]);
 /** Leave a slot after the body's last rendered line for the edited marker:
@@ -444,6 +457,10 @@ type MessageComponents = {
     props: ComponentPropsWithoutRef<Tag> & ExtraProps,
   ) => ReactNode;
 };
+const MESSAGE_CODE_CLASSES = {
+  frame: styles.codeBlock,
+  actions: styles.codeActions,
+};
 const MessageComponentsContext = createContext<MessageComponents | null>(null);
 function useMessageComponents() {
   const components = useContext(MessageComponentsContext);
@@ -462,34 +479,6 @@ const markdownComponents: Components = {
     <table ref={observeTableOverflow} {...props} />
   ),
 };
-
-/** WebKit adds an `overflow-x: auto` scrollbar after flex and grid ancestors
- * have taken their heights, then lays out only the table again. A scrollbar
- * that takes space then overlaps the next row, or leaves a gap when removed.
- * CSS chooses the scrollbar from measured overflow so it is laid out with
- * the ancestors. Observe content too: edits can change scrollWidth without
- * resizing a table at its width cap. Measure on mount because the resize
- * observer's first report arrives after the row's. */
-function observeTableOverflow(table: HTMLTableElement | null) {
-  if (!table || typeof ResizeObserver === "undefined") return;
-  const update = () => {
-    const overflow = String(table.scrollWidth > table.clientWidth);
-    if (table.dataset.overflow !== overflow) table.dataset.overflow = overflow;
-  };
-  update();
-  const observer = new ResizeObserver(update);
-  observer.observe(table);
-  const contentObserver = new MutationObserver(update);
-  contentObserver.observe(table, {
-    childList: true,
-    characterData: true,
-    subtree: true,
-  });
-  return () => {
-    observer.disconnect();
-    contentObserver.disconnect();
-  };
-}
 
 export function MessageMarkdown({
   row,
@@ -520,10 +509,7 @@ export function MessageMarkdown({
   edited?: boolean | undefined;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
-  const prepared = useMemo(
-    () => preparedBodies(row.content, () => prepareMarkdown(row.content)),
-    [row.content],
-  );
+  const prepared = useMemo(() => preparedMarkdown(row.content), [row.content]);
   if (prepared.kind === "plain")
     return (
       <div className={styles.plainText}>
@@ -572,7 +558,7 @@ function PreparedMessageMarkdown({
   interactive = true,
   edited = false,
 }: Parameters<typeof MessageMarkdown>[0] & {
-  prepared: Extract<ReturnType<typeof prepareMarkdown>, { kind: "markdown" }>;
+  prepared: Extract<PreparedMarkdown, { kind: "markdown" }>;
   resolveName: (pubkey: string, fallback: string) => string;
 }) {
   const row =
@@ -684,8 +670,9 @@ function PreparedMessageMarkdown({
     const clickable =
       interactive && typeof target === "string" && !!canOpenLink?.(target);
     if (typeof text === "string" && typeof target === "string") {
-      const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
-      const Icon = agent ? RobotIcon : AtIcon;
+      // A namesake-qualified span shows its name; its target is the key.
+      const shown = text.slice(1).replace(/ \([a-f0-9]{64}\)$/i, "");
+      const label = key ? resolveName(key, shown) : shown;
       const Mention = clickable ? "button" : "span";
       // Selection copy reads the identity and the whole label (selection-copy.ts).
       return (
@@ -706,34 +693,20 @@ function PreparedMessageMarkdown({
               : undefined
           }
         >
-          <Icon aria-hidden="true" className={referenceStyles.icon} />
-          {label}
+          <MentionLabel agent={!!agent} label={label} />
         </Mention>
       );
     }
     return undefined;
   };
   const components: MessageComponents = {
-    p: ({ node, ...props }) => {
-      const first = node?.children[0];
-      const element = first?.type === "element" ? first : undefined;
-      const href = element?.properties.href;
-      const leadingMention =
-        typeof element?.properties["data-profile-target"] === "string" ||
-        (element?.tagName === "a" &&
-          typeof href === "string" &&
-          !!profileKey(href) &&
-          interactive &&
-          !!canOpenLink?.(href));
-      return (
-        <p
-          {...props}
-          className={largeEmoji ? styles.text : undefined}
-          data-single-emoji={largeEmoji || undefined}
-          data-leading-mention={leadingMention || undefined}
-        />
-      );
-    },
+    p: ({ node: _node, ...props }) => (
+      <p
+        {...props}
+        className={largeEmoji ? styles.text : undefined}
+        data-single-emoji={largeEmoji || undefined}
+      />
+    ),
     a: ({ href: target, children }) => {
       const href =
         target &&
@@ -746,12 +719,6 @@ function PreparedMessageMarkdown({
           : safeLinkUrl(target));
       if (href && profileKey(href)) {
         const label = labelText(children);
-        if (!interactive || !canOpenLink?.(href))
-          return (
-            <span>
-              {children} ({href})
-            </span>
-          );
         return renderProfile(label.startsWith("@") ? label : `@${label}`, href);
       }
       return href ? (
@@ -795,27 +762,15 @@ function PreparedMessageMarkdown({
         <span {...props}>{children}</span>
       );
     },
-    pre: ({ node, children, ...props }) => {
-      const code = labelText(children).replace(/\n$/, "");
-      const plain = (
-        <pre {...props}>
-          {children}
-          {interactive && <CodeActions code={code} />}
-        </pre>
-      );
-      const language = codeLanguage(node);
-      // Previews are not interactive, so they keep the plain code.
-      return interactive && language && extensions?.codeBlocks ? (
-        <CodeBlock
-          registry={extensions.codeBlocks}
-          language={language}
-          code={code}
-          fallback={plain}
-        />
-      ) : (
-        plain
-      );
-    },
+    // Previews are not interactive, so they keep the plain code.
+    pre: (props) => (
+      <CodeFence
+        {...props}
+        copy={interactive}
+        registry={interactive ? extensions?.codeBlocks : undefined}
+        classes={MESSAGE_CODE_CLASSES}
+      />
+    ),
   };
 
   const markdown = (
@@ -826,33 +781,6 @@ function PreparedMessageMarkdown({
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
 
-/** Switching channels remounts every row. Keep recent results so a revisit
- * does not prepare and parse unchanged bodies again. */
-function recentResults<T>(
-  budget: number,
-  weigh: (key: string, value: T) => number,
-) {
-  const results = new Map<string, Readonly<{ value: T; weight: number }>>();
-  let total = 0;
-  return (key: string, make: () => T) => {
-    let entry = results.get(key);
-    if (entry) results.delete(key);
-    else {
-      const value = make();
-      entry = { value, weight: weigh(key, value) };
-      // Keeping a result heavier than the budget would evict all the others.
-      if (entry.weight > budget) return value;
-      total += entry.weight;
-    }
-    results.set(key, entry);
-    for (const [oldest, { weight }] of results) {
-      if (total <= budget) break;
-      results.delete(oldest);
-      total -= weight;
-    }
-    return entry.value;
-  };
-}
 function elementCount(node: ReactNode): number {
   if (Array.isArray(node))
     return node.reduce<number>((sum, child) => sum + elementCount(child), 0);
@@ -860,11 +788,6 @@ function elementCount(node: ReactNode): number {
     ? 1 + elementCount(node.props.children)
     : 0;
 }
-// A prepared body keeps its content and literal ranges: ~200k characters.
-const preparedBodies = recentResults<PreparedMarkdown>(
-  200_000,
-  (content) => 100 + content.length,
-);
 // A parsed body keeps ~2 KB, ~1 KB per element and ~2 bytes per character of
 // its key and text. Dense markup has an element every few characters, so weigh
 // both: ~4 MB in all. The elements depend only on the protected content; their
@@ -904,7 +827,7 @@ const MarkdownBody = memo(function MarkdownBody({
           [remarkInlineContent, protectedContent],
           remarkLiteralHtml,
         ],
-        rehypePlugins: [rehypeEditedSlot],
+        rehypePlugins: [rehypeMarkupNewlines, rehypeEditedSlot],
         components: markdownComponents,
         skipHtml: true,
         // The live anchor renderer validates URLs. Cached parsing cannot decide
@@ -947,95 +870,6 @@ function MessageSpoiler({
       >
         {children}
       </span>
-    </span>
-  );
-}
-
-/** The fence's info-string language, as remark records it on the inner `code`. */
-function codeLanguage(pre: ExtraProps["node"]) {
-  const code = pre?.children[0];
-  if (code?.type !== "element" || code.tagName !== "code") return undefined;
-  const classes = code.properties.className;
-  return Array.isArray(classes)
-    ? classes
-        .map(String)
-        .find((name) => name.startsWith("language-"))
-        ?.slice("language-".length)
-    : undefined;
-}
-
-/** A plugin presents the block and may add an action; the host keeps the frame,
- * action placement and copy, and restores the plain code when the plugin fails
- * or is removed. */
-function CodeBlock({
-  registry,
-  language,
-  code,
-  fallback,
-}: {
-  registry: ContributionReader<CodeBlockRenderer>;
-  language: string;
-  code: string;
-  fallback: ReactNode;
-}) {
-  const renderers = useSyncExternalStore(
-    registry.subscribe,
-    registry.snapshot,
-    registry.snapshot,
-  );
-  const renderer = resolveMatch(renderers, language);
-  if (!renderer) return fallback;
-  const { component: Renderer, action: Action } = renderer;
-  return (
-    <ContributionBoundary
-      key={`${contributionKey(renderer)}:${language}:${code}`}
-      fallback={fallback}
-    >
-      {/* Selection copy reads the source here (selection-copy.ts). */}
-      <div
-        className={styles.codeBlock}
-        data-copy-code={code}
-        data-copy-language={language}
-      >
-        <Renderer code={code} language={language} />
-        <CodeActions code={code}>
-          {Action && <Action code={code} language={language} />}
-        </CodeActions>
-      </div>
-    </ContributionBoundary>
-  );
-}
-
-function CodeActions({
-  code,
-  children,
-}: {
-  code: string;
-  children?: ReactNode;
-}) {
-  const notify = useToastNotification();
-  const [copying, setCopying] = useState(false);
-  return (
-    <span className={styles.codeActions}>
-      {children}
-      <IconButton
-        hint="familiar"
-        aria-label="Copy code block"
-        title="Copy code block"
-        disabled={copying}
-        focusableWhenDisabled
-        icon={<CopyIcon />}
-        onClick={() => {
-          setCopying(true);
-          void Promise.resolve()
-            .then(() => writeClipboardText(code))
-            .then(
-              () => notify("Copied code to clipboard", "success"),
-              () => notify("Failed to copy code", "error"),
-            )
-            .finally(() => setCopying(false));
-        }}
-      />
     </span>
   );
 }

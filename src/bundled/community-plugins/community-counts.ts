@@ -153,7 +153,9 @@ function capabilities(session: RelaySession) {
 }
 
 /** The community's marketplace channel: the oldest open, unarchived system
- * channel with the marketplace label, whoever made it. A private or archived
+ * channel with the marketplace label. One the relay created itself wins over
+ * any a member made, since a relay that provisions the channel reserves its
+ * label. Otherwise it's the oldest, whoever made it. A private or archived
  * one is skipped, so the next oldest takes over. */
 export async function findChannel(
   session: RelaySession,
@@ -164,12 +166,16 @@ export async function findChannel(
     consistency: "strong",
     ...(signal ? { signal } : {}),
   });
-  return found.find(
+  const usable = found.filter(
     (channel) =>
       channel.channelType === "system" &&
       !channel.private &&
       channel.visibility !== "private" &&
       !channel.archived,
+  );
+  return (
+    usable.find((channel) => channel.creator === session.relayAuthor) ??
+    usable[0]
   );
 }
 

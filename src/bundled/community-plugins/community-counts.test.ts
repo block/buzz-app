@@ -121,6 +121,30 @@ it("uses the oldest open marketplace channel, whoever made it", async () => {
   );
 });
 
+it("prefers the channel the relay created over older member-made ones", async () => {
+  const relay = "9".repeat(64);
+  const community = fakeCommunity({
+    channels: [
+      {
+        id: "00000003-0000-4000-8000-000000000000",
+        creator: carol,
+        createdAt: 1,
+      },
+      { id: channel, creator: relay, createdAt: 4 },
+      {
+        id: "00000005-0000-4000-8000-000000000000",
+        creator: relay,
+        createdAt: 6,
+        archived: true,
+      },
+    ],
+  });
+  await expect(ensureChannel(community.session)).resolves.toMatchObject({
+    id: channel,
+  });
+  expect(community.create).not.toHaveBeenCalled();
+});
+
 it("skips private and archived marketplace channels", async () => {
   const community = fakeCommunity({
     channels: [

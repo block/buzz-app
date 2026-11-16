@@ -135,9 +135,11 @@ configured". Any other value fails the build.
 
 Installs go through the usual plugin review. Install counts and upvotes never
 go to the index: they stay in the selected community. Each community keeps them
-in one open NIP-CL system channel labeled `buzz-marketplace`: the oldest open,
-unarchived one, whoever created it. When a complete lookup finds none, the first
-member's Buzz to need it creates it, and joins it to write.
+in one open NIP-CL system channel labeled `buzz-marketplace`. A relay can
+provision that channel itself and reserve the label; a channel the relay created
+is used first. Otherwise it's the oldest open, unarchived one, whoever created
+it. When a complete lookup finds none, the first member's Buzz to need it
+creates it, and joins it to write.
 
 The plugin records every installed plugin, wherever it came from: from the
 page, a Git repository, or a local folder. Bundled plugins aren't recorded. In

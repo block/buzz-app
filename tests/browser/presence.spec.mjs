@@ -70,9 +70,9 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
     expect(
       app.report.presenceSnapshots.some((snapshot) => snapshot.pending),
     ).toBe(true);
-    await expect(profile.getByText(/^(Active|Away|Offline)$/)).toHaveCount(0);
+    await expect(profile.getByText(/^(Online|Away|Offline)$/)).toHaveCount(0);
     app.relay.releasePresence();
-    await expect(profile.getByText("Active", { exact: true })).toBeVisible();
+    await expect(profile.getByText("Online", { exact: true })).toBeVisible();
     await expect(
       profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
     ).toBeVisible();
@@ -269,7 +269,7 @@ test.describe("human message bylines omit presence", () => {
     await expect(
       profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
     ).toBeVisible();
-    await expect(profile.getByText("Active", { exact: true })).toBeVisible();
+    await expect(profile.getByText("Online", { exact: true })).toBeVisible();
     app.presence("away");
     await expect(profile.getByText("Away", { exact: true })).toBeVisible();
     await expect(

@@ -583,8 +583,9 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
     trigger.focus();
     rerender(show([turn(1), turn(2), turn(3)], ["reply", id(2)]));
     expect(shown).toEqual(["item:p2"]);
-    // It starts below the sticky header, which keeps no margin afterwards.
-    expect(margins).toEqual(["40px"]);
+    // It starts below the sticky header, with room for its focus ring, and
+    // keeps no margin afterwards.
+    expect(margins).toEqual(["calc(40px + var(--space-2))"]);
     expect(
       view.querySelector<HTMLElement>('[data-entry="item:p2"]')?.style
         .scrollMarginBlockStart,

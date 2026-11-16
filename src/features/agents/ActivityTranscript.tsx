@@ -259,11 +259,12 @@ function useShowFocused(
     surface.addEventListener("animationend", unmark, { once: true });
     surface.addEventListener("animationcancel", unmark, { once: true });
     following.current = false;
-    // Start below the panel's sticky header, which would otherwise cover it.
+    // Start below the panel's sticky header, which would otherwise cover it,
+    // with room for the focus ring and the arrival wash's spread.
     const header = element
       .closest("[data-transcript]")
       ?.querySelector<HTMLElement>(":scope > [data-transcript-header]");
-    element.style.scrollMarginBlockStart = `${header?.offsetHeight ?? 0}px`;
+    element.style.scrollMarginBlockStart = `calc(${header?.offsetHeight ?? 0}px + var(--space-2))`;
     element.scrollIntoView({ block: "start" });
     element.style.removeProperty("scroll-margin-block-start");
     // Keyboard focus arrives too, after the panel's own handoff, unless the

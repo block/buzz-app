@@ -233,6 +233,21 @@ rewriteTools = false;
   faux.setResponses([(context) => { out.after = users(context).at(-1); return fauxAssistantMessage("Answer"); }]);
   const later = await pi.rpc("deliver", shared("Q4", "later", "B"));
   await pi.rpc("wait", { agent, submission: later.submission });
+  // A run a top-level turn started replies at the channel's top level.
+  const topWorking = held();
+  faux.setResponses([
+    async () => { await topWorking.gate; return fauxAssistantMessage(fauxToolCall("buzz_send", { text: "working" }), { stopReason: "toolUse" }); },
+    (context) => { out.topLevel = users(context).at(-1); return fauxAssistantMessage("Answer"); },
+  ]);
+  const top = [];
+  try {
+    top.push(await pi.rpc("deliver", shared("T1", "top", "chan")));
+    await started(pi.events, "T1");
+    top.push(await pi.rpc("deliver", shared("T2", "thread", "B")));
+  } finally {
+    topWorking.release();
+  }
+  await settle(top);
 }
 // A run the host stops in continues in the next host.
 const d = held(), calling = held();
@@ -571,6 +586,44 @@ const ar2 = await pi.rpc("deliver", after("AR2", "next"));
 finished.release();
 out.afterRun = { first: ar1Wait, second: await pi.rpc("wait", { agent: afterAgent, submission: ar2.submission }), saw: afterSaw };
 await pi.stop();
+// A wake that read the run as done before its prompt's refresh may join the
+// next run rather than start it: a later steer then names no thread for it.
+{
+  const holding = held(), holdGate = held(), asked = held(), answered = held(), working = held(), joined = held(), taken = held();
+  const holdRun = defineExtension({ name: "hold-run", hooks: [hook(GenerationTask, { afterRun: async () => { holding.release(); await holdGate.gate; return undefined; } })] });
+  const joinAgent = "e".repeat(64);
+  pi = start(async () => { asked.release(); await answered.gate; return { text: "wake", steer: "steer: wake" }; }, [nesting, holdRun]);
+  await pi.rpc("open", { agent: joinAgent, tools });
+  faux.setResponses([
+    fauxAssistantMessage("Done"),
+    async () => { await working.gate; return fauxAssistantMessage(fauxToolCall("buzz_send", { text: "working" }), { stopReason: "toolUse" }); },
+    async () => { joined.release(); await taken.gate; return fauxAssistantMessage(fauxToolCall("buzz_send", { text: "working" }), { stopReason: "toolUse" }); },
+    (context) => { out.joined = context.messages.filter((m) => m.role === "user").map((m) => m.content).at(-1); return fauxAssistantMessage("Answer"); },
+  ]);
+  const shared = (request, scope, more) => ({ ...turn(request, request), agent: joinAgent, key: "join", context: { channel: "chan" }, scope, ...more });
+  const delivered = [];
+  try {
+    delivered.push(await pi.rpc("deliver", shared("J1", "A")));
+    await holding.gate;
+    delivered.push(await pi.rpc("deliver", shared("J2", "B")));
+    const woken = pi.rpc("deliver", shared("J3", "C", { refresh: true }));
+    await asked.gate;
+    holdGate.release();
+    await started(pi.events, "J2");
+    answered.release();
+    delivered.push(await woken);
+    working.release();
+    await joined.gate;
+    delivered.push(await pi.rpc("deliver", shared("J4", "D")));
+  } finally {
+    holdGate.release();
+    answered.release();
+    working.release();
+    taken.release();
+  }
+  for (const x of delivered) await pi.rpc("wait", { agent: joinAgent, submission: x.submission });
+  await pi.stop();
+}
 // Pi's auth.json: a change that returns nothing, as pi-ai's refresh does when
 // another process refreshed first, keeps the sign-in.
 const auth = new AuthFile(data + "/auth.json");
@@ -872,6 +925,10 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.promotedSteer).toBe("steer: more");
     expect(out.woken).toBe("steer: wake");
     expect(out.after).toBe("later");
+    expect(out.topLevel).toBe(
+      "steer: thread\n\nThe reply target above is for the new message only. If you are still working on an earlier request, ordinary replies about that work still go to the channel top level, without `reply`.",
+    );
+    expect(out.joined).toBe("steer: J4");
     expect(out.stopped).toEqual({ status: "closed" });
     expect(out.unfinished).toEqual([
       {

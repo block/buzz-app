@@ -280,6 +280,41 @@ it("registers link previews and withdraws them with their plugin", async () => {
   );
 });
 
+it("registers identity marks and withdraws them with their plugin", async () => {
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      expect(() =>
+        ctx.conversation.registerIdentityMark({
+          id: "Bad id",
+          title: "Check",
+          component: Component,
+        }),
+      ).toThrow("id, title and component");
+      expect(() =>
+        ctx.conversation.registerIdentityMark({
+          id: "check",
+          title: "Check",
+        } as never),
+      ).toThrow("id, title and component");
+      ctx.conversation.registerIdentityMark({
+        id: "check",
+        title: "Check",
+        component: Component,
+      });
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.identityMarks.snapshot()).toHaveLength(1),
+  );
+  expect(h.runtime.snapshot()[h.plugin.manifest.id]?.status).toBe("active");
+  h.runtime.reconcile([]);
+  await vi.waitFor(() =>
+    expect(h.service.identityMarks.snapshot()).toHaveLength(0),
+  );
+});
+
 it("rejects an attachment renderer order that is neither a number nor a function", async () => {
   const h = harness({
     inject: ["conversation"],
@@ -374,17 +409,20 @@ it("owns completion registration through disable, replacement and failed activat
   );
   expect(broken.service.completions.snapshot()).toHaveLength(0);
 });
-it.each([emoji, mentions])(
-  "bundled plugin registers its own completion provider",
-  async (module) => {
+it.each([
+  [emoji, ["typeahead"]],
+  [mentions, ["typeahead", "folders", "skills"]],
+])(
+  "bundled plugin registers its own completion providers",
+  async (module, ids) => {
     const h = harness(module);
     h.runtime.reconcile([h.plugin]);
     await vi.waitFor(() =>
-      expect(h.service.completions.snapshot()).toHaveLength(1),
+      expect(h.service.completions.snapshot().map(({ id }) => id)).toEqual(ids),
     );
-    expect(h.service.completions.snapshot()[0]?.pluginId).toBe(
-      h.plugin.manifest.id,
-    );
+    expect(
+      h.service.completions.snapshot().map(({ pluginId }) => pluginId),
+    ).toEqual(ids.map(() => h.plugin.manifest.id));
   },
 );
 

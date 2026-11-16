@@ -1068,7 +1068,7 @@ it("finds and opens saved conversations while the community is unreachable or st
           return () => listeners.delete(listener);
         },
         snapshot: () => connection,
-        retry,
+        tryAgain: retry,
       },
     },
   } as unknown as SearchServices;

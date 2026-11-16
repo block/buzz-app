@@ -17,6 +17,10 @@ import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
 import mermaidManifest from "./mermaid/manifest.json";
 import * as mermaid from "./mermaid";
+import chartsManifest from "./charts/manifest.json";
+import * as charts from "./charts";
+import fileViewerManifest from "./file-viewer/manifest.json";
+import * as fileViewer from "./file-viewer";
 import namingManifest from "./identity-naming/manifest.json";
 import * as naming from "./identity-naming";
 import feedbackManifest from "./feedback/manifest.json";
@@ -56,13 +60,13 @@ import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
 import reposManifest from "./repos/manifest.json";
 import * as repos from "./repos";
+import changesetsManifest from "./changesets/manifest.json";
+import * as changesets from "./changesets";
 import workflowsManifest from "./workflows/manifest.json";
 import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
-import linkPreviewsManifest from "./link-previews/manifest.json";
-import * as linkPreviews from "./link-previews";
 import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 import relayStaffManifest from "./relay-staff/manifest.json";
@@ -145,6 +149,16 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
+    manifest: { ...chartsManifest, apiVersion: 1 },
+    module: charts,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...fileViewerManifest, apiVersion: 1 },
+    module: fileViewer,
+    enabledByDefault: false,
+  },
+  {
     manifest: { ...namingManifest, apiVersion: 1 },
     module: naming,
     enabledByDefault: true,
@@ -167,11 +181,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...linksManifest, apiVersion: 1 },
     module: links,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...linkPreviewsManifest, apiVersion: 1 },
-    module: linkPreviews,
     enabledByDefault: true,
   },
   {
@@ -237,6 +246,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...piManifest, apiVersion: 1 },
     module: pi,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...changesetsManifest, apiVersion: 1 },
+    module: changesets,
     enabledByDefault: false,
   },
   {

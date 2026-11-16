@@ -83,8 +83,9 @@ remain distinct. Shared tabs connect related views of one object; route destinat
 retain navigation semantics except for the shell dock described in
 [Chrome route navigation](#chrome-route-navigation). When replacing a focused page heading with shared
 chrome, preserve a meaningful destination focus target, such as a named content
-region. Do not add a duplicate title or discard the focus handoff just because the
-shared heading has no ref or tabIndex prop. [Inbox](../../bundled/inbox/InboxPage.tsx) demonstrates
+region. Do not add a duplicate title or discard the focus handoff: pass `ref` and
+`tabIndex={-1}` to the shared heading to make it a focus landing after an action
+removes the controls it introduces; its recipe draws the keyboard-only ring. [Inbox](../../bundled/inbox/InboxPage.tsx) demonstrates
 body filters and list/detail ownership; [Solo chats](../../bundled/channels/ChannelsPage.tsx)
 demonstrates a working area with a persistent composer. Neither is a blanket visual
 template: check the adoption review before copying their surrounding chrome.
@@ -131,6 +132,13 @@ Keep group headings outside SettingsGroup, and use the documented field/section
 gaps rather than each plugin inventing its own rhythm. Dependent preferences retain
 the row's alignment. A row is not an extra click target around its input. Preserve
 visible labels and connect help/error text; placeholders cannot replace labels.
+When a choice in a row reveals more settings, such as Manual under an Automatic
+or Manual select, wrap those rows in `SettingsGroupExpand` inside the same `rows`
+group rather than opening a second group or a disclosure. The revealed rows line
+up with the choice's title after its icon, enter with the panel motion (none
+with reduced motion), mount when first opened, and then stay mounted but inert
+while closed, so a draft survives switching back. Show what a choice picked as a `ValueChip` in the row's
+subtitle; keep it to the value itself, not how it was chosen.
 Use `Accordion` for optional details, retaining mounted draft input where needed.
 Use `Accordion variant="settings"` for disclosures alongside preference rows.
 Inside a row-layout `SettingsGroup`, it shares the group's frame and content inset,
@@ -1397,15 +1405,20 @@ or explicit-save actions inside the content, rather than a modal-wide Save foote
 
 Use `text-label` (16px, 500 weight at the default scale) for the shared Dialog
 title. Group the title and optional description with `--space-2` (8px), beside
-the close button so its hit area does not enlarge the text gap. The body owns
-vertical padding matching the dialog's horizontal `--dialog-padding`: `2rem`,
-or `1rem` at viewport widths up to `30rem`. Do not add an outer flex gap
-on top of that body padding. Footers following body content also reserve a fixed
+the close button so its hit area does not enlarge the text gap. Dialog uses one
+`--space-3` (12px) heading-to-body gap at every breakpoint. Sticky headers do not
+add another gap; omit `headerGap` in callers. `headerGap="compact"` remains a
+compatible alias. AlertDialog
+retains its body inset matching the horizontal `--dialog-padding`: `2rem`, or
+`1rem` at viewport widths up to `30rem`. Dialog body-bottom padding also retains
+that responsive inset. Do not add an outer flex gap on top of the shared spacing.
+Search and integrated navigation retain their own framing.
+Padded chrome keeps the gap on its fixed header rather than inside the body
+scrollport.
+Footers following body content also reserve a fixed
 `--space-4` (`1rem`) top gutter outside the scrollport, so scrolling content never
 meets the buttons directly. Header-only confirmations retain their header-to-action
-gap. Create/Edit channel forms and plugin update reviews opt into
-`headerGap="compact"` for a 12px heading-to-body gap at every breakpoint;
-other dialog compositions retain their default spacing. Channel privacy confirmation
+gap. Channel privacy confirmation
 steps also opt into `footerGap="compact"` for `0.5rem` of body-bottom padding
 before the fixed footer gutter; returning to the form restores the normal
 body-bottom padding.
@@ -2148,8 +2161,11 @@ accessible selected state.
 Dock artwork stays still on hover and press. Bestie uses its configured avatar
 from the shared page presentation, at the standard avatar size.
 Dock labels remain accessible and use the dock label hover bucket to the right of each vertical dock
-button (beneath horizontal docks); badges overlay the tile. A tile with a page
-preview shows its label on keyboard focus and while its preview is closed.
+button (beneath horizontal docks); badges overlay the tile. CountBadge uses a compact
+corner capsule straddling the top-right edge, with `surface-dock-count` and
+`text-dock-count` keeping dark fill and readable accent ink in both modes. The
+shell scrollport preserves gutter space for the full capsule and focus ring.
+A tile with a page preview shows its label on keyboard focus and while its preview is closed.
 Up/Down arrow keys move focus in the side dock without selecting; Enter, Space or
 pointer selection changes the page while focus stays on its tab. Horizontal dock
 compositions use Left/Right. The host passes per-opening focus intent so page

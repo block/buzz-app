@@ -113,8 +113,8 @@ like the file.
 | `plugins[].id` | yes | The plugin manifest ID: lowercase letters, digits, dots and hyphens, starting with a letter. Not a plugin included with Buzz. |
 | `plugins[].repository` | yes | An HTTPS or SSH Git URL, or GitHub `owner/repository`, as the Add dialog accepts. No credentials, query or fragment. Buzz stores the normalized HTTPS or SSH URL. |
 | `plugins[].reference` | yes | A branch or tag name: letters, digits, `.`, `_`, `/`, `-`, at most 200 characters, not starting with `-`. |
-| `plugins[].commit` | yes | The full 40 digit (SHA-1) or 64 digit (SHA-256) hexadecimal object ID the reference must resolve to. Matching ignores case. Abbreviated IDs are rejected. |
-| `plugins[].path` | no | Relative folder of the built plugin (containing `manifest.json` and `plugin.js`, or a signed release pair) inside the repository. Default `.`. Written canonically: `.` alone, or plain segments joined by single `/` (`plugins/notes/dist`). No empty, `.` or `..` segments, so no leading or trailing `/`, `//` or `./`, and no `\`, `:` or control characters. A path that is not written this way is rejected, because it could never match the folder Buzz finds. |
+| `plugins[].commit` | yes | The full 40 digit (SHA-1) or 64 digit (SHA-256) hexadecimal object ID to install. It must be on `reference`: the tip or an earlier commit of that branch or tag. Matching ignores case. Abbreviated IDs are rejected. |
+| `plugins[].path` | no | Relative folder of the built plugin (containing `manifest.json` and `plugin.js`, or a signed release pair) inside the repository. Default `.`. Buzz reads only this folder of the commit, so a repository with more than 20,000 files elsewhere still works. Written canonically: `.` alone, or plain segments joined by single `/` (`plugins/notes/dist`). No empty, `.` or `..` segments, so no leading or trailing `/`, `//` or `./`, and no `\`, `:` or control characters. A path that is not written this way is rejected, because it could never match the folder Buzz finds. |
 
 ### URL entries
 
@@ -190,8 +190,8 @@ other.
 - **Pending recommendations** show as a small count beside **Plugins** in the profile
   menu and beside **Manage plugins** in Settings. There is no startup prompt or modal.
 - **Shell update notices** also check installed Git plugins. For a managed plugin,
-  the check and update use the recommended reference, path, and commit pin. A
-  reference at another commit cannot install. Missing recommendations keep their
+  the check and update use the recommended reference, path, and commit pin, and read
+  only that folder. A commit that is not on the reference cannot install. Missing recommendations keep their
   existing review flow. The Plugins menu keeps updates available after **Later**.
 - **Details of a managed plugin** do not offer the generic update check, which would
   install the reference's tip instead of the pinned commit. They show the same
@@ -205,13 +205,21 @@ other.
 
 ## Pinned commit behavior
 
-The Git import resolves `reference` with a shallow clone, then requires `HEAD` to be
-exactly `commit`, and the app checks again that the commit it received is the pinned one.
-If the reference has moved, the review shows the two commits and refuses to continue;
-there is no fallback to the new commit. If the policy entry changes while a review is
-open, the review reads the new entry again, and it closes if the entry is removed. Pin a tag, or rewrite the
-entry's `commit` when you intend a branch to advance. Because only the reference's tip is
-fetched, a commit that is no longer the tip of its reference cannot be installed.
+The Git import fetches `commit` directly, without its history or file contents, and
+reads the recommended `path` at that commit. It then fetches the reference's commit
+history and requires `commit` to be an ancestor of (or equal to) the reference's tip, so
+the review's "pinned to commit X on *reference*" is true. A commit that is on the
+reference but no longer its tip installs; a commit that is not on the reference, such as
+one from another branch or a rewritten history, is refused. Because the commit is read
+directly, merging more commits to the reference does not break an existing pin.
+
+Some Git hosts refuse to serve a commit by its ID. For those, Buzz falls back to reading
+the reference's tip, which must then equal `commit`; if the reference has moved, the
+review shows the two commits, says the commit could not be fetched directly, and refuses
+to continue. There is no fallback to the new commit. If the policy entry changes while a
+review is open, the review reads the new entry again, and it closes if the entry is
+removed. Pin a tag, or rewrite the entry's `commit` when you intend a branch to advance.
+The app also checks again that the commit it received is the pinned one.
 
 Only an install or update from a recommendation or an agent's request records `commit`
 in the plugin's saved source in the profile registry. Older Buzz versions reject that field and offer settings

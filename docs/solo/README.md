@@ -89,8 +89,18 @@ behavior on the label, so a rename touches copy only.
   caller, including the standalone stdio server: signed by the caller, with the
   label and any `members` it names. The caller is the creator, so an agent's
   key makes a chat its human members see as shared, not their own. It sends no
-  message, so no agent turn starts, and it does not file the chat in a
-  workspace. It cannot check NIP-CL support first, so on a relay that drops the
+  message, so no agent turn starts. Locally hosted agent runs may use
+  `solo_workspace_list` for their host-bound owner's personal workspace IDs and
+  pass an exact `workspace` to `channel_create` with `solo: true`. Include the
+  owner explicitly in `members`; filing never adds members, copies workspace
+  defaults or Canvas, or changes the creator. This capability is unavailable to
+  standalone/external connections, Nexus workers, and plugin agent handles.
+  Creation and filing are not atomic. A known refusal before assignment reports
+  the created ID and “created, not filed.” After assignment starts, failure reports
+  placement unconfirmed: it may already be durable or pending delivery. Inspect
+  or refresh that chat before **Move to**, never create another. Omitting
+  `workspace` preserves creation without filing.
+  It cannot check NIP-CL support first, so on a relay that drops the
   label it reports an ordinary private channel instead.
 - **Share** opens the same access dialog from Solo and Messages. This flow
   preserves channel ID, history, Canvas, existing members,
@@ -142,8 +152,12 @@ behavior on the label, so a rename touches copy only.
 - Solo chats use the ordinary composer with explicit
   recipient tags for both owners and guests. Saved chats offer the chat's people
   and your available agents; an untagged message never infers an agent recipient.
-  Only available agents can be enrolled through tagging—outside humans must
-  already have been shared into the chat. Empty new-chat drafts start tagged with
+  Only available agents can be enrolled through tagging. Anyone else from the
+  community directory can be mentioned as a reference, as in a DM: they are
+  not added or notified, and the chooser row says so. This includes a new
+  chat's first message. A reference does not replace the toolbar's agents,
+  and the toolbar's agent menu offers agents only. People join only
+  through Share. Empty new-chat drafts start tagged with
   the default agent for this account/community. **Agents → right-click or "..." →
   Make my bestie** explicitly saves that agent as the bestie; its card then shows
   **Bestie**. That choice is saved to the account as a private `main-agent` record,

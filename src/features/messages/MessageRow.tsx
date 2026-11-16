@@ -85,6 +85,7 @@ import {
 } from "../conversation/ContributionBoundary";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { AttachmentImage } from "./AttachmentImage";
+import { AgentDeclineNotes } from "./AgentDeclineNotes";
 import { DeliveryNotice } from "./DeliveryNotice";
 import { AttachmentView } from "../conversation/AttachmentView";
 import { AudioAttachment } from "./AudioAttachment";
@@ -112,6 +113,9 @@ import {
   MenuIcon,
   MenuItem,
   MenuSeparator,
+  MenuSubmenu,
+  MenuSubmenuPopup,
+  MenuSubmenuTrigger,
 } from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
@@ -326,6 +330,11 @@ function MessageRowContent({
     row.channelId,
     (channel) => channel?.channelType === "solo",
   );
+  const dmMembers = useListedChannel(
+    references?.channels,
+    row.channelId,
+    (channel) => (channel?.channelType === "dm" && channel.members) || none,
+  );
   const showTime =
     messageTimestamps === "show" ||
     (messageTimestamps === "hide-solo" && !solo);
@@ -384,18 +393,77 @@ function MessageRowContent({
     canViewTranscript ? session?.agentActivity : undefined,
     row,
   );
-  const activityItem = canViewActivity && (
-    <MenuItem
-      onClick={() => {
-        if (canOpenLink?.(activityView)) onOpenLink(activityView);
-      }}
-    >
-      <MenuIcon>
-        <ListBulletsIcon />
-      </MenuIcon>
-      View activity
-    </MenuItem>
+  // An agent's message opens at the turn that posted it; the viewer's own
+  // message, at the turns it began for each agent it names, or for the other
+  // member of a one-to-one DM, which wakes without a mention.
+  const own = !canViewActivity && !!viewer && row.authorId === viewer;
+  const activityAgents = canViewActivity
+    ? [row.authorId]
+    : own && row.audience !== "agents"
+      ? [
+          ...new Set([
+            ...row.mentions,
+            ...(dmMembers.length === 2
+              ? dmMembers.filter((pubkey) => pubkey !== viewer)
+              : []),
+          ]),
+        ].filter(
+          (pubkey) =>
+            agentPubkeys?.has(pubkey) ||
+            !!directory.profiles.get(pubkey)?.isAgent ||
+            directory.agents.some((item) => item.pubkey === pubkey),
+        )
+      : [];
+  const activityFocus = [row.id, ...(row.request ? [row.request] : [])];
+  const openActivity = (view: string) =>
+    canOpenLink?.(view) && openProfileTranscript(view, openLink, activityFocus);
+  const activityViews = activityAgents.flatMap((pubkey) => {
+    const view = profileActivityViewTarget(pubkey);
+    return view && canOpenLink?.(view) ? [{ pubkey, view }] : [];
+  });
+  // On the viewer's own message, say whose activity: the agent's name as the
+  // rest of the app shows it, or "Agent" when it has none.
+  const agentName = (pubkey: string) => {
+    const profile = directory.profiles.get(pubkey);
+    return resolveName(
+      pubkey,
+      directory.agents.find((item) => item.pubkey === pubkey)?.name.trim() ||
+        (profile?.nameIsFallback ? "" : profile?.name.trim()) ||
+        "Agent",
+    );
+  };
+  const activityIcon = (
+    <MenuIcon>
+      <ListBulletsIcon />
+    </MenuIcon>
   );
+  const [onlyActivity] = activityViews;
+  const activityItem =
+    activityViews.length > 1 ? (
+      // Several agents share one item, so the menu keeps its length.
+      <MenuSubmenu>
+        <MenuSubmenuTrigger>
+          {activityIcon}
+          View activity
+        </MenuSubmenuTrigger>
+        <MenuSubmenuPopup>
+          {activityViews.map(({ pubkey, view }) => (
+            <MenuItem key={pubkey} onClick={() => openActivity(view)}>
+              {agentName(pubkey)}
+            </MenuItem>
+          ))}
+        </MenuSubmenuPopup>
+      </MenuSubmenu>
+    ) : (
+      onlyActivity && (
+        <MenuItem onClick={() => openActivity(onlyActivity.view)}>
+          {activityIcon}
+          {own
+            ? `View ${agentName(onlyActivity.pubkey)}’s activity`
+            : "View activity"}
+        </MenuItem>
+      )
+    );
   const avatarShape =
     row.agentEnvelope || agentPubkeys?.has(row.authorId) || profile?.isAgent
       ? "squircle"
@@ -565,16 +633,19 @@ function MessageRowContent({
       .map((action) =>
         action.placement === "menu" && session && extensions?.actions ? (
           <ContributionBoundary key={contributionKey(action)} fallback={null}>
-            <WithTargetOpener
-              component={action.component}
-              props={{
-                message: row,
-                session,
-                close: () => setOpenAction(undefined),
-              }}
-              registry={extensions.actions}
-              entry={action}
-            />
+            {/* A list's shared menu renders this outside the row's provider. */}
+            <TargetOpenerProvider canOpen={canOpenLink} open={openLink}>
+              <WithTargetOpener
+                component={action.component}
+                props={{
+                  message: row,
+                  session,
+                  close: () => setOpenAction(undefined),
+                }}
+                registry={extensions.actions}
+                entry={action}
+              />
+            </TargetOpenerProvider>
           </ContributionBoundary>
         ) : (
           <MenuItem key={action.key} onClick={() => activateAction(action)}>
@@ -783,8 +854,9 @@ function MessageRowContent({
       />
     </span>
   );
-  const messageActions = (target?: ReactElement) => (
+  const messageActions = (target?: ReactElement, withToolbar?: boolean) => (
     <MessageActionBar
+      withToolbar={withToolbar}
       rowRef={rowRef}
       menuTriggerRef={menuTrigger}
       messageId={row.id}
@@ -1244,10 +1316,7 @@ function MessageRowContent({
                     <button
                       type="button"
                       className={referenceStyles.link}
-                      onClick={() => {
-                        if (canOpenLink?.(transcriptView))
-                          openProfileTranscript(transcriptView, openLink);
-                      }}
+                      onClick={() => openActivity(transcriptView)}
                     >
                       View activity
                     </button>
@@ -1410,8 +1479,8 @@ function MessageRowContent({
                       const url = safeMessageUrl(attachment.url);
                       if (!url) return null;
                       const source = media(url);
-                      if (attachment.kind === "file")
-                        return (
+                      if (attachment.kind === "file") {
+                        const fallback = (
                           <FileAttachment
                             key={url}
                             attachment={{ ...attachment, url }}
@@ -1419,6 +1488,21 @@ function MessageRowContent({
                             onOpenLink={openLink}
                           />
                         );
+                        return source && extensions?.attachments ? (
+                          <AttachmentView
+                            key={url}
+                            registry={extensions.attachments}
+                            attachment={{ ...attachment, url }}
+                            source={source}
+                            placement="message"
+                            message={row}
+                            FileCard={FileAttachment}
+                            fallback={fallback}
+                          />
+                        ) : (
+                          fallback
+                        );
+                      }
                       if (attachment.kind === "audio") {
                         if (
                           source &&
@@ -1430,6 +1514,8 @@ function MessageRowContent({
                                 registry={extensions.attachments}
                                 attachment={{ ...attachment, url }}
                                 source={source}
+                                placement="message"
+                                message={row}
                                 fallback={
                                   <AudioAttachment
                                     attachment={{ ...attachment, url }}
@@ -1518,6 +1604,8 @@ function MessageRowContent({
                             registry={extensions.attachments}
                             attachment={{ ...attachment, url }}
                             source={source}
+                            placement="message"
+                            message={row}
                             fallback={image}
                           />
                         ) : (
@@ -1601,6 +1689,14 @@ function MessageRowContent({
           </div>
           {!reactionsInBubble && reactionContent}
           <DeliveryNotice row={row} retry={retry} />
+          {session && scope && (
+            <AgentDeclineNotes
+              session={session}
+              scope={scope}
+              channelId={row.channelId}
+              messageId={row.id}
+            />
+          )}
           {active && session && scope && extensions?.accessories && (
             <ComposerAccessories
               registry={extensions.accessories}
@@ -1666,8 +1762,10 @@ function MessageRowContent({
       {messageActions(renderMessage(message, menuTrigger))}
       {overlays}
     </>
-  ) : (
+  ) : row.membership || row.huddle ? (
     message
+  ) : (
+    messageActions(message, true)
   );
 }
 /** Coordination between agents reads as one quiet line in time order: who

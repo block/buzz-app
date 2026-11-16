@@ -62,6 +62,7 @@ function setup(available = true) {
       return () => relayListeners.delete(f);
     },
     retry: vi.fn(),
+    tryAgain: vi.fn(),
   } as unknown as RelayData;
   const reader: CommunityReader = {
     snapshot: () => client,
@@ -290,7 +291,9 @@ it("retries the connection when roster access cannot be read offline", () => {
   f.switchRelay({ status: "disconnected" });
   expect(f.access.status("buzz.moderation")).toBe("error");
   f.access.retry("buzz.moderation");
-  expect(f.relay.retry).toHaveBeenCalledTimes(1);
+  // A person asked: the sign-in server is asked again too.
+  expect(f.relay.tryAgain).toHaveBeenCalledTimes(1);
+  expect(f.relay.retry).not.toHaveBeenCalled();
   f.access.dispose();
 });
 

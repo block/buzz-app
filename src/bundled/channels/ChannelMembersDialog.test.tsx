@@ -106,6 +106,7 @@ async function setup(
   agents?: Agents,
   options: {
     archivedAgent?: boolean;
+    deletingAgent?: boolean;
     archivedMembers?: string[];
     pendingArchives?: Promise<void>;
     extraMembers?: number;
@@ -134,7 +135,9 @@ async function setup(
     relayUrl: "wss://relay.example.test",
     owner: viewer.pubkey,
   };
-  const control = localAgentsFixture([agent]);
+  const control = localAgentsFixture([
+    options.deletingAgent ? { ...agent, deleting: true as const } : agent,
+  ]);
   const id = "11111111-1111-4111-8111-111111111111";
   const target = localAgent ? agent.pubkey : person.pubkey;
   const members = [
@@ -1411,6 +1414,22 @@ it("keeps archived agents out of the default invitations", async () => {
   );
   expect(screen.queryByRole("region", { name: "Your agents" })).toBeNull();
   await t.user.type(screen.getByRole("searchbox"), "Fixture");
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Retry member data" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  expect(
+    screen.queryByRole("button", { name: /^Add Fixture agent/ }),
+  ).toBeNull();
+});
+
+it("offers no agent whose Delete started, by default or by search", async () => {
+  await setup("stream", false, true, undefined, undefined, {
+    deletingAgent: true,
+  });
+  expect(screen.queryByRole("region", { name: "Your agents" })).toBeNull();
+  await userEvent.setup().type(screen.getByRole("searchbox"), "Fixture");
   await vi.waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Retry member data" }),
@@ -3742,6 +3761,44 @@ it("pages a large roster without waiting for optional names or exceeding the pro
   } finally {
     await act(async () => release());
   }
+});
+
+it("labels a large roster again only when a name input changes, not on every keystroke", async () => {
+  const t = await setup("stream", false, false, undefined, undefined, {
+    extraMembers: 120,
+  });
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("data-refreshing", "false"),
+  );
+  const search = screen.getByRole("searchbox");
+  const resolve = vi.spyOn(t.session.names, "resolve");
+  const wait = (ms: number) =>
+    act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    });
+  const type = async (value: string, ms: number) => {
+    fireEvent.change(search, { target: { value } });
+    await wait(ms);
+  };
+  // Until no name is resolved for a while: opening and the first filter
+  // load names, which labels the roster again, as it should.
+  const settle = async () => {
+    for (let calls = -1; calls !== resolve.mock.calls.length; await wait(100))
+      calls = resolve.mock.calls.length;
+  };
+  // One letter is too short to search the relay. A filter that changes which
+  // members are shown loads their profiles, which also relabels, so these
+  // letters are ones a fallback name (bech32) never holds: the shown members
+  // match by display name alone.
+  await type("b", 0);
+  await settle();
+  resolve.mockClear();
+  for (const value of ["i", "o", "b", "i"]) await type(value, 50);
+  expect(search).toHaveValue("i");
+  // Labelling the roster on each keystroke would resolve each of its 120
+  // members per letter; the dialog header and choices resolve a few names of
+  // their own.
+  expect(resolve.mock.calls.length).toBeLessThan(120);
 });
 
 it("keeps the current member page through live removals and clamps a shortened roster", async () => {

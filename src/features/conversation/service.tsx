@@ -13,6 +13,8 @@ import {
   type MessageComposerProps,
 } from "../messages/MessageComposer";
 import { MessageRow, type MessageRowProps } from "../messages/MessageRow";
+import { ReplyBranch } from "../messages/ReplyBranch";
+import { ReplySummary } from "../messages/ReplySummary";
 import {
   formatDayGroupLabel,
   formatFullTimestamp,
@@ -25,13 +27,16 @@ import type {
   ComposerTool,
   ComposerAccessory,
   ComposerCompletion,
+  ComposerAnnotator,
   InlineRenderer,
   LinkRenderer,
   LinkPreviewRenderer,
   MessageRenderer,
+  IdentityMark,
   MessageAction,
   ContributionReader,
   PageTabsProps,
+  ConversationWorkspaceProps,
 } from "./contracts";
 import type { RelaySession } from "../relay/session";
 
@@ -69,6 +74,9 @@ export type Conversation = {
   registerTool(tool: ComposerTool): void;
   completions: ContributionReader<ComposerCompletion>;
   registerCompletion(provider: ComposerCompletion): void;
+  annotators: ContributionReader<ComposerAnnotator>;
+  /** Marks on the focused composer's prose; see `ComposerAnnotator`. */
+  registerAnnotator(annotator: ComposerAnnotator): void;
   inline: ContributionReader<InlineRenderer>;
   registerInline(renderer: InlineRenderer): void;
   links: ContributionReader<LinkRenderer>;
@@ -80,6 +88,8 @@ export type Conversation = {
   registerCodeBlock(renderer: CodeBlockRenderer): void;
   actions: ContributionReader<MessageAction>;
   registerMessageAction(action: MessageAction): void;
+  identityMarks: ContributionReader<IdentityMark>;
+  registerIdentityMark(mark: IdentityMark): void;
   ui: {
     Thread: (props: EmbeddedThreadProps) => ReactNode;
     /** One channel's message management, edit target and overlays for a page's
@@ -87,12 +97,22 @@ export type Conversation = {
     Conversation: (props: EmbeddedConversationProps) => ReactNode;
     Composer: (props: Omit<MessageComposerProps, "extensions">) => ReactNode;
     Message: (props: Omit<MessageRowProps, "extensions">) => ReactNode;
+    /** Controlled native reply grouping for caller-owned retained readers. */
+    ReplyBranch: typeof ReplyBranch;
+    /** Native reply summary from the caller's count and participant facts. */
+    ReplySummary: typeof ReplySummary;
     /** The page's content as the first tab, beside conversations it opens;
      * absent until a plugin provides the tab workspace, as Channels does. */
     readonly Tabs?: ((props: PageTabsProps) => ReactNode) | undefined;
+    /** A permanent conversation with a side pane; supplied by Channels. */
+    readonly Workspace?:
+      | ((props: ConversationWorkspaceProps) => ReactNode)
+      | undefined;
   };
   /** Provides `ui.Tabs` while the providing plugin runs; the first one wins. */
   registerTabs(component: ComponentType<PageTabsProps>): void;
+  /** Provides `ui.Workspace` while the plugin runs; the first one wins. */
+  registerWorkspace(component: ComponentType<ConversationWorkspaceProps>): void;
   /** Solo chat icons; the sidebar shows the first one. */
   chatIcons: ContributionReader<ChatIcon>;
   /** Shows `component` as each Solo chat's sidebar icon while the providing
@@ -123,12 +143,14 @@ function validate(
     | ComposerTool
     | InlineRenderer
     | ComposerCompletion
+    | ComposerAnnotator
     | ComposerAccessory
     | LinkRenderer
     | LinkPreviewRenderer
     | CodeBlockRenderer
     | MessageRenderer
-    | MessageAction,
+    | MessageAction
+    | IdentityMark,
 ) {
   if (
     !value ||
@@ -151,6 +173,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly accessoryEntries;
   readonly completions;
   private readonly completionEntries;
+  readonly annotators;
+  private readonly annotatorEntries;
   readonly inline;
   private readonly toolEntries;
   private readonly inlineEntries;
@@ -162,7 +186,10 @@ export class ConversationService extends Service implements Conversation {
   private readonly codeBlockEntries;
   readonly actions;
   private readonly actionEntries;
+  readonly identityMarks;
+  private readonly identityMarkEntries;
   private readonly tabEntries;
+  private readonly workspaceEntries;
   readonly chatMenus;
   private readonly chatMenuEntries;
   readonly chatIcons;
@@ -195,6 +222,12 @@ export class ConversationService extends Service implements Conversation {
       snapshot: completions.snapshot,
       subscribe: completions.subscribe,
     };
+    const annotators = createContributions<ComposerAnnotator>(ctx);
+    this.annotatorEntries = annotators;
+    this.annotators = {
+      snapshot: annotators.snapshot,
+      subscribe: annotators.subscribe,
+    };
     const inline = createContributions<InlineRenderer>(ctx);
     this.toolEntries = tools;
     this.inlineEntries = inline;
@@ -218,11 +251,22 @@ export class ConversationService extends Service implements Conversation {
     const actions = createContributions<MessageAction>(ctx);
     this.actionEntries = actions;
     this.actions = { snapshot: actions.snapshot, subscribe: actions.subscribe };
+    const identityMarks = createContributions<IdentityMark>(ctx);
+    this.identityMarkEntries = identityMarks;
+    this.identityMarks = {
+      snapshot: identityMarks.snapshot,
+      subscribe: identityMarks.subscribe,
+    };
     const tabs = createContributions<{
       id: string;
       component: ComponentType<PageTabsProps>;
     }>(ctx);
     this.tabEntries = tabs;
+    const workspaces = createContributions<{
+      id: string;
+      component: ComponentType<ConversationWorkspaceProps>;
+    }>(ctx);
+    this.workspaceEntries = workspaces;
     const chatMenus = createContributions<ChatMenu>(ctx);
     this.chatMenuEntries = chatMenus;
     this.chatMenus = {
@@ -239,6 +283,10 @@ export class ConversationService extends Service implements Conversation {
       const Provided = tabs.snapshot()[0]?.component;
       return Provided ? <Provided {...props} /> : null;
     };
+    const Workspace = (props: ConversationWorkspaceProps) => {
+      const Provided = workspaces.snapshot()[0]?.component;
+      return Provided ? <Provided {...props} /> : null;
+    };
     this.ui = {
       Thread: (props: EmbeddedThreadProps) => (
         <EmbeddedThread {...props} host={this.ctx} extensions={this} />
@@ -252,8 +300,13 @@ export class ConversationService extends Service implements Conversation {
       Message: (props: Omit<MessageRowProps, "extensions">) => (
         <MessageRow {...props} extensions={this} />
       ),
+      ReplyBranch,
+      ReplySummary,
       get Tabs() {
         return tabs.snapshot().length ? Tabs : undefined;
+      },
+      get Workspace() {
+        return workspaces.snapshot().length ? Workspace : undefined;
       },
     };
   }
@@ -261,6 +314,11 @@ export class ConversationService extends Service implements Conversation {
     if (typeof component !== "function")
       throw new Error("Page tabs need a component");
     this.tabEntries.register(this.ctx, { id: "tabs", component });
+  }
+  registerWorkspace(component: ComponentType<ConversationWorkspaceProps>) {
+    if (typeof component !== "function")
+      throw new Error("A conversation workspace needs a component");
+    this.workspaceEntries.register(this.ctx, { id: "workspace", component });
   }
   registerChatMenu(component: ComponentType<ChatMenuProps>) {
     if (typeof component !== "function")
@@ -281,6 +339,10 @@ export class ConversationService extends Service implements Conversation {
     )
       throw new Error("A message action needs a matcher");
     this.actionEntries.register(this.ctx, value);
+  }
+  registerIdentityMark(value: IdentityMark) {
+    validate(value);
+    this.identityMarkEntries.register(this.ctx, value);
   }
   registerAttachment(value: AttachmentRenderer) {
     validate(value);
@@ -325,6 +387,10 @@ export class ConversationService extends Service implements Conversation {
     if (typeof value.match !== "function")
       throw new Error("A completion provider needs a matcher");
     this.completionEntries.register(this.ctx, value);
+  }
+  registerAnnotator(value: ComposerAnnotator) {
+    validate(value);
+    this.annotatorEntries.register(this.ctx, value);
   }
   registerInline(value: InlineRenderer) {
     validate(value);

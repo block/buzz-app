@@ -12,7 +12,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { DraftsSentPage } from "./DraftsSentPage";
-import { DraftsSentBadge } from "./DraftsSentNavigation";
+import { DraftsSentBadge } from "./DraftsSentBadge";
 import type { RelayData } from "../relay/service";
 import type { Navigation } from "../navigation/controller";
 import { dayLabel, type ReadEvent } from "./model";

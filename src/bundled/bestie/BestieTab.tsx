@@ -415,9 +415,9 @@ function FeatureSwitch({
                 checked && timer?.value.type === "timer" && !timer.value.enabled
                 ? `Paused in Attention. Turn ${feature.title} off and on again to restart it.`
                 : // Attention reads off while no plugin shows it, as when the
-                  // Watching plugin is off, or while the agent's switch is off.
+                  // Watching plugin is off.
                   checked && feature.timer && !agent.attentionEnabled
-                  ? "Paused: watches aren't running on this device. Turn on the Watching plugin and its Run watches switch."
+                  ? "Paused: watches aren't running on this device. Turn on the Attention plugin."
                   : feature.description
         }
         checked={checked}

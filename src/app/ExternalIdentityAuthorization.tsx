@@ -53,7 +53,7 @@ export function ExternalIdentityAuthorization({ viewer }: { viewer: string }) {
       if (attempt.signal.aborted) return;
       if (tag[1] !== viewer)
         throw new Error(
-          "Your Buzz identity changed. Reopen Identity settings before authorizing.",
+          "Your Buzz identity changed. Reopen Security settings before authorizing.",
         );
       setProof(JSON.stringify(tag));
     } catch (failure) {
@@ -160,14 +160,13 @@ export function ExternalIdentityAuthorization({ viewer }: { viewer: string }) {
           onClose={() => setConfirmKey(null)}
           actions={
             <>
-              <Button
-                ref={cancelButton}
-                variant="prominent"
-                onClick={() => setConfirmKey(null)}
-              >
+              <Button ref={cancelButton} onClick={() => setConfirmKey(null)}>
                 Cancel
               </Button>
-              <Button onClick={() => void authorize(confirmKey)}>
+              <Button
+                variant="prominent"
+                onClick={() => void authorize(confirmKey)}
+              >
                 Authorize this key
               </Button>
             </>

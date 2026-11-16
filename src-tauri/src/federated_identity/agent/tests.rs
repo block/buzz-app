@@ -1,5 +1,6 @@
 use super::grant::tests::MemoryGrants;
 use super::*;
+use crate::federated_identity::protocol::now;
 use crate::federated_identity::tests::{at_adapter, record, Memory};
 
 pub(crate) struct Seen {
@@ -324,7 +325,7 @@ async fn evidence_needed_for_longer_replaces_a_cached_assertion_expiring_sooner(
     let key = Secret::generate().unwrap();
     let mut probe = fixture("http://unused".into()).agent;
     probe.pubkey = key.pubkey().into();
-    let now = super::now().unwrap() as u64;
+    let now = now().unwrap() as u64;
     let short = issued(&probe, serde_json::json!({ "exp": now + 60 }));
     let long = issued(&probe, serde_json::json!({}));
     let (base, served) = issuer(vec![
@@ -370,7 +371,7 @@ async fn evidence_minted_shorter_than_needed_is_refused() {
     let key = Secret::generate().unwrap();
     let mut probe = fixture("http://unused".into()).agent;
     probe.pubkey = key.pubkey().into();
-    let now = super::now().unwrap() as u64;
+    let now = now().unwrap() as u64;
     let short = issued(&probe, serde_json::json!({ "exp": now + 60 }));
     let (base, served) = issuer(vec![(200, enrolled(&"b".repeat(64))), (200, short)]).await;
     let mut f = fixture(base);
@@ -424,7 +425,7 @@ fn agent_assertions_must_name_this_agent_owner_issuer_and_community() {
         serde_json::json!({ "iss": "https://other.example" }),
         serde_json::json!({ "aud": "https://other.example" }),
         serde_json::json!({ "exp": now + 299 }),
-        serde_json::json!({ "iat": now + 60 }),
+        serde_json::json!({ "iat": now + 121 }),
     ] {
         assert!(check(wrong).is_err());
     }
@@ -2048,4 +2049,272 @@ async fn a_revision_fenced_sign_out_leaves_a_newer_session_and_its_grants() {
     // The matching revision still signs out.
     let snapshot = f.tokens.sign_out(Some(&newer.revision)).await.unwrap();
     assert!(snapshot.status == crate::federated_identity::Status::SignedOut);
+}
+
+#[tokio::test]
+async fn a_builderlab_customer_server_added_later_gets_its_own_tokens() {
+    let first = crate::federated_identity::tests::with_customers(
+        crate::federated_identity::config::Config::parse(
+            crate::federated_identity::config::BUILT_IN,
+        )
+        .unwrap(),
+        Vec::new(),
+        true,
+    );
+    // Added before the tokens exist, and after.
+    let early = first.server_for("wss://buzz.early.builderlab.xyz").unwrap();
+    let tokens = AgentTokens::in_memory(first.clone());
+    tokens.watch(|| Ok(Vec::new()));
+    let late = first.server_for("wss://buzz.late.builderlab.xyz").unwrap();
+    for (server, relay) in [
+        (&early, "wss://buzz.early.builderlab.xyz"),
+        (&late, "wss://buzz.late.builderlab.xyz"),
+    ] {
+        let own = tokens.for_server(server).unwrap();
+        assert!(own.0.identity.is(server));
+        // It follows the owner's account, as compiled servers' tokens do.
+        assert!(own.0.agents.get().is_some());
+        assert!(tokens.server_for(relay).unwrap().0.identity.is(server));
+    }
+    // A community routed by its host alone reaches it too.
+    assert!(tokens
+        .server_for("wss://buzz.third.builderlab.xyz")
+        .unwrap()
+        .0
+        .identity
+        .is(&first.server_for("wss://buzz.third.builderlab.xyz").unwrap()));
+    assert_eq!(tokens.servers().len(), 4);
+}
+
+#[tokio::test]
+async fn deleting_an_agent_retires_its_grant_with_a_customer_no_longer_joined() {
+    use crate::federated_identity::{config, tests::customers_listed_in};
+    let root = tempfile::tempdir().unwrap();
+    let record = root.path().join("first.customers");
+    let launch = || {
+        customers_listed_in(
+            config::Config::parse(config::BUILT_IN).unwrap(),
+            Vec::new(),
+            Some(Some(record.clone())),
+        )
+    };
+    let grants = Arc::new(MemoryGrants::default());
+    let (owner, agent) = ("owner", "agent");
+    // The agent enrolled with a customer whose community was then removed.
+    let customer = launch()
+        .server_for("wss://buzz.gone.builderlab.xyz")
+        .unwrap();
+    let at = customer.agent_grant_key(owner, agent);
+    grants
+        .write(
+            &at,
+            &Grant::new(
+                owner.into(),
+                agent.into(),
+                "a@example.com".into(),
+                "https://gone.builderlab.xyz".into(),
+                "grant".into(),
+            ),
+        )
+        .unwrap();
+    // After a restart, no community routes to it, yet deleting the agent
+    // retires that grant, so importing its key again cannot reuse it.
+    let tokens = AgentTokens::with_store(launch(), grants.clone());
+    tokens.forget(owner, agent).await.unwrap();
+    assert!(grants.read(&at).unwrap().is_none());
+    let again = AgentTokens::with_store(launch(), grants.clone());
+    let server = again
+        .for_server(
+            &again
+                .0
+                .identity
+                .server_for("wss://buzz.gone.builderlab.xyz")
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(server.0.identity.agent_grant_key(owner, agent), at);
+    assert!(grants.read(&at).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_server_added_once_the_first_has_a_supplier_follows_the_account() {
+    let first = crate::federated_identity::tests::with_customers(
+        crate::federated_identity::config::Config::parse(
+            crate::federated_identity::config::BUILT_IN,
+        )
+        .unwrap(),
+        Vec::new(),
+        true,
+    );
+    let tokens = AgentTokens::in_memory(first.clone());
+    // `watch` sets the first server's supplier before listing servers, so one
+    // added in between gets it from `with_stores`; `watch` then offers it again.
+    tokens.follow_account(Arc::new(|| Ok(Vec::new())));
+    let added = first.server_for("wss://buzz.race.builderlab.xyz").unwrap();
+    tokens.watch(|| Ok(Vec::new()));
+    assert!(tokens.for_server(&added).unwrap().0.agents.get().is_some());
+}
+
+/// An agent fixture whose issuer enrolls it, then answers each mint after its
+/// delay, stamped `skew` seconds from the real time now: an issuer ahead of
+/// or behind that time is this computer's clock behind or ahead of it.
+async fn skewed_agent(
+    mints: Vec<(Duration, i64, u64)>,
+) -> (Fixture, tokio::task::JoinHandle<Vec<String>>) {
+    use crate::federated_identity::testing::{raw, scripted_issuer};
+    let key = Secret::generate().unwrap();
+    let mut probe = fixture("http://unused".into()).agent;
+    probe.pubkey = key.pubkey().into();
+    let real = now().unwrap();
+    let mut replies = vec![(
+        Duration::ZERO,
+        raw("200 OK", "", &enrolled(&"b".repeat(64)).to_string()),
+    )];
+    for (delay, skew, lifetime) in mints {
+        let minted = (real + skew) as u64;
+        let claims = serde_json::json!({ "iat": minted, "exp": minted + lifetime });
+        replies.push((
+            delay,
+            raw("200 OK", "", &issued(&probe, claims).to_string()),
+        ));
+    }
+    let (base, served) = scripted_issuer(replies).await;
+    let mut f = fixture(base);
+    f.agent.pubkey = key.pubkey().into();
+    f.key = key;
+    (f, served)
+}
+async fn admitted(f: &Fixture) -> Result<Admission, String> {
+    f.tokens.authorize(&f.agent, &f.key, Stamp::default()).await
+}
+fn left(admission: &Admission) -> Duration {
+    admission
+        .expires_at()
+        .unwrap()
+        .saturating_duration_since(tokio::time::Instant::now())
+}
+
+#[test]
+fn an_agent_assertion_may_be_minted_120_s_ahead_but_not_121() {
+    let f = fixture("http://unused".into());
+    let grant = Grant::new(
+        f.agent.owner.clone(),
+        f.agent.pubkey.clone(),
+        "a@example.com".into(),
+        "https://issuer.example".into(),
+        "g".into(),
+    );
+    let now = now().unwrap() as u64;
+    let check = |skew| {
+        let token = jwt(&f.agent, serde_json::json!({ "iat": now + skew }));
+        validate(
+            &token,
+            &f.agent,
+            &grant,
+            "wss://relay.example",
+            now + 300,
+            now,
+        )
+    };
+    assert!(check(120).is_ok());
+    assert_eq!(check(121).unwrap_err().code, "invalid-assertion");
+    // A fractional NumericDate `iat` is valid; it rounds up, so the lifetime
+    // against the integer `exp` floors to whole seconds (299, not 299.5).
+    let token = jwt(
+        &f.agent,
+        serde_json::json!({ "iat": now as f64 + 0.5, "exp": now + 300 }),
+    );
+    let minted = validate(
+        &token,
+        &f.agent,
+        &grant,
+        "wss://relay.example",
+        now + 300,
+        now,
+    );
+    assert_eq!(minted.map_err(|e| e.code), Ok(now + 1));
+    // A fractional `exp` past the issued expiry is not rounded to match.
+    let late = jwt(
+        &f.agent,
+        serde_json::json!({ "iat": now, "exp": now as f64 + 300.5 }),
+    );
+    assert!(validate(
+        &late,
+        &f.agent,
+        &grant,
+        "wss://relay.example",
+        now + 300,
+        now
+    )
+    .is_err());
+}
+
+#[tokio::test]
+async fn an_agent_on_a_slow_or_fast_clock_keeps_only_the_issued_lifetime() {
+    for (skew, issued) in [(120, 150), (-120, 30)] {
+        let (f, _) = skewed_agent(vec![(Duration::ZERO, skew, 150)]).await;
+        let left = left(&admitted(&f).await.unwrap());
+        let issued = Duration::from_secs(issued);
+        assert!(
+            left <= issued && left > issued - Duration::from_secs(2),
+            "{skew}: {left:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_reused_agent_assertion_keeps_its_deadline() {
+    let (f, served) = skewed_agent(vec![(Duration::ZERO, 60, 300)]).await;
+    let first = admitted(&f).await.unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(100)).await;
+    tokio::time::resume();
+    let reused = admitted(&f).await.unwrap();
+    assert_eq!(reused.header(), first.header());
+    assert_eq!(reused.expires_at(), first.expires_at());
+    drop(f);
+    assert_eq!(bounded(served).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_zero_budget_agent_assertion_is_never_dispatched() {
+    let (f, served) = skewed_agent(vec![
+        (Duration::from_secs(2), 60, 1),
+        (Duration::ZERO, 60, 300),
+    ])
+    .await;
+    assert!(admitted(&f).await.and_then(|a| a.dispatch()).is_err());
+    assert!(admitted(&f).await.and_then(|a| a.dispatch()).is_ok());
+    assert_eq!(bounded(served).await.unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn an_issuer_that_keeps_rate_limiting_is_not_reported_as_unreachable() {
+    let limited = || (429, serde_json::json!({ "error": "rate_limited" }));
+    let unavailable = || (503, serde_json::json!({ "error": "issuance_unavailable" }));
+    let (base, served) = issuer(vec![
+        limited(),
+        limited(),
+        limited(),
+        limited(),
+        limited(),
+        unavailable(),
+        (200, enrolled(&"b".repeat(64))),
+        limited(),
+        limited(),
+        limited(),
+    ])
+    .await;
+    let f = fixture(base);
+    let limit = |error: String| assert!(error.contains("limiting this agent"), "{error}");
+    // Enrollment: throttling is transient, so the next request enrolls again.
+    limit(f.tokens.evidence(&f.agent, &f.key, 0).await.unwrap_err());
+    // Only the last attempt's answer decides.
+    assert_eq!(
+        f.tokens.evidence(&f.agent, &f.key, 0).await.unwrap_err(),
+        "Your organization's identity service is unreachable"
+    );
+    // Assertion minting.
+    limit(f.tokens.evidence(&f.agent, &f.key, 0).await.unwrap_err());
+    assert_eq!(settled(served).await.len(), 10);
 }

@@ -1,9 +1,20 @@
+import { UnattestedProfile } from "../relay/identity-archives";
+import { createSoloPreferences } from "../relay/solo-preferences";
+import type { ChannelKit } from "../channel-templates/capability";
+import type { KitEntry, KitValue } from "../channel-templates/model";
+import { federatedFixture } from "../federated-identity/testing";
+import { workingAgentDetails } from "../../bundled/channels/working-agents";
+import { completionTarget } from "../notifications/agent-completions";
+import { parseOpenTarget } from "../navigation/targets";
+import { createNativeSession } from "../../bundled/builderlab/session";
+import { offerBuilderlabDecisions } from "../../bundled/builderlab/decisions";
 import { followUpQueue } from "../messages/follow-up-queue";
 import { registerAttention } from "./attention-command";
-import { canMessageAgent, createAgentChoices } from "./choices";
+import { canMessageAgent, createAgentChoices, deletingAgent } from "./choices";
 import { createAgentLibrary } from "./library";
 import type { AttentionSource } from "./attention-sources";
 import { appClient } from "../../buzz-mcp/app-client";
+import type { AgentToolAuthority, AgentToolProof } from "./tool-operation";
 import { callAttentionTool } from "../../buzz-mcp/attention";
 import { callSessionTool } from "../../buzz-mcp/session-tools";
 import { callTool } from "../../buzz-mcp/tools";
@@ -33,6 +44,7 @@ import {
   describe,
   expect,
   it,
+  onTestFinished,
   vi,
 } from "vitest";
 import {
@@ -44,12 +56,15 @@ import type { Mode } from "./agent-start";
 import { channelTemplates } from "../channel-templates/local";
 import { eventDto, type ReadFilter, type RelayEvent } from "../relay/events";
 import { keypair, message, signed } from "../relay/testing";
+import { createRelayReader } from "../relay/reader";
 import type { LiveBatch } from "../relay/incoming";
 import type { RelaySession } from "../relay/session";
+import { huddleDescription } from "../huddle/lifecycle";
 import type { AgentIdentity } from "./native";
 import {
   type Agent,
   type AgentHandle,
+  type AgentSession,
   AgentsService,
   type AgentType,
   type AgentVoiceSeat,
@@ -101,6 +116,12 @@ import {
   steps,
   viewer,
 } from "./service-testing";
+import {
+  mentionAdmission,
+  pastedMentionRecipient,
+} from "../messages/mention-admission";
+import type { ComposerSession } from "../messages/composer-session";
+import { setRuntimeRecommendation } from "./recommended";
 
 /** The tag that the echo type's default watch matches. */
 const DEPLOY = ["t", "deploy"];
@@ -156,7 +177,9 @@ vi.mock("./community-config", async (original) => {
         : actual.communityConfig(...args),
   };
 });
-vi.mock("./relay-removal", () => ({
+vi.mock("./relay-removal", async (actual) => ({
+  // The real archive step, over the fake community's archives.
+  archiveAgent: (await actual<typeof import("./relay-removal")>()).archiveAgent,
   removeAgentFromChannels: leaveChannels,
   publishAgentRecord: records.publish,
   deleteAgentRecord: records.remove,
@@ -209,6 +232,10 @@ async function setup({
   deviceSettings = undefined as DeviceSettings | undefined,
   /** The echo type's plugin revision: "bundled" for a bundled harness. */
   revision = "one",
+  /** The example type's id, "echo" unless a test needs a real harness's. */
+  typeId = "echo",
+  conversationFolders = undefined as true | undefined,
+  sessions = undefined as AgentType<Config>["sessions"],
 } = {}) {
   const ctx = new Context();
   let settled = false;
@@ -258,7 +285,7 @@ async function setup({
   const run =
     vi.fn<(delivery: Delivery<Config>) => void | Promise<void>>(answer);
   const type: AgentType<Config> = {
-    id: "echo",
+    id: typeId,
     title: "Echo",
     timeoutMs,
     adopt: (carry, saved) => ({ reply: carry.instructions ?? saved.reply }),
@@ -326,6 +353,8 @@ async function setup({
       : {}),
     ...(resumes ? { resumes } : {}),
     ...(syncedSettings ? { syncedSettings } : {}),
+    ...(conversationFolders ? { conversationFolders } : {}),
+    ...(sessions ? { sessions } : {}),
   };
   plugin.agents.register(type);
   // The Attention plugin starts after the type, then startup is over.
@@ -1532,6 +1561,9 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     await settle();
     expect(activity.reader.work()[0]?.state).toBe("working");
+    expect(activity.reader.work()[0]?.messageId).toBe(mention.id);
+    expect(activity.reader.work()[0]).not.toHaveProperty("syntheticMessage");
+    expect(activity.reader.work()[0]).not.toHaveProperty("requestText");
     expect(native.publish).toHaveBeenCalledWith(member(bot), {
       kind: 20002,
       content: "",
@@ -1630,6 +1662,358 @@ it.each([
   },
 );
 
+describe("a conversation folder", () => {
+  const root = "e".repeat(64);
+  const thread = { channelId: channel, root };
+  const ready = async (options: Parameters<typeof setup>[0] = {}) => {
+    const f = await setup(options);
+    const agent = await f.service.create({
+      type: "example/echo",
+      name: "Echo",
+    });
+    await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalledWith(bot, 0));
+    await settle();
+    const resolveDirectory = vi.fn(
+      async (path: string, _options?: { create?: boolean }) => {
+        if (path === "/gone") throw new Error("Could not find /gone");
+        return path.replace(/^~/, "/home/me");
+      },
+    );
+    f.ctx.provide("host", { resolveDirectory });
+    return { ...f, agent, resolveDirectory };
+  };
+
+  it("is given once, resolved by the host without creating it", async () => {
+    const f = await ready({ conversationFolders: true });
+    const { agents } = f.plugin;
+    await expect(
+      f.service.assignConversationFolder(f.agent.key, thread, "~/work"),
+    ).rejects.toThrow("Only a desktop plugin");
+    await expect(
+      agents.assignConversationFolder(f.agent.key, thread, "~/work"),
+    ).resolves.toBe("/home/me/work");
+    expect(f.resolveDirectory).toHaveBeenCalledWith("~/work", {
+      create: false,
+    });
+    expect(agents.conversationFolder(f.agent.key, thread)).toBe(
+      "/home/me/work",
+    );
+    // The same folder again is a no-op; another is refused.
+    await expect(
+      agents.assignConversationFolder(f.agent.key, thread, "/home/me/work"),
+    ).resolves.toBe("/home/me/work");
+    await expect(
+      agents.assignConversationFolder(f.agent.key, thread, "/elsewhere"),
+    ).rejects.toThrow("This conversation already works in /home/me/work");
+    // A folder that does not exist is refused, and given to nobody.
+    const other = { channelId: channel, root: "f".repeat(64) };
+    await expect(
+      agents.assignConversationFolder(f.agent.key, other, "/gone"),
+    ).rejects.toThrow("Could not find /gone");
+    expect(agents.conversationFolder(f.agent.key, other)).toBeUndefined();
+    expect(
+      agents.conversationFolder(f.agent.key, { channelId: channel }),
+    ).toBeUndefined();
+    // Kept on this device, never published.
+    expect(JSON.stringify(f.native.publish.mock.calls)).not.toContain(
+      "/home/me/work",
+    );
+  });
+
+  it("is refused for a conversation that already has a session", async () => {
+    const list = vi.fn((): readonly AgentSession[] => [thread]);
+    const f = await ready({
+      conversationFolders: true,
+      sessions: { list, subscribe: () => () => {} },
+    });
+    const { agents } = f.plugin;
+    await expect(
+      agents.assignConversationFolder(f.agent.key, thread, "~/work"),
+    ).rejects.toThrow(
+      "This conversation already started in the agent's workspace",
+    );
+    expect(agents.conversationFolder(f.agent.key, thread)).toBeUndefined();
+    // Another conversation of the agent still gets one, and keeps it once
+    // its session starts there.
+    const other = { channelId: channel, root: "f".repeat(64) };
+    await expect(
+      agents.assignConversationFolder(f.agent.key, other, "~/work"),
+    ).resolves.toBe("/home/me/work");
+    list.mockReturnValue([thread, other]);
+    await expect(
+      agents.assignConversationFolder(f.agent.key, other, "~/work"),
+    ).resolves.toBe("/home/me/work");
+    expect(list).toHaveBeenCalledWith(f.agent.key);
+  });
+
+  it.each(["solo", "dm"] as const)(
+    "is given to a %s conversation whole, refusing a root",
+    async (channelType) => {
+      const f = await ready({ conversationFolders: true });
+      const list = f.session.channels.list();
+      vi.spyOn(f.session.channels, "list").mockReturnValue({
+        ...list,
+        channels: list.channels.map((row) =>
+          row.id === channel ? { ...row, channelType } : row,
+        ),
+      });
+      const { agents } = f.plugin;
+      await expect(
+        agents.assignConversationFolder(f.agent.key, thread, "~/work"),
+      ).rejects.toThrow(
+        "A DM or Solo chat is one conversation: give its folder without a root",
+      );
+      expect(agents.conversationFolder(f.agent.key, thread)).toBeUndefined();
+      await expect(
+        agents.assignConversationFolder(
+          f.agent.key,
+          { channelId: channel },
+          "~/work",
+        ),
+      ).resolves.toBe("/home/me/work");
+    },
+  );
+
+  it("is refused in a huddle room", async () => {
+    const f = await ready({ conversationFolders: true });
+    const list = f.session.channels.list();
+    vi.spyOn(f.session.channels, "list").mockReturnValue({
+      ...list,
+      channels: list.channels.map((row) =>
+        row.id === channel
+          ? { ...row, description: huddleDescription(crypto.randomUUID()) }
+          : row,
+      ),
+    });
+    for (const place of [thread, { channelId: channel }])
+      await expect(
+        f.plugin.agents.assignConversationFolder(f.agent.key, place, "~/work"),
+      ).rejects.toThrow("Conversation folders are unavailable in a huddle");
+  });
+
+  it("is refused by a harness without folders, such as goose or Pi", async () => {
+    const f = await ready();
+    await expect(
+      f.plugin.agents.assignConversationFolder(f.agent.key, thread, "~/work"),
+    ).rejects.toThrow("Echo agents do not support conversation folders");
+    expect(f.resolveDirectory).not.toHaveBeenCalled();
+  });
+
+  it("is refused for an agent on an execution target, or one not here", async () => {
+    const f = await ready({ conversationFolders: true });
+    const executions = (
+      f.service as unknown as {
+        executions: { inspect(key: string): Promise<unknown> };
+      }
+    ).executions;
+    vi.spyOn(executions, "inspect").mockResolvedValue({ provider: "x/y" });
+    await expect(
+      f.plugin.agents.assignConversationFolder(f.agent.key, thread, "~/work"),
+    ).rejects.toThrow("unavailable for agents on an execution target");
+    await expect(
+      f.plugin.agents.assignConversationFolder(sibling, thread, "~/work"),
+    ).rejects.toThrow("No such local agent on this device");
+    expect(f.resolveDirectory).not.toHaveBeenCalled();
+  });
+});
+
+describe("a conversation's instructions", () => {
+  const root = "e".repeat(64);
+  const thread = { channelId: channel, root };
+  const ready = async (options: Parameters<typeof setup>[0] = {}) => {
+    const f = await setup(options);
+    const agent = await f.service.create({
+      type: "example/echo",
+      name: "Echo",
+    });
+    await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalledWith(bot, 0));
+    await settle();
+    return { ...f, agent };
+  };
+  /** The handle of the agent's first run. */
+  const handle = async (f: Awaited<ReturnType<typeof ready>>) => {
+    f.emit({
+      events: [
+        event("1", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    const [delivery] = f.run.mock.calls[0] ?? [];
+    if (!delivery) throw new Error("no run");
+    return delivery.agent;
+  };
+
+  it("are set, replaced and cleared by a plugin, and shown to the agent's turns there", async () => {
+    const f = await ready();
+    const { agents } = f.plugin;
+    await expect(
+      f.service.setConversationInstructions(f.agent.key, thread, "x"),
+    ).rejects.toThrow("Only a plugin");
+    await agents.setConversationInstructions(f.agent.key, thread, "  Review. ");
+    await expect(
+      agents.conversationInstructions(f.agent.key, thread),
+    ).resolves.toBe("Review.");
+    await expect(
+      agents.conversationInstructions(f.agent.key, { channelId: channel }),
+    ).resolves.toBeUndefined();
+    const agent = await handle(f);
+    // Read as each turn's prompt is built, keyed as the session is.
+    expect(agent.conversationInstructions?.(channel, root)).toEqual({
+      plugin: "example",
+      text: "Review.",
+    });
+    expect(agent.conversationInstructions?.(channel)).toBeUndefined();
+    await agents.setConversationInstructions(f.agent.key, thread, "Build.");
+    expect(agent.conversationInstructions?.(channel, root)?.text).toBe(
+      "Build.",
+    );
+    // Cleared, the turns say none apply now.
+    await agents.setConversationInstructions(f.agent.key, thread, " ");
+    await expect(
+      agents.conversationInstructions(f.agent.key, thread),
+    ).resolves.toBeUndefined();
+    expect(agent.conversationInstructions?.(channel, root)).toEqual({
+      plugin: "example",
+      text: "",
+    });
+    // Kept on this device, never published.
+    expect(JSON.stringify(f.native.publish.mock.calls)).not.toContain(
+      "Review.",
+    );
+  });
+
+  it("take at most 8 KiB of UTF-8 text, after trimming", async () => {
+    const f = await ready();
+    const { agents } = f.plugin;
+    for (const text of ["x".repeat(8193), "é".repeat(4097)])
+      await expect(
+        agents.setConversationInstructions(f.agent.key, thread, text),
+      ).rejects.toThrow(/over 8192 bytes/);
+    await expect(
+      agents.setConversationInstructions(f.agent.key, thread, null as never),
+    ).rejects.toThrow("need text");
+    await agents.setConversationInstructions(
+      f.agent.key,
+      thread,
+      ` ${"é".repeat(4096)} `,
+    );
+    await expect(
+      agents.conversationInstructions(f.agent.key, thread),
+    ).resolves.toHaveLength(4096);
+  });
+
+  it.each(["solo", "dm"] as const)(
+    "are given to a %s conversation whole, refusing a root",
+    async (channelType) => {
+      const f = await ready();
+      const list = f.session.channels.list();
+      vi.spyOn(f.session.channels, "list").mockReturnValue({
+        ...list,
+        channels: list.channels.map((row) =>
+          row.id === channel ? { ...row, channelType } : row,
+        ),
+      });
+      const { agents } = f.plugin;
+      await expect(
+        agents.setConversationInstructions(f.agent.key, thread, "x"),
+      ).rejects.toThrow("runs the channel as one conversation");
+      await agents.setConversationInstructions(
+        f.agent.key,
+        { channelId: channel },
+        "Whole.",
+      );
+      await expect(
+        agents.conversationInstructions(f.agent.key, { channelId: channel }),
+      ).resolves.toBe("Whole.");
+    },
+  );
+
+  it("refuse a root for a channel-scoped agent", async () => {
+    const f = await ready({
+      sessionControls: {
+        state: () => "idle",
+        run: async () => {},
+        scope: () => "channel",
+      } as never,
+    });
+    await expect(
+      f.plugin.agents.setConversationInstructions(f.agent.key, thread, "x"),
+    ).rejects.toThrow("runs the channel as one conversation");
+  });
+
+  it("are refused for an agent not here", async () => {
+    const f = await ready();
+    await expect(
+      f.plugin.agents.setConversationInstructions(sibling, thread, "x"),
+    ).rejects.toThrow("No such local agent on this device");
+    await expect(
+      f.plugin.agents.conversationInstructions(sibling, thread),
+    ).resolves.toBeUndefined();
+  });
+
+  it("are refused in a huddle room", async () => {
+    const f = await ready();
+    const list = f.session.channels.list();
+    vi.spyOn(f.session.channels, "list").mockReturnValue({
+      ...list,
+      channels: list.channels.map((row) =>
+        row.id === channel
+          ? { ...row, description: huddleDescription(crypto.randomUUID()) }
+          : row,
+      ),
+    });
+    for (const place of [thread, { channelId: channel }])
+      await expect(
+        f.plugin.agents.setConversationInstructions(f.agent.key, place, "Do."),
+      ).rejects.toThrow(
+        "Conversation instructions are unavailable in a huddle",
+      );
+  });
+
+  it("say none apply while the agent is not in the channel", async () => {
+    const f = await ready();
+    await f.plugin.agents.setConversationInstructions(
+      f.agent.key,
+      thread,
+      "Review.",
+    );
+    const agent = await handle(f);
+    f.confirm(channel, [viewer]);
+    // Any it was shown there no longer apply.
+    expect(agent.conversationInstructions?.(channel, root)).toEqual({
+      plugin: "example",
+      text: "",
+    });
+    f.confirm(channel, [viewer, bot]);
+    expect(agent.conversationInstructions?.(channel, root)?.text).toBe(
+      "Review.",
+    );
+  });
+
+  it("are dropped when the agent is deleted", async () => {
+    const f = await ready();
+    await f.plugin.agents.setConversationInstructions(
+      f.agent.key,
+      thread,
+      "Review.",
+    );
+    const saved = () =>
+      f.storage
+        .keys()
+        .filter((key) =>
+          key.startsWith("buzz.agents.conversation-instructions"),
+        );
+    expect(saved()).toHaveLength(1);
+    await f.service.remove(bot);
+    expect(saved()).toEqual([]);
+  });
+});
+
 describe("a plugin's wake", () => {
   const root = "e".repeat(64);
   /** Once this copy holds the agent. */
@@ -1642,6 +2026,123 @@ describe("a plugin's wake", () => {
     JSON.stringify(
       await Promise.all(native.publish.mock.results.map(({ value }) => value)),
     );
+
+  it.each([undefined, "solo", "dm"] as const)(
+    "reports work for a plugin wake in a %s conversation",
+    async (channelType) => {
+      const f = await setup();
+      const list = f.session.channels.list();
+      vi.spyOn(f.session.channels, "list").mockReturnValue({
+        ...list,
+        channels: list.channels.map((row) =>
+          row.id === channel && channelType ? { ...row, channelType } : row,
+        ),
+      });
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      await held(f.native);
+      let finish!: (outcome: WorkOutcome) => void;
+      const turn = new Promise<WorkOutcome>((resolve) => {
+        finish = resolve;
+      });
+      f.run.mockImplementationOnce(({ acknowledged, workingUntil }) => {
+        acknowledged?.();
+        workingUntil(turn);
+      });
+      f.plugin.agents.wake(bot, {
+        channel,
+        root,
+        text: "Read the task request",
+      });
+      try {
+        await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+        expect(f.activity.reader.work()[0]).toMatchObject({
+          agent: bot,
+          channelId: channel,
+          threadRootId: root,
+          sourceRootId: channelType ? null : root,
+          syntheticMessage: true,
+          requestText: "Read the task request",
+          state: "working",
+          ...(channelType === "solo" ? { soloChat: true } : {}),
+        });
+        expect(f.activity.reader.work()[0]?.thread).toBe(
+          channelType ? undefined : true,
+        );
+        const work = f.activity.reader.work()[0] as LocalWork;
+        expect(work.evidence).toMatchObject({
+          lifecycle: { phase: "wake" },
+          messages: [
+            {
+              role: "user",
+              author: "host",
+              synthetic: true,
+              text: "Read the task request",
+            },
+          ],
+          history: "local",
+        });
+        const delivery = f.run.mock.calls[0]?.[0];
+        expect(work.messageId).toBe(
+          delivery?.trigger.type === "plugin" ? delivery.trigger.id : undefined,
+        );
+        const reply = await delivery?.agent.publish({
+          kind: 9,
+          content: "Please approve the preview",
+          tags: [["h", channel]],
+        });
+        expect(f.activity.reader.work()[0]?.publishedMessageIds).toEqual([
+          reply?.id,
+        ]);
+        const target = completionTarget(work, {
+          viewer,
+          communityOrigin: "https://buzz.example",
+        });
+        expect(target).toEqual({
+          version: 1,
+          kind: "conversation",
+          scope: { viewer, communityOrigin: "https://buzz.example" },
+          channelId: channel,
+          ...(channelType ? {} : { threadRootId: root, messageId: root }),
+        });
+        expect(parseOpenTarget(target)).toEqual(target);
+        expect(
+          workingAgentDetails(
+            {
+              status: "listening",
+              records: [],
+              turns: [],
+              typing: [],
+              trimmed: 0,
+              local: f.activity.reader.work(),
+            },
+            channel,
+            bot,
+          )?.messageId,
+        ).toBe(channelType ? undefined : root);
+        finish({ ok: false, error: "Provider unavailable" });
+        await vi.waitFor(() =>
+          expect(f.activity.reader.work()[0]?.state).toBe("error"),
+        );
+        f.activity.reader.retry?.(f.activity.reader.work()[0] as LocalWork);
+        await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+        expect(f.run.mock.calls[1]?.[0].trigger).toMatchObject({
+          type: "plugin",
+          channel,
+          root,
+          text: "Read the task request",
+        });
+        await vi.waitFor(() =>
+          expect(f.activity.reader.work()[0]?.state).toBe("done"),
+        );
+        expect(f.activity.reader.work()[0]?.publishedMessageIds).toEqual([
+          reply?.id,
+        ]);
+      } finally {
+        finish({ ok: true });
+        await f.ctx.fiber.dispose();
+      }
+    },
+  );
 
   it("runs like a mention in its thread, typing at the thread's root", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -1679,6 +2180,23 @@ describe("a plugin's wake", () => {
     } finally {
       finish();
     }
+  });
+
+  it("wakes at a channel's top level when asked", async () => {
+    const { service, run, plugin, native } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await held(native);
+    plugin.agents.wake(bot, { channel, topLevel: true, text: "New work" });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    const { trigger } = run.mock.calls[0]?.[0] ?? {};
+    expect(trigger).toMatchObject({
+      type: "plugin",
+      plugin: "example",
+      channel,
+      topLevel: true,
+      text: "New work",
+    });
+    expect(trigger && "root" in trigger).toBe(false);
   });
 
   it("never publishes its own id, even when its turn fails", async () => {
@@ -1729,6 +2247,9 @@ describe("a plugin's wake", () => {
       expect(() =>
         plugin.agents.wake(bot, { channel, root: bad, text: "hi" }),
       ).toThrow(/64-hex event id/);
+    expect(() =>
+      plugin.agents.wake(bot, { channel, root, topLevel: true, text: "hi" }),
+    ).toThrow(/not both/);
     expect(() => plugin.agents.wake(sibling, { channel, text: "hi" })).toThrow(
       /does not run that agent/,
     );
@@ -1801,6 +2322,32 @@ it("shows no typing for a mention its runtime ignores", async () => {
   expect(await published(native, 20002)).toEqual([]);
 });
 
+it("keeps a runtime's refusal reason for its owner's decline note", async () => {
+  const { service, run, emit, activity } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  run.mockImplementationOnce(async ({ ignored }) => ignored?.("workflow"));
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() =>
+    expect(activity.reader.declined?.()).toEqual([
+      expect.objectContaining({
+        agent: bot,
+        channelId: channel,
+        refusal: "workflow",
+      }),
+    ]),
+  );
+});
+
 it("wakes on a reply in a thread it started only by a mention or a watch", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -1864,6 +2411,160 @@ it("publishes an agent's reply in a chat its owner is still starting once the st
   land();
   await vi.waitFor(() => expect(replied).toBe(true));
   expect(await published(native, 9)).toHaveLength(1);
+});
+
+it.each(["dm", "huddle"] as const)(
+  "retains supported %s reply placement in local evidence",
+  async (kind) => {
+    const f = await setup();
+    const destination = kind === "dm" ? dm : channel;
+    const root = "e".repeat(64);
+    if (kind === "huddle") {
+      const list = f.session.channels.list();
+      vi.spyOn(f.session.channels, "list").mockReturnValue({
+        ...list,
+        channels: list.channels.map((row) =>
+          row.id === channel
+            ? {
+                ...row,
+                huddle: true,
+                description: huddleDescription(crypto.randomUUID()),
+              }
+            : row,
+        ),
+      });
+    }
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    f.run.mockImplementationOnce(async ({ agent, acknowledged }) => {
+      acknowledged?.();
+      await agent.publish({
+        kind: 9,
+        content: "Reply",
+        tags: [
+          ["h", destination],
+          ...(kind === "dm" ? [["e", root, "", "reply"]] : []),
+        ],
+      });
+    });
+    f.emit({
+      events: [
+        event("f".repeat(64), {
+          pubkey: viewer,
+          content: "Request",
+          tags: [
+            ["h", destination],
+            ["e", root, "", "reply"],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: destination,
+    });
+    try {
+      await vi.waitFor(() =>
+        expect(f.activity.reader.work()[0]?.evidence?.lifecycle.phase).toBe(
+          "handoff",
+        ),
+      );
+      expect(f.activity.reader.work()[0]?.sourceRootId).toBe(
+        kind === "dm" ? null : root,
+      );
+      expect(
+        f.activity.reader.work()[0]?.evidence?.messages.map(({ text }) => text),
+      ).toEqual(["Request", "Reply"]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  },
+);
+
+it("captures runner handoff with a pending publication and a background watch", async () => {
+  const f = await setup();
+  const sourceRootId = "a".repeat(64);
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const publication = runnerGate<RelayEvent>();
+  const turn = runnerGate();
+  const original = f.native.publish.getMockImplementation();
+  if (!original) throw new Error("Missing native publisher");
+  f.native.publish.mockImplementation((member, template) =>
+    template.kind === 9 && template.content === "Choose the next scope"
+      ? publication.promise
+      : original(member, template),
+  );
+  let reply: Promise<RelayEvent> | undefined;
+  f.run.mockImplementationOnce(
+    async ({ agent, acknowledged, workingUntil }) => {
+      acknowledged?.();
+      await agent.publish({
+        kind: 9,
+        content: "Other thread content",
+        tags: [
+          ["h", channel],
+          ["e", "d".repeat(64), "", "reply"],
+        ],
+      });
+      reply = agent.publish({
+        kind: 9,
+        content: "Choose the next scope",
+        tags: [
+          ["h", channel],
+          ["e", sourceRootId, "", "reply"],
+        ],
+      });
+      workingUntil(turn.promise);
+    },
+  );
+  f.emit({
+    events: [
+      event(sourceRootId, {
+        pubkey: viewer,
+        content: "Test the change",
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  try {
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]?.publishing).toBe(1),
+    );
+    const wake = f.activity.reader.work()[0]?.evidence;
+    expect(wake).toMatchObject({
+      lifecycle: { phase: "wake" },
+      messages: [{ author: viewer, text: "Test the change" }],
+    });
+    turn.resolve();
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]?.evidence?.lifecycle.phase).toBe(
+        "handoff",
+      ),
+    );
+    const handoff = f.activity.reader.work()[0]?.evidence;
+    expect(f.activity.reader.work()[0]?.publishing).toBe(1);
+    expect(handoff?.messages.map(({ text }) => text)).toEqual([
+      "Test the change",
+      "Choose the next scope",
+    ]);
+    expect(handoff?.messages[1]?.delivery).toBe("pending");
+    expect(f.service.find(bot)?.attention["watch/channel"]).toBeDefined();
+    publication.resolve(
+      event("local-reply", {
+        pubkey: bot,
+        content: "Choose the next scope",
+        tags: [["h", channel]],
+      }),
+    );
+    await reply;
+    expect(f.activity.reader.work()[0]?.evidence).toBe(handoff);
+  } finally {
+    turn.resolve();
+    publication.resolve(event("local-reply"));
+    await reply;
+    await f.ctx.fiber.dispose();
+  }
 });
 
 it("confirms first-turn Solo metadata before its reply publish is acknowledged", async () => {
@@ -2303,6 +3004,44 @@ it("passes the model and effort its owner asked for, and no other", async () => 
     { model: "deep", effort: undefined },
     { model: undefined, effort: "low" },
   ]);
+});
+
+it("ignores the model and effort asked of an agent on Automatic", async () => {
+  // A synthetic recommendation for the example type.
+  setRuntimeRecommendation({
+    candidates: [
+      { harness: "codex", model: "deep", effort: "max", label: "Deep" },
+    ],
+  });
+  try {
+    const { service, run, emit } = await setup({ typeId: "codex" });
+    await service.create({
+      type: "example/codex",
+      name: "Echo",
+      config: { preset: "recommended" },
+    });
+    // As a Solo chat's pick saved before the agent switched to Automatic.
+    emit({
+      events: [
+        event("picked", {
+          pubkey: viewer,
+          tags: [
+            ["h", channel],
+            ["p", bot],
+            ["model", bot, "deep"],
+            ["effort", bot, "max"],
+          ],
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    const [delivery] = run.mock.calls[0] ?? [];
+    expect(delivery?.config).toMatchObject({ preset: "recommended" });
+    expect(delivery?.model).toBeUndefined();
+    expect(delivery?.effort).toBeUndefined();
+  } finally {
+    setRuntimeRecommendation(undefined);
+  }
 });
 
 it("ignores session tags even for a type with immediate session controls", async () => {
@@ -3289,6 +4028,89 @@ it("leaves a plugin's note for an agent's next turn in a channel, once, while th
   ]);
 });
 
+it("takes plugin instructions of at most 4 KB of UTF-8 text", async () => {
+  const { ctx } = await setup();
+  const { agents } = ctx.extend({
+    pluginOwner: Object.freeze({ id: "buzz.big", revision: "bundled" }),
+  });
+  // "é" is two bytes; the surrounding spaces are trimmed before measuring.
+  for (const text of ["x".repeat(4097), "é".repeat(2049)])
+    expect(() => agents.addInstructions({ id: "rules", text })).toThrow(
+      /over 4096 bytes/,
+    );
+  expect(() =>
+    agents.addInstructions({ id: "rules", text: ` ${"é".repeat(2048)} ` }),
+  ).not.toThrow();
+});
+
+it("gives plugins' instructions to every turn of the agents they choose, until the plugin goes", async () => {
+  const { service, ctx, run, emit } = await setup();
+  const owner = (id: string) =>
+    ctx.extend({ pluginOwner: Object.freeze({ id, revision: "bundled" }) });
+  for (const bad of [
+    { id: "Not An Id", text: "x" },
+    { id: "rules", text: "  " },
+    { id: "rules", text: "x", when: true as never },
+  ])
+    expect(() => owner("buzz.bad").agents.addInstructions(bad)).toThrow(
+      /Agent instructions need/,
+    );
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const zeta = owner("buzz.zeta").plugin({
+    inject: ["agents"],
+    apply: (plugin: Context) =>
+      plugin.agents.addInstructions({ id: "rules", text: "Zeta rules." }),
+  });
+  const alpha = owner("buzz.alpha").plugin({
+    inject: ["agents"],
+    apply: (plugin: Context) => {
+      plugin.agents.addInstructions({
+        id: "echo",
+        text: "Only Echo.",
+        when: (agent) => agent.name === "Echo",
+      });
+      plugin.agents.addInstructions({
+        id: "other",
+        text: "Only Other.",
+        when: (agent) => agent.name === "Other",
+      });
+      plugin.agents.addInstructions({
+        id: "async",
+        text: "Never either.",
+        when: (async () => true) as never,
+      });
+      plugin.agents.addInstructions({
+        id: "broken",
+        text: "Never.",
+        when: () => {
+          throw new Error("no");
+        },
+      });
+    },
+  });
+  await Promise.all([zeta, alpha]);
+  await service.create({ type: "example/echo", name: "Echo" });
+  emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const agent = run.mock.calls[0]?.[0].agent;
+  // Ordered by plugin, whatever order they started in; asked again each time.
+  expect(agent?.instructions?.()).toEqual([
+    { plugin: "buzz.alpha", text: "Only Echo." },
+    { plugin: "buzz.zeta", text: "Zeta rules." },
+  ]);
+  expect(agent?.instructions?.()).toHaveLength(2);
+  expect(warn).toHaveBeenCalledWith(
+    "Agent instructions failed to match",
+    "buzz.alpha/broken",
+    expect.any(Error),
+  );
+  await zeta.dispose();
+  expect(agent?.instructions?.()).toEqual([
+    { plugin: "buzz.alpha", text: "Only Echo." },
+  ]);
+  warn.mockRestore();
+});
+
 it("keeps a plugin's note from posing as a turn's event", async () => {
   const { service, ctx, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -4085,12 +4907,14 @@ describe("an agent in several communities", () => {
   });
 
   it("leaves one community and stays in its others, never its last, and comes back with its key", async () => {
-    const { service, native, second, agent } = await joined();
+    const { service, native, second, agent, plugin } = await joined();
     await service.save(agent.key, {
       attention: {
         "interest/here": { type: "interest", instructions: "Only here." },
       },
     });
+    const thread = { channelId: channel, root: "e".repeat(64) };
+    await plugin.agents.setConversationInstructions(away, thread, "Here.");
     steps.length = 0;
     await service.leave(away);
     // Its share there goes with it: nothing there lists it to unshare after.
@@ -4121,6 +4945,10 @@ describe("an agent in several communities", () => {
     // attention to here is gone.
     const back = await service.join(bot);
     expect(back.agent.key).toBe(away);
+    // Its conversations' instructions stayed here with them.
+    await expect(
+      plugin.agents.conversationInstructions(away, thread),
+    ).resolves.toBe("Here.");
     expect(second.archives.request).toHaveBeenCalledWith(
       "unarchive",
       bot,
@@ -5777,10 +6605,131 @@ it("reads the list again on refresh and clears the error a failed read left", as
         relayUrl: "wss://relay.example.test",
         owner: viewer,
         picture: "https://cdn.example.test/echo.png",
+        type: "example/echo",
       },
     ],
   });
   expect(service.snapshot().error).toBeUndefined();
+});
+
+it("rereads agent execution bindings only after one may have changed", async () => {
+  const storage = memoryStorage();
+  const get = vi.spyOn(storage, "get");
+  const page = new EventTarget();
+  vi.stubGlobal("addEventListener", page.addEventListener.bind(page));
+  vi.stubGlobal("removeEventListener", page.removeEventListener.bind(page));
+  onTestFinished(() => {
+    vi.unstubAllGlobals();
+  });
+  const { service } = await setup({ storage });
+  const agent = await service.create({ type: "example/echo", name: "Echo" });
+  const reads = () =>
+    get.mock.calls.filter(([key]) => key.startsWith("buzz.agent.execution.v1:"))
+      .length;
+  const stored = (key: string) =>
+    page.dispatchEvent(Object.assign(new Event("storage"), { key }));
+  const local = service.local();
+  const before = reads();
+  // Each name lookup asks again; nothing changed, so no binding is read.
+  for (let lookup = 0; lookup < 5; lookup++)
+    expect(service.local()).toBe(local);
+  stored("buzz.agent.other");
+  expect(service.local()).toBe(local);
+  expect(reads()).toBe(before);
+  // Another window saved this agent's binding: the next snapshot shows it.
+  storage.setItem(
+    `buzz.agent.execution.v1:${agent.key}`,
+    JSON.stringify({ provider: "example/remote" }),
+  );
+  stored(`buzz.agent.execution.v1:${agent.key}`);
+  expect(
+    service.local().agents.find((item) => item.pubkey === agent.pubkey)
+      ?.execution,
+  ).toBe("remote");
+});
+
+it("filters the agent list for hosted choices only when the list changes", async () => {
+  const { service } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const filter = vi.spyOn(Array.prototype, "filter");
+  onTestFinished(() => {
+    filter.mockRestore();
+  });
+  const agents = service.snapshot().agents;
+  const filtered = () =>
+    filter.mock.contexts.filter((list) => list === agents).length;
+  service.local();
+  const first = filtered();
+  // Each name lookup asks again; the same list is not filtered again.
+  for (let lookup = 0; lookup < 5; lookup++) service.local();
+  expect(filtered()).toBe(first);
+});
+
+it("classifies an agent as remote after an update overlaps its held binding save", async () => {
+  let entered = () => {};
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const saving = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const storage = fileStore(
+    new Map(),
+    async () => {},
+    async (key) => {
+      if (key.startsWith("buzz.agent.execution.v1:")) {
+        entered();
+        await held;
+      }
+      return null;
+    },
+  );
+  const { ctx, plugin, service } = await setup({ storage });
+  plugin.agents.register({
+    id: "native",
+    title: "Native",
+    execution: true,
+    retire: async () => {},
+    defaults: () => ({ config: {} }),
+    run: vi.fn(),
+  });
+  const adapter = ctx.extend({
+    pluginOwner: {
+      id: "internal",
+      revision: "one",
+      agentExecution: ["example/native"],
+    },
+  });
+  adapter.agents.registerExecution({
+    id: "remote",
+    harnesses: ["example/native"],
+    connect: vi.fn(),
+  });
+  const agent = await service.create({
+    type: "example/native",
+    name: "Dedicated",
+  });
+  const execution = () =>
+    service.local().agents.find((item) => item.pubkey === agent.pubkey)
+      ?.execution;
+  // What a subscriber, such as a Remote badge, last saw.
+  let seen = execution();
+  const off = service.subscribe(() => {
+    seen = execution();
+  });
+  onTestFinished(off);
+  expect(seen).toBeUndefined();
+  const binding = adapter.agents.bindExecution(agent.key, { id: "remote" });
+  await saving;
+  try {
+    // An update while the binding is saved.
+    await service.save(agent.pubkey, { attentionEnabled: true });
+  } finally {
+    release();
+  }
+  await binding;
+  expect(seen).toBe("remote");
 });
 
 it("keeps local selection evidence stable across unrelated agent attention changes", async () => {
@@ -5790,7 +6739,7 @@ it("keeps local selection evidence stable across unrelated agent attention chang
   await service.create({ type: "example/echo", name: "Echo" });
   const local = service.local();
   const agents = service.snapshot().agents;
-  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, { attention: chat });
   expect(service.snapshot().agents).not.toBe(agents);
   expect(service.local()).toBe(local);
   await service.save(hostedKey, { name: "Sea" });
@@ -5862,7 +6811,7 @@ it("runs a type's wakes as standalone turns, one at a time per Interest, and dro
   vi.useFakeTimers({ now: 1_000_000 });
   const releases: (() => void)[] = [];
   const turns: { key: string; prompt?: string | undefined }[] = [];
-  const { service, run } = await setup({
+  const { service, run, watching } = await setup({
     runOnce: async (turn) => {
       const entry: (typeof turns)[number] = { key: turn.key };
       turns.push(entry);
@@ -5906,7 +6855,7 @@ it("runs a type's wakes as standalone turns, one at a time per Interest, and dro
   await vi.waitFor(() => expect(turns[1]?.prompt).toBeDefined());
   expect(turns).toHaveLength(2);
   // Turned off, the waiting turn is dropped; the running one finishes.
-  await service.save(bot, { attentionEnabled: false });
+  await watching?.dispose();
   releases[1]?.();
   await vi.advanceTimersByTimeAsync(1_000);
   expect(turns).toHaveLength(2);
@@ -6094,7 +7043,7 @@ it("runs waiting events before a due timer, so a busy timer cannot starve them",
 });
 
 it("stops it first, and deletes its key only after it left its channels and was archived", async () => {
-  const { service, native, storage, archives } = await setup();
+  const { service, native, storage, archives, authorize } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.remove(bot);
   expect(steps).toEqual([
@@ -6117,6 +7066,8 @@ it("stops it first, and deletes its key only after it left its channels and was 
     "archive",
     bot,
     expect.any(AbortSignal),
+    authorize,
+    expect.any(Function),
   );
   expect(await native.list()).toEqual([]);
 });
@@ -6160,7 +7111,7 @@ it("keeps an unfinished Delete stopped after a relaunch, and finishes it only wh
 });
 
 it("after a relaunch, only drops the record and row of an agent left deleted", async () => {
-  const { service, native, archives } = await setup({
+  const { service, native, archives, session } = await setup({
     identities: [{ ...here(bot), name: "Echo", deleted: true }],
   });
   await vi.waitFor(() =>
@@ -6172,6 +7123,12 @@ it("after a relaunch, only drops the record and row of an agent left deleted", a
   expect(archives.request).not.toHaveBeenCalled();
   expect(await native.list()).toEqual([]);
   expect(service.snapshot().agents).toEqual([]);
+  // So the community's agent choices no longer offer it.
+  await vi.waitFor(() =>
+    expect(session.agentChoices.refresh).toHaveBeenCalledWith(true, {
+      fresh: true,
+    }),
+  );
 });
 
 it("refuses a re-import while a Delete runs, from this copy of the app or another sharing its agents", async () => {
@@ -6334,15 +7291,175 @@ it.each([
   },
 );
 
-it("forgets an agent with no owner-attested profile without archiving it", async () => {
-  const { service, native, archives } = await setup();
+it("archives the agent it deletes with an owner proof issued now, as its profile may have none", async () => {
+  const { service, native, archives, authorize, session } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
-  archives.consent.mockResolvedValueOnce(null);
   await service.remove(bot);
   await vi.waitFor(() =>
     expect(native.forget).toHaveBeenCalledWith(member(bot)),
   );
-  expect(archives.request).not.toHaveBeenCalled();
+  expect(archives.request).toHaveBeenCalledWith(
+    "archive",
+    bot,
+    expect.any(AbortSignal),
+    authorize,
+    expect.any(Function),
+  );
+  expect(session.agentChoices.refresh).toHaveBeenCalledWith(true, {
+    fresh: true,
+  });
+});
+
+it("no picker offers an agent whose Delete started or finished, whatever source still lists it", async () => {
+  const { service, archives, session } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  // The relay library still lists it, as a copy read before Delete would.
+  const listed = [{ pubkey: bot, name: "Echo" }];
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [...listed],
+  }));
+  const choices = createAgentChoices({
+    scope: `https://relay.example.test:${viewer}`,
+    library: library.queries,
+    native: {
+      snapshot: service.local,
+      subscribe: (listener) => service.subscribe(listener),
+      refresh: () => service.refresh(),
+    },
+    signal: new AbortController().signal,
+  });
+  // The community's own choices, which Delete refreshes.
+  Object.assign(session, { agentChoices: choices });
+  await choices.refresh(true, { fresh: true });
+  const composer = {
+    ...session,
+    archives: undefined,
+    profiles: { snapshot: () => new Map() },
+    agentChoices: choices,
+  } as unknown as ComposerSession;
+  const offered = () => {
+    const roster = [{ pubkey: bot, name: "Echo" }];
+    return {
+      member: mentionAdmission(composer, channel)(bot),
+      directory: mentionAdmission(composer, lobby)(bot),
+      roster: mentionAdmission(composer, "private", false, roster)(bot),
+      invite: mentionAdmission(composer, "private", true)(bot),
+      bringBack: mentionAdmission(
+        composer,
+        "private",
+        false,
+        undefined,
+        new Set([bot]),
+      )(bot),
+      pasted: !!pastedMentionRecipient(composer, channel, bot),
+      selectable: choices.snapshot().selectable.some((a) => a.pubkey === bot),
+    };
+  };
+  expect(offered()).toMatchObject({
+    member: true,
+    directory: true,
+    roster: true,
+    invite: true,
+    pasted: true,
+    selectable: true,
+  });
+  // A Delete that couldn't archive leaves it deleting, offered by none.
+  archives.request.mockRejectedValueOnce(new Error("refused"));
+  await expect(service.remove(bot)).rejects.toThrow(UNFINISHED);
+  expect(offered()).toEqual({
+    member: false,
+    directory: false,
+    roster: false,
+    invite: false,
+    bringBack: false,
+    pasted: false,
+    selectable: false,
+  });
+  // Existing content still knows it as an agent.
+  expect(deletingAgent(choices.snapshot(), bot)).toBe(true);
+  expect(
+    choices.snapshot().identities.find((agent) => agent.pubkey === bot),
+  ).toMatchObject({ managed: true, deleting: true });
+  // Once deleted, its record is gone from the library its Delete refreshes.
+  listed.length = 0;
+  await service.remove(bot);
+  expect(choices.snapshot().identities.map((a) => a.pubkey)).not.toContain(bot);
+  expect(offered().selectable).toBe(false);
+});
+
+it("Forget refreshes the community's agent choices", async () => {
+  const { service, archives, session } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  archives.request.mockRejectedValueOnce(new Error("refused"));
+  await expect(service.remove(bot)).rejects.toThrow(UNFINISHED);
+  vi.mocked(session.agentChoices.refresh).mockClear();
+  await service.forget(bot);
+  expect(session.agentChoices.refresh).toHaveBeenCalledWith(true, {
+    fresh: true,
+  });
+});
+
+it("keeps the key of an agent it couldn't archive, stopped for Delete to run again", async () => {
+  const { service, native, archives } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  // As when no owner proof can be issued, or the relay refuses it.
+  archives.request.mockRejectedValueOnce(new Error("refused"));
+  await expect(service.remove(bot)).rejects.toThrow(UNFINISHED);
+  expect(native.forget).not.toHaveBeenCalled();
+  expect(native.remove).not.toHaveBeenCalled();
+  expect(service.memberships(bot)).toEqual([
+    expect.objectContaining({ deleting: true }),
+  ]);
+  // Nor does a connection that can't write archives skip the archive.
+  archives.writable = false;
+  await expect(service.remove(bot)).rejects.toThrow(UNFINISHED);
+  expect(native.forget).not.toHaveBeenCalled();
+  archives.writable = true;
+  await service.remove(bot);
+  await vi.waitFor(() =>
+    expect(native.forget).toHaveBeenCalledWith(member(bot)),
+  );
+});
+
+it("force-republishes the agent's own profile, waits for it, then archives, and keeps the key when that fails", async () => {
+  const { service, native, archives } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const order: string[] = [];
+  // As the archive store does for a profile that names no owner: republish,
+  // confirm by re-reading, then archive.
+  archives.request.mockImplementation(
+    async (_action, _pubkey, signal, _issue, attest) => {
+      if (!attest || !signal) throw new Error("no attest");
+      await attest(signal);
+      order.push("confirmed");
+      order.push("archived");
+    },
+  );
+  let refuse = true;
+  native.publishProfile.mockImplementation(async (_member, force) => {
+    if (!force) return;
+    await settle();
+    if (refuse) {
+      refuse = false;
+      throw new Error("The community refused the agent event");
+    }
+    order.push("published");
+  });
+  await expect(service.remove(bot)).rejects.toThrow(UNFINISHED);
+  expect(native.publishProfile).toHaveBeenCalledWith(member(bot), true);
+  expect(order).toEqual([]);
+  expect(native.forget).not.toHaveBeenCalled();
+  expect(native.remove).not.toHaveBeenCalled();
+  expect(service.memberships(bot)).toEqual([
+    expect.objectContaining({ deleting: true }),
+  ]);
+  await service.remove(bot);
+  await vi.waitFor(() =>
+    expect(native.forget).toHaveBeenCalledWith(member(bot)),
+  );
+  expect(order).toEqual(["published", "confirmed", "archived"]);
+  expect(native.publishProfile).toHaveBeenLastCalledWith(member(bot), true);
 });
 
 it("deletes nothing outside the agent's community, and leaves it stopped for Delete to run again", async () => {
@@ -6573,6 +7690,63 @@ it("without a key the classifier does not run and the turn is told so", async ()
     classifier: { outcome: "not-run" },
   });
   expect(service.classifier()).toBe("unavailable");
+});
+
+it("discovers newly granted Decisions access before Attention skips an unconfigured classifier", async () => {
+  const jev = fakeJev(false);
+  const h = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(h.ctx.decisions.status()).toBe("needs-setup"));
+  let now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  let granted = false;
+  const identity = federatedFixture();
+  identity.request.mockImplementation(async () => ({
+    status: 200,
+    headers: {},
+    body: JSON.stringify({
+      subject: "user",
+      capabilities: { can_use_builderlab_decisions: granted },
+    }),
+  }));
+  const session = createNativeSession(identity.service);
+  const decide = vi.fn(async (input: unknown) => {
+    const state = JSON.parse((input as DecisionRequest).state) as {
+      event: { content: string };
+    };
+    return answered(state.event.content === "qualifies" ? 0.9 : 0.2);
+  });
+  const plugin = h.ctx
+    .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
+    .plugin((ctx) => offerBuilderlabDecisions(ctx, session, true, decide));
+  try {
+    await plugin.await();
+    await session.signIn();
+    await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
+    expect(h.ctx.decisions.status()).toBe("needs-setup");
+    expect(identity.request).toHaveBeenCalledOnce();
+    granted = true;
+    now += 60_000;
+    h.emit({
+      events: [
+        event("a", { content: "does not qualify" }),
+        event("b", { content: "qualifies" }),
+      ],
+    });
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalledOnce());
+    expect(h.run.mock.calls[0]?.[0].trigger).toMatchObject({
+      type: "watch",
+      event: { content: "qualifies" },
+      classifier: { outcome: "passed" },
+    });
+    expect(decide).toHaveBeenCalledTimes(2);
+    expect(jev.decide).not.toHaveBeenCalled();
+    expect(identity.request).toHaveBeenCalledTimes(2);
+    expect(identity.service.signIn).toHaveBeenCalledOnce();
+  } finally {
+    await h.ctx.fiber.dispose();
+    session.dispose();
+    clock.mockRestore();
+  }
 });
 
 it("a key set or cleared takes effect at once, and one removed elsewhere is noticed", async () => {
@@ -7491,6 +8665,47 @@ describe("a turn closing or reloading the app stopped", () => {
     third.service.resumeInterrupted();
     await settle();
     expect(third.run).not.toHaveBeenCalled();
+  });
+
+  it("previews its saved turns with Resume's fresh read, changing nothing", async () => {
+    const asked = mention();
+    const second = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    const [agent] = second.service.snapshot().interrupted;
+    if (!agent) throw new Error("Echo is not interrupted");
+    expect(second.service.interruptedTurns(agent)).toMatchObject([
+      { id: asked.id, channelId: channel },
+    ]);
+    const read = vi.mocked(second.session.readRemote);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    // An event the relay did not prove is never previewed.
+    const unproven = { ...asked, id: "f".repeat(64) } as RelayEvent;
+    read.mockImplementationOnce(async (filters, options) => [
+      ...(await original(filters, options)),
+      unproven,
+    ]);
+    const events = await second.service.readInterrupted(
+      agent,
+      new AbortController().signal,
+    );
+    expect(events.map((event) => event.id)).toEqual([asked.id]);
+    expect(read).toHaveBeenLastCalledWith(
+      [{ ids: [asked.id], limit: 1 }],
+      expect.objectContaining({ fresh: true }),
+    );
+    await settle();
+    expect(second.run).not.toHaveBeenCalled();
+    expect(names(second.service.snapshot().interrupted)).toEqual(["Echo"]);
+    expect(readInterrupted(second.storage)).toEqual({
+      [bot]: { [asked.id]: channel },
+    });
   });
 
   it("is forgotten when the owner does not resume it", async () => {
@@ -9242,30 +10457,6 @@ it.each([
   },
 );
 
-it("wakes nothing from the time its attention was off", async () => {
-  vi.useFakeTimers({ toFake: ["Date"] });
-  try {
-    const { service, run, history, recover } = await setup({
-      identities: [echo],
-    });
-    const start = nowSeconds();
-    await service.save(bot, { attentionEnabled: true, attention: chat });
-    await settle();
-    await service.save(bot, { attentionEnabled: false });
-    history.push(posted("while off", start));
-    await service.save(bot, { attentionEnabled: true });
-    // A reconnect a minute later catches up from when it was turned on.
-    vi.setSystemTime((start + 60) * 1000);
-    history.push(posted("after", start + 30));
-    recover();
-    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-    await settle();
-    expect(heard(run)).toEqual(["after"]);
-  } finally {
-    vi.useRealTimers();
-  }
-});
-
 it("wakes nothing from the time no plugin showed its attention", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   try {
@@ -9588,7 +10779,7 @@ it("holds a public channel's catch-up after a restart, before it is attended, un
 });
 
 it("keeps the channels its enabled watches name live while attention is on", async () => {
-  const { service, attended } = await setup();
+  const { service, attended, ctx } = await setup({ attention: false });
   await service.create({ type: "example/echo", name: "Echo" });
   const watch = {
     type: "event",
@@ -9606,13 +10797,14 @@ it("keeps the channels its enabled watches name live while attention is on", asy
   });
   await settle();
   expect([...attended]).toEqual([]);
-  await service.save(bot, { attentionEnabled: true });
+  const watching = showAttention(ctx, "two");
+  await watching;
   await settle();
   // A watch of "all" hears what the session listens to already.
   expect([...attended].map((ids) => [...ids].sort())).toEqual([
     [channel, plaza].sort(),
   ]);
-  await service.save(bot, { attentionEnabled: false });
+  await watching.dispose();
   await settle();
   expect([...attended]).toEqual([]);
 });
@@ -9721,27 +10913,21 @@ it("answers an unmentioned one-to-one DM as conversation even when a watch match
   });
 });
 
-it("keeps a new agent's attention off until its owner turns it on", async () => {
+it("turns a new agent's attention on while a plugin shows it", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
-  expect(service.find(bot)?.attentionEnabled).toBe(false);
-  // Its type's default watch matches, but wakes nothing while off.
-  emit({ events: [deploy("one")] });
-  await settle();
-  await settle();
-  expect(run).not.toHaveBeenCalled();
-  await service.save(bot, { attentionEnabled: true });
   expect(service.find(bot)?.attentionEnabled).toBe(true);
-  emit({ events: [deploy("two")] });
+  // Its type's default watch wakes it with no switch to turn on.
+  emit({ events: [deploy("one")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
     type: "watch",
-    event: { id: "two".padEnd(64, "0") },
+    event: { id: "one".padEnd(64, "0") },
   });
 });
 
 it("drops a queued watch run whose watch was disabled, or whose attention went off, before it ran", async () => {
-  const { service, run, emit } = await setup();
+  const { service, run, emit, watching } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
   let release = () => {};
@@ -9770,14 +10956,14 @@ it("drops a queued watch run whose watch was disabled, or whose attention went o
     events: [deploy("three"), deploy("four")],
   });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-  await service.save(bot, { attentionEnabled: false });
+  await watching?.dispose();
   release();
   await settle();
   expect(run).toHaveBeenCalledTimes(2);
 });
 
 it("drops a queued watch run when attention goes off and on, or its watch is replaced, before it ran", async () => {
-  const { service, run, emit } = await setup();
+  const { service, run, emit, watching, ctx } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
   const watch = service.find(bot)?.attention["watch/channel"]?.value;
@@ -9791,8 +10977,8 @@ it("drops a queued watch run when attention goes off and on, or its watch is rep
     events: [deploy("one"), deploy("two")],
   });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-  await service.save(bot, { attentionEnabled: false });
-  await service.save(bot, { attentionEnabled: true });
+  await watching?.dispose();
+  await showAttention(ctx, "two");
   release();
   await settle();
   expect(run).toHaveBeenCalledTimes(1);
@@ -9816,7 +11002,7 @@ it("drops a queued watch run when attention goes off and on, or its watch is rep
 });
 
 it("tells a run whose type queued its work that it is current while another community is selected", async () => {
-  const { service, run, emit, second, select } = await setup();
+  const { service, run, emit, second, select, watching } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
   select(second.origin);
@@ -9826,12 +11012,12 @@ it("tells a run whose type queued its work that it is current while another comm
   const delivery = run.mock.calls[0]?.[0] as Delivery;
   await settle();
   expect(delivery.current()).toBe(true);
-  await service.save(bot, { attentionEnabled: false });
+  await watching?.dispose();
   expect(delivery.current()).toBe(false);
 });
 
 it("tells a run whose type queued its work whether that work is still current", async () => {
-  const { service, run, emit } = await setup();
+  const { service, run, emit, watching } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
   const watch = service.find(bot)?.attention["watch/channel"]?.value;
@@ -9856,13 +11042,13 @@ it("tells a run whose type queued its work whether that work is still current", 
   const second = run.mock.calls[1]?.[0] as Delivery;
   await settle();
   expect(second.current()).toBe(true);
-  await service.save(bot, { attentionEnabled: false });
+  await watching?.dispose();
   expect(second.current()).toBe(false);
 });
 
 it("voids a handed-off timer occurrence once attention or the timer is reset", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
-  const { service, run } = await setup();
+  const { service, run, watching, ctx } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
   const timer = {
@@ -9884,8 +11070,8 @@ it("voids a handed-off timer occurrence once attention or the timer is reset", a
   const first = run.mock.calls[0]?.[0] as Delivery;
   expect(first.current()).toBe(true);
   // Turned off and on again while the turn waits for a process.
-  await service.save(bot, { attentionEnabled: false });
-  await service.save(bot, { attentionEnabled: true });
+  await watching?.dispose();
+  await showAttention(ctx, "two");
   expect(first.current()).toBe(false);
   await vi.advanceTimersByTimeAsync(60_000);
   expect(run).toHaveBeenCalledTimes(2);
@@ -10125,6 +11311,51 @@ it("shows the owner's agents on other devices without running them, and leaves e
   expect(native.claim).not.toHaveBeenCalledWith(sibling, 0);
   await expect(service.remove(sibling)).rejects.toThrow(/device that runs it/);
   await expect(service.save(sibling, { name: "Near" })).rejects.toThrow();
+});
+
+it("shows hosted agents while a slow background read holds the relay's background slot", async () => {
+  const { service, plugin, session, connect } = await setup();
+  plugin.agents.register(cloud().type);
+  const listing = record(hostedKey, {
+    content: JSON.stringify({ name: "Sky" }),
+    tags: [
+      ["d", hostedKey],
+      ["runtime", "example/cloud"],
+    ],
+  });
+  let release: ((events: RelayEvent[]) => void) | undefined;
+  // The session's actual reader, which admits one background read at a time.
+  const { reader } = createRelayReader({
+    viewer,
+    relayAuthor: other,
+    media: () => undefined,
+    query: async (filters) =>
+      filters[0]?.kinds?.includes(30078)
+        ? new Promise<RelayEvent[]>((resolve) => (release = resolve))
+        : filters[0]?.kinds?.includes(30177)
+          ? [listing]
+          : [],
+  });
+  const background = reader.read(
+    [{ kinds: [30078], authors: [viewer], limit: 1 }],
+    { priority: "background", deadlineMs: 30_000 },
+  );
+  try {
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    Object.assign(session, { read: reader.read });
+    // A new session reads the community's agent records again.
+    connect(false);
+    connect(true);
+    await vi.waitFor(() =>
+      expect(service.find(hostedKey)).toMatchObject({
+        name: "Sky",
+        place: "hosted",
+      }),
+    );
+  } finally {
+    release?.([]);
+    await background;
+  }
 });
 
 it("creates a hosted agent through its provider, attesting the key it returns", async () => {
@@ -10434,16 +11665,66 @@ it("refuses to remove a hosted agent's picture, but still renames one that has n
   expect(service.find(hostedKey)).toMatchObject({ name: "Sea" });
 });
 
-it("deletes a hosted agent from its provider, then from its community", async () => {
-  const { service, plugin, session } = await setup();
+it("says a hosted agent wasn't archived when its community advertises no archive authority and its provider fails", async () => {
+  const { service, plugin, archives } = await setup();
   const { type, remote } = cloud();
   plugin.agents.register(type);
   await service.create({ type: "example/cloud", name: "Sky" });
-  // A provider that fails leaves it listed, to delete again.
+  archives.unavailable = true;
   remote.remove.mockRejectedValueOnce(new Error("provider down"));
-  await expect(service.remove(hostedKey)).rejects.toThrow("provider down");
+  await expect(service.remove(hostedKey)).rejects.toThrow(
+    "Sky wasn't deleted: its provider couldn't remove it, so it may still be running. This community advertises no archive authority, so it wasn't archived. Delete it again.",
+  );
+  expect(archives.request).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)?.place).toBe("hosted");
+  await service.remove(hostedKey);
+  expect(service.find(hostedKey)).toBeUndefined();
+});
+
+it("stops a hosted agent's Delete when its profile names no owner, saying why", async () => {
+  const { service, plugin, archives } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  archives.request.mockRejectedValueOnce(new UnattestedProfile());
+  await expect(service.remove(hostedKey)).rejects.toThrow(
+    "Sky wasn't deleted: this community archives it only when its profile names you as its owner, and only its provider can publish that profile.",
+  );
+  expect(remote.remove).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)?.place).toBe("hosted");
+});
+
+it("deletes a hosted agent from its provider, then from its community", async () => {
+  const { service, plugin, session, archives, authorize } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  // An archive not confirmed stops it before its provider removes anything.
+  archives.request.mockRejectedValueOnce(new Error("refused"));
+  await expect(service.remove(hostedKey)).rejects.toThrow(
+    "Sky wasn't deleted: Buzz couldn't archive it in this community. Delete it again.",
+  );
+  expect(remote.remove).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)?.place).toBe("hosted");
+  // A provider that fails leaves it archived and listed, to delete again.
+  steps.length = 0;
+  remote.remove.mockRejectedValueOnce(new Error("provider down"));
+  await expect(service.remove(hostedKey)).rejects.toThrow(
+    "Sky is archived and hidden, but its provider couldn't remove it, so it may still be running. Delete it again.",
+  );
+  expect(steps).toEqual(["archive"]);
+  expect(archives.request).toHaveBeenLastCalledWith(
+    "archive",
+    hostedKey,
+    expect.any(AbortSignal),
+    authorize,
+    undefined,
+  );
   expect(records.removeAgent).not.toHaveBeenCalled();
   expect(service.find(hostedKey)?.place).toBe("hosted");
+  // A retry reads it archived, archives nothing again, and asks the provider.
+  archives.request.mockClear();
+  archives.refresh.mockClear();
   // So does a share still listed: its record, which lists it, stays.
   records.unshare.mockRejectedValueOnce(new Error("still listed"));
   await expect(service.remove(hostedKey)).rejects.toThrow("still listed");
@@ -10456,7 +11737,10 @@ it("deletes a hosted agent from its provider, then from its community", async ()
     viewer,
     hostedKey,
     expect.any(AbortSignal),
+    { issue: authorize },
   );
+  expect(archives.refresh).toHaveBeenCalled();
+  expect(archives.request).not.toHaveBeenCalled();
   expect(steps).toEqual(["provider", "unshare", "leave"]);
   expect(remote.remove).toHaveBeenCalledWith({
     pubkey: hostedKey,
@@ -10475,7 +11759,7 @@ it("deletes an unfinished hosted agent from its community too, as its profile ma
     service.create({ type: "example/cloud", name: "Sky" }),
   ).rejects.toThrow();
   await service.remove(hostedKey);
-  expect(steps).toEqual(["provider", "unshare", "leave"]);
+  expect(steps).toEqual(["archive", "provider", "unshare", "leave"]);
   expect(service.find(hostedKey)).toBeUndefined();
 });
 
@@ -11457,6 +12741,20 @@ async function handleOf(
   return run.mock.calls.at(-1)?.[0].agent as Delivery["agent"];
 }
 
+it("routes effective edit lookups through the running agent's custody", async () => {
+  const { service, native, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const handle = await handleOf(run, emit);
+  const head = event("head", { kind: 40003, tags: [["h", channel]] });
+  native.effectiveEdit.mockResolvedValueOnce(head);
+  expect(await handle.effectiveEdit("target", channel)).toBe(head);
+  expect(native.effectiveEdit).toHaveBeenCalledWith(
+    expect.objectContaining({ pubkey: bot, relay: expect.any(String) }),
+    "target",
+    channel,
+  );
+});
+
 it("lets a run read and write its attention with expected-state tokens", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -11525,26 +12823,12 @@ it("fails an agent's attention write that agent storage could not save, and keep
   expect(written.object).toMatchObject({ instructions: "Saved." });
 });
 
-it("keeps attention off across a reload", async () => {
-  const { service, storage, native } = await setup();
-  await service.create({ type: "example/echo", name: "Echo" });
-  await service.save(bot, { attentionEnabled: false });
-  const reloaded = await setup({
-    storage,
-    identities: await native.list(),
-  });
-  await vi.waitFor(() =>
-    expect(reloaded.service.snapshot().status).toBe("ready"),
-  );
-  expect(reloaded.service.find(bot)?.attentionEnabled).toBe(false);
-});
-
 it("stops watches and timers while attention is off, keeps every object, and resumes them", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
-  const { service, run, emit } = await setup();
+  const { service, run, emit, watching, ctx } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await watching?.dispose();
   await service.save(bot, {
-    attentionEnabled: false,
     attention: {
       "watch/tick": {
         type: "timer",
@@ -11579,16 +12863,15 @@ it("stops watches and timers while attention is off, keeps every object, and res
     "mention",
   ]);
   expect(run.mock.calls[0]?.[0].agent.attention.enabled()).toBe(false);
-  await service.save(bot, { attentionEnabled: true });
+  await showAttention(ctx, "two");
   expect(service.find(bot)?.attention).toEqual(before?.attention);
   emit({ events: [deploy("w2")] });
   await vi.advanceTimersByTimeAsync(5_000);
-  // The overdue timer starts once turning attention on is saved, before the
-  // next tick and so before the later event.
+  // The overdue timer starts at the next tick once Attention is shown.
   expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
     "mention",
-    "timer",
     "watch",
+    "timer",
   ]);
 });
 
@@ -11791,25 +13074,7 @@ it("wakes nothing for an event heard during startup when it ends without Attenti
   expect(run).not.toHaveBeenCalled();
 });
 
-it("turning the saved switch off cancels a startup-held event", async () => {
-  vi.useFakeTimers({ now: 1_000_000 });
-  const { service, run, emit, ctx } = await setup({
-    attention: false,
-    starting: true,
-  });
-  await service.create({ type: "example/echo", name: "Echo" });
-  await service.save(bot, { attentionEnabled: true });
-  emit({ events: [deploy("held-before-off")] });
-  await vi.advanceTimersByTimeAsync(1_000);
-  await service.save(bot, { attentionEnabled: false });
-  await vi.advanceTimersByTimeAsync(1_000);
-  await service.save(bot, { attentionEnabled: true });
-  await showAttention(ctx, "two");
-  await vi.advanceTimersByTimeAsync(5_000);
-  expect(run).not.toHaveBeenCalled();
-});
-
-it("turns every agent's attention off while no plugin shows it, keeps its switch, and resumes it", async () => {
+it("turns every agent's attention off while no plugin shows it, and resumes it", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const { service, run, emit, watching, ctx } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -11887,6 +13152,17 @@ it("leaves an agent another copy of the app holds to that copy, and does not say
   expect(said(presence)).toEqual([`online:${bot}`]);
 });
 
+it("tells each community which agent types run remotely, so their agents show online", async () => {
+  vi.useFakeTimers();
+  const { service, plugin, session } = await setup();
+  plugin.agents.register(cloud().type);
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.advanceTimersByTimeAsync(10_000);
+  const told = vi.mocked(session.presence.remoteRuntimes)?.mock.calls ?? [];
+  expect(told.length).toBeGreaterThan(0);
+  expect([...(told.at(-1)?.[0] ?? [])]).toEqual(["example/cloud"]);
+});
+
 it("tries a refused presence again after half a minute, not every tick", async () => {
   vi.useFakeTimers();
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -11951,6 +13227,550 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
   ]);
 });
 
+it("binds run-only Solo placement to the owner, community and just-created confirmed chat", async () => {
+  const f = await setup();
+  const preferences = {
+    refresh: vi.fn(async () => {}),
+    writable: true,
+    snapshot: () => ({
+      status: "ready",
+      data: { sections: [{ id: "work", name: "Work" }] },
+    }),
+    assign: vi.fn(async () => {}),
+  };
+  const authority = "f".repeat(64);
+  const read = vi.fn(async () => [
+    event("meta", {
+      kind: 39000,
+      pubkey: authority,
+      tags: [
+        ["d", "new-chat"],
+        ["t", "stream"],
+        ["t", "buzz.solo"],
+        ["P", bot],
+      ],
+    }),
+    event("roster", {
+      kind: 39002,
+      pubkey: authority,
+      tags: [
+        ["d", "new-chat"],
+        ["p", bot],
+        ["p", viewer],
+      ],
+    }),
+  ]);
+  Object.assign(f.session, {
+    channelKit: { refresh: vi.fn(async () => {}) },
+    soloPreferences: preferences,
+    relayAuthor: authority,
+    snapshotRead: read,
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const handle = await handleOf(f.run, f.emit);
+  const workspace = handle.soloWorkspaces;
+  if (!workspace) throw new Error("Missing run workspace capability");
+  try {
+    expect(f.plugin.agents.handle(bot)?.soloWorkspaces).toBeUndefined();
+    expect(await workspace.list()).toEqual([{ id: "work", name: "Work" }]);
+    await expect(workspace.prepare("work", [], "new-chat")).rejects.toThrow(
+      "Include your owner",
+    );
+    await expect(
+      workspace.prepare("unknown", [viewer], "new-chat"),
+    ).rejects.toThrow("No such Solo workspace");
+    const file = await workspace.prepare("work", [viewer], "new-chat");
+    await expect(file("old-chat")).rejects.toThrow("No new chat from this run");
+    await handle.publish({
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", "new-chat"],
+        ["t", "buzz.solo"],
+        ["p", viewer],
+      ],
+    });
+    await file("new-chat");
+    expect(preferences.assign).toHaveBeenCalledExactlyOnceWith(
+      "new-chat",
+      "work",
+      expect.any(AbortSignal),
+    );
+    expect(read).toHaveBeenCalledExactlyOnceWith(
+      [
+        {
+          kinds: [39000, 39002],
+          authors: [authority],
+          "#d": ["new-chat"],
+          limit: 2,
+          consistency: "strong",
+        },
+      ],
+      { signal: expect.any(AbortSignal) },
+    );
+    await expect(file("new-chat")).rejects.toThrow("already attempted");
+    const stale = await workspace.prepare("work", [viewer], "new-chat");
+    f.connect(false);
+    await expect(stale("new-chat")).rejects.toThrow();
+    await expect(workspace.list()).rejects.toThrow();
+    expect(preferences.assign).toHaveBeenCalledTimes(1);
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it.each([
+  "cached preferences",
+  "read-only preferences",
+  "owner missing",
+  "caller missing",
+  "wrong creator",
+  "not Solo",
+  "region",
+  "wrong authority",
+  "wrong coordinate",
+])("refuses Solo placement for unconfirmed authority: %s", async (failure) => {
+  const f = await setup();
+  const authority = "f".repeat(64);
+  const assign = vi.fn(async () => {});
+  const metadata = event("meta", {
+    kind: 39000,
+    pubkey: authority,
+    tags: [
+      ["d", "new-chat"],
+      ["t", "stream"],
+      ["t", "buzz.solo"],
+      ["P", bot],
+    ],
+  });
+  const roster = event("roster", {
+    kind: 39002,
+    pubkey: authority,
+    tags: [
+      ["d", "new-chat"],
+      ["p", bot],
+      ["p", viewer],
+    ],
+  });
+  if (failure === "owner missing")
+    roster.tags = roster.tags.filter(([, value]) => value !== viewer);
+  if (failure === "caller missing")
+    roster.tags = roster.tags.filter(([, value]) => value !== bot);
+  if (failure === "wrong creator")
+    metadata.tags = metadata.tags.map((tag) =>
+      tag[0] === "P" ? ["P", other] : tag,
+    );
+  if (failure === "not Solo")
+    metadata.tags = metadata.tags.filter(([, value]) => value !== "buzz.solo");
+  if (failure === "region")
+    metadata.tags.push(["t", "buzz.region:example:work"]);
+  if (failure === "wrong authority") roster.pubkey = other;
+  if (failure === "wrong coordinate") roster.tags[0] = ["d", "other-chat"];
+  Object.assign(f.session, {
+    channelKit: { refresh: vi.fn(async () => {}) },
+    relayAuthor: authority,
+    snapshotRead: vi.fn(async () => [metadata, roster]),
+    soloPreferences: {
+      refresh: async () => {},
+      writable: failure !== "read-only preferences",
+      snapshot: () => ({
+        status: "ready",
+        ...(failure === "cached preferences" ? { cached: true } : {}),
+        data: { sections: [{ id: "work", name: "Work" }] },
+      }),
+      assign,
+    },
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const handle = await handleOf(f.run, f.emit);
+  try {
+    if (
+      failure === "cached preferences" ||
+      failure === "read-only preferences"
+    ) {
+      await expect(handle.soloWorkspaces?.list()).rejects.toThrow(
+        "Solo workspaces are unavailable",
+      );
+      await expect(
+        handle.soloWorkspaces?.prepare("work", [viewer], "new-chat"),
+      ).rejects.toThrow("Solo workspaces are unavailable");
+      expect(f.session.snapshotRead).not.toHaveBeenCalled();
+      expect(assign).not.toHaveBeenCalled();
+      return;
+    }
+    const file = await handle.soloWorkspaces?.prepare(
+      "work",
+      [viewer],
+      "new-chat",
+    );
+    await handle.publish({
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", "new-chat"],
+        ["t", "buzz.solo"],
+        ["p", viewer],
+      ],
+    });
+    await expect(file?.("new-chat")).resolves.toMatchObject({
+      status: "not-filed",
+      error: expect.stringContaining("not confirmed"),
+    });
+    expect(assign).not.toHaveBeenCalled();
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it("fences workspace discovery when its community binding changes during the read", async () => {
+  const f = await setup();
+  const gate = runnerGate();
+  const started = runnerGate();
+  Object.assign(f.session, {
+    channelKit: { refresh: vi.fn(async () => {}) },
+    relayAuthor: "f".repeat(64),
+    snapshotRead: vi.fn(),
+    soloPreferences: {
+      refresh: async () => {
+        started.resolve();
+        await gate.promise;
+      },
+      writable: true,
+      snapshot: () => ({
+        status: "ready",
+        data: { sections: [{ id: "work", name: "Private name" }] },
+      }),
+    },
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const handle = await handleOf(f.run, f.emit);
+  const pending = handle.soloWorkspaces?.list();
+  const refused = expect(pending).rejects.toThrow();
+  try {
+    await started.promise;
+    f.signIn(other);
+    gate.resolve();
+    await refused;
+  } finally {
+    gate.resolve();
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it("keeps overlapping prepared creates independently fileable through the run", async () => {
+  const f = await setup();
+  const authority = "f".repeat(64);
+  const firstStarted = runnerGate(),
+    releaseFirst = runnerGate();
+  const assign = vi.fn(async (_id: string) => {});
+  Object.assign(f.session, {
+    channelKit: { refresh: async () => {} },
+    relayAuthor: authority,
+    soloPreferences: {
+      refresh: async () => {},
+      writable: true,
+      snapshot: () => ({
+        status: "ready",
+        data: { sections: [{ id: "work", name: "Work" }] },
+      }),
+      assign,
+    },
+    snapshotRead: async (filters: readonly ReadFilter[]) => {
+      const id = filters[0]?.["#d"]?.[0] ?? "";
+      if (id === "first") {
+        firstStarted.resolve();
+        await releaseFirst.promise;
+      }
+      return [
+        event("meta", {
+          kind: 39000,
+          pubkey: authority,
+          tags: [
+            ["d", id],
+            ["t", "stream"],
+            ["t", "buzz.solo"],
+            ["P", bot],
+          ],
+        }),
+        event("roster", {
+          kind: 39002,
+          pubkey: authority,
+          tags: [
+            ["d", id],
+            ["p", bot],
+            ["p", viewer],
+          ],
+        }),
+      ];
+    },
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const handle = await handleOf(f.run, f.emit);
+  const ws = handle.soloWorkspaces;
+  if (!ws) throw new Error("Missing run capability");
+  const create = (id: string) =>
+    handle.publish({
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", id],
+        ["t", "buzz.solo"],
+        ["p", viewer],
+      ],
+    });
+  try {
+    const first = await ws.prepare("work", [viewer], "first");
+    await create("first");
+    // First tool is still confirming metadata when the second publishes.
+    const second = await ws.prepare("work", [viewer], "second");
+    await create("second");
+    const pending = first("first");
+    await Promise.race([
+      firstStarted.promise,
+      pending.then(() => {
+        throw new Error("First placement finished before its authority read");
+      }),
+    ]);
+    await expect(second("second")).resolves.toEqual({ status: "filed" });
+    releaseFirst.resolve();
+    await expect(pending).resolves.toEqual({ status: "filed" });
+    expect(assign.mock.calls.map(([id]) => id)).toEqual(["second", "first"]);
+    await expect(first("first")).rejects.toThrow("already attempted");
+  } finally {
+    releaseFirst.resolve();
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it.each(["authority", "assignment"])(
+  "retains truthful status when retired during pending %s",
+  async (boundary) => {
+    const f = await setup();
+    const authority = "f".repeat(64);
+    const started = runnerGate(),
+      release = runnerGate();
+    const signal = new AbortController();
+    let durable = false;
+    const assign = vi.fn(async () => {
+      durable = true;
+      started.resolve();
+      await release.promise;
+    });
+    Object.assign(f.session, {
+      channelKit: { refresh: async () => {} },
+      relayAuthor: authority,
+      soloPreferences: {
+        refresh: async () => {},
+        writable: true,
+        snapshot: () => ({
+          status: "ready",
+          data: { sections: [{ id: "work", name: "Work" }] },
+        }),
+        assign,
+      },
+      snapshotRead: async () => {
+        if (boundary === "authority") {
+          started.resolve();
+          await release.promise;
+        }
+        return [
+          event("meta", {
+            kind: 39000,
+            pubkey: authority,
+            tags: [
+              ["d", "chat"],
+              ["t", "stream"],
+              ["t", "buzz.solo"],
+              ["P", bot],
+            ],
+          }),
+          event("roster", {
+            kind: 39002,
+            pubkey: authority,
+            tags: [
+              ["d", "chat"],
+              ["p", bot],
+              ["p", viewer],
+            ],
+          }),
+        ];
+      },
+    });
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    const handle = await handleOf(f.run, f.emit);
+    try {
+      const file = await handle.soloWorkspaces?.prepare(
+        "work",
+        [viewer],
+        "chat",
+        signal.signal,
+      );
+      await handle.publish({
+        kind: 9007,
+        content: "",
+        tags: [
+          ["h", "chat"],
+          ["t", "buzz.solo"],
+          ["p", viewer],
+        ],
+      });
+      const pending = file?.("chat");
+      await started.promise;
+      signal.abort(new Error("retired"));
+      release.resolve();
+      await expect(pending).resolves.toMatchObject({
+        status: boundary === "authority" ? "not-filed" : "unconfirmed",
+      });
+      expect(durable).toBe(boundary === "assignment");
+    } finally {
+      release.resolve();
+      await f.ctx.fiber.dispose();
+    }
+  },
+);
+
+it.each(["filed", "deleted", "retired"])(
+  "uses the existing Solo preference writer across placement outcome: %s",
+  async (outcome) => {
+    const f = await setup();
+    const lifetime = new AbortController();
+    const call = new AbortController();
+    const saved = runnerGate(),
+      release = runnerGate();
+    let entries: KitEntry[] = [
+      {
+        eventId: "head",
+        createdAt: 1,
+        record: {
+          version: 1,
+          community: "https://relay.example.test",
+          deleted: false,
+          value: {
+            type: "groups",
+            id: "me",
+            groups: [
+              { id: "work", name: "Work", defaultTemplateId: "do-not-copy" },
+            ],
+            assignments: {},
+          },
+        },
+      },
+    ];
+    const save = vi.fn(async (value: KitValue) => {
+      entries = [
+        {
+          eventId: "next",
+          createdAt: 2,
+          record: {
+            version: 1,
+            community: "https://relay.example.test",
+            deleted: false,
+            value,
+          },
+        },
+      ];
+      if (outcome === "retired") {
+        saved.resolve();
+        await release.promise;
+      }
+    });
+    const kit = {
+      available: true,
+      refresh: vi.fn(async () => {}),
+      snapshot: () => ({ status: "ready", entries }),
+      save,
+    } as unknown as ChannelKit;
+    const preferences = createSoloPreferences(kit, lifetime.signal);
+    const authority = "f".repeat(64);
+    Object.assign(f.session, {
+      channelKit: kit,
+      soloPreferences: preferences.queries,
+      relayAuthor: authority,
+      snapshotRead: async () => [
+        event("meta", {
+          kind: 39000,
+          pubkey: authority,
+          tags: [
+            ["d", "new-chat"],
+            ["t", "stream"],
+            ["t", "buzz.solo"],
+            ["P", bot],
+          ],
+        }),
+        event("roster", {
+          kind: 39002,
+          pubkey: authority,
+          tags: [
+            ["d", "new-chat"],
+            ["p", bot],
+            ["p", viewer],
+          ],
+        }),
+      ],
+    });
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    const handle = await handleOf(f.run, f.emit);
+    try {
+      const file = await handle.soloWorkspaces?.prepare(
+        "work",
+        [viewer],
+        "new-chat",
+        call.signal,
+      );
+      await handle.publish({
+        kind: 9007,
+        content: "",
+        tags: [
+          ["h", "new-chat"],
+          ["t", "buzz.solo"],
+          ["p", viewer],
+        ],
+      });
+      if (outcome === "deleted") entries = [];
+      if (outcome === "deleted") {
+        await expect(file?.("new-chat")).resolves.toMatchObject({
+          status: "unconfirmed",
+          error: expect.stringContaining("Solo group is unavailable"),
+        });
+        expect(save).not.toHaveBeenCalled();
+      } else {
+        const pending = file?.("new-chat");
+        if (outcome === "retired") {
+          await saved.promise;
+          // The real preference writer's save has committed its fixture head.
+          call.abort(new Error("retired after save"));
+          release.resolve();
+        }
+        await expect(pending).resolves.toMatchObject({
+          status: outcome === "retired" ? "unconfirmed" : "filed",
+        });
+        expect(save).toHaveBeenCalledExactlyOnceWith(
+          {
+            type: "groups",
+            id: "me",
+            groups: [
+              { id: "work", name: "Work", defaultTemplateId: "do-not-copy" },
+            ],
+            assignments: { "new-chat": "work" },
+          },
+          "head",
+          false,
+          expect.any(AbortSignal),
+        );
+        await preferences.queries.refresh();
+        expect(preferences.queries.snapshot().data?.assignments).toEqual({
+          "new-chat": "work",
+        });
+      }
+    } finally {
+      release.resolve();
+      preferences.dispose();
+      lifetime.abort();
+      await f.ctx.fiber.dispose();
+    }
+  },
+);
+
 describe("Attention plugin sources", () => {
   const root = "e".repeat(64);
   async function sourceFixture(options?: Parameters<typeof setup>[0]) {
@@ -11991,7 +13811,9 @@ describe("Attention plugin sources", () => {
             answer = resolve;
           }),
       );
-      const { service, run, plugin, native } = await sourceFixture({ jev });
+      const { service, run, plugin, native, watching } = await sourceFixture({
+        jev,
+      });
       plugin.agents.addAttentionSource({
         id: "command",
         run: async ({ emit }) => {
@@ -12024,7 +13846,7 @@ describe("Attention plugin sources", () => {
       expect(state).toEqual({
         source: { provider: "example/command", text: "build failed" },
       });
-      if (cancelled) await service.save(bot, { attentionEnabled: false });
+      if (cancelled) await watching?.dispose();
       answer(
         outcome === "failure"
           ? failure("service_error")
@@ -12115,7 +13937,7 @@ describe("Attention plugin sources", () => {
     ).toBe(true);
   });
   it("keeps each source emit as its own recent event", async () => {
-    const { service, plugin, native } = await sourceFixture();
+    const { service, plugin, native, watching } = await sourceFixture();
     plugin.agents.addAttentionSource({
       id: "command",
       run: async ({ emit, signal }) => {
@@ -12130,10 +13952,10 @@ describe("Attention plugin sources", () => {
     await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
     await service.save(bot, { attentionEnabled: true, attention: watches });
     await vi.waitFor(() => expect(texts(service)).toEqual(["first", "second"]));
-    await service.save(bot, { attentionEnabled: false });
+    await watching?.dispose();
   });
   it("keeps the end of long source output, where a failure is summarised", async () => {
-    const { service, plugin, native } = await sourceFixture();
+    const { service, plugin, native, watching } = await sourceFixture();
     const summary = "\n2 tests failed";
     plugin.agents.addAttentionSource({
       id: "command",
@@ -12152,7 +13974,7 @@ describe("Attention plugin sources", () => {
         `${"x".repeat(2000 - summary.length)}${summary}`,
       ]),
     );
-    await service.save(bot, { attentionEnabled: false });
+    await watching?.dispose();
   });
   it("stops sources while no plugin shows Attention, and starts them again", async () => {
     const { service, plugin, native, watching, ctx } = await sourceFixture();
@@ -12174,9 +13996,10 @@ describe("Attention plugin sources", () => {
     await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(1));
     await watching?.dispose();
     await vi.waitFor(() => expect(stopped).toHaveBeenCalledTimes(1));
-    await showAttention(ctx, "two");
+    const shown = showAttention(ctx, "two");
+    await shown;
     await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(2));
-    await service.save(bot, { attentionEnabled: false });
+    await shown.dispose();
   });
   it("starts sources only for active plugin revisions and cancels them on deactivation", async () => {
     let active = false;
@@ -12256,7 +14079,7 @@ describe("Attention plugin sources", () => {
     }
   });
   it("delivers source output to the saved conversation and cancels execution when Attention is disabled", async () => {
-    const { service, run, plugin, native } = await sourceFixture();
+    const { service, run, plugin, native, watching } = await sourceFixture();
     let input:
       | Parameters<import("./attention-sources").AttentionSource["run"]>[0]
       | undefined;
@@ -12283,14 +14106,14 @@ describe("Attention plugin sources", () => {
       root,
       text: expect.stringContaining("CI failed"),
     });
-    await service.save(bot, { attentionEnabled: false });
+    await watching?.dispose();
     expect(input?.signal.aborted).toBe(true);
     expect(() => input?.emit("late")).toThrow(/no longer/);
   });
   it.each(["success", "stopped", "invalidated"])(
     "settles a completed producer's final turn without losing work (%s)",
     async (outcome) => {
-      const { service, run, plugin, native } = await sourceFixture();
+      const { service, run, plugin, native, watching } = await sourceFixture();
       let release!: (outcome: WorkOutcome) => void;
       const held = new Promise<WorkOutcome>((resolve) => {
         release = resolve;
@@ -12317,7 +14140,7 @@ describe("Attention plugin sources", () => {
         ).toEqual(expect.any(Number));
         expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
         if (outcome === "invalidated") {
-          await service.save(bot, { attentionEnabled: false });
+          await watching?.dispose();
           expect(run.mock.calls[0]?.[0].current()).toBe(false);
         }
       } finally {
@@ -12432,14 +14255,19 @@ describe("Attention plugin sources", () => {
 
 it.each(
   [undefined, "e".repeat(64)].flatMap((root) =>
-    ["success", "stopped", "invalidated"].map((outcome) => ({ root, outcome })),
+    ["success", "failure", "stopped", "invalidated"].map((outcome) => ({
+      root,
+      outcome,
+    })),
   ),
 )(
   "delivers a timer once and retains unfinished work (root: $root, outcome: $outcome)",
   async ({ root, outcome }) => {
     vi.useFakeTimers({ now: 1_000_000 });
     const runOnce = vi.fn(async () => ({ ok: true }));
-    const { service, run, native } = await setup({ runOnce });
+    const { service, run, native, watching, activity } = await setup({
+      runOnce,
+    });
     let release!: (outcome: WorkOutcome) => void;
     const held = new Promise<WorkOutcome>((resolve) => {
       release = resolve;
@@ -12476,27 +14304,60 @@ it.each(
         text: expect.stringContaining("Check the release"),
       },
     });
-    expect(run.mock.calls[0]?.[0].step).toBeUndefined();
-    expect(run.mock.calls[0]?.[0].superseded).toBeUndefined();
+    expect(run.mock.calls[0]?.[0].step).toEqual(expect.any(Function));
+    expect(run.mock.calls[0]?.[0].superseded).toEqual(expect.any(Function));
     const trigger = run.mock.calls[0]?.[0].trigger;
     if (trigger?.type !== "attention")
       throw new Error("Expected conversation delivery");
     expect(trigger.text).toContain("Be brief.");
     expect(trigger.text).toContain("spent: true");
     expect(trigger.text).not.toContain("no default destination");
+    expect(activity.reader.work()[0]).toMatchObject({
+      agent: bot,
+      channelId: channel,
+      messageId: trigger.id,
+      threadRootId: root ?? trigger.id,
+      syntheticMessage: true,
+      requestText: trigger.text,
+      state: "working",
+    });
+    expect(activity.reader.work()[0]?.thread).toBe(root ? true : undefined);
+    expect(activity.reader.work()[0]?.retryable).toBeUndefined();
+    const reply = await run.mock.calls[0]?.[0].agent.publish({
+      kind: 9,
+      content: "Please approve the preview",
+      tags: [["h", channel]],
+    });
     try {
       if (outcome === "invalidated") {
-        await service.save(bot, { attentionEnabled: false });
+        await watching?.dispose();
         expect(run.mock.calls[0]?.[0].current()).toBe(false);
       }
     } finally {
       release(
-        outcome === "stopped" ? { ok: true, stopped: true } : { ok: true },
+        outcome === "failure"
+          ? { ok: false, error: "Provider unavailable" }
+          : outcome === "stopped"
+            ? { ok: true, stopped: true }
+            : { ok: true },
       );
     }
     await vi.advanceTimersByTimeAsync(180_000);
     expect(run).toHaveBeenCalledTimes(1);
     expect(runOnce).not.toHaveBeenCalled();
+    if (outcome !== "invalidated") {
+      expect(activity.reader.work()[0]).toMatchObject({
+        requestText: trigger.text,
+        state:
+          outcome === "failure"
+            ? "error"
+            : outcome === "stopped"
+              ? "stopped"
+              : "done",
+        publishedMessageIds: [reply?.id],
+      });
+      expect(await published(native, 9)).toHaveLength(1);
+    }
     if (outcome !== "success") {
       expect(service.find(bot)?.attention["watch/once"]).toBeDefined();
       expect(service.find(bot)?.timers["watch/once"]?.used).toBe(1);
@@ -12507,9 +14368,115 @@ it.each(
   },
 );
 
+describe("a timer turn that fails before it starts", () => {
+  const timer = (max: number, root?: string) => ({
+    type: "timer" as const,
+    interest_id: "default",
+    prompt: "Draft the digest",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000,
+    max_occurrences: max,
+    expires_at: null,
+    channel,
+    ...(root ? { root } : {}),
+  });
+  let error: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    error = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => error.mockRestore());
+
+  it.each([undefined, "e".repeat(64)])(
+    "is reported once in its conversation (root: %s)",
+    async (root) => {
+      const { service, run, native } = await setup();
+      run.mockRejectedValue(new Error("no session key"));
+      await service.create({ type: "example/echo", name: "Echo" });
+      if (root)
+        native.query.mockResolvedValue([
+          event(root, { tags: [["h", channel]] }),
+        ]);
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: { "watch/weekly": timer(1, root) },
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      await vi.waitFor(async () =>
+        expect(await published(native, 9)).toHaveLength(1),
+      );
+      const [notice] = await published(native, 9);
+      expect(notice.content).toBe(
+        "⚠️ My timer weekly woke me but its turn couldn't start: no session key",
+      );
+      expect(notice.tags).toEqual([
+        ["h", channel],
+        ...(root ? [["e", root, "", "reply"]] : []),
+        ["p", viewer],
+      ]);
+      // The failed occurrence stays spent; nothing retries it.
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(await published(native, 9)).toHaveLength(1);
+      expect(service.find(bot)?.timers["watch/weekly"]?.used).toBe(1);
+    },
+  );
+
+  it("reports a repeat again only after one of its turns started", async () => {
+    const { service, run, native } = await setup();
+    run
+      .mockRejectedValueOnce(new Error("first"))
+      .mockRejectedValueOnce(new Error("second"))
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("fourth"));
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/weekly": timer(4) },
+    });
+    for (let occurrence = 1; occurrence <= 4; occurrence++) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(occurrence));
+    }
+    await vi.advanceTimersByTimeAsync(1_000);
+    const notices = (await published(native, 9)).map(({ content }) => content);
+    expect(notices).toEqual([
+      "⚠️ My timer weekly woke me but its turn couldn't start: first",
+      "⚠️ My timer weekly woke me but its turn couldn't start: fourth",
+    ]);
+  });
+
+  it("is reported at the channel level when its root is not in the channel", async () => {
+    const { service, run, native } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    native.query.mockResolvedValue([]);
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/weekly": timer(1, "e".repeat(64)) },
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(async () =>
+      expect(await published(native, 9)).toHaveLength(1),
+    );
+    expect(run).not.toHaveBeenCalled();
+    const [notice] = await published(native, 9);
+    expect(notice.content).toBe(
+      "⚠️ My timer weekly woke me but its turn couldn't start: The delivery root is not in its channel",
+    );
+    expect(notice.tags).toEqual([
+      ["h", channel],
+      ["p", viewer],
+    ]);
+  });
+});
+
 it("delivers matched events to their configured address rather than the listening channel", async () => {
   const runOnce = vi.fn(async () => ({ ok: true }));
-  const { service, run, emit, native, session } = await setup({ runOnce });
+  const { service, run, emit, native, session, activity } = await setup({
+    runOnce,
+  });
   await service.create({ type: "example/echo", name: "Echo" });
   const destination = "11111111-1111-1111-1111-111111111111";
   const root = "e".repeat(64);
@@ -12549,6 +14516,34 @@ it("delivers matched events to their configured address rather than the listenin
   expect(trigger.text).toContain("Be brief.");
   expect(trigger.text).not.toContain("no default destination");
   try {
+    expect(activity.reader.work()[0]).toMatchObject({
+      agent: bot,
+      channelId: destination,
+      messageId: trigger.id,
+      threadRootId: root,
+      thread: true,
+      syntheticMessage: true,
+      requestText: trigger.text,
+      state: "working",
+    });
+    await service.save(bot, {
+      attention: {
+        "interest/default": {
+          type: "interest",
+          instructions: "Ask for approval.",
+        },
+      },
+    });
+    const refreshed = await run.mock.calls[0]?.[0].wakeText?.();
+    expect(refreshed).toContain("Ask for approval.");
+    expect(refreshed).not.toBe(trigger.text);
+    expect(activity.reader.work()[0]?.requestText).toBe(refreshed);
+    const reply = await run.mock.calls[0]?.[0].agent.publish({
+      kind: 9,
+      content: "Please approve the preview",
+      tags: [["h", destination]],
+    });
+    expect(activity.reader.work()[0]?.publishedMessageIds).toEqual([reply?.id]);
     await vi.waitFor(async () => {
       const pulses = await published(native, 20002);
       expect(pulses.length).toBeGreaterThan(0);
@@ -12558,6 +14553,7 @@ it("delivers matched events to their configured address rather than the listenin
   } finally {
     finish();
   }
+  await vi.waitFor(() => expect(activity.reader.work()[0]?.state).toBe("done"));
   expect(runOnce).not.toHaveBeenCalled();
 });
 
@@ -12686,6 +14682,83 @@ it.each([false, true])(
   },
 );
 
+it.each([
+  { result: "found", cancelled: true },
+  { result: "missing", cancelled: true },
+  { result: "rejected", cancelled: true },
+  { result: "missing", cancelled: false },
+  { result: "rejected", cancelled: false },
+])(
+  "settles Solo wake root validation ($result, cancelled: $cancelled)",
+  async ({ result, cancelled }) => {
+    const { service, run, emit, native, session, activity } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const list = session.channels.list();
+    vi.spyOn(session.channels, "list").mockReturnValue({
+      ...list,
+      channels: list.channels.map((row) =>
+        row.id === channel ? { ...row, channelType: "solo" as const } : row,
+      ),
+    });
+    const root = "e".repeat(64);
+    let release!: (events: RelayEvent[]) => void;
+    let reject!: (error: Error) => void;
+    const pending = new Promise<RelayEvent[]>((resolve, fail) => {
+      release = resolve;
+      reject = fail;
+    });
+    native.query.mockImplementation(async (_member, filters) =>
+      (filters as ReadFilter[]).some((filter) => filter.ids?.includes(root))
+        ? pending
+        : [],
+    );
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("fixture");
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/channel": { ...watch, channel, root } },
+    });
+    const states: string[] = [];
+    const stop = activity.reader.subscribeWork(() => {
+      for (const row of activity.reader.work()) states.push(row.state);
+    });
+    try {
+      emit({ channelId: channel, events: [deploy("cancelled-wake")] });
+      await vi.waitFor(() =>
+        expect(native.query).toHaveBeenCalledWith(member(bot), [
+          { ids: [root], kinds: [9, 40002], "#h": [channel], limit: 1 },
+        ]),
+      );
+      expect(activity.reader.work()[0]).toMatchObject({
+        state: "working",
+        soloChat: true,
+      });
+      if (cancelled)
+        await service.save(bot, {
+          attention: {
+            "watch/channel": { ...watch, channel, root, enabled: false },
+          },
+        });
+      if (result === "rejected") reject(new Error("Root lookup failed"));
+      else
+        release(
+          result === "found" ? [event(root, { tags: [["h", channel]] })] : [],
+        );
+      await vi.waitFor(() => {
+        if (cancelled) expect(activity.reader.work()).toEqual([]);
+        else
+          expect(activity.reader.work()[0]).toMatchObject({ state: "error" });
+      });
+      expect(run).not.toHaveBeenCalled();
+      expect(states).not.toContain("done");
+      if (cancelled) expect(states).not.toContain("error");
+    } finally {
+      release([]);
+      stop();
+    }
+  },
+);
+
 it("rebuilds addressed Interest instructions after a queued handover", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -12729,6 +14802,7 @@ it("submits an unsaved creation draft and creates only after owner review", asyn
     (await callTool(client, {}, "agent_create", {
       type: "example/echo",
       name: " Child ",
+      instructions: "Review PRs.",
     })) as string,
   );
   expect(result).toEqual({ requestId: expect.any(String), saved: false });
@@ -12738,6 +14812,7 @@ it("submits an unsaved creation draft and creates only after owner review", asyn
     id: result.requestId,
     type: "example/echo",
     name: "Child",
+    instructions: "Review PRs.",
     requester: bot,
     community: "https://relay.example.test",
   });
@@ -12779,7 +14854,15 @@ it("dismisses a creation draft without creating an identity", async () => {
 });
 
 it("refuses agent creation through a stale handle or an unavailable type", async () => {
-  const { service, native, plugin, connect } = await setup();
+  const { service, native, plugin, connect, ctx } = await setup();
+  ctx
+    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+    .agents.register({
+      id: "plain",
+      title: "Plain",
+      defaults: () => ({ config: {} }),
+      run: vi.fn(),
+    });
   await service.create({ type: "example/echo", name: "Parent" });
   await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
   const handle = plugin.agents.handle(bot);
@@ -12790,6 +14873,14 @@ it("refuses agent creation through a stale handle or an unavailable type", async
   await expect(
     handle.createAgent?.({ type: "example/echo", name: " " }),
   ).rejects.toThrow("Name the agent");
+  await expect(
+    handle.createAgent?.({
+      type: "other/plain",
+      name: "Child",
+      instructions: "Triage.",
+    }),
+  ).rejects.toThrow("Plain agents have no instructions to set");
+  expect(service.creationRequests()).toEqual([]);
   connect(false);
   await expect(
     handle.createAgent?.({ type: "example/echo", name: "Child" }),
@@ -14137,7 +16228,7 @@ it.runIf(process.env.BUZZ_AGENT_COMMAND_BINARY)(
     const { apply } = await import(
       "../../../tests/fixtures/agent-command/plugin.js"
     );
-    const { ctx, service, native, run } = await setup();
+    const { ctx, service, native, run, watching } = await setup();
     let initialize = 0;
     let closed!: () => void;
     const stopped = new Promise<void>((resolve) => {
@@ -14296,7 +16387,7 @@ it.runIf(process.env.BUZZ_AGENT_COMMAND_BINARY)(
         text: expect.stringContaining("identity-complete"),
       });
     } finally {
-      await service.save(bot, { attentionEnabled: false });
+      await watching?.dispose();
       for (const child of children)
         if (child.exitCode === null && child.pid) {
           try {
@@ -14317,7 +16408,7 @@ it.each([
   "the community reconnects",
   "the watch is removed",
 ])("kills a source command when %s", async (reason) => {
-  const { ctx, service, native, connect } = await setup();
+  const { ctx, service, native, connect, watching } = await setup();
   let close!: () => void;
   const closed = new Promise<void>((resolve) => {
     close = resolve;
@@ -14348,8 +16439,7 @@ it.each([
   const controller = new AbortController();
   expect(spawn).not.toHaveBeenCalled();
   await sourceCommand(service, consumer, { signal: controller.signal });
-  if (reason === "Attention turns off")
-    await service.save(bot, { attentionEnabled: false });
+  if (reason === "Attention turns off") await watching?.dispose();
   else if (reason === "the watch is removed")
     await service.save(bot, { attention: { "watch/command": null } });
   else connect(true);
@@ -14572,12 +16662,26 @@ it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
   },
 );
 
+// The owner-read tools #2745 and #2881 added, listed here rather than taken
+// from the catalog under test.
+const RETIRED_OWNER_TOOLS = [
+  "owner_channel_list",
+  "owner_channel_get",
+  "owner_member_list",
+  "owner_read",
+  "owner_canvas_get",
+  "owner_canvas_history",
+];
+
 describe("full external agent access", () => {
   async function fixture(
     scopes: readonly import("./external-connection").ExternalScope[] = [
       "agent",
     ],
-    options: Pick<NonNullable<Parameters<typeof setup>[0]>, "readFile"> = {},
+    options: Pick<
+      NonNullable<Parameters<typeof setup>[0]>,
+      "readFile" | "revision"
+    > = {},
   ) {
     vi.stubEnv(
       "VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES",
@@ -14655,6 +16759,34 @@ describe("full external agent access", () => {
     };
   }
 
+  it("withholds local-run Solo workspace filing from external connections", async () => {
+    const f = await fixture();
+    try {
+      const names = await f.names();
+      expect(names).toContain("settings_set");
+      const publish = vi.spyOn(f.native, "publish");
+      const discover = await f.call("solo_workspace_list", {});
+      expect(discover.result.isError).toBe(true);
+      expect(discover.result.content[0]?.text).toBe(
+        "Solo workspaces are unavailable on this host",
+      );
+      const create = await f.call("channel_create", {
+        name: "Triage",
+        visibility: "private",
+        solo: true,
+        members: [viewer],
+        workspace: "work",
+      });
+      expect(create.result.isError).toBe(true);
+      expect(create.result.content[0]?.text).toBe(
+        "Solo workspaces are unavailable on this host",
+      );
+      expect(publish).not.toHaveBeenCalled();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
   it("acts with the agent's run authority and follows plugins' tools", async () => {
     const f = await fixture();
     try {
@@ -14697,6 +16829,30 @@ describe("full external agent access", () => {
       );
     } finally {
       await f.cleanup();
+    }
+  });
+
+  it("neither lists nor runs the retired owner-read tools", async () => {
+    vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", "https://relay.example.test");
+    const f = await fixture(["agent"], { revision: "bundled" });
+    try {
+      const names = await f.names();
+      expect(names).toContain("send");
+      const read = vi.spyOn(f.session, "read");
+      const remote = vi.spyOn(f.session, "readRemote");
+      for (const name of RETIRED_OWNER_TOOLS) {
+        expect(names).not.toContain(name);
+        const reply = await f.call(name, { channel: "private" });
+        expect(reply.result.isError).toBe(true);
+        expect(reply.result.content[0]?.text).toContain(`No tool ${name}`);
+      }
+      // Background sync may read; none of it reads the owner-only channel.
+      expect(
+        JSON.stringify([...read.mock.calls, ...remote.mock.calls]),
+      ).not.toContain('"private"');
+    } finally {
+      await f.cleanup();
+      vi.unstubAllEnvs();
     }
   });
 
@@ -14765,37 +16921,77 @@ describe("full external agent access", () => {
     expect(readFile.mock.calls[0]?.[2].aborted).toBe(true);
   });
 
-  it("hands off as the app, never as the agent's own conversation or a watch", async () => {
-    const root = "e".repeat(64);
-    const f = await fixture();
-    f.native.query.mockImplementation(async (_member, filters) => {
-      const [filter] = filters as { kinds?: number[]; ids?: string[] }[];
-      if (filter?.kinds?.includes(39000))
-        return [event("meta", { kind: 39000, tags: [["d", channel]] })];
-      return filter?.ids?.includes(root) ? [event(root)] : [];
-    });
-    try {
-      expect(
-        await f.call("self_handoff", { channel, thread: root, text: "Look" }),
-      ).toHaveProperty(
-        "result.content.0.text",
-        `Handed off to thread ${root}.`,
-      );
-      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
-      const { trigger } = f.run.mock.calls[0]?.[0] ?? {};
-      expect(trigger).toMatchObject({
-        type: "plugin",
-        from: { external: true },
-        channel,
-        root,
-        text: "Look",
+  it.each([false, true])(
+    "hands off as the app without replaying self-posts (busy: %s)",
+    async (busy) => {
+      const root = "e".repeat(64);
+      const f = await fixture();
+      const active = runnerGate();
+      f.native.query.mockImplementation(async (_member, filters) => {
+        const [filter] = filters as { kinds?: number[]; ids?: string[] }[];
+        if (filter?.kinds?.includes(39000))
+          return [event("meta", { kind: 39000, tags: [["d", channel]] })];
+        return filter?.ids?.includes(root) ? [event(root)] : [];
       });
-      expect(trigger).not.toHaveProperty("plugin");
-      expect(trigger).not.toHaveProperty("from.channel");
-    } finally {
-      await f.cleanup();
-    }
-  });
+      try {
+        if (busy) {
+          f.run.mockImplementationOnce(async () => active.promise);
+          f.emit({
+            events: [
+              event("active", {
+                tags: [
+                  ["h", channel],
+                  ["p", bot],
+                ],
+              }),
+            ],
+            channelId: channel,
+          });
+          await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+        }
+        const own = event("own-correction", {
+          pubkey: bot,
+          tags: [
+            ["h", channel],
+            ["p", bot],
+            ["e", root, "", "reply"],
+          ],
+        });
+        f.emit({ events: [own, own], channelId: channel });
+        await settle();
+        expect(f.run).toHaveBeenCalledTimes(busy ? 1 : 0);
+        expect(
+          await f.call("self_handoff", { channel, thread: root, text: "Look" }),
+        ).toHaveProperty(
+          "result.content.0.text",
+          `Queued self-handoff to ${channel}, thread ${root}. No message was posted. Execution has not been confirmed.`,
+        );
+        if (busy) {
+          await settle();
+          expect(f.run).toHaveBeenCalledTimes(1);
+        }
+        active.resolve();
+        const count = busy ? 2 : 1;
+        await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(count));
+        const { trigger } = f.run.mock.calls[count - 1]?.[0] ?? {};
+        expect(trigger).toMatchObject({
+          type: "plugin",
+          from: { external: true },
+          channel,
+          root,
+          text: "Look",
+        });
+        expect(trigger).not.toHaveProperty("plugin");
+        expect(trigger).not.toHaveProperty("from.channel");
+        f.emit({ events: [own], channelId: channel });
+        await settle();
+        expect(f.run).toHaveBeenCalledTimes(count);
+      } finally {
+        active.resolve();
+        await f.cleanup();
+      }
+    },
+  );
 
   it("grants an older narrow approval nothing until the owner approves full access", async () => {
     const f = await fixture(["read", "post", "create"]);
@@ -14830,7 +17026,7 @@ it.each(["return", "throw"])(
           classify = resolve;
         }),
     );
-    const { service, plugin, ctx, run } = await setup({ jev });
+    const { service, plugin, ctx, run, watching } = await setup({ jev });
     const kill = vi.fn(async () => {}),
       close = vi.fn(async () => {});
     ctx.provide("host", {
@@ -14890,7 +17086,7 @@ it.each(["return", "throw"])(
       });
     } finally {
       finish?.();
-      await service.save(bot, { attentionEnabled: false });
+      await watching?.dispose();
       warning.mockRestore();
     }
   },
@@ -14900,7 +17096,7 @@ it.each([undefined, "d".repeat(64)])(
   "binds simultaneous source commands to their own agent, plugin and destination (root: %s)",
   async (root) => {
     const { Service } = await import("@deepseek-ai/cordis");
-    const { service, ctx, native } = await setup();
+    const { service, ctx, native, watching } = await setup();
     const owners: (string | undefined)[] = [];
     const requests: import("../host/service").McpHandler[] = [];
     const spawned = vi.fn();
@@ -15023,8 +17219,7 @@ it.each([undefined, "d".repeat(64)])(
       });
     }
     expect(owners.every((owner) => owner === "consumer")).toBe(true);
-    for (const pubkey of [bot, sibling])
-      await service.save(pubkey, { attentionEnabled: false });
+    await watching?.dispose();
     await vi.waitFor(() =>
       expect(kills.every((kill) => kill.mock.calls.length === 1)).toBe(true),
     );
@@ -15177,7 +17372,7 @@ it("presents a watch through its provider, and plainly when that fails", async (
 it.each(["command"])(
   "starts a saved attention/%s watch after built-in registration",
   async (id) => {
-    const { service, plugin, ctx } = await setup();
+    const { service, plugin, ctx, watching } = await setup();
     const spawn = vi.fn(async () => heldCommand());
     ctx.provide("host", {
       spawn,
@@ -15238,14 +17433,15 @@ it.each(["command"])(
         mcp: expect.objectContaining({ url: "http://127.0.0.1/mcp" }),
       }),
     );
-    await service.save(bot, { attentionEnabled: false });
+    await watching?.dispose();
   },
 );
 
 it.each(["spawn", "exit"])(
   "retains a saved command watch after %s failure and retries when re-enabled",
   async (failure) => {
-    const { service, plugin, ctx, run } = await setup();
+    const { service, plugin, ctx, run, watching } = await setup();
+    let attention = watching;
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const spawn = vi.fn(async (_id, options) => {
       if (failure === "spawn") throw new Error("program unavailable");
@@ -15296,11 +17492,12 @@ it.each(["spawn", "exit"])(
       });
       expect(service.find(bot)?.attention["watch/saved"]).toBeDefined();
       expect(service.find(bot)?.sourceRuns?.["watch/saved"]).toBeUndefined();
-      await service.save(bot, { attentionEnabled: false });
-      await service.save(bot, { attentionEnabled: true });
+      await watching?.dispose();
+      attention = showAttention(ctx, "two");
+      await attention;
       await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2));
     } finally {
-      await service.save(bot, { attentionEnabled: false });
+      await attention?.dispose();
       warning.mockRestore();
     }
   },
@@ -16597,7 +18794,10 @@ it("revoking the runner while a protected shared tool waits cancels it before an
       readOnlyPaths: ["/provider"],
       hiddenPaths: ["/reviews"],
     },
-    check: async (_request, signal) => {
+    checkEvidence: async (_request, evidence, signal) => {
+      for await (const _part of evidence.read()) {
+        /* consume before deciding */
+      }
       checking = signal;
       entered();
       await allow;
@@ -16670,6 +18870,10 @@ it("fails a protected delivery before calling a runtime that has no protection i
 
 it("refuses fresh work when native custody rejects a stale protection revision", async () => {
   const f = await setup({ identities: [echo] });
+  // Startup's own claim settles before custody starts rejecting, and is not
+  // counted as the mention's claim.
+  await settle();
+  f.native.claim.mockClear();
   f.native.claim.mockRejectedValue(new Error("Agent protection changed"));
   f.emit({
     channelId: channel,
@@ -17121,93 +19325,126 @@ describe("Buzz settings", () => {
   );
 });
 
-describe("Owner tools", () => {
-  const root = "e".repeat(64);
-  /** The agent's handle from a run. */
-  async function running(f: Awaited<ReturnType<typeof setup>>) {
-    await f.service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalledWith(bot, 0));
-    await settle();
-    const handle = runnerGate<AgentHandle>();
-    f.run.mockImplementationOnce(async ({ agent }) => {
-      handle.resolve(agent);
-    });
-    f.plugin.agents.wake(bot, { channel, root, text: "hi" });
-    return handle.promise;
+it("gives a run its owner's Bestie in its community, and a plugin's handle none", async () => {
+  const f = await setup();
+  const chosen = "a".repeat(64);
+  const write = vi.fn(async (_agent: string | null) => {});
+  Object.assign(f.session, {
+    mainAgent: { read: async () => undefined, write },
+  });
+  Object.assign(f.session.agentChoices, {
+    ensure: vi.fn(),
+    snapshot: () => ({ selectable: [{ pubkey: chosen }] }),
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalledWith(bot, 0));
+  await settle();
+  const run = runnerGate<AgentHandle>();
+  f.run.mockImplementationOnce(async ({ agent }) => {
+    run.resolve(agent);
+  });
+  f.plugin.agents.wake(bot, { channel, root: "e".repeat(64), text: "hi" });
+  const agent = await run.promise;
+  expect(await agent.bestie?.()?.set(chosen)).toEqual({
+    device: chosen,
+    account: chosen,
+    here: true,
+  });
+  expect(write).toHaveBeenCalledExactlyOnceWith(chosen);
+  expect(f.plugin.agents.handle(bot)).not.toHaveProperty("bestie");
+  // A control kept past the run's end changes nothing, even one that was
+  // already reading the agents.
+  const control = agent.bestie?.();
+  const inventory = runnerGate();
+  // Only the set's read waits: removal rereads the agents too.
+  const { refresh } = f.session.agentChoices;
+  Object.assign(f.session.agentChoices, {
+    refresh: vi.fn(refresh).mockImplementationOnce(() => inventory.promise),
+  });
+  const setting = control?.set(chosen);
+  try {
+    await f.service.remove(bot);
+  } finally {
+    inventory.resolve();
   }
-  const list = (agent: AgentHandle) =>
-    callSessionTool(
-      appClient(agent, {
-        read: vi.fn(),
-        memories: async () => ({ entries: [], partial: false }),
-      }),
-      {},
-      "owner_channel_list",
-      {},
-    );
+  await expect(setting).rejects.toThrow();
+  await expect(control?.clear()).rejects.toThrow();
+  expect(write).toHaveBeenCalledOnce();
+});
 
-  it("read the owner's channels as the owner, only on the run's handle", async () => {
+describe("Retired owner-read tools", () => {
+  it("are refused on a bundled harness's run before any owner read, while the agent's own reads work", async () => {
+    // The retired build flag no longer enables anything.
     vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", "https://relay.example.test");
     const f = await setup({ revision: "bundled" });
     try {
-      const agent = await running(f);
-      expect(f.plugin.agents.handle(bot)).not.toHaveProperty("ownerAccess");
-      const answer = JSON.parse(String(await list(agent)));
-      expect(answer.executedAs).toEqual({
-        agent: bot,
-        owner: viewer,
-        community: "https://relay.example.test",
-      });
-      // The agent is not in `private`; its owner is, in a role the list
-      // does not say.
-      expect(answer.channels).toContainEqual(
-        expect.objectContaining({ id: "private", role: "unknown", members: 1 }),
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() =>
+        expect(f.native.claim).toHaveBeenCalledWith(bot, 0),
       );
-      expect(answer.partial).toBe(false);
-
-      f.signIn(other);
-      await expect(list(agent)).rejects.toThrow("not connected");
-      f.connect(false);
-      await expect(list(agent)).rejects.toThrow("not connected");
-    } finally {
-      await f.ctx.fiber.dispose();
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it("are not given to an installed harness plugin's runs", async () => {
-    vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", "https://relay.example.test");
-    const f = await setup();
-    try {
-      const agent = await running(f);
+      await settle();
+      const run = runnerGate<AgentHandle>();
+      f.run.mockImplementationOnce(async ({ agent }) => {
+        run.resolve(agent);
+      });
+      f.plugin.agents.wake(bot, { channel, root: "e".repeat(64), text: "hi" });
+      const agent = await run.promise;
       expect(agent).not.toHaveProperty("ownerAccess");
-      await expect(list(agent)).rejects.toThrow("nothing was read");
+      const client = appClient(agent, {
+        read: vi.fn(),
+        memories: async () => ({ entries: [], partial: false }),
+      });
+      // The owner is signed in here, and is in `private`; the agent is not.
+      // The owner's session would return its messages; the relay gives the
+      // agent's key none.
+      const names = (filters: unknown) =>
+        JSON.stringify(filters).includes('"private"');
+      const secret = [
+        event("s", { content: "OWNER_ONLY", tags: [["h", "private"]] }),
+      ];
+      const ownerRead = f.session.read.bind(f.session);
+      const ownerRemote = f.session.readRemote.bind(f.session);
+      const read = vi
+        .spyOn(f.session, "read")
+        .mockImplementation(async (filters, options) =>
+          names(filters) ? secret : ownerRead(filters, options),
+        );
+      const remote = vi
+        .spyOn(f.session, "readRemote")
+        .mockImplementation(async (filters, options) =>
+          names(filters) ? secret : ownerRemote(filters, options),
+        );
+      f.native.query.mockClear();
+      f.native.query.mockImplementation(async (_agent, filters) =>
+        names(filters) ? [] : [event("a", { content: "AGENT_VISIBLE" })],
+      );
+      for (const name of RETIRED_OWNER_TOOLS)
+        await expect(
+          callSessionTool(client, {}, name, { channel: "private" }),
+        ).rejects.toThrow(`No tool ${name}`);
+      expect(f.native.query).not.toHaveBeenCalled();
+      // An ordinary read of `private` runs as the agent and gets nothing.
+      const denied = await callSessionTool(client, {}, "read", {
+        channel: "private",
+      });
+      expect(denied).toBe("No messages.");
+      expect(f.native.query).toHaveBeenCalledWith(expect.anything(), [
+        expect.objectContaining({ "#h": ["private"] }),
+      ]);
+      await expect(
+        callSessionTool(client, {}, "read", { channel }),
+      ).resolves.toContain("AGENT_VISIBLE");
+      // Background sync may read; none of it reads the owner-only channel.
+      expect(
+        [...read.mock.calls, ...remote.mock.calls].some(([filters]) =>
+          names(filters),
+        ),
+      ).toBe(false);
     } finally {
       await f.ctx.fiber.dispose();
       vi.unstubAllEnvs();
     }
   });
-
-  it.each([
-    "",
-    "https://other.example.test",
-    "https://relay.example.test.evil.test",
-    "https://relay.example.test:8443",
-  ])(
-    "are not offered outside the enabled communities (%s)",
-    async (enabled) => {
-      vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", enabled);
-      const f = await setup({ revision: "bundled" });
-      try {
-        const agent = await running(f);
-        expect(agent).not.toHaveProperty("ownerAccess");
-        await expect(list(agent)).rejects.toThrow("nothing was read");
-      } finally {
-        await f.ctx.fiber.dispose();
-        vi.unstubAllEnvs();
-      }
-    },
-  );
 });
 
 it("tells a transcript only of an agent's new or changed steps", async () => {
@@ -17239,4 +19476,263 @@ it("tells a transcript only of an agent's new or changed steps", async () => {
   stop();
   two.step("Read", "c.txt");
   expect(listener).toHaveBeenCalledTimes(3);
+});
+
+it("checks a provider operation and admits one exact proposal from a consumer tool", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Worker" });
+  const handle = f.plugin.agents.handle(bot);
+  if (!handle) throw new Error("Expected running agent");
+  const provider = f.plugin.agents.createToolOperation("proposal");
+  const other = f.plugin.agents.createToolOperation("other");
+  const consumer = f.ctx
+    .extend({ pluginOwner: { id: "consumer", revision: "one" } })
+    .plugin(() => {});
+  await consumer.await();
+  const controller = new AbortController();
+  const client = appClient(handle, {
+    nativeCall: () => {},
+    signal: controller.signal,
+    callSignal: controller.signal,
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+  });
+  const entered = runnerGate<void>();
+  const release = runnerGate<void>();
+  client.protect = vi.fn(async (action) => {
+    if (
+      action.kind === "tool" &&
+      (action.content as { title: string }).title === "example/proposal"
+    ) {
+      entered.resolve(undefined);
+      await release.promise;
+    }
+  });
+  let authority: AgentToolAuthority | undefined;
+  let proof: AgentToolProof | undefined;
+  consumer.ctx.agents.addTool({
+    name: "consumer_propose",
+    description: "Propose a question.",
+    inputSchema: { type: "object" },
+    operation: provider.operation,
+    async call(_client, context, args, issued) {
+      if (!issued) throw new Error("Expected operation proof");
+      proof = issued;
+      expect(context).toEqual({ channel, root: "root" });
+      for (const input of [
+        { ...args, question: "Different" },
+        { ...args, choices: ["B", "A"] },
+        { ...args, messageId: "other" },
+        { ...args, extra: true },
+      ])
+        expect(() => provider.resolve(issued, input)).toThrow("No matching");
+      expect(() => other.resolve(issued, args)).toThrow("No matching");
+      expect(() => provider.resolve({ ...issued }, args)).toThrow(
+        "No matching",
+      );
+      authority = provider.resolve(issued, args);
+      expect(authority.client.key).toBe(handle.key);
+      expect(authority.client.pubkey).toBe(bot);
+      expect(authority.client.owner).toBe(viewer);
+      expect(authority.context).toEqual(context);
+      expect(authority.signal).toBe(controller.signal);
+      authority.check();
+      expect(() => provider.resolve(issued, args)).toThrow("No matching");
+      args.question = "Changed after resolution";
+      expect(() => authority?.check()).toThrow("arguments changed");
+      return "accepted";
+    },
+  });
+  const input = {
+    question: "Question",
+    choices: ["A", "B"],
+    messageId: "source",
+  };
+  const call = callSessionTool(
+    client,
+    { channel, root: "root" },
+    "consumer_propose",
+    input,
+    f.service.tools(),
+  );
+  try {
+    await entered.promise;
+    input.choices.reverse();
+    input.question = "Changed during review";
+    release.resolve(undefined);
+    await expect(call).resolves.toBe("accepted");
+    expect(client.protect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "tool",
+        content: {
+          title: "example/proposal",
+          arguments: {
+            question: "Question",
+            choices: ["A", "B"],
+            messageId: "source",
+          },
+        },
+      }),
+    );
+    expect(proof).toBeDefined();
+    expect(() => authority?.check()).toThrow("call has ended");
+  } finally {
+    release.resolve(undefined);
+    await call.catch(() => {});
+  }
+});
+
+it.each([
+  "cancel",
+  "session",
+  "reconnect",
+  "access",
+  "viewer-access",
+  "agent",
+  "provider",
+  "consumer",
+])(
+  "refuses journal admission after %s changes during a source read",
+  async (change) => {
+    let enabled = true;
+    const f = await setup({ pluginActive: () => enabled });
+    await f.service.create({ type: "example/echo", name: "Worker" });
+    const handle = f.plugin.agents.handle(bot);
+    if (!handle) throw new Error("Expected running agent");
+    const provider = f.plugin.agents.createToolOperation("proposal");
+    const consumer = f.ctx
+      .extend({ pluginOwner: { id: "consumer", revision: "one" } })
+      .plugin(() => {});
+    await consumer.await();
+    const controller = new AbortController();
+    const client = appClient(handle, {
+      nativeCall: () => {},
+      signal: controller.signal,
+      callSignal: controller.signal,
+      read: vi.fn(),
+      memories: async () => ({ entries: [], partial: false }),
+    });
+    const entered = runnerGate<void>();
+    const release = runnerGate<void>();
+    const saved = vi.fn();
+    consumer.ctx.agents.addTool({
+      name: "consumer_propose",
+      description: "Propose a question.",
+      inputSchema: { type: "object" },
+      operation: provider.operation,
+      async call(_client, _context, args, proof) {
+        if (!proof) throw new Error("Expected operation proof");
+        const authority = provider.resolve(proof, args);
+        entered.resolve(undefined);
+        await release.promise;
+        authority.check();
+        saved();
+        return "accepted";
+      },
+    });
+    const call = callSessionTool(
+      client,
+      { channel },
+      "consumer_propose",
+      { question: "Question" },
+      f.service.tools(),
+    );
+    const denied = expect(call).rejects.toThrow();
+    try {
+      await entered.promise;
+      if (change === "cancel") controller.abort();
+      if (change === "session") f.connect(false);
+      if (change === "reconnect") f.recover();
+      if (change === "access") {
+        f.confirm(channel, [viewer]);
+        f.confirm(channel, [viewer, bot]);
+      }
+      if (change === "viewer-access") {
+        f.confirm(channel, [bot]);
+        f.confirm(channel, [viewer, bot]);
+      }
+      if (change === "agent") await f.service.remove(bot);
+      if (change === "provider") enabled = false;
+      if (change === "consumer") {
+        // A stopped scope removes its registered tools.
+        await consumer.dispose();
+      }
+      release.resolve(undefined);
+      await denied;
+      expect(saved).not.toHaveBeenCalled();
+    } finally {
+      release.resolve(undefined);
+      await call.catch(() => {});
+    }
+  },
+);
+
+it("refuses an operation from a fabricated native client", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Worker" });
+  const handle = f.plugin.agents.handle(bot);
+  if (!handle) throw new Error("Expected running agent");
+  const provider = f.plugin.agents.createToolOperation("proposal");
+  const called = vi.fn(async () => "accepted");
+  f.plugin.agents.addTool({
+    name: "example_propose",
+    description: "Propose a question.",
+    inputSchema: { type: "object" },
+    operation: provider.operation,
+    call: called,
+  });
+  const client = appClient(handle, {
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+  });
+  await expect(
+    callSessionTool(
+      { ...client },
+      { channel },
+      "example_propose",
+      {},
+      f.service.tools(),
+    ),
+  ).rejects.toThrow("active native agent call");
+  expect(called).not.toHaveBeenCalled();
+});
+
+it("does not call a consumer when protection denies its provider operation", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Worker" });
+  const handle = f.plugin.agents.handle(bot);
+  if (!handle) throw new Error("Expected running agent");
+  const provider = f.plugin.agents.createToolOperation("proposal");
+  const called = vi.fn(async () => "accepted");
+  f.plugin.agents.addTool({
+    name: "example_propose",
+    description: "Propose a question.",
+    inputSchema: { type: "object" },
+    operation: provider.operation,
+    call: called,
+  });
+  const controller = new AbortController();
+  const client = appClient(handle, {
+    nativeCall: () => {},
+    callSignal: controller.signal,
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+  });
+  client.protect = vi.fn(async (action) => {
+    if (
+      action.kind === "tool" &&
+      (action.content as { title: string }).title === "example/proposal"
+    )
+      throw new Error("Provider operation denied");
+  });
+  await expect(
+    callSessionTool(
+      client,
+      { channel },
+      "example_propose",
+      {},
+      f.service.tools(),
+    ),
+  ).rejects.toThrow("Provider operation denied");
+  expect(called).not.toHaveBeenCalled();
 });

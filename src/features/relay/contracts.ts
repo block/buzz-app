@@ -88,6 +88,8 @@ export type Profile = Readonly<{
   about?: string;
   /** Self-declared NIP-05 identifier; not proof of DNS verification. */
   nip05?: string;
+  /** Self-declared IANA time zone, already checked to be one this runtime knows. */
+  tz?: string;
   /** Self-declared display hint, not proof of ownership, membership or authority. */
   isAgent?: true;
   /** Owner named by the profile auth tag; display metadata, never authorization. */
@@ -140,6 +142,9 @@ export type ChannelMessage = Readonly<{
   /** Signed `audience` tag of the original event: `agents` is coordination
    * between agents, shown quietly. Absent means everyone; unknown values too. */
   audience?: "agents";
+  /** Signed `buzz:request` tag: the agent's claim of the triggering message
+   * this update belongs to, separate from its flattened reply link. */
+  request?: string;
   /** Signed display metadata for an automatic execution-failure reply. */
   notice?: "execution-failure";
   /** Original kind 40008. Untrusted display metadata; content stays a raw patch. */
@@ -200,7 +205,12 @@ export type ChannelList = Readonly<{
   status: ListStatus;
   /** Set when the viewer's roster read hit its cap; omitted channels are then not evidence of removal. */
   coverage?: "partial";
+  /** When discovery last committed: live roster and metadata events, exact
+   * reads and complete roster reads all move it. */
   asOf?: number;
+  /** When a complete viewer-scoped roster read last committed, the only read
+   * whose omissions prove absence; `asOf` of that commit. */
+  rosterAsOf?: number;
   /** Initial Recent ordering observation, independent of roster/access readiness. */
   activityStatus?: "idle" | "loading" | "ready" | "error" | "unavailable";
   channels: readonly ChannelSummary[];

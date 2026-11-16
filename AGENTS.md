@@ -79,6 +79,9 @@ other ignored paths: Keychain credentials and pnpm's package cache are
 machine-shared, while dependencies and build output are regenerated. Git hooks
 need no per-worktree setup; see [Git hooks](docs/contributing.md#git-hooks).
 
+Agents run the desktop app with plain `just desktop`, never `just desktop me`:
+`me` signs in with the owner's release key and sets up their Keychain helper.
+
 ## Engineering standard
 
 When changing a shipped plugin to default-off, follow the
@@ -240,7 +243,8 @@ private GitHub organizations, repositories or org SSH users, internal hosts,
 cloud accounts, IAM roles or buckets, internal ticket keys, go/ links, Slack
 channels, or personal setups. Public Builderlab
 (`app.builderlab.xyz`, `*.communities.builderlab.xyz`) is a supported public
-service and is fine.
+service and is fine, as is the generic rule that routes any
+`buzz.{name}.builderlab.xyz` community to `{name}.builderlab.xyz` sign-in.
 
 The rule covers functionality, not only identifiers. Every feature here must be
 generic: useful and complete for any community or distributor, with no knowledge
@@ -264,6 +268,14 @@ a host or organization.
 Tests, fixtures, docs and examples use example values (`example.org`,
 `example-org`). Reviewers treat a violation as a blocking
 finding.
+
+The same applies to everything published here: issues, PR titles and
+descriptions, commit messages, comments and reviews. Never include details from
+internal discussions. That means no quotes or paraphrases of private chat
+threads, no links to internal chats, messages or meetings, no attribution of
+opinions to colleagues, and no internal planning or deliberation. Describe the
+problem from its observable behavior, the public source and public issues and
+PRs.
 
 ## Commit attribution and DCO
 

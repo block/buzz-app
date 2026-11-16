@@ -776,7 +776,7 @@ function ChannelWorkspace({
     navigation?.target.kind === "conversation"
       ? navigation.target.threadRootId
       : undefined;
-  const channelView = useChannelView(
+  const matchedChannelView = useChannelView(
     extensions?.channelViews,
     current &&
       !requestedMessage &&
@@ -898,6 +898,7 @@ function ChannelWorkspace({
     !!settings &&
     settings.channelId === currentId &&
     tabState.selected === "settings";
+  const channelView = showingSettings ? undefined : matchedChannelView;
   const closeSettings = () => {
     setSettings(undefined);
     afterClose("settings");
@@ -2023,11 +2024,11 @@ function ChannelWorkspace({
   useEffect(
     () =>
       panels.handleOpenRequests(({ target, channelId, rootId }) =>
-        channelId === linkContext.current.channelId
+        !channelView && channelId === linkContext.current.channelId
           ? openLink(target, rootId ? { rootId, fromThread: true } : {})
           : false,
       ),
-    [panels, openLink],
+    [panels, openLink, channelView],
   );
   const hasChannelPanel =
     !composingMessage &&

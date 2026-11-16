@@ -2743,7 +2743,7 @@ mounted page; see [sidebar ownership](channels.md#ownership).
 
 Check `typeof ctx.conversation.registerChannelView === "function"` on older hosts. Registrations belong to the plugin and disappear on disable, replacement or failed activation. `conversation.channelViews` exposes the active registry. Among matching contributions, the lowest contribution key wins. The host skips a matcher that throws. A failed component shows an isolated unavailable state with Retry. Disabling its plugin restores the ordinary channel workspace.
 
-The host resolves channel access before matching. A match does not grant access or signing authority. `active()` becomes false when the contribution, channel visit or session retires. Check the session's current write capabilities before each mutation too. Opening a view does not mount a hidden timeline or mark its messages read. Exact message/thread links and native channel detail destinations continue through the ordinary conversation workspace.
+The host resolves channel access before matching. A match does not grant access or signing authority. `active()` becomes false when the contribution, channel visit or session retires. Check the session's current write capabilities before each mutation too. Opening a view does not mount a hidden timeline or mark its messages read. Exact message/thread links and native channel details continue through the ordinary conversation workspace. Non-addressable panel requests return false while a contributed view replaces their host. A failed view keeps any independent companion beside its recovery state.
 
 ```tsx
 if (typeof ctx.conversation.registerChannelView === "function") {

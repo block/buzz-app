@@ -30,6 +30,7 @@ import {
 } from "../../features/relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ChannelsPage } from "./ChannelsPage";
+import { channelTabs } from "./useChannelTabState";
 
 // Open in channel: whether the page holds its channel list while it seeks the
 // thread's root, and what it asks the list to reveal. The real body renders;
@@ -226,13 +227,20 @@ async function channelsPage({
     clearCache: async () => {},
   };
   const none: ReturnType<Panels["snapshot"]> = [];
+  const panelHandlers = new Set<Parameters<Panels["handleOpenRequests"]>[0]>();
   const panels: Panels = {
     snapshot: () => none,
     subscribe: () => () => {},
     resolve: () => undefined,
     register() {},
-    requestOpen: () => false,
-    handleOpenRequests: () => () => {},
+    requestOpen: (request) =>
+      [...panelHandlers].some((handler) => handler(request)),
+    handleOpenRequests: (handler) => {
+      panelHandlers.add(handler);
+      return () => {
+        panelHandlers.delete(handler);
+      };
+    },
   };
   const navigator = createNavigationController(
     createMemoryHistory(),
@@ -285,6 +293,7 @@ async function channelsPage({
   let rerender: ((ui: ReactElement) => void) | undefined;
   return {
     session: owner.session,
+    panels,
     held,
     /** Open in channel from the thread's tab. */
     inChannel: (extra: Parameters<typeof target>[1] = {}) =>
@@ -372,6 +381,22 @@ it("replaces a resolved channel's reader with its plugin view, restores native c
   await screen.findByText("Board for alpha");
   expect(renders("alpha")).toHaveLength(0);
   expect(h.session.channels.window("alpha").status).toBe("idle");
+  const panel = {
+    id: "example",
+    key: "example/main",
+    pluginId: "example",
+    revision: "one",
+    title: "Example panel",
+    matches: () => true,
+    component: () => <p>Example panel</p>,
+  };
+  vi.spyOn(h.panels, "resolve").mockReturnValue(panel);
+  expect(
+    h.panels.requestOpen({ channelId: "alpha", target: "example:panel" }),
+  ).toBe(false);
+  act(() => channelTabs(h.session).openSettings("alpha", "details"));
+  await screen.findByRole("tab", { name: "Channel settings" });
+  expect(screen.queryByText("Board for alpha")).toBeNull();
   h.go(h.visit(h.target("alpha", { messageId: newest.id }), "message"));
   await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
   expect(screen.queryByText("Board for alpha")).toBeNull();

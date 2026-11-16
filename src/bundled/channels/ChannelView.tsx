@@ -21,6 +21,7 @@ import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Button } from "../../shared/design-system/ui/Button";
 import { PlugIcon } from "../../shared/design-system/icons";
+import { PanelFrame } from "../../features/panels/PanelFrame";
 
 const empty: readonly Contribution<ChannelView>[] = [];
 const emptyViews: ContributionReader<ChannelView> = {
@@ -59,19 +60,21 @@ export function SelectedChannelView({
 }) {
   const [retry, setRetry] = useState(0);
   return (
-    <FullPageSurface aria-label={entry.title}>
-      <OwnedContribution
-        entry={entry}
-        registry={registry}
-        resetIdentity={`${navigation?.entryId}:${retry}`}
-        fallback={
-          <Unavailable
-            navigation={navigation}
-            retry={() => setRetry((n) => n + 1)}
-          />
-        }
-      >
-        {(view, owned) => (
+    <OwnedContribution
+      entry={entry}
+      registry={registry}
+      resetIdentity={`${navigation?.entryId}:${retry}`}
+      fallback={
+        <Unavailable
+          navigation={navigation}
+          retry={() => setRetry((n) => n + 1)}
+          scope={relay.snapshot().scope}
+          companion={companion}
+        />
+      }
+    >
+      {(view, owned) => (
+        <FullPageSurface aria-label={entry.title}>
           <MountedView
             entry={view}
             channel={channel}
@@ -91,9 +94,9 @@ export function SelectedChannelView({
               );
             }}
           />
-        )}
-      </OwnedContribution>
-    </FullPageSurface>
+        </FullPageSurface>
+      )}
+    </OwnedContribution>
   );
 }
 
@@ -116,6 +119,7 @@ function MountedView({
 }) {
   const root = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
+    if (navigation && navigation.target.kind !== "conversation") return;
     navigation?.complete({ status: "opened" });
     if (
       active() &&
@@ -146,11 +150,16 @@ function MountedView({
 function Unavailable({
   navigation,
   retry,
+  scope,
+  companion,
 }: {
   navigation?: PageNavigation | undefined;
   retry(): void;
+  scope: string | undefined;
+  companion?: ReactNode;
 }) {
   useEffect(() => {
+    if (navigation?.target.kind !== "conversation") return;
     navigation?.complete({
       status: "failed",
       reason: "unavailable",
@@ -158,11 +167,15 @@ function Unavailable({
     });
   }, [navigation]);
   return (
-    <EmptyState
-      icon={<PlugIcon />}
-      title="Channel view unavailable"
-      description="Try the view again, or open another channel."
-      action={<Button onClick={retry}>Retry</Button>}
-    />
+    <PanelFrame scope={scope} companion={companion}>
+      <FullPageSurface>
+        <EmptyState
+          icon={<PlugIcon />}
+          title="Channel view unavailable"
+          description="Try the view again, or open another channel."
+          action={<Button onClick={retry}>Retry</Button>}
+        />
+      </FullPageSurface>
+    </PanelFrame>
   );
 }

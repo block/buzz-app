@@ -969,6 +969,9 @@ and are asked to sign in again in Buzz.
   sections. When a plugin is explicitly disabled, its existing chats appear as
   ordinary Solo chats; enabling it again returns them to the plugin's rows when
   available. Opening the channel from Team follows the usual Team navigation.
+- **Open thread marker**: while a thread is displayed in the side pane, its
+  original message keeps the hover highlight in the conversation. Switching
+  threads moves the marker; hiding the pane or closing the thread clears it.
 - **Side panels stay with their conversation**: a tab or panel you open beside a
   conversation, such as a thread, **Canvas**, a huddle, or Todos, stays open for
   that conversation when you go to another conversation or page and come back,

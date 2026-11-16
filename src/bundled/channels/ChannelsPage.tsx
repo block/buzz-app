@@ -2010,6 +2010,16 @@ function ChannelWorkspace({
   const hasPanel = companion || hasChannelPanel;
   const showingChannelPanel = tabState.paneOpen && hasChannelPanel;
   const showingPanel = companion || showingChannelPanel;
+  const highlightedThread =
+    showingChannelPanel && !companion
+      ? tabState.tabs.find(
+          (tab) =>
+            tab.kind === "thread" &&
+            tabPane(tab) === "side" &&
+            tab.id === selectedTab &&
+            tab.channelId === currentId,
+        )
+      : undefined;
   // A plain channel visit reads its visible selected thread along with the
   // conversation that holds focus. A link to a message or thread, passive
   // restoration and another channel’s retained tab do not.
@@ -2326,6 +2336,11 @@ function ChannelWorkspace({
             }
             holding={contextHolding}
             inlineTarget={contextTarget}
+            openThreadRootId={
+              highlightedThread?.kind === "thread"
+                ? rootOfTab(highlightedThread)
+                : undefined
+            }
             onOpenThread={openThread}
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined

@@ -2936,7 +2936,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   :where(html[data-message-density="compact"])
     .message:not(.messageHighlight):is(
       :hover,
-      [data-actions-revealed]
+      [data-actions-revealed],
+      [data-thread-open]
     )::before {
     content: "";
     position: absolute;
@@ -2952,7 +2953,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     opacity: 0.5;
   }
   /* An arrival cue replaces hover on its bubble rather than stacking on it. */
-  .message[data-actions-revealed]:not(.messageHighlight)
+  .message:is([data-actions-revealed], [data-thread-open]):not(
+      .messageHighlight
+    )
     > .messageBody
     > .messageContent
     .messageBubble:not([data-emoji-only], [data-diff-only]):not(
@@ -2961,7 +2964,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     ) {
     background: var(--surface-message-hover);
   }
-  .message[data-own][data-actions-revealed]:not(.messageHighlight)
+  .message[data-own]:is([data-actions-revealed], [data-thread-open]):not(
+      .messageHighlight
+    )
     > .messageBody
     > .messageContent
     .messageBubble:not([data-emoji-only], [data-diff-only]):not(

@@ -156,6 +156,7 @@ export type MessageRowProps = {
   onReply?: ((messageId: string) => void) | undefined;
   /** False: existing threads open, but the row offers none to start or reply in. */
   startsThreads?: boolean;
+  threadOpen?: boolean | undefined;
   quickControls?: ReactNode;
   overflowItems?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
@@ -250,6 +251,7 @@ function MessageRowContent({
   onOpenThread,
   onReply,
   startsThreads = true,
+  threadOpen,
   quickControls,
   overflowItems,
   participantProfiles,
@@ -1181,6 +1183,7 @@ function MessageRowContent({
         ref={rowRef}
         className={styles.message}
         data-highlight-surface=""
+        data-thread-open={threadOpen || undefined}
         data-layout={layout}
         data-stack-previous={stackPrevious || undefined}
         data-stack-next={stackNext || undefined}

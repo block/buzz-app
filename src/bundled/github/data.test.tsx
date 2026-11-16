@@ -27,12 +27,27 @@ it("loads PR details and preserves merged state, branches, and change counts", a
         comments: 5,
         additions: 10,
         deletions: 80,
+        labels: [
+          {
+            id: 101,
+            node_id: "LA_ready",
+            name: "Ready for review",
+            color: "0E8A16",
+          },
+          {
+            id: 102,
+            node_id: "LA_docs",
+            name: "Documentation",
+            color: "#0e8a16",
+          },
+        ],
       }),
     ),
   );
   vi.stubGlobal("fetch", fetch);
   const signal = new AbortController().signal;
   const data = await loadGitHubDetails(reference, signal);
+  expect(fetch).toHaveBeenCalledOnce();
   expect(fetch).toHaveBeenCalledWith(
     "https://api.github.com/repos/block/buzz/pulls/23",
     expect.objectContaining({
@@ -52,12 +67,44 @@ it("loads PR details and preserves merged state, branches, and change counts", a
     bodyHtml: "<p>An independent panel contract.</p>",
     headSha: "head-sha",
   });
+  expect(data.labels).toEqual({
+    items: [
+      { id: "LA_ready", name: "Ready for review", color: "0E8A16" },
+      { id: "LA_docs", name: "Documentation", color: undefined },
+    ],
+    complete: true,
+    totalCount: 2,
+  });
   expect(data.facts.map(([label]) => label)).not.toContain("Comments");
   expect(data.facts).toContainEqual([
     "Changes",
     { additions: 10, deletions: 80 },
   ]);
 });
+it("distinguishes complete empty, unavailable, and issue-only labels", async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(Response.json({ title: "None", labels: [] }))
+    .mockResolvedValueOnce(Response.json({ title: "No label data" }))
+    .mockResolvedValueOnce(
+      Response.json({
+        title: "An issue",
+        labels: [{ id: 1, node_id: "LA_issue", name: "bug" }],
+      }),
+    );
+  vi.stubGlobal("fetch", fetch);
+  const signal = new AbortController().signal;
+
+  expect((await loadGitHubDetails(reference, signal)).labels).toEqual({
+    items: [],
+    complete: true,
+    totalCount: 0,
+  });
+  expect((await loadGitHubDetails(reference, signal)).labels).toBeUndefined();
+  expect((await loadGitHubDetails(issue, signal)).labels).toBeUndefined();
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+
 it.each([
   [404, "private or unavailable"],
   [403, "limit"],

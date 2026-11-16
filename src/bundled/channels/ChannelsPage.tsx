@@ -656,6 +656,9 @@ function ChannelWorkspace({
     queries: RelaySession;
     id: string;
     label: string;
+    /** The access check's answer while joined: one that still stands after
+     * the loss predates it. */
+    access: typeof resolved;
     /** Its loss has been shown, so access checks of later visits to the same
      * channel (a thread, a message link) keep it rather than flicker. */
     shown?: true;
@@ -666,9 +669,10 @@ function ChannelWorkspace({
       joinedVisit?.queries !== queries ||
       joinedVisit.id !== joinedHere.id ||
       joinedVisit.label !== label ||
+      joinedVisit.access !== resolved ||
       joinedVisit.shown
     )
-      setJoinedVisit({ queries, id: joinedHere.id, label });
+      setJoinedVisit({ queries, id: joinedHere.id, label, access: resolved });
   } else if (
     joinedVisit &&
     (recordedLoss ||
@@ -2241,6 +2245,8 @@ function ChannelWorkspace({
   // A private channel's notice offers the only way on; a public preview's
   // history is readable again. Focus that moved elsewhere meanwhile stays.
   const removedId = removed?.id;
+  // The joined channel's answer still stands: the loss's own check is pending.
+  const unchecked = resolved === removed?.access;
   useLayoutEffect(() => {
     const lost = focusAfterLoss.current;
     if (!lost) return;
@@ -2252,7 +2258,10 @@ function ChannelWorkspace({
       return;
     }
     // Access is still settling: a preview this visit resolved is reloading.
-    if (lost !== removedId || (!current && previewAvailable)) return;
+    // Once the loss is checked, a channel still not open has nothing to read:
+    // the relay answers for a private one too, without refusing.
+    if (lost !== removedId || (!current && previewAvailable && unchecked))
+      return;
     focusAfterLoss.current = undefined;
     const history = historyContainer.current;
     const active = document.activeElement;
@@ -2262,7 +2271,14 @@ function ChannelWorkspace({
         history)
       : backTrigger.current
     )?.focus({ preventScroll: true });
-  }, [removedId, current, requestedChannel, ownLoss, previewAvailable]);
+  }, [
+    removedId,
+    current,
+    requestedChannel,
+    ownLoss,
+    previewAvailable,
+    unchecked,
+  ]);
   const channelNotice =
     !!current &&
     (current.archived ||

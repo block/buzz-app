@@ -213,7 +213,9 @@ function fixture({
     },
   );
   // After removal, a public channel's relay still serves it as a preview.
-  let removal: { preview?: ChannelSummary; reloading?: boolean } | undefined;
+  let removal:
+    | { preview?: ChannelSummary; reloading?: boolean; refused?: boolean }
+    | undefined;
   // Access checks the page started, so absence can wait for them to settle.
   const accessChecks: Promise<unknown>[] = [];
   // The default agent comes first, so a named agent is distinguishable from it.
@@ -332,7 +334,7 @@ function fixture({
       ) => {
         const check = (async () => {
           if (!removal) return owner.session.channels.resolve?.(ids, options);
-          if (!removal.preview) throw new Error("Channel unavailable");
+          if (removal.refused) throw new Error("Channel unavailable");
           removal.reloading = false;
         })();
         accessChecks.push(check);
@@ -526,10 +528,12 @@ function fixture({
       emitList();
     },
     /** An admin removed the viewer: the roster drops the conversation, which
-     * stays readable as a preview only when it is public. `reloading`: as for
-     * a channel the store listed, the preview is served only once the page's
-     * next access check reads it again. */
-    remove(visibility: "private" | "public", reloading = false) {
+     * stays readable as a preview only when it is public. As from the store,
+     * the access check of a private one succeeds with nothing to read, unless
+     * the relay `refused` the read. `reloading`: as for a channel the store
+     * listed, the preview is served only once the page's next access check
+     * reads it again. */
+    remove(visibility: "private" | "refused" | "public", reloading = false) {
       const { private: _, viewerRole: __, cached: ___, ...open } = channel;
       removal =
         visibility === "public"
@@ -537,7 +541,7 @@ function fixture({
               preview: { ...open, members: [agent], readOnly: true },
               reloading,
             }
-          : {};
+          : { refused: visibility === "refused" };
       list = {
         ...list,
         asOf: ++reads,
@@ -2170,6 +2174,7 @@ it.each(
   (Object.keys(focusOrigins) as (keyof typeof focusOrigins)[]).flatMap(
     (origin) => [
       [origin, "private", "Back to channels"] as const,
+      [origin, "refused", "Back to channels"] as const,
       [origin, "public", "the history"] as const,
     ],
   ),
@@ -2187,7 +2192,7 @@ it.each(
       name: "You’re no longer a member of Planning",
     });
     const history = screen.getByRole("region", { name: "Channel history" });
-    if (visibility === "private")
+    if (visibility !== "public")
       await waitFor(() =>
         expect(
           within(banner).getByRole("button", { name: "Back to channels" }),

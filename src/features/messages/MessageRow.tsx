@@ -1176,6 +1176,7 @@ function MessageRowContent({
   const message = (
     <div
       data-message-id={renderMessage ? undefined : row.id}
+      aria-current={!renderMessage && threadOpen ? true : undefined}
       data-huddle-row={row.huddle ? "" : undefined}
     >
       {day && <DayDivider createdAt={row.createdAt} />}
@@ -1972,6 +1973,8 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
               onOpenChange={setOpen}
               className={styles.audienceEntry}
               data-highlight-surface=""
+              data-thread-open={props.threadOpen || undefined}
+              aria-current={props.threadOpen ? true : undefined}
               // One stable anchor survives both animation directions. Not the
               // button: revealing an anchor takes it out of the Tab order.
               data-message-id={row.id}

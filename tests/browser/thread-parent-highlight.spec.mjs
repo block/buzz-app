@@ -160,3 +160,54 @@ test.describe("touch-only pointer", () => {
     });
   }
 });
+
+for (const density of ["default", "compact"]) {
+  test(`a collapsed agents root keeps the ${density} hover fill for its open thread`, async ({
+    page,
+    app,
+  }) => {
+    await page.addInitScript((density) => {
+      localStorage.setItem("buzz-message-density.v1", density);
+    }, density);
+    await open(page, app);
+    const event = app.append(
+      "primary",
+      "alpha",
+      "Agent coordination root",
+      true,
+      true,
+      undefined,
+      undefined,
+      [["audience", "agents"]],
+    );
+    await page
+      .getByRole("button", {
+        name: /Show activity history:.*Agent coordination root/,
+      })
+      .click();
+    const row = page.locator(
+      `[data-channel-timeline] [data-message-id="${event.id}"]`,
+    );
+    const toggle = row.getByRole("button", { name: /Agent coordination root/ });
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    const highlighted = await toggle.evaluate((element) => {
+      const sample = document.createElement("span");
+      sample.style.backgroundColor = "var(--affordance-subtle-hover)";
+      element.append(sample);
+      const color = getComputedStyle(sample).backgroundColor;
+      sample.remove();
+      return color;
+    });
+    await expect(toggle).not.toHaveCSS("background-color", highlighted);
+    await toggle.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Reply", exact: true }).click();
+    await expect(
+      page.getByRole("textbox", { name: "Reply to thread", exact: true }),
+    ).toBeFocused();
+    await page.mouse.move(0, 0);
+    await expect(row).toHaveAttribute("data-thread-open");
+    await expect(row).toHaveAttribute("aria-current", "true");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(toggle).toHaveCSS("background-color", highlighted);
+  });
+}

@@ -3586,7 +3586,9 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
 .audienceRow:has(.audienceBody) .audiencePreviewText {
   display: none;
 }
-.audienceLine:hover {
+.audienceLine:hover,
+.audienceEntry:where([data-thread-open]):not(.messageHighlight)
+  > .audienceLine {
   background: var(--affordance-subtle-hover);
 }
 

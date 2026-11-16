@@ -971,8 +971,9 @@ and are asked to sign in again in Buzz.
   available. Opening the channel from Team follows the usual Team navigation.
 - **Open thread marker**: while a thread is displayed in the side pane, its
   original message keeps the hover highlight in the conversation, including on
-  touch-only devices. Switching
-  threads moves the marker; hiding the pane or closing the thread clears it.
+  touch-only devices. Switching threads moves the marker; hiding the pane or
+  closing the thread clears it. The original is also identified as current for
+  assistive technology.
 - **Side panels stay with their conversation**: a tab or panel you open beside a
   conversation, such as a thread, **Canvas**, a huddle, or Todos, stays open for
   that conversation when you go to another conversation or page and come back,

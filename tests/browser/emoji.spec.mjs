@@ -1390,3 +1390,88 @@ test("the first toned pick asks for a default skin tone", async ({ page }) => {
     await server?.close();
   }
 });
+
+test("a tone chosen at the first toned pick inserts even when it cannot be saved", async ({
+  page,
+}) => {
+  let server;
+  try {
+    server = await createServer({
+      root: fileURLToPath(new URL("../../", import.meta.url)),
+      configFile: false,
+      envFile: false,
+      plugins: [react()],
+      logLevel: "error",
+      server: { host: "127.0.0.1", port: 0, strictPort: false },
+    });
+    const errors = watchPageErrors(page);
+    await server.listen();
+    // Storage reads work, but saving the tone is refused (a full quota).
+    await page.addInitScript(() => {
+      const storage = window.localStorage;
+      const refuse = (key) => {
+        if (key === "emoji-mart.skin")
+          throw new DOMException("full", "QuotaExceededError");
+      };
+      const proxy = new Proxy(storage, {
+        get(target, key) {
+          if (key === "setItem")
+            return (name, value) => {
+              refuse(name);
+              target.setItem(name, value);
+            };
+          const value = Reflect.get(target, key);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+        set(target, key, value) {
+          refuse(key);
+          target.setItem(key, value);
+          return true;
+        },
+      });
+      Object.defineProperty(window, "localStorage", { value: proxy });
+    });
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/emoji.html`,
+    );
+    const draft = page
+      .getByRole("textbox", { name: /Message #general/ })
+      .first();
+    const openPicker = async () => {
+      await page
+        .getByRole("button", { name: "Emoji and GIFS", exact: true })
+        .first()
+        .click();
+      await expect(
+        page.getByRole("searchbox", { name: "Search emoji" }),
+      ).toBeVisible();
+    };
+    const toneMenu = page.locator("em-emoji-picker #root > .menu");
+    await draft.fill("");
+    await openPicker();
+    await page
+      .locator('em-emoji-picker .category button[aria-label="👍"]')
+      .first()
+      .click();
+    // Mart focuses the current tone once the menu has opened.
+    await expect(toneMenu.locator('input[value="1"]')).toBeFocused();
+    await toneMenu.locator('input[value="4"]').focus();
+    await page.keyboard.press("Enter");
+    await expect(draft).toContainText("👍🏽");
+    expect(
+      await page.evaluate(() => localStorage.getItem("emoji-mart.skin")),
+    ).toBeNull();
+    // Chosen once this session: the next toned pick inserts without asking.
+    await draft.fill("");
+    await openPicker();
+    await page
+      .locator('em-emoji-picker .category button[aria-label="👍🏽"]')
+      .first()
+      .click();
+    await expect(toneMenu).toHaveCount(0);
+    await expect(draft).toContainText("👍🏽");
+    expect(errors.unexplained()).toEqual([]);
+  } finally {
+    await server?.close();
+  }
+});

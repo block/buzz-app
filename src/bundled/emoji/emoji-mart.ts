@@ -11,6 +11,7 @@ import { rankShortcodes } from "./emoji-search";
 import { PREVIEW_ACTION_SLOT } from "./add-emoji";
 import {
   SKIN_TONE_SLOT,
+  rememberSkinTone,
   savedSkinTone,
   skinToneUnchosen,
   toneHand,
@@ -163,6 +164,8 @@ export function mountEmojiMart({
         }
       : { previewPosition: "none" }),
     set: "native",
+    // Mart prefers its saved tone; this covers a tone it could not save.
+    skin: savedSkinTone() ?? 1,
     skinTonePosition: "search",
     // Widget mode follows the host, never the OS independently.
     theme: resolvedTheme(
@@ -593,6 +596,38 @@ ${[1, 2, 3, 4, 5, 6].map((tone) => `    .menu .skin-tone-${tone}::before { conte
   // Until a default tone is saved, the first pick of an emoji that has tones
   // opens the tone menu showing that emoji; the choice becomes the default.
   let promptedEmoji: string | undefined;
+  let chosenTone: number | undefined;
+  // Mart chooses a tone on an option click, or Enter, Space or Tab on its radio.
+  const recordTone = (tone: number) => {
+    chosenTone = tone;
+    rememberSkinTone(tone);
+  };
+  root?.addEventListener(
+    "click",
+    (event) => {
+      const option =
+        event.target instanceof Element
+          ? event.target.closest(".menu .option")
+          : null;
+      const radio = option?.previousElementSibling;
+      if (radio instanceof HTMLInputElement) recordTone(Number(radio.value));
+    },
+    true,
+  );
+  root?.addEventListener(
+    "keydown",
+    (event) => {
+      const radio = event.target;
+      const { code } = event as KeyboardEvent;
+      if (
+        radio instanceof HTMLInputElement &&
+        radio.matches('.menu input[type="radio"]') &&
+        (code === "Enter" || code === "Space" || code === "Tab")
+      )
+        recordTone(Number(radio.value));
+    },
+    true,
+  );
   const toneOptions = [1, 2, 3, 4, 5, 6].map((tone) => `--buzz-tone-${tone}`);
   const promptSkinTone = (id: string | undefined) => {
     if (!preview || !skinToneUnchosen()) return false;
@@ -606,6 +641,7 @@ ${[1, 2, 3, 4, 5, 6].map((tone) => `    .menu .skin-tone-${tone}::before { conte
         JSON.stringify(skins[index]?.native ?? skins[0].native),
       );
     promptedEmoji = id;
+    chosenTone = undefined;
     source.click();
     return true;
   };
@@ -616,7 +652,8 @@ ${[1, 2, 3, 4, 5, 6].map((tone) => `    .menu .skin-tone-${tone}::before { conte
     promptedEmoji = undefined;
     const menuRoot = root?.querySelector<HTMLElement>("#root");
     for (const name of toneOptions) menuRoot?.style.removeProperty(name);
-    const tone = savedSkinTone();
+    // The choice itself, not whether it saved, separates choosing from dismissing.
+    const tone = chosenTone;
     const native = tone && Data?.emojis[id]?.skins[tone - 1]?.native;
     if (!native || disposed) return false;
     select(native);

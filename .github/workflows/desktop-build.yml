@@ -357,7 +357,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: windows-release
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # TEMPORARY (revert before merge): save from this branch to test restore.
+          save-if: true
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ steps.pins.outputs.node }}

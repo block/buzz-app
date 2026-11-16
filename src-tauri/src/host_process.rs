@@ -594,15 +594,28 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
 }
 
 /// Sets a process's environment: the app's own, less any Buzz identity it was
-/// started with, plus the plugin's `environment` (`None` removes a variable).
-/// `BUZZ_VERSION` is always this app's version, so a command can tell it runs
-/// under Buzz.
+/// started with and any AppImage bundle paths, plus the plugin's `environment`
+/// (`None` removes a variable). `BUZZ_VERSION` is always this app's version,
+/// so a command can tell it runs under Buzz.
 fn set_environment(
     command: &mut Command,
     path: &OsStr,
     environment: &HashMap<String, Option<String>>,
     version: &str,
 ) -> Result<(), String> {
+    // An AppImage's launcher points library, data and program paths into its
+    // bundle for the app alone; a host program loading the bundle's older
+    // OpenSSL fails. First, so nothing below can be undone by it.
+    let bundle = appimage_bundle();
+    if let Some(bundle) = &bundle {
+        for (name, value) in std::env::vars_os() {
+            match without_bundle_paths(&value, bundle) {
+                Some(Some(kept)) => command.env(&name, kept),
+                Some(None) => command.env_remove(&name),
+                None => command,
+            };
+        }
+    }
     // Never pass on an identity the app itself was started with.
     for (name, _) in std::env::vars_os() {
         let text = name.to_string_lossy();
@@ -610,19 +623,10 @@ fn set_environment(
             command.env_remove(&name);
         }
     }
-    // An AppImage's launcher points library and data paths into its bundle for
-    // the app alone; a host program loading the bundle's older OpenSSL fails.
-    if let Some(appdir) = std::env::var_os("APPDIR").filter(|dir| !dir.is_empty()) {
-        for (name, value) in std::env::vars_os() {
-            if let Some(kept) = without_bundle_paths(&value, Path::new(&appdir)) {
-                match kept {
-                    Some(kept) => command.env(&name, kept),
-                    None => command.env_remove(&name),
-                };
-            }
-        }
-    }
-    command.env("PATH", path);
+    match bundle.and_then(|bundle| without_bundle_paths(path, &bundle)) {
+        Some(Some(kept)) => command.env("PATH", kept),
+        _ => command.env("PATH", path),
+    };
     for (name, value) in environment {
         if name.is_empty() || name.contains(['=', '\0']) {
             return Err("Invalid environment variable".into());
@@ -634,6 +638,20 @@ fn set_environment(
     }
     command.env("BUZZ_VERSION", version);
     Ok(())
+}
+
+/// The mounted or extracted AppImage this app runs from: `APPDIR` only when
+/// it holds this executable, not one inherited from another AppImage.
+fn appimage_bundle() -> Option<PathBuf> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let bundle = PathBuf::from(std::env::var_os("APPDIR")?);
+    // A root `APPDIR` would hold every path, so it names no bundle.
+    (bundle.is_absolute()
+        && bundle.parent().is_some()
+        && std::env::current_exe().ok()?.starts_with(&bundle))
+    .then_some(bundle)
 }
 
 /// `value`'s path list less its entries in the bundle at `appdir`, when it
@@ -649,11 +667,8 @@ fn without_bundle_paths(value: &OsStr, appdir: &Path) -> Option<Option<OsString>
         .into_iter()
         .filter(|path| !path.as_os_str().is_empty() && !path.starts_with(appdir))
         .collect();
-    Some(
-        std::env::join_paths(kept)
-            .ok()
-            .filter(|joined| !joined.is_empty()),
-    )
+    let joined = std::env::join_paths(kept).ok()?;
+    Some((!joined.is_empty()).then_some(joined))
 }
 
 /// The verified target stays inside the MCP prefix and the same containment.

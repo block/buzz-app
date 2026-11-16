@@ -5,7 +5,6 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement as h, useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { COMPONENTS } from "../../shared/design-system/ui/registry";
 import type { PluginUi } from "./contract";
 import { pluginUi } from "./service";
 
@@ -150,11 +149,4 @@ it("lets a plugin build a form in a dialog from host controls", async () => {
   // No leftover portal, inert siblings or scroll lock.
   expect(document.body.innerHTML).toBe("<div></div>");
   await vi.waitFor(() => expect(document.body.style.overflowY).toBe(""));
-});
-
-it("keeps the registry's plugin marks in step with what plugins get", () => {
-  const marked = COMPONENTS.filter((c) => c.pluginApi === "v1").map(
-    (c) => c.name,
-  );
-  expect(marked.sort()).toEqual(Object.keys(pluginUi).sort());
 });

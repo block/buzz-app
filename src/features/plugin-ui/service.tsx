@@ -44,8 +44,7 @@ function oneOf<T extends string>(
 /**
  * Provided as a plain frozen object, not a Cordis `Service`: a service proxies
  * each function it returns anew, and a component type that changes identity on
- * every read would remount on every render. Keys are the public names; the
- * registry marks the same set `pluginApi: "v1"`.
+ * every read would remount on every render. Keys are the public names.
  */
 export const pluginUi: PluginUi = Object.freeze({
   Button: ({ children, onClick, ...props }: PluginButtonProps) => (

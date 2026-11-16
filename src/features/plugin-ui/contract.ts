@@ -1,6 +1,6 @@
 // Shared controls for plugins that cannot import app source. These props are
-// the whole contract: the host owns appearance and may restyle the controls,
-// but within API v1 it only adds components, props and values.
+// the whole contract, kept narrow so the host can restyle and migrate the
+// controls underneath without plugins noticing.
 import type { ReactElement, ReactNode } from "react";
 
 // `children` is optional so `createElement(type, props, ...children)` type-checks.

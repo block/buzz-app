@@ -14,15 +14,14 @@ across versions yet, and the author types are `0.0.0-preview.1`.
 - **Steady:** the plugin envelope (manifest, `inject`/`apply`, `ctx.effect`
   cleanup) and capability services: host grants, `addTool` (the tool's shape, not
   the whole client passed to `call`), shortcuts, notifications, settings cards, and
-  navigation `open` for plugin pages, Home and Settings. Owning a whole page or
-  panel is steady, but placement is not.
+  navigation `open` for plugin pages, Home and Settings, and the `ui`
+  [host controls](#host-controls). Owning a whole page or panel is steady, but
+  placement is not.
 - **Borderline:** decisions, and link and code-block renderers.
 - **Likely to break:** the relay session read model; conversation contributions;
   sidebar sections and rows, the Solo region and backdrops; agent hooks, execution
   targets and the harness kit; artifact storage, the installer, federated identity
   and the browser view; and other navigation `open` targets.
-- **Stable within API v1:** the `ui` controls and their documented props. See
-  [Host controls](#host-controls).
 
 ## The first two authoring experiences
 
@@ -414,10 +413,10 @@ Each control forwards only its documented props: other props are ignored and
 an unsupported value uses the default, so internal and migrating variants never
 become plugin behavior. Change handlers receive plain values (`onValueChange(value)`,
 `onCheckedChange(checked)`, `onOpenChange(open)`); `onClick` receives nothing.
-The host owns appearance. Unlike preview services, this set is stable within
-API v1: the host may restyle a control but only adds controls, props and values.
-Components marked `pluginApi: "v1"` in the design-system registry are the ones
-offered, and a test keeps the two in step. A component reads the same on every
+The host owns appearance. Like the other services, the set is a preview; the
+narrow props keep later changes small. Shared primitives belong in `ui`;
+feature components stay with the service that owns them, such as
+`conversation.ui`. A component reads the same on every
 access, so it is safe to use as a React element type. Plugin page state stays
 in the plugin's components; unmounting a page with an open `Dialog` removes its
 portal and scroll lock.

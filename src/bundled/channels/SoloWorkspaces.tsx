@@ -886,11 +886,21 @@ export function SoloWorkspaces({
       </ChannelSidebarDnd>
       {snapshot.orderError && (
         <div role="alert" className={styles.listMessage}>
-          <p>Couldn’t save workspace order. {snapshot.orderError.error}</p>
+          <p>
+            Couldn’t save the move for{" "}
+            {groups.find(({ id }) => id === snapshot.orderError?.sectionId)
+              ?.name ?? "this workspace"}
+            . {snapshot.orderError.error}
+          </p>
           <p>
             The previous order is shown. A partial save may already exist on the
             relay.
           </p>
+          {!orderWritable && (
+            <p>
+              Refresh saved workspace preferences before retrying this move.
+            </p>
+          )}
           <Button
             disabled={!orderWritable}
             onClick={() => {

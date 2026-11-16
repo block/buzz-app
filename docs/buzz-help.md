@@ -481,6 +481,7 @@ and are asked to sign in again in Buzz.
   Drag a workspace header onto another workspace to reorder it, or use **Move up**
   and **Move down** in its **…** menu. Escape cancels a drag; **Chats** stays below
   the workspaces. A failed save restores the previous order and offers **Retry move**.
+  If a failed refresh disables **Retry move**, use **Retry workspaces** first.
   Plugins can also group tasks under joined channels. On supported hosts, each
   channel group keeps the native channel actions and details. New task appears
   only when the channel permits starting a chat.

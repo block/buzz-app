@@ -93,9 +93,10 @@ function fixture(projectName = "Work") {
     };
     return saved;
   });
+  const read = vi.fn(async () => saved);
   const store = () =>
     createSidebarPreferencesStore({
-      read: async () => saved,
+      read,
       available: true,
       write,
       writeStar: async () => [],
@@ -161,6 +162,7 @@ function fixture(projectName = "Work") {
     write,
     remove,
     order,
+    read,
     setSaved: (value: SidebarPreferences) => {
       saved = value;
     },
@@ -192,14 +194,27 @@ it("moves workspaces with the section menu, keeps collapse and filing, and retri
   ).toHaveAttribute("aria-disabled", "true");
   h.order.mockRejectedValueOnce(new Error("Order was refused"));
   await user.click(screen.getByRole("menuitem", { name: "Move up" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Order was refused",
+  const error = await screen.findByRole("alert");
+  expect(error).toHaveTextContent(
+    "Couldn’t save the move for Home. Order was refused",
   );
   expect(first.queries.snapshot().data?.sections.map(({ id }) => id)).toEqual([
     "work",
     "home",
   ]);
-  await user.click(screen.getByRole("button", { name: "Retry move" }));
+  const retry = within(error).getByRole("button", { name: "Retry move" });
+  expect(retry).toBeEnabled();
+  h.read.mockRejectedValueOnce(new Error("Saved preferences unavailable"));
+  await act(() => first.queries.refresh());
+  expect(retry).toBeDisabled();
+  expect(error).toHaveTextContent(
+    "Refresh saved workspace preferences before retrying this move.",
+  );
+  expect(h.order).toHaveBeenCalledOnce();
+  await user.click(screen.getByRole("button", { name: "Retry workspaces" }));
+  await waitFor(() => expect(retry).toBeEnabled());
+  expect(error).not.toHaveTextContent("Refresh saved workspace preferences");
+  await user.click(retry);
   await waitFor(() =>
     expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
   );

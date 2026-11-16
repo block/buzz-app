@@ -43,48 +43,43 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
 
 ## Gateway mode
 
-Gateway mode changes only how a turn reaches its model. Creation, Settings,
-the provider and model pickers and Test connection are Pi's own, as without a
-gateway; nothing is saved or rewritten for it.
+A Pi agent whose route the configured model gateway makes eligible, and which
+that gateway enables for Pi, sends a gateway run's requests to the gateway:
+Pi's own built-in Anthropic or OpenAI model, by its own ID, under the Pi
+upstream base of the build's `BUZZ_AGENT_GATEWAY` descriptor. That base is
+the gateway's ingress that resolves those IDs. Without that descriptor, or
+without a Pi upstream in it, every route is external. Pi's providers, models
+and setup are as without the gateway: the gateway lists nothing, and a saved
+choice is an ordinary `anthropic/…` or `openai/…` model.
 
-When the runner sends a Pi agent's turn through the configured model gateway
-(its route is eligible and the gateway enables Pi), the host sends it through
-the Pi upstream base of the build's `BUZZ_AGENT_GATEWAY` descriptor if the
-gateway serves the turn's model: the agent's own provider and model, or Pi's
-default. The gateway serves a model of Pi's own `anthropic`, `openai`,
-`openai-codex` or `google` provider when an endpoint of the matching family
-(`claude`, `gpt`, `gpt`, `gemini`) is named `databricks-` followed by the
-model's ID with `.` as `-`: `openai/gpt-5.5` is `databricks-gpt-5-5`. Any other
-model runs on Pi's own provider, as the turn would without the gateway, with
-no binding or Buzz headers. The gateway's models are listed as the host takes
-the agent's route. Without the descriptor, or without a Pi upstream in it,
-every route is external.
+A request is a gateway request when its Buzz request was bound through the
+gateway. Each one is admitted as it is made, by the agent's current route,
+and built then from the run's own model and that route. A request made while
+access is revoked is refused visibly, so revocation during a gateway run
+stops it visibly at its next request.
 
 When the runner sends a turn without the gateway (a blocked route: readiness,
-identity, auth or network failure), Pi runs it on the agent's configured
-provider and model, with the runner's shared fallback notice on the prompt. A
-request already bound to the gateway keeps that mode when asked again and is
-never resent without it. Revocation during a gateway run stops it visibly.
+identity, auth or network failure), Pi runs it on the agent's own provider
+and model, with the runner's shared fallback notice on the prompt. The saved
+choice is never rewritten. A request already bound to the gateway keeps that
+mode when asked again and is never resent without it.
 
-Each serving endpoint uses the one protocol verified for its family, with
-pi-ai 1.4.0's own client. Nothing retries a request on another protocol:
+Each provider uses one protocol, with pi-ai 1.4.0's own client. Nothing
+retries a request on another protocol:
 
-| Family (`model_class`) | Protocol | pi-ai API | Verified on |
-|---|---|---|---|
-| `claude` | `anthropic/v1/messages` | `anthropic-messages` | claude-haiku-4-5 |
-| `gpt` | `openai/v1/responses` | `openai-responses` | gpt-5-4-nano |
-| any other offering it | `mlflow/v1/chat/completions` | `openai-completions` (`supportsStore: false`, `maxTokensField: "max_tokens"`) | gpt-oss-20b, qwen3-next-80b-a3b-instruct, glm-5-3-flash |
+| Pi provider | Protocol under the base | pi-ai API |
+|---|---|---|
+| `anthropic` | `anthropic/v1/messages` | `anthropic-messages` |
+| `openai` | `openai/v1/responses` | `openai-responses` |
 
 pi-ai's Anthropic client sends Messages through the SDK's beta resource, so
 its path is `anthropic/v1/messages?beta=true`.
 
-Endpoints that offer none of these serve nothing. That includes Gemini's own
-protocol, embeddings, endpoints that are not ready, and endpoints without
-function calling. The probes listed above are synthetic, so other endpoints
-are untested on their protocol. A served model keeps its own context window,
-output limit, cost and thinking levels; it reasons only on its family's
-verified protocol, not on `mlflow/v1/chat/completions`. Images are the
-endpoint's `image_input`.
+A gateway turn on any other provider's model fails visibly before it binds.
+Models the gateway serves only over MLflow chat completions (such as
+gpt-oss, Qwen and GLM) can't be reached from Pi. Which models an agent may
+use is the gateway's policy: a request for one it doesn't serve fails
+visibly with the gateway's answer.
 
 Every model request carries:
 - the Buzz context headers of the request its durable task serves, recorded
@@ -101,14 +96,29 @@ Every model request carries:
 
 Buzz context a caller set is replaced. A request whose other session
 headers name a different session is refused. A request is also refused
-while its binding is no longer admitted, and when its task carries no
-request, or one recorded for another conversation.
+while its binding is no longer admitted, and when its record is another
+conversation's. A request whose task carries no Buzz request, or one never
+bound through the gateway, runs on Pi's own provider, dispatched as it is.
 
-New session is recorded as an intent, with what the next turn is shown,
-before its reset is written by a request ID, so a host that stops between
-them writes it at the next turn and writing it again adds nothing. The
-intent is cleared only with the binding that replaces the session, before
-that turn is submitted.
+An agent's conversation with no gateway work runs as without the gateway:
+its turns, New session and Compact are Pi's own. For a conversation key
+with gateway state, New session is recorded as an intent, with what the next
+turn is shown, before its reset is written by a request ID, so a host that
+stops between them writes it at the next turn and writing it again adds
+nothing. The intent stays until the binding that replaces the session,
+before that turn is submitted, so the key's next gateway turn starts a new
+Buzz session. An owner's Compact while the route is blocked runs on Pi's own
+provider and model, as a blocked turn does.
+
+A turn steers only a run in its own mode, through the gateway or not. A turn
+in the other mode waits until Pi holds no work in that mode, read from Pi's
+storage. Its own wait for that work continues work a stopped host left. It
+fails visibly ("The previous run didn't finish") once no run works in the
+conversation and that work shows no progress for 15 minutes; a run that works
+silently, such as a long tool call, never fails it. Interrupt withdraws every turn of the conversation
+that Pi doesn't have yet, and Stop on a waiting turn's Activity withdraws
+that turn alone. A withdrawn turn is never submitted, and its record and
+reply destination are removed.
 
 Responses transport is verified. Black-box probes saw no effect of affinity
 on upstream caching, and none is documented.

@@ -11,8 +11,6 @@ import {
 } from "../../features/agents/gateway/vectors";
 import {
   answerGateway,
-  hostRoute,
-  routeKey,
   GATEWAY_SEAM,
   type GatewayRoute,
   type GatewaySeam,
@@ -38,7 +36,10 @@ const external: GatewayRoute = { kind: "external", revision: 3 };
 const message = INFERENCE_VECTORS[0] as (typeof INFERENCE_VECTORS)[number];
 
 /** The shared gateway module's own functions, with only the route this test gives. */
-function seam(route: unknown, upstream = PI_UPSTREAM): GatewaySeam {
+function seam(
+  route: unknown,
+  upstream: Readonly<{ base: string }> = PI_UPSTREAM,
+): GatewaySeam {
   const found = route as GatewayRoute;
   return {
     ...GATEWAY_SEAM,
@@ -49,77 +50,6 @@ function seam(route: unknown, upstream = PI_UPSTREAM): GatewaySeam {
     upstreamFor: (harness) => (harness === "pi" ? upstream : undefined),
   };
 }
-
-describe("hostRoute", () => {
-  it("opens Pi's own providers on any route but an eligible one that enables Pi", () => {
-    expect(hostRoute(undefined, eligible)).toEqual({ kind: "external" });
-    expect(hostRoute(seam(external), external)).toEqual({ kind: "external" });
-    // Blocked, still checking included, falls back to Pi's own providers.
-    expect(hostRoute(seam(blocked), blocked)).toEqual({ kind: "external" });
-    // The gateway enables none, or other harnesses only.
-    for (const harnesses of [[], ["goose", "codex"]]) {
-      const disabled = { ...eligible, harnesses };
-      expect(hostRoute(seam(disabled), disabled)).toEqual({
-        kind: "external",
-      });
-    }
-    // A build without a Pi upstream keeps every agent on its own providers.
-    expect(
-      hostRoute({ ...seam(eligible), upstreamFor: () => undefined }, eligible),
-    ).toEqual({ kind: "external" });
-  });
-
-  it("opens an eligible agent with its upstream base, the build's profile and identity-only discovery headers", () => {
-    const { headers } = VECTOR_PROFILE;
-    expect(hostRoute(seam(eligible), eligible)).toEqual({
-      kind: "eligible",
-      revision: 1,
-      gatewayOrigin: "https://gateway.test",
-      identity: VECTOR_IDENTITY,
-      base: PI_UPSTREAM.base,
-      profile: VECTOR_PROFILE,
-      discovery: {
-        [headers.launcher_client]: VECTOR_PROFILE.launcher_client,
-        [headers.human_pubkey]: VECTOR_IDENTITY.human_pubkey,
-        [headers.agent_pubkey]: VECTOR_IDENTITY.agent_pubkey,
-        [headers.community_id]: VECTOR_IDENTITY.community_id,
-      },
-    });
-  });
-
-  it("lists nothing from the gateway when the identity can't be sent", () => {
-    const invalid = {
-      ...eligible,
-      identity: { ...VECTOR_IDENTITY, community_id: "c1" },
-    };
-    expect(hostRoute(seam(invalid), invalid)).toEqual({ kind: "external" });
-  });
-
-  it("keys a route by the gateway and community it runs on only", () => {
-    const keys = new Set(
-      [
-        external,
-        eligible,
-        blocked,
-        { ...eligible, gatewayOrigin: "https://other.test" },
-        {
-          ...eligible,
-          identity: {
-            ...VECTOR_IDENTITY,
-            community_id: "44444444-4444-4444-8444-444444444444",
-          },
-        },
-      ].map(routeKey),
-    );
-    // Blocked runs Pi's own providers, as external does.
-    expect(keys.size).toBe(4);
-    expect(routeKey(blocked)).toBe(routeKey(external));
-    expect(routeKey({ ...eligible, harnesses: ["goose"] })).toBe(
-      routeKey(external),
-    );
-    expect(routeKey({ ...eligible, revision: 9 })).toBe(routeKey(eligible));
-  });
-});
 
 describe("answerGateway", () => {
   const bind = (
@@ -204,7 +134,8 @@ describe("answerGateway", () => {
       });
       expect(answer).toEqual(
         result.ok
-          ? { ok: true, revision: result.revision }
+          ? // The vectors' routes carry no origin or profile to admit to.
+            expect.objectContaining({ ok: true, revision: result.revision })
           : { ok: false, message: expect.any(String) },
       );
     },
@@ -224,9 +155,32 @@ describe("answerGateway", () => {
         }),
         { op: "admit", agent, binding },
       );
-    expect(at(["pi"])).toEqual({ ok: true, revision: 8 });
+    expect(at(["pi"])).toEqual({
+      ok: true,
+      revision: 8,
+      root: `https://gateway.test${PI_UPSTREAM.base}`,
+      profile: VECTOR_PROFILE,
+    });
     for (const harnesses of [["goose"], []])
       expect(at(harnesses)).toEqual({ ok: false, message: expect.any(String) });
+  });
+
+  it("admits a request to the gateway's root for Pi only while this build has a Pi upstream", () => {
+    const admit = { op: "admit", agent, binding: VECTOR_BINDING } as const;
+    expect(
+      answerGateway(seam(eligible, { base: "/ai-gateway" }), admit),
+    ).toEqual({
+      ok: true,
+      revision: 1,
+      root: "https://gateway.test/ai-gateway",
+      profile: VECTOR_PROFILE,
+    });
+    expect(
+      answerGateway({ ...seam(eligible), upstreamFor: () => undefined }, admit),
+    ).toEqual({ ok: false, message: expect.any(String) });
+    // Blocked or external: never admitted, whatever the binding.
+    for (const route of [blocked, external])
+      expect(answerGateway(seam(route), admit).ok).toBe(false);
   });
 
   it("drops access only at a refused request's revision", () => {
@@ -277,6 +231,7 @@ describe("answerGateway", () => {
       ...GATEWAY_SEAM,
       routeFor: routes.routeFor.bind(routes),
       invalidateRoute: routes.invalidate.bind(routes),
+      upstreamFor: () => PI_UPSTREAM,
     };
     const admit = () =>
       answerGateway(stub, {

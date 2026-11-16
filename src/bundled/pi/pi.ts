@@ -3,6 +3,7 @@
 // go both ways: the plugin asks the host to run turns, and the host asks the
 // plugin to run the Buzz tools, so the process holds no Buzz key.
 import type { AgentProtection } from "../../features/agent-protection/service";
+import type { GatewayProfile } from "../../features/agents/gateway/contract";
 import { protectionEnvironment } from "../../features/agent-protection/native-bridge";
 import type { Context } from "../../buzz-mcp/client";
 import type {
@@ -67,6 +68,10 @@ export type PiGatewayAnswer =
       persist?: boolean;
       /** The eligibility revision an admission holds at. */
       revision?: number;
+      /** Where an admitted request goes: the gateway's root for Pi, ahead
+       * of each protocol's path, and the build's header profile. */
+      root?: string;
+      profile?: GatewayProfile;
       /** Whether a refusal dropped the route's current access. */
       applied?: boolean;
     }

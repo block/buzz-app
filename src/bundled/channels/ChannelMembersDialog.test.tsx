@@ -131,6 +131,9 @@ async function setup(
     directMessages?: boolean;
     /** The person's profile claims to be an agent; the relay disagrees. */
     personClaimsAgent?: boolean;
+    /** The relay counts the person as an agent, though nothing here shows
+     * who owns them. */
+    personIsRelayAgent?: boolean;
     /** The DM is the relay's moderation DM with the viewer. */
     moderation?: boolean;
   } = {},
@@ -166,8 +169,18 @@ async function setup(
       into?: DirectMessageHistory,
     ) => {
       if (failure) throw new Error(failure);
-      // As the relay: only the history tag joins this DM in place.
-      if (into?.includeHistory) {
+      // As the relay: only the history tag joins this DM in place, and a DM
+      // of at most one person never gains another.
+      const agents = new Set([
+        agent.pubkey,
+        ...(options.personIsRelayAgent ? [person.pubkey] : []),
+      ]);
+      const people = (keys: readonly string[]) =>
+        keys.filter((key) => !agents.has(key)).length;
+      if (
+        into?.includeHistory &&
+        (people(members) >= 2 || people([...members, ...pubkeys]) < 2)
+      ) {
         members.push(...pubkeys);
         clock++;
         return id;
@@ -1678,9 +1691,38 @@ it("a person added to a DM of one person and their agents starts a new DM withou
     expect.any(AbortSignal),
     {
       channelId: "11111111-1111-4111-8111-111111111111",
-      includeHistory: false,
+      includeHistory: true,
     },
   );
+});
+it("an agent whose owner is not shown joins a DM of one person and their agents", async () => {
+  const onOpenConversation = vi.fn(() => true);
+  const t = await setup("dm", false, false, { onOpenConversation }, undefined, {
+    directMessages: true,
+    personIsRelayAgent: true,
+  });
+  await t.user.click(await t.search());
+  await screen.findByText("Morgan added.");
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(onOpenConversation).not.toHaveBeenCalled();
+  expect(t.openDirectMessage).toHaveBeenCalledWith(
+    [t.person.pubkey],
+    expect.any(AbortSignal),
+    {
+      channelId: "11111111-1111-4111-8111-111111111111",
+      includeHistory: true,
+    },
+  );
+});
+it("a member whose profile only claims to be an agent counts as a person in a DM", async () => {
+  const claimed = profile(keypair(), { name: "Mallory", is_agent: true });
+  const t = await setup("dm", false, false, undefined, undefined, {
+    directMessages: true,
+    memberProfiles: [claimed],
+  });
+  await t.user.click(await t.search());
+  await screen.findByRole("alertdialog", { name: "Add Morgan?" });
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
 });
 it("cancelling the choice adds no one", async () => {
   const t = await setup("dm", false, false, undefined, undefined, {

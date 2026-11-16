@@ -1629,10 +1629,12 @@ export function ChannelMembersDialog({
   // say-so is asked about, like a person.
   const dmAgent = useRef<(key: string) => boolean>(() => false);
   dmAgent.current = (key) => known.has(key) || ownership.owners.has(key);
-  // A DM of at most one person and their agents never gains a person.
+  // A DM of at most one person and their agents never gains a person. Its
+  // members are counted by the same rule, so one whose profile only claims
+  // to be an agent counts as a person.
   const dmAgentOnly = useRef(false);
   dmAgentOnly.current =
-    (currentGroups.find((group) => group.name === "People")?.count ?? 0) < 2;
+    currentMembers.filter((key) => !dmAgent.current(key)).length < 2;
   const [dmChoice, setDmChoice] = useState<string>();
   const add = useCallback(
     async (key: string, includeHistory?: boolean) => {
@@ -1647,12 +1649,12 @@ export function ChannelMembersDialog({
       const pending = directPending.current;
       // A person joins a DM with or without its history; they choose first.
       // An agent joins with it, so someone the relay counts as a person
-      // still joins this DM instead of starting another. A person added to a
-      // DM of one person and their agents starts a new DM without asking.
+      // still joins this DM instead of starting another. Nothing is asked in
+      // a DM of one person and their agents: the relay adds an agent to it
+      // and starts a new DM for a person, whatever this side thinks they are.
       if (dm && includeHistory === undefined) {
         if (pending.has(key)) return;
-        if (dmAgent.current(key)) includeHistory = true;
-        else if (dmAgentOnly.current) includeHistory = false;
+        if (dmAgentOnly.current || dmAgent.current(key)) includeHistory = true;
         else {
           setDmChoice(key);
           return;

@@ -1589,7 +1589,7 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   added**, or a heading chosen by the plugin.
 - In plugins that use Buzz's sharing controls, switching a record to **Private**
   keeps existing members' access. The confirmation warns about people who joined
-  while it was open; remove them in **People** to end their access.
+  while it was open; remove them from the record to end their access.
 - Agents running on this computer can write plugins while the **Plugin
   development** plugin is on (it is by default). It gives them
   `plugin_authoring_guide`, `plugin_status` and `plugin_reload`. The person

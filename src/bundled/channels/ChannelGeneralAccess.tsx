@@ -376,7 +376,11 @@ function ChannelGeneralAccessEditor({
                       : privacyConsequence(choice.visibility)
                   : "",
               (solo || policy) && choice.visibility === "private"
-                ? soloRetainedAccessWarning(base, mayHaveGuestMembers)
+                ? soloRetainedAccessWarning(
+                    base,
+                    mayHaveGuestMembers,
+                    policy ? null : undefined,
+                  )
                 : "",
               solo &&
               access === "public" &&

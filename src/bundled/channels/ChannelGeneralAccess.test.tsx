@@ -667,7 +667,7 @@ it.each(["Private", "View only"])(
         recordPolicy.visibilityDescription("private"),
       );
       expect(confirm).toHaveTextContent(
-        "People who already joined remain members and keep their access until you remove them in People.",
+        "People who already joined remain members and keep their access until you remove them.",
       );
     }
     expect(h.save).not.toHaveBeenCalled();
@@ -713,7 +713,7 @@ it.each([undefined, true, false])(
     await select(user, "General access", "Private");
     const confirm = await screen.findByRole("alertdialog");
     const warning =
-      "People who joined while it was View only are members and keep reading until you remove them in People.";
+      "People who joined while it was View only are members and keep reading until you remove them.";
     if (mayHaveGuestMembers === false)
       expect(confirm).not.toHaveTextContent(warning);
     else expect(confirm).toHaveTextContent(warning);

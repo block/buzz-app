@@ -23,8 +23,8 @@ const EMPTY = { status: "loaded", sessions: [], more: false } as const;
 
 /** The agent's stored sessions, read each time the tab opens for an agent
  * and account. `shown` while the owner can read them and Builderlab stores
- * them; known before the list arrives, so the tab's layout and its transcript
- * request don't move. */
+ * them. Assumed while the list loads, so the usual layout holds; a server
+ * without the list shifts it once, to the live feed alone, when it answers. */
 function useListedSessions(
   client: AgentClient,
   session: BuilderlabSession,

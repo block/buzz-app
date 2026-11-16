@@ -1,6 +1,7 @@
 import { isSidebarSortMode, type SidebarSortMode } from "./sidebar-sort.ts";
 export type { SidebarSortMode } from "./sidebar-sort.ts";
 import {
+  projectSidebarLayout,
   projectSidebarRecord,
   projectSidebarSort,
 } from "./sidebar-registers.ts";
@@ -55,6 +56,8 @@ export type SidebarGroups = Readonly<{
     order: number;
   }>[];
   assignments: Readonly<Record<string, string>>;
+  /** Section keys in display order, when built-in sections were moved. */
+  layout?: readonly string[];
 }>;
 export type SidebarFilterMode = "all" | "unreads" | "active";
 export const DEFAULT_ACTIVE_WINDOW_SECONDS = 30 * 86400;
@@ -118,6 +121,7 @@ export type SidebarSectionRenameMutator = (
 export type SidebarSectionOrderMutator = (
   sectionIds: readonly string[],
   signal: AbortSignal,
+  layout?: readonly string[],
 ) => Promise<SidebarGroups>;
 /** Adds an empty section without assigning a conversation. */
 export type SidebarSectionCreationMutator = (
@@ -154,6 +158,7 @@ export function projectSidebarPreferences(
   const result: {
     sections: { id: string; name: string; icon?: string; order: number }[];
     assignments: Record<string, string>;
+    layout?: string[];
     starred: string[];
     sort?: Record<string, SidebarSortMode>;
     filters?: Record<string, SidebarFilterMode>;
@@ -201,6 +206,8 @@ export function projectSidebarPreferences(
         .map(([id, section]) => [text(id), text(section)])
         .filter(([, section]) => ids.has(section as string)),
     );
+    const layout = projectSidebarLayout(data.sectionOrder);
+    if (layout) result.layout = layout;
   }
   if (stars !== undefined) {
     const data = object(stars);

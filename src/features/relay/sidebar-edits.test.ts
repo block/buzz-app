@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { projectSidebarRecord } from "./sidebar-registers";
+import { projectSidebarPreferences } from "./sidebar-preferences";
 import {
   editSidebarSectionOrder,
   editSidebarSectionRemoval,
@@ -78,6 +79,40 @@ it("reorders live sections as one whole-list write and keeps unlisted ones after
   expect(meta.s).not.toHaveProperty("gone");
   // A satisfied order does not rewrite the head.
   expect(editSidebarSectionOrder(next, 0, ["work", "home"], 43)).toBe(next);
+});
+
+it("saves a section layout beside metadata that older writers carry forward", () => {
+  const current = {
+    version: 1,
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: {},
+  };
+  const layout = ["dms", "starred", "group:work", "channels", "forums"];
+  const next = editSidebarSectionOrder(current, 1, ["work"], 50, layout);
+  expect(next.sectionOrder).toEqual([50, expect.any(String), layout]);
+  expect(projectSidebarPreferences(next, undefined).layout).toEqual(layout);
+  // Same layout leaves the head alone; a newer one outranks the saved stamp.
+  expect(editSidebarSectionOrder(next, 1, ["work"], 10, layout)).toBe(next);
+  const moved = editSidebarSectionOrder(next, 1, ["work"], 10, [
+    "starred",
+    "group:work",
+    "channels",
+    "forums",
+    "dms",
+  ]);
+  expect((moved.sectionOrder as unknown[])[0]).toBe(51);
+  // A writer that knows only groups keeps the layout it does not understand.
+  const renamed = editSidebarSectionRename(next, 1, "work", "Focus", 60);
+  expect(renamed.sectionOrder).toEqual(next.sectionOrder);
+  // An unreadable layout falls back to the default order, not a failed read.
+  expect(
+    projectSidebarPreferences(
+      { ...current, sectionOrder: [1, "0000000000000000", ["dms"]] },
+      undefined,
+    ).layout,
+  ).toBeUndefined();
+  expect(validSidebarSectionOrder(["work"], layout)).toBe(true);
+  expect(validSidebarSectionOrder(["work"], ["dms", "work"])).toBe(false);
 });
 
 it("validates bounded unique section orders", () => {

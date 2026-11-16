@@ -45,6 +45,7 @@ import {
   type SidebarMuteMutator,
   type SidebarPreferences,
 } from "./sidebar-preferences";
+import { validSidebarLayout } from "./sidebar-registers";
 import { createHostAdmission } from "./host-admission";
 import { relayOrigin } from "../communities/destination";
 import {
@@ -1165,12 +1166,15 @@ export async function connectBrokerTransport(
           async writeSidebarSectionOrder(
             sectionIds: readonly string[],
             signal: AbortSignal,
+            layout?: readonly string[],
           ) {
             const response = await fetch(`${endpoint}/sidebar-section-order`, {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ sectionIds }),
+              body: JSON.stringify(
+                layout ? { sectionIds, layout } : { sectionIds },
+              ),
               signal,
             });
             if (!response.ok)
@@ -1184,7 +1188,13 @@ export async function connectBrokerTransport(
               },
               undefined,
             );
-            return { sections, assignments };
+            return {
+              sections,
+              assignments,
+              ...(validSidebarLayout(value.layout)
+                ? { layout: value.layout }
+                : {}),
+            };
           },
         }
       : {}),

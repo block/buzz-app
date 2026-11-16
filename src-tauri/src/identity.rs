@@ -641,7 +641,38 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             validate_sidebar_meta(coordinate, choices, true)?;
         }
     }
+    if coordinate == "channel-sections"
+        && data
+            .get("sectionOrder")
+            .is_some_and(|layout| !valid_sidebar_layout(layout))
+    {
+        return Err(invalid());
+    }
     Ok(())
+}
+
+// One register of unique section keys. Readers ignore keys they don't know, so
+// only the shape is bounded here: a newer client's layout must not block writes.
+fn valid_sidebar_layout(value: &serde_json::Value) -> bool {
+    let Some([version, device, keys]) = value.as_array().map(Vec::as_slice) else {
+        return false;
+    };
+    let Some(keys) = keys.as_array() else {
+        return false;
+    };
+    let mut seen = std::collections::HashSet::new();
+    version.as_u64().is_some_and(|v| v <= 9_007_199_254_740_991)
+        && device.as_str().is_some_and(|s| {
+            s.len() == 16
+                && s.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
+        && keys.len() <= 104
+        && keys.iter().all(|key| {
+            key.as_str().is_some_and(|key| {
+                !key.trim().is_empty() && key.encode_utf16().count() <= 262 && seen.insert(key)
+            })
+        })
 }
 
 // The signer admits only the bounded Desktop register schema, not arbitrary

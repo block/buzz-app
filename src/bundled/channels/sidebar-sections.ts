@@ -1,5 +1,6 @@
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { SidebarPreferences } from "../../features/relay/sidebar-preferences";
+import { BUILT_IN_SIDEBAR_SECTIONS } from "../../features/relay/sidebar-registers";
 
 export function isChannelSectionKey(key: string) {
   return key === "channels" || key.startsWith("group:");
@@ -53,6 +54,47 @@ export function compareRecent(a: ChannelSummary, b: ChannelSummary) {
   return compareName(a, b);
 }
 
+/** Every section key in display order. A built-in section stays just before
+ * the saved group that followed it, so group order stays the groups' own. A
+ * group the layout doesn't list yet follows the group before it; a first one
+ * goes after the next group's built-ins, or just before Channels. */
+export function sidebarLayout(
+  groupIds: readonly string[],
+  layout?: readonly string[],
+): string[] {
+  const groups = groupIds.map((id) => `group:${id}`);
+  if (!layout) return ["starred", ...groups, "channels", "forums", "dms"];
+  const live = new Set(groups);
+  const before = new Map<string, string[]>();
+  let pending: string[] = [];
+  for (const key of layout)
+    if (live.has(key)) {
+      before.set(key, pending);
+      pending = [];
+    } else if ((BUILT_IN_SIDEBAR_SECTIONS as readonly string[]).includes(key))
+      pending.push(key);
+  const result: string[] = [];
+  let waiting: string[] = [];
+  for (const group of groups) {
+    const anchored = before.get(group);
+    if (!anchored) {
+      if (result.length && !waiting.length) result.push(group);
+      else waiting.push(group);
+      continue;
+    }
+    result.push(...anchored, ...waiting, group);
+    waiting = [];
+  }
+  if (!waiting.length) return [...result, ...pending];
+  const channels = pending.indexOf("channels");
+  return [
+    ...result,
+    ...pending.slice(0, Math.max(channels, 0)),
+    ...waiting,
+    ...pending.slice(Math.max(channels, 0)),
+  ];
+}
+
 /** Preferences only arrange the supplied authorized roster; they never add channels. */
 export function sidebarSections<T extends ChannelSummary>(
   channels: readonly T[],
@@ -79,6 +121,12 @@ export function sidebarSections<T extends ChannelSummary>(
     [...rows].sort(
       preferences?.sort?.[key] === "recent" ? compareRecent : compareName,
     );
+  const position = new Map(
+    sidebarLayout(
+      groups.map(({ id }) => id),
+      preferences?.layout,
+    ).map((key, index) => [key, index]),
+  );
   return [
     {
       key: "starred",
@@ -134,10 +182,12 @@ export function sidebarSections<T extends ChannelSummary>(
         "dms",
       ),
     },
-  ].filter(
-    (section) =>
-      isChannelSectionKey(section.key) ||
-      section.key === "dms" ||
-      section.rows.length,
-  );
+  ]
+    .sort((a, b) => (position.get(a.key) ?? 0) - (position.get(b.key) ?? 0))
+    .filter(
+      (section) =>
+        isChannelSectionKey(section.key) ||
+        section.key === "dms" ||
+        section.rows.length,
+    );
 }

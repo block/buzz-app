@@ -211,6 +211,12 @@ function importLegacy(
     ),
   };
 }
+function writerDevice() {
+  device ??= Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+  return device;
+}
 function maxVersion(tree: Tree): number {
   return Object.values(tree).reduce(
     (max, v) => Math.max(max, Array.isArray(v) ? v[0] : maxVersion(v)),
@@ -251,9 +257,7 @@ export function editSidebarRecord(
     return !Array.isArray(node) || node[2] !== value;
   });
   if (!changed.length) return current;
-  device ??= Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) =>
-    b.toString(16).padStart(2, "0"),
-  ).join("");
+  const device = writerDevice();
   const version = Math.max(now, maxVersion(tree) + 1);
   if (!Number.isSafeInteger(version))
     throw new Error("Sidebar register clock exhausted");
@@ -428,4 +432,52 @@ export function nextSidebarSectionOrder(
   return position === "first"
     ? Math.min(0, ...orders) - 1
     : Math.max(-1, ...orders) + 1;
+}
+
+export const BUILT_IN_SIDEBAR_SECTIONS = [
+  "starred",
+  "channels",
+  "forums",
+  "dms",
+] as const;
+/** Every built-in key exactly once, plus `group:<id>` keys, in display order. */
+export function validSidebarLayout(value: unknown): value is string[] {
+  if (!Array.isArray(value) || value.length > 104) return false;
+  const keys = new Set<string>();
+  for (const key of value) {
+    if (typeof key !== "string" || keys.has(key)) return false;
+    keys.add(key);
+    if (
+      !(BUILT_IN_SIDEBAR_SECTIONS as readonly string[]).includes(key) &&
+      !(key.startsWith("group:") && text(key.slice(6)))
+    )
+      return false;
+  }
+  return BUILT_IN_SIDEBAR_SECTIONS.every((key) => keys.has(key));
+}
+/** Section layout is one register beside the metadata older hosts understand,
+ * so their writers carry it forward unchanged. An invalid one is ignored. */
+export function projectSidebarLayout(value: unknown): string[] | undefined {
+  try {
+    return register(value, validSidebarLayout)[2] as string[];
+  } catch {
+    return undefined;
+  }
+}
+export function editSidebarLayout(
+  current: Record<string, unknown>,
+  layout: readonly string[],
+  now: number,
+): Record<string, unknown> {
+  if (!validSidebarLayout(layout)) throw new Error("Invalid sidebar layout");
+  const previous = projectSidebarLayout(current.sectionOrder);
+  if (previous?.join("\n") === layout.join("\n")) return current;
+  const saved = (current.sectionOrder as unknown[] | undefined)?.[0];
+  const version = Math.max(
+    now,
+    (Number.isSafeInteger(saved) ? (saved as number) : 0) + 1,
+  );
+  if (!Number.isSafeInteger(version))
+    throw new Error("Sidebar register clock exhausted");
+  return { ...current, sectionOrder: [version, writerDevice(), [...layout]] };
 }

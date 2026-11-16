@@ -214,8 +214,8 @@ export function assertSidebarSectionOrderIntent(intent) {
     Array.isArray(intent) ||
     !Array.isArray(intent.sectionIds) ||
     !intent.sectionIds.every((id) => typeof id === "string") ||
-    !validSidebarSectionOrder(intent.sectionIds) ||
-    Object.keys(intent).some((key) => key !== "sectionIds")
+    !validSidebarSectionOrder(intent.sectionIds, intent.layout) ||
+    Object.keys(intent).some((key) => key !== "sectionIds" && key !== "layout")
   )
     throw new Error("Invalid sidebar section order intent");
 }
@@ -232,6 +232,7 @@ export function prepareSidebarSectionOrder(
       current.createdAt,
       intent.sectionIds,
       now,
+      intent.layout,
     ),
   );
 }

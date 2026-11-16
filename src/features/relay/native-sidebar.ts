@@ -278,19 +278,41 @@ export function nativeSidebar(transport: ReadTransport) {
     async writeSidebarSectionOrder(
       sectionIds: readonly string[],
       signal: AbortSignal,
+      layout?: readonly string[],
     ): Promise<SidebarGroups> {
-      if (!validSidebarSectionOrder(sectionIds))
+      if (!validSidebarSectionOrder(sectionIds, layout))
         throw new Error("Invalid sidebar section order intent");
       const prepare = (current: Record<string, unknown>, createdAt: number) => {
-        const next = editSidebarSectionOrder(current, createdAt, sectionIds);
-        const { sections, assignments } = project("channel-sections", next);
-        return { next, result: { sections, assignments } };
+        const next = editSidebarSectionOrder(
+          current,
+          createdAt,
+          sectionIds,
+          undefined,
+          layout,
+        );
+        const {
+          sections,
+          assignments,
+          layout: saved,
+        } = project("channel-sections", next);
+        return {
+          next,
+          result: {
+            sections,
+            assignments,
+            ...(saved ? { layout: saved } : {}),
+          },
+        };
       };
       return mutate(
         "channel-sections",
         signal,
         prepare,
-        (value) => same(value, editSidebarSectionOrder(value, 0, sectionIds)),
+        (value) =>
+          same(
+            value,
+            editSidebarSectionOrder(value, 0, sectionIds, undefined, layout),
+          ),
         "Sidebar groups changed on another device; reload and try again",
       );
     },

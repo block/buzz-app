@@ -1,5 +1,6 @@
-// The turns a remote agent published to its owner over the relay this session:
-// the conversation it was opened from, or all of them.
+// A remote agent's turns: those Builderlab stored and those it published to
+// its owner over the relay this session, for the conversation it was opened
+// from or all of them.
 import {
   type ComponentType,
   type ReactNode,
@@ -26,6 +27,15 @@ import type {
 import { SettingsSectionLink } from "../../../features/navigation/SettingsSectionLink";
 import type { IdentityNameView } from "../../../features/identity-names/service";
 import { useIdentityNames } from "../../../features/identity-names/react";
+import type { AgentClient } from "../agents/client";
+import type { BuilderlabSession, LoginSnapshot } from "../session";
+import {
+  historyReader,
+  mergeTurns,
+  storedTurns,
+  type HistoryReader,
+  type StoredHistory,
+} from "./history";
 
 export type AgentActivity = RelaySession["agentActivity"];
 
@@ -34,7 +44,15 @@ const UNAVAILABLE = "Activity isn't available here.";
 export function createActivityTab(
   relay: RelayData,
   openSettings?: (section: string) => void,
+  builderlab?: Readonly<{ client: AgentClient; session: BuilderlabSession }>,
 ): ComponentType<AgentViewProps> {
+  const read = builderlab
+    ? historyReader(builderlab.client, builderlab.session)
+    : undefined;
+  const signedOut: LoginSnapshot = { status: "signed-out" };
+  const subscribe = (listener: () => void) =>
+    builderlab?.session.subscribe(listener) ?? (() => {});
+  const login = () => builderlab?.session.snapshot() ?? signedOut;
   return function PublishedActivity({
     agent,
     conversation,
@@ -42,12 +60,16 @@ export function createActivityTab(
     openConversation,
   }) {
     const connection = useRelayConnection(relay);
+    const signedIn = useSyncExternalStore(subscribe, login, login);
+    // Another account, or a change in its access, reads the stored turns again.
+    const revision = `${signedIn.status}:${signedIn.account?.subject}:${!!signedIn.account?.canUseRemoteAgents}`;
     return (
       <ActivityPanel
         agent={agent}
         conversation={conversation}
         initialTranscript={initialTranscript}
         openConversation={openConversation}
+        history={read && { read, revision }}
         activity={
           connection.status === "ready"
             ? connection.session.agentActivity
@@ -70,6 +92,7 @@ export function ActivityPanel({
   openSettings,
   openConversation,
   names,
+  history,
 }: {
   agent: Agent;
   /** Absent while the owner's session connects. */
@@ -81,6 +104,8 @@ export function ActivityPanel({
   openConversation?: AgentViewProps["openConversation"];
   /** Names the people whose messages prompted the turns. */
   names?: IdentityNameView | undefined;
+  /** Reads stored turns; a new revision reads them again. */
+  history?: Readonly<{ read: HistoryReader; revision: unknown }> | undefined;
 }) {
   if (!activity) return <Note>Activity shows once Buzz is connected.</Note>;
   return (
@@ -92,6 +117,7 @@ export function ActivityPanel({
       activity={activity}
       openSettings={openSettings}
       names={names}
+      history={history}
     />
   );
 }
@@ -116,6 +142,7 @@ function ActivityFeed({
   openSettings,
   openConversation,
   names,
+  history,
 }: {
   agent: Agent;
   activity: AgentActivity;
@@ -124,6 +151,7 @@ function ActivityFeed({
   openSettings: ((section: string) => void) | undefined;
   openConversation: AgentViewProps["openConversation"];
   names: IdentityNameView | undefined;
+  history: Readonly<{ read: HistoryReader; revision: unknown }> | undefined;
 }) {
   const resolve = useIdentityNames(names);
   const [everywhere, setEverywhere] = useState(false);
@@ -146,23 +174,29 @@ function ActivityFeed({
     activity.snapshot,
     activity.snapshot,
   );
+  const stored = useStoredHistory(history, agent.pubkey, channelId, rootId);
   const transcript = useMemo(() => {
     const transcript = activityTranscript(
       snapshot.records.filter((record) => record.agent === agent.pubkey),
       { agent: agent.pubkey, channelId },
       (pubkey) => resolve(pubkey, "") || undefined,
     );
-    return {
-      turns: transcript.turns.flatMap((turn): TranscriptTurn[] => {
-        if (channelId && !inConversation(turn, channelId, rootId)) return [];
-        const retained = snapshot.turns.find(
-          (row) => row.agent === agent.pubkey && row.turnId === turn.turnId,
-        );
-        return [
-          retained?.outcome ? { ...turn, outcome: retained.outcome } : turn,
-        ];
-      }),
-    };
+    const live = transcript.turns.flatMap((turn): TranscriptTurn[] => {
+      if (channelId && !inConversation(turn, channelId, rootId)) return [];
+      const retained = snapshot.turns.find(
+        (row) => row.agent === agent.pubkey && row.turnId === turn.turnId,
+      );
+      return [
+        retained?.outcome ? { ...turn, outcome: retained.outcome } : turn,
+      ];
+    });
+    if (typeof stored !== "object" || stored.status !== "loaded")
+      return { turns: live };
+    const saved = storedTurns(
+      stored.sessions,
+      (pubkey) => resolve(pubkey, "") || undefined,
+    ).filter((turn) => !channelId || inConversation(turn, channelId, rootId));
+    return { turns: mergeTurns(live, saved) };
   }, [
     snapshot.records,
     snapshot.turns,
@@ -170,6 +204,7 @@ function ActivityFeed({
     resolve,
     channelId,
     rootId,
+    stored,
   ]);
   if (snapshot.status === "unavailable") return <Note>{UNAVAILABLE}</Note>;
   if (snapshot.status === "disabled")
@@ -206,7 +241,10 @@ function ActivityFeed({
       before={
         <>
           <Note>
-            {`Turns from ${here ? "this conversation" : "all of this agent's conversations"}, captured while Buzz has been open. Earlier turns aren't shown.`}
+            {coverage(
+              here ? "this conversation" : "all of this agent's conversations",
+              stored,
+            )}
           </Note>
           {conversation && (
             // An inline link wraps in a narrow pane at large text sizes.
@@ -242,4 +280,60 @@ function Note({ children }: { children: ReactNode }) {
       {children}
     </p>
   );
+}
+
+type Stored = StoredHistory | "loading" | "failed" | undefined;
+
+/** What the view covers: stored turns once read, else only live ones. */
+function coverage(scope: string, stored: Stored) {
+  if (stored === "loading")
+    return `Turns from ${scope}. Loading earlier turns…`;
+  if (stored === "failed")
+    return `Turns from ${scope}, captured while Buzz has been open. Earlier turns couldn't be loaded.`;
+  if (stored?.status !== "loaded")
+    return `Turns from ${scope}, captured while Buzz has been open. Earlier turns aren't shown.`;
+  const removed = stored.sessions.some(
+    (session) => !!session.response.removal_state,
+  );
+  return [
+    `Turns from ${scope}.`,
+    stored.more && "Older conversations aren't shown.",
+    removed && "A removed conversation's turns aren't shown.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** The view's stored turns, read once per agent, scope and sign-in. */
+function useStoredHistory(
+  history: Readonly<{ read: HistoryReader; revision: unknown }> | undefined,
+  pubkey: string,
+  channelId: string | undefined,
+  rootId: string | undefined,
+): Stored {
+  const [stored, setStored] = useState<Stored>();
+  const read = history?.read;
+  const revision = history?.revision;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: another sign-in reads again.
+  useEffect(() => {
+    if (!read) return;
+    const controller = new AbortController();
+    setStored("loading");
+    read(
+      pubkey,
+      { ...(channelId ? { channelId } : {}), ...(rootId ? { rootId } : {}) },
+      controller.signal,
+    ).then(
+      (value) => {
+        if (!controller.signal.aborted) setStored(value);
+      },
+      (error: unknown) => {
+        if (controller.signal.aborted) return;
+        console.warn("Builderlab stored activity read failed", error);
+        setStored("failed");
+      },
+    );
+    return () => controller.abort();
+  }, [read, revision, pubkey, channelId, rootId]);
+  return read ? stored : undefined;
 }

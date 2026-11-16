@@ -112,6 +112,74 @@ it("reads terminal task status only for the requested task IDs", async () => {
     ).rejects.toThrow("invalid turn status");
   }
 });
+it("pages an agent's stored sessions up to a bound, and reads one's messages", async () => {
+  const h = await fixture();
+  const page = (cursor?: string) =>
+    response({
+      sessions: [
+        {
+          session_id: `s-${cursor ?? "last"}`,
+          channel_id: "alpha",
+          thread_root_event_id: "r".repeat(64),
+          updated_at: "2000",
+        },
+        { session_id: "dm", channel_id: "beta" },
+      ],
+      ...(cursor ? { next_cursor: cursor } : {}),
+    });
+  vi.mocked(h.host.request)
+    .mockResolvedValueOnce(page("p1"))
+    .mockResolvedValueOnce(page());
+  expect(await h.client.sessions("agent-1", h.signal)).toEqual({
+    more: false,
+    sessions: [
+      {
+        sessionId: "s-p1",
+        channelId: "alpha",
+        threadRootId: "r".repeat(64),
+        updatedAt: 2000,
+      },
+      { sessionId: "dm", channelId: "beta", updatedAt: 0 },
+      {
+        sessionId: "s-last",
+        channelId: "alpha",
+        threadRootId: "r".repeat(64),
+        updatedAt: 2000,
+      },
+      { sessionId: "dm", channelId: "beta", updatedAt: 0 },
+    ],
+  });
+  const bodies = vi
+    .mocked(h.host.request)
+    .mock.calls.map(([input]) => [
+      input.url.split("/").at(-1),
+      JSON.parse(input.body ?? ""),
+    ]);
+  expect(bodies).toEqual([
+    ["list-agent-sessions", { agent_id: "agent-1", limit: 50 }],
+    ["list-agent-sessions", { agent_id: "agent-1", limit: 50, cursor: "p1" }],
+  ]);
+  vi.mocked(h.host.request).mockResolvedValue(page("again"));
+  const bounded = await h.client.sessions("agent-1", h.signal);
+  expect(bounded.more).toBe(true);
+  expect(bounded.sessions).toHaveLength(8);
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({ sessions: [{ session_id: "s" }] }),
+  );
+  await expect(h.client.sessions("agent-1", h.signal)).rejects.toThrow(
+    "invalid session list",
+  );
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({ messages: [], turns: [] }),
+  );
+  expect(await h.client.sessionMessages("s", h.signal)).toEqual({
+    messages: [],
+    turns: [],
+  });
+  expect(
+    JSON.parse(vi.mocked(h.host.request).mock.calls.at(-1)?.[0].body ?? ""),
+  ).toEqual({ session_id: "s" });
+});
 it("lists the authenticated account through the configured native host", async () => {
   const h = await fixture();
   vi.mocked(h.host.request).mockResolvedValueOnce(

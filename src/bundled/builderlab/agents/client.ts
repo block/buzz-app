@@ -37,6 +37,17 @@ export type RemoteAgent = Readonly<{
     | "unknown";
 }>;
 
+/** One of a remote agent's conversations, as Builderlab stores it. */
+export type AgentSession = Readonly<{
+  sessionId: string;
+  channelId: string;
+  /** Absent when the whole channel shares one session. */
+  threadRootId?: string;
+  updatedAt: number;
+}>;
+/** Session list pages read at most, so a long history stays bounded. */
+const SESSION_PAGES = 4;
+
 export type RemoteAgentModel = Readonly<{
   id: string;
   displayName: string;
@@ -210,7 +221,12 @@ export function createAgentClient(
     }
   }
   function readRequest(
-    path: "get-model-catalog" | "list-agents" | "get-agent-turn-status",
+    path:
+      | "get-model-catalog"
+      | "list-agents"
+      | "get-agent-turn-status"
+      | "list-agent-sessions"
+      | "get-agent-session-messages",
     body: unknown,
     signal: AbortSignal,
   ) {
@@ -402,6 +418,55 @@ export function createAgentClient(
         statuses.set(taskId, outcome);
       }
       return statuses;
+    },
+    /** The agent's conversation sessions, most recently active first, from
+     * at most {@link SESSION_PAGES} pages; `more` when others remain. */
+    async sessions(agentId: string, signal: AbortSignal) {
+      const sessions: AgentSession[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < SESSION_PAGES; page++) {
+        const result = await readRequest(
+          "list-agent-sessions",
+          { agent_id: agentId, limit: 50, ...(cursor ? { cursor } : {}) },
+          signal,
+        );
+        const rows = result.sessions ?? [];
+        if (!Array.isArray(rows))
+          throw new Error("Builderlab returned an invalid session list.");
+        for (const row of rows) {
+          const updatedAt = Number(row?.updated_at);
+          if (
+            typeof row?.session_id !== "string" ||
+            !row.session_id ||
+            typeof row.channel_id !== "string" ||
+            !row.channel_id
+          )
+            throw new Error("Builderlab returned an invalid session list.");
+          sessions.push({
+            sessionId: row.session_id,
+            channelId: row.channel_id,
+            ...(typeof row.thread_root_event_id === "string" &&
+            row.thread_root_event_id
+              ? { threadRootId: row.thread_root_event_id }
+              : {}),
+            updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
+          });
+        }
+        cursor =
+          typeof result.next_cursor === "string" && result.next_cursor
+            ? result.next_cursor
+            : undefined;
+        if (!cursor) return { sessions, more: false };
+      }
+      return { sessions, more: true };
+    },
+    /** A listed session's stored messages and turns, as Builderlab sent them. */
+    sessionMessages(sessionId: string, signal: AbortSignal) {
+      return readRequest(
+        "get-agent-session-messages",
+        { session_id: sessionId },
+        signal,
+      );
     },
     link,
     activate,

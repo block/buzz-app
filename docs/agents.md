@@ -1601,6 +1601,19 @@ cannot replace a received terminal result. Recovery neither archives raw activit
 nor restores history after reload. Older servers without the endpoint leave
 tasks unknown.
 
+A remote agent's Activity tab also shows the turns Builderlab stored. Once per
+open, scope and sign-in, it pages `/v3/beekeeper/list-agent-sessions` (at most
+four pages of 50, most recently active first) and reads
+`/v3/beekeeper/get-agent-session-messages` for at most five matching sessions:
+the opened thread's and its channel's shared session, or any for all
+conversations. Messages carry no turn, so each joins the latest stored turn
+started at or before it; tool requests join their responses by ID, and a
+message tool's text shows as the agent's posted message. A live turn replaces
+its stored copy unless Buzz saw only part of it. A removed session's turns are
+withheld; a server without the session list, a signed-out owner or an account
+without remote agents shows live turns only. Stored turns are not polled;
+new work arrives as live activity.
+
 ### Activity updates in the conversation
 
 An agent's work has one working indicator. While a live activity bubble on the

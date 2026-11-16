@@ -406,3 +406,118 @@ it("names the person whose message prompted a turn", () => {
     screen.getByText("go", { selector: "summary span" }),
   ).toBeInTheDocument();
 });
+
+function storedSession(turnId: string, reply: string, at: number) {
+  return {
+    session: {
+      sessionId: "S",
+      channelId: "alpha",
+      threadRootId: root,
+      updatedAt: at,
+    },
+    response: {
+      turns: [
+        {
+          turn_id: turnId,
+          status: "TASK_STATUS_COMPLETED",
+          created_at: at,
+          updated_at: at + 5,
+        },
+      ],
+      messages: [
+        {
+          id: `${turnId}-m`,
+          role: "ROLE_ASSISTANT",
+          created: at + 1,
+          content: [{ type: "MESSAGE_TYPE_TEXT", text: { text: reply } }],
+        },
+      ],
+    },
+  };
+}
+
+it("shows stored turns from before Buzz opened beside live ones", async () => {
+  const { activity } = fakeActivity({
+    records: [record("t1", "Live reply")] as unknown as Snapshot["records"],
+  });
+  const read = vi.fn(async () => ({
+    status: "loaded" as const,
+    more: false,
+    sessions: [
+      storedSession("t0", "Earlier reply", 1000),
+      storedSession("t1", "Stored copy of the live turn", 2000),
+    ],
+  }));
+  render(
+    <ActivityPanel
+      agent={agent}
+      activity={activity}
+      conversation={{ channelId: "alpha", rootId: root }}
+      history={{ read, revision: "in" }}
+    />,
+  );
+  expect(
+    await screen.findByText("Turns from this conversation."),
+  ).toBeVisible();
+  expect(read).toHaveBeenCalledExactlyOnceWith(
+    pubkey,
+    { channelId: "alpha", rootId: root },
+    expect.any(AbortSignal),
+  );
+  expect(turnText("Earlier reply")).toBeInTheDocument();
+  expect(turnText("Live reply")).toBeInTheDocument();
+  expect(turnText("Stored copy of the live turn")).not.toBeInTheDocument();
+});
+
+it("says when stored turns are loading, unavailable or limited", async () => {
+  const { activity } = fakeActivity();
+  let finish: (value: unknown) => void = () => {};
+  const read = vi.fn(
+    () =>
+      new Promise((resolve, reject) => {
+        finish = (value) =>
+          value instanceof Error ? reject(value) : resolve(value);
+      }),
+  );
+  const view = (revision: string) => (
+    <ActivityPanel
+      agent={agent}
+      activity={activity}
+      history={{ read: read as never, revision }}
+    />
+  );
+  const { rerender } = render(view("a"));
+  const status = () =>
+    screen.getAllByRole("status").map((note) => note.textContent);
+  expect(status()).toContain(
+    "Turns from all of this agent's conversations. Loading earlier turns…",
+  );
+  finish(new Error("offline"));
+  expect(
+    await screen.findByText(/Earlier turns couldn't be loaded\.$/),
+  ).toBeVisible();
+  rerender(view("b"));
+  finish({ status: "unsupported" });
+  expect(
+    await screen.findByText(
+      "Turns from all of this agent's conversations, captured while Buzz has been open. Earlier turns aren't shown.",
+    ),
+  ).toBeVisible();
+  rerender(view("c"));
+  finish({
+    status: "loaded",
+    more: true,
+    sessions: [
+      {
+        ...storedSession("t0", "Removed", 1),
+        response: { removal_state: {}, turns: [], messages: [] },
+      },
+    ],
+  });
+  expect(
+    await screen.findByText(
+      "Turns from all of this agent's conversations. Older conversations aren't shown. A removed conversation's turns aren't shown.",
+    ),
+  ).toBeVisible();
+  expect(read).toHaveBeenCalledTimes(3);
+});

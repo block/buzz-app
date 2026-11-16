@@ -1,8 +1,8 @@
-// One live set of shared thread titles per relay session, read by the channel
-// timeline and thread tabs. The relay's current read is the only authority:
-// a live title revision only marks its channel stale, and a debounced read of
-// the stale channels replaces their titles. NIP-AR orders revisions by `prev`,
-// not by time, so live events are never applied as-is.
+// One live set of shared thread titles per relay session, read by the Threads
+// page, the channel timeline and thread tabs. The relay's current read is the
+// only authority: a live title revision only marks its channel stale, and a
+// debounced read of the stale channels replaces their titles. NIP-AR orders
+// revisions by `prev`, not by time, so live events are never applied as-is.
 //
 // Relay reads per session: ceil(joined/100) current reads when the first
 // reader subscribes and whenever the joined set changes, then one read per
@@ -79,7 +79,7 @@ export function enableThreadTitles() {
 
 export const threadTitlesEnabled = () => enabled > 0;
 
-const subscribeSwitch = (listener: () => void) => {
+export const subscribeThreadTitlesSwitch = (listener: () => void) => {
   switchListeners.add(listener);
   return () => {
     switchListeners.delete(listener);
@@ -94,7 +94,7 @@ const idle = () => () => {};
 export function useThreadTitles(session: Session) {
   const store = threadTitleStore(session);
   const on = useSyncExternalStore(
-    subscribeSwitch,
+    subscribeThreadTitlesSwitch,
     threadTitlesEnabled,
     threadTitlesEnabled,
   );

@@ -3,15 +3,18 @@ import { PublishRejected } from "../relay/outbox";
 import type { ReadFilter, RelayEvent } from "../relay/events";
 import type { RelayWriter } from "../relay/transport";
 import {
+  activityKey,
   normalizeTitle,
   parseTitle,
   planTitle,
+  readActivity,
   readTitles,
   staleChannels,
   type ThreadTitle,
   threadTitleId,
   TitleConflict,
   titleRevision,
+  noteReplies,
   writeTitle,
 } from "./thread-titles";
 
@@ -44,6 +47,19 @@ async function titleEvent(
   const template = await titleRevision(channel, root, { op: "create" }, title);
   return event(id, template.tags, title, created_at);
 }
+
+const reply = (id: string, channel: string, root: string, at: number) => ({
+  ...event(
+    id,
+    [
+      ["h", channel],
+      ["e", root, "", "reply"],
+    ],
+    "",
+    at,
+  ),
+  kind: 9,
+});
 
 describe("convention", () => {
   it("derives the same d as the SDK, whatever the root's case", async () => {
@@ -173,6 +189,95 @@ describe("reads", () => {
       },
       expect.objectContaining({ "#h": channels.slice(100) }),
     ]);
+  });
+
+  it("finds each root's newest reply per channel and survives a failed read", async () => {
+    const other = "c".repeat(64);
+    const titles = [
+      { channel: CHANNEL, root: ROOT },
+      { channel: OTHER, root: other },
+    ] as ThreadTitle[];
+    const read = vi.fn(async (filters: readonly ReadFilter[]) => {
+      if (filters[0]?.["#h"]?.[0] === OTHER) throw new Error("offline");
+      return [reply("r1", CHANNEL, ROOT, 300), reply("r2", CHANNEL, ROOT, 200)];
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const latest = await readActivity(
+      { read },
+      titles,
+      new AbortController().signal,
+    );
+    expect([...latest]).toEqual([[activityKey(CHANNEL, ROOT), 300]]);
+    expect(read.mock.calls[0]?.[0]).toEqual([
+      { kinds: [9, 40002, 45003], "#e": [ROOT], "#h": [CHANNEL], limit: 500 },
+    ]);
+  });
+
+  it("reads again the roots a full page of another root's replies left out", async () => {
+    const busy = ROOT;
+    const quiet = "b".repeat(64);
+    const silent = "c".repeat(64);
+    const titles = [busy, quiet, silent].map((root) => ({
+      channel: CHANNEL,
+      root,
+    })) as ThreadTitle[];
+    const read = vi.fn(async (filters: readonly ReadFilter[]) => {
+      const roots = filters[0]?.["#e"] ?? [];
+      // The busy root's 500 newest replies fill the first page.
+      if (roots.includes(busy))
+        return Array.from({ length: 500 }, (_, i) =>
+          reply(`b${i}`, CHANNEL, busy, 1000 - i),
+        );
+      return roots.includes(quiet) ? [reply("q", CHANNEL, quiet, 100)] : [];
+    });
+    const latest = await readActivity(
+      { read },
+      titles,
+      new AbortController().signal,
+    );
+    expect(latest.get(activityKey(CHANNEL, busy))).toBe(1000);
+    expect(latest.get(activityKey(CHANNEL, quiet))).toBe(100);
+    expect(latest.has(activityKey(CHANNEL, silent))).toBe(false);
+    expect(read.mock.calls.map(([filters]) => filters[0]?.["#e"])).toEqual([
+      [busy, quiet, silent],
+      [quiet, silent],
+    ]);
+  });
+
+  it("reads at most four channels at once, and one held read blocks none of the others", async () => {
+    const channels = Array.from(
+      { length: 6 },
+      (_, i) => `${i}`.repeat(8) + "-1111-4111-8111-111111111111",
+    );
+    const titles = channels.map((channel) => ({ channel, root: ROOT }));
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let inFlight = 0;
+    let most = 0;
+    const read = vi.fn(async (filters: readonly ReadFilter[]) => {
+      const channel = filters[0]?.["#h"]?.[0] ?? "";
+      inFlight++;
+      most = Math.max(most, inFlight);
+      try {
+        if (channel === channels[0]) await held;
+        await Promise.resolve();
+        return [reply(`r${channel}`, channel, ROOT, 300)];
+      } finally {
+        inFlight--;
+      }
+    });
+    const done = readActivity(
+      { read },
+      titles as ThreadTitle[],
+      new AbortController().signal,
+    );
+    // Every other channel finishes while the first is held.
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(6));
+    expect(most).toBe(4);
+    release();
+    expect((await done).size).toBe(6);
   });
 });
 
@@ -311,5 +416,46 @@ describe("live updates", () => {
     expect(
       await staleChannels([good, forged, elsewhere], new Set([CHANNEL, OTHER])),
     ).toEqual(new Set([CHANNEL]));
+  });
+
+  it("keeps the newest reply only for titled roots, in any order", () => {
+    const joined = new Set([CHANNEL]);
+    const key = activityKey(CHANNEL, ROOT);
+    const titled = new Set([key]);
+    const latest = new Map<string, number>();
+    const parent = "d".repeat(64);
+    // A reply naming its parent too: only the titled root is kept.
+    const nested = {
+      ...reply("r1", CHANNEL, ROOT, 300),
+      tags: [
+        ["h", CHANNEL],
+        ["e", ROOT, "", "root"],
+        ["e", parent, "", "reply"],
+      ],
+    };
+    expect(
+      noteReplies(
+        [nested, reply("r2", CHANNEL, ROOT, 200)],
+        joined,
+        titled,
+        latest,
+      ),
+    ).toBe(true);
+    expect([...latest]).toEqual([[key, 300]]);
+    // Older replies, untitled roots, other channels and other kinds change nothing.
+    expect(
+      noteReplies(
+        [
+          reply("r3", CHANNEL, ROOT, 100),
+          reply("r4", CHANNEL, "b".repeat(64), 400),
+          reply("r5", OTHER, ROOT, 400),
+          { ...reply("r6", CHANNEL, ROOT, 500), kind: 7 },
+        ],
+        joined,
+        titled,
+        latest,
+      ),
+    ).toBe(false);
+    expect([...latest]).toEqual([[key, 300]]);
   });
 });

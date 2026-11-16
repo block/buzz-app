@@ -1,0 +1,465 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Navigation } from "../../features/navigation/controller";
+import type { NavigationScope } from "../../features/navigation/targets";
+import { useChannelList, useRelayConnection } from "../../features/relay/react";
+import type { RelayData } from "../../features/relay/service";
+import type { RelaySession } from "../../features/relay/session";
+import {
+  ArrowsClockwiseIcon,
+  ChecksIcon,
+  MessageReplyIcon,
+  PencilSimpleIcon,
+  XIcon,
+} from "../../shared/design-system/icons";
+import { CountBadge } from "../../shared/design-system/ui/CountBadge";
+import { TypingDots } from "../../shared/design-system/ui/TypingDots";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { Input } from "../../shared/design-system/ui/Input";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
+import {
+  NavigationCard,
+  NavigationItem,
+} from "../../shared/design-system/ui/NavigationItem";
+import {
+  PanelHeader,
+  PanelHeaderLabel,
+} from "../../shared/design-system/ui/PanelHeader";
+import { Select } from "../../shared/design-system/ui/Select";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
+import {
+  threadActivityStore,
+  useThreadActivity,
+} from "../../features/messages/thread-activity-store";
+import {
+  threadTitleStore,
+  useThreadTitles,
+} from "../../features/messages/thread-title-store";
+import {
+  activityKey,
+  normalizeTitle,
+  type Row,
+  writeTitle,
+} from "../../features/messages/thread-titles";
+import styles from "./Threads.module.css";
+import { useThreadSignals, workingDuration } from "./thread-signals";
+
+const ALL = "";
+
+export function ThreadsPage({
+  relay,
+  navigator,
+}: {
+  relay: RelayData;
+  navigator: Navigation;
+}) {
+  const connection = useRelayConnection(relay);
+  const { viewer, scope } = connection;
+  return (
+    <div className="h-full min-h-0">
+      <FullPageSurface aria-label="Threads">
+        {connection.status === "ready" &&
+        viewer &&
+        scope?.endsWith(`:${viewer}`) ? (
+          <ThreadsView
+            key={`${scope}:${connection.generation}`}
+            session={connection.session}
+            scope={{
+              viewer,
+              communityOrigin: scope.slice(0, -(viewer.length + 1)),
+            }}
+            navigator={navigator}
+          />
+        ) : (
+          <div data-buzz-ui="" className={styles.page}>
+            <Header />
+            <p className={`text-body text-subtle ${styles.notice}`}>
+              {connection.status === "connecting"
+                ? "Connecting…"
+                : "Choose a community to see its threads."}
+            </p>
+          </div>
+        )}
+      </FullPageSurface>
+    </div>
+  );
+}
+
+function Header({ onRefresh }: { onRefresh?: () => void }) {
+  return (
+    <PanelHeader
+      title={
+        <PanelHeaderLabel
+          title="Threads"
+          icon={<MessageReplyIcon size="1rem" />}
+        />
+      }
+      actions={
+        onRefresh && (
+          <IconButton
+            size="sm"
+            variant="ghost"
+            icon={<ArrowsClockwiseIcon size="1rem" aria-hidden="true" />}
+            aria-label="Refresh threads"
+            title="Refresh"
+            hint="familiar"
+            onClick={onRefresh}
+          />
+        )
+      }
+    />
+  );
+}
+
+/** Inline rename: Enter or leaving saves (blank clears), Escape cancels. */
+function TitleField({
+  title,
+  onDone,
+}: {
+  title: string;
+  onDone(draft: string | undefined): void;
+}) {
+  const done = useRef(false);
+  const finish = (draft: string | undefined) => {
+    if (done.current) return;
+    done.current = true;
+    onDone(draft);
+  };
+  return (
+    <Input
+      aria-label={`Title for ${title}`}
+      defaultValue={title}
+      autoFocus
+      onKeyDown={(event) => {
+        if (event.key === "Enter") finish(event.currentTarget.value);
+        if (event.key === "Escape") finish(undefined);
+      }}
+      onBlur={(event) => finish(event.currentTarget.value)}
+    />
+  );
+}
+
+export function ThreadsView({
+  session,
+  scope,
+  navigator,
+}: {
+  session: RelaySession;
+  scope: NavigationScope;
+  navigator: Navigation;
+}) {
+  const list = useChannelList(session.channels);
+  const names = useMemo(
+    () => new Map(list.channels.map((c) => [c.id, c.name || "Conversation"])),
+    [list.channels],
+  );
+  const store = threadTitleStore(session);
+  const shared = useThreadTitles(session);
+  const titles = useMemo(
+    () => shared.titles && [...shared.titles.values()],
+    [shared.titles],
+  );
+  // Rows draw from titles alone, by title time; reply times reorder them as
+  // they arrive and stay for the session, so a reopened page reads nothing.
+  const activity = useThreadActivity(session);
+  const [saveError, setSaveError] = useState<string>();
+  const [filter, setFilter] = useState(ALL);
+  const [editing, setEditing] = useState<string>();
+  const [saving, setSaving] = useState<string>();
+  const read = session.snapshotRead;
+  const writer = session.configArtifactWriter;
+  const error = saveError ?? shared.error;
+  const toolbar = useRef<HTMLDivElement>(null);
+
+  const refresh = () => {
+    setSaveError(undefined);
+    threadActivityStore(session).refresh();
+  };
+
+  const rows = useMemo(
+    () =>
+      titles?.map(
+        (t): Row => ({
+          ...t,
+          activeAt: Math.max(
+            t.updatedAt,
+            activity.get(activityKey(t.channel, t.root))?.at ?? 0,
+          ),
+        }),
+      ),
+    [titles, activity],
+  );
+
+  const save = useCallback(
+    async (row: Row, draft: string | undefined) => {
+      setEditing(undefined);
+      if (!read || !writer) return;
+      setSaving(row.root);
+      setSaveError(undefined);
+      try {
+        const desired = draft === undefined ? undefined : normalizeTitle(draft);
+        if (desired === row.title) return;
+        const revision = await writeTitle(
+          read,
+          writer,
+          row,
+          desired,
+          AbortSignal.timeout(20_000),
+        );
+        // A title change is activity: updatedAt moves the row up.
+        store.apply(
+          row.channel,
+          row.root,
+          desired && revision
+            ? {
+                title: desired,
+                channel: row.channel,
+                root: row.root,
+                revision,
+                updatedAt: Math.floor(Date.now() / 1000),
+              }
+            : undefined,
+        );
+      } catch (cause) {
+        setSaveError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        setSaving(undefined);
+      }
+    },
+    [read, writer, store],
+  );
+
+  const sorted = (rows ?? [])
+    .filter((r) => filter === ALL || r.channel === filter)
+    .sort((a, b) => b.activeAt - a.activeAt);
+  const filterChannels = [...new Set((rows ?? []).map((r) => r.channel))]
+    .map((id) => ({ value: id, label: names.get(id) ?? "Conversation" }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  // The replies in a row's newest second count only when that second is a
+  // reply's, not its title's.
+  const signals = useThreadSignals(
+    session,
+    useMemo(() => [...new Set(titles?.map((t) => t.channel))], [titles]),
+  );
+  const unreadOf = (row: Row) =>
+    signals.unread.get(activityKey(row.channel, row.root)) ?? 0;
+  // One tick for the page, only while a working row shows a time.
+  const timed = [...signals.working.values()].some(
+    (work) => work.startedAt !== undefined,
+  );
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!timed) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [timed]);
+  const markRead = async (row: Row) => {
+    setSaveError(undefined);
+    try {
+      let prepared: () => Promise<unknown>;
+      try {
+        prepared = session.unread.prepareThreadRead(row.channel, row.root);
+      } catch {
+        // Unread state has only the roots this session has seen. A verified
+        // read of the root lets it prepare the read; a second failure is real.
+        await session.read(
+          [{ ids: [row.root], "#h": [row.channel], limit: 1 }],
+          {
+            signal: AbortSignal.timeout(20_000),
+          },
+        );
+        prepared = session.unread.prepareThreadRead(row.channel, row.root);
+      }
+      await prepared();
+    } catch (cause) {
+      setSaveError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+  const renderRow = (row: Row) => {
+    const unread = unreadOf(row);
+    const work = signals.working.get(activityKey(row.channel, row.root));
+    return (
+      <li key={row.root} className={styles.row}>
+        {editing === row.root ? (
+          <TitleField
+            title={row.title}
+            onDone={(draft) =>
+              draft === undefined
+                ? setEditing(undefined)
+                : void save(row, draft)
+            }
+          />
+        ) : (
+          <NavigationCard>
+            <NavigationItem
+              multiline
+              aria-busy={saving === row.root || undefined}
+              label={
+                <span className={styles.label}>
+                  <span
+                    className={`text-body ${styles.title}`}
+                    data-unread={unread > 0 || undefined}
+                  >
+                    {row.title}
+                  </span>
+                  <span className="text-caption text-subtle">
+                    {names.get(row.channel) ?? "Conversation"} ·{" "}
+                    {relativeTimestamp(row.activeAt)}
+                  </span>
+                </span>
+              }
+              trailing={
+                (unread > 0 || work) && (
+                  <span className={styles.signals}>
+                    {work && (
+                      <span
+                        className={`text-caption ${styles.working}`}
+                        role="img"
+                        aria-label={`${work.agents.length === 1 ? "An agent is" : `${work.agents.length} agents are`} working${work.startedAt === undefined ? "" : ` for ${workingDuration(work.startedAt, now)}`}`}
+                      >
+                        <TypingDots size="small" />
+                        {work.startedAt !== undefined &&
+                          workingDuration(work.startedAt, now)}
+                      </span>
+                    )}
+                    {unread > 0 && (
+                      <span className={styles.unreadDot} aria-hidden="true" />
+                    )}
+                    <CountBadge
+                      count={unread}
+                      label={`${unread} unread ${unread === 1 ? "reply" : "replies"}`}
+                    />
+                  </span>
+                )
+              }
+              onClick={() =>
+                void navigator.open({
+                  version: 1,
+                  kind: "conversation",
+                  scope,
+                  channelId: row.channel,
+                  messageId: row.root,
+                  threadRootId: row.root,
+                })
+              }
+            />
+            {(writer || unread > 0) && (
+              // Actions show on hover or keyboard focus.
+              <span className={styles.actions}>
+                {writer && (
+                  <span data-reveal="">
+                    <IconButton
+                      variant="bare"
+                      icon={<PencilSimpleIcon size={16} />}
+                      aria-label={`Rename ${row.title}`}
+                      title="Rename"
+                      disabled={!!saving}
+                      onClick={() => setEditing(row.root)}
+                    />
+                  </span>
+                )}
+                {unread > 0 && (
+                  <span data-reveal="">
+                    <IconButton
+                      variant="bare"
+                      icon={<ChecksIcon size={16} />}
+                      aria-label={`Mark ${row.title} read`}
+                      title="Mark read"
+                      onClick={() => void markRead(row)}
+                    />
+                  </span>
+                )}
+              </span>
+            )}
+          </NavigationCard>
+        )}
+      </li>
+    );
+  };
+
+  return (
+    <div data-buzz-ui="" className={styles.page}>
+      <Header onRefresh={refresh} />
+      {read ? (
+        <>
+          <div ref={toolbar} className={styles.toolbar}>
+            <Select
+              label="Channel"
+              variant="compact"
+              size="sm"
+              value={filter}
+              onValueChange={setFilter}
+              groups={[
+                {
+                  label: "Channels",
+                  options: [
+                    { value: ALL, label: "All channels" },
+                    ...filterChannels,
+                  ],
+                },
+              ]}
+            />
+            {filter !== ALL && (
+              <IconButton
+                size="sm"
+                variant="ghost"
+                icon={<XIcon size="1rem" aria-hidden="true" />}
+                aria-label="Show all channels"
+                title="Show all channels"
+                hint="familiar"
+                onClick={() => {
+                  setFilter(ALL);
+                  toolbar.current
+                    ?.querySelector<HTMLElement>('[role="combobox"]')
+                    ?.focus();
+                }}
+              />
+            )}
+          </div>
+          {error && (
+            <p role="alert" className={`text-body-sm ${styles.notice}`}>
+              {error}
+            </p>
+          )}
+          <div className={styles.scroller}>
+            <LoadingRegion
+              pending={!rows && !error}
+              label="Loading threads…"
+              statusVisibility="screen-reader"
+            >
+              {!rows ? null : sorted.length === 0 ? (
+                <EmptyState
+                  icon={<MessageReplyIcon size={24} />}
+                  title={
+                    rows.length ? "No named threads here" : "No named threads"
+                  }
+                  description={
+                    rows.length
+                      ? "Choose All channels to see every named thread."
+                      : "Threads appear here once someone gives them a title, for example with buzz threads title set."
+                  }
+                />
+              ) : (
+                <ul className={styles.list} aria-label="Named threads">
+                  {sorted.map(renderRow)}
+                </ul>
+              )}
+              {shared.partial && (
+                <p className={`text-caption text-subtle ${styles.notice}`}>
+                  Showing the most recently titled threads.
+                </p>
+              )}
+            </LoadingRegion>
+          </div>
+        </>
+      ) : (
+        <p className={`text-body text-subtle ${styles.notice}`}>
+          This community connection can't read thread titles.
+        </p>
+      )}
+    </div>
+  );
+}

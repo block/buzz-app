@@ -14,6 +14,7 @@ import {
   uuidv5,
 } from "../agents/agent-config-artifacts";
 import type { EventData, RelayEvent } from "../relay/events";
+import type { RelaySession } from "../relay/session";
 import type { RelayWriter } from "../relay/transport";
 
 export const THREAD_TITLE_TYPE = "buzz.thread-title";
@@ -23,6 +24,8 @@ export const MAX_THREAD_TITLE_BYTES = 512;
 const BATCH = 100;
 /** The session reader's page cap. */
 const PAGE = 500;
+/** Stream and forum reply kinds; edits and diffs are not new activity. */
+const REPLY_KINDS = [9, 40002, 45003];
 
 export const threadTitleId = (root: string) =>
   uuidv5(THREAD_TITLE_NAMESPACE, `${THREAD_TITLE_TYPE}:${root.toLowerCase()}`);
@@ -71,7 +74,9 @@ export function parseTitle(event: EventData): ThreadTitle | undefined {
   };
 }
 
-/** Titles are kept per channel and root. */
+/** A title row with its newest activity: last reply or title revision. */
+export type Row = ThreadTitle & Readonly<{ activeAt: number }>;
+/** Activity is per channel and root, so a reply counts only in its channel. */
 export const activityKey = (channel: string, root: string) =>
   `${channel} ${root}`;
 
@@ -97,6 +102,33 @@ export async function staleChannels(
       stale.add(channel);
   }
   return stale;
+}
+
+/** Records reply times in place: a root of a titled row (`titled`, keyed by
+ * activityKey) keeps its newest reply in `latest`. Order-independent.
+ * Returns whether a titled row's time advanced. */
+export function noteReplies(
+  events: readonly EventData[],
+  channels: ReadonlySet<string>,
+  titled: ReadonlySet<string>,
+  latest: Map<string, number>,
+) {
+  let advanced = false;
+  for (const event of events) {
+    const channel = tag(event, "h");
+    if (!REPLY_KINDS.includes(event.kind) || !channel || !channels.has(channel))
+      continue;
+    for (const [name, value] of event.tags) {
+      if (name !== "e" || !value) continue;
+      const key = activityKey(channel, value);
+      const at = event.created_at;
+      const was = latest.get(key) ?? 0;
+      if (!titled.has(key) || at <= was) continue;
+      latest.set(key, at);
+      advanced = true;
+    }
+  }
+  return advanced;
 }
 
 export type Head = Readonly<{
@@ -183,6 +215,61 @@ export async function readTitles(
     }
   }
   return { titles, partial };
+}
+
+/** Activity reads in flight at once. */
+const ACTIVITY_CONCURRENCY = 4;
+
+/** Newest reply per channel and root (see activityKey), read by `#e` on the
+ * roots in each channel, ACTIVITY_CONCURRENCY reads at a time. A root a full
+ * page left out is read again with the others it left out. Activity only
+ * refines the order: a failed read leaves those roots at their title time. */
+export async function readActivity(
+  session: Pick<RelaySession, "read">,
+  titles: readonly ThreadTitle[],
+  signal: AbortSignal,
+) {
+  const latest = new Map<string, number>();
+  const roots = new Map<string, string[]>();
+  for (const { channel, root } of titles)
+    roots.set(channel, [...(roots.get(channel) ?? []), root]);
+  const batches: [string, string[]][] = [];
+  for (const [channel, all] of roots)
+    for (let at = 0; at < all.length; at += BATCH)
+      batches.push([channel, all.slice(at, at + BATCH)]);
+  const next = async (): Promise<void> => {
+    const item = batches.shift();
+    if (!item) return;
+    const [channel, batch] = item;
+    try {
+      const replies = await session.read(
+        [{ kinds: REPLY_KINDS, "#e": batch, "#h": [channel], limit: PAGE }],
+        { signal },
+      );
+      noteReplies(
+        replies,
+        new Set([channel]),
+        new Set(batch.map((root) => activityKey(channel, root))),
+        latest,
+      );
+      // The limit is shared by the batch: a full page may have cut off every
+      // reply of a quieter root. Those roots are read again on their own;
+      // each full page names at least one root, so the batch shrinks.
+      if (replies.length >= PAGE) {
+        const unseen = batch.filter(
+          (root) => !latest.has(activityKey(channel, root)),
+        );
+        if (unseen.length && unseen.length < batch.length)
+          batches.push([channel, unseen]);
+      }
+    } catch (error) {
+      signal.throwIfAborted();
+      console.warn("Thread activity read failed", error);
+    }
+    return next();
+  };
+  await Promise.all(Array.from({ length: ACTIVITY_CONCURRENCY }, next));
+  return latest;
 }
 
 export class TitleConflict extends Error {

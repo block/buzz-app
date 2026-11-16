@@ -195,10 +195,19 @@ type Once = {
   /** Settles once the turn has ended and let go of its thread. */
   released: Promise<void>;
 };
+/** A queued turn that later messages join once it starts. */
+type Next = {
+  began: Promise<Active | undefined>;
+  /** Joining messages in order; the turn steers past them once it begins. */
+  steering: Promise<void>;
+  begin: (active?: Active) => void;
+};
 type Lane = {
   tail: Promise<void>;
   /** Turns waiting on `tail` to start; steering past them would reorder. */
   queued: number;
+  /** The latest of them. */
+  next?: Next;
   active?: Active;
   voice?: { loaded: Loaded; signal: AbortSignal };
 };
@@ -1857,15 +1866,21 @@ export class CodexRuntime {
           lane = { tail: entry.after, queued: 0 };
           entry.lanes.set(key, lane);
         }
-        if (lane.active) {
-          const active = lane.active;
+        // Behind a queued turn, a message joins it once it starts, so a
+        // backlog clears in one turn rather than one turn per message.
+        const next = lane.queued ? lane.next : undefined;
+        const running = lane.active;
+        const chain = next ?? running;
+        if (chain) {
           let queued = false;
           const queue = () => {
             queued = true;
             this.start(request, text, key, lane, entry);
           };
           // Startup and history reads stay ordered without holding Agents delivery.
-          const accepted = active.steering.then(async () => {
+          const accepted = chain.steering.then(async () => {
+            const active = next ? await next.began : running;
+            if (!active) return queue();
             try {
               await active.ready;
               if (entry.abort.signal.aborted) {
@@ -1946,7 +1961,7 @@ export class CodexRuntime {
               if (!queued) entry.waiting.delete(request);
             }
           });
-          active.steering = accepted.catch((error) =>
+          chain.steering = accepted.catch((error) =>
             console.error("Codex steering failed", error),
           );
           return;
@@ -2237,12 +2252,22 @@ export class CodexRuntime {
   ) {
     const current = lane;
     current.queued++;
+    let began!: (active?: Active) => void;
+    const next: Next = {
+      began: new Promise((resolve) => (began = resolve)),
+      steering: Promise.resolve(),
+      begin: (active) => {
+        next.begin = () => {};
+        current.queued--;
+        began(active);
+      },
+    };
+    current.next = next;
     const job = lane.tail
       .catch(() => undefined)
       .then(async () => {
         // A server-started voice turn can arrive after this job was queued.
         while (current.active) await current.active.released;
-        current.queued--;
         entry.waiting.delete(request);
         if (entry.abort.signal.aborted) {
           request.failActivity("Codex was stopped");
@@ -2254,12 +2279,14 @@ export class CodexRuntime {
         }
         try {
           await entry.after;
-          await this.execute(request, text, key, current, entry);
+          await this.execute(request, text, key, current, entry, next);
         } catch (error) {
           request.failActivity(message(error));
           throw error;
         }
-      });
+      })
+      // Messages that joined a turn that never began queue on their own.
+      .finally(() => next.begin());
     lane.tail = job;
     this.status(request.agent.key, key, "Starting");
     // Agents can deliver follow-ups and other conversations immediately.
@@ -2843,6 +2870,7 @@ export class CodexRuntime {
     key: string,
     lane: Lane,
     entry: Entry,
+    next?: Next,
   ) {
     const { adopted } = request;
     let ready!: () => void;
@@ -2868,7 +2896,7 @@ export class CodexRuntime {
       released: new Promise((resolve) => {
         release = resolve;
       }),
-      steering: Promise.resolve(),
+      steering: next?.steering ?? Promise.resolve(),
       reply: request,
       finished: false,
       workspace: lane.voice?.loaded.workspace ?? request.settings.workspace,
@@ -2879,6 +2907,7 @@ export class CodexRuntime {
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
+    next?.begin(active);
     const { settings, agent } = request;
     const followed = follow(server.rpc, signal, active, (method, item) => {
       const step = method === "item/started" ? codexStep(item) : undefined;

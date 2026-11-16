@@ -72,6 +72,10 @@ import type { AgentLibrary } from "../agents/library";
 import { observerFrame } from "../agents/observer";
 import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
 import {
+  artifactConversationsCapability,
+  isConversationOpening,
+} from "./artifact-conversation";
+import {
   acceptPublish,
   acceptReadStatePublish,
   admitSignedRequest,
@@ -646,6 +650,33 @@ export async function connectNativeTransport(
                 event.pubkey !== transport.viewer
               )
                 throw new Error("Not this viewer's artifact");
+              return (await writer.publish(event, signal)) ?? "";
+            },
+          },
+        }
+      : {}),
+    ...(artifactConversationsCapability(info)
+      ? {
+          artifactConversations: {
+            kinds: [9007],
+            isNotSent: (error: unknown) => error instanceof PublishNotSent,
+            async sign(event: EventTemplate, signal: AbortSignal) {
+              if (!(await isConversationOpening(event)))
+                throw new Error("Not a conversation opening");
+              const signed = await writer.sign(event, signal);
+              if (
+                signed.pubkey !== transport.viewer ||
+                !(await isConversationOpening(signed))
+              )
+                throw new Error("Invalid conversation opening");
+              return signed;
+            },
+            async publish(event: RelayEvent, signal: AbortSignal) {
+              if (
+                event.pubkey !== transport.viewer ||
+                !(await isConversationOpening(event))
+              )
+                throw new Error("Not this viewer's conversation opening");
               return (await writer.publish(event, signal)) ?? "";
             },
           },

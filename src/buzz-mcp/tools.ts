@@ -941,6 +941,8 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
               ? { kinds: [39000], ...scope }
               : { kinds: [39000], "#d": [...ids], ...scope },
             (event) => {
+              // A task's conversation belongs to its task, never a list.
+              if (tag(event, "t") === "artifact") return true;
               const id = tag(event, "d") ?? "";
               const flags = [
                 tag(event, "t") === "stream" ? "" : tag(event, "t"),

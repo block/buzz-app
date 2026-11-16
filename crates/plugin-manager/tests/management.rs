@@ -1375,6 +1375,7 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
             id,
             "buzz.pi"
                 | "buzz.todos"
+                | "buzz.tasks"
                 | "buzz.usage"
                 | "buzz.relay-notes"
                 | "buzz.reminders"

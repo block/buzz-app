@@ -1,0 +1,7 @@
+{
+  "id": "buzz.tasks",
+  "name": "Tasks",
+  "apiVersion": 1,
+  "description": "Shared tasks that hold the context for a piece of work and link the conversations about it.",
+  "discovery": { "category": "productivity", "tags": ["tasks"] }
+}

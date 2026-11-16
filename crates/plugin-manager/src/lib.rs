@@ -454,6 +454,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("valid pairing manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/todos/manifest.json"))
             .expect("todos manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/tasks/manifest.json"))
+            .expect("tasks manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/diffs/manifest.json"))
             .expect("bundled diffs manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/mermaid/manifest.json"))

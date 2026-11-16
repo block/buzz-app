@@ -13,6 +13,8 @@ import * as huddles from "./huddles";
 import builderlabManifest from "./builderlab/manifest.json";
 import * as builderlab from "./builderlab";
 import * as todos from "./todos";
+import tasksManifest from "./tasks/manifest.json";
+import * as tasks from "./tasks";
 import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
 import mermaidManifest from "./mermaid/manifest.json";
@@ -136,6 +138,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...todosManifest, apiVersion: 1 },
     module: todos,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...tasksManifest, apiVersion: 1 },
+    module: tasks,
     enabledByDefault: false,
   },
   {

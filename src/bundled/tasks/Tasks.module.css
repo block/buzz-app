@@ -1,0 +1,187 @@
+/* Layout only: spacing and arrangement of the plugin's own elements. Every
+   control is a design-system component in its own appearance. */
+.page {
+  container: tasks-page / inline-size;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+/* List beside the open task; a narrow pane shows one at a time, with Back. */
+.board {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.board[data-detail] {
+  grid-template-columns: minmax(16rem, 24rem) minmax(0, 1fr);
+}
+.list,
+.detail {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+.detail {
+  border-inline-start: 1px solid var(--border-standard);
+}
+.back {
+  display: none;
+}
+@container tasks-page (max-width: 40rem) {
+  .board[data-detail] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .board[data-detail] > .list {
+    display: none;
+  }
+  .detail {
+    border-inline-start: 0;
+  }
+  .back {
+    display: block;
+  }
+}
+
+/* Project groups, a section's gap apart. */
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.actions,
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.spacer {
+  flex: 1;
+}
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.linkRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.linkRow > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* One task, read or edited. Its width decides whether Edit and Move show
+   as buttons or in More. */
+.task {
+  container: task / inline-size;
+}
+.task,
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.section {
+  gap: var(--space-2);
+}
+.heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.image {
+  position: relative;
+  max-width: 100%;
+}
+
+/* A status read-only: its icon beside its label, as in the list rows. */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.wideOnly {
+  display: contents;
+}
+.more {
+  display: none;
+}
+@container task (max-width: 30rem) {
+  .wideOnly {
+    display: none;
+  }
+  .more {
+    display: contents;
+  }
+}
+
+/* A task link's status, in line with the link's text. */
+.linkIcon {
+  display: inline-flex;
+  margin-right: var(--space-half);
+  vertical-align: -0.1875em;
+}
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 20rem;
+  overflow-wrap: anywhere;
+}
+
+/* A task's comments: the timeline scrolls inside a bounded height, with its
+   composer below. */
+.comments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.commentList {
+  display: flex;
+  flex-direction: column;
+  block-size: 24rem;
+  max-block-size: 60vh;
+  min-block-size: 0;
+}

@@ -3,6 +3,10 @@ import {
   VIEWER_ACCESS_CHANGED_KIND,
 } from "./channel-access";
 import { createChannelReach } from "./channel-reach";
+import {
+  artifactConversationId,
+  conversationOpening,
+} from "./artifact-conversation";
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
 import { createSoloPreferences, soloGroups } from "./solo-preferences";
@@ -3156,6 +3160,33 @@ export function createRelaySession(
      * this relay has no sync; use read() with `artifact: "current"` instead.
      * Dispose with the plugin's scope. */
     artifacts: {
+      /** The channel id of artifact `d`'s conversation (NIP-AR). Read it
+       * through `channels.reach`; it never lists. */
+      conversationId: artifactConversationId,
+      /** Opens artifact `d`'s conversation, for someone who may post in its
+       * home; opening one that exists changes nothing. Resolves with its id
+       * once the relay accepts. Absent where the relay has no conversations. */
+      ...(transport?.artifactConversations
+        ? {
+            async openConversation(d: string, signal: AbortSignal) {
+              const writer = transport.artifactConversations;
+              if (!writer || closed) throw new Error("Relay is unavailable");
+              const event = await writer.sign(
+                await conversationOpening(d),
+                signal,
+              );
+              try {
+                await writer.publish(event, signal);
+              } catch (error) {
+                if (!(error instanceof PublishRejected)) throw error;
+                throw new Error("You can’t start comments on this task.");
+              }
+              const id = await artifactConversationId(d);
+              reach?.recheck([id]);
+              return id;
+            },
+          }
+        : {}),
       sync(filter: unknown): ArtifactSyncView {
         if (closed || artifactSyncs.size >= ARTIFACT_SYNC_MAX_VIEWS)
           throw new Error("Artifact sync capacity unavailable");

@@ -127,6 +127,9 @@ export interface ReadTransport {
   readonly memberAdministration?: RelayWriter;
   /** NIP-AR kind-45010 config artifacts only; never supplied to the outbox. */
   readonly configArtifacts?: RelayWriter;
+  /** Opens NIP-AR artifact conversations (`buzz-artifact-conversations`):
+   * the exact kind:9007 of `isConversationOpening`, nothing else. */
+  readonly artifactConversations?: RelayWriter;
   /** Narrow NIP-IA 9035/9036 signer/publisher; never supplied to the message outbox. */
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */

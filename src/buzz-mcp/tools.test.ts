@@ -1650,6 +1650,35 @@ it("lists channels it can join as well as its own", async () => {
   );
 });
 
+it("leaves a task's conversation out of every channel list", async () => {
+  const { client, state } = relay();
+  const comments = "7d9a4e3f-5c6b-8d8e-8f1a-2b3c4d5e6f71";
+  state.push(
+    event({
+      kind: 39000,
+      tags: [
+        ["d", comments],
+        ["name", "Comments"],
+        ["t", "artifact"],
+        ["private"],
+        ["hidden"],
+      ],
+    }),
+    event({
+      kind: 39002,
+      tags: [
+        ["d", comments],
+        ["t", "artifact"],
+        ["p", me, "", "member"],
+      ],
+    }),
+  );
+  for (const args of [{}, { all: true }, { q: "comments", all: true }])
+    await expect(
+      callTool(client, {}, "channel_list", args),
+    ).resolves.not.toContain(comments);
+});
+
 it("lists only the channel types asked for", async () => {
   const { client, state } = relay();
   const forum = "7d9a4e3f-5c6b-4d8e-8f1a-2b3c4d5e6f70";

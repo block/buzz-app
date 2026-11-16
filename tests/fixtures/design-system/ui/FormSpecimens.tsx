@@ -14,6 +14,7 @@ import { Select } from "../../../../src/shared/design-system/ui/Select";
 import { PreferenceRow } from "../../../../src/shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../../../src/shared/design-system/ui/SettingsGroup";
 import { Combobox } from "../../../../src/shared/design-system/ui/Combobox";
+import { AvatarStack } from "../../../../src/shared/design-system/ui/AvatarStack";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
 
 import { IconButton } from "../../../../src/shared/design-system/ui/IconButton";
@@ -758,6 +759,63 @@ function PopupSearchExample({ compact = false }: { compact?: boolean }) {
   );
 }
 
+function CompactTriggerExample() {
+  const people = ["Riley", "Wes", "Priya", "Dana"];
+  const [status, setStatus] = useState("in_progress");
+  const [chosen, setChosen] = useState<string[]>(["Riley"]);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Select
+        label="Status"
+        variant="compact"
+        value={status}
+        onValueChange={setStatus}
+        groups={[
+          {
+            label: "",
+            options: [
+              { value: "todo", label: "To do" },
+              { value: "in_progress", label: "In progress" },
+              { value: "done", label: "Done" },
+            ],
+          },
+        ]}
+      />
+      <Combobox.Root
+        items={people}
+        multiple
+        value={chosen}
+        onValueChange={setChosen}
+      >
+        <Combobox.Trigger variant="compact" label="Assignees">
+          {chosen.length ? (
+            <AvatarStack
+              size="mini"
+              max={4}
+              items={chosen.map((name) => ({
+                id: name,
+                name,
+                shape: "circle",
+              }))}
+            />
+          ) : (
+            "Nobody"
+          )}
+        </Combobox.Trigger>
+        <Combobox.Popup search size="compact" empty="No one here matches.">
+          <Combobox.List>
+            {(item: string) => (
+              <Combobox.Item key={item} value={item}>
+                {item}
+              </Combobox.Item>
+            )}
+          </Combobox.List>
+        </Combobox.Popup>
+      </Combobox.Root>
+    </div>
+  );
+}
+
 export function ComboboxExamples() {
   const [state, setState] = useState<ExampleState>("ready");
   return (
@@ -778,6 +836,15 @@ ${workspaceComboboxCode}`}
         <WorkspaceCombobox label="Compact row choice" compact />
         <WorkspaceCombobox label="Read-only choices" readOnly />
         <WorkspaceCombobox label="Disabled choices" disabled />
+      </FormExample>
+      <FormExample
+        title="Compact trigger"
+        description="In a row of compact controls, the trigger matches a compact Select and announces its label. The menu keeps a minimum width, so short triggers never squeeze names."
+        code={`<Combobox.Trigger variant="compact" label="Assignees">
+  <AvatarStack size="mini" items={assignees} />
+</Combobox.Trigger>`}
+      >
+        <CompactTriggerExample />
       </FormExample>
       <FormExample
         title="Loading, empty, and recovery"

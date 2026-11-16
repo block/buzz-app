@@ -3230,7 +3230,13 @@ function Composer({
               )
             )
               return "conflict";
-            const target = attachmentDraft(session, recoveryKey, channelId);
+            const target = attachmentDraft(
+              session,
+              recoveryKey,
+              channelId,
+              false,
+              host ? [scope, `${draftKey}:files`] : undefined,
+            );
             if (target.snapshot().length) return "conflict";
             if (
               current !== capturedRevision &&

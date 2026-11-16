@@ -627,7 +627,13 @@ export function SoloDraft({
         writeView(scope, `draft:${channelId}`, draft);
         transferAttachmentDraft(
           files,
-          attachmentDraft(session, `${scope}:draft:${channelId}`, channelId),
+          attachmentDraft(
+            session,
+            `${scope}:draft:${channelId}`,
+            channelId,
+            false,
+            [scope, `draft:${channelId}:files`],
+          ),
         );
       }
       if (source) writeView(scope, draftKey, null);

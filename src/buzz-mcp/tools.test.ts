@@ -1148,7 +1148,7 @@ it("searches by name, channel and date, best match first, citing each hit", asyn
   expect(client.query).toHaveBeenCalledWith([
     {
       kinds: SEARCH_KINDS,
-      limit: 20,
+      limit: 30,
       search: "deploy",
       authors: [alice],
       "#h": ["other"],
@@ -1249,7 +1249,7 @@ it("asks for newest first from a span back, and says when the community ranked a
     expect(client.query).toHaveBeenCalledWith([
       {
         kinds: SEARCH_KINDS,
-        limit: 20,
+        limit: 30,
         search: "x",
         search_sort: "newest",
         since: 23 * DAY,

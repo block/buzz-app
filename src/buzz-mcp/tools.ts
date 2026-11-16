@@ -256,7 +256,7 @@ export const TOOLS: readonly Tool[] = [
   }),
   tool(
     "search",
-    'Search messages you can read, best match first. q matches whole words only, not other forms of a word: "exact phrase", -word, a or b. Without q, the newest messages matching the other fields. Each result has a link to cite it or open it with read.',
+    'Search messages you can read, best match first. The query q matches whole words only, not other forms of a word, and supports "exact phrase", -word and a or b. Without q, the newest messages matching the other fields. Each result has a link to cite it or open it with read.',
     {
       q: str,
       from: { type: "string", description: "me, a name, npub or hex pubkey." },
@@ -268,11 +268,15 @@ export const TOOLS: readonly Tool[] = [
       after: {
         type: "string",
         description:
-          "YYYY-MM-DD (UTC) or a time back from now: 7d, 2w, 3m, 1y. Included.",
+          "Only messages at or after this time: a date YYYY-MM-DD (from its start, UTC) or a time back from now: 7d, 2w, 3m, 1y.",
       },
-      before: { type: "string", description: "Same forms as after. Excluded." },
+      before: {
+        type: "string",
+        description:
+          "Only messages before this time, not at it: a date YYYY-MM-DD (from its start, UTC, so that day is left out) or a time back from now: 7d, 2w, 3m, 1y.",
+      },
       sort: { type: "string", enum: ["relevance", "newest"] },
-      limit: { type: "integer", description: "Default 20, max 50." },
+      limit: { type: "integer", description: "Default 30, max 100." },
       page: { type: "integer", description: "From a continue line." },
     },
     [],
@@ -903,8 +907,8 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     // 0 is what a model sends for a field it means to leave out.
     const limit = bound(
       typeof args.limit === "number" ? args.limit || undefined : undefined,
-      20,
-      50,
+      30,
+      100,
     );
     const page = (args.page as number) || 1;
     if (!Number.isSafeInteger(page) || page < 1)

@@ -23,19 +23,13 @@ import {
 export const PEOPLE_SEARCH_MAX_LENGTH = 100;
 
 /** Opening is idempotent by participant set; first messages use the durable outbox. */
-/** Someone would join an existing DM: the sender chooses whether they see
- * its history. Nothing was added. */
+/** People would join the DM: the adder chooses whether they see its
+ * history. Nothing was added. */
 export class NeedsHistoryChoice extends Error {
   constructor() {
     super(NEEDS_HISTORY_CHOICE);
     this.name = "NeedsHistoryChoice";
   }
-}
-
-function historyChoice(error: unknown): never {
-  throw error instanceof Error && error.message === NEEDS_HISTORY_CHOICE
-    ? new NeedsHistoryChoice()
-    : error;
 }
 
 export function createDirectMessages(
@@ -197,13 +191,11 @@ export function createDirectMessages(
     },
     /** Open the DM of `pubkeys`. With `includeHistory`, the relay picks the
      * DM of these people, so the caller sends to the id returned, and named
-     * agents it lacks join it and can read it. With `"ask"`, it throws
-     * `NeedsHistoryChoice` instead of adding them, so the caller says who
-     * would see its history and opens again with their choice. */
+     * agents it lacks join it and can read it. */
     async open(
       pubkeys: readonly string[],
       signal: AbortSignal,
-      includeHistory: boolean | "ask" = false,
+      includeHistory = false,
     ) {
       if (!available || !transport?.openDirectMessage)
         throw new Error("This connection cannot start direct messages.");
@@ -211,13 +203,11 @@ export function createDirectMessages(
         throw new Error("Choose between one and eight other people.");
       const active = AbortSignal.any([lifetime, signal]);
       active.throwIfAborted();
-      const id = await transport
-        .openDirectMessage(
-          pubkeys,
-          active,
-          includeHistory ? { includeHistory } : undefined,
-        )
-        .catch(historyChoice);
+      const id = await transport.openDirectMessage(
+        pubkeys,
+        active,
+        includeHistory ? { includeHistory } : undefined,
+      );
       active.throwIfAborted();
       // The relay may return the DM of these people with agents they did
       // not name: it decides who is an agent, so only who is named is checked.
@@ -253,7 +243,11 @@ export function createDirectMessages(
       active.throwIfAborted();
       const id = await transport
         .openDirectMessage(pubkeys, active, { channelId, includeHistory })
-        .catch(historyChoice);
+        .catch((error: unknown) => {
+          throw error instanceof Error && error.message === NEEDS_HISTORY_CHOICE
+            ? new NeedsHistoryChoice()
+            : error;
+        });
       active.throwIfAborted();
       await confirmed(id, [transport.viewer, ...pubkeys], active);
       if (id !== channelId) for (const listener of [...opened]) listener(id);

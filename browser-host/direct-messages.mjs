@@ -6,8 +6,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** Idempotent participant-set command (kind 41010), or with `channel`, adding
  * people to that DM (kind 41011). Only with `includeHistory` may anyone join
- * an existing DM and read its history; `"ask"` lets the relay decide whether
- * to ask first. Keys stay in the broker. */
+ * an existing DM and read its history; an addition's `"ask"` lets the relay
+ * decide whether to ask first. Keys stay in the broker. */
 export function directMessageEvent(input, viewer, key) {
   const adding = input?.channel !== undefined;
   if (
@@ -21,14 +21,14 @@ export function directMessageEvent(input, viewer, key) {
         ? "Choose who to add to this DM."
         : "Choose between one and eight other people.",
     );
-  const history =
-    typeof input.includeHistory === "boolean" || input.includeHistory === "ask";
   if (
     adding
       ? typeof input.channel !== "string" ||
         !UUID.test(input.channel) ||
-        !history
-      : input.includeHistory !== undefined && !history
+        (typeof input.includeHistory !== "boolean" &&
+          input.includeHistory !== "ask")
+      : input.includeHistory !== undefined &&
+        typeof input.includeHistory !== "boolean"
   )
     throw new Error("Choose a direct message to add people to.");
   return finalizeEvent(

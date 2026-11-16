@@ -16,9 +16,8 @@ export function validDirectMessageParticipants(
 /** The most people and agents one addition to a DM names. */
 export const MAX_DIRECT_MESSAGE_ADDITIONS = 100;
 
-/** The relay's refusal of a DM command tagged `["history", "ask"]`: someone
- * would join an existing DM, so the sender chooses whether they see its
- * history. */
+/** The relay's refusal of an addition tagged `["history", "ask"]`: people
+ * would join this DM, so the adder chooses whether they see its history. */
 export const NEEDS_HISTORY_CHOICE = "needs-choice: history";
 
 /** What to show for the relay's refusal of a DM command, from its exact
@@ -26,8 +25,9 @@ export const NEEDS_HISTORY_CHOICE = "needs-choice: history";
 export function directMessageRefusal(adding: boolean, reason: unknown): string {
   const full = `${adding ? "Couldn’t add them. " : ""}A DM holds up to 9 people, not counting agents.`;
   if (
-    reason === NEEDS_HISTORY_CHOICE ||
-    reason === 'invalid: history must be "include", got "ask"'
+    adding &&
+    (reason === NEEDS_HISTORY_CHOICE ||
+      reason === 'invalid: history must be "include", got "ask"')
   )
     return NEEDS_HISTORY_CHOICE;
   // The browser host maps a refusal at admission and again on its way out.

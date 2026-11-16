@@ -846,7 +846,7 @@ it("loads matching DM history inline and keeps the draft while recipients change
   expect(screen.getByRole("textbox")).toHaveTextContent("Keep this draft");
 });
 
-it("asks the relay for the DM of these people, whether or not it shows one", async () => {
+it("opens the DM of these people with its history, whether or not it shows one", async () => {
   const t = setup();
   const owner = t.create();
   t.mount(owner);
@@ -856,7 +856,7 @@ it("asks the relay for the DM of these people, whether or not it shows one", asy
   await waitFor(() => expect(t.openDirectMessage).toHaveBeenCalledOnce());
   // The relay picks the DM by its people, and restores it if it is hidden.
   expect(t.openDirectMessage.mock.calls[0]?.[2]).toEqual({
-    includeHistory: "ask",
+    includeHistory: true,
   });
   cleanup();
 
@@ -870,7 +870,7 @@ it("asks the relay for the DM of these people, whether or not it shows one", asy
   await fresh.user.click(send());
   await waitFor(() => expect(fresh.openDirectMessage).toHaveBeenCalledOnce());
   expect(fresh.openDirectMessage.mock.calls[0]?.[2]).toEqual({
-    includeHistory: "ask",
+    includeHistory: true,
   });
 });
 
@@ -910,7 +910,7 @@ describe("the relay picks the DM, and the preview is only a hint", () => {
     await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
     // The relay returns Avery's 1:1, and the message and page go there.
     expect(t.openDirectMessage.mock.calls).toEqual([
-      [[other.pubkey], expect.any(AbortSignal), { includeHistory: "ask" }],
+      [[other.pubkey], expect.any(AbortSignal), { includeHistory: true }],
     ]);
     expect(sentTo(t)).toEqual([channel]);
     expect(t.onStarted).toHaveBeenCalledWith(channel, expect.any(String));
@@ -950,112 +950,9 @@ describe("the relay picks the DM, and the preview is only a hint", () => {
       [
         [other.pubkey, another.pubkey],
         expect.any(AbortSignal),
-        { includeHistory: "ask" },
+        { includeHistory: true },
       ],
     ]);
-    expect(sentTo(t)).toEqual([channel]);
-  });
-
-  /** The relay asks first once, then answers with `channel`. */
-  function asksOnce(t: ReturnType<typeof setup>) {
-    const open = t.openDirectMessage.getMockImplementation();
-    assert.exists(open);
-    t.openDirectMessage.mockImplementation(async (pubkeys, ...rest) => {
-      const [, history] = rest as [AbortSignal, { includeHistory?: unknown }?];
-      if (history?.includeHistory === "ask")
-        throw new Error("needs-choice: history");
-      return open(pubkeys, ...rest);
-    });
-  }
-  const asked = (t: ReturnType<typeof setup>) =>
-    t.openDirectMessage.mock.calls.map((call) => call[2]);
-
-  it("warns for the people's DM when the preview shows an older DM that holds the agent", async () => {
-    const t = setup();
-    // An older DM of exactly Avery and Zoe sorts first, so the page shows
-    // it, and Zoe is in it. The relay's DM of Avery lacks her.
-    const older = "00000000-0000-4000-8000-000000000000";
-    const at = t.events.findIndex(
-      (event) => event.kind === 0 && event.pubkey === another.pubkey,
-    );
-    t.events[at] = signed(another, {
-      kind: 0,
-      content: JSON.stringify({ name: "Zoe", is_agent: true }),
-      tags: [],
-    });
-    t.agents.push({ pubkey: another.pubkey, name: "Zoe" });
-    t.events.unshift(
-      signed(relay, {
-        kind: 39000,
-        tags: [
-          ["d", older],
-          ["hidden", ""],
-          ["t", "dm"],
-          ["private", ""],
-        ],
-        content: JSON.stringify({ name: "Avery, Zoe", channel_type: "dm" }),
-      }),
-      roster(relay, older, [viewer.pubkey, other.pubkey, another.pubkey]),
-      message(other, older, "With Zoe", 1_700_000_002),
-    );
-    asksOnce(t);
-    const owner = t.create();
-    t.mount(owner);
-    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
-    await addRecipient(t, "Zoe, Agent");
-    await showsHistory(owner, older, "With Zoe");
-    expect(screen.queryByText(/Sending adds/)).toBeNull();
-    await t.user.type(screen.getByRole("textbox"), "Hello");
-    await t.user.click(send());
-    expect(
-      await screen.findByText(
-        "Sending adds Zoe to your existing DM with Avery. It can read its earlier messages. Send again to add it.",
-      ),
-    ).toHaveAttribute("role", "status");
-    // Asking granted nothing and sent nothing.
-    expect(asked(t)).toEqual([{ includeHistory: "ask" }]);
-    expect(t.publish).not.toHaveBeenCalled();
-    expect(screen.queryByRole("alert")).toBeNull();
-    await t.user.click(send());
-    await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-    expect(asked(t)).toEqual([
-      { includeHistory: "ask" },
-      { includeHistory: true },
-    ]);
-    expect(sentTo(t)).toEqual([channel]);
-  });
-
-  it("warns before an agent joins a DM the page did not preview", async () => {
-    const t = setup();
-    // The page counts Zoe as a person, so no DM of Avery and Zoe is shown;
-    // the relay counts her as an agent and finds Avery's DM.
-    asksOnce(t);
-    const owner = t.create();
-    t.mount(owner);
-    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
-    await addRecipient(t, "Zoe");
-    expect(previewed()).toBeUndefined();
-    await t.user.type(screen.getByRole("textbox"), "Hello");
-    await t.user.click(send());
-    expect(
-      await screen.findByText(
-        "Sending adds the agents you chose to an existing DM. They can read its earlier messages. Send again to add them.",
-      ),
-    ).toBeVisible();
-    expect(t.publish).not.toHaveBeenCalled();
-    // Choosing someone else asks again.
-    await t.user.click(screen.getByRole("button", { name: "Remove Zoe" }));
-    expect(screen.queryByText(/Send again/)).toBeNull();
-    await addRecipient(t, "Zoe");
-    await t.user.click(send());
-    await screen.findByText(/Send again to add them/);
-    expect(asked(t)).toEqual([
-      { includeHistory: "ask" },
-      { includeHistory: "ask" },
-    ]);
-    await t.user.click(send());
-    await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-    expect(asked(t).at(-1)).toEqual({ includeHistory: true });
     expect(sentTo(t)).toEqual([channel]);
   });
 });

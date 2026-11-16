@@ -394,15 +394,11 @@ receiving a generic duplicate-event receipt. No private key or arbitrary signing
 capability is exposed to the page. Other host adapters report this capability as
 unavailable until they implement it. Without `["history", "include"]` the
 relay finds or makes the DM of exactly the named members, agents included. New
-message sends `["history", "ask"]`, because only the relay knows who is an
-agent: the relay finds the DM the named people already share, rather than
-making another, and grants nothing. If named agents would join that DM, it
-refuses with `needs-choice: history` and changes nothing; the page then says
-who would see its earlier messages, and Send again opens it with
-`["history", "include"]`, adding them. The page's preview is only a hint. The
-message goes to the DM the relay returns, and the page then opens it, even when
-that is not the DM it showed. A relay from before `"ask"` opens the DM of exactly
-the named members. Every other open omits the tag.
+message always sends the tag, because only the relay knows who is an agent: it
+returns the DM the named people already share, which named agents join with
+its history, rather than making another. The page's preview is only a
+hint. The message goes to the DM the relay returns, and the page then opens it,
+even when that is not the DM it showed. Every other open omits the tag.
 
 Before sending, the session requires signed DM metadata and a signed roster
 containing the viewer and selected people, plus only agents they did not name.

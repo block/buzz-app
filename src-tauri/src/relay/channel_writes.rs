@@ -287,10 +287,9 @@ pub(crate) async fn relay_kit_decode(
 /// that DM (kind:41011). Only with `history` `"include"` may anyone join an
 /// existing DM and read its history: an open then finds the DM of these
 /// people and adds any named agents, and an add joins that DM instead of
-/// starting a new DM of its people plus them, its agents left behind.
-/// `"ask"` lets the relay decide, refusing with `needs-choice: history` when
-/// an add would bring people in, or an open would bring named agents into the
-/// DM of these people. Returns the DM the relay settled on.
+/// starting a new DM of its people plus them, its agents left behind. An
+/// add's `"ask"` lets the relay decide, refusing with `needs-choice: history`
+/// when people would join. Returns the DM the relay settled on.
 #[tauri::command]
 pub(crate) async fn relay_direct_message(
     host: tauri::State<'_, IdentityHost>,
@@ -361,7 +360,9 @@ pub(crate) async fn relay_direct_message(
 /// A relay from before `ask` refuses the tag itself, which asks too.
 fn direct_message_refusal(adding: bool, reason: Option<&str>) -> &'static str {
     match reason {
-        Some("needs-choice: history" | r#"invalid: history must be "include", got "ask""#) => {
+        Some("needs-choice: history" | r#"invalid: history must be "include", got "ask""#)
+            if adding =>
+        {
             "needs-choice: history"
         }
         Some(reason) if reason.contains("at most 9 people") => {
@@ -381,7 +382,7 @@ fn direct_message_refusal(adding: bool, reason: Option<&str>) -> &'static str {
 const MAX_DIRECT_MESSAGE_ADDITIONS: usize = 100;
 
 /// The tags of a DM open, or of an addition to the DM `channel`: an `h` tag
-/// first when adding, a `p` per person, `["history", "include"]` or
+/// first when adding, a `p` per person, `["history", "include"]` or, adding,
 /// `["history", "ask"]` when asked, and a unique `client` tag so a repeat is
 /// a new command.
 pub(super) fn direct_message_tags(
@@ -413,10 +414,12 @@ pub(super) fn direct_message_tags(
         Some(_) => return Err("Choose a direct message to add people to.".into()),
         None => {}
     }
+    let adding = tags.len() == 1;
     tags.extend(pubkeys.into_iter().map(|p| vec!["p".into(), p]));
     match history {
         None => {}
-        Some(value @ ("include" | "ask")) => tags.push(vec!["history".into(), value.into()]),
+        Some(value @ "include") => tags.push(vec!["history".into(), value.into()]),
+        Some(value @ "ask") if adding => tags.push(vec!["history".into(), value.into()]),
         Some(_) => return Err("Choose whether they see this DM’s history.".into()),
     }
     tags.push(vec!["client".into(), uuid::Uuid::new_v4().to_string()]);
@@ -1066,8 +1069,6 @@ mod direct_message_tests {
             shared[1],
             vec!["history".to_string(), "include".to_string()]
         );
-        let asking = direct_message_tags(&key('a'), vec![key('b')], None, Some("ask")).unwrap();
-        assert_eq!(asking[1], vec!["history".to_string(), "ask".to_string()]);
         let exact = direct_message_tags(&key('a'), vec![key('b')], None, None).unwrap();
         assert!(!exact.iter().any(|tag| tag[0] == "history"));
     }
@@ -1101,12 +1102,10 @@ mod direct_message_tests {
             "needs-choice: history",
             r#"invalid: history must be "include", got "ask""#,
         ] {
-            for adding in [true, false] {
-                assert_eq!(
-                    direct_message_refusal(adding, Some(reason)),
-                    "needs-choice: history"
-                );
-            }
+            assert_eq!(
+                direct_message_refusal(true, Some(reason)),
+                "needs-choice: history"
+            );
         }
         assert_eq!(
             direct_message_refusal(
@@ -1120,7 +1119,7 @@ mod direct_message_tests {
             "Couldn’t add them. A DM holds up to 9 people, not counting agents."
         );
         assert_eq!(
-            direct_message_refusal(false, Some("invalid: unknown")),
+            direct_message_refusal(false, Some("needs-choice: history")),
             "The direct message could not be opened. Try again."
         );
     }
@@ -1140,7 +1139,7 @@ mod direct_message_tests {
                 Some("not-a-uuid".to_string()),
                 Some("include"),
             ),
-            (vec![key('b')], None, Some("exclude")),
+            (vec![key('b')], None, Some("ask")),
             (vec![key('b')], dm, Some("exclude")),
         ] {
             assert!(direct_message_tags(&viewer, pubkeys, channel, history).is_err());

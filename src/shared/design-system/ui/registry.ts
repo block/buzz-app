@@ -108,6 +108,12 @@ export type ComponentDefinition = {
    * of its own can still inherit behaviour through one of these.
    */
   composes: readonly string[];
+  /**
+   * Offered to plugins through `ctx.ui` under a narrower, frozen prop
+   * contract (`src/features/plugin-ui/contract.ts`). Appearance may change;
+   * removing or renaming the component or its plugin props may not.
+   */
+  pluginApi?: "v1";
 };
 
 export const COMPONENTS: readonly ComponentDefinition[] = [
@@ -212,6 +218,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
 
   {
     slug: "dialog",
+    pluginApi: "v1",
     name: "Dialog",
     purpose: "A shared modal frame with title, content and actions.",
     behavior:
@@ -292,6 +299,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
 
   {
     slug: "input",
+    pluginApi: "v1",
     name: "Input",
     purpose:
       "A single-line text field. InputGroup owns the shared frame for leading and trailing content.",
@@ -315,6 +323,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
 
   {
     slug: "field",
+    pluginApi: "v1",
     name: "Field",
     purpose:
       "Label, description and error for a form control; `optional` marks fields a form doesn't require.",
@@ -490,6 +499,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   },
   {
     slug: "switch",
+    pluginApi: "v1",
     name: "Switch",
     purpose: "A labelled setting that is on or off.",
     behavior: "Base UI owns checked state and keyboard behavior.",
@@ -503,6 +513,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   },
   {
     slug: "button",
+    pluginApi: "v1",
     name: "Button",
     purpose:
       "Trigger an action with a single-line label. Choose its emphasis and size, and use the shared loading or destructive state when needed.",

@@ -1,0 +1,97 @@
+// Shared controls for plugins that cannot import app source. These props are
+// the whole contract: the host owns appearance and may restyle the controls,
+// but within API v1 it only adds components, props and values.
+import type { ReactElement, ReactNode } from "react";
+
+// `children` is optional so `createElement(type, props, ...children)` type-checks.
+export type PluginButtonProps = Readonly<{
+  children?: ReactNode;
+  /** Default `subtle`. */
+  variant?: "prominent" | "subtle" | "ghost" | "destructive" | undefined;
+  /** Default `md`. */
+  size?: "sm" | "md" | undefined;
+  /** Shows a spinner and ignores activation while keeping the button's size. */
+  loading?: boolean | undefined;
+  disabled?: boolean | undefined;
+  /** Default `button`. */
+  type?: "button" | "submit" | "reset" | undefined;
+  onClick?: (() => void) | undefined;
+  /** Shown as the host's tooltip. */
+  title?: string | undefined;
+  "aria-label"?: string | undefined;
+}>;
+
+export type PluginInputProps = Readonly<{
+  value?: string | undefined;
+  defaultValue?: string | undefined;
+  onValueChange?: ((value: string) => void) | undefined;
+  /** Default `text`. */
+  type?: "text" | "email" | "url" | "search" | "password" | undefined;
+  placeholder?: string | undefined;
+  name?: string | undefined;
+  id?: string | undefined;
+  disabled?: boolean | undefined;
+  readOnly?: boolean | undefined;
+  required?: boolean | undefined;
+  autoFocus?: boolean | undefined;
+  maxLength?: number | undefined;
+  /** Needed only outside a `Field`, which labels its control. */
+  "aria-label"?: string | undefined;
+}>;
+
+/** Labels the control it contains and announces `error`. */
+export type PluginFieldProps = Readonly<{
+  label: ReactNode;
+  /** Hidden while `error` is shown. */
+  description?: ReactNode;
+  /** Marks the field invalid. */
+  error?: ReactNode;
+  /** Adds an "Optional" note to the label. */
+  optional?: boolean | undefined;
+  children?: ReactNode;
+}>;
+
+export type PluginSwitchProps = Readonly<
+  {
+    checked?: boolean | undefined;
+    defaultChecked?: boolean | undefined;
+    onCheckedChange?: ((checked: boolean) => void) | undefined;
+    disabled?: boolean | undefined;
+    name?: string | undefined;
+    id?: string | undefined;
+  } & (
+    | { label: string; "aria-label"?: undefined }
+    | { label?: undefined; "aria-label": string }
+  )
+>;
+
+/** A modal; the host owns its portal, focus trap, Escape and focus return. */
+export type PluginDialogProps = Readonly<{
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: ReactNode;
+  /** Introductory copy under the title, not a body paragraph. */
+  description?: ReactNode;
+  children?: ReactNode;
+  /** Footer buttons: Cancel first, then the completing action. */
+  actions?: ReactNode;
+  /** Default `default`. */
+  size?: "compact" | "default" | undefined;
+  /** Blocks every way of dismissing it, for example while saving. */
+  preventClose?: boolean | undefined;
+}>;
+
+export type PluginUi = Readonly<{
+  Button: (props: PluginButtonProps) => ReactElement;
+  Input: (props: PluginInputProps) => ReactElement;
+  Field: (props: PluginFieldProps) => ReactElement;
+  Switch: (props: PluginSwitchProps) => ReactElement;
+  Dialog: (props: PluginDialogProps) => ReactElement;
+}>;
+
+declare module "@deepseek-ai/cordis" {
+  interface Context {
+    /** Read with `ctx.reflect.get("ui")` so older hosts return `undefined`. */
+    ui?: PluginUi;
+  }
+}

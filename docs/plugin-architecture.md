@@ -21,6 +21,8 @@ across versions yet, and the author types are `0.0.0-preview.1`.
   sidebar sections and rows, the Solo region and backdrops; agent hooks, execution
   targets and the harness kit; artifact storage, the installer, federated identity
   and the browser view; and other navigation `open` targets.
+- **Stable within API v1:** the `ui` controls and their documented props. See
+  [Host controls](#host-controls).
 
 ## The first two authoring experiences
 
@@ -397,6 +399,33 @@ See [foundation status and open gates](status.md) for maintained decisions,
 remaining acceptance work and historical evidence.
 
 ## Starting contracts
+
+### Host controls
+
+External plugins cannot import app source, so the host provides its own
+controls. Read the optional `ui` service with `ctx.reflect.get("ui")`; it is
+`undefined` on older hosts. It offers `Button`, `Input`, `Field`, `Switch` and
+`Dialog`, rendered by the host with its React instance, theme, focus handling
+and overlay layer. The props are `PluginButtonProps`, `PluginInputProps`,
+`PluginFieldProps`, `PluginSwitchProps` and `PluginDialogProps` in
+`@buzz/author` (`src/features/plugin-ui/contract.ts`).
+
+Each control forwards only its documented props: other props are ignored and
+an unsupported value uses the default, so internal and migrating variants never
+become plugin behavior. Change handlers receive plain values (`onValueChange(value)`,
+`onCheckedChange(checked)`, `onOpenChange(open)`); `onClick` receives nothing.
+The host owns appearance. Unlike preview services, this set is stable within
+API v1: the host may restyle a control but only adds controls, props and values.
+Components marked `pluginApi: "v1"` in the design-system registry are the ones
+offered, and a test keeps the two in step. A component reads the same on every
+access, so it is safe to use as a React element type. Plugin page state stays
+in the plugin's components; disabling a plugin unmounts an open `Dialog` with its
+portal and scroll lock.
+
+For styling beyond these controls, rely on the `core` roles in the token
+registry and the classes the authoring guide names (`ui-card`,
+`shell-sidebar-default`). Control class names and `data-*` attributes are
+internal.
 
 ### Subject lift
 

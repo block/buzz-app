@@ -844,7 +844,7 @@ it("expires Show all conversations after the default two minutes, keeping the op
   expect(shortcut()).toMatchObject({
     id: "show-all-conversations",
     title: "Show all conversations",
-    binding: { key: "f", mod: true, shift: true },
+    binding: { key: "s", mod: true, shift: true },
     allowInEditable: true,
   });
   expect(shortcut().when?.()).toBe(true);
@@ -890,6 +890,52 @@ it("expires Show all conversations after the default two minutes, keeping the op
     mounted.unmount();
     expect(clearTimer).toHaveBeenCalledWith(showAllTimers()[3]);
     expect(remove).toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+    preferences.dispose();
+  }
+});
+
+it("ends Show all conversations on waking past its deadline, even if the timer is late, and announces it", async () => {
+  const { h, preferences, shortcut } = filteredChannels();
+  render(h.view("alpha"));
+  await screen.findByRole("button", { name: "alpha" });
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "beta" })).toBeNull(),
+  );
+  const announcement = () =>
+    document.querySelector('[aria-live="polite"].sr-only');
+  // Date moves while the timeout stays pending, as when a laptop sleeps.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    act(() => void shortcut().run());
+    expect(screen.getByRole("button", { name: "beta" })).toBeInTheDocument();
+    // Waking before the deadline keeps it on.
+    vi.setSystemTime(Date.now() + SHOW_ALL_DURATION - 1);
+    act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    expect(screen.getByRole("button", { name: "beta" })).toBeInTheDocument();
+    expect(announcement()).toHaveTextContent("");
+    vi.setSystemTime(Date.now() + 1);
+    act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
+    expect(screen.getByRole("button", { name: "alpha" })).toBeInTheDocument();
+    expect(announcement()).toHaveTextContent(
+      "Showing filtered conversations again",
+    );
+    // Turning it on clears the announcement; focus is a wake too.
+    act(() => void shortcut().run());
+    expect(announcement()).toHaveTextContent("");
+    vi.setSystemTime(Date.now() + SHOW_ALL_DURATION);
+    act(() => void window.dispatchEvent(new Event("focus")));
+    expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
+    expect(announcement()).toHaveTextContent(
+      "Showing filtered conversations again",
+    );
+    // Ending it yourself is not announced.
+    act(() => void shortcut().run());
+    act(() => void shortcut().run());
+    expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
+    expect(announcement()).toHaveTextContent("");
   } finally {
     vi.useRealTimers();
     preferences.dispose();

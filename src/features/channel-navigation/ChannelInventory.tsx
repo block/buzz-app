@@ -34,6 +34,7 @@ import {
 } from "./sidebar-rows-service";
 import type { ShortcutsService } from "../shortcuts/service";
 import { useShowAllSecondsPreference } from "./show-all-preference";
+import { HOST_SHORTCUT_ORDER } from "../../app/shortcuts";
 import { useSidebarRowUnread } from "./useSidebarRowUnread";
 import type { SidebarSortMode } from "../relay/sidebar-sort";
 import type { SidebarFrame } from "./SidebarFrame";
@@ -639,14 +640,28 @@ export function ChannelInventory({
   // the chosen duration, on reload or reconnect, or with a new filter choice.
   // Changing the duration while paused starts the new duration afresh.
   const [showAll, setShowAll] = useState(false);
+  const [showAllExpired, setShowAllExpired] = useState(false);
   const showAllSeconds = useShowAllSecondsPreference().seconds;
   useEffect(() => {
     if (!showAll) return;
-    const timer = window.setTimeout(
-      () => setShowAll(false),
-      showAllSeconds * 1000,
-    );
-    return () => window.clearTimeout(timer);
+    setShowAllExpired(false);
+    const deadline = Date.now() + showAllSeconds * 1000;
+    const expire = () => {
+      setShowAll(false);
+      setShowAllExpired(true);
+    };
+    // A timer can fire late after sleep, so waking checks the deadline itself.
+    const wake = () => {
+      if (Date.now() >= deadline) expire();
+    };
+    const timer = window.setTimeout(expire, showAllSeconds * 1000);
+    document.addEventListener("visibilitychange", wake);
+    window.addEventListener("focus", wake);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", wake);
+      window.removeEventListener("focus", wake);
+    };
   }, [showAll, showAllSeconds]);
   const filtering = sortedSections.some(
     ({ key }) => (savedFilters[key] ?? "all") !== "all",
@@ -660,8 +675,8 @@ export function ChannelInventory({
       shortcuts?.registerHost({
         id: "show-all-conversations",
         title: "Show all conversations",
-        binding: { key: "f", mod: true, shift: true },
-        order: 77,
+        binding: { key: "s", mod: true, shift: true },
+        order: HOST_SHORTCUT_ORDER.showAllConversations,
         allowInEditable: true,
         when: () => showAllAvailable.current,
         run: () => setShowAll((paused) => !paused),
@@ -1908,6 +1923,9 @@ export function ChannelInventory({
     ),
     dialogs: (
       <>
+        <p className="sr-only" aria-live="polite">
+          {showAllExpired ? "Showing filtered conversations again" : ""}
+        </p>
         {creatingSection && (
           <CreateSidebarSection
             writable={preferences.sectionCreationWritable}

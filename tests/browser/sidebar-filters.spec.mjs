@@ -626,18 +626,18 @@ test.describe("show all conversations", () => {
 
     // From a focused sidebar row: the first press shows all, the second ends it.
     await design.focus();
-    await page.keyboard.press(`${modifier}+Shift+f`);
+    await page.keyboard.press(`${modifier}+Shift+s`);
     await everything();
-    await page.keyboard.press(`${modifier}+Shift+f`);
+    await page.keyboard.press(`${modifier}+Shift+s`);
     await filtered();
 
     // From the composer, without touching its draft.
     await composer.fill("Keep my draft");
-    await page.keyboard.press(`${modifier}+Shift+f`);
+    await page.keyboard.press(`${modifier}+Shift+s`);
     await everything();
     await expect(composer).toBeFocused();
     await expect(composer).toHaveJSProperty("value", "Keep my draft");
-    await page.keyboard.press(`${modifier}+Shift+f`);
+    await page.keyboard.press(`${modifier}+Shift+s`);
     await filtered();
     await expect(composer).toHaveJSProperty("value", "Keep my draft");
     await expect(
@@ -680,7 +680,7 @@ test.describe("show all conversations", () => {
     // Pausing never saves: the only publications are the two filter choices.
     expect(app.report.sidebarPublications).toHaveLength(publications);
 
-    // A rebound chord replaces ⌘⇧F (Ctrl+Shift+F elsewhere).
+    // A rebound chord replaces ⌘⇧S (Ctrl+Shift+S elsewhere).
     await page.keyboard.press(`${modifier}+,`);
     await page.getByRole("button", { name: "Shortcuts", exact: true }).click();
     const region = page.getByRole("region", { name: "Shortcuts", exact: true });
@@ -704,7 +704,7 @@ test.describe("show all conversations", () => {
     await closeSettings(page);
     await filtered();
     // If the old chord still toggled, the new one would toggle it back off.
-    await page.keyboard.press(`${modifier}+Shift+f`);
+    await page.keyboard.press(`${modifier}+Shift+s`);
     await page.keyboard.press(`${modifier}+Shift+j`);
     await everything();
   });
@@ -722,7 +722,7 @@ test.describe("show all conversations", () => {
     await filter();
     // Pause first, so the five seconds count from the press itself.
     await pauseClock(page);
-    await page.keyboard.press(`${modifier}+Shift+f`);
+    await page.keyboard.press(`${modifier}+Shift+s`);
     await everything();
     // Planning is hidden by Work's Unreads filter once the pause ends.
     await planning.click();

@@ -19,6 +19,15 @@ import type {
 const tabbable =
   'input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
 
+/** Not disabled by a fieldset, and not inside a hidden or inert container. */
+function focusable(element: HTMLElement) {
+  return (
+    !element.matches(":disabled") &&
+    !element.closest("[hidden], [inert]") &&
+    (element.checkVisibility?.({ visibilityProperty: true }) ?? true)
+  );
+}
+
 /**
  * Plugins cannot pass a focus ref, so start where a form dialog should: on the
  * first body control, else the first action, never on header Close. The title
@@ -28,10 +37,21 @@ function initialFocus(anchor: RefObject<HTMLSpanElement | null>) {
   return () => {
     const popup = anchor.current?.closest('[role="dialog"]');
     const first = (region: string) =>
-      popup?.querySelector(region)?.querySelector<HTMLElement>(tabbable);
+      [
+        ...(popup
+          ?.querySelector(region)
+          ?.querySelectorAll<HTMLElement>(tabbable) ?? []),
+      ].find(focusable);
     return first(".buzz-dialog-body") ?? first(".buzz-dialog-actions") ?? true;
   };
 }
+
+// Plain-JS plugins can pass anything; a value of the wrong type is treated as
+// absent, so every control falls back to the same default.
+const bool = (value: unknown) =>
+  typeof value === "boolean" ? value : undefined;
+const str = (value: unknown) => (typeof value === "string" ? value : undefined);
+const fn = <T,>(value: T) => (typeof value === "function" ? value : undefined);
 
 /** An unsupported value falls back to the default instead of an internal style. */
 function oneOf<T extends string>(
@@ -47,40 +67,52 @@ function oneOf<T extends string>(
  * every read would remount on every render. Keys are the public names.
  */
 export const pluginUi: PluginUi = Object.freeze({
-  Button: ({ children, onClick, ...props }: PluginButtonProps) => (
-    <Button
-      variant={
-        oneOf(props.variant, ["prominent", "subtle", "ghost", "destructive"]) ??
-        "subtle"
-      }
-      size={oneOf(props.size, ["sm", "md"]) ?? "md"}
-      loading={props.loading === true}
-      disabled={props.disabled === true}
-      type={oneOf(props.type, ["button", "submit", "reset"]) ?? "button"}
-      form={typeof props.form === "string" ? props.form : undefined}
-      onClick={onClick && (() => onClick())}
-      title={props.title}
-      aria-label={props["aria-label"]}
-    >
-      {children}
-    </Button>
-  ),
-  Input: ({ onValueChange, ...props }: PluginInputProps) => (
-    <Input
-      value={props.value}
-      defaultValue={props.defaultValue}
-      onValueChange={onValueChange && ((value) => onValueChange(value))}
-      type={oneOf(props.type, ["text", "email", "url", "password"])}
-      placeholder={props.placeholder}
-      name={props.name}
-      id={props.id}
-      disabled={props.disabled}
-      readOnly={props.readOnly}
-      required={props.required}
-      maxLength={props.maxLength}
-      aria-label={props["aria-label"]}
-    />
-  ),
+  Button: ({ children, ...props }: PluginButtonProps) => {
+    const onClick = fn(props.onClick);
+    return (
+      <Button
+        variant={
+          oneOf(props.variant, [
+            "prominent",
+            "subtle",
+            "ghost",
+            "destructive",
+          ]) ?? "subtle"
+        }
+        size={oneOf(props.size, ["sm", "md"]) ?? "md"}
+        loading={props.loading === true}
+        disabled={props.disabled === true}
+        type={oneOf(props.type, ["button", "submit", "reset"]) ?? "button"}
+        form={str(props.form)}
+        onClick={onClick && (() => onClick())}
+        title={str(props.title)}
+        aria-label={str(props["aria-label"])}
+      >
+        {children}
+      </Button>
+    );
+  },
+  Input: (props: PluginInputProps) => {
+    const onValueChange = fn(props.onValueChange);
+    return (
+      <Input
+        value={str(props.value)}
+        defaultValue={str(props.defaultValue)}
+        onValueChange={onValueChange && ((value) => onValueChange(value))}
+        type={oneOf(props.type, ["text", "email", "url", "password"])}
+        placeholder={str(props.placeholder)}
+        name={str(props.name)}
+        id={str(props.id)}
+        disabled={props.disabled === true}
+        readOnly={props.readOnly === true}
+        required={props.required === true}
+        maxLength={
+          Number.isInteger(props.maxLength) ? props.maxLength : undefined
+        }
+        aria-label={str(props["aria-label"])}
+      />
+    );
+  },
   Field: (props: PluginFieldProps) => (
     <Field
       label={props.label}
@@ -91,18 +123,19 @@ export const pluginUi: PluginUi = Object.freeze({
       {props.children}
     </Field>
   ),
-  Switch: ({ onCheckedChange, ...props }: PluginSwitchProps) => {
+  Switch: (props: PluginSwitchProps) => {
+    const onCheckedChange = fn(props.onCheckedChange);
     const shared = {
-      checked: props.checked,
-      defaultChecked: props.defaultChecked,
+      checked: bool(props.checked),
+      defaultChecked: bool(props.defaultChecked),
       onCheckedChange:
         onCheckedChange && ((checked: boolean) => onCheckedChange(checked)),
-      disabled: props.disabled,
-      name: props.name,
-      id: props.id,
+      disabled: props.disabled === true,
+      name: str(props.name),
+      id: str(props.id),
     };
     return props.label === undefined ? (
-      <Switch {...shared} aria-label={props["aria-label"] ?? ""} />
+      <Switch {...shared} aria-label={str(props["aria-label"]) ?? ""} />
     ) : (
       <Switch {...shared} label={props.label} />
     );
@@ -111,8 +144,8 @@ export const pluginUi: PluginUi = Object.freeze({
     const anchor = useRef<HTMLSpanElement>(null);
     return (
       <Dialog
-        open={props.open}
-        onOpenChange={props.onOpenChange}
+        open={props.open === true}
+        onOpenChange={(open) => fn(props.onOpenChange)?.(open)}
         title={<span ref={anchor}>{props.title}</span>}
         initialFocus={initialFocus(anchor)}
         description={props.description}

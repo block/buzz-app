@@ -88,6 +88,13 @@ it("lets a plugin build a form in a dialog from host controls", async () => {
             "Save",
           ),
         },
+        // Fields that cannot take focus come first; the dialog skips them.
+        h(
+          "fieldset",
+          { disabled: true },
+          h(loose.Input, { "aria-label": "Locked" }),
+        ),
+        h("div", { hidden: true }, h(loose.Input, { "aria-label": "Later" })),
         h(
           "form",
           { id: "profile", onSubmit: save },
@@ -149,4 +156,30 @@ it("lets a plugin build a form in a dialog from host controls", async () => {
   // No leftover portal, inert siblings or scroll lock.
   expect(document.body.innerHTML).toBe("<div></div>");
   await vi.waitFor(() => expect(document.body.style.overflowY).toBe(""));
+});
+
+it("treats plain-JS values of the wrong type as absent", async () => {
+  const loose = pluginUi as unknown as Record<
+    keyof PluginUi,
+    (props: Record<string, unknown>) => ReturnType<PluginUi["Button"]>
+  >;
+  const user = userEvent.setup();
+  render(
+    h(
+      "div",
+      null,
+      h(loose.Button, { disabled: 1, onClick: "x" }, "Go"),
+      h(loose.Input, { "aria-label": "Name", disabled: 1, maxLength: "4" }),
+      h(loose.Switch, { label: "Alerts", disabled: 1, checked: "yes" }),
+    ),
+  );
+  const go = screen.getByRole("button", { name: "Go" });
+  expect(go).toBeEnabled();
+  await user.click(go);
+  const name = screen.getByRole("textbox", { name: "Name" });
+  expect(name).toBeEnabled();
+  expect(name).not.toHaveAttribute("maxlength");
+  const alerts = screen.getByRole("switch", { name: "Alerts" });
+  expect(alerts).not.toHaveAttribute("aria-disabled");
+  expect(alerts).not.toBeChecked();
 });

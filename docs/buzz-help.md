@@ -410,9 +410,18 @@ and are asked to sign in again in Buzz.
   not change the copy. Forwarded attribution is supplied by the sender, not
   cryptographic proof. Mentions inside the copy retain their labels but do not
   notify again. The dialog’s optional note is plain text; its mentions do not notify.
+  **Copy as forward** is available in the Forward message dialog for DMs,
+  channels and Solo chats. Paste it into a message box or thread to attach a
+  removable preview; any note typed in the dialog comes along as editable text.
+  Files added alongside the preview belong to your message, outside the copied
+  card, and are not included when re-forwarding the original. Selected mentions in the composer
+  note notify normally. Only one forward can be attached. The preview is saved
+  with your draft; loading or inaccessible sources block Send until resolved or
+  removed. The current account must still be able to read the source.
+  Ordinary pasted links stay links; pasting outside Buzz provides quoted text.
   Messages exceeding the forwarding size limit, or containing a local file
   without sharable attachment metadata (including custom emoji), show an
-  explanation before sending. Forward is disabled; **Copy link** is available
+  explanation before sending. Forward and Copy as forward are disabled; **Copy link** is available
   in the dialog. A link still requires access to the original conversation.
 - Select text in a message, such as by double-clicking a word, and choose
   **Quote** (or press Q) to add it to the end of that conversation's draft as a

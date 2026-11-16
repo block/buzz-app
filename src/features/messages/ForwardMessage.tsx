@@ -1,4 +1,5 @@
 import { snapshotAttachments } from "../relay/forwarded-message";
+import { copyAsForward } from "./forward-clipboard";
 import { snapshotMessage } from "../relay/forwarded-message";
 import { writeClipboardText } from "../../shared/clipboard";
 import { LockIcon } from "../../shared/design-system/icons";
@@ -601,6 +602,26 @@ function ForwardMessageDialog({
         }
         actions={
           <>
+            <Button
+              disabled={pending || !forwardRow || !!forwardProblem}
+              onClick={() => {
+                if (!forwardRow) return;
+                void copyAsForward(session, forwardRow, authorName, note).then(
+                  () =>
+                    setNotice({
+                      text: "Copied. Paste it in any message box to forward it.",
+                      error: false,
+                    }),
+                  () =>
+                    setNotice({
+                      text: "Couldn't copy. Try again, or use Forward.",
+                      error: true,
+                    }),
+                );
+              }}
+            >
+              Copy as forward
+            </Button>
             {forwardProblem && (
               <Button onClick={() => void copyLink()}>Copy link</Button>
             )}

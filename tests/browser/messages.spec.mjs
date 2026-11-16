@@ -1109,10 +1109,13 @@ test("forwarded snapshots remain readable without their source and expand inline
   );
 });
 
-test("keeps the forward dialog compact and aligned", async ({ page }) => {
+test("copies a forward into a thread composer and keeps the dialog compact", async ({
+  page,
+}) => {
   await withMessagesFixture(
     page,
     async () => {
+      await page.evaluate(() => window.messagesFixture.forwardClipboard());
       const card = page
         .getByRole("group", { name: /Forwarded message from Original Author/ })
         .first();
@@ -1148,10 +1151,53 @@ test("keeps the forward dialog compact and aligned", async ({ page }) => {
         .boundingBox();
       const previewBox = await preview.boundingBox();
       expect(Math.abs(previewBox.width - noteBox.width)).toBeLessThan(1);
+      await dialog
+        .getByRole("textbox", { name: "Note (optional)" })
+        .fill("Please keep my review note");
+      await dialog
+        .getByRole("button", { name: "Copy as forward", exact: true })
+        .click();
       await expect(
-        dialog.getByRole("button", { name: "Copy as forward", exact: true }),
-      ).toHaveCount(0);
+        page.getByText("Copied. Paste it in any message box to forward it."),
+      ).toBeVisible();
       await dialog.getByRole("button", { name: "Cancel" }).click();
+      const form = page.getByRole("form", { name: "Reply to thread" });
+      const editor = form.getByRole("textbox");
+      await editor.evaluate((el) => {
+        const data = new DataTransfer();
+        data.setData("text/html", window.messagesFixture.copiedForward.html);
+        data.setData("text/plain", window.messagesFixture.copiedForward.text);
+        el.dispatchEvent(
+          new ClipboardEvent("paste", {
+            clipboardData: data,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await expect(
+        form.getByRole("button", { name: "Remove forwarded message" }),
+      ).toBeVisible();
+      await expect(
+        form.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled();
+      await expect(editor).toContainText("Please keep my review note");
+      for (const width of [1280, 480]) {
+        await page.setViewportSize({ width, height: 1000 });
+        const preview = form.getByRole("group", { name: /Forwarded message/ });
+        const box = await preview.boundingBox();
+        expect(box.width).toBeLessThanOrEqual(520);
+        expect(box.x + box.width).toBeLessThanOrEqual(width);
+      }
+      await form.getByRole("button", { name: "Send message" }).click();
+      await expect(
+        form.getByRole("button", { name: "Remove forwarded message" }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("group", {
+          name: /Forwarded message from Original Author/,
+        }),
+      ).toHaveCount(2);
     },
     "?forwarded&threadWindow",
   );

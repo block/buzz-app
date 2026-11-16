@@ -1,3 +1,5 @@
+import { pastedForward } from "./forward-clipboard";
+import { ComposerForward, useComposerForward } from "./ComposerForward";
 import { draftEditorId, traceDraft } from "../../shared/draft-diagnostics";
 import {
   soloModelPicksKey,
@@ -499,7 +501,8 @@ function untouchedDraft(draft: MentionDraft) {
     !draft.text &&
     !draft.recipients.length &&
     !draft.chatCards?.length &&
-    !draft.gifs?.length
+    !draft.gifs?.length &&
+    !draft.forward
   );
 }
 
@@ -736,6 +739,12 @@ function Composer({
     return caption;
   }, [value]);
   const draft = value.text;
+  const forwarded = useComposerForward(
+    session,
+    value.forward,
+    channelId,
+    draft,
+  );
   const recipientKey = JSON.stringify(
     value.recipients.map(({ pubkey, name }) => ({ pubkey, name })),
   );
@@ -1116,6 +1125,16 @@ function Composer({
         ...((next.chatCards ?? valueRef.current.chatCards)
           ? {
               chatCards: next.chatCards ?? valueRef.current.chatCards ?? [],
+            }
+          : {}),
+        ...((next.forward !== undefined
+          ? next.forward
+          : valueRef.current.forward) !== undefined
+          ? {
+              forward:
+                next.forward !== undefined
+                  ? next.forward
+                  : valueRef.current.forward,
             }
           : {}),
         ...((next.gifs ?? valueRef.current.gifs)
@@ -2618,7 +2637,7 @@ function Composer({
     return { recipients, references };
   }
   async function send() {
-    if (!permitted.current || voice.isCapturing()) return;
+    if (!permitted.current || voice.isCapturing() || forwarded.blocked) return;
     if (editing.target) {
       if (editDisabled || editing.locked) return;
       if ("saveDraft" in editing.target) {
@@ -2737,6 +2756,7 @@ function Composer({
     // Named conversations require text unless their owner explicitly permits files alone.
     if (
       !draft.trim() &&
+      !value.forward &&
       !chatCards?.length &&
       ((!!submission && !submission.allowAttachmentOnly) ||
         (!attachments.items.length && !gifs?.length))
@@ -2806,6 +2826,7 @@ function Composer({
       onCommand &&
       !captured.recipients.length &&
       !captured.pending?.length &&
+      !captured.forward &&
       !captured.chatCards?.length &&
       !captured.gifs?.length &&
       !capturedAttachments.length &&
@@ -3067,6 +3088,37 @@ function Composer({
         uploaded: readonly UploadedAttachment[],
         sender: ComposerSession,
       ) {
+        if (captured.forward) {
+          const main = fullSession(sender);
+          if (!main && sender.forwarding)
+            return sender.forwarding.send(
+              captured.forward,
+              content,
+              recipients,
+              uploaded,
+              references,
+              sentPicks,
+            );
+          if (!main || !forwarded.row || forwarded.blocked)
+            throw new Error(
+              "Couldn't load this message. Remove it or try pasting again.",
+            );
+          return main.messages.forward(
+            channelId,
+            forwarded.row,
+            forwarded.name,
+            content,
+            undefined,
+            {
+              ...(threadRootId ? { rootId: threadRootId } : {}),
+              ...(replyParentId ? { parentId: replyParentId } : {}),
+              mentions: recipients,
+              references,
+              attachments: uploaded,
+              picks: sentPicks,
+            },
+          );
+        }
         return threadRootId
           ? sender.messages.reply(
               channelId,
@@ -3121,6 +3173,7 @@ function Composer({
           return publishNow(uploaded, session);
         const message = {
           channelId,
+          ...(captured.forward ? { forward: captured.forward } : {}),
           text: content,
           recipients,
           attachments: uploaded,
@@ -3128,7 +3181,13 @@ function Composer({
           picks: sentPicks,
           ...(tokens.length ? { tokens } : {}),
         };
-        const send = followUpMessage(host, message);
+        const send = followUpMessage(
+          host,
+          message,
+          captured.forward && forwarded.row
+            ? { row: forwarded.row, name: forwarded.name }
+            : undefined,
+        );
         return followUpQueue(host).submit(
           {
             ...message,
@@ -3191,6 +3250,7 @@ function Composer({
                 return (
                   !draft.text.trim() &&
                   !draft.recipients.length &&
+                  !draft.forward &&
                   !composerMarkdown(draft).trim()
                 );
               } catch {
@@ -3205,6 +3265,8 @@ function Composer({
                   JSON.stringify(next.recipients) ||
                 JSON.stringify(valueRef.current.chatCards ?? []) !==
                   JSON.stringify(next.chatCards ?? []) ||
+                JSON.stringify(valueRef.current.forward) !==
+                  JSON.stringify(next.forward) ||
                 JSON.stringify(valueRef.current.gifs ?? []) !==
                   JSON.stringify(next.gifs ?? [])) &&
               JSON.stringify(valueRef.current) !== capturedRevision
@@ -3226,6 +3288,8 @@ function Composer({
                   JSON.stringify(next.recipients) &&
                 JSON.stringify(valueRef.current.chatCards ?? []) ===
                   JSON.stringify(next.chatCards ?? []) &&
+                JSON.stringify(valueRef.current.forward) ===
+                  JSON.stringify(next.forward) &&
                 JSON.stringify(valueRef.current.gifs ?? []) ===
                   JSON.stringify(next.gifs ?? [])
               )
@@ -3478,6 +3542,25 @@ function Composer({
           }
         }}
         onPasteCapture={(event) => {
+          const reference = pastedForward(event.clipboardData);
+          if (reference) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (editing.target || submission) {
+              setError("Finish this edit before pasting a forwarded message.");
+              return;
+            }
+            if (valueRef.current.forward) {
+              setError(
+                "Only one forwarded message can be attached. Remove it before pasting another.",
+              );
+              return;
+            }
+            const { note, ...source } = reference;
+            if (note && !insert(note)) return;
+            saveDraft({ ...valueRef.current, forward: source });
+            return;
+          }
           const files = pastedFiles(event.clipboardData);
           if (!files.length) return;
           event.preventDefault();
@@ -3584,6 +3667,17 @@ function Composer({
           )}
         </ComposerContext>
         <div className={styles.composerContent}>
+          {!editing.target && value.forward && (
+            <ComposerForward
+              session={host}
+              state={forwarded}
+              scope={scope}
+              onRemove={() => {
+                saveDraft({ ...valueRef.current, forward: null });
+                setError(undefined);
+              }}
+            />
+          )}
           {!editing.target && (
             <ComposerAttachments
               media={session.media}
@@ -3766,6 +3860,7 @@ function Composer({
                     automaticTag.current ===
                       JSON.stringify(valueRef.current)) &&
                   !valueRef.current.chatCards?.length &&
+                  !valueRef.current.forward &&
                   !valueRef.current.gifs?.length &&
                   !attachments.items.length
                 ) {
@@ -3927,6 +4022,7 @@ function Composer({
             <IconButton
               variant={
                 draft.trim() ||
+                value.forward ||
                 chatCards?.length ||
                 gifs?.length ||
                 attachments.items.length
@@ -3961,8 +4057,10 @@ function Composer({
                 admitting ||
                 sending ||
                 submission?.disabled ||
+                (!editing.target && forwarded.blocked) ||
                 (!editing.target && attachments.blocked) ||
                 (!draft.trim() &&
+                  !value.forward &&
                   !chatCards?.length &&
                   ((!!submission && !submission.allowAttachmentOnly) ||
                     (!attachments.items.length && !gifs?.length)) &&

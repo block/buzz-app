@@ -2174,3 +2174,53 @@ it("holds automatic release while editing, then sends the saved text", async () 
   await vi.waitFor(() => expect(h.send).toHaveBeenCalledOnce());
   expect(h.send.mock.calls[0]?.[1]).toBe("Saved before release");
 });
+
+it("persists a queued forward locator and publishes its snapshot with recovery", () => {
+  const h = fixture();
+  const reference = {
+    version: 1 as const,
+    origin: "https://relay.example",
+    channelId: "source",
+    id: "c".repeat(64),
+  };
+  const saved = {
+    ...message,
+    forward: reference,
+    id: "queued-forward",
+    createdAt: 1,
+  };
+  followUpStorage(scope).save(saved);
+  expect(followUpStorage(scope).load()[0]?.forward).toEqual(reference);
+  const forward = vi
+    .spyOn(h.session.messages, "forward")
+    .mockReturnValue("forward-id");
+  const row = {
+    id: reference.id,
+    channelId: "source",
+    authorId: viewer,
+    createdAt: 1,
+    content: "Source",
+    mentions: [],
+    participants: [],
+    attachments: [],
+    reactions: [],
+    replyCount: 0,
+  };
+  const entry = followUpMessage(h.session, saved, { row, name: "Author" });
+  const recovery = followUpRecovery(saved.id);
+  expect(entry.publish(recovery)).toBe("forward-id");
+  expect(forward).toHaveBeenCalledWith(
+    "chat",
+    row,
+    "Author",
+    message.text,
+    recovery,
+    {
+      mentions: message.recipients,
+      attachments: [],
+      references: [],
+      picks: message.picks,
+    },
+  );
+  expect(h.send).not.toHaveBeenCalled();
+});

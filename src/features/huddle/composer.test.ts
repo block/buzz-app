@@ -747,3 +747,75 @@ it("carries the owner's profile purge generation so the companion rereads shown 
   await remote.profiles.ensure(["cd".repeat(32)], "background");
   await vi.waitFor(() => expect(ensure).toHaveBeenCalledTimes(2));
 });
+
+it("resolves and rechecks a detached forward in the owning session, never accepting clipboard content", async () => {
+  const h = harness();
+  const reference = {
+    version: 1 as const,
+    origin: "https://example.test",
+    channelId: "source",
+    id: "c".repeat(64),
+  };
+  let content = "Authorized source";
+  const row = () => ({
+    id: reference.id,
+    channelId: "source",
+    authorId: h.session.viewer,
+    createdAt: 1,
+    content,
+    mentions: [],
+    participants: [],
+    attachments: [],
+    reactions: [],
+    replyCount: 0,
+  });
+  const dispose = vi.fn();
+  vi.spyOn(h.session, "thread").mockImplementation(
+    () =>
+      ({
+        snapshot: () => ({
+          status: "ready",
+          targetStatus: "ready",
+          target: row(),
+          replies: [],
+          canLoadMore: false,
+        }),
+        subscribe: () => () => {},
+        refresh: async () => {},
+        dispose,
+      }) as unknown as ReturnType<typeof h.session.thread>,
+  );
+  vi.spyOn(h.session.messages, "forwardProblem").mockReturnValue(undefined);
+  const forward = vi
+    .spyOn(h.session.messages, "forward")
+    .mockReturnValue("forwarded-id");
+  const { remote } = await h.connect();
+  expect(
+    (await remote.forwarding?.resolve(reference, new AbortController().signal))
+      ?.row.content,
+  ).toBe("Authorized source");
+  content = "Current authorized source";
+  expect(await remote.forwarding?.send(reference, "Note", [], [], [], {})).toBe(
+    "forwarded-id",
+  );
+  expect(forward).toHaveBeenCalledWith(
+    "room",
+    expect.objectContaining({ content }),
+    expect.any(String),
+    "Note",
+    undefined,
+    { mentions: [], attachments: [], references: [], picks: {} },
+  );
+  expect(dispose).toHaveBeenCalledTimes(2);
+  await expect(
+    remote.forwarding?.resolve(
+      { ...reference, origin: "https://other.example" },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow(/another community/);
+  h.revoke();
+  await expect(
+    remote.forwarding?.send(reference, "", [], [], [], {}),
+  ).rejects.toThrow();
+  expect(forward).toHaveBeenCalledOnce();
+});

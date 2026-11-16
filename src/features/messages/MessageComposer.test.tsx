@@ -1892,6 +1892,7 @@ function attachByDrop(target: HTMLElement, file = attachmentFile()) {
 async function mountUploadComposer(
   options: {
     threadRootId?: string;
+    sourceMessages?: boolean;
     replyParentId?: string;
     onSend?: MessageComposerProps["onSend"];
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
@@ -1943,6 +1944,15 @@ async function mountUploadComposer(
         return result.promise;
       },
       async query(filters) {
+        if (
+          options.sourceMessages &&
+          filters.some((filter) => filter.ids?.length)
+        )
+          return publish.mock.calls
+            .map(([event]) => event)
+            .filter((event) =>
+              filters.some((filter) => filter.ids?.includes(event.id)),
+            );
         if (filters.some((filter) => filter.kinds?.includes(0)))
           return [...(options.profiles ?? [])];
         if (
@@ -17166,4 +17176,90 @@ it("shows an annotator's marks in the composer and retires them with the destina
   await waitFor(() =>
     expect(h.input().querySelector('[aria-invalid="spelling"]')).toBeNull(),
   );
+});
+
+it.each([false, true])(
+  "pastes a source locator, preserves the card while typing, and forwards through normal send (thread=%s)",
+  async (thread) => {
+    const root = "b".repeat(64);
+    const h = await mountUploadComposer(
+      thread
+        ? { threadRootId: root, sourceMessages: true }
+        : { sourceMessages: true },
+    );
+    const id = h.owner.session.messages.send("channel", "Original **message**");
+    await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+    const { forwardClipboard } = await import("./forward-clipboard");
+    const { readForward } = await import("../relay/forwarded-message");
+    const payload = forwardClipboard(
+      {
+        version: 1,
+        origin: "https://relay.example.test",
+        channelId: "channel",
+        id,
+      },
+      "Untrusted clipboard text",
+    );
+    const paste = () =>
+      fireEvent.paste(h.input(), {
+        clipboardData: {
+          getData: (type: string) =>
+            type === "text/html" ? payload.html : payload.text,
+          items: [],
+        },
+      });
+    paste();
+    await screen.findByRole("button", { name: "Remove forwarded message" });
+    await waitFor(() => expect(h.send()).toBeEnabled());
+    expect(
+      screen.queryByText("Untrusted clipboard text"),
+    ).not.toBeInTheDocument();
+    fireEvent.change(h.input(), { target: { value: "My note" } });
+    paste();
+    expect(
+      await screen.findByText(/Only one forwarded message can be attached/),
+    ).toBeVisible();
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
+    const event = h.publish.mock.calls[1]?.[0];
+    expect(event && readForward(event)?.snapshot.content).toBe(
+      "Original **message**",
+    );
+    expect(event && readForward(event)?.note).toBe("My note");
+    if (thread) expect(event?.tags).toContainEqual(["e", root, "", "reply"]);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Remove forwarded message" }),
+      ).not.toBeInTheDocument(),
+    );
+  },
+);
+it("keeps the note and disables Send for an inaccessible pasted forward until removed", async () => {
+  const h = await mountUploadComposer();
+  fireEvent.change(h.input(), { target: { value: "Keep this note" } });
+  const { forwardClipboard } = await import("./forward-clipboard");
+  const payload = forwardClipboard(
+    {
+      version: 1,
+      origin: "https://another.example",
+      channelId: "private",
+      id: "c".repeat(64),
+    },
+    "fake text",
+  );
+  fireEvent.paste(h.input(), {
+    clipboardData: {
+      getData: (type: string) =>
+        type === "text/html" ? payload.html : payload.text,
+      items: [],
+    },
+  });
+  expect(await screen.findByText(/belongs to another community/)).toBeVisible();
+  expect(h.send()).toBeDisabled();
+  expect(h.input()).toHaveValue("Keep this note");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Remove forwarded message" }),
+  );
+  expect(h.send()).toBeEnabled();
+  expect(h.input()).toHaveValue("Keep this note");
 });

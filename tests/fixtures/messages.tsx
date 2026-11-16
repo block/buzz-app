@@ -473,6 +473,28 @@ Object.assign(window, {
     extensionsActive() {
       return extensions.inline.snapshot().map((entry) => entry.id);
     },
+    copiedForward: { text: "", html: "" },
+    forwardClipboard() {
+      class FixtureClipboardItem {
+        constructor(readonly items: Record<string, Blob>) {}
+      }
+      Object.defineProperty(window, "ClipboardItem", {
+        configurable: true,
+        value: FixtureClipboardItem,
+      });
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          write: async (items: FixtureClipboardItem[]) => {
+            const item = items[0];
+            window.messagesFixture.copiedForward = {
+              text: await item.items["text/plain"].text(),
+              html: await item.items["text/html"].text(),
+            };
+          },
+        },
+      });
+    },
     imageClipboard(outcome: "success" | "failure", mode?: "deferred") {
       const clipboardGate = createClipboardGate();
       window.messagesFixture.clipboardGate = clipboardGate;

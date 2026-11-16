@@ -312,6 +312,7 @@ it("links scheme-less hosts under common web TLDs, ending them like bare URLs", 
   for (const [content, ...links] of [
     ["check example.com", "example.com"],
     ["see builderlab.xyz.", "builderlab.xyz"],
+    ["try GitHub.com", "GitHub.com"],
     ["(docs.github.com/en/rest?x=1#top)", "docs.github.com/en/rest?x=1#top"],
     ["a.co.uk:8443/path, then", "a.co.uk:8443/path"],
     ["看 example.com/a，foo.io。", "example.com/a", "foo.io"],
@@ -331,6 +332,7 @@ it("leaves file names, emails, paths and partial hosts as plain text", () => {
     "mail me@example.com",
     "open src/example.com or #example.com",
     "example.comfoo and example.com.zz",
+    "built on ASP.NET and VB.NET, see Example.COM",
     "localhost:3000",
   ]) {
     const parts = bareHostParts(content);

@@ -145,9 +145,10 @@ export function messageLinkParts(
 }
 
 // Only common web TLDs: file names end in country codes too (main.rs, app.py,
-// notes.md, run.sh), and so do words after a missing space (it, no, me).
+// notes.md, run.sh), and so do words after a missing space (it, no, me). The
+// TLD must be lowercase, so names like ASP.NET stay text.
 const bareHost =
-  /(?<![\p{L}\p{N}_@.\-/:#\\])(?:[a-z\d](?:[a-z\d-]*[a-z\d])?\.)+(?:com|org|net|edu|gov|io|ai|app|dev|xyz|co|gg|tv|info|biz|uk|ca|de|fr|jp|au|nl|eu|ch|se|nz|ie|es|br|kr|cn)(?![\p{L}\p{N}_-]|\.[\p{L}\p{N}])(?:[:/?#]\S*)?/giu;
+  /(?<![\p{L}\p{N}_@.\-/:#\\])(?:[a-zA-Z\d](?:[a-zA-Z\d-]*[a-zA-Z\d])?\.)+(?:com|org|net|edu|gov|io|ai|app|dev|xyz|co|gg|tv|info|biz|uk|ca|de|fr|jp|au|nl|eu|ch|se|nz|ie|es|br|kr|cn)(?![\p{L}\p{N}_-]|\.[\p{L}\p{N}])(?:[:/?#]\S*)?/gu;
 
 /** Display-only links for scheme-less hosts in prose, such as `example.com/a`.
  * The destination is HTTPS; the label stays the authored text. */

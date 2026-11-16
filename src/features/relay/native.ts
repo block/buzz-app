@@ -651,6 +651,9 @@ export async function connectNativeTransport(
                     : undefined,
             }
           : {}),
+      }).catch((error: unknown) => {
+        // The command rejects with its refusal's words; callers expect an Error.
+        throw typeof error === "string" ? new Error(error) : error;
       });
       signal.throwIfAborted();
       if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(id))

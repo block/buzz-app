@@ -16,6 +16,8 @@ import type { AccountActionsService } from "../../features/account-actions/servi
 import type { Communities } from "../../features/communities/service";
 import { APPEARANCE_KEY, createAppearance } from "../../shared/theme/service";
 import { ProfileButton } from "./ProfileButton";
+import * as communityApi from "../../features/communities/api";
+import { resetSharedTimeZones } from "../../features/profiles/share-time-zone";
 
 const testAppearance = createAppearance(window);
 
@@ -845,6 +847,19 @@ it("refreshes the viewer through the real session after roster setup, not a stal
   owner.session.channels.ensureList();
   const initialRoster = wire.next();
   const read = vi.fn(owner.session.read);
+  resetSharedTimeZones();
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockResolvedValue(undefined);
+  // The strong read just before sharing sees a newer description.
+  const strong = {
+    exists: true,
+    existing: { name: "Current community name", about: "Newer" },
+    profile: { name: "Current community name", picture: "", about: "Newer" },
+  };
+  const inspect = vi
+    .spyOn(communityApi, "inspectProfile")
+    .mockResolvedValue(strong);
   const connection = {
     viewer: viewer.pubkey,
     status: "ready",
@@ -931,90 +946,123 @@ it("refreshes the viewer through the real session after roster setup, not a stal
       await screen.findByRole("menu", { name: "Current community name" }),
     ).toBeVisible();
     expect(snapshot.profile.name).toBe("Local only");
+    // That fresh read shows no `tz`, so this device's zone is shared once,
+    // into what a strong read of the same session holds just before.
+    await waitFor(() =>
+      expect(publish).toHaveBeenCalledWith(
+        "https://community.test",
+        strong.profile,
+        {
+          ...strong.existing,
+          tz: new Intl.DateTimeFormat().resolvedOptions().timeZone,
+        },
+      ),
+    );
+    expect(inspect).toHaveBeenCalledExactlyOnceWith(
+      "https://community.test",
+      connection.session,
+    );
     // Unrelated live notifications do not start extra reads.
     act(() => live.state({ status: "connected", routes: [] }));
     expect(read).toHaveBeenCalledTimes(1);
   } finally {
+    publish.mockRestore();
+    inspect.mockRestore();
     view.unmount();
     owner.dispose();
   }
 });
 
-it("opens a contributed account action and removes it when its registration retires", async () => {
-  const user = userEvent.setup();
-  const profile = { profile: { name: "Fixture", picture: "" }, viewer: null };
-  const presence = { status: "online", preference: "auto", error: null };
-  const subscribe = () => () => {};
-  const connection = { status: "unavailable", session: undefined, scope: "" };
-  const communities = {
-    subscribe,
-    snapshot: () => profile,
-    presence: { subscribe, snapshot: () => presence },
-    relay: { subscribe, snapshot: () => connection },
-  } as unknown as Communities;
-  function Action({
-    open,
-    onOpenChange,
-  }: {
-    open: boolean;
-    onOpenChange(open: boolean): void;
-  }) {
-    return open ? (
-      <div role="dialog" aria-label="Feedback">
-        <button type="button" onClick={() => onOpenChange(false)}>
-          Dismiss feedback
-        </button>
-      </div>
-    ) : null;
-  }
-  const entry = {
-    key: "buzz.feedback/send",
-    pluginId: "buzz.feedback",
-    title: "Send feedback",
-    component: Action,
-  };
-  let actions = [entry];
-  const listeners = new Set<() => void>();
-  const accountActions = {
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    snapshot: () => actions,
-  } as unknown as AccountActionsService;
-  render(
-    <ProfileButton
-      communities={communities}
-      accountActions={accountActions}
-      appearance={testAppearance}
-      settingsSelected={false}
-      onSettings={() => {}}
-    />,
-  );
-  await user.click(screen.getByRole("button", { name: "Your profile" }));
-  const menu = await screen.findByRole("menu", { name: "Fixture" });
-  expect(within(menu).getAllByRole("separator")).toHaveLength(2);
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Send feedback" }),
-  );
-  expect(screen.getByRole("dialog", { name: "Feedback" })).toBeInTheDocument();
-  await act(async () => {
-    actions = [];
-    for (const listener of listeners) listener();
-  });
-  expect(
-    screen.queryByRole("dialog", { name: "Feedback" }),
-  ).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Your profile" }));
-  expect(
-    screen.queryByRole("menuitem", { name: "Send feedback" }),
-  ).not.toBeInTheDocument();
-  expect(
-    within(await screen.findByRole("menu", { name: "Fixture" })).getAllByRole(
-      "separator",
-    ),
-  ).toHaveLength(1);
-});
+it.each(["default", "before-settings"] as const)(
+  "opens a contributed %s action in host menu order and removes retired registrations",
+  async (placement) => {
+    const user = userEvent.setup();
+    const profile = { profile: { name: "Fixture", picture: "" }, viewer: null };
+    const presence = { status: "online", preference: "auto", error: null };
+    const subscribe = () => () => {};
+    const connection = { status: "unavailable", session: undefined, scope: "" };
+    const communities = {
+      subscribe,
+      snapshot: () => profile,
+      presence: { subscribe, snapshot: () => presence },
+      relay: { subscribe, snapshot: () => connection },
+    } as unknown as Communities;
+    function Action({
+      open,
+      onOpenChange,
+    }: {
+      open: boolean;
+      onOpenChange(open: boolean): void;
+    }) {
+      return open ? (
+        <div role="dialog" aria-label="Feedback">
+          <button type="button" onClick={() => onOpenChange(false)}>
+            Dismiss feedback
+          </button>
+        </div>
+      ) : null;
+    }
+    const entry = {
+      placement,
+      key: "buzz.feedback/send",
+      pluginId: "buzz.feedback",
+      title: "Send feedback",
+      component: Action,
+    };
+    let actions = [entry];
+    const listeners = new Set<() => void>();
+    const accountActions = {
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      snapshot: () => actions,
+    } as unknown as AccountActionsService;
+    render(
+      <ProfileButton
+        communities={communities}
+        accountActions={accountActions}
+        appearance={testAppearance}
+        settingsSelected={false}
+        onSettings={() => {}}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Your profile" }));
+    const menu = await screen.findByRole("menu", { name: "Fixture" });
+    expect(within(menu).getAllByRole("separator")).toHaveLength(
+      placement === "default" ? 2 : 1,
+    );
+    const items = within(menu).getAllByRole("menuitem");
+    const feedback = await screen.findByRole("menuitem", {
+      name: "Send feedback",
+    });
+    const settings = within(menu).getByRole("menuitem", { name: "Settings" });
+    expect(items.indexOf(feedback) - items.indexOf(settings)).toBe(
+      placement === "default" ? 1 : -1,
+    );
+    feedback.focus();
+    await user.keyboard("{Enter}");
+    expect(
+      screen.getByRole("dialog", { name: "Feedback" }),
+    ).toBeInTheDocument();
+    await act(async () => {
+      actions = [];
+      for (const listener of listeners) listener();
+    });
+    expect(
+      screen.queryByRole("dialog", { name: "Feedback" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Your profile" }));
+    expect(
+      screen.queryByRole("menuitem", { name: "Send feedback" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(await screen.findByRole("menu", { name: "Fixture" })).getAllByRole(
+        "separator",
+      ),
+    ).toHaveLength(1);
+  },
+);
 
 async function statusFeedbackFixture(disconnected = false) {
   const listeners = new Set<() => void>();

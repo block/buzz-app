@@ -209,6 +209,9 @@ it("keeps the existing local migration flow available", async () => {
     await screen.findByRole("dialog", { name: "Move Ada to Next?" }),
   ).toBeVisible();
   expect(previewRetype).toHaveBeenCalledWith("a".repeat(64), "local/next");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus(),
+  );
   await user.click(screen.getByRole("button", { name: "Continue" }));
   expect(screen.getByLabelText("Selected harness")).toHaveTextContent(
     "local/next",

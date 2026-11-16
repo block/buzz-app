@@ -7,7 +7,7 @@ import {
   resolveConfig,
 } from "vite";
 import { constants } from "node:fs";
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,6 +71,7 @@ function fixturePlugin(plugins) {
       // server and binds it to the number Vite probed for the first one.
       if (server.httpServer && server.config.server.port === 0)
         bindAssignedPort(server.httpServer);
+      if (server.httpServer) keepIdleConnections(server.httpServer);
       const after = [];
       for (const plugin of plugins) {
         const result = await plugin.configureServer?.(server);
@@ -118,6 +119,15 @@ function bindAssignedPort(httpServer) {
   httpServer.listen = (_port, ...args) => listen.call(httpServer, 0, ...args);
 }
 
+// Node closes a keep-alive connection once it has idled for its 5 s default
+// keepAliveTimeout. A browser may reuse the connection in that same instant (WebKit on Linux did, after a few seconds
+// between a page's resources and its first lazy import), so its request dies
+// with the socket, and nothing retries a module script. Fixture servers leave
+// idle connections open; closing the server destroys them.
+function keepIdleConnections(httpServer) {
+  httpServer.keepAliveTimeout = 0;
+}
+
 export const build = (config) => keepNodeEnv(() => viteBuild(config));
 export const preview = (config) =>
   keepNodeEnv(() =>
@@ -130,11 +140,55 @@ export const preview = (config) =>
           configurePreviewServer(server) {
             if (server.config.preview.port === 0)
               bindAssignedPort(server.httpServer);
+            keepIdleConnections(server.httpServer);
           },
         },
       ],
     }),
   );
+
+// A dev server transforms a page's modules on first request, so a worker's
+// first navigation to a large fixture can outlast the navigation timeout on a
+// busy runner. This builds the repository-relative pages once and serves the
+// bundle. Development React, as a dev server serves, keeps StrictMode's checks.
+// close() stops the server and removes the build.
+export async function previewFixtures(pages) {
+  const directory = await mkdtemp(join(tmpdir(), "buzz-fixture-preview-"));
+  try {
+    const config = {
+      root,
+      configFile: false,
+      envDir: false,
+      logLevel: "error",
+      plugins: [react()],
+      define: {
+        "import.meta.env.DEV": "true",
+        "process.env.NODE_ENV": '"development"',
+      },
+      build: {
+        rollupOptions: { input: pages.map((page) => join(root, page)) },
+        outDir: join(directory, "dist"),
+        emptyOutDir: true,
+        target: "esnext",
+      },
+    };
+    await build(config);
+    const server = await preview({
+      ...config,
+      preview: { host: "127.0.0.1", port: 0, strictPort: true },
+    });
+    return {
+      origin: `http://127.0.0.1:${server.httpServer.address().port}`,
+      async close() {
+        await new Promise((resolve) => server.httpServer.close(resolve));
+        await rm(directory, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
 
 // Run once per test run, before any test: it scans and bundles the fixture
 // dependencies so no server does that work inside a navigation budget.
@@ -165,6 +219,45 @@ export async function prepareFixtureDependencies() {
 
 // Playwright's globalSetup.
 export default prepareFixtureDependencies;
+
+// A module script's `src`, with `type="module"` before or after it.
+const moduleScript = /<script\b(?=[^>]*\btype="module")[^>]*\bsrc="([^"]+)"/g;
+
+// A fixture page that reaches the whole app has over a thousand modules to
+// transform on its first load. Transform the static import graph of each entry
+// before navigating, as prepareFixtureDependencies does for dependencies, so no
+// server does that work inside a navigation budget. An entry is a module URL or
+// an HTML page, whose module scripts are its entries. The walk awaits every
+// module itself: Vite's waitForRequestsIdle settles once per server, after its
+// first crawl, so it cannot show that a later warm-up has finished.
+export async function warmUp(server, ...entries) {
+  const environment = server.environments.client;
+  const seen = new Set();
+  const visit = async (url) => {
+    if (seen.has(url)) return;
+    seen.add(url);
+    await environment.warmupRequest(url);
+    const module = await environment.moduleGraph.getModuleByUrl(url);
+    await Promise.all([...(module?.staticImportedUrls ?? [])].map(visit));
+  };
+  await Promise.all(
+    entries.flat().map(async (entry) => {
+      if (!entry.endsWith(".html")) return visit(entry);
+      const html = await readFile(join(server.config.root, entry), "utf8");
+      const sources = Array.from(html.matchAll(moduleScript), ([, src]) => src);
+      // A page warmed through nothing would load cold again, and silently.
+      if (!sources.length)
+        throw new Error(
+          `${entry} has no <script type="module" src> to warm up`,
+        );
+      await Promise.all(
+        sources.map((src) =>
+          visit(new URL(src, `http://fixture${entry}`).pathname),
+        ),
+      );
+    }),
+  );
+}
 
 // Parallel fixture servers must not invalidate each other's optimized imports,
 // so each one gets its own copy of the prepared cache.

@@ -43,10 +43,14 @@ export type SetupSnapshot = Readonly<
   | {
       status: "failed";
       error: string;
-      /** The error says Try again can help, as a retryable `BackupError` does. */
+      /** Try again can help: false when the error says another attempt gets
+       * the same answer (`retryable: false`), as an ended sign-in, a refusal
+       * or a non-retryable `BackupError` does. */
       retryable: boolean;
       /** Continuing past the failure skips the link, so the key stays unlinked. */
       skipsLink: boolean;
+      /** Builderlab refused the link for good, so Try again cannot help. */
+      bound: boolean;
       unsupportedBackup?: boolean;
     }
   | { status: "done" }
@@ -56,6 +60,18 @@ export type Resting = Extract<
   SetupSnapshot,
   { status: "idle" | "paused" | "done" }
 >;
+
+/**
+ * Builderlab's refusal of a link because the key is another account's, or the
+ * account holds another key: asking again gets the same answer.
+ */
+export function boundElsewhere(error: unknown) {
+  if (!(error instanceof Error) || !("code" in error)) return false;
+  return (
+    error.code === "pubkey_already_bound" ||
+    error.code === "identity_already_bound"
+  );
+}
 
 /** The key now on this device, which the account steps act on. */
 function viewer(identity: Identity) {
@@ -83,29 +99,94 @@ function saved(identity: Identity) {
 function vacant(identity: Identity) {
   if (identity.snapshot().status === "ready")
     throw new Error(
-      "This Mac already has a different Buzz key. Sign out of Buzz on this Mac first, or use a different account.",
+      "This computer already has a different Buzz key. Sign out of Buzz on this computer first, or use a different account.",
     );
+}
+
+/**
+ * Set while a first run links old Buzz's key and has not saved it yet, so only
+ * a run that stopped in between (a failed save, or Buzz quit) brings up the OS
+ * prompt for old Buzz's storage after a later sign-in.
+ */
+const LEGACY_LINK = "buzz.legacy-link-pending.v1";
+
+function noteLegacyLink(pending: boolean) {
+  try {
+    if (pending) localStorage.setItem(LEGACY_LINK, "1");
+    else localStorage.removeItem(LEGACY_LINK);
+  } catch {
+    // Storage refused: a later sign-in won't recover an unsaved link by itself.
+  }
+}
+
+function legacyLinkPending(): boolean {
+  try {
+    return localStorage.getItem(LEGACY_LINK) === "1";
+  } catch {
+    return false;
+  }
 }
 
 /**
  * The key for an account that has none: old Buzz's, when it was used on this
  * device, so someone who used Buzz before stays the same person; otherwise a
- * new one. Reading old Buzz's secure storage may bring up an OS prompt, and if
- * it can't be read a new key is made rather than stopping setup.
+ * new one. Old Buzz's key is linked first and saved only once the account
+ * holds it, so a key kgoose refuses as another account's never lands here:
+ * then, as when it can't be read, a new key is made rather than stopping
+ * setup. Reading old Buzz's secure storage may bring up an OS prompt.
  */
-export function keyForAccount(identity: Identity): SetupStep {
+export function keyForAccount(
+  identity: Identity,
+  account: FirstRunAccount,
+): SetupStep {
   return {
     label: "Preparing your identity…",
     run: async () => {
       vacant(identity);
       if (await identity.legacyAvailable().catch(() => false)) {
-        await identity.importLegacy();
-        if (identity.snapshot().status === "ready") return;
+        // A failure from here may leave old Buzz's key linked, so the note
+        // stays until the key is saved or was never linked.
+        noteLegacyLink(true);
+        const linked = await account.bindLegacy();
+        if (linked) {
+          // Pinned: native saves only the key the account now holds.
+          await identity.importLegacy(linked);
+          // A refused save reports its own reason, such as a denied read.
+          saved(identity);
+          if (viewer(identity) !== linked)
+            throw new Error("Your key could not be saved on this device.");
+          noteLegacyLink(false);
+          return;
+        }
+        noteLegacyLink(false);
       }
       await identity.create();
       saved(identity);
     },
   };
+}
+
+/**
+ * Saves old Buzz's key when it is `linked`, the key the account holds but this
+ * device lacks: a first run that linked it and stopped before saving it (a
+ * failed save, or Buzz quit in between) leaves exactly that. Only after such a
+ * run, so no other sign-in brings up the OS prompt for old Buzz's storage.
+ * Another key, no old Buzz, or a refused read saves nothing, and the account's
+ * pages follow.
+ */
+export async function adoptLinkedLegacy(
+  identity: Identity,
+  linked: string,
+): Promise<boolean> {
+  if (!legacyLinkPending()) return false;
+  if (identity.snapshot().status !== "missing") return false;
+  if (!(await identity.legacyAvailable().catch(() => false))) return false;
+  await identity.importLegacy(linked);
+  const here = identity.snapshot();
+  const adopted = here.status === "ready" && here.viewer === linked;
+  // Old Buzz's key is not this account's: that run linked nothing it holds.
+  if (adopted || here.status === "missing") noteLegacyLink(false);
+  return adopted;
 }
 
 /** Creates a key on this device, which the account steps then act on. */
@@ -324,18 +405,20 @@ export function restoreCommunities(
  * Welcome back offers a restore and an import still needs backup.
  * Reported as `undefined` where backup status is unavailable (most Builderlab
  * deployments today) or failed, never as a failed setup: the pages work without it, and
- * no copy implies the user lost a backup.
+ * no copy implies the user lost a backup. A failed lookup also reports
+ * `failed`: a backup may still exist, so Welcome back still offers the restore,
+ * whose own page says when none holds the key.
  */
 export function checkBackup(
   account: FirstRunAccount,
-  onListed: (pubkeys: readonly string[] | undefined) => void,
+  onListed: (pubkeys: readonly string[] | undefined, failed?: true) => void,
 ): SetupStep {
   return {
     label: "Checking for a backed-up key…",
     run: () =>
       account.backupStatus().then(
         (listed) => onListed(listed === "unavailable" ? undefined : listed),
-        () => onListed(undefined),
+        () => onListed(undefined, true),
       ),
   };
 }
@@ -378,11 +461,13 @@ export function createSetup() {
           status: "failed",
           error:
             error instanceof Error ? error.message : "Setup failed. Try again.",
-          retryable:
+          retryable: !(
             error instanceof Error &&
             "retryable" in error &&
-            error.retryable === true,
+            error.retryable === false
+          ),
           skipsLink: left.some((step) => step.links === true),
+          bound: boundElsewhere(error),
           ...(step.backup &&
           !left.some((step) => step.links) &&
           error instanceof BackupError &&

@@ -26,12 +26,13 @@ function run(...args) {
   return spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
 }
 
-const endpoint =
-  "https://github.com/block/buzz-app/releases/download/preview-feed/latest.json";
+const feedUrl = (feed) =>
+  `https://github.com/block/buzz-app/releases/download/${feed}/latest.json`;
+const endpoint = feedUrl("preview-feed");
 const publicKeyBase64 =
   "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJDQjQ2RDZFMUEwOERFMTEKUldRUjNnZ2FibTIwTE10QkVaMzFyYkZlY0R4ajhmbFBjdncvNVRCYnNpSm9kaFNBaHQzemZlZHkK";
 // Inject a disposable public key into a copy of the promotion script, never into production.
-function fixture(dir, version = "0.0.0-preview.22.1") {
+function fixture(dir, version = "0.0.0-preview.22", embedded = endpoint) {
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const keyId = Buffer.from("12345678");
   const keyRecord = Buffer.concat([
@@ -83,7 +84,7 @@ function fixture(dir, version = "0.0.0-preview.22.1") {
     writeFileSync(installer, `fixture bytes: ${installer}`);
     signFile(installer);
   }
-  writeFileSync(binary, `compiled: ${endpoint} ${encodedKey}`);
+  writeFileSync(binary, `compiled: ${embedded} ${encodedKey}`);
   const sign = (...options) => signFile(archive, ...options);
   const args = (action, current) => [
     localScript,
@@ -120,18 +121,18 @@ test("preview candidate requires verified archive and updater-enabled binary wit
   assert.equal(data.platforms["darwin-aarch64"].signature, validSignature);
   assert.equal(
     data.platforms["darwin-aarch64"].url,
-    "https://github.com/block/buzz-app/releases/download/v0.0.0-preview.22.1/Buzz_0.0.0-preview.22.1_aarch64.app.tar.gz",
+    "https://github.com/block/buzz-app/releases/download/v0.0.0-preview.22/Buzz_0.0.0-preview.22_aarch64.app.tar.gz",
   );
   assert.equal(execute("verify").status, 0);
   const older = join(dir, "older.json");
   writeFileSync(
     older,
-    JSON.stringify({ ...data, version: "0.0.0-preview.23.1" }),
+    JSON.stringify({ ...data, version: "0.0.0-preview.23" }),
   );
   assert.match(execute("verify", older).stderr, /rollback/);
   writeFileSync(
     older,
-    JSON.stringify({ ...data, version: "0.0.0-preview.22.1" }),
+    JSON.stringify({ ...data, version: "0.0.0-preview.22" }),
   );
   assert.match(execute("verify", older).stderr, /differs/);
   data.platforms["darwin-aarch64"].url = "https://example.com/wrong";
@@ -149,7 +150,7 @@ test("preview candidate requires verified archive and updater-enabled binary wit
   assert.match(execute("verify").stderr, /Archive signature invalid/);
   // A signed archive can be replayed under another advertised version until
   // the signer and updater both enforce version binding in 2.12.x.
-  sign("99.0.0-preview.999.1");
+  sign("99.0.0-preview.999");
   assert.equal(execute("generate").status, 0);
   sign();
   const modifiedComment = Buffer.from(
@@ -187,7 +188,7 @@ test("preview feed signs every desktop installer into its updater target", (t) =
     const name = installers[index].split("/").at(-1);
     assert.deepEqual(platforms[target], {
       signature: readFileSync(`${installers[index]}.sig`, "utf8").trim(),
-      url: `https://github.com/block/buzz-app/releases/download/v0.0.0-preview.22.1/${name}`,
+      url: `https://github.com/block/buzz-app/releases/download/v0.0.0-preview.22/${name}`,
     });
   });
   const [, , windows, deb] = installers;
@@ -210,17 +211,19 @@ test("preview rollback compares the complete canonical SemVer without number rou
   const candidate = JSON.parse(readFileSync(manifest, "utf8"));
   writeFileSync(
     current,
-    JSON.stringify({ ...candidate, version: "1.0.0-preview.21.1" }),
+    JSON.stringify({ ...candidate, version: "1.0.0-preview.21" }),
   );
   assert.match(execute("verify", current).stderr, /rollback/);
   writeFileSync(
     current,
-    JSON.stringify({ ...candidate, version: "0.0.0-preview.23.1" }),
+    JSON.stringify({ ...candidate, version: "0.0.0-preview.23" }),
   );
   assert.match(execute("verify", current).stderr, /rollback/);
   for (const invalid of [
-    "01.0.0-preview.22.1",
-    "0.0.0-preview.022.1",
+    "01.0.0-preview.22",
+    "0.0.0-preview.022",
+    "0.0.0-preview.0",
+    "0.0.0-preview.22.1",
     "0.0.0-preview.bad",
   ]) {
     writeFileSync(current, JSON.stringify({ ...candidate, version: invalid }));
@@ -228,43 +231,141 @@ test("preview rollback compares the complete canonical SemVer without number rou
   }
 });
 
-test("successful preview publication promotes automatically; manual recovery bypasses skipped builds", () => {
-  const workflow = parse(
-    readFileSync(
-      new URL("../../.github/workflows/release.yml", import.meta.url),
-      "utf8",
-    ),
+test("a preview replaces a stable release on the preview feed only when it sorts above it", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "preview-over-stable-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const { manifest, execute } = fixture(dir, "1.0.2-preview.301");
+  assert.equal(execute("generate").status, 0);
+  const candidate = JSON.parse(readFileSync(manifest, "utf8"));
+  const current = join(dir, "current.json");
+  const against = (version) => {
+    writeFileSync(current, JSON.stringify({ ...candidate, version }));
+    return execute("verify", current);
+  };
+  // Numeric, not lexical: .301 is above .99 and below .1000.
+  for (const older of [
+    "1.0.1",
+    "1.0.1-preview.999",
+    "0.9.99",
+    "1.0.2-preview.99",
+  ])
+    assert.equal(against(older).status, 0, older);
+  // A preview of X.Y.Z sorts below X.Y.Z itself, so it would be a rollback.
+  for (const newer of [
+    "1.0.2",
+    "1.0.3",
+    "1.0.2-preview.302",
+    "1.0.2-preview.1000",
+  ])
+    assert.match(
+      against(newer).stderr,
+      /Refusing preview feed rollback/,
+      newer,
+    );
+  assert.match(against("1.0.2-beta.1").stderr, /Invalid preview version/);
+});
+
+test("a preview of the feed's own stable version is refused as a rollback", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "preview-under-stable-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const { manifest, execute } = fixture(dir, "1.0.1-preview.301");
+  assert.equal(execute("generate").status, 0);
+  const current = join(dir, "current.json");
+  writeFileSync(
+    current,
+    JSON.stringify({
+      ...JSON.parse(readFileSync(manifest, "utf8")),
+      version: "1.0.1",
+    }),
   );
-  const { build, publish, promote_preview: promotion } = workflow.jobs;
-  assert.match(build.if, /!inputs\.promote_version/);
-  assert.deepEqual(publish.needs, [
-    "build",
-    "windows",
-    "linux",
-    "updater_signatures",
-  ]);
-  assert.deepEqual(promotion.needs, ["build", "publish"]);
+  assert.match(
+    execute("verify", current).stderr,
+    /Refusing preview feed rollback/,
+  );
+});
+
+test("stable releases get their own feed; betas and previews never reach it", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "stable-feed-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stable = feedUrl("stable-feed");
+  const { manifest, binary, execute } = fixture(dir, "1.0.0", stable);
+  assert.equal(execute("generate").status, 0, execute("generate").stderr);
+  const data = JSON.parse(readFileSync(manifest, "utf8"));
+  assert.equal(data.version, "1.0.0");
+  assert.equal(data.notes, "Buzz 1.0.0 desktop");
+  assert.equal(
+    data.platforms["windows-x86_64"].url,
+    "https://github.com/block/buzz-app/releases/download/v1.0.0/Buzz_1.0.0_x64_unsigned.exe",
+  );
+  assert.equal(execute("verify").status, 0);
+  const current = join(dir, "current.json");
+  writeFileSync(current, JSON.stringify({ ...data, version: "1.0.1" }));
+  assert.match(
+    execute("verify", current).stderr,
+    /Refusing stable feed rollback/,
+  );
+  // A preview in the current stable feed is not comparable, so it is refused.
+  writeFileSync(
+    current,
+    JSON.stringify({ ...data, version: "0.0.0-preview.22" }),
+  );
+  assert.match(execute("verify", current).stderr, /Invalid stable version/);
+  // A preview build checks the preview feed, so it cannot be served as stable.
+  writeFileSync(binary, `compiled: ${endpoint} ${publicKeyBase64}`);
+  assert.match(execute("verify").stderr, /updater endpoint/);
+  mkdirSync(join(dir, "preview"));
+  const preview = fixture(join(dir, "preview"), undefined, stable);
+  assert.match(preview.execute("verify").stderr, /updater endpoint/);
+});
+
+test("betas and malformed versions are never served on a feed", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "beta-feed-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  for (const version of ["1.0.0-beta.1", "1.0", "01.0.0"]) {
+    const sub = join(dir, version);
+    mkdirSync(sub);
+    const { execute } = fixture(sub, version, feedUrl("stable-feed"));
+    assert.match(execute("generate").stderr, /Invalid feed version/, version);
+  }
+});
+
+test("successful preview publication promotes automatically; manual recovery bypasses skipped builds", () => {
+  const read = (path) =>
+    readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
+  const workflow = parse(read(".github/workflows/release.yml"));
+  const { desktop, promote_preview: promotion } = workflow.jobs;
+  assert.match(desktop.if, /!inputs\.promote_version/);
+  assert.deepEqual(
+    parse(read(".github/workflows/desktop-build.yml")).jobs.publish.needs,
+    ["build", "windows", "linux", "updater_signatures"],
+  );
+  assert.deepEqual(promotion.needs, ["desktop"]);
   assert.match(promotion.if, /!cancelled\(\)/);
   assert.match(promotion.if, /!inputs\.candidates/);
   assert.match(
     promotion.if,
-    /inputs\.promote_version == '' && needs\.build\.result == 'success' && needs\.publish\.result == 'success'/,
+    /inputs\.promote_version == '' && needs\.desktop\.result == 'success'/,
   );
   assert.match(
     promotion.if,
-    /inputs\.promote_version != '' && needs\.build\.result == 'skipped' && needs\.publish\.result == 'skipped'/,
+    /inputs\.promote_version != '' && needs\.desktop\.result == 'skipped'/,
   );
   assert.equal(promotion.permissions.contents, "write");
   const promotionStep = promotion.steps.find((step) =>
-    step.run?.includes("scripts/preview-feed.mjs verify"),
+    step.run?.includes("scripts/promote-updater-feed.sh"),
+  );
+  assert.equal(
+    promotionStep.run,
+    'scripts/promote-updater-feed.sh preview-feed "$VERSION"',
   );
   assert.equal(
     promotionStep.env.VERSION,
-    `\${{ inputs.promote_version || needs.build.outputs.version }}`,
+    `\${{ inputs.promote_version || needs.desktop.outputs.version }}`,
   );
+  const promote = read("scripts/promote-updater-feed.sh");
   assert.ok(
-    promotionStep.run.indexOf("scripts/preview-feed.mjs verify") <
-      promotionStep.run.indexOf("gh release upload preview-feed"),
+    promote.indexOf("scripts/preview-feed.mjs verify") <
+      promote.indexOf('gh release upload "$feed"'),
   );
   const cleanupStep = promotion.steps.at(-1);
   assert.equal(

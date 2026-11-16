@@ -232,6 +232,67 @@ it.each([
     fail: "invalid-target",
   });
 });
+it("opens Settings links, an agent type's setup included, without a community", () => {
+  const link =
+    "buzz://settings?section=agents&provider=buzz.claude-code%2Fclaude-code";
+  const target = {
+    version: 1,
+    kind: "settings",
+    section: "agents",
+    provider: "buzz.claude-code/claude-code",
+  };
+  expect(buzzLinkKind(link)).toBe("buzz");
+  expect(buzzLinkTarget(link, scope)).toEqual(target);
+  expect(deepLinkStep(link, { selected: null })).toEqual({ open: target });
+  expect(buzzLinkTarget("buzz://settings", scope)).toEqual({
+    version: 1,
+    kind: "settings",
+  });
+  expect(buzzLinkTarget("buzz://settings/?section=plugins", scope)).toEqual({
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+  });
+});
+it.each([
+  "buzz://settings?provider=buzz.claude-code%2Fclaude-code",
+  "buzz://settings?section=agents&section=plugins",
+  "buzz://settings?section=Agents!",
+  "buzz://settings/other?section=agents",
+])("rejects invalid or ambiguous Settings links: %s", (href) => {
+  expect(parseBuzzLink(href)).toBeNull();
+});
+const artifactUrl = "https://artifacts.example.com/plugins/a.json";
+const artifactHash = "ab".repeat(32);
+const artifactLink = `buzz://plugin-install?id=example.plugin&url=${encodeURIComponent(artifactUrl)}&sha256=${artifactHash.toUpperCase()}`;
+it("opens plugin artifact links pinned by SHA-256 in Settings", () => {
+  const target = {
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+    pluginImport: {
+      id: "example.plugin",
+      url: artifactUrl,
+      sha256: artifactHash,
+    },
+  };
+  expect(buzzLinkTarget(artifactLink, scope)).toEqual(target);
+  expect(deepLinkStep(artifactLink, { selected: null })).toEqual({
+    open: target,
+  });
+});
+it.each([
+  artifactLink.replace(/&sha256=[^&]+/, ""),
+  artifactLink.replace(/id=[^&]+&/, ""),
+  artifactLink.replace("sha256=", "sha256=00"),
+  artifactLink.replace("https%3A", "http%3A"),
+  `${artifactLink}&ref=main`,
+  `${artifactLink}&url=${encodeURIComponent(artifactUrl)}`,
+  `${pluginLink}&sha256=${artifactHash}`,
+  `buzz://plugin-install?id=example.plugin&sha256=${artifactHash}&url=${encodeURIComponent(`${artifactUrl}?token=secret`)}`,
+])("rejects invalid or ambiguous plugin artifact links: %s", (href) => {
+  expect(parseBuzzLink(href)).toBeNull();
+});
 const commit = "0123456789abcdef0123456789abcdef01234567";
 it("carries an optional plugin folder and pinned commit in plugin links", () => {
   const pinned = `${pluginLink}&path=plugins%2Fone&commit=${commit.toUpperCase()}`;

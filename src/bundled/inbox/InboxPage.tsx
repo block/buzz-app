@@ -57,6 +57,7 @@ import {
   MenuItem,
   MenuPopup,
 } from "../../shared/design-system/ui/Menu";
+import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
 import styles from "./Inbox.module.css";
 import {
   readView,
@@ -225,11 +226,14 @@ export function InboxPage({
               <p className="text-body text-subtle">
                 {connection.status === "connecting"
                   ? "Connecting to your activity…"
-                  : (connection.error ??
-                    "Choose a community to see your activity.")}
+                  : connection.denied
+                    ? // Its notice, on every page, offers what fixes it.
+                      communityRefusalTitle(connection.refusal)
+                    : (connection.error ??
+                      "Choose a community to see your activity.")}
               </p>
-              {connection.status === "error" && (
-                <Button onClick={relay.retry}>Retry connection</Button>
+              {connection.status === "error" && !connection.denied && (
+                <Button onClick={relay.tryAgain}>Retry connection</Button>
               )}
             </div>
           </div>
@@ -402,7 +406,13 @@ function InboxList({
   const [pending, setPending] = useState(false);
   const [refreshAfterRoster, setRefreshAfterRoster] = useState(false);
   const [error, setError] = useState<string>();
-  const [menu, setMenu] = useState<{ id: string; anchor?: HTMLElement }>();
+  /** `unread` is the row's read state when its menu opened, which fixes the
+   * menu's one read action for as long as it stays open. */
+  const [menu, setMenu] = useState<{
+    id: string;
+    unread: boolean;
+    anchor?: HTMLElement;
+  }>();
   const active = useRef(false);
   const busy = useRef(false);
   const failedMutation = useRef<
@@ -1153,6 +1163,7 @@ function InboxList({
                 const { sender, context } = identity;
                 const unread = hasUnread(item);
                 const readable = unread && canRead;
+                const menuUnread = menu?.id === item.id ? menu.unread : unread;
                 return (
                   <li
                     key={item.id}
@@ -1165,7 +1176,7 @@ function InboxList({
                     <ContextMenuRoot
                       open={menu?.id === item.id}
                       onOpenChange={(open) =>
-                        setMenu(open ? { id: item.id } : undefined)
+                        setMenu(open ? { id: item.id, unread } : undefined)
                       }
                     >
                       <ContextMenuTrigger
@@ -1178,6 +1189,7 @@ function InboxList({
                             event.preventDefault();
                             setMenu({
                               id: item.id,
+                              unread,
                               anchor: event.target as HTMLElement,
                             });
                           }
@@ -1255,17 +1267,20 @@ function InboxList({
                         aria-label={`Actions for ${sender} in ${context}`}
                         anchor={menu?.id === item.id ? menu.anchor : undefined}
                       >
+                        {/* One action, for the row's read state when the menu
+                            opened. It stays, disabled, when it cannot run, so
+                            the menu is never empty. That includes the row's
+                            state changing under the open menu: the item keeps
+                            its label rather than reversing under the pointer. */}
                         <MenuItem
-                          disabled={pending || !unread || !canRead}
-                          onClick={() => markRead(item)}
+                          disabled={
+                            pending || !canRead || menuUnread !== unread
+                          }
+                          onClick={() =>
+                            menuUnread ? markRead(item) : mutate(item, true)
+                          }
                         >
-                          Mark as read
-                        </MenuItem>
-                        <MenuItem
-                          disabled={pending || unread || !canRead}
-                          onClick={() => mutate(item, true)}
-                        >
-                          Mark unread
+                          {menuUnread ? "Mark as read" : "Mark unread"}
                         </MenuItem>
                       </MenuPopup>
                     </ContextMenuRoot>

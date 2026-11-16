@@ -1,7 +1,9 @@
 import { useState } from "react";
 import type { InboxReaction } from "../../features/relay/inbox-reactions";
 import { groupReactions } from "../../features/relay/fold";
+import { useReactionEmoji } from "../../features/messages/reaction-emoji";
 import { useReactionName } from "../../features/messages/use-reaction-name";
+import { isReactionShortcode } from "../../features/relay/emoji";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { ComponentProps, ReactNode } from "react";
 import { channelText } from "../../features/channels/channel-icon";
@@ -11,8 +13,9 @@ import type { InboxFeedSnapshot } from "../../features/relay/inbox-feed";
 import type { RelaySession } from "../../features/relay/session";
 import { workflowLabel } from "../../features/relay/workflow-attribution";
 import { messagePreview } from "../../features/notifications/content";
+import { ByteLru } from "../../features/relay/budget";
 import { avatarMedia } from "../../shared/avatar-source";
-import { LightningIcon } from "../../shared/design-system/icons";
+import { LightningIcon, SmileyIcon } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { formatPublicKey } from "../../shared/identity/public-key";
@@ -27,8 +30,34 @@ type ResolveName = (
   candidates?: readonly string[],
 ) => string;
 
+/** Row previews by message text, least recently used dropped first. Each
+ * preview parses Markdown, and every filter change or live event renders all
+ * rows again, remounting rows a filter hid. The budget counts the source
+ * text, which is the key. */
+const previews = new ByteLru<string>(500, 1024 * 1024);
+const rowPreview = (content: string) => {
+  let text = previews.get(content);
+  if (text === undefined) {
+    text = messagePreview(content);
+    previews.set(content, text, content.length);
+  }
+  return text;
+};
+
 export const hasUnread = (item: InboxItem) =>
   item.unreadCount > 0 || item.manual;
+
+/** What a preview shows instead of a body whose stored edits or deletions are
+ * not settled yet, or undefined when none of `ids` is incomplete. */
+export const incompletePreview = (
+  feed: InboxFeedSnapshot,
+  ids: readonly (string | undefined)[],
+) =>
+  ids.some((id) => id !== undefined && feed.incomplete.includes(id))
+    ? feed.status === "error"
+      ? "Preview unavailable. Retry activity."
+      : "Preview updating…"
+    : undefined;
 
 /** Who sent a row and where, as the Inbox page and its sidebar preview name it. */
 export function rowIdentity(
@@ -119,13 +148,8 @@ export function InboxRowButton({
       unread={unread}
       previewId={previewId}
       preview={
-        [item.previewMessageId, ...item.messageIds].some(
-          (id) => id !== undefined && feed.incomplete.includes(id),
-        )
-          ? feed.status === "error"
-            ? "Preview unavailable. Retry activity."
-            : "Preview updating…"
-          : messagePreview(item.preview)
+        incompletePreview(feed, [item.previewMessageId, ...item.messageIds]) ??
+        rowPreview(item.preview)
       }
     />
   );
@@ -173,7 +197,7 @@ export function ReactionRowButton({
         ? channelText(channel)
         : "Conversation";
   const reactions = groupReactions(item.events);
-  const preview = messagePreview(item.message.content);
+  const preview = rowPreview(item.message.content);
   const emojiNames = reactions
     .map((reaction) =>
       reaction.emoji
@@ -250,18 +274,25 @@ function ActivityReactionGlyph({
   reaction: ReturnType<typeof groupReactions>[number];
   session: RelaySession;
 }) {
-  const source = reaction.emoji ? session.media(reaction.emoji.url) : undefined;
+  const emoji = useReactionEmoji(reaction, session);
+  const source = emoji ? session.media(emoji.url) : undefined;
   const [failed, setFailed] = useState<string>();
-  return source && source !== failed ? (
-    <img
-      src={source}
-      className={styles.reactionEmoji}
-      alt=""
-      aria-hidden="true"
-      draggable={false}
-      onError={() => setFailed(source)}
-    />
-  ) : (
-    <span aria-hidden="true">{reaction.content} </span>
-  );
+  if (source && source !== failed)
+    return (
+      <img
+        src={source}
+        className={styles.reactionEmoji}
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        onError={() => setFailed(source)}
+      />
+    );
+  if (isReactionShortcode(reaction.content))
+    return (
+      <SmileyIcon
+        className={`${styles.reactionEmoji} ${styles.reactionPlaceholder}`}
+      />
+    );
+  return <span aria-hidden="true">{reaction.content} </span>;
 }

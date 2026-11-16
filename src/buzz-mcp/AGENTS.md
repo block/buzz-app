@@ -19,10 +19,9 @@ deliberately.
 - `settings.ts`: the settings tools (`settings_list`, `settings_get`,
   `settings_set`). The settings themselves are the host's catalog
   (`src/app/device-settings.ts`); the tools never name one.
-- `owner.ts`: the owner tools (`owner_channel_list`, `owner_channel_get`,
-  `owner_member_list`), which read with the owner's access where the host gives
-  the client `ownerAccess`; `src/features/agents/owner-access.ts` owns the
-  reads and their binding. Plugins' clients never have it.
+- `bestie.ts`: the Bestie tools (`bestie_get`, `bestie_set`, `bestie_clear`),
+  which read and change the owner's Bestie through
+  `src/features/solo/default-agent.ts`.
 - `session-tools.ts`: what a session lists, each tool's `load` (`always` or
   `search`), and the server instructions that cover the whole tool set.
 - `prompt.md`: the posting conventions every agent gets after the shared base

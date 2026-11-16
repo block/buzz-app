@@ -343,7 +343,17 @@ async fn upgrade(
                         // Missing evidence: the relay requires a token after all.
                         None => unsigned.unwrap_or("relay-unauthorized"),
                     },
-                    403 => "relay-forbidden",
+                    403 => {
+                        if let Ok(server) = fi.server_for(relay) {
+                            server.note_clock_offset(super::protocol::clock_offset(
+                                response
+                                    .headers()
+                                    .get("date")
+                                    .and_then(|v| v.to_str().ok()),
+                            ));
+                        }
+                        "relay-forbidden"
+                    }
                     503 => "relay-unavailable",
                     _ => "Native socket upgrade refused",
                 }

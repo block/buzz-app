@@ -107,6 +107,12 @@ need their own validation.
   implicit runner arguments. Explicit `--config` arguments merge afterward and can
   override it; keep their development URL and frontend command consistent. Use `--`
   before runner/application arguments if they contain their own `--port` flag.
+  `just desktop me` signs in with your installed Buzz's key, read-only, instead
+  of the debug build's own. On macOS it also sets up, on first use, a Keychain
+  helper and a local signing certificate: click **Always Allow** on each Keychain
+  dialog that first launch, and later launches, rebuilds and new worktrees show
+  none. Agents and tests use plain `just desktop`. See
+  [the local credential helper](identity.md#local-credential-helper-on-macos).
   On macOS, `just desktop profile` uses Instruments' Time Profiler to launch and
   record only the Buzz native parent process, not every process on the desktop.
   WebKit subprocesses and the Vite broker are outside this native trace; use web
@@ -178,6 +184,9 @@ into a new worktree. Native dependencies are fetched by Cargo as needed into the
 shared `~/.cargo`. Each worktree compiles into its own `target/`, overriding any
 user-level `target-dir`, so its app and bundled resources always match its sources;
 remove stale worktrees (or run `bin/cargo clean` in them) to reclaim that space.
+The bundled `buzz` CLI is the exception: it builds from a pinned block/buzz
+revision, not worktree sources, so linked worktrees share one build in the main
+checkout's `target/`.
 Native compilation still takes time in each new worktree. Parallel worktrees normally need
 no port flags: each derives a stable default from its path. Pass `--port` if paths
 collide, the default is occupied, or you run a second instance from one checkout;
@@ -795,7 +804,7 @@ across cached, parallel jobs rather than running the entire recipe several times
 [Three documented WebKit cases remain local-only](browser-testing.md#ci-coverage-and-local-only-webkit-checks);
 the complete correctness suite still runs with `pnpm test` / `just scan`:
 
-- **JavaScript:** four runners, each with Biome, one TypeScript check and a frontend
+- **JavaScript:** eight runners, each with Biome, one TypeScript check and a frontend
   build. Vitest splits all test files across the runners, with two workers each;
   every shard must succeed. Timing artifacts include the shard number.
 - **Rust and tool integration:** workspace formatting, Clippy, all Rust tests and
@@ -803,8 +812,10 @@ the complete correctness suite still runs with `pnpm test` / `just scan`:
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
   rather than part of pre-push.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
-  It also runs all [perf scenarios](performance.md) once in Chromium.
-- **Browser journeys:** twenty-three runners (nine Chromium and fourteen WebKit
+  It also runs all [perf scenarios](performance.md) once in Chromium, and the
+  broker's 100,000-channel scale check in `browser-host/relay-broker-live.test.mjs`
+  alone, with `BUZZ_BROKER_SCALE` set; the JavaScript shards skip that test.
+- **Browser journeys:** twenty-seven runners (nine Chromium and eighteen WebKit
   file-level shards), each with two workers. They start alongside measurements on separate
   runners; `CI required` still requires both lanes. A separate required Ubuntu
   job builds the native plugin-manager fixture once with Hermit's pinned Cargo.

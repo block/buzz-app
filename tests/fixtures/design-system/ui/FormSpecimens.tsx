@@ -1,6 +1,6 @@
 import { ExamplePreview } from "./ExamplePreview";
 import { Section } from "./primitives";
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { Field } from "../../../../src/shared/design-system/ui/Field";
 import { InputGroup } from "../../../../src/shared/design-system/ui/InputGroup";
 import {
@@ -11,6 +11,8 @@ import { Input } from "../../../../src/shared/design-system/ui/Input";
 import { Textarea } from "../../../../src/shared/design-system/ui/Textarea";
 import { SearchField } from "../../../../src/shared/design-system/ui/SearchField";
 import { Select } from "../../../../src/shared/design-system/ui/Select";
+import { PreferenceRow } from "../../../../src/shared/design-system/ui/PreferenceRow";
+import { SettingsGroup } from "../../../../src/shared/design-system/ui/SettingsGroup";
 import { Combobox } from "../../../../src/shared/design-system/ui/Combobox";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
 
@@ -68,6 +70,7 @@ export function FormExample({
 }
 
 export function InputExamples() {
+  const suffixId = useId();
   return (
     <div className="component-specimen-stack">
       <FormExample
@@ -118,6 +121,21 @@ export function InputExamples() {
         </Field>
         <Field label="Filled">
           <Input defaultValue="Design studio" />
+        </Field>
+        <Field label="Site address" description="The domain stays fixed.">
+          <InputGroup wrap>
+            <Input
+              textSize="large"
+              placeholder="studio"
+              aria-describedby={suffixId}
+            />
+            <span
+              id={suffixId}
+              className="min-w-0 wrap-anywhere text-body-lg text-primary"
+            >
+              .example.org
+            </span>
+          </InputGroup>
         </Field>
         <Field
           label="Read-only"
@@ -363,6 +381,9 @@ export function SearchExamples() {
 export function SelectExamples() {
   const [value, setValue] = useState("");
   const [inline, setInline] = useState("studio");
+  const [detailed, setDetailed] = useState("automatic");
+  const detailedModel =
+    "Atlas Reasoning Model — Extended Context Preview with Additional Reasoning Capacity for Large Workloads and Complex Tasks · High";
   return (
     <div className="component-specimen-stack">
       <FormExample
@@ -511,6 +532,72 @@ export function SelectExamples() {
           onValueChange={setInline}
           groups={workspaceGroups}
         />
+      </FormExample>
+      <FormExample
+        title="Description details"
+        description="An option can show a model with parenthetical attribution beneath explanatory copy."
+        code={`// An option's description
+description: (
+  <span className="grid gap-1.5 text-caption">
+    <span className="text-body-sm">Recommended by Example Co. Use recommended settings for a balance of capability, speed, and availability.</span>{" "}
+    <span className="text-subtle">
+      <span title={modelName}>{modelName}</span>{" "}
+
+    </span>
+  </span>
+)`}
+      >
+        <SettingsGroup>
+          <PreferenceRow
+            title="AI setup"
+            subtitle={
+              <span className="grid min-w-0 gap-1">
+                <span
+                  className="flex min-w-0 items-baseline gap-1"
+                  title={`Set to ${detailedModel} (recommended)`}
+                >
+                  <span className="shrink-0">Set to</span>{" "}
+                  <span className="truncate">{detailedModel}</span>{" "}
+                  <span className="shrink-0"> (recommended)</span>
+                </span>
+              </span>
+            }
+            trailing={
+              <Select
+                label="Mode with description details"
+                variant="compact"
+                value={detailed}
+                onValueChange={setDetailed}
+                groups={[
+                  {
+                    label: "",
+                    options: [
+                      {
+                        value: "automatic",
+                        label: "Automatic",
+                        description: (
+                          <span className="grid gap-1.5 text-caption">
+                            <span className="text-body-sm">
+                              Recommended by Example Co. Use recommended
+                              settings for a balance of capability, speed, and
+                              availability.
+                            </span>{" "}
+                            <span className="text-subtle">
+                              <span title={detailedModel}>
+                                {detailedModel}
+                              </span>{" "}
+                            </span>
+                          </span>
+                        ),
+                      },
+                      { value: "manual", label: "Custom" },
+                    ],
+                  },
+                ]}
+              />
+            }
+          />
+        </SettingsGroup>
       </FormExample>
       <FormExample
         title="Disabled choices"

@@ -1,7 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
-import type { ChannelLifecycleCapability } from "../../features/relay/channel-lifecycle";
+import {
+  ChannelLifecycleUnconfirmed,
+  type ChannelLifecycleCapability,
+} from "../../features/relay/channel-lifecycle";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
+import { ApiPaused } from "../../features/relay/http-admission";
 import { Dialog, type DialogProps } from "../../shared/design-system/ui/Dialog";
 import {
   ToastNotice,
@@ -18,7 +22,7 @@ export const lifecycleNoun = (
 const details = {
   channel: {
     archive:
-      "Archive this channel for everyone and remove it from the sidebar. Messages are kept. Find it in search and open Settings to unarchive it later.",
+      "Archive this channel for everyone and remove it from the sidebar. Messages are kept. Find it in search to unarchive it later.",
     unarchive:
       "Unarchive this channel for everyone and return it to the sidebar. Members can send messages again.",
     delete: "This deletes the channel for everyone. You can’t undo this.",
@@ -61,9 +65,15 @@ function copyFor(action: ChannelLifecycleAction, noun: LifecycleNoun) {
 }
 
 // Enter confirms unarchive and hide. Archive affects everyone, so it starts on
-// Cancel, which takes the highlight; leave and delete start on a neutral Cancel
-// so it never competes with a red confirm.
+// Cancel while retaining the action's prominent treatment.
 const reversible = new Set<ChannelLifecycleAction>(["unarchive", "hide"]);
+
+function wait(milliseconds: number) {
+  const seconds = Math.ceil(milliseconds / 1000);
+  if (seconds < 60) return seconds === 1 ? "1 second" : `${seconds} seconds`;
+  const minutes = Math.ceil(seconds / 60);
+  return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+}
 
 export function ChannelLifecycleDialog({
   channelId,
@@ -89,7 +99,9 @@ export function ChannelLifecycleDialog({
   completed(): void;
   onSubmit?(): void;
   finalFocus?: DialogProps["finalFocus"];
-  failed?(title: string, message: string): void;
+  /** `unconfirmed`: the relay may have applied it anyway
+   * (`ChannelLifecycleUnconfirmed`). */
+  failed?(title: string, message: string, unconfirmed: boolean): void;
   /** Already chosen without a dialog, as Undo is: run it on mount. */
   confirmed?: boolean;
   /** Offered from an immediate archive's result toast. */
@@ -112,6 +124,23 @@ export function ChannelLifecycleDialog({
       : copy.detail;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // A paused delete keeps its confirmation, with Retry once the pause ends.
+  const [pausedUntil, setPausedUntil] = useState<number>();
+  const [now, setNow] = useState(0);
+  const cooldown =
+    pausedUntil === undefined ? 0 : Math.max(0, pausedUntil - now);
+  useEffect(() => {
+    if (pausedUntil === undefined || !cooldown) return;
+    // Tick on whole-second boundaries, measured from the admission lane's
+    // monotonic clock rather than this render, so a late tick stays exact.
+    // Whole-millisecond delays let a coarse clock advance, so each tick re-renders.
+    const left = pausedUntil - performance.now();
+    const timer = setTimeout(
+      () => setNow(performance.now()),
+      left > 0 ? Math.ceil(left % 1000) || 1000 : 0,
+    );
+    return () => clearTimeout(timer);
+  }, [pausedUntil, cooldown]);
   const notify = useToastNotification();
   const operation = useRef<AbortController | undefined>(undefined);
   useEffect(() => {
@@ -139,12 +168,13 @@ export function ChannelLifecycleDialog({
     return () => clearTimeout(timer);
   }, [immediate, busy]);
   const submit = async () => {
-    if (operation.current || error) return;
+    if (operation.current || error || cooldown) return;
     const controller = new AbortController();
     operation.current = controller;
     onSubmit?.();
     setBusy(true);
     setError("");
+    setPausedUntil(undefined);
     try {
       await lifecycle.run(action, channelId, controller.signal);
       if (!controller.signal.aborted) {
@@ -158,10 +188,25 @@ export function ChannelLifecycleDialog({
         callbacks.current.completed();
       }
     } catch (error) {
-      if (!controller.signal.aborted) {
+      if (
+        !controller.signal.aborted &&
+        action === "delete" &&
+        !immediate &&
+        error instanceof ApiPaused
+      ) {
+        // Admission refused it before sending, and `run` wraps anything after
+        // publication, so a bare pause proves nothing was sent.
+        const at = performance.now();
+        setNow(at);
+        setPausedUntil(at + (error.retryAfterMs ?? 0));
+      } else if (!controller.signal.aborted) {
         const message = error instanceof Error ? error.message : String(error);
         if (callbacks.current.failed)
-          callbacks.current.failed(`${copy.title} failed`, message);
+          callbacks.current.failed(
+            `${copy.title} failed`,
+            message,
+            error instanceof ChannelLifecycleUnconfirmed,
+          );
         else setError(message);
       }
     } finally {
@@ -196,15 +241,18 @@ export function ChannelLifecycleDialog({
             ? `Delete ${channelName}?`
             : `${copy.title}: ${channelName}`
         }
-        description={description}
+        description={
+          pausedUntil === undefined
+            ? description
+            : `${description} Relay requests ${
+                cooldown
+                  ? `are paused, so nothing was deleted. You can retry in ${wait(cooldown)}.`
+                  : "were paused, so nothing was deleted. You can retry now."
+              }`
+        }
         actions={
           <>
-            <Button
-              ref={cancel}
-              type="button"
-              variant={action === "archive" ? "prominent" : "subtle"}
-              onClick={close}
-            >
+            <Button ref={cancel} type="button" onClick={close}>
               Cancel
             </Button>
             <Button
@@ -213,13 +261,15 @@ export function ChannelLifecycleDialog({
               variant={
                 action === "delete"
                   ? "destructive"
-                  : confirms
+                  : action === "archive" || confirms
                     ? "prominent"
                     : "subtle"
               }
+              disabled={cooldown > 0}
+              focusableWhenDisabled
               onClick={() => void submit()}
             >
-              {copy.title}
+              {pausedUntil === undefined ? copy.title : "Retry"}
             </Button>
           </>
         }

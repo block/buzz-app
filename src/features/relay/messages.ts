@@ -7,9 +7,11 @@ import type { EventTemplate } from "nostr-tools";
 import { MEDIA_TARGET_TAG, type ChannelMessage } from "./contracts";
 import { messageAuthor } from "./fold";
 import { threadReference } from "./thread-reference";
+import { reactionTarget as reactionTargetId } from "./reaction-target";
 import { safeMessageUrl } from "./message-content";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
+import { signedMessageTokenTags } from "../messages/message-tokens";
 
 /** Owner authorization is supplied only after the agent's signed profile is verified. */
 export type AgentOwnerAuthorization = Readonly<{
@@ -244,7 +246,7 @@ export function createMessages(
     const channel = (event: EventData) =>
       event.tags.find(([name]) => name === "h")?.[1] ??
       (event.kind === 7
-        ? find(event.tags.find(([name]) => name === "e")?.[1] ?? "")?.tags.find(
+        ? find(reactionTargetId(event) ?? "")?.tags.find(
             ([name]) => name === "h",
           )?.[1]
         : undefined);
@@ -319,6 +321,7 @@ export function createMessages(
             ...pickTags(channelId, mentions, picks),
             ...emojiTags(content),
             ...message.tags,
+            ...signedMessageTokenTags(),
           ],
         },
         ...(recovery ? [recovery] : []),
@@ -442,6 +445,7 @@ export function createMessages(
           ...(mediaTarget ? [[MEDIA_TARGET_TAG, mediaTarget]] : []),
           ...emojiTags(content),
           ...message.tags,
+          ...signedMessageTokenTags(),
         ],
       });
     },
@@ -520,13 +524,11 @@ export function createMessages(
         }
       : undefined,
     reactionTarget(event: Pick<EventData, "kind" | "tags">) {
+      if (event.kind === 7) return reactionTargetId(event);
       const target = event.tags.find(([name]) => name === "e")?.[1];
-      if (event.kind === 7) return target;
       if (event.kind !== 5 || !target) return undefined;
       const original = find(target);
-      return original?.kind === 7
-        ? original.tags.find(([name]) => name === "e")?.[1]
-        : undefined;
+      return original?.kind === 7 ? reactionTargetId(original) : undefined;
     },
     retry(id: string) {
       outbox?.retry(id);

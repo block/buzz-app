@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { StrictMode, useState } from "react";
+import { StrictMode, useRef, useState } from "react";
 import {
   act,
   cleanup,
@@ -9,10 +9,12 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   ToastNotice,
   ToastProvider,
+  useToastClearance,
   useToastNotification,
   useToastDismiss,
 } from "./Toast";
@@ -106,6 +108,45 @@ it("keeps notice navigation separate from its explicit actions", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Dismiss notification" }));
   await waitFor(() => expect(dismiss).toHaveBeenCalledTimes(1));
   expect(open).toHaveBeenCalledTimes(1);
+});
+
+it("puts notice navigation first in the toast's Tab order and opens it with Enter or Space", async () => {
+  const user = userEvent.setup();
+  const open = vi.fn();
+  render(
+    <ToastProvider>
+      <ToastNotice
+        title="Update Notes"
+        navigation={{ label: "Manage update checks", open }}
+        onDismiss={() => {}}
+      >
+        <Button>Update</Button>
+      </ToastNotice>
+    </ToastProvider>,
+  );
+  const body = await screen.findByRole("button", {
+    name: "Manage update checks",
+  });
+  // WebKit Tabs past a button without an explicit tabindex unless the OS
+  // enables full keyboard access.
+  expect(body).toHaveAttribute("tabindex", "0");
+  // user-event has no F6 in its key map; Sonner matches the hotkey by code.
+  fireEvent.keyDown(document.body, { key: "F6", code: "F6" });
+  expect(body.closest("[data-sonner-toaster]")).toHaveFocus();
+  await user.tab();
+  expect(body.closest("[data-sonner-toast]")).toHaveFocus();
+  await user.tab();
+  expect(body).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(open).toHaveBeenCalledTimes(1);
+  await user.keyboard(" ");
+  expect(open).toHaveBeenCalledTimes(2);
+  await user.tab();
+  expect(
+    screen.getByRole("button", { name: "Dismiss notification" }),
+  ).toHaveFocus();
+  await user.tab();
+  expect(screen.getByRole("button", { name: "Update" })).toHaveFocus();
 });
 
 it("keeps startup notices inside the inert toast host", async () => {
@@ -359,4 +400,37 @@ it("cancels a dismissed toast's pending removal when its host unmounts", async (
   expect(vi.getTimerCount()).toBeGreaterThan(0);
   view.unmount();
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("keeps docked clearance off the document root and skips unchanged values", async () => {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+    top: window.innerHeight - 80,
+    height: 80,
+  } as DOMRect);
+  const rootWrite = vi.spyOn(document.documentElement.style, "setProperty");
+  function Docked() {
+    const ref = useRef<HTMLDivElement>(null);
+    useToastClearance(ref);
+    return <div ref={ref} />;
+  }
+  const host = (docked?: string) => (
+    <StrictMode>
+      <ToastProvider>{docked && <Docked key={docked} />}</ToastProvider>
+    </StrictMode>
+  );
+  const view = render(host("first"));
+  await act(async () => {});
+  const viewport = screen.getByRole("region", { name: "App notifications" });
+  const clearance = () =>
+    viewport.style.getPropertyValue("--buzz-toast-clearance");
+  expect(clearance()).toBe("80px");
+  // Switching channels replaces the composer with one of the same height.
+  const write = vi.spyOn(viewport.style, "setProperty");
+  view.rerender(host("second"));
+  await act(async () => {});
+  expect(write).not.toHaveBeenCalled();
+  view.rerender(host());
+  await act(async () => {});
+  expect(clearance()).toBe("0px");
+  expect(rootWrite).not.toHaveBeenCalled();
 });

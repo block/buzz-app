@@ -420,9 +420,11 @@ export function createAgentClient(
       return statuses;
     },
     /** The agent's conversation sessions, most recently active first, from
-     * at most {@link SESSION_PAGES} pages; `more` when others remain. */
+     * at most {@link SESSION_PAGES} pages; `more` when others remain. A
+     * session active while paging can show on two pages; its first stays. */
     async sessions(agentId: string, signal: AbortSignal) {
       const sessions: AgentSession[] = [];
+      const seen = new Set<string>();
       let cursor: string | undefined;
       for (let page = 0; page < SESSION_PAGES; page++) {
         const result = await readRequest(
@@ -442,6 +444,8 @@ export function createAgentClient(
             !row.channel_id
           )
             throw new Error("Builderlab returned an invalid session list.");
+          if (seen.has(row.session_id)) continue;
+          seen.add(row.session_id);
           sessions.push({
             sessionId: row.session_id,
             channelId: row.channel_id,

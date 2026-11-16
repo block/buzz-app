@@ -46,7 +46,7 @@ it("groups stored messages into the turns that started before them", () => {
       {
         turn_id: "t2",
         mention_event_id: "f".repeat(64),
-        status: "TASK_STATUS_RUNNING",
+        status: "TASK_STATUS_IN_PROGRESS",
         created_at: "2000",
         updated_at: "2000",
       },
@@ -116,9 +116,16 @@ it("groups stored messages into the turns that started before them", () => {
 
 it("maps stored terminal statuses, by name or number", () => {
   const outcomes = [
-    "TASK_STATUS_FAILED",
+    4,
     5,
+    7,
+    8,
+    "TASK_STATUS_CANCELLED",
     "TASK_STATUS_TERMINATED",
+    2,
+    3,
+    6,
+    9,
     "TASK_STATUS_INITIALIZED",
   ].map(
     (status) =>
@@ -126,7 +133,15 @@ it("maps stored terminal statuses, by name or number", () => {
         turns: [{ turn_id: "t", status, created_at: 1 }],
       })[0]?.outcome,
   );
-  expect(outcomes).toEqual(["error", "stopped", "error", undefined]);
+  expect(outcomes).toEqual([
+    "ended",
+    "error",
+    "stopped",
+    "error",
+    "stopped",
+    "error",
+    ...Array(5).fill(undefined),
+  ]);
 });
 
 it("marks a failed tool call and a model error", () => {
@@ -169,7 +184,11 @@ it("keeps live turns, and a stored copy of one Buzz saw only part of", () => {
   }));
   const merged = mergeTurns(
     [
-      { ...live("mid", true, 2), outcome: "stopped" },
+      {
+        ...live("mid", true, 2),
+        items: [{ id: "later", at: 5, type: "status", text: "" }],
+        outcome: "stopped",
+      },
       live("new", false, 3),
       live("old", false, 1),
     ],
@@ -179,8 +198,45 @@ it("keeps live turns, and a stored copy of one Buzz saw only part of", () => {
     merged.map((turn) => [turn.turnId, turn.items.length, turn.outcome]),
   ).toEqual([
     ["old", 1, undefined],
-    ["mid", 0, "stopped"],
+    ["mid", 1, "stopped"],
     ["new", 1, undefined],
+  ]);
+});
+
+it("keeps a stored copy of a running turn up to date with the live one", () => {
+  const tool = (status: string, output: string) => ({
+    id: `call-${status}`,
+    at: 20,
+    type: "tool",
+    toolCallId: "c1",
+    status,
+    output,
+  });
+  const copy = {
+    ...live("t", false, 10),
+    items: [
+      { id: "p", at: 10, type: "prompt", text: "Go" },
+      tool("in_progress", ""),
+      { id: "m", at: 30, type: "message", text: "Checking" },
+    ],
+  } as unknown as TranscriptTurn;
+  const running = {
+    ...live("t", true, 10),
+    items: [
+      tool("completed", "done"),
+      { id: "seen", at: 30, type: "message", text: "Checking" },
+      { id: "after", at: 40, type: "message", text: "Shipped" },
+    ],
+    outcome: "ended",
+    endedAt: 50,
+  } as unknown as TranscriptTurn;
+  const [turn] = mergeTurns([running], [copy]);
+  expect(turn).toMatchObject({ outcome: "ended", endedAt: 50, partial: false });
+  expect(turn?.items.map((item) => item.id)).toEqual([
+    "p",
+    "call-completed",
+    "m",
+    "after",
   ]);
 });
 

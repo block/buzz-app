@@ -39,11 +39,14 @@ const ROLES = ["ROLE_UNSPECIFIED", "ROLE_USER", "ROLE_ASSISTANT"];
 const STATUSES = [
   "TASK_STATUS_UNSPECIFIED",
   "TASK_STATUS_INITIALIZED",
-  "TASK_STATUS_RUNNING",
+  "TASK_STATUS_IN_PROGRESS",
+  "TASK_STATUS_CLIENT_INPUT_PENDING",
   "TASK_STATUS_COMPLETED",
   "TASK_STATUS_FAILED",
+  "TASK_STATUS_CANCELLING",
   "TASK_STATUS_CANCELLED",
   "TASK_STATUS_TERMINATED",
+  "TASK_STATUS_WAITING_FOR_PERMISSION_LEASE",
 ];
 const SUMMARY = 5;
 /** The prompt composer escapes these in every value it writes. */
@@ -281,8 +284,36 @@ export const storedTurns = (sessions: readonly StoredSession[], name?: Names) =>
       : sessionTurns(stored.session, stored.response, name),
   );
 
+/** A stored copy, brought up to date with what Buzz saw of the turn since:
+ * newer items, calls that finished, and how it ended. */
+function withLive(copy: TranscriptTurn, turn: TranscriptTurn): TranscriptTurn {
+  const copied = Math.max(copy.startedAt, ...copy.items.map((item) => item.at));
+  const calls = new Map(
+    turn.items.flatMap((item) =>
+      item.type === "tool" ? [[item.toolCallId, item] as const] : [],
+    ),
+  );
+  const used = new Set<TranscriptItem>();
+  const items = copy.items.map((item) => {
+    const update = item.type === "tool" && calls.get(item.toolCallId);
+    if (!update) return item;
+    used.add(update);
+    return update;
+  });
+  for (const item of turn.items)
+    if (item.at > copied && !used.has(item)) items.push(item);
+  return {
+    ...copy,
+    items,
+    ...(turn.outcome ? { outcome: turn.outcome } : {}),
+    ...(turn.endedAt !== undefined ? { endedAt: turn.endedAt } : {}),
+    ...(turn.error ? { error: turn.error } : {}),
+  };
+}
+
 /** Live turns, with stored ones Buzz did not see. A live turn that began
- * before Buzz saw it is partial, so its stored copy shows instead. */
+ * before Buzz saw it is partial, so its stored copy shows instead, kept up
+ * to date by the live one. */
 export function mergeTurns(
   live: readonly TranscriptTurn[],
   stored: readonly TranscriptTurn[],
@@ -292,8 +323,7 @@ export function mergeTurns(
   const turns = live.map((turn): TranscriptTurn => {
     shown.add(turn.turnId);
     const copy = saved.get(turn.turnId);
-    if (!turn.partial || !copy) return turn;
-    return turn.outcome ? { ...copy, outcome: turn.outcome } : copy;
+    return turn.partial && copy ? withLive(copy, turn) : turn;
   });
   for (const turn of stored) if (!shown.has(turn.turnId)) turns.push(turn);
   return turns.sort((a, b) => a.startedAt - b.startedAt);

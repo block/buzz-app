@@ -112,7 +112,7 @@ it("reads terminal task status only for the requested task IDs", async () => {
     ).rejects.toThrow("invalid turn status");
   }
 });
-it("pages an agent's stored sessions up to a bound, and reads one's messages", async () => {
+it("pages an agent's stored sessions up to a bound, once each, and reads one's messages", async () => {
   const h = await fixture();
   const page = (cursor?: string) =>
     response({
@@ -146,7 +146,6 @@ it("pages an agent's stored sessions up to a bound, and reads one's messages", a
         threadRootId: "r".repeat(64),
         updatedAt: 2000,
       },
-      { sessionId: "dm", channelId: "beta", updatedAt: 0 },
     ],
   });
   const bodies = vi
@@ -162,7 +161,10 @@ it("pages an agent's stored sessions up to a bound, and reads one's messages", a
   vi.mocked(h.host.request).mockResolvedValue(page("again"));
   const bounded = await h.client.sessions("agent-1", h.signal);
   expect(bounded.more).toBe(true);
-  expect(bounded.sessions).toHaveLength(8);
+  expect(bounded.sessions.map((row) => row.sessionId)).toEqual([
+    "s-again",
+    "dm",
+  ]);
   vi.mocked(h.host.request).mockResolvedValueOnce(
     response({ sessions: [{ session_id: "s" }] }),
   );

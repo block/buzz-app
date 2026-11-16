@@ -83,6 +83,7 @@ function protectInlineContent(
     | "attachmentSeams"
     | "mentions"
     | "mentionReferences"
+    | "mentionLabels"
     | "emoji"
   >,
   profiles: ReadonlyMap<string, Profile> | undefined,
@@ -234,6 +235,7 @@ function inlineProtectionKey(
   const emoji = row.emoji?.map(({ shortcode, url }) => [shortcode, url]);
   return JSON.stringify([
     row.edited === true,
+    row.mentionLabels,
     row.attachmentSeams,
     mentions,
     agentNames,
@@ -645,6 +647,7 @@ function PreparedMessageMarkdown({
             : {}),
           mentions: sourceRow.mentions,
           mentionReferences: sourceRow.mentionReferences ?? [],
+          mentionLabels: sourceRow.mentionLabels ?? [],
           ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
         },
         profiles,

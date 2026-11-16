@@ -19,7 +19,12 @@ type Part = { text: string; target?: string | undefined };
 export function profileMentionParts(
   row: Pick<
     ChannelMessage,
-    "content" | "edited" | "attachmentSeams" | "mentions" | "mentionReferences"
+    | "content"
+    | "edited"
+    | "attachmentSeams"
+    | "mentions"
+    | "mentionReferences"
+    | "mentionLabels"
   >,
   profiles: ReadonlyMap<string, Profile> | undefined,
   agents: AgentLibrary["identities"] = [],
@@ -35,7 +40,7 @@ export function profileMentionParts(
   for (const id of new Set(identities)) {
     const target = profileTarget(id);
     if (!target) continue;
-    const labels = [
+    const labels = row.mentionLabels?.find((item) => item.id === id)?.names ?? [
       ...profileMentionNames(profiles?.get(id)),
       ...agents
         .filter((agent) => agent.pubkey === id)

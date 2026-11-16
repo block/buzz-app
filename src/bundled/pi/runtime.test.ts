@@ -2067,6 +2067,7 @@ it("persists a channel-scoped wake's reply thread separately from its tool conte
     expect(f.host.requests("deliver")[0]?.params).toMatchObject({
       key: channel,
       context: { channel },
+      scope: root.id,
       reply: { channel, root: root.id, topLevel: false },
     });
   } finally {

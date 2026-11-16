@@ -539,7 +539,8 @@ out.refresh.dropped = await pi.rpc("deliver", refreshing("R3", 999));
 out.refresh.seen = (await pi.rpc("place", { agent: promptAgent, key: "refresh" })).seen;
 await pi.stop();
 // A steering wake names the run it joins as that run is once its prompt is
-// refreshed: here the run ended meanwhile, and Pi ran the queued steer apart.
+// refreshed: here the run ended meanwhile, and Pi ran the queued steer apart,
+// so the wake names the queued steer's thread.
 {
   const asked = held(), answered = held(), ending = held(), working = held();
   pi = start(async () => { asked.release(); await answered.gate; return { text: "wake", steer: "steer: wake" }; });
@@ -587,7 +588,8 @@ finished.release();
 out.afterRun = { first: ar1Wait, second: await pi.rpc("wait", { agent: afterAgent, submission: ar2.submission }), saw: afterSaw };
 await pi.stop();
 // A wake that read the run as done before its prompt's refresh may join the
-// next run rather than start it: a later steer then names no thread for it.
+// next run rather than start it: a later steer then names the thread of the
+// request that started that run, not the wake's.
 {
   const holding = held(), holdGate = held(), asked = held(), answered = held(), working = held(), joined = held(), taken = held();
   const holdRun = defineExtension({ name: "hold-run", hooks: [hook(GenerationTask, { afterRun: async () => { holding.release(); await holdGate.gate; return undefined; } })] });
@@ -911,24 +913,22 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       { type: "text", text: "[Buzz plugin: fixture-policy]" },
       { type: "text", text: "Replaced result" },
     ]);
-    const running =
-      'If you are still working on an earlier request, ordinary replies about that work still go to `reply: "A"`.';
+    const running = (steer: string, target: string) =>
+      `${steer}\n\nThe reply target above is for the new message only. If you are still working on the request that started this run, ordinary replies about that work still go ${target}. Later messages keep their own reply targets.`;
     expect(out.steered).toEqual([
       "first",
-      `steer: other\n\nThe reply target above is for the new message only. ${running}`,
+      running("steer: other", 'to `reply: "A"`'),
       "steer: same",
     ]);
     // Written before Pi decided to run it apart, so worded to hold either way.
-    expect(out.promoted).toBe(
-      `steer: other\n\nThe reply target above is for the new message only. ${running}`,
-    );
+    expect(out.promoted).toBe(running("steer: other", 'to `reply: "A"`'));
     expect(out.promotedSteer).toBe("steer: more");
-    expect(out.woken).toBe("steer: wake");
+    expect(out.woken).toBe(running("steer: wake", 'to `reply: "C"`'));
     expect(out.after).toBe("later");
     expect(out.topLevel).toBe(
-      "steer: thread\n\nThe reply target above is for the new message only. If you are still working on an earlier request, ordinary replies about that work still go to the channel top level, without `reply`.",
+      running("steer: thread", "to the channel top level, without `reply`"),
     );
-    expect(out.joined).toBe("steer: J4");
+    expect(out.joined).toBe(running("steer: J4", 'to `reply: "B"`'));
     expect(out.stopped).toEqual({ status: "closed" });
     expect(out.unfinished).toEqual([
       {

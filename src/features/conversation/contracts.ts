@@ -177,6 +177,12 @@ export type LinkPreviewProps = Readonly<{
   /** The message's `TargetOpener`, for targets other than `url`, such as the
    * plugin's own panel. Absent on hosts that predate it. */
   opener?: TargetOpener | undefined;
+  /** Present only when the viewer may edit the message and the link that
+   * earned this card can be rewritten without losing anything the author wrote.
+   * Publishes one edit that rewrites that link to `<url>`, which asks for no
+   * preview, and rejects with an `Error` if the message has changed so that the
+   * link is no longer there as drawn. */
+  dismiss?: (() => Promise<void>) | undefined;
 }>;
 /** A card below a message for one of its links. The lowest `order` among
  * matches draws it, so a plugin can claim its own URLs ahead of the default

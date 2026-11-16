@@ -105,7 +105,7 @@ export function MessageLink({
   channelPrivate = false,
   channelSolo = false,
   written = "bare",
-  occurrence,
+  source,
 }: {
   url: string;
   children?: ReactNode;
@@ -123,8 +123,9 @@ export function MessageLink({
   /** The joined list holds the destination as a Solo chat, confirmed or not. */
   channelSolo?: boolean;
   written?: LinkWritten;
-  /** Position among links to this URL; present only when `dismiss` may rewrite it. */
-  occurrence?: number | undefined;
+  /** The link's address as written in the message and its position among links
+   * written that way; present only where `dismiss` may rewrite it. */
+  source?: Readonly<{ url: string; occurrence: number }> | undefined;
 }) {
   const active = useConversationPresentation();
   const renderers = useSyncExternalStore(
@@ -260,8 +261,8 @@ export function MessageLink({
   const dismissLink = useContext(LinkDismissContext);
   const messageId = useContext(LinkMessageIdContext);
   const dismiss =
-    interactive && dismissLink && occurrence !== undefined
-      ? () => dismissLink({ url, written, occurrence })
+    interactive && dismissLink && source
+      ? () => dismissLink({ ...source, written })
       : undefined;
   const openThreadTab = useContext(LinkThreadTabContext);
   const thread =

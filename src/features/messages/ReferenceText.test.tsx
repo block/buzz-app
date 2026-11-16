@@ -13,8 +13,6 @@ import { ReferenceText, useReferenceDirectory } from "./ReferenceText";
 
 afterEach(cleanup);
 
-const noProfiles = new Map();
-
 /** A ready session whose joined list, warm public directory and exact
  * channel references the test controls. */
 function session(joined: readonly ChannelSummary[]) {
@@ -39,12 +37,6 @@ function session(joined: readonly ChannelSummary[]) {
       viewer: "v".repeat(64),
       unread: undefined,
       channels,
-      profiles: {
-        subscribe: () => () => {},
-        event: () => undefined,
-        snapshot: () => noProfiles,
-      },
-      agentChoices: { subscribe: () => () => {}, snapshot: () => undefined },
     } as unknown as RelaySession,
     refer,
     directoryRead(channels: readonly ChannelSummary[]) {

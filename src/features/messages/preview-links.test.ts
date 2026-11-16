@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { scanMarkdown } from "../relay/message-content";
 import { preparedMarkdown } from "./markdown-preparation";
-import { previewLinks } from "./preview-links";
+import { previewCards, previewLinks } from "./preview-links";
 
 vi.mock("../relay/message-content", async (actual) => {
   const module = await actual<typeof import("../relay/message-content")>();
@@ -77,5 +77,25 @@ describe("previewLinks", () => {
     expect(preparedMarkdown(content).kind).toBe("markdown");
     expect(previewLinks(content)).toEqual(["https://example.com/once"]);
     expect(scanMarkdown).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("previewCards", () => {
+  it("says where the link that earned each card begins", () => {
+    const content =
+      "See [https://a.example/](https://a.example/) and https://b.example/x, then https://b.example/x";
+    expect(previewCards(content)).toEqual([
+      { url: "https://a.example/", at: 4 },
+      {
+        url: "https://b.example/x",
+        at: content.indexOf("https://b.example/x"),
+      },
+    ]);
+  });
+
+  it("names no position for a link that has a label of its own", () => {
+    expect(previewCards("See [docs](https://a.example/)")).toEqual([
+      { url: "https://a.example/", at: undefined },
+    ]);
   });
 });

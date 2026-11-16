@@ -53,7 +53,10 @@ it("lets the lowest order claim a link ahead of the default card", () => {
   ]);
   render(
     <LinkPreviews
-      urls={["https://a.example/", "https://special.example/"]}
+      links={[
+        { url: "https://a.example/" },
+        { url: "https://special.example/" },
+      ]}
       messageId="m"
       registry={registry}
       onOpenLink={() => true}
@@ -69,7 +72,7 @@ it("folds past three cards and opens links through the host", () => {
   const urls = [1, 2, 3, 4, 5].map((n) => `https://${n}.example/`);
   render(
     <LinkPreviews
-      urls={urls}
+      links={urls.map((url) => ({ url }))}
       messageId="m"
       registry={reader([entry("web", () => true, 100, card("web"))])}
       onOpenLink={onOpenLink}
@@ -177,7 +180,10 @@ it("drops a card whose renderer throws and keeps the rest", () => {
   };
   render(
     <LinkPreviews
-      urls={["https://broken.example/", "https://ok.example/"]}
+      links={[
+        { url: "https://broken.example/" },
+        { url: "https://ok.example/" },
+      ]}
       messageId="m"
       registry={reader([
         entry("broken", (url) => url.includes("broken"), 0, Broken),

@@ -3104,8 +3104,9 @@ inline content inside that anchor. They must not nest links or buttons. `written
 the author wrote the link: `"bare"`, `"angle"` (`<https://…>`) or `"labeled"`
 (`[text](https://…)`). `messageId` is the id of the message holding the link, and is
 absent outside a message. `interactive` is false for a composer decoration or preview,
-where a renderer reads nothing. `dismiss` is described in [Link previews](#link-previews).
-Components that ignore the added props keep working; `apiVersion` stays 1. Among matching renderers the lowest `order`
+where a renderer reads nothing. `dismiss` is described in [Link previews](#link-previews);
+a renderer drawn inside the anchor cannot hold a control, so a card offers it through
+`registerLinkPreview`. Components that ignore the added props keep working; `apiVersion` stays 1. Among matching renderers the lowest `order`
 wins under the panel [resolution order](#resolution-order); throwing matchers are
 skipped. A render failure or plugin removal restores the ordinary link, including
 its styling. Registration follows the existing plugin lifetime.
@@ -3177,12 +3178,13 @@ lowest-`order` match draws its card under the panel
 [resolution order](#resolution-order), so a plugin claims its own URLs by
 registering below the default web card's catch-all band; a component that
 renders nothing leaves that link without a card. Components receive
-`{ url, messageId, open, opener }`;
+`{ url, messageId, open, opener, dismiss? }`;
 `open()` routes `url` through the host's link handler, as clicking the link
 does, and returns false once the contribution or message has retired. `opener`
 is the message's [`TargetOpener`](#opening-targets-from-channel-plugins), so a
 card can open a different target, such as its plugin's panel, while clicking the
 link itself still does what it always did. Hosts that predate it omit `opener`.
+`dismiss` is described in [Link previews](#link-previews).
 Cards sit between the message bubble and its attachments. After three, the rest
 fold behind "Show N more previews". A render failure drops only that card.
 Registration follows the existing plugin lifetime.
@@ -3332,17 +3334,22 @@ A link renderer that draws a card or other expansion beside its link follows one
 convention: `written === "angle"` means the author asked for no preview, so it draws the
 link inline, with no card. Standard Markdown already says this with `<https://…>`.
 
-`dismiss` lets the card offer a Slack-style remove control. It is present only when
-the viewer may edit the message: its author, or the verified human owner of the agent
-that wrote it, under the same evidence checks as any owner edit. It is absent in a
-composer draft or preview, outside a channel the viewer can write to, while an edit of
-the message is still pending, and for a link whose label is not its address, since the
-rewrite would drop the label. `dismiss()` publishes one ordinary edit that rewrites
-exactly that link to `<url>`. Other links, including others to the same address,
-and anything in a code span or block are left as they were. It rejects with an `Error`
-if the message changed so that the link is no longer there as it was drawn. Undo is
-editing the message again; the host adds no UI of its own. The relay and the protocol
-are unchanged; the edit carries no `p` tag, so it wakes no agent.
+`dismiss` lets a card offer a Slack-style remove control. A `registerLinkPreview`
+component receives it on its props, and a `registerLink` renderer receives it for
+the link it draws. It is present only when the viewer may edit the message: its
+author, or the verified human owner of the agent that wrote it, under the same
+evidence checks as any owner edit. It is absent in a composer draft or preview,
+outside a channel the viewer can write to, while an edit of the message is still
+pending, and for a link whose label is not its address, since the rewrite would drop
+the label. `dismiss()` publishes one ordinary edit that rewrites exactly one link to
+`<url>`: for a card, the link that earned it. Another link to the same address
+is left as it was, so a later one then earns the card and dismissing again removes
+that one. Everything else in the message, including mentions, attachments, chat
+cards and a media timestamp, stays exactly as written. A link that only becomes
+`<url>` does not mark the message edited. `dismiss()` rejects with an `Error` if the
+message changed so that the link is no longer there as it was drawn. Undo is editing
+the message again; the host adds no UI of its own. The relay and the protocol are
+unchanged; the edit carries no `p` tag, so it wakes no agent.
 
 ### Composer ownership and mention tools
 

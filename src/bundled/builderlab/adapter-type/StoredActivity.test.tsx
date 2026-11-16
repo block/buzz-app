@@ -1,0 +1,134 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, expect, it, vi } from "vitest";
+import type { Agent } from "../../../features/agents/service";
+import type { ChannelLabel } from "../../../features/channels/channel-icon";
+import { PanelSubviewHost } from "../../../features/panels/PanelSubview";
+import type { AgentClient, AgentSession } from "../agents/client";
+import { StoredActivity } from "./StoredActivity";
+
+afterEach(cleanup);
+
+const agent = {
+  key: "a".repeat(64),
+  pubkey: "a".repeat(64),
+  name: "Ada",
+  relay: "wss://relay.example.org",
+} as unknown as Agent;
+const root = "r".repeat(64);
+const dm: AgentSession = { sessionId: "dm", channelId: "dm", updatedAt: 2000 };
+const thread: AgentSession = {
+  sessionId: "thread",
+  channelId: "alpha",
+  threadRootId: root,
+  updatedAt: 1000,
+};
+const labels: Record<string, ChannelLabel> = {
+  dm: { name: "Sam", channelType: "dm" },
+  alpha: { name: "alpha" },
+};
+
+function setup({
+  listed = [dm, thread],
+  conversation,
+  lookup = [],
+}: {
+  listed?: AgentSession[];
+  conversation?: { channelId: string; rootId?: string };
+  lookup?: AgentSession[];
+}) {
+  const client = {
+    sessions: vi.fn(async () => ({ sessions: lookup, more: false })),
+    sessionMessages: vi.fn(async () => ({
+      turns: [
+        { turn_id: "t1", created_at: 1, status: "TASK_STATUS_COMPLETED" },
+      ],
+      messages: [],
+    })),
+  } as unknown as AgentClient;
+  const openConversation = vi.fn();
+  render(
+    <PanelSubviewHost close={() => {}}>
+      <StoredActivity
+        agent={agent}
+        {...(conversation && { conversation })}
+        openConversation={openConversation}
+        client={client}
+        listed={Promise.resolve({
+          status: "loaded",
+          agentId: "agent-1",
+          sessions: listed,
+          more: false,
+        })}
+        activity={undefined}
+        channelLabel={(id) => labels[id]}
+        name={() => undefined}
+      />
+    </PanelSubviewHost>,
+  );
+  return { client, openConversation };
+}
+
+const section = async (name: string) => {
+  const heading = await screen.findByRole("heading", { name });
+  return within(heading.closest("section") as HTMLElement);
+};
+
+it("counts a DM's one session as the conversation it was opened from", async () => {
+  const { client } = setup({ conversation: { channelId: "dm" } });
+  const here = await section("This channel");
+  expect(
+    here.getByRole("button", { name: "View transcript: Sam" }),
+  ).toBeVisible();
+  const recent = await section("Recent conversations");
+  expect(recent.queryByText("Sam")).toBeNull();
+  expect(recent.getByText("alpha")).toBeVisible();
+  expect(client.sessions).not.toHaveBeenCalled();
+});
+
+it("asks Builderlab for the opened thread's session when the page lacks it", async () => {
+  const shared: AgentSession = {
+    sessionId: "shared",
+    channelId: "beta",
+    updatedAt: 3000,
+  };
+  const { client } = setup({
+    conversation: { channelId: "beta", rootId: "o".repeat(64) },
+    lookup: [shared],
+  });
+  const here = await section("This channel");
+  expect(
+    await here.findByRole("button", { name: "View transcript: beta" }),
+  ).toBeVisible();
+  expect(client.sessions).toHaveBeenCalledExactlyOnceWith(
+    "agent-1",
+    expect.any(AbortSignal),
+    {
+      community: "wss://relay.example.org",
+      channelId: "beta",
+      threadRootId: "o".repeat(64),
+    },
+  );
+});
+
+it("reads a transcript only when it opens, and links to its conversation", async () => {
+  const { client, openConversation } = setup({});
+  const user = userEvent.setup();
+  const recent = await section("Recent conversations");
+  expect(client.sessionMessages).not.toHaveBeenCalled();
+  await user.click(
+    recent.getByRole("button", {
+      name: "View transcript: alpha · thread rrrrrrrr",
+    }),
+  );
+  expect(client.sessionMessages).toHaveBeenCalledExactlyOnceWith(
+    "thread",
+    expect.any(AbortSignal),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Open this thread" }),
+  );
+  expect(openConversation).toHaveBeenCalledWith("alpha", root);
+});

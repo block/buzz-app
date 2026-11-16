@@ -1601,6 +1601,20 @@ cannot replace a received terminal result. Recovery neither archives raw activit
 nor restores history after reload. Older servers without the endpoint leave
 tasks unknown.
 
+A remote agent's Activity tab also lists the sessions Builderlab stored, above
+the live feed. Once per agent and sign-in it reads one page of
+`/v3/beekeeper/list-agent-sessions` (50, most recently active first). The
+conversation it was opened from comes first: its thread's session, else its
+channel's, which a DM or channel-scoped agent shares. When that session is not
+on the page, the tab asks for it by `channel_id` and `thread_root_event_id`.
+A session's messages are read from `/v3/beekeeper/get-agent-session-messages`
+only when its transcript opens, and again while it is working. Messages carry
+no turn, so each joins the latest stored turn started at or before it; tool
+requests join their responses by ID, and a message tool's text shows as the
+agent's posted message. A removed session shows no transcript. A server
+without the session list, a signed-out owner or an account without remote
+agents shows the live feed only.
+
 ### Activity updates in the conversation
 
 An agent's work has one working indicator. While a live activity bubble on the

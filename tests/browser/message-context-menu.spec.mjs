@@ -135,16 +135,52 @@ test("right-clicking a message timestamp offers its ⋯ actions and copies its l
   await page.mouse.click(1, 1);
   await expect(menu).toHaveCount(0);
 
-  // Text the reader selected keeps the browser's menu.
+  // Highlighted prose prepends its actions to the existing message menu.
   const prose = row.locator("[data-message-action-anchor] p");
   await prose.selectText();
   await page.evaluate(() => {
     window.contextMenus = [];
   });
   await rightClick(page, prose);
-  expect(await prevented(page)).toEqual([false]);
+  expect(await prevented(page)).toEqual([true]);
+  await expect(menu).toBeVisible();
+  expect((await items(page).allInnerTexts()).slice(0, 2)).toEqual([
+    "Copy highlight",
+    "Quote highlight",
+  ]);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+
+  // The same selection does not add highlight actions outside its range.
+  await prose.selectText();
+  await rightClick(
+    page,
+    rowOf(peer.id).locator("[data-message-action-anchor] p").first(),
+  );
+  await expect(
+    menu.getByRole("menuitem", { name: "Copy link", exact: true }),
+  ).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: /highlight/ })).toHaveCount(
+    0,
+  );
+  await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   await page.evaluate(() => document.getSelection()?.removeAllRanges());
+
+  // Editing selections keep the browser menu.
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await input.fill("Draft context");
+  await input.selectText();
+  await page.evaluate(() => {
+    window.contextMenus = [];
+  });
+  await input.click({ button: "right" });
+  expect(await prevented(page)).toEqual([false]);
+  await expect(menu).toHaveCount(0);
+  await input.fill("");
 
   // A thread reply's menu copies the reply's own thread link.
   await clickRow(page, summary);

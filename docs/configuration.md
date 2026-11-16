@@ -93,7 +93,7 @@ builds.
 
 `BUZZ_AGENT_GATEWAY` describes one agent gateway and the communities whose
 local agent memberships route inference through it. It is a version 2 JSON
-object with exactly these keys:
+object with these keys (`launcher_client` is optional):
 
 ```json
 {
@@ -121,8 +121,10 @@ object with exactly these keys:
 - `communities`: 1 to 16 unique entries, each a canonical NIP-11 community
   UUID and a secure relay origin.
 - `access_path`: the gateway's readiness check, a plain absolute path.
-- `launcher_client` and `headers`: the value and the header name for each of
-  the eight context roles. Names are lowercase, unique and may not collide
+- `launcher_client`: the launcher name, defaulting to `"buzz"` when omitted.
+  An explicit value must be 1 to 64 letters, digits, `.`, `_` or `-`.
+- `headers`: the header name for each of the eight context roles, including
+  `launcher_client`. Names are lowercase, unique and may not collide
   with protected headers (hop-by-hop, routing, credential, body protocol and
   vendor SDK headers).
 - `reserved_prefixes`: up to 4 header prefixes only Buzz may set. Before the
@@ -132,13 +134,14 @@ object with exactly these keys:
   `codex` or `pi`. A harness with no entry keeps the user's own
   configuration, without a notice.
 
-The descriptor is public routing data with no credential, and this code
-carries no default for any of its values. Both the frontend build and the
+The descriptor is public routing data with no credential. Only
+`launcher_client` has a default. Both the frontend build and the
 plugin-manager native build read it from the process environment only, never
 from `.env` files. Only the frontend (Vite) build validates all of it, against
 the shared cases in `src/features/agents/gateway/descriptor-vectors.json`. The
-native build checks the version, the eight keys and the gateway origin, which
-is all its network grant needs, and nothing more. An invalid value, including
+native build checks the version, the keys (with `launcher_client` optional)
+and the gateway origin, which is all its network grant needs, and nothing
+more. An invalid value, including
 a version 1 descriptor, fails the build that rejects it with a fixed message
 that never echoes it. A descriptor that is still invalid at runtime fails
 open: no harness gets an upstream, so turns run unchanged, with no notice.

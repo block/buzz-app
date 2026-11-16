@@ -192,6 +192,14 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               const result = await loadConfigFromFile({ command: 'build', mode: 'production' }, configFile);
               assert.equal(result.config.define['import.meta.env.VITE_BUZZ_AGENT_GATEWAY'], JSON.stringify(expected));
             }
+            const defaultLauncher = descriptor([{ id, origin: 'https://relay.example' }]);
+            delete defaultLauncher.launcher_client;
+            process.env.BUZZ_AGENT_GATEWAY = JSON.stringify(defaultLauncher);
+            const defaultConfig = await loadConfigFromFile({ command: 'build', mode: 'production' }, configFile);
+            assert.deepEqual(
+              JSON.parse(JSON.parse(defaultConfig.config.define['import.meta.env.VITE_BUZZ_AGENT_GATEWAY'])),
+              { ...defaultLauncher, launcher_client: 'buzz' },
+            );
             rmSync('.env.production');
             // Anything else must be a valid version 2 descriptor, and the
             // build's error never echoes it.

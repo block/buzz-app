@@ -10,8 +10,8 @@ import {
  * for one agent gateway. It names the gateway origin, the exact communities
  * whose local agent memberships route through it, the access check's path,
  * the context header profile and each harness's upstream base. It carries no
- * credential. Every deployed value comes from the build's input; this code
- * has no defaults. Compiled into the frontend, and validated independently
+ * credential. Values come from the build's input; an omitted launcher_client
+ * defaults to "buzz". Compiled into the frontend, and validated independently
  * by native, which compiles only what it enforces. Unset or blank turns
  * gateway routing off everywhere; anything else must be a valid version 2
  * descriptor, or the build fails. */
@@ -98,7 +98,7 @@ export type DescriptorError =
 const MESSAGES: Record<DescriptorError, string> = {
   json: "it isn't JSON",
   size: "it's larger than 8 KiB",
-  keys: "expected exactly version, gateway, communities, access_path, launcher_client, headers, reserved_prefixes and upstreams",
+  keys: "expected version, gateway, communities, access_path, headers, reserved_prefixes and upstreams, with optional launcher_client",
   version: "version must be 2",
   gateway: "gateway must be an https:// origin with no path or credentials",
   communities: `communities must list 1 to 16 unique communities, each exactly a canonical NIP-11 UUID id and a secure origin`,
@@ -158,7 +158,7 @@ export function parseGatewayDescriptor(raw: string): GatewayDescriptor | null {
   }
   if (!plain(value)) return fail("keys");
   if (value.version !== 2) fail("version");
-  if (keys(value) !== KEYS) fail("keys");
+  if (keys({ launcher_client: "buzz", ...value }) !== KEYS) fail("keys");
 
   const gateway = typeof value.gateway === "string" ? value.gateway : "";
   const url = URL.canParse(gateway) ? new URL(gateway) : null;
@@ -195,10 +195,9 @@ export function parseGatewayDescriptor(raw: string): GatewayDescriptor | null {
 
   if (!isPath(value.access_path)) fail("path");
 
-  if (
-    typeof value.launcher_client !== "string" ||
-    !LAUNCHER.test(value.launcher_client)
-  )
+  const launcherClient =
+    value.launcher_client === undefined ? "buzz" : value.launcher_client;
+  if (typeof launcherClient !== "string" || !LAUNCHER.test(launcherClient))
     fail("launcher_client");
 
   const headers = value.headers;
@@ -248,7 +247,7 @@ export function parseGatewayDescriptor(raw: string): GatewayDescriptor | null {
     gateway,
     communities: Object.freeze(communities),
     access_path: value.access_path as string,
-    launcher_client: value.launcher_client as string,
+    launcher_client: launcherClient as string,
     headers: Object.freeze(
       Object.fromEntries(GATEWAY_ROLES.map((role, i) => [role, names[i]])),
     ) as GatewayDescriptor["headers"],

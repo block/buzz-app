@@ -379,15 +379,15 @@ html[data-keyboard-navigation] .context summary:focus-visible {
 }
 
 /* Arriving at a message's turn marks its text with the message arrival
-   wash, longer than in chat so it is found in a busy transcript: held about
-   four seconds, then a two-second fade back to the surface's own fill. The
-   spread pads the wash without moving the text. */
+   wash, timed like the chat message highlight: held about a second, then a
+   slow fade back to the surface's own fill. The spread pads the wash without
+   moving the text. */
 .timeline [data-arrived] {
-  animation: entry-arrived 6s ease-out;
+  animation: entry-arrived calc(var(--duration-settle) * 10) ease-out;
 }
 @keyframes entry-arrived {
   0%,
-  67% {
+  45% {
     background-color: var(--surface-message-highlight);
     box-shadow: 0 0 0 var(--space-1) var(--surface-message-highlight);
   }

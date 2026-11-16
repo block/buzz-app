@@ -94,6 +94,9 @@ bundled/inbox/          builtin Inbox page for unread conversations and mentions
 The host composes the conversation sidebar (Solo and Team inventories) beside
 independently mounted pages. Settings supplies its own modal navigation; a selected
 page can replace the conversation sidebar through its optional `sidebar` contribution.
+A page can set `conversationNavigation: true` to keep the Messages sidebar and
+dock selection. This also applies to pages with `primary: false`; it does not add
+a navigation row. Without this option, the page keeps its own navigation owner.
 The conversation sidebar reuses session-owned roster, unread, creation and
 preferences capabilities; it does not
 retain a hidden Channels page or message reader. Sidebar and page render errors
@@ -410,20 +413,22 @@ for installation. Read the optional `pluginInstaller` service with
 lookup returns `undefined` when an older host has not provided it.
 
 ```ts
+type PluginInstallSource =
+  | {
+      repository: string; // https://, ssh:// or scp-style Git URL
+      reference: string; // branch or tag
+      path?: string; // relative folder inside the repository; only it is read
+      commit?: string; // 40- or 64-hex; install exactly this commit, on `reference`
+    }
+  | {
+      id: string; // the artifact's plugin ID
+      url: string; // https:// artifact from `buzzodz plugin pack`
+      sha256: string; // 64-hex; install exactly these bytes
+    };
+
 type PluginInstaller = {
   requestInstall(
-    source:
-      | {
-          repository: string; // https://, ssh:// or scp-style git URL
-          reference: string; // branch or tag
-          path?: string; // relative folder inside the repository; only it is read
-          commit?: string; // 40- or 64-hex; install exactly this commit, on `reference`
-        }
-      | {
-          id: string; // the artifact's plugin ID
-          url: string; // https:// artifact from `buzzodz plugin pack`
-          sha256: string; // 64-hex; install exactly these bytes
-        },
+    source: PluginInstallSource,
   ): Promise<"installed" | "updated" | "cancelled" | "unavailable">;
   getInstallationStatus(
     id: string,
@@ -431,6 +436,13 @@ type PluginInstaller = {
   getInstallationSource?(
     id: string,
   ): "git" | "url" | "folder" | "bundled" | "absent" | "unavailable";
+  compareInstallationRelease?(
+    id: string,
+    candidate: {
+      source: PluginInstallSource;
+      release: { revision: string; publisher?: string | null };
+    },
+  ): "current" | "different" | "review" | "unknown";
   subscribeInstallationStatus(
     id: string,
     listener: (status: "installed" | "absent" | "unavailable") => void,
@@ -443,6 +455,60 @@ These installation-status methods may be missing on an older host even when the
 optional service is available. Feature-check each method before calling it; see
 the [plugin authoring guide](plugin-authoring-guide.md#extension-points) for
 status semantics and subscription-lifetime guidance.
+
+`compareInstallationRelease` is an optional, read-only comparison for one listed
+release. Its answer is relative to the caller-supplied candidate: use trusted
+catalog data, not arbitrary plugin or user input. This is neither a catalog
+attestation nor an inventory. It returns bounded equality/mismatch results for
+caller-supplied values, not raw installed revision, publisher, source URL,
+repository, or local path. `current` requires a unique, ready, error-free external
+install, an exact immutable saved
+source pin (Git commit plus repository/reference/path, or URL plus artifact
+SHA-256), and matching native release revision and known publisher. `different`
+requires the same source line and known publisher but a different source pin
+and native revision. It means “does not match this release,” **not “newer”**: Git commits are not ordered by
+their hashes, and an artifact SHA is an integrity pin, not a native plugin
+revision. `review` means a known source or publisher mismatch, or inconsistent
+listed metadata; `unknown` covers missing/invalid source or release data,
+unpinned Git sources, absence, duplicate IDs, non-ready/recovery state, plugin
+errors, folder or bundled installs, and unknown publishers. Neither `review` nor
+`unknown` is evidence of an update or downgrade opportunity. Older hosts without
+the method are also unknown. In particular, callers must not substitute a Git
+commit or URL archive SHA for the native `release.revision`.
+
+The input publisher is optional so incomplete catalog records remain representable;
+an omitted or null publisher always returns `unknown`. URL spelling is normalized
+as in native imports (including scp-style Git remotes), while Git transports,
+users, references, and plugin paths remain distinct.
+
+For example, a Marketplace consumer may feature-check the method and use only a
+verified catalog release identity. It may label a `different` result **Update**
+only when its own catalog authority establishes that the listing is the intended
+current release and not a downgrade; the host comparison itself proves no order.
+The button still opens the existing native review with `requestInstall`, never an
+automatic install:
+
+```ts
+const comparison = installer?.compareInstallationRelease?.(listing.id, {
+  source: listing.installSource,
+  release: listing.verifiedNativeRelease,
+}) ?? "unknown";
+
+const showUpdate = comparison === "different" && catalogConfirmsCurrentRelease(listing);
+function onUpdateClick() {
+  // Wire this to a user action, never to render or the comparison read.
+  if (showUpdate) return installer?.requestInstall(listing.installSource);
+}
+```
+
+`catalogConfirmsCurrentRelease` represents catalog-side publisher/order evidence;
+it is not a host API. If the catalog supplies only an immutable Git commit or URL
+artifact hash, without a verified native revision and publisher, comparison stays
+unknown rather than guessing. Subscribe before reading for current state; the
+existing status subscription is also an invalidation signal for same-ID release,
+publisher, source, and removal changes, and may notify with the unchanged
+`installed` status. Re-read the comparison after each notification and release
+the subscription with the plugin effect.
 
 ```ts
 type Updates = NonNullable<PluginInstaller["updates"]>;
@@ -963,6 +1029,15 @@ keep it short: it is sent with every turn. `addInstructions` throws on text over
 4096 UTF-8 bytes after trimming. Context for one turn belongs in a note, which
 the agent reads as data.
 
+`ctx.agents.setConversationInstructions(agent, { channelId, root? }, text)`
+gives one of the owner's local agents standing instructions in one
+conversation, at most 8192 UTF-8 bytes after trimming; empty text clears them.
+Each of that agent's turns there shows them in an `<owner-instructions
+source="…">` section after the plugin instructions, escaped the same way, and
+the base prompt ranks them below the owner's messages and above a Solo chat's
+Canvas. They are kept on this device for now. `conversationInstructions(agent,
+place)` resolves with the text. See [Agents](agents.md).
+
 ### Agent operation proofs
 
 A plugin can provide an operation that another installed plugin calls from a
@@ -1043,10 +1118,11 @@ plugin's folder can replace that plugin's code, though not its host access,
 without a new review. Plugin code is trusted and unsandboxed, so only load folders
 that the agents you run may change.
 
-`ctx.agents.wake(pubkey, { channel, root?, text })` wakes an agent this copy of
+`ctx.agents.wake(pubkey, { channel, root?, topLevel?, text })` wakes an agent this copy of
 the app runs in one of its conversations, as a mention there would, with no
 message. `root` is the thread's root event id (64 hex); leave it out for a Solo
-chat. The agent is told
+chat. `topLevel: true`, without `root`, wakes it at the top level of a channel
+that is not a Solo chat, for example to start a new thread there. The agent is told
 the text comes from the plugin, not its owner, and is data, so quote what others
 wrote (comments, check output) rather than phrasing it as instructions. It
 throws when this copy does not run the agent or its queue is full. Claude, Codex and Goose accept plugin wakes; Pi ignores them. Attention delivery uses a separate internal `attention` trigger in the Interest lane, accepted by all four harnesses. Its Interest instructions retain their instruction framing, while observed messages remain data. A channel-only Attention address supplies a default posting destination and allows explicit thread replies outside Solo chats.
@@ -1289,7 +1365,7 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Todos, Usage, Reminders,
-Workflows, Changesets, Shared compute and Charts are off by default for fresh installs. Bestie,
+Workflows, Changesets, Shared compute, Charts and File viewer are off by default for fresh installs. Bestie,
 Feedback, Diff viewer, Identity Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and
@@ -1471,6 +1547,14 @@ in a workspace visit, then retain it for that visit. The default remains eager.
 Component-provided titles (`usePanelTabTitle`) and local detail tabs (`PanelLocalTab`)
 are also deferred; opt in when the contribution's static title is sufficient until
 selection.
+
+A plugin panel, which cannot import host modules, names its tab with
+`ctx.panels.useTabTitle(label)`, a React hook called in the panel component (for
+example `ctx.panels.useTabTitle("#12554892")` for a build opened from a link). The
+label replaces the static `title` while the component is mounted and the static
+`title` returns when it unmounts; outside a panel tab the call does nothing. It
+takes a label only, no icon. Hosts that predate it lack the hook, so plugins that
+support them test `typeof ctx.panels.useTabTitle === "function"` first.
 
 Channels keeps layout and channel/thread selection. The Terminal plugin binds its
 mounted launcher into the existing shortcut dispatcher, and owns sessions separately
@@ -1931,8 +2015,9 @@ program such as `base64` or `pwd` that Windows lacks.
 missing file rejects with an error whose message contains "No such file".
 `ctx.host.resolveDirectory(path)` returns an absolute or `~/…` directory as an
 absolute path without symbolic links, in the platform's ordinary form, and
-creates it if missing, as a process's `cwd` is. Both act with the user's full
-access; the import preview says so.
+creates it if missing, as a process's `cwd` is; with `{ create: false }` a
+missing path, or one that is not a directory, rejects instead. Both act with
+the user's full access; the import preview says so.
 
 `ctx.host.repositoryFolders(binding, signal)` lists the repositories folder that
 the binding's community and account configured in **Local settings**, or the
@@ -2828,6 +2913,22 @@ tooltips and anything else that fetches or injects. Marks use the four
 `chart-series` roles, with extra version 1 series summed into Other. Its action
 opens the chart in an expanded dialog, and invalid JSON shows the error with the
 source. The host's Copy action copies the fenced JSON.
+The bundled **File viewer** plugin (`buzz.file-viewer`, off by default) claims
+file cards for PDFs, Markdown, code, text, CSV and TSV at `order: 100`, the
+bundled catch-all band, so a plugin registered at a lower order for the same
+files takes them over. The
+card's preview opens a `buzz-file:?url=…&name=…&mime=…&time=…` panel target,
+which other plugins may also open. The panel reads only `/media/` URLs on the
+current community's origin, through the session's media proxy, and caps text at
+20 MB and PDFs at 100 MB; tables stop at 50,000 cells. Markdown, code and text
+are indexed once and shown in parts of at most 12,500 characters, mounted near
+the view and dropped away from it. Markdown renders through the shared `MarkdownDocument` with the document profile,
+which the viewer extends with heading ids, code highlighting, in-document `#`
+links and images, which load only from the same community media. PDFs use
+[PDF.js](https://mozilla.github.io/pdf.js/) in a worker, loaded on the first
+PDF, and draw only the pages near the viewport. Its CMaps, standard fonts and
+image decoders are bundled assets served through a `BinaryDataFactory`, so
+PDFs need no network access beyond the file.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
 methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` / `.Conversation` /

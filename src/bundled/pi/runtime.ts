@@ -29,7 +29,10 @@ import {
 } from "../../features/agent-harness/core-memory";
 import { readAuthorNames } from "../../features/agent-harness/author-names";
 import { readProject } from "../../features/agent-harness/project";
-import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
+import {
+  mentionAuthority,
+  workflowOf,
+} from "../../features/agents/owner-attestation";
 import { type AgentKey, pubkeyOf } from "../../features/agents/membership";
 import { sessionPrompts } from "../../features/agents/session-prompts";
 import { localStore, type AgentStore } from "../../features/agents/store";
@@ -545,15 +548,14 @@ export class PiRuntime {
     // it, and keeps its own destination for a failure recovered after a stop.
     const attention = wake?.type === "attention";
     // Pi runs commands as you; mentions need owner or delegated authority.
-    if (
-      trigger.type === "mention" &&
-      !(await fromOwner(
+    if (trigger.type === "mention") {
+      const authority = await mentionAuthority(
         trigger.event,
         agent.owner,
         workflowOf(this.reads(agent.key), agent.pubkey),
-      ))
-    )
-      return ignored?.();
+      );
+      if (authority !== "owner") return ignored?.(authority);
+    }
     signal.throwIfAborted();
     const entry = this.entry(agent, config(raw));
     entry.handle = agent;
@@ -622,6 +624,8 @@ export class PiRuntime {
               ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
               : {}),
           }),
+          channel,
+          key === channel ? undefined : root,
         );
       // A conversation's tools default to its thread; a conversation shared
       // by several threads is told which to reply in instead.
@@ -1218,9 +1222,15 @@ export class PiRuntime {
     };
   }
 
-  /** `text` with the Buzz tools' end-of-turn note, when they have one. */
-  private review(entry: Entry, text: string) {
-    const note = turnNote(entry.handle);
+  /** `text` with the Buzz tools' end-of-turn note for its conversation, when
+   * they have one. */
+  private review(
+    entry: Entry,
+    text: string,
+    channelId: string,
+    root: string | undefined,
+  ) {
+    const note = turnNote(entry.handle, channelId, root);
     return note ? `${text}\n\n${note}` : text;
   }
 

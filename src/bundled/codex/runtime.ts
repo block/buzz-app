@@ -12,7 +12,10 @@ import { isFinalMessage } from "../../buzz-mcp/session-tools";
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import type { AgentProtection } from "../../features/agent-protection/service";
 import { nativeProtectionBridge } from "../../features/agent-protection/native-bridge";
-import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
+import {
+  mentionAuthority,
+  workflowOf,
+} from "../../features/agents/owner-attestation";
 import {
   type ConversationWake,
   wakeAnchor,
@@ -25,6 +28,11 @@ import {
   sessionPrompts,
 } from "../../features/agents/session-prompts";
 import { localStore, type AgentStore } from "../../features/agents/store";
+import {
+  conversationFolder,
+  conversationKey,
+  existingFolder,
+} from "../../features/agents/conversation-folders";
 import type {
   Agent,
   AgentHandle,
@@ -126,7 +134,7 @@ type Request = {
   /** A failed final delivery stays pending until this request gets a reply. */
   finalDelivery?: Error | true;
   step?: (tool: string, target?: string) => void;
-  acknowledged?: () => void;
+  acknowledged?: (input?: Readonly<{ steering?: true }>) => void;
   superseded?: () => void;
   /** Takes a title for a new Solo chat; see `Delivery.named`. */
   named?: (title: string) => void;
@@ -273,7 +281,11 @@ function noteOf(request: Request) {
     request.sessionContext,
     request.resumed ? RESUMED_PROMPT : undefined,
     ...request.notes,
-    turnNote(request.agent),
+    turnNote(
+      request.agent,
+      request.conversation.channelId,
+      request.conversation.root,
+    ),
   ].filter(Boolean);
   return notes.length ? notes.join("\n\n") : undefined;
 }
@@ -363,7 +375,46 @@ export class CodexRuntime {
     private readonly protectionHost?: Pick<Host, "spawn" | "serveMcp">,
     private readonly handle: (pubkey: string) => AgentHandle | undefined = () =>
       undefined,
+    private readonly resolveDirectory?: Host["resolveDirectory"],
   ) {}
+  /** The folder a plugin gave the conversation, if any. Only the local
+   * runtime keeps them; an execution target's conversations refuse one. */
+  private folder(
+    scope: string,
+    agent: AgentKey,
+    channelId: string,
+    root?: string,
+  ) {
+    if (this.target) return undefined;
+    return conversationFolder(
+      this.storage,
+      scope,
+      agent,
+      conversationKey(channelId, root),
+    );
+  }
+  /** Where a conversation's thread runs: the folder it was given, which must
+   * still exist, with the agent's workspace as `home`; or else that
+   * workspace. Both absolute. */
+  private async conversationPlace(
+    scope: string,
+    agent: AgentKey,
+    conversation: Readonly<{ channelId: string; root?: string }>,
+    settings: Config,
+  ): Promise<{ cwd: string; home?: string }> {
+    const assigned = this.folder(
+      scope,
+      agent,
+      conversation.channelId,
+      conversation.root,
+    );
+    const workspace = await this.workspace(settings.workspace);
+    if (!assigned) return { cwd: workspace };
+    return {
+      cwd: await existingFolder(this.resolveDirectory, assigned),
+      home: workspace,
+    };
+  }
   private executionKey(agent: AgentKey, scope: string, conversation: string) {
     return `buzz.codex.sessions.execution.v1:${scope}:${agent}:${conversation}`;
   }
@@ -661,7 +712,17 @@ export class CodexRuntime {
       const server = this.open(this.handle(agent.key));
       const rpc = await server.opening;
       const settings = this.resolveConfig(agent.config);
-      const workspace = await this.workspace(settings.workspace);
+      const { cwd: workspace, home } = await this.conversationPlace(
+        reads.scope,
+        agent.key,
+        {
+          channelId: place.channelId,
+          ...(settings.scope === "channel" || !place.root
+            ? {}
+            : { root: place.root }),
+        },
+        settings,
+      );
       if (workspace !== thread.workspace)
         throw new Error(
           "The workspace changed. Send a message to start its session first.",
@@ -672,6 +733,8 @@ export class CodexRuntime {
         settings,
         workspace,
         {},
+        undefined,
+        home,
       );
       try {
         signal.throwIfAborted();
@@ -1622,16 +1685,13 @@ export class CodexRuntime {
     const event =
       trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const reads = this.reads(agent.key);
-    if (
-      trigger.type === "mention" &&
-      !(await fromOwner(
+    if (trigger.type === "mention") {
+      const authority = await mentionAuthority(
         trigger.event,
         agent.owner,
         workflowOf(reads, agent.pubkey),
-      ))
-    ) {
-      delivery.ignored?.();
-      return;
+      );
+      if (authority !== "owner") return delivery.ignored?.(authority);
     }
     delivery.signal.throwIfAborted();
     if (!reads) throw new Error("Connect to the agent's community first");
@@ -1680,6 +1740,10 @@ export class CodexRuntime {
       );
 
     if (await this.inspect?.(agent.key)) {
+      if (this.folder(reads.scope, agent.key, channelId, root))
+        throw new Error(
+          "Conversation folders are unavailable for agents on an execution target",
+        );
       const handoff = this.controls.deliver(
         `${agent.key}/${conversationKey}`,
         async (deferred) => {
@@ -1855,7 +1919,7 @@ export class CodexRuntime {
               active.requests.push(request);
               entry.waiting.delete(request);
               this.touch(request, entry, key);
-              this.acknowledgeActivity(active, request);
+              this.acknowledgeActivity(active, request, true);
             } catch (error) {
               if (entry.abort.signal.aborted) {
                 request.failActivity("Codex was stopped");
@@ -2105,7 +2169,11 @@ export class CodexRuntime {
   /** A positive harness response transfers presentation, not execution or
    * success. Watches have no bubble; mentions in other threads keep theirs,
    * and a top-level chat is one scope. */
-  private acknowledgeActivity(active: Active, request: Request) {
+  private acknowledgeActivity(
+    active: Active,
+    request: Request,
+    steering = false,
+  ) {
     if (request.step) {
       const scope = request.activityScope;
       const prior = active.activity.get(scope);
@@ -2113,7 +2181,7 @@ export class CodexRuntime {
       prior?.superseded?.();
       active.activity.set(scope, request);
     }
-    request.acknowledged?.();
+    request.acknowledged?.(steering ? { steering: true } : undefined);
   }
 
   /** Compacts thread `threadId`, which runs as a turn of its own on it. */
@@ -2454,7 +2522,8 @@ export class CodexRuntime {
     text: string,
     stopped: AbortSignal,
     // The conversation's thread settings: its workspace, model, and Codex
-    // config with MCP servers, plugins, apps and web search off.
+    // config. The title thread turns MCP servers, plugins and apps off
+    // whatever the conversation allows.
     {
       cwd,
       model,
@@ -2501,6 +2570,8 @@ export class CodexRuntime {
                 >,
               ).map(([name, server]) => [name, { ...server, enabled: false }]),
             ),
+            "features.plugins": false,
+            "features.apps": false,
             ...(this.server?.rpc === rpc && this.hooks
               ? { "hooks.state": await nativeHookState(rpc, cwd, false) }
               : {}),
@@ -2563,11 +2634,16 @@ export class CodexRuntime {
    * model and effort its turn runs on: `pick`'s when available. */
   private async prepare(
     rpc: AppServer,
-    agent: Pick<AgentHandle, "key" | "name" | "pubkey" | "relay">,
+    // Protected when it has a policy, bound or not yet.
+    agent: Pick<AgentHandle, "key" | "name" | "pubkey" | "relay"> & {
+      protection?: unknown;
+    },
     settings: Config,
     workspace: string,
     pick: Readonly<{ model?: string; effort?: string }>,
     synced?: Delivery["synced"],
+    /** The agent's workspace, when `workspace` is the conversation's folder. */
+    home?: string,
   ) {
     const normalized = await rpc.request<{
       config: {
@@ -2609,7 +2685,7 @@ export class CodexRuntime {
     const params = {
       model,
       cwd: workspace,
-      developerInstructions: developerInstructions(agent),
+      developerInstructions: developerInstructions(agent, home),
       approvalPolicy: "never",
       // Matches Claude's bypassPermissions; only the owner's mentions and the
       // agent's own watches and timers start work.
@@ -2618,8 +2694,9 @@ export class CodexRuntime {
         ...(hooks ? { "hooks.state": hooks } : {}),
         web_search: "disabled",
         mcp_servers: { ...mcp, ...bridge?.config },
-        "features.plugins": false,
-        "features.apps": false,
+        ...(settings.apps && !agent.protection
+          ? {}
+          : { "features.plugins": false, "features.apps": false }),
         ...(credential && {
           [`shell_environment_policy.set.${CREDENTIAL_ENV}`]: credential,
         }),
@@ -2644,7 +2721,12 @@ export class CodexRuntime {
     const { settings, agent } = request;
     // The process host expands ~/… and creates the directory; Codex's RPC needs
     // an absolute path rather than shell-style home notation.
-    const workspace = await this.workspace(settings.workspace);
+    const { cwd: workspace, home } = await this.conversationPlace(
+      request.scope,
+      agent.key,
+      request.conversation,
+      settings,
+    );
     signal.throwIfAborted();
     const saved = entry.saved[key];
     const existing = resumable(saved, agent.protection);
@@ -2655,6 +2737,7 @@ export class CodexRuntime {
       workspace,
       request,
       request.synced,
+      home,
     );
     if (voiceInstructions) {
       Object.assign(params.config, {

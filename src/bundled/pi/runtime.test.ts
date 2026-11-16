@@ -14,6 +14,8 @@ import type {
   StandaloneTurn,
 } from "../../features/agents/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
+import { eventDto } from "../../features/relay/events";
+import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import { deferred, fakeHost, type Handler } from "./pi-testing";
 import { type Config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
@@ -75,6 +77,7 @@ function setup(
   /** Channels that are the owner's own Solo chats; the owner is the viewer. */
   const solo = new Set<string>();
   const session = {
+    workflowAuthority: undefined as string | undefined,
     read: vi.fn(async () => [root]),
     agentMemories: {
       read: vi.fn(async () => ({
@@ -440,6 +443,21 @@ it("hands Pi the core memory apart from the instructions, and none it could not 
   expect(await turn(undefined)).not.toHaveProperty("core");
 });
 
+it("ends a turn's prompt with its conversation's instructions", async () => {
+  const { host, deliver, agent } = setup();
+  const conversationInstructions = vi.fn(() => ({
+    plugin: "acme.tasks",
+    text: "Review only.",
+  }));
+  Object.assign(agent, { conversationInstructions });
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  expect(String(host.requests("deliver")[0]?.params.text)).toMatch(
+    /<owner-instructions source="acme\.tasks">\n[\s\S]*\n\nReview only\.\n<\/owner-instructions>/,
+  );
+  // Keyed as its session is: the reply's thread.
+  expect(conversationInstructions).toHaveBeenCalledWith(channel, root.id);
+});
+
 it("shows a conversation only the messages it was not shown, nor its own replies", async () => {
   const { host, deliver, session } = setup({ place: () => ({ seen: 105 }) });
   const later = (id: string, content: string, pubkey: string, at: number) => ({
@@ -456,6 +474,30 @@ it("shows a conversation only the messages it was not shown, nor its own replies
   expect(text).toContain("Bob checked it");
   expect(text).not.toContain("Build is red");
   expect(text).not.toContain("Earlier from Pi");
+});
+
+it("gives the workflow reason for its owner's workflow mention that doesn't name it", async () => {
+  const { host, deliver, session } = setup();
+  const relay = keypair();
+  session.workflowAuthority = relay.pubkey;
+  const turn = deliver({
+    type: "mention",
+    event: eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Agent workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+        ],
+      }),
+    ),
+  });
+  await turn.run;
+  expect(turn.ignored).toHaveBeenCalledExactlyOnceWith("workflow");
+  expect(host.processes).toEqual([]);
 });
 
 it("ignores a mention from someone who is not the owner", async () => {
@@ -628,7 +670,9 @@ it("hands off from Pi to another of its conversations", async () => {
       arguments: { channel: "chan-2", thread: thread.id, text: "carry on" },
     })
   )?.result;
-  expect(JSON.stringify(result)).toContain(`Handed off to thread ${thread.id}`);
+  expect(JSON.stringify(result)).toContain(
+    `Queued self-handoff to chan-2, thread ${thread.id}`,
+  );
   expect(agent.handoff).toHaveBeenCalledWith({
     channel: "chan-2",
     root: thread.id,

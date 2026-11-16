@@ -1414,8 +1414,7 @@ retains its body inset matching the horizontal `--dialog-padding`: `2rem`, or
 that responsive inset. Do not add an outer flex gap on top of the shared spacing.
 Search and integrated navigation retain their own framing.
 Padded chrome keeps the gap on its fixed header rather than inside the body
-scrollport. See the dated [spacing audit](../../../docs/dialog-spacing-audit.md)
-for the original implementation and consumer inventory.
+scrollport.
 Footers following body content also reserve a fixed
 `--space-4` (`1rem`) top gutter outside the scrollport, so scrolling content never
 meets the buttons directly. Header-only confirmations retain their header-to-action

@@ -1717,24 +1717,15 @@ it("an agent joins a DM directly, without a history choice", async () => {
     },
   );
 });
-it("someone whose profile claims to be an agent still joins this DM", async () => {
-  const onOpenConversation = vi.fn(() => true);
-  const t = await setup("dm", false, false, { onOpenConversation }, undefined, {
+it("someone whose profile claims to be an agent is asked about like a person", async () => {
+  const t = await setup("dm", false, false, undefined, undefined, {
     directMessages: true,
+    extraMembers: 1,
     personClaimsAgent: true,
   });
   await t.user.click(await t.search());
-  await screen.findByText("Morgan added.");
-  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-  expect(onOpenConversation).not.toHaveBeenCalled();
-  expect(t.openDirectMessage).toHaveBeenCalledWith(
-    [t.person.pubkey],
-    expect.any(AbortSignal),
-    {
-      channelId: "11111111-1111-4111-8111-111111111111",
-      includeHistory: true,
-    },
-  );
+  await screen.findByRole("alertdialog", { name: "Add Morgan?" });
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
 });
 it("Escape closes the dialog and restores focus to its header button", async () => {
   const t = await setup();

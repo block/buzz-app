@@ -1624,10 +1624,11 @@ export function ChannelMembersDialog({
   }, [memberKey, offering]);
   // Whether to ask how someone joins a DM, from the latest classification,
   // without rebuilding `add` on each render. Only the question depends on it:
-  // the relay decides who is an agent and enforces the people limit.
+  // the relay decides who is an agent and enforces the people limit. It
+  // counts only agents with an owner, so one known only by its profile's
+  // say-so is asked about, like a person.
   const dmAgent = useRef<(key: string) => boolean>(() => false);
-  dmAgent.current = (key) =>
-    agentCandidate(candidates.get(key) ?? { pubkey: key });
+  dmAgent.current = (key) => known.has(key) || ownership.owners.has(key);
   // A DM of at most one person and their agents never gains a person.
   const dmAgentOnly = useRef(false);
   dmAgentOnly.current =

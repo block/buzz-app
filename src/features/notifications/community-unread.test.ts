@@ -47,6 +47,7 @@ function fakeSession() {
     members: string[];
     huddle?: true;
     cached?: true;
+    channelType?: string;
   }[] = [];
   let listStatus = "loading";
   const unread = new Map<string, Partial<UnreadSnapshot>>();
@@ -101,6 +102,11 @@ function fakeSession() {
     /** Lists channels repair cannot read while the roster is still loading. */
     loadUnreadable(channel: { id: string; members: string[]; cached?: true }) {
       channels = [channel];
+      list.emit();
+    },
+    /** Adds a joined channel of `type` to the roster. */
+    channelType(id: string, type: string) {
+      channels = [...channels, { id, members: [viewer], channelType: type }];
       list.emit();
     },
     join(...ids: string[]) {
@@ -165,14 +171,24 @@ it("follows the sidebar row a visit quieted, and keeps manual unread", () => {
   expect(state()).toEqual({ unread: true, attention: 0 });
 });
 
-it("leaves out muted channels and channels notification settings exclude", () => {
+it("counts muted channels as their sidebar rows do, and leaves out channels notification settings exclude", () => {
   const fake = fakeSession();
   const state = observe(fake, (id) => id !== "quiet");
   fake.join("muted", "quiet", "open");
-  fake.preferences({ status: "ready", data: { muted: ["muted"] } });
-  fake.set("muted", { observedCount: 5, attentionCount: 5 });
+  fake.channelType("dm", "dm");
+  fake.preferences({ status: "ready", data: { muted: ["muted", "dm"] } });
+  fake.set("muted", { observedCount: 5, attentionCount: 0 });
   fake.set("quiet", { observedCount: 5, attentionCount: 5 });
   expect(state()).toEqual({ unread: false, attention: 0 });
+  // A muted channel's mention still shows, as in its sidebar row.
+  fake.set("muted", { observedCount: 5, attentionCount: 1 });
+  expect(state()).toEqual({ unread: true, attention: 1 });
+  fake.set("muted", { observedCount: 0, attentionCount: 0 });
+  expect(state()).toEqual({ unread: false, attention: 0 });
+  // A muted DM still shows.
+  fake.set("dm", { observedCount: 1, attentionCount: 0 });
+  expect(state()).toEqual({ unread: true, attention: 0 });
+  fake.set("dm", { observedCount: 0 });
   fake.set("open", { observedCount: 1 });
   expect(state()).toEqual({ unread: true, attention: 0 });
 });

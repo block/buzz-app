@@ -2,6 +2,7 @@ import type { Communities } from "../communities/service";
 import { communityDestination } from "../communities/destination";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
+import { rowUnread } from "../relay/unread";
 import type { OpenTarget } from "../navigation/targets";
 
 /** Notification gates: only conversations they allow count as unread. */
@@ -31,6 +32,7 @@ export function observeCommunityUnread(
 ) {
   let closed = false;
   const channels = new Map<string, () => void>();
+  const dms = new Set<string>();
   const scope = { viewer, communityOrigin };
   const changed = () => {
     if (closed) return;
@@ -44,18 +46,16 @@ export function observeCommunityUnread(
     let attention = 0;
     let observed = 0;
     for (const channelId of channels.keys()) {
-      if (muted.has(channelId)) continue;
       const snapshot = session.unread.snapshot({ kind: "channel", channelId });
       if (known) {
         if (snapshot.freshness === "stale") return publish(undefined);
         if (snapshot.coverage !== "observed") continue;
         observed++;
       }
-      // Follow the sidebar rows, which opening a channel quiets.
-      const row = snapshot.row ?? snapshot;
-      if (snapshot.manual !== "none" || (row.observedCount ?? 0) > 0)
+      // Count what the channel's sidebar row shows.
+      if (rowUnread(snapshot, dms.has(channelId), muted.has(channelId)))
         unread = true;
-      attention += row.attentionCount ?? 0;
+      attention += (snapshot.row ?? snapshot).attentionCount ?? 0;
     }
     if (known && !observed) return publish(undefined);
     publish({ unread, attention });
@@ -78,7 +78,11 @@ export function observeCommunityUnread(
                 channelId: channel.id,
               })),
         )
-        .map((channel) => channel.id),
+        .map((channel) => {
+          if (channel.channelType === "dm") dms.add(channel.id);
+          else dms.delete(channel.id);
+          return channel.id;
+        }),
     );
     for (const [id, stop] of channels) {
       if (ids.has(id)) continue;

@@ -11,6 +11,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ChannelMessage } from "../relay/contracts";
 import { registerMessageList, type MessageList } from "./message-selection";
 import { SelectionQuote } from "./SelectionQuote";
+import * as overlayLayer from "../../shared/design-system/overlayLayer";
 
 const cleanups: (() => void)[] = [];
 const rect = (top: number) =>
@@ -103,6 +104,24 @@ it("waits for a drag in the timeline to finish", async () => {
   );
   fireEvent.pointerUp(list, { button: 0 });
   await screen.findByRole("button", { name: "Quote" });
+});
+
+it("skips overlay scans when no text is selected", async () => {
+  const { list } = setup();
+  await screen.findByRole("button", { name: "Quote" });
+  const scan = vi.spyOn(overlayLayer, "behindActiveOverlay");
+  try {
+    act(() => {
+      document.getSelection()?.removeAllRanges();
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    await frame();
+    fireEvent.scroll(list);
+    await frame();
+    expect(scan).not.toHaveBeenCalled();
+  } finally {
+    scan.mockRestore();
+  }
 });
 
 it("hides behind a modal and returns once it closes", async () => {

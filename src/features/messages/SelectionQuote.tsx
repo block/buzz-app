@@ -73,15 +73,12 @@ export function SelectionQuote({
       frame = 0;
       const element = list.current;
       // Interactive overlays own the page; Quote must not cover their actions.
-      const target =
-        pressed ||
-        !element ||
-        activeModal(document) ||
-        behindActiveOverlay(element)
-          ? undefined
-          : quotableSelection();
+      const target = pressed || !element ? undefined : quotableSelection();
       const next =
-        target && element && target.element === element
+        target &&
+        target.element === element &&
+        !activeModal(document) &&
+        !behindActiveOverlay(element)
           ? edges(target.ranges, element)
           : null;
       setAt((current) => (same(current, next) ? current : next));

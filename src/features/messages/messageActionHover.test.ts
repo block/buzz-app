@@ -42,8 +42,8 @@ function setup() {
             !target.closest(
               "[data-message-reactions], [data-media-timecode]",
             ) &&
-            node.contains(target),
-          retain: () => false,
+            (content.contains(target) || bar.contains(target)),
+          retain: (target) => target === node,
           changed,
         },
         false,
@@ -184,3 +184,35 @@ it.each(["data-message-reactions", "data-media-timecode"])(
     }
   },
 );
+
+it("keeps a shown toolbar through a touch tap, then releases on touch elsewhere", () => {
+  vi.useFakeTimers();
+  const { a, b, close } = setup();
+  try {
+    fireEvent.pointerMove(b.content, point(150, 160));
+    const touch = { ...point(200, 120), pointerType: "touch" };
+    fireEvent.pointerOver(a.bar, touch);
+    fireEvent.pointerDown(a.bar, touch);
+    fireEvent.pointerOut(a.bar, { ...touch, relatedTarget: null });
+    vi.advanceTimersByTime(MESSAGE_ACTION_TRAVEL_IDLE_MS);
+    expect(a.changed).toHaveBeenLastCalledWith(true);
+    fireEvent.pointerDown(b.content, touch);
+    expect(a.changed).toHaveBeenLastCalledWith(false);
+  } finally {
+    close();
+  }
+});
+
+it("keeps a press in the current row's retained space and switches on another row", () => {
+  const { a, b, close } = setup();
+  try {
+    fireEvent.pointerMove(a.node, point(100, 200));
+    fireEvent.pointerDown(a.node, point(100, 200));
+    expect(a.changed).toHaveBeenLastCalledWith(true);
+    fireEvent.pointerDown(b.content, point(150, 160));
+    expect(a.changed).toHaveBeenLastCalledWith(false);
+    expect(b.changed).toHaveBeenLastCalledWith(true);
+  } finally {
+    close();
+  }
+});

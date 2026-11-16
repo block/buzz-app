@@ -6,6 +6,8 @@ for (const density of ["default", "compact"])
   for (const layout of ["timeline", "thread", "continuation"]) {
     test(`toolbar travel preserves ${density} ${layout} ownership`, async ({
       page,
+      context,
+      browserName,
     }) => {
       const server = await createServer({
         root: fileURLToPath(new URL("../../", import.meta.url)),
@@ -94,6 +96,38 @@ for (const density of ["default", "compact"])
               ).toHaveCount(1);
             }
           }
+        if (
+          density === "default" &&
+          layout === "timeline" &&
+          browserName === "chromium"
+        ) {
+          const button = page
+            .locator('[data-message-id="b"] [data-message-actions]')
+            .getByRole("button", { name: "More message actions" });
+          const box = await button.boundingBox();
+          expect(
+            await page.evaluate(
+              () => matchMedia("(hover: hover) and (pointer: fine)").matches,
+            ),
+          ).toBe(true);
+          // Native touch on a fine-pointer desktop needs the Chromium input protocol.
+          const cdp = await context.newCDPSession(page);
+          try {
+            await cdp.send("Input.dispatchTouchEvent", {
+              type: "touchStart",
+              touchPoints: [
+                { x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 },
+              ],
+            });
+            await cdp.send("Input.dispatchTouchEvent", {
+              type: "touchEnd",
+              touchPoints: [],
+            });
+            await expect(page.getByRole("menu")).toBeVisible();
+          } finally {
+            await cdp.detach();
+          }
+        }
       } finally {
         await server.close();
       }

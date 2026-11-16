@@ -88,7 +88,9 @@ function hoverOwner(document: Document) {
   };
   const update = (event: PointerEvent, immediate = false) => {
     if (event.pointerType === "touch") {
-      select(undefined);
+      if (event.target instanceof Node && current?.bar.contains(event.target))
+        cancel();
+      else select(undefined);
       return;
     }
     const target =
@@ -100,7 +102,11 @@ function hoverOwner(document: Document) {
       origin = previous = point;
       return;
     }
-    if (!immediate && current?.retain(target, point)) {
+    if (
+      (!immediate ||
+        (target instanceof Node && current?.row.contains(target))) &&
+      current?.retain(target, point)
+    ) {
       cancel();
       previous = point;
       return;

@@ -3112,6 +3112,7 @@ function Composer({
             {
               ...(threadRootId ? { rootId: threadRootId } : {}),
               ...(replyParentId ? { parentId: replyParentId } : {}),
+              ...(mediaTargetUrl ? { mediaTargetUrl } : {}),
               mentions: recipients,
               references,
               attachments: uploaded,
@@ -3675,6 +3676,7 @@ function Composer({
               onRemove={() => {
                 saveDraft({ ...valueRef.current, forward: null });
                 setError(undefined);
+                input.current?.focus();
               }}
             />
           )}

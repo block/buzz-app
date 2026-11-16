@@ -1893,6 +1893,8 @@ async function mountUploadComposer(
   options: {
     threadRootId?: string;
     sourceMessages?: boolean;
+    mediaTimeSeconds?: number;
+    mediaTargetUrl?: string;
     replyParentId?: string;
     onSend?: MessageComposerProps["onSend"];
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
@@ -2021,6 +2023,10 @@ async function mountUploadComposer(
           scope={scope}
           channelId="channel"
           channelName="General"
+          {...(options.mediaTimeSeconds !== undefined
+            ? { mediaTimeSeconds: options.mediaTimeSeconds }
+            : {})}
+          mediaTargetUrl={options.mediaTargetUrl}
           defaultMention={options.defaultMention}
           requireMention={options.requireMention}
           {...(options.extensions ? { extensions: options.extensions } : {})}
@@ -17257,9 +17263,84 @@ it("keeps the note and disables Send for an inaccessible pasted forward until re
   expect(await screen.findByText(/belongs to another community/)).toBeVisible();
   expect(h.send()).toBeDisabled();
   expect(h.input()).toHaveValue("Keep this note");
-  fireEvent.click(
-    screen.getByRole("button", { name: "Remove forwarded message" }),
-  );
+  const remove = screen.getByRole("button", {
+    name: "Remove forwarded message",
+  });
+  remove.focus();
+  await userEvent.setup().keyboard("{Enter}");
+  expect(h.input()).toHaveFocus();
   expect(h.send()).toBeEnabled();
   expect(h.input()).toHaveValue("Keep this note");
+});
+
+it("preserves the selected video when pasting a timed forward into a two-video thread", async () => {
+  const second = `https://relay.example.test/media/${"b".repeat(64)}.mp4`;
+  const options = {
+    sourceMessages: true,
+    threadRootId: "",
+    mediaTimeSeconds: 21,
+    mediaTargetUrl: second,
+  };
+  const h = await mountUploadComposer(options);
+  const source = h.owner.session.messages.send("channel", "Original message");
+  const root = h.owner.session.messages.send(
+    "channel",
+    "Two videos",
+    [],
+    [
+      {
+        ...uploadDescriptor("first.mp4"),
+        url: `https://relay.example.test/media/${"a".repeat(64)}.mp4`,
+        type: "video/mp4",
+      },
+      {
+        ...uploadDescriptor("second.mp4"),
+        url: second,
+        sha256: "b".repeat(64),
+        type: "video/mp4",
+      },
+    ],
+  );
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
+  options.threadRootId = root;
+  h.present(true);
+  const { forwardClipboard } = await import("./forward-clipboard");
+  const { readForward } = await import("../relay/forwarded-message");
+  const { foldMessages } = await import("../relay/fold");
+  const payload = forwardClipboard(
+    {
+      version: 1,
+      origin: "https://relay.example.test",
+      channelId: "channel",
+      id: source,
+    },
+    "fallback",
+  );
+  fireEvent.paste(h.input(), {
+    clipboardData: {
+      getData: (type: string) =>
+        type === "text/html" ? payload.html : payload.text,
+      items: [],
+    },
+  });
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.change(h.input(), { target: { value: "Review this cut" } });
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(3));
+  const event = h.publish.mock.calls[2]?.[0];
+  expect(event?.tags).toContainEqual(["e", root, "", "reply"]);
+  expect(event?.tags).toContainEqual(["buzz:media", second]);
+  expect(event && readForward(event)?.note).toBe("⏱ 0:21 — Review this cut");
+  const rows = foldMessages(
+    "channel",
+    h.owner.session.viewer ?? "",
+    h.publish.mock.calls.map(([value]) => value),
+    { includeReplies: true },
+  );
+  expect(
+    rows
+      .find((row) => row.id === root)
+      ?.attachments.filter((item) => item.kind === "video"),
+  ).toHaveLength(2);
+  expect(rows.find((row) => row.id === event?.id)?.mediaTargetUrl).toBe(second);
 });

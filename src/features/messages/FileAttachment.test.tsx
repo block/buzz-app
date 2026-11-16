@@ -231,6 +231,8 @@ it("downloads authenticated native documents through the host without navigating
   const link = screen.getByRole("button", { name: "Download report.pdf" });
   expect(link).not.toHaveAttribute("href");
   expect(screen.getByText("Download file")).toBeInTheDocument();
+  // The host has said there is no saved copy.
+  await act(async () => {});
   fireEvent.click(link);
   expect(open).not.toHaveBeenCalled();
   expect(downloadNativeMedia).toHaveBeenCalledWith(nativeSource, "report.pdf");
@@ -285,6 +287,16 @@ function heldDownload() {
   return { promise, resolve, reject };
 }
 
+function heldStatus() {
+  let answer!: (saved: boolean) => void;
+  let fail!: (error: Error) => void;
+  const promise = new Promise<boolean>((yes, no) => {
+    answer = yes;
+    fail = no;
+  });
+  return { promise, answer, fail };
+}
+
 const file = {
   url: "https://relay.test/file",
   kind: "file" as const,
@@ -303,6 +315,8 @@ it("preserves focus and blocks repeat saves while pending, then offers Open", as
     />,
   );
   const button = screen.getByRole("button", { name: "Download report.pdf" });
+  // The host has said there is no saved copy.
+  await act(async () => {});
   button.focus();
   fireEvent.click(button);
   expect(button).toHaveFocus();
@@ -544,6 +558,205 @@ it("ignores a status that arrives after the card unmounts or after a click", asy
   expect(button).toHaveAccessibleName("Open report.pdf");
 });
 
+it.each([
+  [true, "opens the saved copy"],
+  [false, "downloads"],
+])(
+  "asks the host for a click made before its first answer (saved: %s) and %s",
+  async (saved) => {
+    const first = heldStatus();
+    const asked = heldStatus();
+    vi.mocked(savedDownloadStatus)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(asked.promise);
+    vi.mocked(openSavedDownload).mockResolvedValue("opened");
+    vi.mocked(downloadNativeMedia).mockResolvedValue(undefined);
+    render(
+      <FileAttachment
+        attachment={file}
+        source={nativeSource}
+        onOpenLink={() => false}
+      />,
+    );
+    const button = screen.getByRole("button", { name: "Download report.pdf" });
+    // The card's own check on mount is silent and leaves the card usable.
+    expect(button).toHaveTextContent("1 KB");
+    expect(button).toHaveAttribute("aria-busy", "false");
+    expect(button).toHaveAttribute("aria-disabled", "false");
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+
+    button.focus();
+    fireEvent.click(button);
+    expect(savedDownloadStatus).toHaveBeenCalledTimes(2);
+    expect(button).toHaveFocus();
+    expect(button).toHaveAccessibleName("Download report.pdf");
+    expect(button).toHaveTextContent("Checking…");
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Checking for a saved copy of report.pdf",
+    );
+    // A repeat click neither asks again nor acts.
+    fireEvent.click(button);
+    expect(savedDownloadStatus).toHaveBeenCalledTimes(2);
+    expect(downloadNativeMedia).not.toHaveBeenCalled();
+    expect(openSavedDownload).not.toHaveBeenCalled();
+
+    await act(async () => asked.answer(saved));
+    await waitFor(() => expect(button).toHaveAccessibleName("Open report.pdf"));
+    expect(openSavedDownload).toHaveBeenCalledTimes(saved ? 1 : 0);
+    expect(downloadNativeMedia).toHaveBeenCalledTimes(saved ? 0 : 1);
+    expect(button).toHaveAttribute("aria-busy", "false");
+    expect(button).toHaveTextContent("1 KB · Downloaded");
+    if (saved) expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    else
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Saved report.pdf to Downloads",
+      );
+    // The first answer is out of date by now, whatever it says.
+    await act(async () => first.answer(false));
+    expect(button).toHaveAccessibleName("Open report.pdf");
+  },
+);
+
+it("offers Download, without asking again, when its first lookup fails", async () => {
+  const first = heldStatus();
+  vi.mocked(savedDownloadStatus).mockReturnValueOnce(first.promise);
+  vi.mocked(downloadNativeMedia).mockResolvedValue(undefined);
+  render(
+    <FileAttachment
+      attachment={file}
+      source={nativeSource}
+      onOpenLink={() => false}
+    />,
+  );
+  const button = screen.getByRole("button", { name: "Download report.pdf" });
+  await act(async () => first.fail(new Error("unavailable")));
+  fireEvent.click(button);
+  expect(savedDownloadStatus).toHaveBeenCalledTimes(1);
+  expect(downloadNativeMedia).toHaveBeenCalledTimes(1);
+  expect(button).toHaveTextContent("Downloading…");
+  await waitFor(() => expect(button).toHaveAccessibleName("Open report.pdf"));
+});
+
+it("downloads when the host never says whether a saved copy exists", async () => {
+  vi.useFakeTimers();
+  vi.mocked(savedDownloadStatus).mockReturnValue(new Promise(() => {}));
+  vi.mocked(downloadNativeMedia).mockResolvedValue(undefined);
+  render(
+    <FileAttachment
+      attachment={file}
+      source={nativeSource}
+      onOpenLink={() => false}
+    />,
+  );
+  const button = screen.getByRole("button", { name: "Download report.pdf" });
+  fireEvent.click(button);
+  expect(button).toHaveTextContent("Checking…");
+  await act(async () => vi.advanceTimersByTimeAsync(4999));
+  expect(button).toHaveTextContent("Checking…");
+  expect(downloadNativeMedia).not.toHaveBeenCalled();
+  await act(async () => vi.advanceTimersByTimeAsync(1));
+  expect(downloadNativeMedia).toHaveBeenCalledTimes(1);
+  expect(openSavedDownload).not.toHaveBeenCalled();
+  expect(button).toHaveAccessibleName("Open report.pdf");
+  expect(button).toHaveAttribute("aria-busy", "false");
+});
+
+it("keeps the newest status when an older one answers after it", async () => {
+  let changed = () => {};
+  vi.mocked(subscribeSavedDownloads).mockImplementation((callback) => {
+    changed = callback;
+    return () => {};
+  });
+  const older = heldStatus();
+  const newer = heldStatus();
+  vi.mocked(savedDownloadStatus)
+    .mockReturnValueOnce(older.promise)
+    .mockReturnValueOnce(newer.promise);
+  vi.mocked(openSavedDownload).mockResolvedValue("opened");
+  render(
+    <FileAttachment
+      attachment={file}
+      source={nativeSource}
+      onOpenLink={() => false}
+    />,
+  );
+  const button = screen.getByRole("button", { name: "Download report.pdf" });
+  // Another card saved the file before this card's mount lookup answered.
+  act(() => changed());
+  expect(savedDownloadStatus).toHaveBeenCalledTimes(2);
+  await act(async () => newer.answer(true));
+  expect(button).toHaveAccessibleName("Open report.pdf");
+  await act(async () => older.answer(false));
+  expect(button).toHaveAccessibleName("Open report.pdf");
+  fireEvent.click(button);
+  await act(async () => {});
+  expect(openSavedDownload).toHaveBeenCalledTimes(1);
+  expect(downloadNativeMedia).not.toHaveBeenCalled();
+});
+
+it("stays pending through a status refresh, and keeps the saved copy's menu when Download again fails", async () => {
+  let changed = () => {};
+  vi.mocked(subscribeSavedDownloads).mockImplementation((callback) => {
+    changed = callback;
+    return () => {};
+  });
+  vi.mocked(savedDownloadStatus).mockResolvedValue(true);
+  vi.mocked(openSavedDownload).mockResolvedValue("opened");
+  const again = heldDownload();
+  vi.mocked(downloadNativeMedia).mockReturnValueOnce(again.promise);
+  render(
+    <FileAttachment
+      attachment={file}
+      source={nativeSource}
+      onOpenLink={() => false}
+    />,
+  );
+  const button = await screen.findByRole("button", {
+    name: "Open report.pdf",
+  });
+  fireEvent.contextMenu(button, { clientX: 20, clientY: 20 });
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Download again" }),
+  );
+  await waitFor(() => expect(button).toHaveAttribute("aria-busy", "true"));
+  await waitFor(() =>
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+  );
+  expect(savedDownloadStatus).toHaveBeenCalledTimes(1);
+
+  // Another card's save tells every card to ask again. This one is busy.
+  await act(async () => changed());
+  expect(savedDownloadStatus).toHaveBeenCalledTimes(1);
+  expect(button).toHaveAttribute("aria-busy", "true");
+  expect(button).toHaveAttribute("aria-disabled", "true");
+  expect(button).toHaveTextContent("Downloading…");
+  fireEvent.click(button);
+  expect(openSavedDownload).not.toHaveBeenCalled();
+
+  await act(async () => again.reject(new Error("offline")));
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Couldn’t download report.pdf. Try again.",
+    ),
+  );
+  // The card asked whether the earlier copy is still saved. It is.
+  expect(savedDownloadStatus).toHaveBeenCalledTimes(2);
+  expect(button).toHaveAccessibleName("Retry download report.pdf");
+  expect(button).toHaveTextContent("Couldn’t download · Retry");
+  expect(button).toHaveAttribute("aria-busy", "false");
+  fireEvent.contextMenu(button, { clientX: 20, clientY: 20 });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Open" }));
+  await waitFor(() => expect(button).toHaveAccessibleName("Open report.pdf"));
+  expect(openSavedDownload).toHaveBeenCalledWith(
+    nativeSource,
+    "report.pdf",
+    false,
+  );
+  expect(downloadNativeMedia).toHaveBeenCalledTimes(1);
+});
+
 it("keeps a failed download on the card and recovers through retry", async () => {
   const failed = heldDownload();
   const retried = heldDownload();
@@ -564,6 +777,10 @@ it("keeps a failed download on the card and recovers through retry", async () =>
   });
   expect(retry).toHaveTextContent("Couldn’t download · Retry");
   expect(screen.getByRole("alert")).toHaveClass("sr-only");
+  // Nothing was saved, so there is no saved copy's menu.
+  fireEvent.contextMenu(retry, { clientX: 20, clientY: 20 });
+  await act(async () => {});
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   fireEvent.click(retry);
   expect(retry).toHaveTextContent("Downloading…");
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();

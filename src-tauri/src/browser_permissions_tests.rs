@@ -309,6 +309,8 @@ fn native_command_permissions_isolate_webviews() {
     for (webview, origin, source) in [
         (&guest, local_origin, "guest webview"),
         (&main, "https://example.org", "remote content"),
+        // Its watch channel, not an event, reports a saved-download change.
+        (&huddle, local_origin, "huddle window"),
     ] {
         assert!(
             invoke_with_body(

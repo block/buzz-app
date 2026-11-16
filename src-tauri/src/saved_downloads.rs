@@ -18,7 +18,9 @@ const CHANGED: &str = "saved-downloads-changed";
 const MOVED: &str = "Saved file moved or changed";
 const OPEN_FAILED: &str = "Could not open the saved file";
 const FILE: &str = "saved-downloads.json";
-const VERSION: u32 = 1;
+/// Version 1 keyed a record by blob name alone, on any relay. Its records
+/// cannot be told apart by relay, so a ledger of another version starts empty.
+const VERSION: u32 = 2;
 /// A record lasts this long after its last download or Open.
 const LIFETIME_SECS: u64 = 30 * 24 * 60 * 60;
 /// The most records kept; the least recently used go first.
@@ -45,12 +47,13 @@ struct Stored<R> {
 #[derive(Default)]
 pub(crate) struct SavedDownloads(Mutex<Option<Records>>);
 
-/// One record per blob and saved name, the name Download would use, so the
-/// same bytes saved as `notes.md` and `notes.txt` stay separate. `url` is a
-/// validated relay media URL, whose last segment names the blob on any relay.
+/// One record per relay media URL and saved name, the name Download would
+/// use, so the same bytes saved as `notes.md` and `notes.txt` stay separate.
+/// `url` is a validated relay media URL. Its relay is part of the key: nothing
+/// checks the saved bytes against the hash the URL names, so the same blob
+/// name on another relay may be another file.
 pub(crate) fn key(url: &url::Url, filename: &str) -> String {
-    let blob = url.path().rsplit('/').next().unwrap_or_default();
-    format!("{blob}/{filename}")
+    format!("{url}/{filename}")
 }
 
 pub(crate) fn now() -> u64 {
@@ -92,8 +95,9 @@ impl SavedDownloads {
     }
 
     /// The saved copy of `key` while it is still the file that was saved.
-    /// A moved, deleted or changed file loses its record. Content is not
-    /// hashed: Open hands the file to the OS as a double-click would.
+    /// A moved, deleted or changed file loses its record, and so does one
+    /// past its lifetime. Content is not hashed: Open hands the file to the
+    /// OS as a double-click would.
     pub(crate) fn check(&self, dir: &Path, key: &str, now: u64) -> Option<PathBuf> {
         self.with(dir, now, |records| {
             let saved = records.get(key).filter(|record| {
@@ -119,11 +123,16 @@ impl SavedDownloads {
         });
     }
 
+    /// Runs `change` on the records that are still within their lifetime, so
+    /// no lookup or renewal ever sees an expired one.
     fn with<T>(&self, dir: &Path, now: u64, change: impl FnOnce(&mut Records) -> (T, bool)) -> T {
         let mut slot = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        let records = slot.get_or_insert_with(|| load(dir, now));
+        let records = slot.get_or_insert_with(|| load(dir));
+        let held = records.len();
+        prune(records, now);
+        let expired = records.len() != held;
         let (value, changed) = change(records);
-        if changed {
+        if changed || expired {
             prune(records, now);
             if let Err(error) = persist(dir, records) {
                 eprintln!("Saved downloads were not stored: {error}");
@@ -133,15 +142,13 @@ impl SavedDownloads {
     }
 }
 
-fn load(dir: &Path, now: u64) -> Records {
-    let mut records = std::fs::read(dir.join(FILE))
+fn load(dir: &Path) -> Records {
+    std::fs::read(dir.join(FILE))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Stored<Records>>(&bytes).ok())
         .filter(|stored| stored.version == VERSION)
         .map(|stored| stored.records)
-        .unwrap_or_default();
-    prune(&mut records, now);
-    records
+        .unwrap_or_default()
 }
 
 fn prune(records: &mut Records, now: u64) {
@@ -171,13 +178,22 @@ fn persist(dir: &Path, records: &Records) -> io::Result<()> {
     std::fs::rename(temporary, dir.join(FILE))
 }
 
+/// Tells every webview to ask again which attachments have a saved copy. The
+/// Huddle window may not listen for app events, so its own channel says so.
+pub(crate) fn changed<R: Runtime>(app: &AppHandle<R>) {
+    let _ = app.emit(CHANGED, ());
+    if let Some(huddle) = app.try_state::<crate::huddle_window::HuddleWindow>() {
+        huddle.saved_downloads_changed();
+    }
+}
+
 /// Records where `media_download` saved `key`, then tells every webview.
 pub(crate) fn recorded<R: Runtime>(app: &AppHandle<R>, key: String, path: PathBuf) {
     match app.path().app_data_dir() {
         Ok(dir) => app.state::<SavedDownloads>().record(&dir, key, path, now()),
         Err(error) => eprintln!("Saved download was not recorded: {error}"),
     }
-    let _ = app.emit(CHANGED, ());
+    changed(app);
 }
 
 /// Whether this attachment's last download is still where it was saved, unchanged.
@@ -228,7 +244,7 @@ pub(crate) async fn media_download_open<R: Runtime>(
             .map_err(|_| OPEN_FAILED.to_owned())
         });
         if matches!(&opened, Err(error) if error == MOVED) {
-            let _ = app.emit(CHANGED, ());
+            changed(&app);
         }
         opened
     })
@@ -263,10 +279,67 @@ mod tests {
     }
 
     #[test]
-    fn keys_name_the_blob_and_the_saved_name() {
+    fn keys_name_the_relay_the_blob_and_the_saved_name() {
         let hash = "a".repeat(64);
         let url = url::Url::parse(&format!("https://relay.test/media/{hash}.pdf")).unwrap();
-        assert_eq!(key(&url, "notes.pdf"), format!("{hash}.pdf/notes.pdf"));
+        assert_eq!(
+            key(&url, "notes.pdf"),
+            format!("https://relay.test/media/{hash}.pdf/notes.pdf")
+        );
+    }
+
+    #[test]
+    fn a_copy_saved_from_one_relay_is_not_another_relays_copy() {
+        let ledger = tempfile::tempdir().unwrap();
+        let downloads = tempfile::tempdir().unwrap();
+        let path = saved(downloads.path(), "report.pdf", b"hostile");
+        let blob = format!("{}.pdf", "a".repeat(64));
+        let [hostile, trusted] = ["https://hostile.test", "https://trusted.test"].map(|relay| {
+            let url = url::Url::parse(&format!("{relay}/media/{blob}")).unwrap();
+            key(&url, "report.pdf")
+        });
+        let saves = SavedDownloads::default();
+        saves.record(ledger.path(), hostile.clone(), path.clone(), NOW);
+        let unopened = |_: PathBuf| -> Result<(), String> { panic!("opened another relay's copy") };
+        for saves in [&saves, &SavedDownloads::default()] {
+            assert_eq!(saves.check(ledger.path(), &trusted, NOW), None);
+            assert_eq!(
+                open_saved(saves, ledger.path(), &trusted, NOW, unopened),
+                Err(MOVED.into())
+            );
+            assert_eq!(
+                saves.check(ledger.path(), &hostile, NOW),
+                Some(path.clone())
+            );
+        }
+    }
+
+    #[test]
+    fn records_keyed_without_a_relay_are_dropped() {
+        let ledger = tempfile::tempdir().unwrap();
+        let downloads = tempfile::tempdir().unwrap();
+        let path = saved(downloads.path(), "report.pdf", b"report");
+        let (size, modified_ns) = stat(&path).unwrap();
+        let blob = format!("{}.pdf", "a".repeat(64));
+        let url = url::Url::parse(&format!("https://relay.test/media/{blob}")).unwrap();
+        // A version 1 ledger, under its key and, were it ever read, the new one.
+        let record = serde_json::json!({
+            "path": path, "size": size, "modified_ns": modified_ns, "used": NOW
+        });
+        let stored = serde_json::json!({
+            "version": 1,
+            "records": {
+                format!("{blob}/report.pdf"): record.clone(),
+                key(&url, "report.pdf"): record,
+            }
+        });
+        std::fs::write(ledger.path().join(FILE), stored.to_string()).unwrap();
+        let saves = SavedDownloads::default();
+        assert_eq!(
+            saves.check(ledger.path(), &key(&url, "report.pdf"), NOW),
+            None
+        );
+        assert!(saves.with(ledger.path(), NOW, |records| (records.is_empty(), false)));
     }
 
     #[test]
@@ -351,13 +424,41 @@ mod tests {
         saves.record(ledger.path(), "idle".into(), idle, NOW);
         saves.touch(ledger.path(), "opened", NOW + LIFETIME_SECS - 1);
 
+        // The instance that loaded the records enforces their lifetime too.
         let later = NOW + LIFETIME_SECS;
+        assert!(saves.check(ledger.path(), "idle", later - 1).is_some());
+        assert_eq!(saves.check(ledger.path(), "idle", later), None);
+        assert_eq!(
+            saves.check(ledger.path(), "opened", later),
+            Some(opened.clone())
+        );
+        // The expired record is gone, not hidden: an earlier clock finds nothing.
+        assert_eq!(saves.check(ledger.path(), "idle", NOW), None);
         let relaunched = SavedDownloads::default();
-        assert_eq!(relaunched.check(ledger.path(), "idle", later), None);
+        assert_eq!(relaunched.check(ledger.path(), "idle", NOW), None);
         assert_eq!(
             relaunched.check(ledger.path(), "opened", later),
             Some(opened)
         );
+    }
+
+    #[test]
+    fn open_does_not_renew_an_expired_record() {
+        let ledger = tempfile::tempdir().unwrap();
+        let downloads = tempfile::tempdir().unwrap();
+        let path = saved(downloads.path(), "notes.md", b"notes");
+        let saves = SavedDownloads::default();
+        saves.record(ledger.path(), "notes".into(), path, NOW);
+        let unopened = |_: PathBuf| -> Result<(), String> { panic!("opened an expired copy") };
+        let later = NOW + LIFETIME_SECS;
+        assert_eq!(
+            open_saved(&saves, ledger.path(), "notes", later, unopened),
+            Err(MOVED.into())
+        );
+        saves.touch(ledger.path(), "notes", later);
+        for saves in [&saves, &SavedDownloads::default()] {
+            assert_eq!(saves.check(ledger.path(), "notes", later), None);
+        }
     }
 
     #[test]
@@ -433,7 +534,7 @@ mod tests {
         let ledger = tempfile::tempdir().unwrap();
         let downloads = tempfile::tempdir().unwrap();
         let path = saved(downloads.path(), "notes.md", b"notes");
-        for contents in ["{not json", r#"{"version":2,"records":{}}"#] {
+        for contents in ["{not json", r#"{"version":3,"records":{}}"#] {
             std::fs::write(ledger.path().join(FILE), contents).unwrap();
             let saves = SavedDownloads::default();
             assert_eq!(saves.check(ledger.path(), "notes", NOW), None);

@@ -38,14 +38,35 @@ import {
 import { useNativeDownload, type DownloadState } from "./use-native-download";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-/** A native file card: `ready` has a saved copy to open; `moved` lost it. */
+/** A native file card. `checking` has not heard yet whether a saved copy
+ * exists, and `choosing` is a click waiting to hear. `ready` has a copy to
+ * open; `moved` lost it; `failedAgain` kept its copy when Download again failed. */
 type FileCardState =
+  | "checking"
+  | "choosing"
   | "idle"
   | "pending"
   | "ready"
   | "moved"
   | "openFailed"
-  | "failed";
+  | "failed"
+  | "failedAgain";
+
+/** How long a click or a failed download waits to hear about a saved copy. */
+const SAVED_ANSWER_LIMIT_MS = 5000;
+
+/** Whether the host has a saved copy; none when it fails or does not answer. */
+function hasSavedCopy(source: string, name: string) {
+  return new Promise<boolean>((resolve) => {
+    const limit = setTimeout(resolve, SAVED_ANSWER_LIMIT_MS, false);
+    void savedDownloadStatus(source, name)
+      .catch(() => false)
+      .then((saved) => {
+        clearTimeout(limit);
+        resolve(saved);
+      });
+  });
+}
 
 export function formatFileSize(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -192,16 +213,18 @@ export function FileAttachment({
                   ? "Couldn’t open · Try again"
                   : state === "failed"
                     ? "Couldn’t download · Retry"
-                    : source
-                      ? attachment.size
-                        ? formatFileSize(attachment.size)
-                        : proxySource
-                          ? "Download file"
-                          : "Open file"
-                      : "File unavailable"}
+                    : state === "choosing"
+                      ? "Checking…"
+                      : source
+                        ? attachment.size
+                          ? formatFileSize(attachment.size)
+                          : proxySource
+                            ? "Download file"
+                            : "Open file"
+                        : "File unavailable"}
         </span>
       </span>
-      {state === "pending" ? (
+      {state === "pending" || state === "choosing" ? (
         <CircleNotchIcon
           size={20}
           className="motion-safe:animate-spin"
@@ -298,7 +321,9 @@ function NativeDownloadAction({
 
 /** A source/name change mounts a fresh download lifetime, retiring old results.
  * The host remembers where it saved the file; once saved, a click opens that
- * copy and the context menu shows it in its folder or downloads it again. */
+ * copy and the context menu shows it in its folder or downloads it again.
+ * Until the host has said whether a copy exists, the card looks ready to
+ * download, and a click asks before it opens or downloads. */
 function NativeFileDownload({
   source,
   name,
@@ -310,28 +335,35 @@ function NativeFileDownload({
   displayName: string;
   children(state: FileCardState): ReactNode;
 }) {
-  const [state, setState] = useState<FileCardState>("idle");
+  const [state, setState] = useState<FileCardState>("checking");
   // Only this card's own actions are announced, never a status found on mount.
   const [notice, setNotice] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLButtonElement>();
   const trigger = useRef<HTMLButtonElement>(null);
-  // A status asked before the latest action, or answered after unmount, is stale.
+  // Counts status requests and actions. A status is stale once a later one
+  // was asked, an action started, or the card unmounted.
   const generation = useRef(0);
   const busy = useRef(false);
   useEffect(() => {
     let mounted = true;
     const refresh = () => {
+      // The action in progress decides the state it ends in.
+      if (busy.current) return;
+      generation.current += 1;
       const asked = generation.current;
-      savedDownloadStatus(source, name).then(
-        (saved) => {
-          if (!mounted || asked !== generation.current) return;
-          setState((current) =>
-            saved ? "ready" : current === "ready" ? "idle" : current,
-          );
-        },
-        () => {},
-      );
+      // `saved` is undefined when the host could not say.
+      const answer = (saved?: boolean) => {
+        if (!mounted || asked !== generation.current) return;
+        setState((current) =>
+          saved
+            ? "ready"
+            : current === "checking" || (saved === false && current === "ready")
+              ? "idle"
+              : current,
+        );
+      };
+      savedDownloadStatus(source, name).then(answer, () => answer());
     };
     refresh();
     const stop = subscribeSavedDownloads(refresh);
@@ -350,39 +382,53 @@ function NativeFileDownload({
       busy.current = false;
     }
   };
-  const download = () =>
-    run(async () => {
-      setState("pending");
-      setNotice(`Downloading ${displayName}`);
-      try {
-        await downloadNativeMedia(source, name);
+  const save = async () => {
+    setState("pending");
+    setNotice(`Downloading ${displayName}`);
+    try {
+      await downloadNativeMedia(source, name);
+      setState("ready");
+      setNotice(`Saved ${displayName} to Downloads`);
+    } catch {
+      // A failed Download again leaves the earlier copy, and its menu.
+      setState((await hasSavedCopy(source, name)) ? "failedAgain" : "failed");
+      setNotice(`Couldn’t download ${displayName}. Try again.`);
+    }
+  };
+  const show = async (reveal: boolean) => {
+    try {
+      if ((await openSavedDownload(source, name, reveal)) === "moved") {
+        setState("moved");
+        setNotice(`${displayName} was moved or changed. Download it again.`);
+      } else {
         setState("ready");
-        setNotice(`Saved ${displayName} to Downloads`);
-      } catch {
-        setState("failed");
-        setNotice(`Couldn’t download ${displayName}. Try again.`);
+        setNotice("");
       }
-    });
-  const open = (reveal: boolean) =>
+    } catch {
+      setState("openFailed");
+      setNotice(`Couldn’t open ${displayName}. Try again.`);
+    }
+  };
+  const download = () => run(save);
+  const open = (reveal: boolean) => run(() => show(reveal));
+  /** A click before the first answer asks for itself, so it cannot download
+   * a file that is already saved. */
+  const choose = () =>
     run(async () => {
-      try {
-        if ((await openSavedDownload(source, name, reveal)) === "moved") {
-          setState("moved");
-          setNotice(`${displayName} was moved or changed. Download it again.`);
-        } else setState("ready");
-      } catch {
-        setState("openFailed");
-        setNotice(`Couldn’t open ${displayName}. Try again.`);
-      }
+      setState("choosing");
+      setNotice(`Checking for a saved copy of ${displayName}`);
+      await ((await hasSavedCopy(source, name)) ? show(false) : save());
     });
   const saved = state === "ready" || state === "openFailed";
-  const alert =
-    state === "failed" || state === "moved" || state === "openFailed";
+  const menu = saved || state === "failedAgain";
+  const retry = state === "failed" || state === "failedAgain";
+  const working = state === "pending" || state === "choosing";
+  const alert = retry || state === "moved" || state === "openFailed";
   return (
     <ContextMenuRoot
       open={menuOpen}
       onOpenChange={setMenuOpen}
-      disabled={!saved}
+      disabled={!menu}
     >
       <ContextMenuTrigger
         render={
@@ -390,20 +436,26 @@ function NativeFileDownload({
             ref={trigger}
             type="button"
             className={styles.fileAttachment}
-            aria-label={`${state === "failed" ? "Retry download" : saved ? "Open" : "Download"} ${displayName}`}
-            aria-disabled={state === "pending"}
-            aria-busy={state === "pending"}
+            aria-label={`${retry ? "Retry download" : saved ? "Open" : "Download"} ${displayName}`}
+            aria-disabled={working}
+            aria-busy={working}
             title={displayName}
-            onClick={() => void (saved ? open(false) : download())}
+            onClick={() =>
+              void (state === "checking"
+                ? choose()
+                : saved
+                  ? open(false)
+                  : download())
+            }
           >
-            {children(state)}
+            {children(retry ? "failed" : state)}
           </button>
         }
         onContextMenu={() => setMenuAnchor(undefined)}
         onTouchStart={() => setMenuAnchor(undefined)}
         onKeyDown={(event) => {
           if (
-            saved &&
+            menu &&
             (event.key === "ContextMenu" ||
               (event.shiftKey && event.key === "F10"))
           ) {

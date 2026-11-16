@@ -121,7 +121,7 @@ it("reads one page of an agent's stored sessions, or one conversation's, and a s
           session_id: "s-thread",
           channel_id: "alpha",
           thread_root_event_id: "r".repeat(64),
-          updated_at: "2000",
+          updated_at: "1767225602000",
         },
         { session_id: "dm", channel_id: "beta" },
       ],
@@ -135,7 +135,7 @@ it("reads one page of an agent's stored sessions, or one conversation's, and a s
         sessionId: "s-thread",
         channelId: "alpha",
         threadRootId: "r".repeat(64),
-        updatedAt: 2000,
+        updatedAt: 1_767_225_602_000,
       },
       { sessionId: "dm", channelId: "beta", updatedAt: 0 },
     ],
@@ -180,6 +180,12 @@ it("reads one page of an agent's stored sessions, or one conversation's, and a s
       },
     ],
   ]);
+  await expect(
+    h.client.sessions("agent-1", h.signal, {
+      community: "relay.example.org",
+      channelId: "alpha",
+    }),
+  ).rejects.toThrow("The agent's community is not a URL: relay.example.org");
   vi.mocked(h.host.request).mockResolvedValueOnce(
     response({ sessions: [{ session_id: "s" }] }),
   );

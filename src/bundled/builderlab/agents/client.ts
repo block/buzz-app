@@ -47,6 +47,13 @@ export type AgentSession = Readonly<{
 }>;
 /** Sessions read at most, the most the server returns in one page. */
 const SESSION_LIMIT = 50;
+const communityHost = (community: string) => {
+  try {
+    return new URL(community).host;
+  } catch {
+    throw new Error(`The agent's community is not a URL: ${community}`);
+  }
+};
 
 export type RemoteAgentModel = Readonly<{
   id: string;
@@ -438,7 +445,7 @@ export function createAgentClient(
           limit: SESSION_LIMIT,
           ...(place && {
             // Beekeeper keys conversations by the community's host.
-            community: new URL(place.community).host,
+            community: communityHost(place.community),
             channel_id: place.channelId,
             ...(place.threadRootId && {
               thread_root_event_id: place.threadRootId,
@@ -451,7 +458,7 @@ export function createAgentClient(
       if (!Array.isArray(rows))
         throw new Error("Builderlab returned an invalid session list.");
       const sessions = rows.map((row): AgentSession => {
-        const updatedAt = Number(row?.updated_at);
+        const updatedAt = managementTimestamp(row?.updated_at);
         if (
           typeof row?.session_id !== "string" ||
           !row.session_id ||
@@ -466,7 +473,7 @@ export function createAgentClient(
           row.thread_root_event_id
             ? { threadRootId: row.thread_root_event_id }
             : {}),
-          updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
+          updatedAt: updatedAt ?? 0,
         };
       });
       return {

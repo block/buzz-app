@@ -210,12 +210,19 @@ export function fixture(
     async clearCache() {},
   };
   let attempt = 0;
+  let visit = new AbortController();
   let sidebar: NavigationOpenOptions["sidebar"];
+  // Each opening ends the previous attempt's visit, as the controller does.
+  const begin = (next: OpenTarget, options?: NavigationOpenOptions) => {
+    sidebar = options?.sidebar;
+    target = next;
+    attempt++;
+    visit.abort();
+    visit = new AbortController();
+  };
   const open = vi.fn(
     async (next: OpenTarget, options?: NavigationOpenOptions) => {
-      sidebar = options?.sidebar;
-      target = next;
-      attempt++;
+      begin(next, options);
       rendered.rerender(tree());
       publish();
       return { status: "opened" as const };
@@ -228,7 +235,7 @@ export function fixture(
       entry: { target },
       attempt: {
         id: String(attempt),
-        signal: new AbortController().signal,
+        signal: visit.signal,
         sidebar,
       },
     }),
@@ -312,6 +319,13 @@ export function fixture(
       });
     },
     open,
+    /** A navigation the shell does not render the sidebar for, as a thread move. */
+    navigateWithin(next: OpenTarget) {
+      act(() => {
+        begin(next);
+        publish();
+      });
+    },
     /** The sidebar's hand-off to the conversation page it opens. */
     handoff: () => handoff,
     markThrough,

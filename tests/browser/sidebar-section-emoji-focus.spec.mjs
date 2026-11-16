@@ -29,6 +29,9 @@ test("picked section emoji keeps pointer entry unringed and keyboard focus ringe
   await expect(search).toBeFocused();
   await search.fill("rocket");
   await page.getByRole("button", { name: "🚀", exact: true }).click();
+  await expect(trigger).toHaveAccessibleName(
+    "Change section emoji, currently 🚀",
+  );
   await expect(trigger).toBeFocused();
   await expect(trigger).toHaveCSS("outline-style", "none");
   await page.keyboard.press("Tab");

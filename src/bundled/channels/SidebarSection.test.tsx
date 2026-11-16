@@ -555,8 +555,10 @@ it("edits a saved section from its menu and keeps the dialog open on failure", a
   );
   const dialog = await screen.findByRole("dialog", { name: "Edit section" });
   expect(
-    within(dialog).getByRole("button", { name: "Change section emoji" }),
-  ).toHaveAttribute("aria-description", "Selected section emoji: 🏢");
+    within(dialog).getByRole("button", {
+      name: "Change section emoji, currently 🏢",
+    }),
+  ).toHaveAccessibleName("Change section emoji, currently 🏢");
   const input = within(dialog).getByRole("textbox", { name: "Section name" });
   expect(input).toHaveValue("Work");
   await user.clear(input);
@@ -604,7 +606,7 @@ it("saves icon-only edits and removes an icon without resending the name", async
     await screen.findByRole("menuitem", { name: "Edit section" }),
   );
   await user.click(
-    screen.getByRole("button", { name: "Change section emoji" }),
+    screen.getByRole("button", { name: "Change section emoji, currently 🏢" }),
   );
   await user.click(screen.getByRole("button", { name: "📚" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -616,12 +618,14 @@ it("saves icon-only edits and removes an icon without resending the name", async
     await screen.findByRole("menuitem", { name: "Edit section" }),
   );
   await user.click(
-    screen.getByRole("button", { name: "Change section emoji" }),
+    screen.getByRole("button", { name: "Change section emoji, currently 🏢" }),
   );
   await user.click(screen.getByRole("button", { name: ":books:" }));
   expect(screen.queryByRole("button", { name: "Remove emoji" })).toBeNull();
   await user.click(
-    screen.getByRole("button", { name: "Change section emoji" }),
+    screen.getByRole("button", {
+      name: "Change section emoji, currently books",
+    }),
   );
   await user.click(screen.getByRole("button", { name: "Remove emoji" }));
   expect(screen.queryByRole("dialog", { name: "Emoji picker" })).toBeNull();

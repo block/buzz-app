@@ -381,7 +381,9 @@ async function expectIconCentered(dialog) {
     }
   }
   const metrics = await dialog
-    .getByRole("button", { name: /section emoji$/ })
+    .getByRole("button", {
+      name: /^(?:Choose section emoji|Change section emoji, currently .+)$/,
+    })
     .evaluate((button) => {
       const artwork = button.querySelector("[data-sidebar-group-icon], svg");
       const input = button.closest(".buzz-input-group")?.querySelector("input");

@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
+import { CUSTOM_REACTION } from "../../features/relay/emoji";
 import { EmojiPicker } from "../emoji/EmojiPicker";
 import { SmileyIcon } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -40,7 +41,10 @@ export function SidebarSectionEmojiInput({
   useEffect(() => {
     if (disabled) close();
   }, [disabled, close]);
-  const label = icon ? "Change section emoji" : "Choose section emoji";
+  const selection = CUSTOM_REACTION.exec(icon)?.[1] ?? icon;
+  const label = icon
+    ? `Change section emoji, currently ${selection}`
+    : "Choose section emoji";
   return (
     <>
       <InputGroup
@@ -51,11 +55,6 @@ export function SidebarSectionEmojiInput({
             type="button"
             size="sm"
             aria-label={label}
-            aria-description={
-              icon
-                ? `Selected section emoji: ${icon}`
-                : "No section emoji selected"
-            }
             aria-haspopup="dialog"
             aria-expanded={pickerOpen && !disabled}
             aria-controls={pickerOpen && !disabled ? pickerId : undefined}

@@ -80,9 +80,8 @@ test("section emoji edits are centered, keyboard-safe, independently removable a
   const trigger = dialog.getByRole("button", {
     name: "Change section emoji",
   });
-  await expect(trigger).toHaveAttribute(
-    "aria-description",
-    "Selected section emoji: :stamp:",
+  await expect(trigger).toHaveAccessibleName(
+    "Change section emoji, currently stamp",
   );
   await input.press("End");
   await expectIconCentered(dialog);
@@ -107,9 +106,8 @@ test("section emoji edits are centered, keyboard-safe, independently removable a
   await expect(dialog).toBeVisible();
   await expect(unicodeTrigger).toBeFocused();
   await select("bus", "🚌");
-  await expect(unicodeTrigger).toHaveAttribute(
-    "aria-description",
-    "Selected section emoji: 🚌",
+  await expect(unicodeTrigger).toHaveAccessibleName(
+    "Change section emoji, currently 🚌",
   );
   await expectIconCentered(dialog);
   await dialog.screenshot({
@@ -185,7 +183,7 @@ test("section emoji edits are centered, keyboard-safe, independently removable a
   dialog = await openEditor();
   await expect(
     dialog.getByRole("button", { name: "Change section emoji" }),
-  ).toHaveAttribute("aria-description", "Selected section emoji: :stamp:");
+  ).toHaveAccessibleName("Change section emoji, currently stamp");
   await dialog.getByRole("button", { name: "Change section emoji" }).click();
   await expect(search).toBeFocused();
   // A centered compact dialog still fits below at short heights. Move the real
@@ -251,7 +249,9 @@ async function expectIconCentered(dialog) {
     }
   }
   const metrics = await dialog
-    .getByRole("button", { name: /section emoji$/ })
+    .getByRole("button", {
+      name: /^(?:Choose section emoji|Change section emoji, currently .+)$/,
+    })
     .evaluate((button) => {
       const artwork = button.querySelector("[data-sidebar-group-icon], svg");
       const input = button.closest(".buzz-input-group")?.querySelector("input");

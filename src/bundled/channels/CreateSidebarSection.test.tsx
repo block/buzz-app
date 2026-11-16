@@ -256,44 +256,43 @@ it("keeps a gated draft editable and submits its edited name with a fresh identi
   expect(create).toHaveBeenCalledTimes(2);
 });
 
-it.each(["📚", ":books:"])(
-  "creates with the selected %s emoji",
-  async (icon) => {
-    const user = userEvent.setup();
-    const create = vi.fn(() => true);
-    render(
-      <CreateSidebarSection
-        {...picker}
-        create={create}
-        close={vi.fn()}
-        writable
-        refreshing={false}
-        retry={vi.fn()}
-      />,
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Choose section emoji" }),
-    );
-    await user.click(screen.getByRole("button", { name: icon }));
-    const trigger = screen.getByRole("button", {
-      name: "Change section emoji",
-    });
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
-    expect(trigger).toHaveAttribute(
-      "aria-description",
-      `Selected section emoji: ${icon}`,
-    );
-    const input = screen.getByRole("textbox", { name: "Section name" });
-    await user.type(input, "Projects");
-    await user.click(screen.getByRole("button", { name: "Create" }));
-    expect(create).toHaveBeenCalledOnce();
-    expect(create).toHaveBeenCalledWith({
-      id: expect.any(String),
-      name: "Projects",
-      icon,
-    });
-  },
-);
+it.each([
+  ["📚", "📚"],
+  [":books:", "books"],
+])("creates with the selected %s emoji", async (icon, selection) => {
+  const user = userEvent.setup();
+  const create = vi.fn(() => true);
+  render(
+    <CreateSidebarSection
+      {...picker}
+      create={create}
+      close={vi.fn()}
+      writable
+      refreshing={false}
+      retry={vi.fn()}
+    />,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Choose section emoji" }),
+  );
+  await user.click(screen.getByRole("button", { name: icon }));
+  const trigger = screen.getByRole("button", {
+    name: `Change section emoji, currently ${selection}`,
+  });
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(trigger).toHaveAccessibleName(
+    `Change section emoji, currently ${selection}`,
+  );
+  const input = screen.getByRole("textbox", { name: "Section name" });
+  await user.type(input, "Projects");
+  await user.click(screen.getByRole("button", { name: "Create" }));
+  expect(create).toHaveBeenCalledOnce();
+  expect(create).toHaveBeenCalledWith({
+    id: expect.any(String),
+    name: "Projects",
+    icon,
+  });
+});
 
 it("clears a selected community emoji without clearing the name", async () => {
   const user = userEvent.setup();
@@ -318,7 +317,9 @@ it("clears a selected community emoji without clearing the name", async () => {
   );
   expect(screen.queryByRole("button", { name: "Remove emoji" })).toBeNull();
   await user.click(
-    screen.getByRole("button", { name: "Change section emoji" }),
+    screen.getByRole("button", {
+      name: "Change section emoji, currently books",
+    }),
   );
   await user.click(screen.getByRole("button", { name: "Remove emoji" }));
   expect(screen.queryByRole("dialog", { name: "Emoji picker" })).toBeNull();
@@ -389,7 +390,7 @@ it("keeps the submitted name and identity through a failed save, blocking dismis
   expect(input).toHaveAttribute("readonly");
   expect(input).toBeEnabled();
   expect(
-    screen.getByRole("button", { name: "Change section emoji" }),
+    screen.getByRole("button", { name: "Change section emoji, currently 📚" }),
   ).toBeDisabled();
   expect(create.mock.calls[0]?.[0]).toMatchObject({ icon: "📚" });
   expect(close).not.toHaveBeenCalled();

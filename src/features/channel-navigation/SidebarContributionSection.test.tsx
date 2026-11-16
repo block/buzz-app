@@ -22,6 +22,14 @@ const row = {
   status: "Active",
 };
 
+/** A navigator whose open entry is `current`. */
+const navigatorAt = (current: OpenTarget, open = vi.fn()) =>
+  ({
+    open,
+    subscribe: () => () => {},
+    snapshot: () => ({ entry: { target: current } }),
+  }) as unknown as Navigation;
+
 function ThrowingIcon(): never {
   throw new Error("fixture icon failed");
 }
@@ -81,7 +89,7 @@ it("isolates a contribution render failure and keeps sibling section actions usa
     register: () => {},
   };
   const open = vi.fn().mockResolvedValue({ status: "opened" });
-  const navigator = { open } as unknown as Navigation;
+  const navigator = navigatorAt(target, open);
 
   render(
     <ChannelSidebarDnd
@@ -162,7 +170,7 @@ it("keeps failed header-action feedback visible while the section is collapsed",
       <SidebarContributionSection
         entry={entry}
         registry={registry}
-        navigator={{ open: vi.fn() } as unknown as Navigation}
+        navigator={navigatorAt(target)}
         target={target}
         open={false}
         onToggle={() => {}}
@@ -252,7 +260,7 @@ it("selects an unscoped page row in its current community only", () => {
       <SidebarContributionSection
         entry={entry}
         registry={registry}
-        navigator={{ open: vi.fn() } as unknown as Navigation}
+        navigator={navigatorAt(target)}
         target={current}
         open
         onToggle={() => {}}
@@ -318,7 +326,7 @@ it("keeps conversation-level rows selected through in-conversation navigation", 
     subscribe: () => () => {},
     register: () => {},
   };
-  const renderSection = (target: OpenTarget) => (
+  const renderSection = (target: OpenTarget, open = target) => (
     <ChannelSidebarDnd
       writable={false}
       onMove={() => {}}
@@ -328,7 +336,7 @@ it("keeps conversation-level rows selected through in-conversation navigation", 
       <SidebarContributionSection
         entry={entry}
         registry={registry}
-        navigator={{ open: vi.fn() } as unknown as Navigation}
+        navigator={navigatorAt(open)}
         target={target}
         open
         onToggle={() => {}}
@@ -347,6 +355,15 @@ it("keeps conversation-level rows selected through in-conversation navigation", 
 
   expect(conversationRow()).toHaveAttribute("aria-current", "page");
   expect(exactMessageRow()).toHaveAttribute("aria-current", "page");
+
+  // The shell's sidebar target names only the conversation; the open entry
+  // still selects the exact message. Under Settings, the target stands.
+  rerender(renderSection(conversation, message));
+  expect(conversationRow()).toHaveAttribute("aria-current", "page");
+  expect(exactMessageRow()).toHaveAttribute("aria-current", "page");
+  rerender(renderSection(conversation, { version: 1, kind: "settings" }));
+  expect(conversationRow()).toHaveAttribute("aria-current", "page");
+  expect(exactMessageRow()).not.toHaveAttribute("aria-current");
 
   rerender(renderSection({ ...message, panel: "members" }));
   expect(conversationRow()).toHaveAttribute("aria-current", "page");
@@ -405,7 +422,7 @@ it("preserves the receiver for an external row store", () => {
       <SidebarContributionSection
         entry={entry}
         registry={registry}
-        navigator={{ open: vi.fn() } as unknown as Navigation}
+        navigator={navigatorAt(target)}
         target={target}
         open
         onToggle={() => {}}

@@ -24,7 +24,10 @@ import type { Agents } from "../../features/agents/service";
 import { PrimarySidebar } from "./PrimarySidebar";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
-import { conversationTarget } from "../../features/channel-navigation/routes";
+import {
+  conversationTarget,
+  sidebarTarget,
+} from "../../features/channel-navigation/routes";
 import type { ContributionReader } from "../../features/conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
@@ -256,7 +259,7 @@ export function fixture(
                   creationAction={creationAction}
                   relay={relay}
                   navigator={navigator}
-                  target={target}
+                  target={sidebarTarget(target)}
                   chatIcons={chatIcons}
                   chatMenus={chatMenus}
                   sidebarRows={host.sidebarRows}

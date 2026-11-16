@@ -214,7 +214,10 @@ function fixture(
   const navigator = {
     open: vi.fn().mockResolvedValue({ status: "opened" }),
     subscribe: () => () => {},
-    snapshot: () => ({ attempt: { id: "visit" } }),
+    snapshot: () => ({
+      entry: { target: { version: 1, kind: "home" } },
+      attempt: { id: "visit" },
+    }),
   } as unknown as Navigation;
   const view = (
     id: string,

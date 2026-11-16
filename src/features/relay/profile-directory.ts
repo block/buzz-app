@@ -50,7 +50,7 @@ export interface ProfileQueries {
    * later, the limit returns to the largest remaining reservation and evicts
    * the least recently used profiles past it. */
   reserve?(members: number): () => void;
-  /** Room open views reserved, on top of the base; one ensure may ask for at
+  /** The base plus the room open views reserved; one ensure may ask for at
    * most this many. A released view's hold keeps more profiles cached but
    * does not count here, so reads sized by it do not evict the held names. */
   limit?(): number;

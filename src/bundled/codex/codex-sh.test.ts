@@ -932,22 +932,20 @@ it("runs codex.exe in Buzz's own home under Git for Windows", async () => {
     expect(await readlink(join(f.own, name))).toBe(join(f.codex, name));
 });
 
-it("runs Codex in the shared home, and says so, when Windows makes no links", async () => {
+it("runs nothing, saying Developer Mode is needed, when Windows makes no links", async () => {
   const f = await windows(false);
-  const { stdout, stderr } = await f.step("run", "app-server");
-  expect(stdout.trim().split("\n")).toEqual([
-    shellPath(f.codex),
-    "-c",
-    `sqlite_home=${shellPath(f.codex)}`,
-    "app-server",
-  ]);
-  expect(stderr).toContain("Buzz's Codex shares your Codex home");
-  // Signing in happens there too; reviews need links.
-  expect((await f.step("login")).stdout.trim().split("\n")).toEqual([
-    shellPath(f.codex),
-    "login",
-  ]);
-  await expect(f.step("review")).rejects.toThrow("need Developer Mode");
+  await mkdir(f.codex, { recursive: true });
+  await writeFile(join(f.codex, "auth.json"), "existing");
+  for (const step of [
+    ["run", "--version"],
+    ["run", "app-server"],
+    ["login"],
+    ["review"],
+  ])
+    await expect(f.step(...step)).rejects.toThrow("needs Developer Mode");
+  // The user's own Codex home is left as it was: no sign-in was revoked.
+  expect(await readFile(join(f.codex, "auth.json"), "utf8")).toBe("existing");
+  expect(await readdir(f.own)).toEqual([]);
 });
 
 it("keeps links made before Windows stopped allowing new ones", async () => {

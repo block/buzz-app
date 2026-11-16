@@ -79,8 +79,8 @@ and write instructions. Then click **Create agent**.
 | Goose | macOS, Linux, Windows | Included with Buzz. Choose a model provider and enter its key in **Settings → Agent setup → Harness defaults → Goose**. Providers that sign in through goose instead need `goose configure` from the separate goose CLI. |
 | Pi | macOS, Linux, Windows | Node.js 22.19 or later. Turn on **Pi** in **Settings → Plugins** first. Click the model, choose a provider, paste its **API key**, and click **Save to Pi**. Providers that sign in another way need `pi`, then `/login`, in your terminal. |
 
-On Windows, Claude and Codex also need [Git for Windows](https://git-scm.com/download/win).
-With Developer Mode off, Codex agents share your own Codex history.
+On Windows, Claude and Codex also need [Git for Windows](https://git-scm.com/download/win),
+and Codex needs Developer Mode on (**Windows Settings → System → For developers**).
 
 The install and sign-in buttons appear in the create dialog's **Model** row, and
 in **Settings → Agent setup → Harness defaults**. Agents run on your computer
@@ -113,8 +113,8 @@ ln -sf /Applications/Buzz.app/Contents/Resources/bin/buzz ~/.local/bin/buzz
 - Updates can break plugins (see [Plugins](#plugins)).
 - The Windows installer is unsigned, and Intel macOS, Windows and Linux get
   less testing than Apple Silicon macOS.
-- Claude and Codex agents need Git for Windows on Windows. Goose and Pi work
-  everywhere.
+- On Windows, Claude and Codex agents need Git for Windows, and Codex agents
+  also need Developer Mode. Goose and Pi work everywhere.
 - Buzz doesn't back up your key, so keep your own copy (see step 2).
 - Bringing your identity over from Buzz 0.X doesn't bring your communities
   (rejoin them in step 3) or your agents. On the Agents page, bring agents

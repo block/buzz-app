@@ -16,7 +16,7 @@
 #                                  while the sign-in still names it
 set -eu
 
-SHARED_HOME="Buzz's Codex shares your Codex home: Windows makes links only in Developer Mode"
+DEVELOPER_MODE="Codex on Windows needs Developer Mode: turn it on in Windows Settings, under System, For developers"
 
 # Shared by every Buzz build on this computer, so there is one download.
 if [ "$(uname)" = Darwin ]; then
@@ -117,21 +117,21 @@ case "$command" in run | adopt | home | login | review)
     fi
     exec 9>&-
   fi
-  # Without real links (Windows without Developer Mode), Codex runs in the
-  # shared home itself, and says so: the plugin tells the person.
+  # Buzz's home links to the shared settings and sign-in, and Windows lets it
+  # make those links only in Developer Mode, so without it Codex doesn't run.
+  # Links made earlier keep working if Developer Mode is turned off later.
   probe="$home/.link.$$"
   if [ -n "$exe" ] && [ ! -L "$home/config.toml" ] &&
     ! { ln -sn "$shared/config.toml" "$probe" 2>/dev/null && rm -f "$probe"; }; then
-    echo "$SHARED_HOME" >&2
-    home="$shared"
-  else
-    for name in config.toml auth.json AGENTS.md rules skills; do
-      [ -e "$home/$name" ] || [ -L "$home/$name" ] ||
-        ln -sn "$shared/$name" "$home/$name" 2>/dev/null || true
-      [ "$(readlink "$home/$name")" = "$shared/$name" ] ||
-        { echo "Buzz's Codex setup conflicts with $home/$name" >&2; exit 1; }
-    done
+    echo "$DEVELOPER_MODE" >&2
+    exit 1
   fi
+  for name in config.toml auth.json AGENTS.md rules skills; do
+    [ -e "$home/$name" ] || [ -L "$home/$name" ] ||
+      ln -sn "$shared/$name" "$home/$name" 2>/dev/null || true
+    [ "$(readlink "$home/$name")" = "$shared/$name" ] ||
+      { echo "Buzz's Codex setup conflicts with $home/$name" >&2; exit 1; }
+  done
   export CODEX_HOME="$home"
   ;;
 esac
@@ -234,14 +234,6 @@ home)
   printf '%s\n' "$home"
   ;;
 login | review)
-  # Shared, there is no review home: Codex signs in where it runs.
-  if [ "$home" = "$shared" ]; then
-    [ "$command" = login ] ||
-      { echo "Codex security reviews need Developer Mode on Windows" >&2; exit 2; }
-    version="${BUZZ_CODEX_VERSION:-$(cat "$dir/current" 2>/dev/null)}"
-    valid "$version" || { echo "Codex is not installed" >&2; exit 127; }
-    exec "$dir/$version/bin/codex$exe" login
-  fi
   # The security plugin keeps this home read-only to every contained worker, so
   # nothing one writes (config.toml, AGENTS.md, skills, memories, rules) can
   # reach a review: it holds only the sign-in, the workspace a Buzz sign-in

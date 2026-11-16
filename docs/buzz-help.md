@@ -1102,10 +1102,10 @@ available rather than silently discarding it.
   workspace. Codex's harness defaults offer that sign-in while Codex is signed
   out. API key and keyring sign-ins can't run them.
 - On Windows, local Claude and Codex agents run their setup through Git for
-  Windows, which must be installed; Settings says so when it is missing.
-  Without Windows Developer Mode, Codex agents run in your own Codex folder,
-  so their conversations appear in your Codex history, and Settings notes it.
-  Security reviews for protected agents are macOS-only.
+  Windows, which must be installed. Codex also needs Windows Developer Mode
+  (Windows Settings → System → For developers), because Buzz keeps its own
+  Codex folder linked to your settings and sign-in. Settings says which one
+  is missing. Security reviews for protected agents are macOS-only.
 - **Settings → Agent details** says where an agent's configuration lives:
   **Synced in** its community, or **Only on this Mac** with why (the relay
   doesn't sync agent settings, or the first copy failed and Buzz will try

@@ -133,19 +133,16 @@ it("downloads the package for this computer's target", () => {
   expect(targetOf("MINGW32_NT-10.0-26100 i686")).toBeUndefined();
 });
 
-it("notes when Codex shares the user's own Codex home", async () => {
+it("reports why Codex can't start, such as Windows without Developer Mode", async () => {
   const { spawn } = scripted({
     "codex --version": {
-      stdout: "codex-cli 0.167.1\n",
-      stderr:
-        "Buzz's Codex shares your Codex home: Windows makes links only in Developer Mode\n",
+      stderr: "Codex on Windows needs Developer Mode: turn it on\n",
+      code: 1,
     },
-    "codex login status": { stdout: "Logged in using ChatGPT\n" },
   });
   await expect(checkCodex(spawn)).resolves.toEqual({
-    state: "ready",
-    version: "0.167.1",
-    shared: true,
+    state: "error",
+    message: "Codex on Windows needs Developer Mode: turn it on",
   });
 });
 

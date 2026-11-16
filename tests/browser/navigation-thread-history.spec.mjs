@@ -44,7 +44,7 @@ test("Back restores each thread visit before the previous channel", async ({
   const headStarted = new Promise((resolve) => {
     sawHead = resolve;
   });
-  await page.route("**/api/relay/**/query", async (route) => {
+  await page.route("**/api/relay/primary/query", async (route) => {
     if (
       route
         .request()
@@ -175,7 +175,7 @@ for (const reading of [false, true]) {
       release = resolve;
     });
     let requested = false;
-    const routePattern = "**/api/relay/**/query";
+    const routePattern = "**/api/relay/primary/query";
     await page.route(routePattern, async (route) => {
       if (
         !requested &&

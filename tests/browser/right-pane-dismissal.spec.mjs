@@ -210,7 +210,7 @@ for (const close of [
     const held = new Promise((resolve) => {
       release = resolve;
     });
-    await page.route("**/api/relay/**/query", async (route) => {
+    await page.route("**/api/relay/primary/query", async (route) => {
       if (
         route
           .request()
@@ -258,9 +258,8 @@ for (const close of [
             .getByRole("button", { name: /^Close / })
             .click();
         } else {
-          await (close === "Close other tabs"
-            ? tabs.first()
-            : pendingTab
+          await (
+            close === "Close other tabs" ? tabs.first() : pendingTab
           ).click({ button: "right" });
           await page
             .getByRole("menuitem", { name: close, exact: true })

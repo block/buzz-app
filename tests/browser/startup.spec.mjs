@@ -377,7 +377,7 @@ test("launch waits for the initial sidebar and message history before revealing 
   app.relay.holdUnread();
   const head = held();
   let requested = false;
-  await page.route("**/api/relay/**/query", async (route) => {
+  await page.route("**/api/relay/primary/query", async (route) => {
     if (
       route
         .request()
@@ -631,7 +631,7 @@ test.describe("pending startup navigation", () => {
   }) => {
     const gate = held();
     let requested = false;
-    await page.route("**/api/relay/**/query", async (route) => {
+    await page.route("**/api/relay/primary/query", async (route) => {
       if (
         route
           .request()

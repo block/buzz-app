@@ -340,7 +340,7 @@ test.describe("public preview recovery", () => {
     const headGate = new Promise((resolve) => {
       releaseHead = resolve;
     });
-    await page.route("**/api/relay/**/query", async (route) => {
+    await page.route("**/api/relay/primary/query", async (route) => {
       const isPreviewHead = route
         .request()
         .postDataJSON()

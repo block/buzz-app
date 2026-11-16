@@ -321,7 +321,7 @@ test.describe("mentioned reply priority", () => {
     const read = new Promise((resolve) => {
       sawRead = resolve;
     });
-    await page.route("**/api/relay/**/query", async (route) => {
+    await page.route("**/api/relay/primary/query", async (route) => {
       if (held) {
         sawRead();
         await gate;
@@ -754,7 +754,7 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
     release = resolve;
   });
   let requested = false;
-  await page.route("**/api/relay/**/query", async (route) => {
+  await page.route("**/api/relay/primary/query", async (route) => {
     if (
       route
         .request()

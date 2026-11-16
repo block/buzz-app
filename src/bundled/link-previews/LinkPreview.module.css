@@ -34,13 +34,27 @@ html[data-keyboard-navigation] .card:focus-visible {
   flex: 1;
 }
 .site {
+  display: flex;
+  min-width: 0;
   overflow: hidden;
   color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+.siteName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The page names itself, but the domain is always whole and reads left to right. */
+.domain {
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  unicode-bidi: isolate;
 }
 .title {
   display: -webkit-box;
@@ -63,6 +77,11 @@ html[data-keyboard-navigation] .card:focus-visible {
   letter-spacing: var(--text-body-sm--letter-spacing);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+.title.fallback {
+  color: var(--text-subtle);
+  font-weight: normal;
 }
 .media {
   flex-shrink: 0;

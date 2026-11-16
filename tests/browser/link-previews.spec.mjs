@@ -51,7 +51,36 @@ test("link previews draw web cards below messages and let a plugin claim its own
     expect(asked.some((url) => url.includes("router.local"))).toBe(false);
     expect(asked.some((url) => /github\.com|figma\.com/.test(url))).toBe(false);
 
-    const third = rows.nth(2);
+    // A page can't push the real domain off its card or reverse it.
+    const spoof = rows
+      .nth(2)
+      .getByRole("link", { name: /Sign in to continue/ });
+    await expect(spoof).toBeVisible();
+    const domain = spoof.locator("[dir=ltr]");
+    await expect(domain).toHaveText("spoof.example.net");
+    const fits = await domain.evaluate((element) => {
+      const own = element.getBoundingClientRect();
+      const card = element.closest("a").getBoundingClientRect();
+      return (
+        element.scrollWidth <= element.clientWidth &&
+        own.left >= card.left &&
+        own.right <= card.right
+      );
+    });
+    expect(fits).toBe(true);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.linkPreviewFixture.images.includes(
+            "https://img.example.com/missing.png",
+          ),
+        ),
+      )
+      .toBe(true);
+    await expect(spoof.locator("img")).toHaveCount(0);
+    expect(await spoof.evaluate((card) => card.children.length)).toBe(1);
+
+    const third = rows.nth(3);
     await expect(third.getByRole("link")).toHaveCount(3);
     await third.getByRole("button", { name: "Show 2 more previews" }).click();
     await expect(third.getByRole("link")).toHaveCount(5);
@@ -62,6 +91,19 @@ test("link previews draw web cards below messages and let a plugin claim its own
     await expect(page.getByRole("status")).toHaveText(
       "https://news.example.com/launch",
     );
+
+    // A page Buzz can't open itself goes to the browser.
+    await page
+      .context()
+      .route("https://a.example.org/", (route) =>
+        route.fulfill({ contentType: "text/html", body: "<p>a</p>" }),
+      );
+    const [popup] = await Promise.all([
+      page.waitForEvent("popup"),
+      third.getByRole("link", { name: /a\.example\.org/ }).click(),
+    ]);
+    expect(popup.url()).toBe("https://a.example.org/");
+    await popup.close();
 
     await page.getByRole("button", { name: "Disable tracker plugin" }).click();
     await expect(

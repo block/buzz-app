@@ -74,8 +74,8 @@ test("link previews never move the reader in the real timeline", async ({
     await releaseAndHold(page);
 
     // A fling through unread history: cards scrolled past are withdrawn, so
-    // apart from the read already under way when it began, every read that
-    // goes out is for a card still on screen.
+    // apart from the read already under way when it began, every page or
+    // image read that goes out is for a card still on screen.
     const sent = await page.evaluate(
       () => window.linkPreviewScroll.asked.length,
     );
@@ -94,10 +94,15 @@ test("link previews never move the reader in the real timeline", async ({
       (sent) => window.linkPreviewScroll.asked.slice(sent),
       sent,
     );
+    // Story n's page is on site{n} or more{n}, and its image on img{n}.
+    const story = (url) => new URL(url).hostname.match(/\d+/)?.[0];
     const shown = await feed
       .locator("[data-link-previews] a")
       .evaluateAll((cards) => cards.map((card) => card.href));
-    expect(fling.slice(1).filter((url) => !shown.includes(url))).toEqual([]);
+    expect(fling.some((url) => url.includes("://img"))).toBe(true);
+    expect(
+      fling.slice(1).filter((url) => !shown.map(story).includes(story(url))),
+    ).toEqual([]);
 
     // Away and back: remounted cards draw from the cache on their first frame.
     const reader = await anchor(page);
@@ -120,6 +125,12 @@ test("link previews never move the reader in the real timeline", async ({
     // Turned off and on again: a new loader with an empty cache.
     await page.evaluate(() => window.linkPreviewScroll.enable(false));
     await expect(feed.locator("[data-link-previews]")).toHaveCount(0);
+    await page.evaluate(() => window.linkPreviewScroll.enable(true));
+    await expect(pending.first()).toBeVisible();
+    await settle(page);
+    // And again while the last loader's read is still under way, so the two
+    // loaders' reads overlap.
+    await page.evaluate(() => window.linkPreviewScroll.enable(false));
     await page.evaluate(() => window.linkPreviewScroll.enable(true));
     await expect(pending.first()).toBeVisible();
     await settle(page);

@@ -7,7 +7,6 @@ export type Page = Readonly<{
   description?: string;
   siteName?: string;
   image?: string;
-  imageAlt?: string;
 }>;
 
 const MAX_REDIRECTS = 5;
@@ -56,6 +55,7 @@ export function createLoader(host: Reader | undefined, now = Date.now) {
   const requestBytes = host?.requestBytes?.bind(host);
   const pages = new Map<string, PageEntry>();
   const failures = new Map<string, number>();
+  const imageFailures = new Map<string, number>();
   const images = new Map<string, Held>();
   const waiting: Waiter[] = [];
   let active = 0;
@@ -130,23 +130,22 @@ export function createLoader(host: Reader | undefined, now = Date.now) {
       ...(preview.description ? { description: preview.description } : {}),
       ...(preview.siteName ? { siteName: preview.siteName } : {}),
       ...(image ? { image } : {}),
-      ...(preview.imageAlt ? { imageAlt: preview.imageAlt } : {}),
     };
   };
 
-  const failedRecently = (url: string) => {
-    const until = failures.get(url);
+  const failedRecently = (url: string, cache = failures) => {
+    const until = cache.get(url);
     if (until === undefined) return false;
     if (until > now()) return true;
-    failures.delete(url);
+    cache.delete(url);
     return false;
   };
-  const fail = (url: string) => {
-    failures.delete(url);
-    failures.set(url, now() + FAILURE_COOLDOWN_MS);
-    for (const old of failures.keys()) {
-      if (failures.size <= KEEP_FAILURES) break;
-      failures.delete(old);
+  const fail = (url: string, cache = failures) => {
+    cache.delete(url);
+    cache.set(url, now() + FAILURE_COOLDOWN_MS);
+    for (const old of cache.keys()) {
+      if (cache.size <= KEEP_FAILURES) break;
+      cache.delete(old);
     }
   };
   const touch = <T>(cache: Map<string, T>, key: string, value: T) => {
@@ -169,6 +168,17 @@ export function createLoader(host: Reader | undefined, now = Date.now) {
     void held.promise.then((src) => src && URL.revokeObjectURL(src));
   const revokeIfUnused = (held: Held) => {
     if (!held.kept && held.users === 0) revoke(held);
+  };
+
+  // A pending image stays, so a card that remounts joins its read.
+  const evictImages = () => {
+    for (const [old, value] of images) {
+      if (images.size <= KEEP_IMAGES) break;
+      if (!value.done) continue;
+      images.delete(old);
+      value.kept = false;
+      revokeIfUnused(value);
+    }
   };
 
   const loadImage = (url: string, entry: Pending<string>) =>
@@ -217,9 +227,12 @@ export function createLoader(host: Reader | undefined, now = Date.now) {
       if (value) return value;
       return failedRecently(url) ? null : undefined;
     },
-    /** The image's `blob:` URL when it has already loaded. */
+    /** The image's `blob:` URL when it has already loaded, or null after a
+     * recent failure. */
     peekImage(url: string): string | null | undefined {
-      return images.get(url)?.ready;
+      const ready = images.get(url)?.ready;
+      if (ready) return ready;
+      return failedRecently(url, imageFailures) ? null : undefined;
     },
     /** A lease on the page's preview. Releasing the last lease before the
      * read finishes withdraws it. */
@@ -274,7 +287,7 @@ export function createLoader(host: Reader | undefined, now = Date.now) {
      * `KEEP_IMAGES` for reuse, but a URL is revoked only once it has left the
      * cache and every lease on it is released. */
     image(url: string): ImageLease {
-      if (!requestBytes || stopped)
+      if (!requestBytes || stopped || failedRecently(url, imageFailures))
         return { src: Promise.resolve(null), release() {} };
       let held = images.get(url);
       if (held) touch(images, url, held);
@@ -297,13 +310,11 @@ export function createLoader(host: Reader | undefined, now = Date.now) {
             images.delete(url);
             entry.kept = false;
           }
+          if (src === null && !entry.controller.signal.aborted && !stopped)
+            fail(url, imageFailures);
+          evictImages();
         });
-        for (const [old, value] of images) {
-          if (images.size <= KEEP_IMAGES) break;
-          images.delete(old);
-          value.kept = false;
-          revokeIfUnused(value);
-        }
+        evictImages();
       }
       const leased = held;
       leased.users++;
@@ -332,6 +343,7 @@ export function createLoader(host: Reader | undefined, now = Date.now) {
       images.clear();
       pages.clear();
       failures.clear();
+      imageFailures.clear();
       for (const waiter of waiting.splice(0)) waiter.start(false);
     },
   };

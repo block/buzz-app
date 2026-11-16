@@ -193,11 +193,14 @@ describe("createLoader", () => {
       }));
       const loader = createLoader({ readPage: vi.fn(), requestBytes });
       const shown = loader.image("https://img.example.com/0.png");
-      const others = Array.from({ length: 61 }, (_, i) =>
-        loader.image(`https://img.example.com/${i + 1}.png`),
-      );
       const src = await shown.src;
-      const srcs = await Promise.all(others.map((lease) => lease.src));
+      const others = [];
+      const srcs = [];
+      for (let i = 1; i <= 61; i++) {
+        const lease = loader.image(`https://img.example.com/${i}.png`);
+        others.push(lease);
+        srcs.push(await lease.src);
+      }
       for (const lease of others) lease.release();
       await Promise.resolve();
       expect(src).toMatch(/^blob:test\//);
@@ -214,6 +217,40 @@ describe("createLoader", () => {
       create.mockRestore();
       revoke.mockRestore();
     }
+  });
+
+  it("keeps a failed image for a cooldown instead of reading it on every remount", async () => {
+    let time = 0;
+    const requestBytes = vi.fn(async () => ({
+      status: 404,
+      headers: {},
+      body: new Uint8Array(),
+    }));
+    const loader = createLoader(
+      { readPage: vi.fn(), requestBytes },
+      () => time,
+    );
+    const url = "https://img.example.com/gone.png";
+    expect(loader.peekImage(url)).toBeUndefined();
+    expect(await loader.image(url).src).toBeNull();
+    expect(loader.peekImage(url)).toBeNull();
+    expect(await loader.image(url).src).toBeNull();
+    expect(requestBytes).toHaveBeenCalledTimes(1);
+    time += 5 * 60_000 + 1;
+    expect(loader.peekImage(url)).toBeUndefined();
+    expect(await loader.image(url).src).toBeNull();
+    expect(requestBytes).toHaveBeenCalledTimes(2);
+  });
+
+  it("never evicts an image still loading, so a card that remounts joins its read", async () => {
+    const requestBytes = vi.fn(() => new Promise<never>(() => {}));
+    const loader = createLoader({ readPage: vi.fn(), requestBytes });
+    const first = loader.image("https://img.example.com/first.png");
+    for (let i = 0; i < 70; i++)
+      loader.image(`https://img.example.com/${i}.png`);
+    expect(loader.image("https://img.example.com/first.png").src).toBe(
+      first.src,
+    );
   });
 
   it("is unavailable without a page reader", async () => {

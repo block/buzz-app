@@ -1,23 +1,17 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import type { LinkPreviewProps } from "../../features/conversation/contracts";
 import type { Loader, Page } from "./loader";
 import { domainOf } from "./safety";
 import styles from "./LinkPreview.module.css";
 
-function Media({
-  loader,
-  image,
-  alt,
-}: {
-  loader: Loader;
-  image: string;
-  alt: string;
-}) {
-  const [src, setSrc] = useState(() => loader.peekImage(image) ?? null);
+function Media({ loader, image }: { loader: Loader; image: string }) {
+  const [src, setSrc] = useState(() => loader.peekImage(image));
   const [broken, setBroken] = useState(false);
   useEffect(() => {
     let live = true;
     setBroken(false);
+    setSrc(loader.peekImage(image));
     const lease = loader.image(image);
     void lease.src.then((blob) => live && setSrc(blob));
     return () => {
@@ -25,12 +19,13 @@ function Media({
       lease.release();
     };
   }, [loader, image]);
+  if (src === null || broken) return null;
   return (
     <span className={styles.media}>
-      {src && !broken && (
+      {src && (
         <img
           src={src}
-          alt={alt}
+          alt=""
           decoding="async"
           onError={() => setBroken(true)}
         />
@@ -60,30 +55,58 @@ export function LinkPreview({
     };
   }, [loader, url]);
   const domain = domainOf(url);
-  const site =
+  const siteName =
     page?.siteName && page.siteName.toLowerCase() !== domain.toLowerCase()
-      ? `${page.siteName} · ${domain}`
-      : domain;
+      ? page.siteName
+      : undefined;
   return (
     <a
       className={styles.card}
       href={url}
+      target="_blank"
+      rel="noopener noreferrer"
       aria-busy={page === undefined || undefined}
       onClick={(event) => {
-        event.preventDefault();
-        open();
+        // Tauri's external-link opener skips Command-clicks.
+        if (event.metaKey && event.button === 0 && isTauri()) {
+          event.preventDefault();
+          void invoke("plugin:opener|open_url", { url }).catch(() => {});
+          return;
+        }
+        if (
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.shiftKey &&
+          !event.altKey &&
+          open()
+        )
+          event.preventDefault();
       }}
     >
       <span className={styles.body}>
-        <span className={styles.site}>{site}</span>
-        <span className={styles.title}>{page?.title ?? bareUrl(url)}</span>
+        <span className={styles.site}>
+          {siteName && (
+            <>
+              <bdi className={styles.siteName}>{siteName}</bdi>
+              <span>{"\u00a0·\u00a0"}</span>
+            </>
+          )}
+          <span className={styles.domain} dir="ltr">
+            {domain}
+          </span>
+        </span>
+        {page ? (
+          <span className={styles.title}>{page.title}</span>
+        ) : (
+          <span className={`${styles.title} ${styles.fallback}`}>
+            {bareUrl(url)}
+          </span>
+        )}
         {page?.description && (
           <span className={styles.description}>{page.description}</span>
         )}
       </span>
-      {page?.image && (
-        <Media loader={loader} image={page.image} alt={page.imageAlt ?? ""} />
-      )}
+      {page?.image && <Media loader={loader} image={page.image} />}
     </a>
   );
 }

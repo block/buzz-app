@@ -1,5 +1,5 @@
 {
-  "id": "buzz.link-previews",
+  "id": "buzz.web-previews",
   "name": "Link previews",
   "apiVersion": 1,
   "description": "Show a card with a web page's title, description and image below messages that link to it.",

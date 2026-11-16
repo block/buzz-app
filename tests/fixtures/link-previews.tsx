@@ -37,8 +37,19 @@ const pages: Record<string, HostPage> = {
     status: 302,
     location: "https://router.local/admin",
   },
+  "https://spoof.example.net/login": {
+    status: 200,
+    preview: {
+      siteName: `\u202ePayPal Secure Account Verification Center for Your Protection Today ${"x".repeat(20)}`,
+      title: "Sign in to continue",
+      image: "https://img.example.com/missing.png",
+    },
+  },
 };
-const readPage = async (url: string): Promise<HostPage> => {
+const readPage = async (
+  url: string,
+  _options?: { timeoutMs?: number },
+): Promise<HostPage> => {
   await new Promise((resolve) => setTimeout(resolve, 150));
   return (
     pages[url] ?? {
@@ -60,8 +71,10 @@ async function png(width: number, height: number) {
   const blob = await canvas.convertToBlob({ type: "image/png" });
   return new Uint8Array(await blob.arrayBuffer());
 }
-const requestBytes = async () => {
+const requestBytes = async ({ url }: { url: string }) => {
   await new Promise((resolve) => setTimeout(resolve, 600));
+  if (url.includes("missing"))
+    return { status: 404, headers: {}, body: new Uint8Array() };
   return {
     status: 200,
     headers: { "content-type": "image/png" },
@@ -69,12 +82,16 @@ const requestBytes = async () => {
   };
 };
 const asked: string[] = [];
+const images: string[] = [];
 const host = {
   readPage: (url: string, options?: { timeoutMs?: number }) => {
     asked.push(url);
     return readPage(url, options);
   },
-  requestBytes,
+  requestBytes: (request: { url: string }) => {
+    images.push(request.url);
+    return requestBytes(request);
+  },
 };
 const heights: number[] = [];
 new MutationObserver(() => {
@@ -84,7 +101,7 @@ new MutationObserver(() => {
   const height = card?.getBoundingClientRect().height;
   if (height && heights.at(-1) !== height) heights.push(height);
 }).observe(document, { subtree: true, childList: true, attributes: true });
-Object.assign(window, { linkPreviewFixture: { asked, heights } });
+Object.assign(window, { linkPreviewFixture: { asked, images, heights } });
 
 const webPreviews: PluginModule = {
   inject: ["conversation"],
@@ -117,7 +134,7 @@ const siteOverride: PluginModule = {
 };
 const modules: Record<string, PluginModule> = {
   "buzz.links": links,
-  "buzz.link-previews": webPreviews,
+  "buzz.web-previews": webPreviews,
   "fixture.tracker": siteOverride,
 };
 const root = new Context();
@@ -138,7 +155,7 @@ const plugin = (id: string, name: string) => ({
 function mode(override: boolean, previews: boolean) {
   runtime.reconcile([
     plugin("buzz.links", "Links"),
-    ...(previews ? [plugin("buzz.link-previews", "Link previews")] : []),
+    ...(previews ? [plugin("buzz.web-previews", "Link previews")] : []),
     ...(override ? [plugin("fixture.tracker", "Tracker")] : []),
   ]);
 }
@@ -169,6 +186,7 @@ const rows = [
     "services",
     "Already labelled inline: https://github.com/block/buzz-app/pull/3225 and https://www.figma.com/file/abc",
   ),
+  message("spoof", "Odd one: https://spoof.example.net/login"),
   message(
     "three",
     "Reading list: https://a.example.org/ https://b.example.org/ https://c.example.org/ https://d.example.org/ https://e.example.org/",
@@ -259,6 +277,8 @@ function Preview() {
           profile={{ name: "Morgan" }}
           media={() => undefined}
           onOpenLink={(url) => {
+            // Buzz has no panel for an ordinary page, so the browser opens it.
+            if (url === "https://a.example.org/") return false;
             setOpened(url);
             return true;
           }}

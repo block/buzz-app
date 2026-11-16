@@ -55,7 +55,10 @@ const host = {
     asked.push(url);
     return admit(() => readPage(url));
   },
-  requestBytes: () => admit(readImage),
+  requestBytes: (request: { url: string }) => {
+    asked.push(request.url);
+    return admit(readImage);
+  },
 };
 async function readPage(url: string): Promise<HostPage> {
   await pass();
@@ -100,7 +103,7 @@ const previews: PluginModule = {
 };
 const root = new Context();
 const runtime = new PluginRuntime(root, async (plugin) =>
-  plugin.manifest.id === "buzz.link-previews" ? previews : links,
+  plugin.manifest.id === "buzz.web-previews" ? previews : links,
 );
 const conversation = new ConversationService(root);
 const plugin = (id: string, name: string) => ({
@@ -115,7 +118,7 @@ const plugin = (id: string, name: string) => ({
 const enable = (on: boolean) =>
   runtime.reconcile([
     plugin("buzz.links", "Links"),
-    ...(on ? [plugin("buzz.link-previews", "Link previews")] : []),
+    ...(on ? [plugin("buzz.web-previews", "Link previews")] : []),
   ]);
 enable(true);
 

@@ -9,9 +9,10 @@ import {
   memory,
   notes,
   restoredFeature,
+  upgradedFeature,
   withFeature,
 } from "./features";
-import { v1CheckIn } from "./test-helpers";
+import { v1CheckIn, v1Memory } from "./test-helpers";
 
 const OPEN = `<!-- buzz:bestie/memory v${memory.version} -->`;
 const CLOSE = "<!-- /buzz:bestie/memory -->";
@@ -291,4 +292,34 @@ it("takes the old hourly check-in's section away, as it was saved", () => {
   const off = old ? withFeature(on, old, false) : on;
   expect(off).toBe(withFeature("Be brief.\n", memory, true));
   expect(off).not.toContain("Hourly upkeep");
+});
+
+it("upgrades an earlier version's whole section where it is, and nothing else", () => {
+  const owner = (section: string) =>
+    `Be brief.\n\n${section}\n\nAlways answer in French.\n`;
+  const old = withFeature("", v1Memory, true).trimEnd();
+  const current = withFeature("", memory, true).trimEnd();
+  expect(upgradedFeature(owner(old), memory)).toBe(owner(current));
+  // The current version, an edited section and no section stay as they are.
+  expect(upgradedFeature(owner(current), memory)).toBe(owner(current));
+  const edited = owner(old).replace(CLOSE, "");
+  expect(upgradedFeature(edited, memory)).toBe(edited);
+  expect(upgradedFeature("Be brief.", memory)).toBe("Be brief.");
+});
+
+it("has Nightly review keep what an earlier version saved in mem/memory before rebuilding it", () => {
+  const steps = dream.timer?.interest ?? "";
+  // v1 chat turns kept prose there; the rebuild keeps only cards, Now and lessons.
+  expect(v1Memory.text).toContain("mem/memory: curated longer-term knowledge");
+  expect(steps).toContain(
+    'Before you write mem/memory again, move each claim in it that is not a card line, a "Now" line or a lesson, such as one an earlier version of your memory rules saved there, to its card, or to mem/hypotheses if it is a guess, with its date and source; never drop one.',
+  );
+  // Every night, not only the first: a v1 section may still be in the instructions.
+  const step = steps.slice(
+    steps.indexOf("5. ORGANIZE"),
+    steps.indexOf("6. REFLECT"),
+  );
+  expect(step.indexOf("Before you write mem/memory again")).toBeLessThan(
+    step.indexOf("Then write mem/memory again"),
+  );
 });

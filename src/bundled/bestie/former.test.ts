@@ -214,43 +214,44 @@ it("replaces the Bestie's old hourly check-in with Hourly notes and Nightly revi
   const { save, run, now, stop } = oldCheckIn();
   expect(checkingIn).toContain("each private channel you have been added to");
   await run();
-  await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(4));
-  const [first, second, third, fourth] = save.mock.calls;
-  // The new ones first, so a failure leaves the old one to try again.
-  expect(first?.[1].attention).toEqual({
-    "interest/bestie-notes": {
-      type: "interest",
-      instructions: notes.timer?.interest,
-    },
-    "watch/bestie-notes": expect.objectContaining({
-      type: "timer",
-      interest_id: "bestie-notes",
-      interval_secs: 3600,
-      channel: DM,
-      enabled: true,
-    }),
-  });
-  expect(second?.[1].attention).toEqual({
-    "interest/bestie-dream": {
-      type: "interest",
-      instructions: dream.timer?.interest,
-    },
-    "watch/bestie-dream": expect.objectContaining({
-      type: "timer",
-      interest_id: "bestie-dream",
-      interval_secs: 86_400,
-      channel: DM,
-      enabled: true,
-    }),
-  });
-  // Then the old timer and Interest, and its section.
-  expect(third?.[1]).toEqual({
+  await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+  const [first, second] = save.mock.calls;
+  // One Attention change, the old timer and Interest first, so it saves
+  // whole or not at all and the old one's room is free for the new ones.
+  expect(first?.[1]).toEqual({
     attention: {
       "interest/bestie-hourly-check-in": null,
       "watch/bestie-hourly-check-in": null,
+      "interest/bestie-notes": {
+        type: "interest",
+        instructions: notes.timer?.interest,
+      },
+      "watch/bestie-notes": expect.objectContaining({
+        type: "timer",
+        interest_id: "bestie-notes",
+        interval_secs: 3600,
+        channel: DM,
+        enabled: true,
+      }),
+      "interest/bestie-dream": {
+        type: "interest",
+        instructions: dream.timer?.interest,
+      },
+      "watch/bestie-dream": expect.objectContaining({
+        type: "timer",
+        interest_id: "bestie-dream",
+        interval_secs: 86_400,
+        channel: DM,
+        enabled: true,
+      }),
     },
   });
-  expect(fourth?.[1]).toEqual({ config: { instructions: remembering } });
+  expect(Object.keys(first?.[1].attention ?? {}).slice(0, 2)).toEqual([
+    "interest/bestie-hourly-check-in",
+    "watch/bestie-hourly-check-in",
+  ]);
+  // Then its section.
+  expect(second?.[1]).toEqual({ config: { instructions: remembering } });
   // Memory stays; none of the old steps, with the channel self-add, remain.
   const left = now();
   expect(Object.keys(left.attention).sort()).toEqual([
@@ -316,8 +317,17 @@ it("swaps only the timers of a Bestie also in another community, whose instructi
   const { agents, save } = host([ada, bea], [elsewhere]);
   const stop = stopFormerCheckIns(relay, agents);
   await settle(ada.pubkey);
-  await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(3));
+  await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
   await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(Object.keys(save.mock.calls[0]?.[1].attention ?? {}).sort()).toEqual([
+    "interest/bestie-dream",
+    "interest/bestie-hourly-check-in",
+    "interest/bestie-notes",
+    "watch/bestie-dream",
+    "watch/bestie-hourly-check-in",
+    "watch/bestie-notes",
+  ]);
   expect(save.mock.calls.some(([, change]) => change.config)).toBe(false);
   stop();
 });

@@ -15,6 +15,7 @@ import {
   memory,
   notes,
   restoredFeature,
+  upgradedFeature,
   withFeature,
 } from "./features";
 
@@ -87,6 +88,58 @@ function lastHour(hour: number, now: Date) {
   return Math.floor(at.getTime() / 1000);
 }
 
+/** The feature, and with Off the features that require it. */
+const offWith = (feature: Feature, on: boolean) =>
+  on
+    ? []
+    : [feature, ...FEATURES.filter(({ requires }) => requires === feature.id)];
+
+/** The Attention change that turns `feature` on or off, as `saveFeature`
+ * saves it: Off deletes the Interests and timers it and the features that
+ * require it have, On saves its Interest and a timer delivered to
+ * `channel`. */
+function featureAttention(
+  agent: Agent,
+  feature: Feature,
+  on: boolean,
+  {
+    channel,
+    paused = false,
+  }: { channel?: string | undefined; paused?: boolean } = {},
+) {
+  const attention: Record<string, AttentionValue | null> = {};
+  for (const { timer } of offWith(feature, on))
+    for (const slug of timer
+      ? [interestSlug(timer.id), watchSlug(timer.id)]
+      : [])
+      if (agent.attention[slug]) attention[slug] = null;
+  const timer = on && feature.timer;
+  if (timer) {
+    if (!channel) throw new Error("A check-in needs your DM with the agent.");
+    attention[interestSlug(timer.id)] = {
+      type: "interest",
+      instructions: timer.interest,
+      ...(paused && { paused: true }),
+    };
+    attention[watchSlug(timer.id)] = {
+      type: "timer",
+      interest_id: timer.id,
+      prompt: timer.prompt,
+      enabled: !paused,
+      interval_secs: timer.everySecs,
+      // A timer is next due one interval after it is armed.
+      armed_at:
+        timer.atHour === undefined
+          ? Math.floor(Date.now() / 1000)
+          : lastHour(timer.atHour, new Date()),
+      max_occurrences: null,
+      expires_at: null,
+      channel,
+    };
+  }
+  return attention;
+}
+
 /** Turns `feature` on or off as its switch does, revising the synced
  * instructions as their editor would. Off also turns off the features that
  * require it. A timer is delivered to `channel`, the owner's DM with the
@@ -118,39 +171,9 @@ export async function saveFeature(
     throw new Error(
       `${feature.title} was edited in Instructions; restore it first.`,
     );
-  const off = on
-    ? []
-    : [feature, ...FEATURES.filter(({ requires }) => requires === feature.id)];
-  const attention: Record<string, AttentionValue | null> = {};
-  for (const { timer } of off)
-    for (const slug of timer
-      ? [interestSlug(timer.id), watchSlug(timer.id)]
-      : [])
-      if (agent.attention[slug]) attention[slug] = null;
+  const off = offWith(feature, on);
+  const attention = featureAttention(agent, feature, on, { channel, paused });
   const timer = on && feature.timer;
-  if (timer) {
-    if (!channel) throw new Error("A check-in needs your DM with the agent.");
-    attention[interestSlug(timer.id)] = {
-      type: "interest",
-      instructions: timer.interest,
-      ...(paused && { paused: true }),
-    };
-    attention[watchSlug(timer.id)] = {
-      type: "timer",
-      interest_id: timer.id,
-      prompt: timer.prompt,
-      enabled: !paused,
-      interval_secs: timer.everySecs,
-      // A timer is next due one interval after it is armed.
-      armed_at:
-        timer.atHour === undefined
-          ? Math.floor(Date.now() / 1000)
-          : lastHour(timer.atHour, new Date()),
-      max_occurrences: null,
-      expires_at: null,
-      channel,
-    };
-  }
   if (Object.keys(attention).length)
     await agents.save(agent.key, { attention });
   if (timerOnly) return;
@@ -187,12 +210,17 @@ export async function saveFeature(
 
 /** Replaces the hourly check-in of an earlier version, which keeps its steps
  * in the instructions, with Hourly notes and Nightly review. If it was on,
- * with memory, they are turned on in the DM its timer was delivered to,
- * before the old section, Interest and timer are taken away, so a failure
- * leaves it to be tried again. If it was not on, as when half of it was
- * deleted, it is only removed. If its timer or its Interest was paused in
- * Attention, they are turned on paused, so upgrading starts no wakes. With
- * `timerOnly`, the instructions, which each of the agent's communities
+ * with memory, they are turned on in the DM its timer was delivered to. The
+ * old Interest and timer are taken away in the same Attention change, before
+ * the new ones are added, so it saves whole or not at all, and an agent at
+ * its limit of timers has the old one's room. If it was not on, as when half
+ * of it was deleted, it is only removed. If its timer or its Interest was
+ * paused in Attention, they are turned on paused, so upgrading starts no
+ * wakes. Then its section is taken out of the instructions, and a whole
+ * memory section of an earlier version is replaced where it is by the
+ * current one, whose chat turns keep no prose in mem/memory for the nightly
+ * review to rebuild. A failure there leaves the section to be tried again.
+ * With `timerOnly`, the instructions, which each of the agent's communities
  * shares, are left as they are. */
 export async function replaceCheckIn(
   agents: FeatureAgents,
@@ -212,24 +240,36 @@ export async function replaceCheckIn(
       (!!timer && interestPaused(agent.attention, timer.id))
     );
   });
+  const instructions = instructionsOf(agent);
   // On is its section, whole, and its timer, which says where it ran.
-  if (
-    channel &&
+  const on =
+    !!channel &&
     featureOn(agent, memory) &&
-    old.some((feature) => hasFeature(instructionsOf(agent), feature))
-  )
-    for (const feature of [notes, dream]) {
-      options.signal?.throwIfAborted();
-      await saveFeature(agents, agent, feature, true, {
-        channel,
-        paused,
-        ...(options.signal && { signal: options.signal }),
-      });
-    }
-  for (const feature of old) {
-    options.signal?.throwIfAborted();
-    await saveFeature(agents, agent, feature, false, options);
-  }
+    old.some((feature) => hasFeature(instructions, feature));
+  const attention: Record<string, AttentionValue | null> = Object.assign(
+    {},
+    ...old.map((feature) => featureAttention(agent, feature, false)),
+    ...(on
+      ? [notes, dream].map((feature) =>
+          featureAttention(agent, feature, true, { channel, paused }),
+        )
+      : []),
+  );
+  options.signal?.throwIfAborted();
+  if (Object.keys(attention).length)
+    await agents.save(agent.key, { attention });
+  if (options.timerOnly) return;
+  const next = upgradedFeature(
+    old.reduce(
+      (text, feature) => withFeature(text, feature, false),
+      instructions,
+    ),
+    memory,
+  );
+  if (next === instructions) return;
+  // The caller may have stopped while Attention saved.
+  options.signal?.throwIfAborted();
+  await saveInstructions(agents, agent, next);
 }
 
 /** Puts back the feature's section edited by hand, as the editor would save

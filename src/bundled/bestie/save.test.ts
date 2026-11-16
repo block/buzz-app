@@ -5,6 +5,7 @@ import {
   validateObject,
 } from "../../features/agents/attention";
 import type { Agent, AgentChange, Agents } from "../../features/agents/service";
+import { type AgentRecord, setAttention } from "../../features/agents/store";
 import { dream, memory, notes, withFeature } from "./features";
 import {
   cannotEdit,
@@ -13,7 +14,7 @@ import {
   replaceCheckIn,
   saveFeature,
 } from "./save";
-import { v1CheckIn } from "./test-helpers";
+import { v1CheckIn, v1Memory } from "./test-helpers";
 
 afterEach(() => vi.useRealTimers());
 
@@ -272,17 +273,120 @@ it("keeps an old hourly check-in paused in Attention paused in Hourly notes and 
         ...(paused && { paused: true }),
       });
       for (const [slug, value] of Object.entries(made ?? {}))
-        expect(validateObject(slug, value)).toBeUndefined();
+        if (value !== null) expect(validateObject(slug, value)).toBeUndefined();
     }
     // The rest of the upgrade is the same: the old check-in is taken away.
-    expect(changes).toContainEqual({
-      "interest/bestie-hourly-check-in": null,
-      "watch/bestie-hourly-check-in": null,
-    });
+    expect(changes).toContainEqual(
+      expect.objectContaining({
+        "interest/bestie-hourly-check-in": null,
+        "watch/bestie-hourly-check-in": null,
+      }),
+    );
     expect(save).toHaveBeenLastCalledWith(expect.any(String), {
       config: { instructions: remembering },
     });
   }
+});
+
+const LEGACY_TIMER = {
+  "interest/bestie-hourly-check-in": { type: "interest", instructions: "Up" },
+  "watch/bestie-hourly-check-in": {
+    type: "timer",
+    interest_id: "bestie-hourly-check-in",
+    prompt: "Hourly upkeep wake",
+    enabled: true,
+    interval_secs: 3600,
+    armed_at: 1_700_000_000,
+    max_occurrences: null,
+    expires_at: null,
+    channel: DM,
+  },
+};
+
+it("replaces the old hourly check-in in one Attention change, the old one first, so a failure on either new one saves nothing", async () => {
+  const checkingIn = withFeature(remembering, v1CheckIn, true);
+  const save = vi
+    .fn<Agents["save"]>()
+    .mockRejectedValueOnce(
+      new Error("An agent can have at most 250 watches and timers"),
+    );
+  await expect(
+    replaceCheckIn(
+      { save, types: () => [] },
+      ada(held(LEGACY_TIMER), checkingIn),
+    ),
+  ).rejects.toThrow("at most 250");
+  // Nothing else was tried: the old check-in, section and all, is as it was.
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(Object.keys(save.mock.calls[0]?.[1].attention ?? {})).toEqual([
+    "interest/bestie-hourly-check-in",
+    "watch/bestie-hourly-check-in",
+    "interest/bestie-notes",
+    "watch/bestie-notes",
+    "interest/bestie-dream",
+    "watch/bestie-dream",
+  ]);
+  expect(save.mock.calls[0]?.[1].config).toBeUndefined();
+});
+
+it("replaces the old hourly check-in of an agent at 249 of 250 watches and timers, ending at 250", async () => {
+  let record: AgentRecord = {
+    pubkey: "a".repeat(64),
+    attention: {},
+    config: undefined,
+  };
+  for (const [slug, value] of Object.entries(LEGACY_TIMER))
+    record = setAttention(record, slug, value as never);
+  record = setAttention(record, "interest/other", {
+    type: "interest",
+    instructions: "Other",
+  });
+  for (let i = 0; record && Object.keys(record.attention).length < 251; i++)
+    record = setAttention(record, `watch/other-${i}`, {
+      ...LEGACY_TIMER["watch/bestie-hourly-check-in"],
+      interest_id: "other",
+    } as never);
+  const watches = (attention: AgentRecord["attention"]) =>
+    Object.values(attention).filter(({ value }) => value.type !== "interest")
+      .length;
+  expect(watches(record.attention)).toBe(249);
+  // As the agents service saves a change: all of it, or none of it.
+  const save = vi.fn<Agents["save"]>(async (_, change) => {
+    let next = record;
+    for (const [slug, value] of Object.entries(change.attention ?? {}))
+      next = setAttention(next, slug, value);
+    record = next;
+  });
+  const agent = {
+    ...ada(undefined, withFeature(remembering, v1CheckIn, true)),
+    attention: record.attention,
+  } as Agent;
+  await replaceCheckIn({ save, types: () => [] }, agent);
+  expect(watches(record.attention)).toBe(250);
+  expect(record.attention["watch/bestie-hourly-check-in"]).toBeUndefined();
+  expect(record.attention["watch/bestie-notes"]).toBeDefined();
+  expect(record.attention["watch/bestie-dream"]).toBeDefined();
+});
+
+it("upgrades a v1 memory section in place with the old check-in's section, so chat turns stop keeping prose in mem/memory", async () => {
+  const save = vi.fn<Agents["save"]>(async () => {});
+  const old = withFeature(
+    withFeature("Be brief.", v1Memory, true),
+    v1CheckIn,
+    true,
+  );
+  await replaceCheckIn({ save, types: () => [] }, ada(held(LEGACY_TIMER), old));
+  expect(save).toHaveBeenLastCalledWith(expect.any(String), {
+    config: { instructions: remembering },
+  });
+  // A timer-only replacement leaves the shared instructions as they are.
+  save.mockClear();
+  await replaceCheckIn(
+    { save, types: () => [] },
+    ada(held(LEGACY_TIMER), old),
+    { timerOnly: true },
+  );
+  expect(save.mock.calls.some(([, change]) => change.config)).toBe(false);
 });
 
 it("undoes the timer of a feature with a section when its instructions can't be saved", async () => {

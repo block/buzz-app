@@ -106,7 +106,7 @@ export const dream: Feature = {
      test: true if owner states a time zone or 3 days of message times fit; false if owner states another zone
    Count the new observations for and against each one. Two messages about one event are one observation. Promote one to a fact, as a dated line with its sources in mem/user or its card, only if the owner confirmed it, or it has 3 or more observations on 3 or more different days and none against. One clear contradiction retires it: move it to "Retired" (keep the last 10) with the event id, and don't suggest it again. A guess with no test is rejected. A fact that other evidence contradicts becomes a hypothesis again; the owner's newer statement replaces it. Silence is not evidence: one that expects regular events is marked "stale" when its time passes, and retires after 3 stale nights. Add the guesses in the notes as new hypotheses; keep at most 12 open, retiring the oldest with no support. You may mark one "ask".
 4. REWRITE mem/user as current directives with a date and source for each, and its "Open loops", in at most 4 KB. Keep everything the owner said that is still true.
-5. ORGANIZE THE CARDS. Merge duplicate lines. When two claims disagree: if the newer is a correction, the old line becomes "was X until <date>, per <source>"; if not, write "CONFLICT: A says…; B says…" and show which is a person's decision and which an agent's inference. A search that found nothing never overrules a recorded decision. Add new supported facts. Change or remove at most 2 existing claims a night, and only when the size limit requires it; an owner's correction does not count. Remove first a claim a stronger one made old, then one that repeats another; never the only support for a claim or the only open alternative; never infer a change from absence. Rename a card only by leaving "MOVED TO [[slug]]" at the old slug. Then write mem/memory again, in at most 4 KB: one line "[[mem/entities/<type>/<id>]] and a sentence" for each card, a "Now" section with one line for each active project, and the lessons. When it is full, leave out the cards with no new line and no question for the longest time; keep their slugs. The first night, move what mem/user holds beyond the owner's own facts into cards, mem/hypotheses and the index.
+5. ORGANIZE THE CARDS. Merge duplicate lines. When two claims disagree: if the newer is a correction, the old line becomes "was X until <date>, per <source>"; if not, write "CONFLICT: A says…; B says…" and show which is a person's decision and which an agent's inference. A search that found nothing never overrules a recorded decision. Add new supported facts. Change or remove at most 2 existing claims a night, and only when the size limit requires it; an owner's correction does not count. Remove first a claim a stronger one made old, then one that repeats another; never the only support for a claim or the only open alternative; never infer a change from absence. Rename a card only by leaving "MOVED TO [[slug]]" at the old slug. Before you write mem/memory again, move each claim in it that is not a card line, a "Now" line or a lesson, such as one an earlier version of your memory rules saved there, to its card, or to mem/hypotheses if it is a guess, with its date and source; never drop one. Then write mem/memory again, in at most 4 KB: one line "[[mem/entities/<type>/<id>]] and a sentence" for each card, a "Now" section with one line for each active project, and the lessons. When it is full, leave out the cards with no new line and no question for the longest time; keep their slugs. The first night, move what mem/user holds beyond the owner's own facts into cards, mem/hypotheses and the index.
 6. REFLECT. Append a "Dream" section to the end of the latest note you reviewed, or of mem/notes/<today> if you reviewed none. Start it with a line "<!-- dream:start -->" and end it with a line "<!-- dream:end -->", so later lines are not part of it. In it: what helped and what went wrong, with event ids; the duties that follow; what stays open for tomorrow; and what changed: promoted, retired, new, merged.
 7. FINISH. Set last_dream in mem/heartbeat only if every step finished; if not, leave it, so the next review covers the same notes. Append a one-line receipt (time, slugs changed, promoted, retired), keeping the last 10. Send no message.`,
   },
@@ -210,6 +210,18 @@ export function withFeature(
     .join("\n\n");
   // A section at the end gives back the line ending that came after it.
   return kept && !last.trim() ? `${kept}${last}` : kept;
+}
+
+/** `instructions` with each whole section of an earlier version of the
+ * feature replaced, where it is, by the current one. An edited section, as
+ * `featureState` reads it, is the owner's and stays as it is. */
+export function upgradedFeature(instructions: string, feature: Feature) {
+  if (featureState(instructions, feature) !== "on") return instructions;
+  return instructions.replace(sections(feature), (section) =>
+    Number(/ v(\d+) -->/.exec(section)?.[1]) < feature.version
+      ? block(feature)
+      : section,
+  );
 }
 
 /** `instructions` with an edited section put back as the feature adds it,

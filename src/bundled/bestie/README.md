@@ -93,7 +93,10 @@ rules, which every turn needs: each slug with its size and who writes it
 finds it), what is a fact and what a guess, and checking a fact against its source before
 relying on it. Sizes are asked for in the text; nothing enforces them yet. An
 agent that already has the v1 section keeps it until Remembers you is turned
-off and on again. The switch is on while the section is
+off and on again, or until the upgrade from Every hour below replaces it.
+Nightly review never drops what v1 kept in `mem/memory`: before it rebuilds
+the index, it moves each claim there that is not a card line, a "Now" line or
+a lesson to its card, or to `mem/hypotheses` if it is a guess. The switch is on while the section is
 there, whatever you edit inside it or type next to its markers. Off removes
 it with your edits inside it, and keeps text you put before its opening
 marker or after its closing one. If you edit, remove or copy one of its
@@ -166,9 +169,12 @@ and a timer, `watch/bestie-hourly-check-in`. Its steps added Bestie to each
 private channel it had been added to, which Hourly notes no longer does. For
 your Bestie, whenever the account's choice is known, the plugin turns on Hourly
 notes and Nightly review in the DM the old timer ran in, when the old check-in
-was on with memory, paused if its timer or Interest was paused in Attention;
-then it removes the old section, Interest and timer. A
-failure leaves the old check-in to try again. An old check-in that read as off,
+was on with memory, paused if its timer or Interest was paused in Attention.
+That is one Attention change that removes the old Interest and timer before it
+adds the new ones, so it saves whole or not at all, and an agent at its limit
+of 250 watches and timers has the old timer's room. Then it removes the old
+section, and replaces a whole v1 memory section where it is with the current
+one. A failure leaves what is left of the old check-in to try again. An old check-in that read as off,
 such as one with only its timer left, is only removed. Another agent's is
 stopped, as any former Bestie's. For an agent also in another community, only
 the timers change, as its instructions are shared.

@@ -7,6 +7,7 @@ import {
   cleanup,
   fireEvent,
   render,
+  renderHook,
   screen,
   waitFor,
   within,
@@ -47,6 +48,7 @@ import type { AppServices } from "../services";
 import type { SearchGroup } from "./SearchChoices";
 import { setUnreadFirstPreference } from "../../features/search/unread-first-preference";
 import { SearchResults } from "./SearchResults";
+import { useSearchMessages } from "./useSearchMessages";
 import { useSearchSettings } from "./SearchSettings";
 import {
   readSearchUsage,
@@ -3954,6 +3956,8 @@ function verifiedAuthorSession({
   extraMembers = 0,
   earlyHead = false,
   refuseVerification,
+  messageCount = 1,
+  searchableNames = true,
 }: {
   namesakeName?: string;
   pageOnly?: boolean;
@@ -3964,6 +3968,8 @@ function verifiedAuthorSession({
   extraMembers?: number;
   earlyHead?: boolean;
   refuseVerification?: "before-eose" | "after-eose";
+  messageCount?: number;
+  searchableNames?: boolean;
 } = {}) {
   const relay = keypair(),
     viewer = keypair(),
@@ -4000,7 +4006,9 @@ function verifiedAuthorSession({
     ]),
     ...publicProfiles,
     head,
-    message(person, "crew", "deploy the engine", 1700000500),
+    ...Array.from({ length: messageCount }, (_, index) =>
+      message(person, "crew", `deploy the engine ${index}`, 1700000500 + index),
+    ),
   ];
   const reads: Filter[] = [];
   const verificationReads: Filter[] = [];
@@ -4012,7 +4020,7 @@ function verifiedAuthorSession({
       verifiedProfiles: {
         pubkey: relay.pubkey,
         multipleIssuers: false,
-        searchable: true,
+        ...(searchableNames ? { searchable: true as const } : {}),
       },
       async query(filters) {
         const verifying = filters.filter((filter) =>
@@ -4025,12 +4033,19 @@ function verifiedAuthorSession({
             filter.kinds?.includes(9),
           ) as Filter[]),
         );
-        return discovery.filter((event) =>
+        const found = discovery.filter((event) =>
           filters.some((filter) => matchFilter(filter as Filter, event)),
         );
+        const messages = filters.find((filter) => filter.kinds?.includes(9));
+        const offset = ((messages?.page ?? 1) - 1) * (messages?.limit ?? 20);
+        return messages
+          ? found.slice(offset, offset + (messages.limit ?? 20))
+          : found;
       },
       async searchProfiles() {
-        return searchEmpty ? [] : [...publicProfiles, head];
+        return searchEmpty
+          ? []
+          : [...publicProfiles, ...(searchableNames ? [head] : [])];
       },
       subscribe(callbacks) {
         callbacks.state({ status: "connected", routes: [] });
@@ -4083,6 +4098,8 @@ function verifiedAuthorSession({
   );
   return {
     owner,
+    relay,
+    head,
     person,
     reads,
     verificationReads,
@@ -4090,6 +4107,173 @@ function verifiedAuthorSession({
     deliverHead: () => deliverHead(),
   };
 }
+
+it.each(["crew", undefined])(
+  "preserves author results and pagination in %s when an unrelated head arrives",
+  async (scope) => {
+    const {
+      owner,
+      person,
+      relay,
+      head,
+      reads,
+      verificationReads,
+      verifiedSubscriptions,
+    } = verifiedAuthorSession({ messageCount: 21 });
+    try {
+      owner.session.channels.ensureList();
+      await waitFor(() =>
+        expect(owner.session.channels.get?.("crew")?.members).toContain(
+          person.pubkey,
+        ),
+      );
+      await act(async () =>
+        owner.session.profiles.ensure(
+          owner.session.channels.get?.("crew")?.members ?? [],
+        ),
+      );
+      await waitFor(() =>
+        expect(owner.session.profiles.verifiedHeld?.(person.pubkey)).toBe(true),
+      );
+      const { result } = renderHook(() =>
+        useSearchMessages(owner.session, "from:robinz deploy", scope),
+      );
+      await waitFor(() => expect(result.current.messages).toHaveLength(20));
+      act(() => result.current.loadMore());
+      await waitFor(() => expect(result.current.messages).toHaveLength(21));
+      expect(reads).toHaveLength(2);
+      const counts = [reads.length, verificationReads.length];
+      const stranger = keypair();
+      await act(async () => owner.session.profiles.ensure([stranger.pubkey]));
+      const sink = verifiedSubscriptions.at(-1);
+      assert(sink);
+      const revision = owner.session.profiles.verifiedRevision?.() ?? 0;
+      vi.useFakeTimers();
+      await act(async () => {
+        sink.event(
+          eventDto(
+            signed(relay, {
+              kind: 30382,
+              content: head.content,
+              tags: head.tags.map((tag) =>
+                tag[0] === "d" || tag[0] === "p"
+                  ? [tag[0], stranger.pubkey]
+                  : tag,
+              ),
+            }),
+          ),
+        );
+        sink.eose();
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(owner.session.profiles.verifiedRevision?.()).toBeGreaterThan(
+        revision,
+      );
+      expect(result.current.loading).toBe(false);
+      expect(result.current.messages).toHaveLength(21);
+      for (let cycle = 0; cycle < 3; cycle++)
+        await act(async () =>
+          vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS + 1),
+        );
+      expect([reads.length, verificationReads.length]).toEqual(counts);
+      expect(result.current.messages).toHaveLength(21);
+      // A changed head for the consulted author must still invalidate its name.
+      await act(async () => {
+        for (const memberSink of verifiedSubscriptions)
+          memberSink.event(
+            eventDto(
+              signed(relay, {
+                kind: 30382,
+                created_at: head.created_at + 1,
+                content: "",
+                tags: head.tags.map((tag) =>
+                  tag[0] === "active" ? ["active", "false"] : tag,
+                ),
+              }),
+            ),
+          );
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(result.current.loading).toBe(true);
+      for (let cycle = 0; cycle < 3; cycle++)
+        await act(async () =>
+          vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS + 1),
+        );
+      expect(result.current.loading).toBe(false);
+      expect(result.current.messages).toEqual([]);
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+it("fails closed when remote author verification is unavailable", async () => {
+  const gate = authorVerificationGate();
+  const { owner, reads, verificationReads } = verifiedAuthorSession({
+    namesakeName: "robinz",
+    pageOnly: true,
+    searchableNames: false,
+    verification: gate.promise,
+  });
+  try {
+    const { result } = renderHook(() =>
+      useSearchMessages(owner.session, "from:robinz deploy"),
+    );
+    await waitFor(() => expect(verificationReads.length).toBeGreaterThan(0));
+    await act(async () => gate.reject(new Error("Verification unavailable")));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toContain("Verification unavailable");
+    expect(reads).toEqual([]);
+  } finally {
+    gate.resolve();
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it.each(["before-eose", "after-eose"] as const)(
+  "offers a scoped verified namesake absent from profile search when live sync refuses %s",
+  async (refuseVerification) => {
+    const { owner, person, reads } = verifiedAuthorSession({
+      pageOnly: true,
+      searchEmpty: true,
+      namesakeName: "robinz",
+      refuseVerification,
+    });
+    const change = vi.fn();
+    try {
+      render(
+        <SearchResults
+          session={owner.session}
+          query="from:robinz deploy"
+          scopedChannelId="crew"
+          onQueryChange={change}
+          input={createRef()}
+          pages={[]}
+          openConversation={() => {}}
+        />,
+      );
+      await waitFor(() =>
+        expect(
+          within(screen.getByRole("group", { name: "People" })).getAllByRole(
+            "option",
+          ),
+        ).toHaveLength(2),
+      );
+      expect(reads).toEqual([]);
+      fireEvent.click(
+        screen.getByRole("option", {
+          name: new RegExp(person.pubkey.slice(0, 12)),
+        }),
+      );
+      expect(change).toHaveBeenCalledWith(`from:${person.pubkey} deploy`);
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
 
 function authorVerificationGate() {
   let resolve!: () => void;

@@ -734,7 +734,7 @@ export function SearchResults({
   );
   const authorVerified = useVerifiedNames(
     session,
-    [...remoteAuthors].map(([pubkey, profile]) => ({
+    [...candidates].map(([pubkey, profile]) => ({
       pubkey,
       isAgent: profile.isAgent || knownAgents.has(pubkey),
     })),

@@ -158,13 +158,6 @@ export function useSearchMessages(
     [session],
   );
   const parsed = useMemo(() => parseSearchOperators(query), [query]);
-  const verifiedRevision = useSyncExternalStore(
-    session.profiles.subscribe,
-    () =>
-      parsed.from && !isHexPubkey(parsed.from) && !isViewerHandle(parsed.from)
-        ? (session.profiles.verifiedRevision?.() ?? 0)
-        : 0,
-  );
   const syntax = useMemo(() => searchTextSyntax(parsed.text), [parsed.text]);
   // Rerun the search only when the names change, not on every new map.
   const agentKey = JSON.stringify([...agentNames]);
@@ -208,6 +201,55 @@ export function useSearchMessages(
   const newest = sort === "newest" && session.searchSort;
   // Without text the relay reads its ordinary newest-first history.
   const newestFirst = newest || !parsed.text;
+  // Only evidence consulted by this resolution can invalidate its results.
+  // Other views verify unrelated people without resetting these pages.
+  const verification = useMemo(() => {
+    const profiles = session.profiles;
+    const subjects = new Map(
+      [
+        ...(channelId
+          ? (session.channels.get?.(channelId)?.members ?? [])
+          : []),
+        ...agents.keys(),
+      ].map((key) => [key, !!profiles.verifiedHeld?.(key)]),
+    );
+    let authority = profiles.verifiedAuthority?.();
+    let seen = profiles.verifiedRevision?.() ?? 0;
+    let revision = 0;
+    return {
+      consult(keys: Iterable<string>) {
+        for (const key of keys)
+          if (!subjects.has(key))
+            subjects.set(key, !!profiles.verifiedHeld?.(key));
+      },
+      snapshot() {
+        if (
+          !parsed.from ||
+          isHexPubkey(parsed.from) ||
+          isViewerHandle(parsed.from)
+        )
+          return 0;
+        const next = profiles.verifiedRevision?.() ?? 0;
+        const current = profiles.verifiedAuthority?.();
+        if (next === seen && current === authority) return revision;
+        let changed = current !== authority;
+        for (const [key, held] of subjects) {
+          const now = !!profiles.verifiedHeld?.(key);
+          if (now !== held || profiles.verifiedSince?.(key, seen))
+            changed = true;
+          subjects.set(key, now);
+        }
+        seen = next;
+        authority = current;
+        if (changed) revision++;
+        return revision;
+      },
+    };
+  }, [session, parsed, channelId, agents]);
+  const verifiedRevision = useSyncExternalStore(
+    session.profiles.subscribe,
+    verification.snapshot,
+  );
   const owner = useMemo(
     () => ({
       session,
@@ -276,6 +318,7 @@ export function useSearchMessages(
             const knownMembers = channelId
               ? (session.channels.get?.(channelId)?.members ?? [])
               : [];
+            verification.consult([...knownMembers, ...agents.keys()]);
             if (knownMembers.length) {
               await session.profiles.ensure(knownMembers, "foreground");
               controller.signal.throwIfAborted();
@@ -377,12 +420,20 @@ export function useSearchMessages(
                 candidates,
                 session.profiles.verifiedAuthority?.(),
               );
-              const checked = await session.directMessages
-                .verified([...profiles.keys()], controller.signal)
-                .catch(() => undefined);
+              verification.consult(profiles.keys());
+              const checked = await session.directMessages.verified(
+                [...profiles.keys()],
+                controller.signal,
+              );
               controller.signal.throwIfAborted();
-              if (checked?.authority === session.profiles.verifiedAuthority?.())
-                remoteNames = checked?.profiles;
+              if (
+                authority &&
+                (!checked ||
+                  checked.authority !== authority ||
+                  session.profiles.verifiedAuthority?.() !== authority)
+              )
+                throw new Error("Author names changed. Try again.");
+              remoteNames = checked?.profiles;
               const matches = [...profiles]
                 .filter(
                   ([pubkey, profile]) =>
@@ -461,6 +512,7 @@ export function useSearchMessages(
     scopedChannelId,
     agents,
     newest,
+    verification,
   ]);
   const loadMore = useCallback(() => {
     const base = copied.current;

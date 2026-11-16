@@ -17,6 +17,7 @@ import {
   useAttachmentDraft,
   attachmentDraft,
   transferAttachmentDraft,
+  subscribeAttachmentDraftCounts,
 } from "./attachment-draft";
 
 function deferred<T>() {
@@ -538,7 +539,10 @@ it("keeps uploaded files across a reload, but not a file still uploading", async
   expect(after.upload).not.toHaveBeenCalled();
   const item = after.draft.result.current.items[0];
   assert.exists(item);
+  const counted = vi.fn();
+  subscribeAttachmentDraftCounts(after.session, counted);
   act(() => after.draft.result.current.store.remove(item.id));
+  expect(counted).toHaveBeenCalled();
   after.draft.unmount();
   expect(open().draft.result.current.items).toEqual([]);
   localStorage.clear();

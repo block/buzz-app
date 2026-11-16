@@ -162,7 +162,7 @@ export function attachmentDraft(
       /* Storage unavailable; the files remain in this tab. */
     }
   };
-  let count = 0;
+  let count = items.length;
   const emit = () => {
     for (const listener of listeners) listener();
     save();

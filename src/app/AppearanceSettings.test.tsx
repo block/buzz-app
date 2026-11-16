@@ -60,6 +60,7 @@ afterEach(() => {
     hourCycle: "system",
     seconds: false,
     messageTimestamps: "show",
+    localTimeDetails: true,
   });
   localStorage.clear();
   vi.unstubAllGlobals();
@@ -425,7 +426,7 @@ it("preserves follow-up choice and save recovery when Appearance is hidden", asy
   );
 });
 
-it("saves the clock, seconds and message timestamp choices", async () => {
+it("saves the clock, seconds, message timestamp and profile local time choices", async () => {
   const user = userEvent.setup();
   render(preferencesPage(), { wrapper: ToastProvider });
   const clock = screen.getByRole("combobox", { name: "Clock" });
@@ -439,10 +440,14 @@ it("saves the clock, seconds and message timestamp choices", async () => {
   await user.click(
     await screen.findByRole("option", { name: "Hide in Solo chats" }),
   );
+  await user.click(
+    screen.getByRole("switch", { name: "Show time zone details on profiles" }),
+  );
   expect(clockPreference()).toEqual({
     hourCycle: "h23",
     seconds: true,
     messageTimestamps: "hide-solo",
+    localTimeDetails: false,
   });
   expect(JSON.parse(localStorage.getItem("buzz-clock.v1") ?? "")).toEqual(
     clockPreference(),
@@ -488,9 +493,23 @@ it("switches message density, restores it, and retries a failed save", async () 
   );
   const user = userEvent.setup();
   const density = screen.getByRole("combobox", { name: "Message density" });
+  const preview = screen.getByRole("figure", { name: "Appearance preview" });
+  expect(preview.querySelector("[data-message-density]")).toHaveAttribute(
+    "data-message-density",
+    "default",
+  );
   expect(density).toHaveTextContent("Default");
   await user.click(density);
   await user.click(await screen.findByRole("option", { name: "Compact" }));
+  expect(preview.querySelector("[data-message-density]")).toHaveAttribute(
+    "data-message-density",
+    "compact",
+  );
+  expect(preview.querySelector("[data-message-width]")).toHaveAttribute(
+    "data-message-width",
+    "wide",
+  );
+  expect(screen.queryByRole("combobox", { name: "Message width" })).toBeNull();
   expect(document.documentElement.dataset.messageDensity).toBe("compact");
   expect(localStorage.getItem("buzz-message-density.v1")).toBe("compact");
   const restored = createAppearance();

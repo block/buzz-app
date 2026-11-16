@@ -18,7 +18,13 @@ export function externalMcpEnabled(community: string | null) {
   }
 }
 
-export type ExternalScope = "read" | "post" | "create";
+/** `agent` is full access as the selected agent. The narrow scopes belong to
+ * older approvals and links: they parse, but grant no tools. */
+export type ExternalScope = "read" | "post" | "create" | "agent";
+export const fullAgentAccess = (scopes: readonly ExternalScope[]) =>
+  scopes.length === 1 && scopes[0] === "agent";
+export const legacyRequest =
+  "This app asks for limited access, which Buzz no longer grants. Update the app, then start setup again.";
 export type ExternalAuthorization = McpAuthorization &
   Readonly<{
     version: 1 | 2;
@@ -78,9 +84,10 @@ export function parseExternalAuthorization(
       value.code_challenge_method !== "S256" ||
       !scope.length ||
       new Set(scope).size !== scope.length ||
-      scope.some(
-        (item) => item !== "read" && item !== "post" && item !== "create",
-      )
+      (value.scope !== "agent" &&
+        scope.some(
+          (item) => item !== "read" && item !== "post" && item !== "create",
+        ))
     )
       return null;
     const resumed = ["pairing_id", "counter", "proof"].some((key) =>
@@ -125,6 +132,8 @@ type Pending = Readonly<{
   expires: number;
 }>;
 type Grant = Readonly<{
+  /** Identifies the approval; stable across phase changes, fresh per approval. */
+  id: number;
   client: string;
   agent: AgentKey;
   phase: "starting" | "waiting" | "connected" | "ended";
@@ -182,6 +191,7 @@ export function createExternalApps() {
     if (pending && host) await host.deny(nativeRequest(pending.request));
   };
   let generation = 0;
+  let grants = 0;
   let resuming: { request: ExternalAuthorization; viewer: string } | undefined;
   const closeSession = async () => {
     generation++;
@@ -204,7 +214,7 @@ export function createExternalApps() {
     } catch {
       update({
         ...state,
-        error: "Cannot revoke the saved approval. Retry in Buzz.",
+        error: "Could not remove the saved approval. Try again.",
       });
     }
   };
@@ -242,6 +252,7 @@ export function createExternalApps() {
         ...(!state.grant
           ? {
               grant: {
+                id: ++grants,
                 client: pairing.approval.client,
                 agent: pairing.approval.agent,
                 phase: "ended" as const,
@@ -288,6 +299,9 @@ export function createExternalApps() {
       await previous?.close();
       if (generation !== attemptGeneration || host !== bound) return;
       const grant: Grant = {
+        // The same saved approval the row already shows, so a confirmation
+        // opened on it stays valid when the app restores it.
+        id: state.grant?.id ?? ++grants,
         client: pairing.approval.client,
         agent: pairing.approval.agent,
         phase: connected ? "connected" : "waiting",
@@ -336,6 +350,7 @@ export function createExternalApps() {
               ...(pairing && !state.grant
                 ? {
                     grant: {
+                      id: ++grants,
                       client: pairing.approval.client,
                       agent: pairing.approval.agent,
                       phase: "ended" as const,
@@ -392,12 +407,19 @@ export function createExternalApps() {
         });
         return;
       }
+      // Limited access is no longer granted, and is never widened to full access.
+      if (!fullAgentAccess(pending.request.scope)) {
+        await deny();
+        update({ ...state, error: legacyRequest });
+        return;
+      }
       clearPending();
       const closing = closeSession();
       const attemptGeneration = generation;
       const attempt = new AbortController();
       controller = attempt;
       const grant: Grant = {
+        id: ++grants,
         client: pending.request.client,
         agent,
         phase: "starting",

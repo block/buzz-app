@@ -42,7 +42,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 .failure {
   color: var(--text-danger);
@@ -65,27 +65,56 @@
   padding: var(--space-1);
 }
 
-.stopped {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
+.overlayControls:has(> .inlineStop) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
-
-.outcome[data-layout] {
-  padding-block: var(--space-half);
+.overlayControls > * {
+  grid-area: 1 / 1;
 }
-
-.caption {
+.overlayContent {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-1);
   min-width: 0;
+  width: 100%;
+  mask-image: linear-gradient(
+    to right,
+    currentColor calc(100% - var(--space-16) - var(--space-4)),
+    transparent calc(100% - var(--space-16))
+  );
 }
-
-.outcomeDetail {
+.inlineStop {
+  z-index: 1;
+  pointer-events: none;
+  justify-self: end;
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
+  justify-content: end;
+  align-items: center;
+  width: calc(var(--space-16) + var(--space-8));
+  padding-inline-end: var(--space-1);
+}
+.inlineStop > button {
+  pointer-events: auto;
+}
+@media (hover: hover) and (pointer: fine) {
+  .inlineStop > button {
+    pointer-events: none;
+  }
+  .inlineStop {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .overlayControls:not(:hover, :focus-within):not(:has([data-stopping]))
+    .overlayContent {
+    mask-image: none;
+  }
+  .overlayControls:hover > .inlineStop,
+  .overlayControls:focus-within > .inlineStop,
+  .overlayControls > .inlineStop[data-stopping] {
+    opacity: 1;
+  }
+  .overlayControls:hover > .inlineStop > button,
+  .overlayControls:focus-within > .inlineStop > button,
+  .overlayControls > .inlineStop[data-stopping] > button {
+    pointer-events: auto;
+  }
 }

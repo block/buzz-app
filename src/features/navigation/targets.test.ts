@@ -53,6 +53,27 @@ describe("open target boundary", () => {
     ])
       expect(() => parseOpenTarget(invalid)).toThrow();
   });
+  it("lands on Organization sign-in only within Identity settings", () => {
+    const target = {
+      version: 1,
+      kind: "settings",
+      section: "identity",
+      part: "organization-sign-in",
+    } as const;
+    expect(parseOpenTarget(target)).toEqual(target);
+    // A visit that lands on the part is its own place in history.
+    expect(targetKey(target)).not.toBe(
+      targetKey({ version: 1, kind: "settings", section: "identity" }),
+    );
+    const { section: _section, ...sectionless } = target;
+    for (const invalid of [
+      sectionless,
+      { ...target, section: "agents" },
+      { ...target, part: "private-key" },
+      { ...target, part: "" },
+    ])
+      expect(() => parseOpenTarget(invalid)).toThrow();
+  });
   it("canonicalizes and freezes a detached, bounded identity-scoped target", () => {
     const input = {
       ...conversation,
@@ -80,6 +101,12 @@ describe("open target boundary", () => {
     expect(targetKey(target)).not.toBe(targetKey(conversation));
     expect(Object.isFrozen(target)).toBe(true);
     expect(() => parseOpenTarget({ ...target, scope: undefined })).toThrow();
+  });
+  it("keeps Open in channel's thread context as its own visit", () => {
+    const thread = { ...conversation, threadRootId: "C".repeat(64) };
+    const target = parseOpenTarget({ ...thread, context: "channel" });
+    expect(target).toEqual({ ...parseOpenTarget(thread), context: "channel" });
+    expect(targetKey(target)).not.toBe(targetKey(thread));
   });
   it("opens a saved Shared sessions target as its conversation", () => {
     const target = parseOpenTarget({
@@ -130,6 +157,16 @@ describe("open target boundary", () => {
     };
     expect(targetKey(a)).toBe(targetKey(b));
     expect(parseOpenTarget(a)).toEqual(a);
+    const settings = {
+      version: 1,
+      kind: "settings",
+      section: "org.example/card",
+      route: { version: 1, params: "create" },
+    } as const;
+    expect(parseOpenTarget(settings)).toEqual(settings);
+    expect(targetKey(settings)).not.toBe(
+      targetKey({ version: 1, kind: "settings", section: settings.section }),
+    );
   });
   it.each([
     null,
@@ -152,8 +189,17 @@ describe("open target boundary", () => {
     { ...conversation, panel: { kind: "members", remove: "someone" } },
     { ...conversation, panel: null },
     { ...conversation, messageId: undefined, threadRootId: "b".repeat(64) },
+    // Context names where a thread's root shows; it needs that root.
+    { ...conversation, context: "channel" },
+    { ...conversation, threadRootId: "b".repeat(64), context: "timeline" },
     { ...conversation, channelId: "../../other" },
     { version: 1, kind: "page", pluginId: "a/b", pageId: "board" },
+    {
+      version: 1,
+      kind: "settings",
+      section: "org.example/card",
+      route: { version: 0, params: null },
+    },
     {
       version: 1,
       kind: "page",

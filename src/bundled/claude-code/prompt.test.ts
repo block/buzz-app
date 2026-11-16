@@ -67,6 +67,7 @@ it.each([false, true])(
     ]);
     expect(promptMessage(sections)).toEqual({
       author: undefined,
+      authorPubkey: alice,
       text: "the actual request",
     });
     expect(JSON.parse(sections[0]?.body ?? "").messages).toMatchObject([
@@ -91,7 +92,11 @@ it.each([false, true])(
       "mention",
       "buzz-event",
     ]);
-    expect(promptMessage(direct)).toEqual({ author: undefined, text: content });
+    expect(promptMessage(direct)).toEqual({
+      author: undefined,
+      authorPubkey: alice,
+      text: content,
+    });
   },
 );
 
@@ -127,6 +132,7 @@ it("names each message's author beside their pubkey", () => {
   });
   expect(promptMessage(sections)).toEqual({
     author: undefined,
+    authorPubkey: alice,
     text: "@Agent look",
   });
 });
@@ -201,6 +207,31 @@ it("builds the harness system prompt with instructions and core memory", () => {
   expect(systemPrompt({ scope: "channel", cwd: "/w" })).not.toContain(
     "<core-memory>",
   );
+});
+
+it("points a conversation in its own folder to the agent's workspace", () => {
+  const own = systemPrompt({ scope: "thread", cwd: "/repo", workspace: "/ws" });
+  expect(own).toContain(
+    "<workspace>\nCurrent working directory: /repo\n</workspace>",
+  );
+  expect(own).toContain(
+    "Your persistent workspace is at `/ws`, not in your working directory, which is this conversation's own folder:",
+  );
+  expect(own).toContain("See `AGENTS.md` in your workspace");
+  expect(own).toContain(
+    "These paths are relative to your workspace — start there for your own files rather than scanning `$HOME` or `/`. Keep them there; do not create them in your working directory.",
+  );
+  expect(own).not.toContain("Your persistent workspace is in your working");
+  expect(own).not.toContain("These paths are relative to your working");
+  // Without a folder, the workspace is the working directory, as before.
+  const plain = systemPrompt({ scope: "thread", cwd: "~/.buzz" });
+  expect(plain).toContain(
+    "Your persistent workspace is in your working directory:",
+  );
+  expect(plain).toContain(
+    "These paths are relative to your working directory — start there",
+  );
+  expect(plain).not.toContain("this conversation's own folder");
 });
 
 it("names the agent first when it is known", () => {

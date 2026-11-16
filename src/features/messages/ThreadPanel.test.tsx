@@ -11,13 +11,22 @@ import {
 } from "@testing-library/react";
 import { StrictMode } from "react";
 import { renderToString } from "react-dom/server";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
 import { selectNewestMessage } from "./message-selection";
 import type { MessageRowProps } from "./MessageRow";
 import type { MessageComposerProps } from "./MessageComposer";
 import { createAgentLibrary } from "../agents/library";
-import type { RelaySession } from "../relay/session";
+import { createRelaySession, type RelaySession } from "../relay/session";
+import type { RelayEvent } from "../relay/events";
+import type { ReadStateSigning } from "../relay/read-state-host";
+import { readJournal, type ReadJournal } from "../relay/read-state-storage";
+import { keypair, message, metadata, roster } from "../relay/testing";
+import {
+  decodeReadState,
+  signReadState,
+  // @ts-expect-error Test the production Node codec with disposable identities.
+} from "../../../browser-host/read-state.mjs";
 import type { PageNavigation } from "../navigation/service";
 import type { JsonValue } from "../navigation/targets";
 import { createNavigationController } from "../navigation/controller";
@@ -46,11 +55,15 @@ vi.mock("./MessageRow", () => ({
     row,
     scope,
     retry,
+    onReply,
     onOpenMediaReview,
     onMediaPlayback,
   }: MessageRowProps) => (
     <article data-message-id={row.id} data-scope={scope}>
       <span>{row.content}</span>
+      <button type="button" onClick={() => onReply?.(row.id)}>
+        Reply to {row.content}
+      </button>
       {row.attachments
         .filter((attachment) => attachment.kind === "video")
         .flatMap((attachment) =>
@@ -645,6 +658,158 @@ it.each([false, true])(
     expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
   },
 );
+it("scopes its reading leases to its thread while the original is unavailable", () => {
+  const h = messagesHarness();
+  h.resize(600);
+  vi.mocked(document.hasFocus).mockReturnValue(true);
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+    new DOMRect(0, 0, 500, 500),
+  ] as unknown as DOMRectList);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 500, 500),
+  );
+  const reading = vi.fn((_channelId: string, _rootId?: string) => ({
+    view: vi.fn(),
+    observe: vi.fn(async () => {}),
+    catchUp: vi.fn(async () => {}),
+    dispose: vi.fn(),
+  }));
+  Object.assign(h.session.unread, {
+    sync: () => ({ capability: "frontier-sync" }),
+    reading,
+  });
+  h.snapshot.root = undefined;
+  h.snapshot.replies = [{ ...row, id: "reply", content: "reply" }];
+  h.render();
+  expect(screen.getByText("Original message unavailable.")).toBeVisible();
+  h.element.focus();
+  // In a DM, the thread it opened bounds what its reads may cover.
+  expect(reading.mock.calls).not.toHaveLength(0);
+  for (const call of reading.mock.calls)
+    expect(call).toEqual(["channel", row.id]);
+});
+it("leaves a sibling reply it hides unread while a DM reply's original is unavailable", async () => {
+  // The real unread owner, so a dwell's DM read lands in its journal.
+  const self = keypair(),
+    relay = keypair(),
+    alice = keypair();
+  let journal: ReadJournal | undefined;
+  let incoming: (events: readonly RelayEvent[]) => void = () => {};
+  const owner = createRelaySession(
+    {
+      viewer: self.pubkey,
+      relayAuthor: relay.pubkey,
+      query: async () => [],
+      media: () => undefined,
+      readState: {
+        decode: async (events: readonly RelayEvent[]) =>
+          decodeReadState(events, self.secret),
+        sign: async (intent: ReadStateSigning) =>
+          signReadState(intent, self.secret),
+        publish: async () => {},
+      },
+      subscribe(callbacks) {
+        incoming = callbacks.receive;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    {
+      readStateFloor: () => 0,
+      readStateStorage: {
+        capture: async () => structuredClone(journal),
+        async update(change) {
+          journal = readJournal(change(journal), self.pubkey);
+          return journal;
+        },
+        close() {},
+      },
+      readPublisherLock: async (_signal, work) => work(),
+    },
+  );
+  onTestFinished(owner.dispose);
+  const h = messagesHarness();
+  const dm = h.props.channelId;
+  const unread = owner.session.unread;
+  // Neither the thread view nor the unread owner has the original.
+  const root = message(self, dm, "Original", 10);
+  const reply = (content: string, at: number) =>
+    message(alice, dm, content, at, [["e", root.id, "", "reply"]]);
+  const target = reply("Opened reply", 20);
+  const sibling = reply("Hidden sibling", 30);
+  incoming([
+    roster(relay, dm, [self.pubkey, alice.pubkey], 1),
+    metadata(relay, dm, "DM", 1, [["t", "dm"]]),
+    target,
+  ]);
+  await unread.ensure();
+  Object.assign(h.session, { viewer: self.pubkey, unread });
+  // What an exact view publishes when it cannot load the original: only its
+  // target, never the thread's other replies.
+  const shown = {
+    ...row,
+    id: target.id,
+    channelId: dm,
+    authorId: alice.pubkey,
+    content: target.content,
+    createdAt: target.created_at,
+    threadRootId: root.id,
+    replyParentId: root.id,
+    replyCount: 0,
+  };
+  h.snapshot.status = "error";
+  h.snapshot.error = "Error: The original thread message is unavailable.";
+  h.snapshot.root = undefined;
+  h.snapshot.replies = [shown];
+  h.snapshot.target = shown;
+  h.snapshot.targetStatus = "ready";
+  // Opened at the reply, as a conversation tab opens an exact message.
+  Object.assign(h.props as ThreadPanelProps, {
+    messageId: target.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.resize(600);
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+    new DOMRect(0, 0, 500, 500),
+  ] as unknown as DOMRectList);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 500, 500),
+  );
+  // A controlled clock runs the reveal's frames and the dwell.
+  vi.useFakeTimers({
+    toFake: [
+      "setTimeout",
+      "clearTimeout",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+    ],
+  });
+  try {
+    h.render();
+    expect(screen.getByText("Original message unavailable.")).toBeVisible();
+    // A sibling reply in the same thread arrives after opening, unread.
+    act(() => incoming([sibling]));
+    expect(unread.attention(dm, sibling.id).unread).toBe(true);
+    // The window gains focus: once revealed, the reader dwells on its reply.
+    vi.mocked(document.hasFocus).mockReturnValue(true);
+    await act(async () => h.element.focus());
+    for (
+      let elapsed = 0;
+      (journal?.state.frontiers[dm] ?? -1) < target.created_at;
+      elapsed += 50
+    ) {
+      if (elapsed >= 2000) throw new Error("The dwell never read the reply.");
+      await act(() => vi.advanceTimersByTimeAsync(50));
+    }
+  } finally {
+    vi.useRealTimers();
+  }
+  // It reads the reply, but stops one second before the sibling it hides.
+  expect(journal?.state.frontiers[dm]).toBe(sibling.created_at - 1);
+  expect(unread.attention(dm, target.id).unread).toBe(false);
+  expect(unread.attention(dm, sibling.id).unread).toBe(true);
+});
 it("renders replies after the original without a reply-count divider", () => {
   const h = messagesHarness();
   h.snapshot.root = { ...row, replyCount: 0 };
@@ -958,6 +1123,44 @@ it("uses the resolved root with the shared composer and reveals an own send even
   h.snapshot.root = undefined;
   h.render();
   expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+});
+it("does not count an own nested reply sent while reading above as a new message", () => {
+  const h = messagesHarness();
+  const parent = {
+    ...row,
+    id: "parent",
+    content: "parent",
+    replyParentId: row.id,
+    createdAt: 2,
+  };
+  h.snapshot.replies = [parent];
+  h.render();
+  h.scroll(500);
+  fireEvent.click(screen.getByRole("button", { name: "Reply to parent" }));
+  fireEvent.click(screen.getByRole("button", { name: "Send fixture reply" }));
+  const own = {
+    ...parent,
+    id: "own-reply",
+    content: "own reply",
+    authorId: viewer,
+    replyParentId: parent.id,
+    createdAt: 3,
+  };
+  h.snapshot.replies = [parent, own];
+  h.resize(4800);
+  h.render();
+  expect(h.element.scrollTop).toBe(500);
+  expect(
+    vi.mocked(HTMLElement.prototype.scrollIntoView).mock.contexts,
+  ).toContain(screen.getByText("own reply").closest("article"));
+  expect(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
+  h.snapshot.replies = [
+    parent,
+    own,
+    { ...row, id: "live", content: "live", authorId: viewer, createdAt: 4 },
+  ];
+  h.render();
+  expect(screen.getByRole("button", { name: "1 new message" })).toBeVisible();
 });
 it.each([
   {
@@ -1398,8 +1601,13 @@ it("observes a visible reply before its root resolves, then enables thread catch
 
   h.snapshot.root = row;
   h.render();
+  // The rows measure in the next frame. That list mutation restarts dwell,
+  // which measures again in the frame after it.
   await act(() => vi.advanceTimersToNextFrame());
-  await act(() => vi.advanceTimersByTimeAsync(300));
+  await act(() => vi.advanceTimersToNextFrame());
+  await act(() => vi.advanceTimersByTimeAsync(299));
+  expect(catchUp).not.toHaveBeenCalled();
+  await act(() => vi.advanceTimersByTimeAsync(1));
   expect(catchUp).toHaveBeenCalledExactlyOnceWith(reply.id, row.id);
 });
 
@@ -2353,5 +2561,7 @@ it("reveals a completed step selected by an exact thread link", async () => {
   });
   h.render();
   expect(await screen.findByText("Completed tool result")).toBeVisible();
-  expect(screen.queryByRole("button", { name: /activity history/ })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: /Collapse activity history/ }),
+  ).toBeVisible();
 });

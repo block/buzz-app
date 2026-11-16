@@ -347,14 +347,17 @@ for (const huddle of [false, true]) {
     expect(
       await page.evaluate(() => window.fixtureNavigation.snapshot().status),
     ).toBe("opening");
-    await expect(page.getByRole("textbox", { name: /^Message #/ })).toHaveCount(
-      0,
-    );
+    await expect(
+      page.getByRole("textbox", { name: /^Message #?Alpha$/ }),
+    ).toHaveCount(0);
     expect(reads).toHaveLength(0);
     release();
     if (huddle) {
-      // Mutable metadata without a creation receipt remains an ordinary channel.
-      await expect(messages(page)).toBeVisible();
+      // Mutable metadata without a creation receipt remains an ordinary
+      // (private) channel.
+      await expect(
+        page.getByRole("textbox", { name: "Message Alpha", exact: true }),
+      ).toBeVisible();
       await expect
         .poll(() =>
           page.evaluate(() => window.fixtureNavigation.snapshot().status),
@@ -368,7 +371,7 @@ for (const huddle of [false, true]) {
         await page.evaluate(() => window.fixtureNavigation.snapshot().status),
       ).toBe("failed");
       await expect(
-        page.getByRole("textbox", { name: /^Message #/ }),
+        page.getByRole("textbox", { name: /^Message #?Alpha$/ }),
       ).toHaveCount(0);
       expect(reads).toHaveLength(0);
       failMetadata = false;

@@ -40,9 +40,11 @@ vi.mock("./MessageRow", () => ({
     day,
     repliedAgents,
     stoppedRequest,
+    recordedActivity,
   }: MessageRowProps) => (
     <article
       data-message-id={row.id}
+      data-request={recordedActivity?.requestId}
       data-replied-agents={repliedAgents?.join(",")}
       data-stopped-request={stoppedRequest?.id}
       data-layout={layout}
@@ -185,6 +187,28 @@ function setup(messageId = "root") {
     },
   };
 }
+it("binds a flattened update to the request it claims in another reply level", () => {
+  const h = setup();
+  const agent = "b".repeat(64);
+  const update = (id: string): ChannelMessage => ({
+    ...row(id, "root"),
+    threadRootId: "root",
+    authorId: agent,
+    audience: "agents",
+  });
+  h.update([
+    update("old"),
+    { ...row("follow-up", "old"), threadRootId: "root" },
+    // Its send names the nested follow-up, but its reply link is the root.
+    { ...update("current"), request: "follow-up" },
+  ]);
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Show activity history:/ }),
+  );
+  const article = (text: string) => screen.getByText(text).closest("article");
+  expect(article("current")).toHaveAttribute("data-request", "follow-up");
+  expect(article("old")).toHaveAttribute("data-request", "root");
+});
 it("keeps a stopped note on the agent's latest reply that a collapsed branch cannot hide", () => {
   const h = setup();
   const agent = "b".repeat(64);
@@ -221,6 +245,66 @@ it("shows automatic failure captions beside their request while ordinary replies
   expect(screen.getByText("child")).toBeVisible();
   expect(screen.getByText("failure")).toBeVisible();
 });
+it.each(["first update", "second update", "failure"])(
+  "preserves activity grouping and reachable replies when someone replies to %s",
+  (parent) => {
+    const h = setup();
+    const agent = "b".repeat(64);
+    const update = (id: string): ChannelMessage => ({
+      ...row(id, "root"),
+      threadRootId: "root",
+      authorId: agent,
+      audience: "agents",
+    });
+    const failure: ChannelMessage = {
+      ...row("failure", "root"),
+      threadRootId: "root",
+      authorId: agent,
+      agentEnvelope: true,
+      notice: "execution-failure",
+    };
+    const history = [update("first update"), update("second update"), failure];
+    h.update(history);
+    const disclosure = () =>
+      screen.queryByRole("button", { name: /^Show activity history:/ });
+    expect(disclosure()).toBeVisible();
+    expect(screen.queryByText("first update")).not.toBeInTheDocument();
+    expect(screen.queryByText("failure")).not.toBeInTheDocument();
+
+    h.update([
+      ...history,
+      { ...row("follow-up", parent), threadRootId: "root" },
+    ]);
+    if (parent === "failure") {
+      expect(disclosure()).toBeVisible();
+      expect(screen.queryByText("first update")).not.toBeInTheDocument();
+      expect(screen.getByText("failure")).toBeVisible();
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Show activity history:/ }),
+      );
+    } else {
+      // Coordination rows with children must still expose their own branch.
+      expect(disclosure()).not.toBeInTheDocument();
+    }
+    expect(screen.getAllByText("failure")).toHaveLength(1);
+    expect(screen.getByText("first update")).toBeVisible();
+    expect(screen.getByText("second update")).toBeVisible();
+    expect(screen.queryByText("follow-up")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "View 1 reply" }));
+    expect(screen.getByText("follow-up")).toBeVisible();
+    if (parent === "failure") {
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Collapse activity history:/ }),
+      );
+      expect(screen.getByText("failure")).toBeVisible();
+      expect(screen.getByText("follow-up")).toBeVisible();
+      expect(screen.queryByText("first update")).not.toBeInTheDocument();
+    }
+    h.update(history);
+    expect(disclosure()).toBeVisible();
+    expect(screen.queryByText("failure")).not.toBeInTheDocument();
+  },
+);
 it("moves a follow-up outcome to its latest reply within an expanded branch", () => {
   const h = setup();
   const agent = "b".repeat(64);

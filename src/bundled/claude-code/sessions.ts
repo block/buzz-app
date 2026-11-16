@@ -130,10 +130,10 @@ export class AgentSessions {
     const saved = this.options.store.get(key);
     return (contextRoot ? saved?.threads?.[contextRoot] : saved?.seen) ?? 0;
   }
-  protectionContext(key: string) {
+  captureProtectionContext(key: string) {
     const live = this.live.get(key) ?? this.once.get(key);
     if (!live) throw new Error("The protected Claude session is unavailable");
-    return live.process.protectionContext();
+    return live.process.captureProtectionContext();
   }
   active(key: string) {
     return this.opening.has(key) || !!this.live.get(key)?.process.active;
@@ -543,9 +543,11 @@ export class AgentSessions {
       (error): Settled => {
         if (this.opening.get(key) === opened) this.opening.delete(key);
         console.warn("Claude could not start", error);
+        // Its reason, such as a conversation folder that is gone, is the
+        // owner's to act on.
         return {
           ok: false,
-          error: "Claude could not start",
+          error: `Claude could not start: ${error instanceof Error ? error.message : String(error)}`,
           undelivered: true,
         };
       },

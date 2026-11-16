@@ -3,7 +3,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { HeadPersistence, SavedHead, SavedStartup } from "./persistence";
 import type { ReadTransport } from "./transport";
 import { ReadError } from "./errors";
-import { bounds, keypair, message, metadata, roster } from "./testing";
+import { bounds, keypair, message, metadata, roster, signed } from "./testing";
+import { eventDto, type RelayEvent } from "./events";
 import { provideRelay } from "./service";
 
 const storage = vi.hoisted(() => ({ create: vi.fn() }));
@@ -13,6 +14,8 @@ afterEach(async () => {
   for (const ctx of roots.splice(0)) await ctx.fiber.dispose();
   vi.useRealTimers();
 });
+/** A signature no JavaScript check accepts; only a stubbed host admits it. */
+const FORGED = "0".repeat(128);
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -22,15 +25,34 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-function setup({ saved = true } = {}) {
-  const viewer = keypair(),
-    relay = keypair();
+function setup({
+  saved = true,
+  profiles = [],
+  headProfiles = [],
+  verifyStored,
+  relay = keypair(),
+  verifiedProfiles,
+  forged = false,
+}: {
+  saved?: boolean;
+  profiles?: unknown[];
+  headProfiles?: unknown[];
+  verifyStored?: ReadTransport["verifyStored"];
+  relay?: ReturnType<typeof keypair>;
+  verifiedProfiles?: unknown;
+  /** Give the saved history message a signature only a host could accept. */
+  forged?: boolean;
+} = {}) {
+  const viewer = keypair();
   const events = [
     roster(relay, "alpha", [viewer.pubkey]),
     metadata(relay, "alpha", "Alpha"),
   ];
   let startup: SavedStartup | undefined = saved
-    ? { discovery: { savedAt: Date.now(), relayAuthor: relay.pubkey, events } }
+    ? {
+        discovery: { savedAt: Date.now(), relayAuthor: relay.pubkey, events },
+        ...(verifiedProfiles ? { verifiedProfiles } : {}),
+      }
     : undefined;
   let heads: SavedHead[] = !saved
     ? []
@@ -38,9 +60,14 @@ function setup({ saved = true } = {}) {
         {
           channelId: "alpha",
           savedAt: Date.now(),
-          profiles: [],
+          profiles: headProfiles,
           events: [
-            message(viewer, "alpha", "Saved history", 20),
+            forged
+              ? {
+                  ...message(viewer, "alpha", "Saved history", 20),
+                  sig: FORGED,
+                }
+              : message(viewer, "alpha", "Saved history", 20),
             bounds(relay, "alpha", "head", {
               has_more: false,
               next_cursor: null,
@@ -49,6 +76,7 @@ function setup({ saved = true } = {}) {
         },
       ];
   const disk: HeadPersistence = {
+    readProfiles: async () => structuredClone(profiles),
     readStartup: vi.fn(async () => structuredClone(startup)),
     writeStartup: vi.fn(async (patch) => {
       startup = { ...startup, ...structuredClone(patch) };
@@ -91,6 +119,8 @@ function setup({ saved = true } = {}) {
     undefined,
     undefined,
     { viewer: viewer.pubkey, scope: "primary" },
+    undefined,
+    verifyStored,
   );
   const restored = async () => {
     await vi.waitFor(() => expect(data.snapshot().cached).toBe(true));
@@ -102,6 +132,183 @@ function setup({ saved = true } = {}) {
   };
   return { ctx, data, disk, connections, source, restored };
 }
+it.each(["profile mirror", "discovery", "history", "head profiles"])(
+  "waits for host verification of cached %s before publishing while offline",
+  async (stage) => {
+    const profile = signed(keypair(), {
+      kind: 0,
+      tags: [],
+      content: JSON.stringify({ name: "Saved member" }),
+    });
+    const checking = deferred<void>();
+    const kind = stage === "discovery" ? 39002 : stage === "history" ? 9 : 0;
+    const holds = (values: readonly unknown[]) =>
+      values.some((value) => (value as { kind: number }).kind === kind);
+    const verifyStored = vi.fn(async (values: readonly unknown[]) => {
+      if (holds(values)) await checking.promise;
+      return values.map((value) => eventDto(JSON.parse(JSON.stringify(value))));
+    });
+    const { data, restored, source } = setup({
+      profiles: stage === "profile mirror" ? [profile] : [],
+      headProfiles: stage === "head profiles" ? [profile] : [],
+      verifyStored,
+    });
+    try {
+      await vi.waitFor(() =>
+        expect(verifyStored.mock.calls.some(([values]) => holds(values))).toBe(
+          true,
+        ),
+      );
+      expect(data.snapshot().cached).toBeUndefined();
+    } finally {
+      checking.resolve();
+    }
+    const snapshot = await restored();
+    if (kind === 0)
+      expect(
+        snapshot.session.profiles.snapshot().get(profile.pubkey)?.name,
+      ).toBe("Saved member");
+    expect(snapshot.status).toBe("connecting");
+    expect(source.query).not.toHaveBeenCalled();
+  },
+);
+it.each([false, true])(
+  "restores valid cached profiles with JS when host verification fails or is absent (host=%s)",
+  async (host) => {
+    const profile = signed(keypair(), {
+      kind: 0,
+      tags: [],
+      content: JSON.stringify({ name: "Saved member" }),
+    });
+    const invalid = {
+      ...profile,
+      content: JSON.stringify({ name: "Changed bytes" }),
+    };
+    const embedded = signed(keypair(), {
+      kind: 0,
+      tags: [],
+      content: JSON.stringify({ name: "History author" }),
+    });
+    const verifyStored = host
+      ? vi.fn(async () => {
+          throw new Error("Host unavailable");
+        })
+      : undefined;
+    const { restored } = setup({
+      profiles: [invalid, profile],
+      headProfiles: [profile, embedded],
+      verifyStored,
+    });
+    const snapshot = await restored();
+    expect(snapshot.session.profiles.snapshot().get(profile.pubkey)?.name).toBe(
+      "Saved member",
+    );
+    expect(
+      snapshot.session.profiles.snapshot().get(embedded.pubkey)?.name,
+    ).toBe("History author");
+    if (verifyStored) expect(verifyStored).toHaveBeenCalled();
+  },
+);
+it("restores cached discovery, history and head profiles from the host's answer alone", async () => {
+  // Only the host's result can admit these records: JS rejects their signatures.
+  const profile = {
+    ...signed(keypair(), {
+      kind: 0,
+      tags: [],
+      content: JSON.stringify({ name: "Saved member" }),
+    }),
+    sig: FORGED,
+  };
+  const verifyStored = vi.fn(async (values: readonly unknown[]) =>
+    values.map((value) => structuredClone(value) as RelayEvent),
+  );
+  const { restored } = setup({
+    forged: true,
+    headProfiles: [profile],
+    verifyStored,
+  });
+  const snapshot = await restored();
+  expect(snapshot.session.profiles.snapshot().get(profile.pubkey)?.name).toBe(
+    "Saved member",
+  );
+  for (const kind of [39002, 9, 0])
+    expect(
+      verifyStored.mock.calls.some(([values]) =>
+        values.some((value) => (value as RelayEvent).kind === kind),
+      ),
+    ).toBe(true);
+});
+it.each(["history", "head profiles"])(
+  "drops a cached head whose %s the host rejects",
+  async (stage) => {
+    const profile = signed(keypair(), {
+      kind: 0,
+      tags: [],
+      content: JSON.stringify({ name: "Saved member" }),
+    });
+    const verifyStored = vi.fn(async (values: readonly unknown[]) => {
+      if (values.some((value) => (value as RelayEvent).sig === FORGED))
+        throw new Error("Relay supplied a malformed or invalidly signed event");
+      return values.map((value) => eventDto(JSON.parse(JSON.stringify(value))));
+    });
+    const { data } = setup({
+      forged: stage === "history",
+      headProfiles: [
+        stage === "head profiles" ? { ...profile, sig: FORGED } : profile,
+      ],
+      verifyStored,
+    });
+    await vi.waitFor(() => expect(data.snapshot().cached).toBe(true));
+    data.snapshot().session.channels.ensure("alpha");
+    expect(data.snapshot().session.channels.window("alpha").rows).toEqual([]);
+    expect(
+      data.snapshot().session.profiles.snapshot().get(profile.pubkey),
+    ).toBeUndefined();
+  },
+);
+it.each([
+  ["the saved authority", true],
+  ["no saved authority", false],
+])("shows saved verified names while offline with %s", async (_, saved) => {
+  const relay = keypair(),
+    alice = keypair();
+  const head = signed(relay, {
+    kind: 30382,
+    content: "",
+    tags: [
+      ["d", alice.pubkey],
+      ["p", alice.pubkey],
+      ["active", "true"],
+      ["display_name", "Alice"],
+      ["username", "alice"],
+      ["issuer_label", "Example"],
+      ["verified_at", "1700000000"],
+    ],
+  });
+  const self = signed(alice, {
+    kind: 0,
+    tags: [],
+    content: JSON.stringify({ name: "Self-chosen" }),
+  });
+  const { restored } = setup({
+    relay,
+    profiles: [self, head],
+    ...(saved
+      ? {
+          verifiedProfiles: {
+            pubkey: relay.pubkey,
+            multipleIssuers: false,
+          },
+        }
+      : {}),
+  });
+  const snapshot = await restored();
+  expect(snapshot.session.profiles.snapshot().get(alice.pubkey)).toMatchObject(
+    saved
+      ? { name: "Alice", verified: { status: "cached" } }
+      : { name: "Self-chosen" },
+  );
+});
 it("resumes and connects one partition: heads keep `viewer:origin`, snapshots `origin:viewer`", async () => {
   const { data, connections, source, restored } = setup();
   const viewer = source.viewer;

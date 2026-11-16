@@ -323,15 +323,21 @@ it("lists saved conversations and shows one's Codex thread, or that Codex no lon
     ] as HTMLElement;
   expect(await screen.findByTitle("general · thread eeeeeeee")).toBeVisible();
   fireEvent.click(viewButton(0));
-  expect(await screen.findByText("what changed?")).toBeVisible();
-  expect(screen.getByText("Two files.")).toBeVisible();
+  expect(
+    await screen.findByText("what changed?", { selector: "summary span" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Two files.", { selector: "summary span" }),
+  ).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Refresh transcript" }));
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Refresh transcript" }),
     ).not.toHaveAttribute("data-loading"),
   );
-  expect(screen.getByText("Two files.")).toBeVisible();
+  expect(
+    screen.getByText("Two files.", { selector: "summary span" }),
+  ).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Back to profile" }));
   fireEvent.click(viewButton(1));
   expect(
@@ -465,7 +471,9 @@ it("opens a channel's thread transcript when opened from one of its threads' act
       initialTranscript={{ opening: 1, done }}
     />,
   );
-  expect(await screen.findByText("Two files.")).toBeVisible();
+  expect(
+    await screen.findByText("Two files.", { selector: "summary span" }),
+  ).toBeVisible();
   expect(done).toHaveBeenCalledTimes(1);
 });
 
@@ -619,7 +627,9 @@ it("finds the thread's Codex session another build started", async () => {
   fireEvent.click(
     await within(opened).findByRole("button", { name: /^View transcript/ }),
   );
-  expect(await screen.findByText("what changed?")).toBeVisible();
+  expect(
+    await screen.findByText("what changed?", { selector: "summary span" }),
+  ).toBeVisible();
 });
 
 it("shows the channel's current kind for a session another build started", async () => {
@@ -1029,6 +1039,51 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled(),
   );
   expect(f.processes[0]?.end).toHaveBeenCalled();
+});
+it("saves Codex apps and plugins on and off, and keeps them off for a protected agent", async () => {
+  const f = fixture();
+  const save = vi.fn(async () => {});
+  const { unmount } = render(
+    <f.tabs.SettingsTab {...f.props(defaults, save)} />,
+  );
+  const user = userEvent.setup();
+  const allow = screen.getByRole("switch", {
+    name: "Codex apps and plugins",
+  });
+  expect(allow).not.toBeChecked();
+  await user.click(allow);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenLastCalledWith({ ...defaults, apps: true }),
+  );
+  unmount();
+  render(
+    <f.tabs.SettingsTab {...f.props({ ...defaults, apps: true }, save)} />,
+  );
+  await user.click(
+    screen.getByRole("switch", { name: "Codex apps and plugins" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(save).toHaveBeenLastCalledWith(defaults));
+  cleanup();
+  const props = f.props({ ...defaults, apps: true }, save);
+  render(
+    <f.tabs.SettingsTab
+      {...props}
+      agent={{
+        ...props.agent,
+        protection: { provider: "security", policy: {} },
+      }}
+    />,
+  );
+  const locked = screen.getByRole("switch", {
+    name: "Codex apps and plugins",
+  });
+  expect(locked).not.toBeChecked();
+  expect(locked).toHaveAttribute("aria-disabled", "true");
+  expect(
+    screen.getByText("Protected agents never use Codex apps or plugins."),
+  ).toBeInTheDocument();
 });
 it("renders provider, model, and thinking as direct settings inputs", async () => {
   const f = fixture();
@@ -1833,8 +1888,12 @@ it("offers to install Codex from its card when Buzz has no copy", async () => {
       onChange={vi.fn()}
     />,
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Install Codex" }));
-  const dialog = await screen.findByRole("dialog", { name: "Set up Codex" });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Install integration" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Codex integration",
+  });
   expect(within(dialog).getByText(/about 130 MB/)).toBeVisible();
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   // A failed download leaves the offer in place, with what went wrong.
@@ -1845,7 +1904,7 @@ it("offers to install Codex from its card when Buzz has no copy", async () => {
     await within(dialog).findByRole("log", { name: "Setup output" }),
   ).toHaveTextContent("Codex downloads need the desktop app");
   expect(
-    await within(dialog).findByRole("button", { name: "Install Codex" }),
+    await within(dialog).findByRole("button", { name: "Install integration" }),
   ).toBeEnabled();
 
   f.disk.installed = true;
@@ -1856,7 +1915,7 @@ it("offers to install Codex from its card when Buzz has no copy", async () => {
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
-it("moves the card from Install Codex to Sign in once the install succeeds", async () => {
+it("moves the card from Install integration to Sign in once the install succeeds", async () => {
   const f = fixture({ installed: false, signedIn: false });
   // Stands in for the download, which setup.test.ts covers.
   const download = deferred<void>();
@@ -1874,9 +1933,15 @@ it("moves the card from Install Codex to Sign in once the install succeeds", asy
       onChange={vi.fn()}
     />,
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Install Codex" }));
-  const dialog = await screen.findByRole("dialog", { name: "Set up Codex" });
-  const install = within(dialog).getByRole("button", { name: "Install Codex" });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Install integration" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Codex integration",
+  });
+  const install = within(dialog).getByRole("button", {
+    name: "Install integration",
+  });
   install.focus();
   expect(
     await within(dialog).findByRole("button", { name: "Cancel" }),
@@ -1937,20 +2002,20 @@ it("installs and signs in Buzz's copy of Codex from its provider settings", asyn
   );
   render(<ProviderDialogBody onClose={vi.fn()} />);
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Codex is not installed.",
+    "The Codex integration isn't installed yet.",
   );
   expect(provider.snapshot()).toMatchObject({
     readiness: "attention",
-    attentionLabel: "Install Codex",
+    attentionLabel: "Install Codex integration",
   });
   expect(screen.getByText(/about 130 MB/)).toBeVisible();
   // A failed download leaves the offer in place, with what went wrong.
-  fireEvent.click(screen.getByRole("button", { name: "Install Codex" }));
+  fireEvent.click(screen.getByRole("button", { name: "Install integration" }));
   expect(
     await screen.findByRole("log", { name: "Setup output" }),
   ).toHaveTextContent("Codex downloads need the desktop app");
   expect(
-    await screen.findByRole("button", { name: "Install Codex" }),
+    await screen.findByRole("button", { name: "Install integration" }),
   ).toBeVisible();
 
   f.disk.installed = true;
@@ -1971,37 +2036,6 @@ it("installs and signs in Buzz's copy of Codex from its provider settings", asyn
   expect(provider.snapshot()).toMatchObject({ readiness: "ready" });
   expect(provider.snapshot()).not.toHaveProperty("blocking");
   provider.dispose();
-});
-
-it("signs in again from provider settings once Codex is ready, for security reviews", async () => {
-  const f = fixture();
-  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
-  const again = await screen.findByRole("button", { name: "Sign in again" });
-  expect(f.provider.snapshot()).toMatchObject({ readiness: "ready" });
-  fireEvent.click(again);
-  expect(await screen.findByText("Waiting for Codex sign-in…")).toBeVisible();
-  expect(f.spawn.mock.calls.filter(([id]) => id === "login")).toHaveLength(1);
-  expect(again).toHaveAttribute("aria-busy", "true");
-
-  f.logins[0]?.resolve(0);
-  await waitFor(() => expect(again).not.toHaveAttribute("aria-busy", "true"));
-  expect(screen.queryByText("Waiting for Codex sign-in…")).toBeNull();
-  expect(f.provider.snapshot()).toMatchObject({ readiness: "ready" });
-});
-
-it("keeps a failed sign-in's output once Codex is ready", async () => {
-  const f = fixture();
-  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
-  const again = await screen.findByRole("button", { name: "Sign in again" });
-  fireEvent.click(again);
-  await waitFor(() => expect(f.logins).toHaveLength(1));
-  f.logins[0]?.resolve(1);
-  await waitFor(() => expect(again).not.toHaveAttribute("aria-busy", "true"));
-  expect(f.provider.snapshot()).toMatchObject({ readiness: "ready" });
-  expect(screen.getByRole("log", { name: "Setup output" })).toHaveTextContent(
-    "Sign-in ended (1).",
-  );
-  expect(screen.getByRole("log", { name: "Setup output" })).toBeVisible();
 });
 
 it("separates identity fields from runtime settings without changing the stored config", () => {
@@ -2270,7 +2304,7 @@ it("opens scoped model settings from a remote card when local Codex is unavailab
   );
   const control = await screen.findByRole("button", { name: "Model settings" });
   expect(control).toHaveTextContent("Codex default");
-  expect(screen.queryByText("Install Codex")).not.toBeInTheDocument();
+  expect(screen.queryByText("Install integration")).not.toBeInTheDocument();
   await userEvent.setup().click(control);
   expect(openSettings).toHaveBeenCalledOnce();
   expect(f.spawn).not.toHaveBeenCalled();
@@ -2292,7 +2326,7 @@ it("refreshes a mounted card after its agent receives an execution binding", asy
     openSettings,
   };
   const view = render(<tabs.CreateModel {...props} agent={agent} />);
-  await screen.findByRole("button", { name: "Install Codex" });
+  await screen.findByRole("button", { name: "Install integration" });
   f.spawn.mockClear();
   binding = { provider: "test/guest" };
   view.rerender(
@@ -2302,7 +2336,7 @@ it("refreshes a mounted card after its agent receives an execution binding", asy
     />,
   );
   try {
-    expect(screen.queryByText("Install Codex")).not.toBeInTheDocument();
+    expect(screen.queryByText("Install integration")).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
       "Loading models",
     );
@@ -2311,7 +2345,7 @@ it("refreshes a mounted card after its agent receives an execution binding", asy
   }
   const control = await screen.findByRole("button", { name: "Model settings" });
   expect(control).toHaveTextContent("Codex default");
-  expect(screen.queryByText("Install Codex")).not.toBeInTheDocument();
+  expect(screen.queryByText("Install integration")).not.toBeInTheDocument();
   await userEvent.setup().click(control);
   expect(openSettings).toHaveBeenCalledOnce();
   expect(f.spawn).not.toHaveBeenCalled();
@@ -2646,4 +2680,144 @@ it("reports Codex connection readiness only after resolving a model", async () =
   expect(
     screen.queryByText(/This model isn’t available/),
   ).not.toBeInTheDocument();
+});
+
+describe("Recommended", () => {
+  // A synthetic candidate the fake Codex offers.
+  const candidate = {
+    harness: "codex",
+    model: "model-b",
+    effort: "medium",
+    label: "Model B",
+  };
+  beforeEach(() =>
+    vi.stubEnv("VITE_BUZZ_RECOMMENDED_AGENT", JSON.stringify([candidate])),
+  );
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("recommends a candidate only when Codex is signed in and offers its model", async () => {
+    await expect(fixture().provider.recommends(candidate)).resolves.toBe(true);
+    await expect(
+      fixture().provider.recommends({ ...candidate, model: "model-z" }),
+    ).resolves.toBe(false);
+    // Its model, on a thinking level that model doesn't offer.
+    await expect(
+      fixture().provider.recommends({ ...candidate, effort: "xhigh" }),
+    ).resolves.toBe(false);
+    await expect(
+      fixture({ signedIn: false }).provider.recommends(candidate),
+    ).resolves.toBe(false);
+    await expect(
+      fixture({ installed: false }).provider.recommends(candidate),
+    ).resolves.toBe(false);
+  });
+
+  it("runs an agent on Recommended on the first candidate its catalog offers", async () => {
+    vi.stubEnv(
+      "VITE_BUZZ_RECOMMENDED_AGENT",
+      JSON.stringify([
+        { ...candidate, model: "model-z" },
+        { ...candidate, effort: "xhigh" },
+        candidate,
+      ]),
+    );
+    const f = fixture();
+    await f.provider.saveDefaults({ model: "model-a", effort: "low" });
+    const saved = { ...defaults, preset: "recommended" as const };
+    // Until the catalog is read it runs on the device's default.
+    expect(f.provider.recommended()).toBeUndefined();
+    await f.provider.check();
+    // Model Z isn't offered, nor Model B on Extra high, so the next
+    // candidate, over device defaults.
+    expect(f.provider.recommended()).toEqual(candidate);
+    // Kept for the launch: a later failed check doesn't move it to the default.
+    f.disk.signedIn = false;
+    await f.provider.check();
+    expect(f.provider.snapshot().readiness).toBe("attention");
+    expect(f.provider.recommended()).toEqual(candidate);
+    f.disk.signedIn = true;
+    expect(f.provider.resolve(saved)).toMatchObject({
+      model: "model-b",
+      effort: "medium",
+      preset: "recommended",
+    });
+    expect(f.provider.resolve(defaults).model).toBe("model-a");
+    // A remote target's catalog isn't this computer's: it runs on the
+    // target's own Codex default.
+    expect(f.provider.resolve(saved, true)).toMatchObject({
+      model: "",
+      effort: "",
+    });
+  });
+
+  it("keeps Apps and plugins to this computer", () => {
+    const f = fixture();
+    const allowed = { ...defaults, apps: true };
+    expect(f.provider.resolve(allowed).apps).toBe(true);
+    // A remote target has its own Codex sign-in.
+    expect(f.provider.resolve(allowed, true)).not.toHaveProperty("apps");
+  });
+
+  it("runs on Codex's own default when no candidate is offered", async () => {
+    vi.stubEnv(
+      "VITE_BUZZ_RECOMMENDED_AGENT",
+      JSON.stringify([{ ...candidate, model: "model-z" }]),
+    );
+    const f = fixture();
+    await f.provider.saveDefaults({ model: "model-a", effort: "" });
+    await f.provider.check();
+    expect(f.provider.recommended()).toBeNull();
+    expect(
+      f.provider.resolve({ ...defaults, preset: "recommended" }).model,
+    ).toBe("model-a");
+    // A catalog that can't be read is the same.
+    const signedOut = fixture({ signedIn: false });
+    await signedOut.provider.check();
+    expect(signedOut.provider.recommended()).toBeNull();
+  });
+
+  it("takes up a candidate a later catalog offers after none was offered", async () => {
+    // Model B on Medium, which this catalog doesn't offer yet.
+    const levels = ["low"];
+    const f = fixture({ modelBReasoningEfforts: levels });
+    await f.provider.check();
+    expect(f.provider.recommended()).toBeNull();
+    levels.push("medium");
+    await f.provider.check();
+    expect(f.provider.recommended()).toEqual(candidate);
+  });
+
+  it("drops Recommended for a manual choice in Settings", async () => {
+    const f = fixture();
+    const save = vi.fn(async () => {});
+    const { SettingsTab } = f.tabs;
+    render(
+      <SettingsTab
+        {...f.props({ ...defaults, preset: "recommended" }, save)}
+      />,
+    );
+    const user = userEvent.setup();
+    const aiSettings = screen.getByRole("combobox", { name: "AI setup" });
+    expect(aiSettings).toHaveTextContent("Automatic");
+    expect(screen.queryByText("Model B · Medium")).not.toBeInTheDocument();
+    await user.click(aiSettings);
+    expect(await screen.findByText("Model B · Medium")).toBeInTheDocument();
+    expect(aiSettings).toHaveAccessibleDescription(
+      "Set to Model B (recommended)",
+    );
+    // The model rows wait for Manual.
+    const thinking = () => screen.getByRole("combobox", { name: "Thinking" });
+    expect(
+      screen.queryByRole("combobox", { name: "Thinking" }),
+    ).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("option", { name: /^Custom/ }));
+    expect(thinking().closest("[inert]")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save).toHaveBeenCalledWith({
+      ...defaults,
+      model: "model-b",
+      effort: "medium",
+    });
+  });
 });

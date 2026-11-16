@@ -138,7 +138,7 @@ it("lays out the full disclosure from the start and staggers real Motion charact
   expect(first).toHaveStyle({ opacity: "1", filter: "blur(0px)" });
   expect(last).toHaveStyle({ opacity: "0", filter: "blur(0.5px)" });
   // The provider name joins the same stream, rather than appearing as one badge.
-  await frame(560 + (fullText ?? "").indexOf("Builderlab") * 16 + 140);
+  await frame(560 + (fullText ?? "").indexOf("Builderlab") * 10.7 + 140);
   expect(Number(providerCharacters[0]?.style.opacity)).toBeGreaterThan(
     Number(providerCharacters.at(-1)?.style.opacity),
   );

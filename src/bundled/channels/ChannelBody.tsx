@@ -1,8 +1,9 @@
-import { memo, useEffect, useId, useLayoutEffect } from "react";
+import { memo, type ReactNode, useEffect, useId, useLayoutEffect } from "react";
 import {
   ConversationTimeline,
   useConversation,
 } from "../../features/conversation/Conversation";
+import type { ChannelTimelineProps } from "../../features/messages/ChannelTimeline";
 import type { PageNavigation } from "../../features/navigation/service";
 import { useChannelWindow } from "../../features/relay/react";
 import { useRecoveryOwns } from "../../features/relay/RecoveryNotice";
@@ -13,6 +14,7 @@ import styles from "./Channels.module.css";
 
 export const ChannelBody = memo(function ChannelBody({
   cached,
+  intro,
   viewer,
   revealMessageId,
   inlineTarget,
@@ -24,13 +26,12 @@ export const ChannelBody = memo(function ChannelBody({
 }: {
   onContentReady?(channelId: string): void;
   cached: boolean;
+  intro?: ReactNode;
   viewer?: string | undefined;
   navigation?: PageNavigation | undefined;
   revealMessageId?: string | undefined;
   /** One exact visit to a loaded message, without a page navigation. */
-  inlineTarget?:
-    | Readonly<{ messageId: string; signal: AbortSignal }>
-    | undefined;
+  inlineTarget?: ChannelTimelineProps["inlineTarget"];
   /** False: viewing rows marks nothing read. */
   marksRead?: boolean | undefined;
   /** Show the loading notice instead of the list, as while a message is sought. */
@@ -91,8 +92,8 @@ export const ChannelBody = memo(function ChannelBody({
         presented: true,
       });
   }, [cached, navigation, window.status]);
-  // While recovery retries this timeline's head read it owns the one Retry
-  // now, in its notice after the quiet delay; the empty timeline waits.
+  // While recovery retries this timeline's head read, its notice is the one
+  // report, after the quiet delay; the empty timeline waits.
   if (window.status === "error" && !window.rows.length && !headRecovers)
     return (
       <div
@@ -121,6 +122,7 @@ export const ChannelBody = memo(function ChannelBody({
   return (
     <ConversationTimeline
       continuityKey={continuityKey}
+      intro={intro}
       viewer={viewer}
       window={window}
       launchPending={

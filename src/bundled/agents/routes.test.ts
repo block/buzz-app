@@ -1,13 +1,14 @@
 import { expect, it } from "vitest";
 import {
   agentCardRoute,
-  agentHistoryRoute,
-  agentHistoryTarget,
   agentProviderRoute,
   agentProviderTarget,
   agentRoute,
   agentTarget,
   availableAgentProviderRoute,
+  historyRoute,
+  historyTarget,
+  teamRoute,
 } from "./routes";
 
 it("admits provider-shaped routes and preserves the Agents page scope", () => {
@@ -54,11 +55,11 @@ it("admits an agent of yours to open, by its key", () => {
 it("validates a version locator without treating it as authority or accepting extra route fields", () => {
   const base = { ...agentTarget("a".repeat(64)), scope: null };
   const selected = { side: "settings", id: "b".repeat(64) } as const;
-  const opened = agentHistoryTarget(base, "a".repeat(64), selected);
+  const opened = historyTarget(base, { agent: "a".repeat(64) }, selected);
   expect(agentRoute(opened.route?.params)).toBe("a".repeat(64));
-  expect(agentHistoryRoute(opened.route?.params)).toEqual(selected);
-  expect(agentHistoryTarget(opened, "a".repeat(64))).toEqual(
-    agentHistoryTarget(base, "a".repeat(64)),
+  expect(historyRoute(opened.route?.params, agentRoute)).toEqual(selected);
+  expect(historyTarget(opened, { agent: "a".repeat(64) })).toEqual(
+    historyTarget(base, { agent: "a".repeat(64) }),
   );
   expect(availableAgentProviderRoute(opened.route?.params ?? null)).toBe(true);
   for (const revision of [
@@ -89,4 +90,23 @@ it("admits an agent card to start an agent from, by its id", () => {
     expect(agentCardRoute(invalid)).toBeUndefined();
     expect(availableAgentProviderRoute(invalid)).toBe(false);
   }
+});
+
+it("admits team routes and their version addresses", () => {
+  const id = "6f1c2b9e-3d4a-4f5b-8c7d-1e2f3a4b5c6d";
+  const base = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+  } as const;
+  const selected = { side: "instructions", id: "a".repeat(64) } as const;
+  const target = historyTarget(base, { team: id }, selected);
+  expect(teamRoute(target.route?.params)).toBe(id);
+  expect(historyRoute(target.route?.params, teamRoute)).toEqual(selected);
+  expect(availableAgentProviderRoute({ team: id })).toBe(true);
+  for (const invalid of [{ team: "x" }, { team: id, extra: 1 }])
+    expect(teamRoute(invalid)).toBeUndefined();
+  expect(teamRoute({ agent: "a".repeat(64) })).toBeUndefined();
 });

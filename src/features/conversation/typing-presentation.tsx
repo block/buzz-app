@@ -16,6 +16,9 @@ type Replacement = Readonly<{
   threadRootId: string | undefined;
   pubkey: string;
   requestId?: string | undefined;
+  /** This mounted row is the agent's live working indicator, not only its
+   * step details: the conversation must not show a second one. */
+  presence?: boolean | undefined;
 }>;
 function createPresentation() {
   const entries = new Map<symbol, Replacement>();
@@ -117,7 +120,8 @@ function useReplacement(
 ) {
   const store = context?.store;
   const active = context?.active;
-  const { session, channelId, threadRootId, pubkey, requestId } = value ?? {};
+  const { session, channelId, threadRootId, pubkey, requestId, presence } =
+    value ?? {};
   const participantKeys = (participants ?? (pubkey ? [pubkey] : [])).join(":");
   useLayoutEffect(() => {
     if (!active || !enabled || !session || !channelId || !participantKeys)
@@ -129,6 +133,7 @@ function useReplacement(
         threadRootId,
         pubkey,
         requestId,
+        presence,
       })),
     );
   }, [
@@ -140,12 +145,30 @@ function useReplacement(
     threadRootId,
     participantKeys,
     requestId,
+    presence,
   ]);
 }
+/** Agents whose step details a mounted row shows in this conversation. */
 export function useReplacedTypers(
   session: object | undefined,
   channelId: string,
   threadRootId: string | undefined,
+) {
+  return useScopedReplacements(session, channelId, threadRootId, false);
+}
+/** Agents whose live working indicator a mounted row shows in this conversation. */
+export function usePresentedAgents(
+  session: object | undefined,
+  channelId: string,
+  threadRootId: string | undefined,
+) {
+  return useScopedReplacements(session, channelId, threadRootId, true);
+}
+function useScopedReplacements(
+  session: object | undefined,
+  channelId: string,
+  threadRootId: string | undefined,
+  presenceOnly: boolean,
 ) {
   const context = useContext(Presentation);
   const activityStore = useContext(ActivityPresentation);
@@ -173,6 +196,7 @@ export function useReplacedTypers(
       ],
       (entry) =>
         !entry.requestId &&
+        (!presenceOnly || !!entry.presence) &&
         entry.session === session &&
         entry.channelId === channelId &&
         entry.threadRootId === threadRootId,
@@ -188,6 +212,38 @@ const keysOf = (
   [...new Set(entries.filter(matches).map((entry) => entry.pubkey))].join(":");
 const keySet = (key: string): ReadonlySet<string> =>
   new Set(key ? key.split(":") : []);
+
+/** Requests whose live work a mounted row presents in this channel, as
+ * `agent\nrequestId` keys: the conversation's cue skips only covered work. */
+export function usePresentedRequests(
+  session: object | undefined,
+  channelId: string,
+) {
+  const store = useContext(ActivityPresentation);
+  const getKey = () =>
+    [
+      ...new Set(
+        (store?.snapshot() ?? empty)
+          .filter(
+            (entry) =>
+              !!entry.presence &&
+              !!entry.requestId &&
+              entry.session === session &&
+              entry.channelId === channelId,
+          )
+          .map((entry) => `${entry.pubkey}\n${entry.requestId}`),
+      ),
+    ].join("\t");
+  const key = useSyncExternalStore(
+    store?.subscribe ?? noopSubscribe,
+    getKey,
+    emptyKey,
+  );
+  return useMemo(
+    (): ReadonlySet<string> => new Set(key ? key.split("\t") : []),
+    [key],
+  );
+}
 
 /** Recorded history owns request controls only while that history is mounted. */
 export function useRecordedActivityAgents(

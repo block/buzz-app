@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { defineConfig, loadEnv, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
+import { entityDecoderAlias } from "./scripts/entity-decoder-alias.mjs";
 import { worktreePort } from "./scripts/worktree-port.mjs";
 import {
   parseCommunityAliases,
@@ -11,10 +12,11 @@ import {
 } from "./src/features/communities/destination.ts";
 import { parseFirstRunAccountSeed } from "./src/features/identity/first-run-seed.ts";
 import { isBuiltInBuilderlab } from "./src/features/federated-identity/community-hosts.ts";
+import { parseRecommended } from "./src/features/agents/recommended.ts";
 
-/** `BUZZ_BUILDERLAB_URL` from the process or `.env.local`, or undefined when unset. */
-function sharedBuilderlabUrl() {
-  const key = "BUZZ_BUILDERLAB_URL";
+/** A value native builds also read: process first, then repository-root
+ * .env.local, never Vite mode files; undefined when unset. */
+function sharedBuildValue(key: string) {
   if (process.env[key] !== undefined) return process.env[key];
   let local: string;
   try {
@@ -30,6 +32,22 @@ function sharedBuilderlabUrl() {
     throw new Error("Could not read shared Builderlab build configuration.");
   }
   return parseEnv(local.replace(/^\uFEFF/, ""))[key];
+}
+
+/** The Apps control plane for the build's login origin, checked as native's
+ * `build.rs` checks it. */
+function sharedAppsControlPlane(login: string) {
+  const raw = sharedBuildValue("BUZZ_BUILDERLAB_APPS_CONTROL_PLANE") ?? "";
+  if (!raw) return "";
+  let url: URL | undefined;
+  try {
+    url = new URL(raw);
+  } catch {}
+  if (!login || url?.protocol !== "https:" || url.origin !== raw)
+    throw new Error(
+      "Builderlab Apps control plane must be an HTTPS origin with a login origin",
+    );
+  return raw;
 }
 
 /** The built-in sign-in server's Builderlab, in the legacy URL's shape. Keep
@@ -81,9 +99,10 @@ export default defineConfig(async ({ command, mode }) => {
   // developer has pinned their public key. Production builds (`pnpm build`,
   // `pnpm tauri build`) never load it, regardless of .env.local contents.
   const live = command === "serve" && Boolean(env.BUZZ_DEV_VIEWER?.trim());
-  const legacyUrl = sharedBuilderlabUrl();
+  const legacyUrl = sharedBuildValue("BUZZ_BUILDERLAB_URL");
   const federatedUrl = federatedBuilderlabUrl(legacyUrl, live);
   const builderlabUrl = federatedUrl ?? legacyUrl ?? BUILT_IN_BUILDERLAB;
+  const appsControlPlane = sharedAppsControlPlane(builderlabUrl);
   const aliases = env.BUZZ_COMMUNITY_ALIASES ?? "";
   parseCommunityAliases(aliases);
   const externalMcpCommunities = (env.BUZZ_EXTERNAL_MCP_COMMUNITIES ?? "")
@@ -124,6 +143,19 @@ export default defineConfig(async ({ command, mode }) => {
         "BUZZ_DATABRICKS_HOST must be an https:// URL without credentials.",
       );
   }
+  // Packagers may link their mobile app's store listings from the mobile card.
+  const [mobileIos, mobileAndroid] = (
+    ["BUZZ_MOBILE_APP_IOS_URL", "BUZZ_MOBILE_APP_ANDROID_URL"] as const
+  ).map((name) => {
+    const value = env[name]?.trim() ?? "";
+    const url = value && URL.canParse(value) ? new URL(value) : null;
+    if (value && (url?.protocol !== "https:" || url.username || url.password))
+      throw new Error(`${name} must be an https:// URL without credentials.`);
+    return value;
+  });
+  // Packagers may recommend agent settings: candidates in priority order.
+  const recommended = env.BUZZ_RECOMMENDED_AGENT?.trim() ?? "";
+  parseRecommended(recommended);
   // Opt-in seed: replaces first run's Builderlab account requests, key backup
   // and recovery, so the first-run screens can be walked against a real account
   // whose binding must not change. Builds never see it. The full list is in
@@ -148,7 +180,7 @@ export default defineConfig(async ({ command, mode }) => {
           api: `${builderlabUrl.replace(/\/$/, "")}/api/goose`,
           appsBase: (
             await import("./src/bundled/builderlab/apps/environment.ts")
-          ).controlPlane(builderlabUrl),
+          ).controlPlane(builderlabUrl, builderlabUrl, appsControlPlane),
         },
       }),
     );
@@ -168,6 +200,7 @@ export default defineConfig(async ({ command, mode }) => {
     });
   return {
     plugins,
+    resolve: { alias: [entityDecoderAlias] },
     define: {
       "import.meta.env.VITE_BUZZ_LIVE": JSON.stringify(live ? "1" : "0"),
       "import.meta.env.VITE_BUZZ_NOTIFICATIONS_PAUSED": JSON.stringify(
@@ -183,9 +216,16 @@ export default defineConfig(async ({ command, mode }) => {
       ),
       "import.meta.env.VITE_BUZZ_BUILDERLAB_APPS_DOMAIN":
         JSON.stringify(env.BUZZ_BUILDERLAB_APPS_DOMAIN) ?? "undefined",
+      "import.meta.env.VITE_BUZZ_BUILDERLAB_APPS_CONTROL_PLANE":
+        JSON.stringify(appsControlPlane),
       "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(openOrigin),
       "import.meta.env.VITE_BUZZ_DATABRICKS_HOST":
         JSON.stringify(databricksHost),
+      "import.meta.env.VITE_BUZZ_MOBILE_APP_IOS_URL": JSON.stringify(mobileIos),
+      "import.meta.env.VITE_BUZZ_MOBILE_APP_ANDROID_URL":
+        JSON.stringify(mobileAndroid),
+      "import.meta.env.VITE_BUZZ_RECOMMENDED_AGENT":
+        JSON.stringify(recommended),
       "import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT":
         JSON.stringify(firstRunAccount),
     },
@@ -194,6 +234,9 @@ export default defineConfig(async ({ command, mode }) => {
         input: {
           main: fileURLToPath(new URL("index.html", import.meta.url)),
           huddle: fileURLToPath(new URL("huddle.html", import.meta.url)),
+          compute: fileURLToPath(
+            new URL("compute-widget.html", import.meta.url),
+          ),
         },
       },
     },

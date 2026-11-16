@@ -369,3 +369,69 @@ it("keeps sender uploads outside snapshot ownership and drops them when flatteni
     "m image/png",
   ]);
 });
+
+it.each([
+  ["comment", "<!-- @Secret -->", false],
+  ["definition title", '[ref]: https://example.org "@Secret"', false],
+  ["inline code", "`@Secret`", false],
+  ["fenced code", "```text\n@Secret\n```", false],
+  ["link text", "[@Secret](https://example.org)", false],
+  ["link URL", "[link](https://example.org/@Secret)", false],
+  ["reference link", "[@Secret][ref]\n\n[ref]: https://example.org", false],
+  ["bare URL", "https://example.org/@Secret", false],
+  ["visible prose", "Hello @Secret", true],
+  ["visible emphasis", "**@Secret**", true],
+] as const)(
+  "copies only rendered bindings through first and legacy re-forward: %s",
+  async (_name, body, visible) => {
+    const hidden = keypair();
+    const content = "Hello @Visible\n\n" + body;
+    const labels = [
+      { id: recipient.pubkey, names: ["Visible"] },
+      { id: hidden.pubkey, names: ["Secret"] },
+    ];
+    const expected = visible ? labels : labels.slice(0, 1);
+    const source = eventDto(
+      message(author, "private-source", content, 100, [
+        ["p", recipient.pubkey],
+        ["p", hidden.pubkey],
+      ]),
+    );
+    const first = setup(
+      [source],
+      true,
+      new Map([
+        [recipient.pubkey, { name: "Visible" }],
+        [hidden.pubkey, { name: "Secret" }],
+      ]),
+    );
+    await first.outbox.ready();
+    first.messages.forward("destination", first.row, "Author", "");
+    await vi.waitFor(() => expect(first.writer.publish).toHaveBeenCalledOnce());
+    const sent = first.writer.publish.mock.calls[0]?.[0];
+    assert.exists(sent);
+    const snapshot = readForward(sent)?.snapshot;
+    assert.exists(snapshot);
+    expect(snapshot.mentionLabels).toEqual(expected);
+    // Older copies can already carry the hidden bindings. Re-forwarding must
+    // sanitize those labels too, without needing a source profile directory.
+    const legacy = { ...snapshot, mentionLabels: labels };
+    const event = eventDto(
+      message(forwarder, "destination", forwardBody(legacy, ""), 101, [
+        forwardTag(legacy),
+      ]),
+    );
+    const second = setup([event]);
+    await second.outbox.ready();
+    second.messages.forward("third", second.row, "Forwarder", "");
+    await vi.waitFor(() =>
+      expect(second.writer.publish).toHaveBeenCalledOnce(),
+    );
+    const resent = second.writer.publish.mock.calls[0]?.[0];
+    assert.exists(resent);
+    expect(readForward(resent)?.snapshot.mentionLabels).toEqual(expected);
+    expect(resent.tags.some(([tag]) => tag === "p" || tag === "mention")).toBe(
+      false,
+    );
+  },
+);

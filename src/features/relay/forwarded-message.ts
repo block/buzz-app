@@ -1,4 +1,4 @@
-import { profileMentionParts } from "../messages/profile-mentions";
+import { renderedProfileMentionParts } from "../messages/profile-mentions";
 import { profileKey } from "../profiles/target";
 import type { ChannelMessage, Profile } from "./contracts";
 import type { CustomEmoji } from "./emoji";
@@ -65,7 +65,7 @@ function displayedMentionLabels(
   agents: readonly { pubkey: string; name: string }[],
 ) {
   const bindings = new Map<string, Set<string>>();
-  for (const part of profileMentionParts(row, profiles, agents)) {
+  for (const part of renderedProfileMentionParts(row, profiles, agents)) {
     const id = part.target && profileKey(part.target);
     if (!id) continue;
     const name = part.text.slice(1).replace(/ \([a-f0-9]{64}\)$/i, "");

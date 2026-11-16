@@ -61,8 +61,9 @@ const GATEWAY_KEY: &str = "BUZZ_AGENT_GATEWAY";
 
 /// The gateway origin the `BUZZ_AGENT_GATEWAY` descriptor names, or empty
 /// when it is unset. Like the FI descriptor, it is read from the process
-/// only. This checks the version, the eight keys and the gateway origin,
-/// which is all the grant needs, and nothing more: only the frontend (Vite)
+/// only. This checks the version, the keys (launcher_client is optional)
+/// and the gateway origin, which is all the grant needs, and nothing more:
+/// only the frontend (Vite)
 /// build validates the whole descriptor, against
 /// `src/features/agents/gateway/descriptor-vectors.json`. Errors never echo
 /// the descriptor.
@@ -78,7 +79,11 @@ fn descriptor_gateway(process: Option<String>) -> Result<String, &'static str> {
     if object.get("version").and_then(serde_json::Value::as_f64) != Some(2.0) {
         return Err("Agent gateway descriptor must be version 2");
     }
-    let mut keys: Vec<_> = object.keys().map(String::as_str).collect();
+    let mut keys: Vec<_> = object
+        .keys()
+        .map(String::as_str)
+        .filter(|key| *key != "launcher_client")
+        .collect();
     keys.sort_unstable();
     if keys
         != [
@@ -86,7 +91,6 @@ fn descriptor_gateway(process: Option<String>) -> Result<String, &'static str> {
             "communities",
             "gateway",
             "headers",
-            "launcher_client",
             "reserved_prefixes",
             "upstreams",
             "version",
@@ -344,6 +348,15 @@ mod tests {
             .unwrap(),
             "https://gateway.example"
         );
+        assert_eq!(
+            descriptor_gateway(Some(
+                descriptor("https://gateway.example")
+                    .unwrap()
+                    .replace(r#""launcher_client":"c","#, "")
+            ))
+            .unwrap(),
+            "https://gateway.example"
+        );
         for gateway in [
             "http://gateway.example",
             "https://gateway.example/",
@@ -366,6 +379,10 @@ mod tests {
                 .replace(r#""version":2"#, r#""version":3"#),
             descriptor("https://gateway.example")
                 .unwrap()
+                .replace(r#""headers":{},"#, ""),
+            descriptor("https://gateway.example")
+                .unwrap()
+                .replace(r#""launcher_client":"c","#, "")
                 .replace(r#""upstreams":{}"#, r#""upstreams":{},"token":"x""#),
         ] {
             let error = descriptor_gateway(Some(raw.clone())).unwrap_err();

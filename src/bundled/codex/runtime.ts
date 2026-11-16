@@ -12,7 +12,10 @@ import { isFinalMessage } from "../../buzz-mcp/session-tools";
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import type { AgentProtection } from "../../features/agent-protection/service";
 import { nativeProtectionBridge } from "../../features/agent-protection/native-bridge";
-import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
+import {
+  mentionAuthority,
+  workflowOf,
+} from "../../features/agents/owner-attestation";
 import {
   type ConversationWake,
   wakeAnchor,
@@ -1682,16 +1685,13 @@ export class CodexRuntime {
     const event =
       trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const reads = this.reads(agent.key);
-    if (
-      trigger.type === "mention" &&
-      !(await fromOwner(
+    if (trigger.type === "mention") {
+      const authority = await mentionAuthority(
         trigger.event,
         agent.owner,
         workflowOf(reads, agent.pubkey),
-      ))
-    ) {
-      delivery.ignored?.();
-      return;
+      );
+      if (authority !== "owner") return delivery.ignored?.(authority);
     }
     delivery.signal.throwIfAborted();
     if (!reads) throw new Error("Connect to the agent's community first");
@@ -2522,7 +2522,8 @@ export class CodexRuntime {
     text: string,
     stopped: AbortSignal,
     // The conversation's thread settings: its workspace, model, and Codex
-    // config with MCP servers, plugins, apps and web search off.
+    // config. The title thread turns MCP servers, plugins and apps off
+    // whatever the conversation allows.
     {
       cwd,
       model,
@@ -2569,6 +2570,8 @@ export class CodexRuntime {
                 >,
               ).map(([name, server]) => [name, { ...server, enabled: false }]),
             ),
+            "features.plugins": false,
+            "features.apps": false,
             ...(this.server?.rpc === rpc && this.hooks
               ? { "hooks.state": await nativeHookState(rpc, cwd, false) }
               : {}),
@@ -2631,7 +2634,10 @@ export class CodexRuntime {
    * model and effort its turn runs on: `pick`'s when available. */
   private async prepare(
     rpc: AppServer,
-    agent: Pick<AgentHandle, "key" | "name" | "pubkey" | "relay">,
+    // Protected when it has a policy, bound or not yet.
+    agent: Pick<AgentHandle, "key" | "name" | "pubkey" | "relay"> & {
+      protection?: unknown;
+    },
     settings: Config,
     workspace: string,
     pick: Readonly<{ model?: string; effort?: string }>,
@@ -2688,8 +2694,9 @@ export class CodexRuntime {
         ...(hooks ? { "hooks.state": hooks } : {}),
         web_search: "disabled",
         mcp_servers: { ...mcp, ...bridge?.config },
-        "features.plugins": false,
-        "features.apps": false,
+        ...(settings.apps && !agent.protection
+          ? {}
+          : { "features.plugins": false, "features.apps": false }),
         ...(credential && {
           [`shell_environment_policy.set.${CREDENTIAL_ENV}`]: credential,
         }),

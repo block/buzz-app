@@ -782,6 +782,46 @@ it("hands over promptly and runs conversations independently on one server", asy
     tags: expect.arrayContaining([["e", root, "", "reply"]]),
   });
 });
+it("leaves Codex's Apps and plugins to its configuration only for an agent that allows them", async () => {
+  const f = fixture();
+  const delivery = f.delivery("@Codex check my mail");
+  await f.runtime.run({
+    ...delivery,
+    config: { ...(delivery.config as object), apps: true },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const started = f.sent.find((wire) => wire.method === "thread/start")
+    ?.params as { config: Record<string, unknown> };
+  const { config } = started;
+  expect(config).not.toHaveProperty("features.apps");
+  expect(config).not.toHaveProperty("features.plugins");
+  // Everything else inherited stays off.
+  expect(config).toMatchObject({
+    web_search: "disabled",
+    mcp_servers: { "company.tools": { enabled: false } },
+  });
+  f.complete(0, "DONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+});
+it("keeps Codex's Apps and plugins off for a protected agent that allows them", async () => {
+  const f = protectedPreview();
+  try {
+    await f.runtime.run({
+      ...f.delivery("@Codex check my mail"),
+      agent: f.handle as unknown as Delivery["agent"],
+      config: { ...(f.agent.config as object), apps: true },
+    });
+    await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(1));
+    expect(
+      f.worker.sent.find((wire) => wire.method === "thread/start")?.params,
+    ).toMatchObject({
+      config: { "features.apps": false, "features.plugins": false },
+    });
+    await f.worker.complete(0, "");
+  } finally {
+    f.runtime.dispose();
+  }
+});
 /** A second agent on the same runtime, with its own identity and publisher. */
 function second(f: ReturnType<typeof fixture>) {
   const other = "9".repeat(64);
@@ -2843,7 +2883,8 @@ it("ignores non-owner messages without spawning", async () => {
   if ("event" in other.trigger) other.trigger.event.pubkey = "f".repeat(64);
   const ignored = vi.fn();
   await f.runtime.run({ ...other, ignored });
-  expect(ignored).toHaveBeenCalledOnce();
+  // No reason, so no note for its owner.
+  expect(ignored).toHaveBeenCalledExactlyOnceWith(undefined);
   expect(f.spawn).not.toHaveBeenCalled();
   expect(f.publish).not.toHaveBeenCalled();
 });
@@ -2871,6 +2912,28 @@ it("runs a verified relay workflow mention for its owner", async () => {
   expect(ignored).not.toHaveBeenCalled();
   await f.complete();
   expect(f.publish).toHaveBeenCalled();
+});
+it("gives the workflow reason for its owner's workflow mention that doesn't name it", async () => {
+  const f = fixture();
+  const relay = keypair();
+  f.snapshot.session.workflowAuthority = relay.pubkey;
+  const ask = f.delivery("@Codex workflow");
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Agent workflow",
+      tags: [
+        ["h", "channel"],
+        ["p", pubkey],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", owner],
+      ],
+    }),
+  );
+  const ignored = vi.fn();
+  await f.runtime.run({ ...ask, trigger: { type: "mention", event }, ignored });
+  expect(ignored).toHaveBeenCalledExactlyOnceWith("workflow");
+  expect(f.spawn).not.toHaveBeenCalled();
 });
 it.each([false, true])(
   "handles sibling workflow authorization with cancellation=%s",
@@ -5345,13 +5408,20 @@ it("titles a new Solo chat once, from its first message on an ephemeral read-onl
         wire.method === "thread/start" &&
         (wire.params as { ephemeral?: boolean }).ephemeral,
     );
-  await f.runtime.run({ ...f.delivery("@Codex fix the login bug"), named });
+  const delivery = f.delivery("@Codex fix the login bug");
+  // Even when the conversation allows Codex apps and plugins.
+  await f.runtime.run({
+    ...delivery,
+    config: { ...(delivery.config as object), apps: true },
+    named,
+  });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   // Without Codex's title model in the catalog, the chat's own model titles it.
   expect(titling()[0]?.params).toMatchObject({
     model: "test-model",
     approvalPolicy: "never",
     sandbox: "read-only",
+    config: { "features.apps": false, "features.plugins": false },
   });
   expect(f.starts()[1]?.params).toMatchObject({
     threadId: "thread-2",

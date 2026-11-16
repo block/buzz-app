@@ -1,4 +1,5 @@
 import { protectionTranscript } from "./protection-transcript";
+import type { PRESET } from "../../features/agents/recommended";
 import { fileStore } from "../../features/agents/state";
 import type { AgentExecution } from "../../features/agents/execution";
 import { executionSpawn } from "./execution";
@@ -22,7 +23,10 @@ import {
   unsupportedSynced,
   unverifiedSynced,
 } from "../../features/agents/agent-config";
-import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
+import {
+  mentionAuthority,
+  workflowOf,
+} from "../../features/agents/owner-attestation";
 import type { TranscriptTurn } from "../../features/agents/activity-transcript";
 import type { AgentReads } from "../../features/agents/reads";
 import { localStore, type AgentStore } from "../../features/agents/store";
@@ -111,6 +115,8 @@ export type Config = Readonly<{
   workspace: string;
   /** Whether each thread is its own session, or the whole channel is one. */
   scope: Scope;
+  /** On Recommended, whose model and thinking level runs replace these. */
+  preset?: typeof PRESET;
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
   model: "",
@@ -963,16 +969,13 @@ export class ClaudeRuntime {
     // for the owner.
     const wake = trigger.type !== "mention" ? trigger : undefined;
     // Claude runs commands as you; mentions need owner or delegated authority.
-    if (
-      trigger.type === "mention" &&
-      !(await fromOwner(
+    if (trigger.type === "mention") {
+      const authority = await mentionAuthority(
         trigger.event,
         agent.owner,
         workflowOf(this.reads(agent.key), agent.pubkey),
-      ))
-    ) {
-      ignored?.();
-      return;
+      );
+      if (authority !== "owner") return ignored?.(authority);
     }
     signal.throwIfAborted();
     const entry = this.entry(agent, settings);

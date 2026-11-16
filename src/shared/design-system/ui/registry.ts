@@ -215,7 +215,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Dialog",
     purpose: "A shared modal frame with title, content and actions.",
     behavior:
-      "Shared title/description header and secondary Close; 2rem insets (1rem at viewport widths up to 30rem) and a fixed 1rem minimum gutter above footer buttons outside scrolling content. Compact dialogs center; task modals start 8rem from the top. Base UI owns focus, default outside dismissal and transition presence; shared motion tokens animate entry and exit. The host can preserve native titlebar dragging through the backdrop.",
+      "Shared title/description header and secondary Close; one 12px heading-to-body gap, 2rem outer insets (1rem at viewport widths up to 30rem) and a fixed 1rem minimum gutter above footer buttons outside scrolling content. Compact dialogs center; task modals start 8rem from the top. Base UI owns focus, default outside dismissal and transition presence; shared motion tokens animate entry and exit. The host can preserve native titlebar dragging through the backdrop.",
     variants: [
       "compact (25rem)",
       "default (40rem)",
@@ -422,14 +422,29 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "settings-group",
     name: "SettingsGroup",
     purpose:
-      "A subtle bordered container for related settings rows or form fields, or a stack of individually bordered cards.",
+      "A subtle bordered container for related settings rows or form fields, or a stack of individually bordered cards. SettingsGroupExpand reveals rows in place under a choice.",
     behavior:
-      "Presentation only; children retain their labels, state, and interactions.",
-    variants: ["rows", "form", "cards"],
+      "Presentation only; children retain their labels, state, and interactions. Expanded rows mount when first opened; closed again, they are inert and keep their state.",
+    variants: ["rows", "form", "cards", "expand"],
     status: "proposed",
     collection: "components",
     owner: "Buzz Settings",
     source: "shared/design-system/ui/SettingsGroup.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
+    slug: "value-chip",
+    name: "ValueChip",
+    purpose:
+      "A short read-only value in running text, such as the model a setting chose, with an optional mark.",
+    behavior:
+      "Presentation only; long values ellipsize, and an optional label names the value for assistive technology.",
+    variants: ["text", "icon"],
+    status: "proposed",
+    collection: "components",
+    owner: "Buzz Settings",
+    source: "shared/design-system/ui/ValueChip.tsx",
     baseUi: [],
     composes: [],
   },

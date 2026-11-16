@@ -38,6 +38,72 @@
   },
   "valid": [
     {
+      "name": "omitted launcher_client defaults to buzz",
+      "descriptor": {
+        "version": 2,
+        "gateway": "https://gateway.example",
+        "communities": [
+          {
+            "id": "22222222-2222-4222-8222-222222222222",
+            "origin": "https://relay.example"
+          }
+        ],
+        "access_path": "/v9/access",
+        "headers": {
+          "launcher_client": "x-gw-launcher-client",
+          "launcher_session": "x-gw-launcher-session",
+          "human_pubkey": "x-gw-ctx-human-pubkey",
+          "agent_pubkey": "x-gw-ctx-agent-pubkey",
+          "community_id": "x-gw-ctx-community-id",
+          "channel_id": "x-gw-ctx-channel-id",
+          "message_id": "x-gw-ctx-message-id",
+          "thread_id": "x-gw-ctx-thread-id"
+        },
+        "reserved_prefixes": [],
+        "upstreams": {}
+      },
+      "expect": {
+        "version": 2,
+        "gateway": "https://gateway.example",
+        "communities": [
+          {
+            "id": "22222222-2222-4222-8222-222222222222",
+            "origin": "https://relay.example"
+          }
+        ],
+        "access_path": "/v9/access",
+        "launcher_client": "buzz",
+        "headers": {
+          "launcher_client": "x-gw-launcher-client",
+          "launcher_session": "x-gw-launcher-session",
+          "human_pubkey": "x-gw-ctx-human-pubkey",
+          "agent_pubkey": "x-gw-ctx-agent-pubkey",
+          "community_id": "x-gw-ctx-community-id",
+          "channel_id": "x-gw-ctx-channel-id",
+          "message_id": "x-gw-ctx-message-id",
+          "thread_id": "x-gw-ctx-thread-id"
+        },
+        "reserved_prefixes": [],
+        "upstreams": {}
+      },
+      "expect_native": {
+        "gateway": "https://gateway.example",
+        "launcher_client": "buzz",
+        "headers": {
+          "launcher_client": "x-gw-launcher-client",
+          "launcher_session": "x-gw-launcher-session",
+          "human_pubkey": "x-gw-ctx-human-pubkey",
+          "agent_pubkey": "x-gw-ctx-agent-pubkey",
+          "community_id": "x-gw-ctx-community-id",
+          "channel_id": "x-gw-ctx-channel-id",
+          "message_id": "x-gw-ctx-message-id",
+          "thread_id": "x-gw-ctx-thread-id"
+        },
+        "reserved_prefixes": [],
+        "upstreams": {}
+      }
+    },
+    {
       "name": "full profile",
       "descriptor": {
         "version": 2,
@@ -646,6 +712,34 @@
     }
   ],
   "invalid": [
+    {
+      "name": "launcher_client null",
+      "error": "launcher_client",
+      "descriptor": {
+        "version": 2,
+        "gateway": "https://gateway.example",
+        "communities": [
+          {
+            "id": "22222222-2222-4222-8222-222222222222",
+            "origin": "https://relay.example"
+          }
+        ],
+        "access_path": "/v9/access",
+        "headers": {
+          "launcher_client": "x-gw-launcher-client",
+          "launcher_session": "x-gw-launcher-session",
+          "human_pubkey": "x-gw-ctx-human-pubkey",
+          "agent_pubkey": "x-gw-ctx-agent-pubkey",
+          "community_id": "x-gw-ctx-community-id",
+          "channel_id": "x-gw-ctx-channel-id",
+          "message_id": "x-gw-ctx-message-id",
+          "thread_id": "x-gw-ctx-thread-id"
+        },
+        "reserved_prefixes": [],
+        "upstreams": {},
+        "launcher_client": null
+      }
+    },
     {
       "name": "not JSON",
       "error": "json",

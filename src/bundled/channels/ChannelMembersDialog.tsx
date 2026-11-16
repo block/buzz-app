@@ -105,6 +105,7 @@ import {
   UsersIcon,
 } from "../../shared/design-system/icons";
 import {
+  MemberMenus,
   MemberRow,
   useMemberAdministration,
   memberAccessLabel,
@@ -208,7 +209,6 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   ownerClickable,
   descriptionId,
   input,
-  scrollport,
   focusedAdd,
   openProfile,
   onSendMessage,
@@ -245,7 +245,6 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   ownerClickable: boolean;
   descriptionId: string;
   input: RefObject<HTMLElement | null>;
-  scrollport: RefObject<HTMLElement | null>;
   focusedAdd: RefObject<{
     key: string;
     button: HTMLButtonElement;
@@ -361,7 +360,6 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
       verifiedOwner={verifiedOwner}
       onChange={onChange}
       returnFocus={input}
-      scrollport={scrollport}
       onViewProfile={clickable ? viewProfile : undefined}
       onViewOwnerProfile={
         ownerClickable ? () => openProfile(ownerTarget) : undefined
@@ -974,7 +972,10 @@ export function ChannelMembersDialog({
       current = false;
     };
   }, [session, channelId, refresh, soloSharing]);
-  const memberKey = channel?.members?.join(":") ?? "";
+  const memberKey = useMemo(
+    () => channel?.members?.join(":") ?? "",
+    [channel?.members],
+  );
   const largeRoster = (channel?.members?.length ?? 0) > MEMBER_PAGE_SIZE;
   const administration = useMemberAdministration(
     session,
@@ -1041,10 +1042,14 @@ export function ChannelMembersDialog({
       withVerifiedNames(search.people, searchVerified, profiles, preference),
     [search.people, searchVerified, profiles, preference],
   );
-  const searchProfiles = new Map(
-    searchPeople.map((person) => [person.pubkey, person]),
+  const searchProfiles = useMemo(
+    () => new Map(searchPeople.map((person) => [person.pubkey, person])),
+    [searchPeople],
   );
-  const members = new Set(channel?.members ?? []);
+  const members = useMemo(
+    () => new Set(channel?.members ?? []),
+    [channel?.members],
+  );
   const verifiedOf = (key: string): VerifiedProfile | undefined =>
     profiles.get(key)?.verified ?? searchVerified.get(key);
   const pageLabel = (verified: VerifiedProfile | undefined) =>
@@ -1090,13 +1095,31 @@ export function ChannelMembersDialog({
   const addable = (key: string, ...names: (string | undefined)[]) =>
     key === typedKey || names.some(nameMatches);
   // Label once per member: a fallback label bech32-encodes the key, too costly
-  // to repeat for every member of a large roster on each render.
-  const memberLabels = new Map([...members].map((key) => [key, label(key)]));
+  // to repeat for every member of a large roster on each render. Effects and
+  // subscriptions render the dialog several times per keystroke; relabel only
+  // when a member or an input of `label` changes: `profiles`, `searchVerified`,
+  // `preference`, `searchProfiles`, `known` and `resolveName`.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: listed above.
+  const memberLabels = useMemo(
+    () => new Map((channel?.members ?? []).map((key) => [key, label(key)])),
+    [
+      channel?.members,
+      profiles,
+      searchProfiles,
+      searchVerified,
+      known,
+      preference,
+      resolveName,
+    ],
+  );
   const memberLabel = (key: string) => memberLabels.get(key) ?? label(key);
   // Sort again only when a member or label changes, not on every render (each
   // filter keystroke), which would re-sort a large roster. The serialized
   // pairs are the memo key, since they change whenever either does.
-  const labelList = JSON.stringify([...memberLabels]);
+  const labelList = useMemo(
+    () => JSON.stringify([...memberLabels]),
+    [memberLabels],
+  );
   const currentMembers = useMemo(
     () =>
       (JSON.parse(labelList) as [string, string][])
@@ -1131,18 +1154,22 @@ export function ChannelMembersDialog({
     selectedAccess !== accessFilter
   )
     setSelectedAccess(accessFilter);
-  const currentGroups = ["People", "Agents"].map((name) => {
-    const keys = currentMembers.filter((key) => {
-      const group =
-        known.has(key) || profiles.get(key)?.isAgent ? "Agents" : "People";
-      return group === name;
-    });
-    return {
-      name,
-      count: keys.length,
-      keys,
-    };
-  });
+  const currentGroups = useMemo(
+    () =>
+      ["People", "Agents"].map((name) => {
+        const keys = currentMembers.filter((key) => {
+          const group =
+            known.has(key) || profiles.get(key)?.isAgent ? "Agents" : "People";
+          return group === name;
+        });
+        return {
+          name,
+          count: keys.length,
+          keys,
+        };
+      }),
+    [currentMembers, known, profiles],
+  );
   // Optional profile updates change labels, not the identities being browsed.
   // Reopening or refreshing takes a new paging order. Live roster changes
   // retain surviving identities and append new members in their current order.
@@ -1192,24 +1219,45 @@ export function ChannelMembersDialog({
   const isArchived = (key: string) =>
     archiveHides(session.archives, key, session.viewer);
   const baseGroups = largeRoster ? orderedGroups : currentGroups;
-  const groups = [
-    ...baseGroups.map((group) => ({
-      name: group.name,
-      keys: group.keys.filter((key) => !isArchived(key)),
-    })),
-    {
-      name: "Archived",
-      keys: baseGroups.flatMap((group) => group.keys.filter(isArchived)),
-    },
-  ].map((group) => ({
-    name: group.name,
-    count: group.keys.length,
-    keys: group.keys.filter(
-      (key) =>
-        matches(key, memberLabel(key)) &&
-        (accessFilter === "All" || accessOf(key) === accessFilter),
-    ),
-  }));
+  // Filters every member: redo it only when the roster, the query or an input
+  // of the filters changes, not on each of the several renders effects cause
+  // per keystroke. `matches` reads the query, `searchProfiles`, `profiles` and
+  // `searchVerified`; `memberLabel` reads `memberLabels` (every key here is a
+  // member); `isArchived` reads `archives`; `accessOf` reads `roles`.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: listed above.
+  const groups = useMemo(
+    () =>
+      [
+        ...baseGroups.map((group) => ({
+          name: group.name,
+          keys: group.keys.filter((key) => !isArchived(key)),
+        })),
+        {
+          name: "Archived",
+          keys: baseGroups.flatMap((group) => group.keys.filter(isArchived)),
+        },
+      ].map((group) => ({
+        name: group.name,
+        count: group.keys.length,
+        keys: group.keys.filter(
+          (key) =>
+            matches(key, memberLabel(key)) &&
+            (accessFilter === "All" || accessOf(key) === accessFilter),
+        ),
+      })),
+    [
+      baseGroups,
+      archives,
+      session.viewer,
+      query,
+      searchProfiles,
+      profiles,
+      searchVerified,
+      memberLabels,
+      accessFilter,
+      roles,
+    ],
+  );
   const narrowed = text.length > 0 || accessFilter !== "All";
   const presentGroups = groups.filter((group) => group.count > 0);
   const identityFilter =
@@ -1841,7 +1889,6 @@ export function ChannelMembersDialog({
         }
         descriptionId={`${presenceId}-${key}`}
         input={input}
-        scrollport={scrollport}
         focusedAdd={focusedAdd}
         openProfile={openProfile}
         onSendMessage={
@@ -2097,9 +2144,6 @@ export function ChannelMembersDialog({
       }
       height={selection ? "content" : generalAccess ? "stable-tall" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}
-      headerGap={
-        !selection || selection.role === "remove" ? "compact" : "default"
-      }
       footerGap={
         selection && selection.role !== "remove" ? "default" : "compact"
       }
@@ -2258,8 +2302,8 @@ export function ChannelMembersDialog({
               )}
             </div>
           )}
-          <section
-            ref={scrollport}
+          <MemberMenus
+            scrollport={scrollport}
             className={`${styles.memberList} buzz-thin-scrollbar`}
             aria-label="Member list"
             data-refreshing={refreshing}
@@ -2626,7 +2670,7 @@ export function ChannelMembersDialog({
                   {share.progress}
                 </p>
               ) : null)}
-          </section>
+          </MemberMenus>
         </div>
       )}
       {share.confirmation && chosen && (

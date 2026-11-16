@@ -13,10 +13,17 @@ import { refusedByBuzz } from "./auth";
 import type { PluginModule } from "../../plugins/api";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { claudeRun, TYPE_ID } from "./run";
+import {
+  followRecommended,
+  recommendedRun,
+} from "../../features/agents/recommended";
+import type { AgentHandle } from "../../features/agents/service";
 import { ClaudeDefaults } from "./defaults";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup, withScript } from "./setup";
 import { createTabs } from "./tabs";
+import { targetKey } from "../../features/navigation/targets";
+import type { ClaudeConnection } from "./ClaudeSettings";
 import { readUsage } from "./usage";
 
 export { TYPE_ID };
@@ -41,7 +48,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const setup = new ClaudeSetup(spawn, (input) => host.request(input));
   // Older replacement auth implementations need not provide key management.
   const { Settings } = setup.auth as {
-    Settings?: ComponentType<{ setup: ClaudeSetup; active(): boolean }>;
+    Settings?: ComponentType<{
+      setup: ClaudeSetup;
+      active(): boolean;
+      connection?: ClaudeConnection | undefined;
+    }>;
   };
   if (Settings)
     ctx.settingsCards.register({
@@ -49,7 +60,32 @@ export const apply: PluginModule["apply"] = (ctx) => {
       title: "Claude",
       icon: ClaudeLogoIcon,
       group: "Plugins",
-      component: ({ active }) => createElement(Settings, { setup, active }),
+      component: ({ active, navigation }) => {
+        let connection: ClaudeConnection | undefined;
+        if (navigation?.target.kind === "settings") {
+          const { route, ...parent } = navigation.target;
+          const target = {
+            ...parent,
+            route: { version: 1, params: "connect" },
+          } as const;
+          connection = {
+            open: route?.version === 1 && route.params === "connect",
+            onOpenChange(open) {
+              if (!active()) return;
+              if (open) {
+                if (!navigation.signal.aborted)
+                  void ctx.navigation.open(target);
+              } else {
+                ctx.navigation.dismiss(
+                  (candidate) => targetKey(candidate) === targetKey(target),
+                  parent,
+                );
+              }
+            },
+          };
+        }
+        return createElement(Settings, { setup, active, connection });
+      },
     });
   ctx.agentProtection.registerModels({
     label: "Claude",
@@ -60,7 +96,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
       })),
     complete: (model, prompt, signal) => setup.review(model, prompt, signal),
   });
-  const providerDefaults = new ClaudeDefaults(agents.storage);
+  // A candidate needs Claude signed in and its model and level listed.
+  const recommended = recommendedRun(TYPE_ID, (candidate) =>
+    setup.offers(candidate),
+  );
+  const providerDefaults = new ClaudeDefaults(agents.storage, recommended);
+  /** What an agent on Recommended runs on, found before its first run. */
+  const follow = (agent: AgentHandle | undefined) =>
+    providerDefaults.follow(
+      agents.snapshot().running.find((item) => item.key === agent?.key)?.config,
+    );
   // No turn starts without credentials.
   const runtime = new ClaudeRuntime(
     {
@@ -160,6 +205,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     defaults: providerDefaults,
     runtime,
     openSetup,
+    recommended,
   });
   agents.register<Config>({
     id: TYPE_ID,
@@ -186,8 +232,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
         : undefined,
     exportShared: (saved) => ({
       runtime: "claude",
-      model: config(saved).model,
+      model: followRecommended(saved, config(saved), recommended.current())
+        .model,
     }),
+    recommends: (candidate) => setup.offers(candidate),
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,
@@ -213,7 +261,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         },
       ];
     },
-    summary: (agent) => config(agent.config).model || "Claude",
+    summary: (agent) =>
+      followRecommended(
+        agent.config,
+        config(agent.config),
+        recommended.current(),
+      ).model || "Claude",
     ...(spawn &&
       readFile && {
         usage: async (agent, { since, signal }) => {
@@ -295,10 +348,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ],
     // A mention during the first download waits for it, within its deadline.
     ...claudeRun(runtime, async (signal, agent) => {
+      // A remote target runs Recommended on its own default.
       if (agent && (await agents.inspectExecution(agent.key))) return;
-      return agent?.protection
+      await (agent?.protection
         ? setup.protectedInstalled(signal)
-        : setup.installed(signal);
+        : setup.installed(signal));
+      await follow(agent);
     }),
   });
 };

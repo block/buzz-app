@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { AgentDeclineNotes } from "../../features/messages/AgentDeclineNotes";
 
@@ -29,32 +29,44 @@ const session = {
     subscribe: () => () => {},
   },
 } as never;
-const notes = () =>
-  render(
-    messages.map((id) => (
-      <AgentDeclineNotes
-        key={id}
-        session={session}
-        scope={scope}
-        channelId="channel"
-        messageId={id}
-      />
-    )),
-  );
+const notes = (ids = messages) =>
+  ids.map((id) => (
+    <AgentDeclineNotes
+      key={id}
+      session={session}
+      scope={scope}
+      channelId="channel"
+      messageId={id}
+    />
+  ));
+const owner = /limits which workflows/;
 
-it("shares one relay read across notes, and retries after a failure", async () => {
-  native.relayInfo.mockRejectedValueOnce(new Error("offline"));
-  notes();
-  await new Promise((done) => setTimeout(done));
-  cleanup();
-  expect(native.relayInfo).toHaveBeenCalledTimes(1);
+/** Mounts every note, removes one while the lookup is pending, then settles it. */
+async function settleAfterRemoval(settle: () => void) {
+  let done = () => {};
+  const pending = new Promise<void>((resolve) => {
+    done = resolve;
+  });
+  native.relayInfo.mockImplementationOnce(() => pending.then(settle));
+  const view = render(notes());
+  view.rerender(notes(messages.slice(1)));
+  await act(async () => done());
+}
 
-  native.relayInfo.mockResolvedValue({ workflow_agent_mentions: "owner" });
-  notes();
-  expect(await screen.findAllByText(/limits which workflows/)).toHaveLength(3);
+it("shares one pending relay read across notes, and retries after a failure", async () => {
+  await settleAfterRemoval(() => {
+    throw new Error("offline");
+  });
+  expect(screen.getAllByRole("status")).toHaveLength(2);
+  expect(screen.queryByText(owner)).toBeNull();
   cleanup();
-  notes();
-  expect(await screen.findAllByText(/limits which workflows/)).toHaveLength(3);
+
+  await settleAfterRemoval(() => ({ workflow_agent_mentions: "owner" }));
+  expect(screen.getAllByText(owner)).toHaveLength(2);
+  cleanup();
+
+  render(notes());
+  expect(await screen.findAllByText(owner)).toHaveLength(3);
   expect(native.relayInfo).toHaveBeenCalledTimes(2);
   expect(native.relayInfo).toHaveBeenCalledWith("https://relay.example");
 });

@@ -48,15 +48,19 @@ function comparable(value: Groups) {
   ]);
 }
 
-function admit(value: Groups, entry: KitEntry | undefined) {
-  // With no saved record, any filing fits. Existing records retain their
-  // exact community envelope, including its UTF-8 byte cost.
-  if (entry && !kitRecordFits({ ...entry.record, deleted: false, value }))
-    throw new Error(soloCapacityMessage);
-}
+// With no saved record, any filing fits. Existing records retain their
+// exact community envelope, including its UTF-8 byte cost.
+const fits = (value: Groups, entry: KitEntry | undefined) =>
+  !entry || kitRecordFits({ ...entry.record, deleted: false, value });
 
-/** Reuse recipe revision checks/outbox and preference lifecycle; never read Messages groups. */
-export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
+/** Reuse recipe revision checks/outbox and preference lifecycle; never read Messages groups.
+ * `gone` names the given chats that are known to be archived or deleted, and
+ * none when that isn't known. A full record drops their filings to make room. */
+export function createSoloPreferences(
+  kit: ChannelKit,
+  lifetime: AbortSignal,
+  gone: (chats: readonly string[]) => readonly string[] = () => [],
+) {
   let mutations = Promise.resolve();
   let generation = new AbortController();
   const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -100,8 +104,16 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
     value: Groups,
     entry: KitEntry | undefined,
     active: AbortSignal,
+    filing?: string,
   ) {
-    admit(value, entry);
+    if (!fits(value, entry)) {
+      // The chat being filed may be too new for the channel list to know it.
+      const assignments = { ...value.assignments };
+      for (const chat of gone(Object.keys(assignments)))
+        if (chat !== filing) delete assignments[chat];
+      value = { ...value, assignments };
+      if (!fits(value, entry)) throw new Error(soloCapacityMessage);
+    }
     // Serialized Solo edits still need a later second for replaceable records.
     // Future-dated heads remain subject to the kit's existing refusal.
     const delay = entry ? (entry.createdAt + 1) * 1000 - Date.now() : 0;
@@ -170,7 +182,12 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
             value.assignments[intent.channelId] === target)
         )
           return project(value);
-        return save({ ...value, groups, assignments }, entry, active);
+        return save(
+          { ...value, groups, assignments },
+          entry,
+          active,
+          intent.channelId,
+        );
       }),
     removeSection: (id, signal) =>
       serialize(async () => {

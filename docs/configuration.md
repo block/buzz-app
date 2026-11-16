@@ -298,6 +298,15 @@ Staging is then the build's Builderlab, with the built-in production server
 after it for the public communities. A native test parses this exact
 descriptor, so keep the two in step.
 
+Remote agents follow the selected community: in a community another listed
+server covers, the bundled Builderlab plugin's agent calls carry that
+community (`relay`) and native sends them with that server's session, origin
+and API base path, under the same granted routes. Elsewhere, including
+Personal space, they use the build's Builderlab. Each saved agent and pending
+creation is kept with its server, so an agent is managed only while one of its
+server's communities is selected. Known communities, backup, hosted
+communities, Apps and decisions always use the build's Builderlab.
+
 `signIn` and `organization` are optional. `signIn` is `on-demand` by default:
 the app asks for organization sign-in only when a protected community refuses
 the viewer, or from Settings → Identity. `at-launch` signs in before the app
@@ -330,7 +339,8 @@ inputs.
 Identity backup uses the session only when its separately configured service URL
 is the build's Builderlab, at the same origin and API base path. Backup still
 requires its own service URL, namespace and user choice. The existing
-identity-binding validator accepts production Builderlab or the configured origin.
+identity-binding validator accepts production Builderlab or a configured sign-in
+server's identity origin.
 
 Native viewer SSO also needs the exact Apps domain in
 `BUZZ_BUILDERLAB_APPS_DOMAIN`, for example `apps.example.com` for a Builderlab

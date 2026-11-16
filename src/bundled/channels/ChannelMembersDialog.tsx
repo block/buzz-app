@@ -105,6 +105,7 @@ import {
   UsersIcon,
 } from "../../shared/design-system/icons";
 import {
+  MemberMenus,
   MemberRow,
   useMemberAdministration,
   memberAccessLabel,
@@ -208,7 +209,6 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   ownerClickable,
   descriptionId,
   input,
-  scrollport,
   focusedAdd,
   openProfile,
   onSendMessage,
@@ -245,7 +245,6 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   ownerClickable: boolean;
   descriptionId: string;
   input: RefObject<HTMLElement | null>;
-  scrollport: RefObject<HTMLElement | null>;
   focusedAdd: RefObject<{
     key: string;
     button: HTMLButtonElement;
@@ -361,7 +360,6 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
       verifiedOwner={verifiedOwner}
       onChange={onChange}
       returnFocus={input}
-      scrollport={scrollport}
       onViewProfile={clickable ? viewProfile : undefined}
       onViewOwnerProfile={
         ownerClickable ? () => openProfile(ownerTarget) : undefined
@@ -1841,7 +1839,6 @@ export function ChannelMembersDialog({
         }
         descriptionId={`${presenceId}-${key}`}
         input={input}
-        scrollport={scrollport}
         focusedAdd={focusedAdd}
         openProfile={openProfile}
         onSendMessage={
@@ -2258,8 +2255,8 @@ export function ChannelMembersDialog({
               )}
             </div>
           )}
-          <section
-            ref={scrollport}
+          <MemberMenus
+            scrollport={scrollport}
             className={`${styles.memberList} buzz-thin-scrollbar`}
             aria-label="Member list"
             data-refreshing={refreshing}
@@ -2626,7 +2623,7 @@ export function ChannelMembersDialog({
                   {share.progress}
                 </p>
               ) : null)}
-          </section>
+          </MemberMenus>
         </div>
       )}
       {share.confirmation && chosen && (

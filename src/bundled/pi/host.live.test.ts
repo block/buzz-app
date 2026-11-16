@@ -233,21 +233,6 @@ rewriteTools = false;
   faux.setResponses([(context) => { out.after = users(context).at(-1); return fauxAssistantMessage("Answer"); }]);
   const later = await pi.rpc("deliver", shared("Q4", "later", "B"));
   await pi.rpc("wait", { agent, submission: later.submission });
-  // A run a top-level turn started replies at the channel's top level.
-  const topWorking = held();
-  faux.setResponses([
-    async () => { await topWorking.gate; return fauxAssistantMessage(fauxToolCall("buzz_send", { text: "working" }), { stopReason: "toolUse" }); },
-    (context) => { out.topLevel = users(context).at(-1); return fauxAssistantMessage("Answer"); },
-  ]);
-  const top = [];
-  try {
-    top.push(await pi.rpc("deliver", shared("T1", "top", "chan")));
-    await started(pi.events, "T1");
-    top.push(await pi.rpc("deliver", shared("T2", "thread", "B")));
-  } finally {
-    topWorking.release();
-  }
-  await settle(top);
 }
 // A run the host stops in continues in the next host.
 const d = held(), calling = held();
@@ -913,22 +898,19 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       { type: "text", text: "[Buzz plugin: fixture-policy]" },
       { type: "text", text: "Replaced result" },
     ]);
-    const running = (steer: string, target: string) =>
-      `${steer}\n\nThe reply target above is for the new message only. If you are still working on the request that started this run, ordinary replies about that work still go ${target}. Later messages keep their own reply targets.`;
+    const running = (steer: string, thread: string) =>
+      `${steer}\n\nThe reply target above is for the new message only. Unfinished work from thread ${thread} keeps \`reply: "${thread}"\`. Later messages keep their own reply targets.`;
     expect(out.steered).toEqual([
       "first",
-      running("steer: other", 'to `reply: "A"`'),
+      running("steer: other", "A"),
       "steer: same",
     ]);
     // Written before Pi decided to run it apart, so worded to hold either way.
-    expect(out.promoted).toBe(running("steer: other", 'to `reply: "A"`'));
+    expect(out.promoted).toBe(running("steer: other", "A"));
     expect(out.promotedSteer).toBe("steer: more");
-    expect(out.woken).toBe(running("steer: wake", 'to `reply: "C"`'));
+    expect(out.woken).toBe(running("steer: wake", "C"));
     expect(out.after).toBe("later");
-    expect(out.topLevel).toBe(
-      running("steer: thread", "to the channel top level, without `reply`"),
-    );
-    expect(out.joined).toBe(running("steer: J4", 'to `reply: "B"`'));
+    expect(out.joined).toBe(running("steer: J4", "B"));
     expect(out.stopped).toEqual({ status: "closed" });
     expect(out.unfinished).toEqual([
       {

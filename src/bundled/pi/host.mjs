@@ -1355,8 +1355,8 @@ export function serve({
     const running = opened.scopes.get(watched?.inputs[0]);
     const content = !steers
       ? turn.text
-      : running && running.scope !== turn.scope
-        ? `${turn.steer}\n\nThe reply target above is for the new message only. If you are still working on the request that started this run, ordinary replies about that work still go ${running.topLevel ? "to the channel top level, without `reply`" : `to \`reply: "${running.scope}"\``}. Later messages keep their own reply targets.`
+      : running && running !== turn.scope
+        ? `${turn.steer}\n\nThe reply target above is for the new message only. Unfinished work from thread ${running} keeps \`reply: "${running}"\`. Later messages keep their own reply targets.`
         : turn.steer;
     const submission = await conversation.submit(
       {
@@ -1645,11 +1645,7 @@ export function serve({
           watched,
         );
         if (!submitted) return false;
-        // A top-level turn's scope is its channel, and its replies omit `reply`.
-        opened.scopes.set(submitted.submission, {
-          scope: turn.scope,
-          topLevel: turn.scope === tools.channel,
-        });
+        opened.scopes.set(submitted.submission, turn.scope);
         if (session !== undefined) Object.assign(submitted, { session });
         // Recorded once Pi has the turn: one that could not start leaves the
         // messages it would have been shown for the next.

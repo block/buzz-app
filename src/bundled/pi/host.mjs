@@ -1511,14 +1511,13 @@ export function serve({
 
   async function observe(opened, conversation) {
     let queue = Promise.resolve();
-    /** `sent`: once every event so far has gone out. `idle`: waiters woken
-     * once no run works in it. `events`: how many commits it has seen, which
-     * a turn waiting for its run reads as progress. */
+    /** `sent`: once every event so far has gone out. `events`: how many
+     * commits it has seen, which a turn waiting for its run reads as
+     * progress. */
     const state = {
       busy: false,
       observation: undefined,
       sent: () => queue,
-      idle: [],
       events: 0,
     };
     // Events go out in order, each after the reads it needs. The observer
@@ -1544,7 +1543,6 @@ export function serve({
       // new request then starts the next run, not steers this one.
       state.busy = Boolean(live.run && !live.run.afterRun);
       if (!initial) state.events++;
-      if (!state.busy) for (const resolve of state.idle.splice(0)) resolve();
       if (!live.run) {
         inputs.clear();
         calls.clear();
@@ -1880,7 +1878,7 @@ export function serve({
   /** Waits until the conversation holds no unfinished input in the other
    * mode than `bound`, read from Pi's storage, as Pi may hold one that no
    * run it has been seen to start has yet. WITHDRAWN once an Interrupt or
-   * Stop came for it. Woken when a run ends or such an input settles; its
+   * Stop came for it. Woken when such an input settles; its
    * own wait for each asks Pi for progress, which continues work a restart
    * left; a run Pi cuts off after repeated crashes ends its requests
    * itself. With no run working in the conversation and no activity in it
@@ -1890,12 +1888,11 @@ export function serve({
     const closed = () => new Error("This agent was closed.");
     let seen = state.events;
     let since = Date.now();
-    /** Inputs whose wait here ended: only a run's end or the bound wakes
-     * it for them again, so a wait that settles at once never spins. */
+    /** Inputs whose wait here ended: only the bound wakes it for them
+     * again, so a wait that settles at once never spins. */
     const waited = new Set();
     for (;;) {
       const ended = new Promise((resolve) => {
-        state.idle.push(resolve);
         waiting.wake = resolve;
       });
       if (opened.closing) throw closed();
@@ -2655,11 +2652,8 @@ export function serve({
     if (!opened) return;
     if (!opened.closing)
       opened.closing = (async () => {
-        for (const watched of opened.watched.values()) {
-          const state = await watched.catch(() => undefined);
-          for (const resolve of state?.idle.splice(0) ?? []) resolve();
-          state?.observation.detach();
-        }
+        for (const watched of opened.watched.values())
+          (await watched.catch(() => undefined))?.observation.detach();
         await opened.harness.close(context);
         // A compromised lock may already be released. Native execution has
         // ended above; releasing ownership is cleanup, not its acknowledgement.

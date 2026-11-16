@@ -48,9 +48,10 @@ that gateway enables for Pi, sends a gateway run's requests to the gateway:
 Pi's own built-in Anthropic or OpenAI model, by its own ID, under the Pi
 upstream base of the build's `BUZZ_AGENT_GATEWAY` descriptor. That base must be
 the gateway's routed ingress, which resolves Pi's own IDs (such as
-`claude-haiku-4-5` or `gpt-5.4-mini`) to its endpoints. A raw Databricks
-pass-through base rejects them, and Buzz does no name mapping of its own. Without that descriptor, or
-without a Pi upstream in it, every route is external. Pi's providers, models
+`claude-haiku-4-5` or `gpt-5.4-mini`) to its endpoints. A raw provider
+pass-through base rejects them, and Buzz does no name mapping of its own.
+Without that descriptor, or without a Pi upstream in it, every route is
+external. Pi's providers, models
 and setup are as without the gateway: the gateway lists nothing, and a saved
 choice is an ordinary `anthropic/…` or `openai/…` model.
 
@@ -118,13 +119,13 @@ in the other mode waits until Pi holds no work in that mode, read from Pi's
 storage. Its own wait for that work continues work a stopped host left. It
 fails visibly ("The previous run didn't finish") once no run works in the
 conversation and that work shows no progress for 15 minutes; a run that works
-silently, such as a long tool call, never fails it. Interrupt withdraws every turn of the conversation
-that Pi doesn't have yet, and Stop on a waiting turn's Activity withdraws
-that turn alone. A withdrawn turn is never submitted, and its record and
+silently, such as a long tool call, never fails it. In a conversation with
+gateway work, Interrupt withdraws every turn of it that Pi doesn't have yet,
+and Stop on a waiting turn's Activity withdraws that turn alone; an ordinary
+conversation's Interrupt is as on `main`. A withdrawn turn is never submitted, and its record and
 reply destination are removed.
 
-Responses transport is verified. Black-box probes saw no effect of affinity
-on upstream caching, and none is documented.
+Responses transport is verified.
 
 ## Limits
 

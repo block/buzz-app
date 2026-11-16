@@ -1276,38 +1276,22 @@ it("reads newest history without q, in a DM named by its person, a page at a tim
   expect(second).toContain("\n[2] buzz://message?channel=dm1&id=");
 });
 
-it("sorts newest first only where the community says it can", async () => {
+it("asks for newest first, and says when the community ranked anyway", async () => {
   const older = event({ id: "3".repeat(64), created_at: 100, content: "x" });
   const newer = event({ id: "4".repeat(64), created_at: 200, content: "x" });
   const { client } = fake([older, newer]);
-  // A relevance page in date order proves nothing about the sort.
-  ranking(client, () => [newer, older]);
+  let ranked = [older, newer];
+  ranking(client, () => ranked);
   const header = async () =>
     (await search(client, { q: "x", sort: "newest" })).split("\n")[0];
-  // A host that can't say, or a community that doesn't advertise it.
-  for (const searchSort of [
-    undefined,
-    async () => false,
-    async () => {
-      throw new Error("offline");
-    },
-  ]) {
-    if (searchSort) client.searchSort = searchSort;
-    else delete client.searchSort;
-    expect(await header()).toBe(
-      `2 results for "x", best match first (this community can't sort a search by newest).`,
-    );
-    expect(client.query).toHaveBeenLastCalledWith(
-      expect.arrayContaining([
-        expect.not.objectContaining({ search_sort: "newest" }),
-      ]),
-    );
-  }
-  client.searchSort = async () => true;
-  expect(await header()).toBe(`2 results for "x", newest first.`);
+  expect(await header()).toBe(
+    `2 results for "x", best match first (this community can't sort a search by newest).`,
+  );
   expect(client.query).toHaveBeenCalledWith([
     { kinds: SEARCH_KINDS, limit: 30, search: "x", search_sort: "newest" },
   ]);
+  ranked = [newer, older];
+  expect(await header()).toBe(`2 results for "x", newest first.`);
 });
 
 it("keeps a span back from now fixed across pages", async () => {

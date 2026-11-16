@@ -956,12 +956,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       args.in === undefined ? undefined : await tools.place(String(args.in));
     if (!q && !from && !place && since === undefined && until === undefined)
       throw new Error("Give q, or from, in, after or before.");
-    // A community that can't sort a search by newest ranks it by relevance.
-    const sortable =
-      q && sort === "newest"
-        ? await client.searchSort?.().catch(() => false)
-        : false;
-    const newest = !q || sortable === true;
+    const newest = !q || sort === "newest";
     const found = await client.query([
       {
         kinds: q ? SEARCH : MESSAGES,
@@ -984,11 +979,23 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       : [];
     const latest = new Map(edited([...found, ...edits]).map((e) => [e.id, e]));
     const hits = found.flatMap((event) => latest.get(event.id) ?? []);
-    const order = newest
-      ? "newest first"
-      : sort === "newest"
+    // Newest first if this community supports it (it advertises
+    // `buzz-search-sort`). An older relay ignores `search_sort` and ranks by
+    // relevance; that shows here only when the page is out of date order, so
+    // one hit, or a relevance page that happens to be in date order, is still
+    // called newest first.
+    const unsorted =
+      q &&
+      newest &&
+      hits.some(
+        (event, i) =>
+          i > 0 && event.created_at > (hits[i - 1] as BuzzEvent).created_at,
+      );
+    const order = !newest
+      ? "best match first"
+      : unsorted
         ? "best match first (this community can't sort a search by newest)"
-        : "best match first";
+        : "newest first";
     const owners = hits.flatMap((event) => tag(event, "auth") ?? []);
     const names = await tools.names([
       ...(from ? [from] : []),
@@ -1044,7 +1051,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       // Resolved, so a span like 7d does not move between pages.
       ...(since !== undefined ? { after: utc(since) } : {}),
       ...(before !== undefined ? { before: utc(before) } : {}),
-      ...(q && sort === "newest" ? { sort } : {}),
+      ...(q && newest ? { sort } : {}),
       limit,
       page: page + 1,
     };

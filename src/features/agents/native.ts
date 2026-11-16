@@ -4,7 +4,6 @@ import type {
 } from "../agent-protection/service";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { eventsDto, type RelayEvent } from "../relay/events";
-import { nativeRelayInfo } from "../relay/native";
 import { effectiveEditDto, effectiveEditFilter } from "../relay/effective-edit";
 import { importedEmojiPicture } from "./import-picture";
 
@@ -204,9 +203,6 @@ export type AgentsNative = {
     query: string,
     limit: number,
   ): Promise<RelayEvent[] | undefined>;
-  /** Whether the agent's community advertises `buzz-search-sort`, so a
-   * search can ask for newest first. */
-  searchSort?(member: Membership): Promise<boolean>;
   /** Uploads base64 `data`, a file of any type its community accepts, as
    * the agent. `mime` is a hint; the community decides the type. */
   upload(member: Membership, data: string, mime: string): Promise<AgentUpload>;
@@ -338,13 +334,6 @@ export const nativeAgents = (): AgentsNative | undefined =>
             limit,
           });
           return found == null ? undefined : eventsDto(found);
-        },
-        searchSort: async ({ relay }) => {
-          const extensions = (await nativeRelayInfo(relay))
-            .supported_extensions;
-          return (
-            Array.isArray(extensions) && extensions.includes("buzz-search-sort")
-          );
         },
         upload: ({ pubkey, relay }, data, mime) =>
           invoke("app_agent_upload", { pubkey, relay, data, mime }),

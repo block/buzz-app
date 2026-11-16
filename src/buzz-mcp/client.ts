@@ -151,9 +151,6 @@ export interface BuzzClient {
     query: string,
     limit: number,
   ): Promise<readonly BuzzEvent[] | undefined>;
-  /** Whether the community advertises `buzz-search-sort`, so a search can
-   * ask for newest first. Absent or false: searches rank by relevance. */
-  searchSort?(): Promise<boolean>;
   /** Signs `event` as the agent and posts it. */
   publish(event: Template): Promise<BuzzEvent>;
   /** Uploads a file; `mime` is a hint, and the community decides the type. */

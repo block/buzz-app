@@ -567,7 +567,6 @@ export type RunnerHost = {
         | "query"
         | "effectiveEdit"
         | "searchProfiles"
-        | "searchSort"
         | "upload"
         | "media"
         | "gitAuth"
@@ -3002,10 +3001,6 @@ export class AgentRunners {
         searchProfiles: async (query: string, limit: number) => {
           lifetime.throwIfAborted();
           return this.require().searchProfiles(agent, query, limit);
-        },
-        searchSort: async () => {
-          lifetime.throwIfAborted();
-          return (await this.require().searchSort?.(agent)) === true;
         },
         upload: async (data: string, mime: string) => {
           lifetime.throwIfAborted();

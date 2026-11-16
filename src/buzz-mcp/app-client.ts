@@ -185,10 +185,6 @@ export function appClient(
       check();
       return agent.searchProfiles(query, limit);
     },
-    searchSort: async () => {
-      check();
-      return (await agent.searchSort?.()) === true;
-    },
     publish: (event) => {
       check();
       return agent.publish(event, check);

@@ -259,7 +259,13 @@ function useShowFocused(
     surface.addEventListener("animationend", unmark, { once: true });
     surface.addEventListener("animationcancel", unmark, { once: true });
     following.current = false;
+    // Start below the panel's sticky header, which would otherwise cover it.
+    const header = element
+      .closest("[data-transcript]")
+      ?.querySelector<HTMLElement>(":scope > [data-transcript-header]");
+    element.style.scrollMarginBlockStart = `${header?.offsetHeight ?? 0}px`;
     element.scrollIntoView({ block: "start" });
+    element.style.removeProperty("scroll-margin-block-start");
     // Keyboard focus arrives too, after the panel's own handoff, unless the
     // reader has pressed or typed since asking and so moved it themselves.
     requestAnimationFrame(() => {

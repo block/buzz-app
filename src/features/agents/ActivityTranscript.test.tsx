@@ -548,17 +548,26 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
   Object.defineProperty(view, "scrollHeight", { get: () => 1000 });
   document.body.appendChild(view);
   const shown: string[] = [];
+  const margins: string[] = [];
   Element.prototype.scrollIntoView = function (this: HTMLElement) {
     shown.push(this.dataset.entry ?? "");
+    margins.push(this.style.scrollMarginBlockStart);
   };
   const done = vi.fn();
+  // The panel's sticky header, 40px tall.
+  const header = (node: HTMLDivElement | null) => {
+    if (node) Object.defineProperty(node, "offsetHeight", { value: 40 });
+  };
   const show = (turns: TranscriptTurn[], events: string[]) => (
     <TranscriptFocus.Provider value={{ events, inputs: readerInputs(), done }}>
-      <ActivityTranscript
-        transcript={{ turns }}
-        agentName="Sol"
-        state={() => "ended"}
-      />
+      <div data-transcript>
+        <div data-transcript-header ref={header} />
+        <ActivityTranscript
+          transcript={{ turns }}
+          agentName="Sol"
+          state={() => "ended"}
+        />
+      </div>
     </TranscriptFocus.Provider>
   );
   try {
@@ -574,6 +583,12 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
     trigger.focus();
     rerender(show([turn(1), turn(2), turn(3)], ["reply", id(2)]));
     expect(shown).toEqual(["item:p2"]);
+    // It starts below the sticky header, which keeps no margin afterwards.
+    expect(margins).toEqual(["40px"]);
+    expect(
+      view.querySelector<HTMLElement>('[data-entry="item:p2"]')?.style
+        .scrollMarginBlockStart,
+    ).toBe("");
     expect(done).toHaveBeenCalledOnce();
     const prompt = screen.getByText("Prompt 2", { selector: "p" });
     expect(prompt.closest("details")).toHaveAttribute("open");

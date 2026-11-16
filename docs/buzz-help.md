@@ -1491,7 +1491,9 @@ available rather than silently discarding it.
   once that turn is loaded. Working indicators describe current work,
   not a guarantee that an agent is available or that a message was delivered.
   Local work includes conversation wakes from plugins, watches, and timers.
-  These wakes have no message link of their own.
+  These wakes have no message link of their own. A plugin can cancel a pending
+  guarded wake when its work is no longer current. It cannot retract input
+  already handed to the agent.
   Expand grouped work updates to read each message; the collapsed excerpt names
   its speaker. Thread work appears inside its thread; the channel’s reply summary
   still shows when an agent is working there. While the activity under your

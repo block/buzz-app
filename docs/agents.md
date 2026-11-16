@@ -626,6 +626,37 @@ Then the wake's run
 goes on, and only what it sends is posted. Pi still waits for the wake, so a
 run of its own that fails fails what is queued behind it too, which reports it.
 
+Plugins can feature-detect the optional `ctx.agents.wakeGuarded` capability:
+
+```ts
+const result = await ctx.agents.wakeGuarded?.(agentKey, wake, {
+  signal: controller.signal,
+  current: () => workIsStillCurrent(),
+});
+if (result?.status === "dropped") {
+  // No input was handed to the prompt/steer transport.
+}
+```
+
+It uses the same queue, destination and plugin-data framing as `wake`.
+The synchronous `current` predicate must return `true`. The host checks it at
+admission, after queue waits, and immediately before prompt or steering handoff.
+A thrown predicate fails closed. The host also checks plugin lifetime, agent
+identity, community session, destination membership and the owner's read access.
+A predicate cannot grant access or override Stop.
+
+The result is `{ status: "delivered" }` at the final guarded handoff to the
+runner's prompt/steer transport. This is neither an early queue acknowledgement
+nor proof of model consumption, task completion, or a durable receipt. Once input
+has been handed off, cancellation cannot retract it. A dropped result has
+`status: "dropped"` and a `reason`: `aborted` for caller cancellation, `stale` for
+a false predicate, `guard-error` for a thrown predicate, `unavailable` for a lost
+host binding or authority, or `refused` for a full queue or a harness that ends
+without handoff. Invalid wake arguments reject as with `wake`. A host without
+this method returns no capability; plugins must choose their own fallback.
+The guard and result are local and are not saved across shutdown. Dropped guarded
+wakes have no retry action that could bypass the original guard.
+
 An agent hands off to itself in another of its conversations with the
 `self_handoff` tool, which takes a channel, a thread and text. The tool requires
 a channel the agent can see, as `send` does, and a thread in that channel (any

@@ -31,6 +31,7 @@ export const HOST_SHORTCUT_ORDER = {
   textSizeDecrease: 50,
   textSizeReset: 60,
   search: 70,
+  showAllConversations: 77,
   settings: 80,
   shortcutsHelp: 81,
   status: 83,

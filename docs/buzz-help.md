@@ -955,6 +955,14 @@ and are asked to sign in again in Buzz.
   sections. When a plugin is explicitly disabled, its existing chats appear as
   ordinary Solo chats; enabling it again returns them to the plugin's rows when
   available. Opening the channel from Team follows the usual Team navigation.
+- **Section filters**: a Team section's **⋯** → **Filter** shows **All**,
+  **Unreads** or channels **Active in the last…** period; the open conversation
+  always stays. The menu lists the hidden channels so you can open one.
+  **Show all conversations** in that menu, or ⌘⇧S (Ctrl+Shift+S elsewhere),
+  pauses every section's filter without changing it, for two minutes unless
+  **Settings** → **Appearance** → **Show all conversations for** sets 30
+  seconds, 1 minute or 5 minutes on this device. Choose it or press the
+  shortcut again to end it early. Screen readers announce when it runs out.
 - **Side panels stay with their conversation**: a tab or panel you open beside a
   conversation, such as a thread, **Canvas**, a huddle, or Todos, stays open for
   that conversation when you go to another conversation or page and come back,

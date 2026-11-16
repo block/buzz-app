@@ -712,7 +712,16 @@ export function SearchResults({
     session.profiles.verifiedAuthority?.(),
   );
   const candidates = new Map([
-    ...[...profiles].filter(([pubkey]) => members.includes(pubkey)),
+    ...members.map(
+      (pubkey) =>
+        [
+          pubkey,
+          profiles.get(pubkey) ?? {
+            name: pubkey.slice(0, 10),
+            nameIsFallback: true,
+          },
+        ] as const,
+    ),
     ...agents.selectable.map(
       (agent) =>
         [

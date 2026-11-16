@@ -349,7 +349,7 @@ export function useSearchMessages(
                 checked.authority !== authority ||
                 session.profiles.verifiedAuthority?.() !== authority
               )
-                throw new Error("Author names changed. Try again.");
+                throw new Error("Author names changed.");
               for (const [pubkey, profile] of checked.profiles)
                 checkedNames.set(pubkey, profile);
             }
@@ -432,7 +432,7 @@ export function useSearchMessages(
                   checked.authority !== authority ||
                   session.profiles.verifiedAuthority?.() !== authority)
               )
-                throw new Error("Author names changed. Try again.");
+                throw new Error("Author names changed.");
               remoteNames = checked?.profiles;
               const matches = [...profiles]
                 .filter(

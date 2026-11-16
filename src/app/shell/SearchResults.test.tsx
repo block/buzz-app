@@ -3962,7 +3962,7 @@ function verifiedAuthorSession({
   namesakeName?: string;
   pageOnly?: boolean;
   namingPolicy?: boolean;
-  profileName?: string;
+  profileName?: string | null;
   verification?: Promise<void>;
   searchEmpty?: boolean;
   extraMembers?: number;
@@ -3975,7 +3975,8 @@ function verifiedAuthorSession({
     viewer = keypair(),
     person = keypair(),
     namesake = keypair();
-  const raw = profile(person, { name: profileName });
+  const raw =
+    profileName === null ? undefined : profile(person, { name: profileName });
   const head = eventDto(
     signed(relay, {
       kind: 30382,
@@ -3993,7 +3994,7 @@ function verifiedAuthorSession({
     }),
   );
   const publicProfiles = [
-    raw,
+    ...(raw ? [raw] : []),
     ...(namesakeName ? [profile(namesake, { name: namesakeName })] : []),
   ];
   const discovery = [
@@ -4232,14 +4233,20 @@ it("fails closed when remote author verification is unavailable", async () => {
   }
 });
 
-it.each(["before-eose", "after-eose"] as const)(
-  "offers a scoped verified namesake absent from profile search when live sync refuses %s",
-  async (refuseVerification) => {
+it.each(
+  (["before-eose", "after-eose"] as const).flatMap((refuseVerification) =>
+    [true, false].map((kind0) => ({ refuseVerification, kind0 })),
+  ),
+)(
+  "offers a scoped verified namesake absent from profile search with kind 0 $kind0 when live sync refuses $refuseVerification",
+  async ({ refuseVerification, kind0 }) => {
     const { owner, person, reads } = verifiedAuthorSession({
       pageOnly: true,
       searchEmpty: true,
       namesakeName: "robinz",
       refuseVerification,
+      profileName: kind0 ? "Robin" : null,
+      searchableNames: false,
     });
     const change = vi.fn();
     try {

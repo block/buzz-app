@@ -23,14 +23,17 @@ import { bindDeepLinks } from "../features/navigation/deep-links";
 import { matchesEvent } from "../features/relay/projection";
 import { bounds, message, metadata, roster } from "../features/relay/testing";
 import type { ReadFilter } from "../features/relay/events";
+import type { StorageResult } from "../plugins/types";
 
 /** Any variant of the App-owned "page couldn't open" card. */
 const pageFailure =
   /^(This page isn’t available|Can’t connect|You don’t have access to this|This link doesn’t work)$/;
 
-// Holds the plugin catalog read, so a test can settle the client first.
+// Holds the plugin catalog read, so a test can settle the client first, and
+// lets a test change what the read returns.
 const catalogGate = vi.hoisted(() => ({
   value: undefined as Promise<void> | undefined,
+  edit: undefined as ((result: StorageResult) => StorageResult) | undefined,
 }));
 vi.mock("../plugins/storage", async (original) => {
   const actual = await original<typeof import("../plugins/storage")>();
@@ -44,7 +47,8 @@ vi.mock("../plugins/storage", async (original) => {
         ...storage,
         async getCatalog() {
           await catalogGate.value;
-          return storage.getCatalog();
+          const result = await storage.getCatalog();
+          return catalogGate.edit?.(result) ?? result;
         },
       };
     },
@@ -64,6 +68,21 @@ vi.mock("../plugins/modules", async (original) => {
         if (plugin.manifest.id === "buzz.inbox") await inboxGate.value;
         return load(plugin);
       };
+    },
+  };
+});
+// Counts the sidebar inventory's renders.
+const soloRenders = vi.hoisted(() => ({ count: 0 }));
+vi.mock("../features/channel-navigation/SoloInventory", async (original) => {
+  const actual =
+    await original<
+      typeof import("../features/channel-navigation/SoloInventory")
+    >();
+  return {
+    ...actual,
+    SoloInventory: (props: Parameters<typeof actual.SoloInventory>[0]) => {
+      soloRenders.count++;
+      return <actual.SoloInventory {...props} />;
     },
   };
 });
@@ -149,6 +168,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   catalogGate.value = undefined;
+  catalogGate.edit = undefined;
   inboxGate.value = undefined;
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   localStorage.clear();
@@ -799,6 +819,104 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
   expect(current.relay.snapshot().generation).toBe(generation);
   expect(screen.queryByText(pageFailure)).toBeNull();
 });
+it("opens and closes a thread without rendering the sidebar", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  vi.stubEnv("VITE_BUZZ_LIVE", "1");
+  localStorage.setItem(
+    `buzz-client.v1:${viewer}`,
+    JSON.stringify({
+      profile: { name: "Fixture", picture: "" },
+      memberships: [{ id: origin, name: "Fixture community" }],
+      selected: origin,
+    }),
+  );
+  const author = { secret: key, pubkey: viewer };
+  const root = message(author, "alpha", "Thread root", 1_700_000_100);
+  const channels = [
+    roster(author, "alpha", [viewer]),
+    metadata(author, "alpha", "Alpha"),
+    roster(author, "beta", [viewer]),
+    metadata(author, "beta", "Beta"),
+  ];
+  const history = [
+    root,
+    bounds(author, "alpha", "head", { has_more: false, next_cursor: null }),
+  ];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, options?: RequestInit) => {
+      if (url.endsWith("/identity")) return Response.json({ viewer });
+      if (url.endsWith("/session"))
+        return Response.json({ viewer, relayAuthor: viewer, relayUrl: origin });
+      if (url.endsWith("/query")) {
+        const filters = JSON.parse(String(options?.body)) as ReadFilter[];
+        if (filters.some((filter) => filter.kinds?.includes(9)))
+          return Response.json(history);
+        return Response.json(
+          channels.filter((event) =>
+            filters.some((filter) => matchesEvent(event, filter)),
+          ),
+        );
+      }
+      return Response.json({});
+    }),
+  );
+  const alpha = {
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: origin },
+    channelId: "alpha",
+  } as const;
+  window.history.replaceState(
+    null,
+    "",
+    `/#buzz=${encodeURIComponent(JSON.stringify(alpha))}`,
+  );
+  services = createServices();
+  const current = services;
+  render(<App services={current} />);
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  await waitFor(() => expect(soloRenders.count).toBeGreaterThan(0));
+  const opened = (entry: string) =>
+    waitFor(() =>
+      expect(current.navigation.snapshot()).toMatchObject({
+        status: "opened",
+        entry: { id: entry },
+      }),
+    );
+  // Let the sidebar settle before counting.
+  await act(async () => {});
+  const settled = soloRenders.count;
+  const start = current.navigation.snapshot().entry.id;
+  act(() => {
+    void current.navigation.open({
+      ...alpha,
+      messageId: root.id,
+      threadRootId: root.id,
+    });
+  });
+  const thread = current.navigation.snapshot().entry.id;
+  expect(thread).not.toBe(start);
+  // The page, not the shell, completes the thread's visit.
+  await opened(thread);
+  act(() => current.navigation.back());
+  await opened(start);
+  expect(soloRenders.count).toBe(settled);
+  // Another conversation is a destination, which the sidebar shows.
+  act(() => {
+    void current.navigation.open({ ...alpha, channelId: "beta" });
+  });
+  await waitFor(() => expect(soloRenders.count).toBeGreaterThan(settled));
+});
 it("offers to join a code-less link's community, or opens it once joined", async () => {
   const queue = [
     "buzz://add-community?relay=wss%3A%2F%2Fother.example%2F&name=other",
@@ -875,7 +993,11 @@ it("lists active primary pages in the app dock", async () => {
     value: () => {},
   });
   vi.stubEnv("VITE_BUZZ_LIVE", "1");
-  // Personal space with a saved community, not the first-run join screen.
+  // An existing install with Bestie explicitly enabled, not first-run setup.
+  localStorage.setItem(
+    "buzzodz.plugins.v1",
+    JSON.stringify({ version: 3, enabled: { "buzz.bestie": true } }),
+  );
   localStorage.setItem(
     `buzz-client.v1:${viewer}`,
     JSON.stringify({
@@ -895,7 +1017,11 @@ it("lists active primary pages in the app dock", async () => {
   services = createServices();
   const current = services;
   render(<App services={current} />);
-  await screen.findByRole("tab", { name: "Activity" });
+  // Activity is a row in the Messages sidebar; the others are dock apps.
+  await within(
+    await screen.findByRole("navigation", { name: "Pages" }),
+  ).findByRole("button", { name: "Activity" });
+  expect(screen.queryByRole("tab", { name: "Activity" })).toBeNull();
   expect(screen.getByRole("tab", { name: "Bestie" })).toBeInTheDocument();
 
   expect(
@@ -939,7 +1065,12 @@ it("lists active primary pages in the app dock", async () => {
   );
 
   await act(() => current.plugins.change("disable", "buzz.agents"));
-  expect(screen.getByRole("tab", { name: "Activity" })).toBeInTheDocument();
+  expect(
+    within(screen.getByRole("navigation", { name: "Pages" })).getByRole(
+      "button",
+      { name: "Activity" },
+    ),
+  ).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Bestie" })).toBeInTheDocument();
 
   expect(screen.queryByRole("tab", { name: "Agents" })).not.toBeInTheDocument();
@@ -960,11 +1091,14 @@ it("lists active primary pages in the app dock", async () => {
   ).not.toBeInTheDocument();
   await userEvent.keyboard("{Escape}");
 
-  // Disabling optional pages removes their dock entries without hiding Messages.
+  // Disabling optional pages removes their entries without hiding Messages.
   for (const id of ["buzz.inbox", "buzz.bestie", "buzz.repos"])
     await act(() => current.plugins.change("disable", id));
   expect(
-    screen.queryByRole("tab", { name: "Activity" }),
+    within(screen.getByRole("navigation", { name: "Pages" })).queryByRole(
+      "button",
+      { name: "Activity" },
+    ),
   ).not.toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: "Bestie" })).not.toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Messages" })).toBeInTheDocument();
@@ -972,6 +1106,17 @@ it("lists active primary pages in the app dock", async () => {
     screen.getByRole("complementary", { name: "Sidebar" }),
   ).toBeInTheDocument();
 });
+
+/** Activity is a row at the top of the Messages sidebar. While the app
+ * starts, that sidebar remounts once it becomes resizable, so find the row
+ * after that. */
+async function findActivityRow() {
+  await screen.findByRole("separator", { name: "Resize sidebar" });
+  return within(screen.getByRole("navigation", { name: "Pages" })).getByRole(
+    "button",
+    { name: "Activity" },
+  );
+}
 
 function legacyPageFixture(
   memberships = [{ id: origin, name: "Fixture community" }],
@@ -1019,8 +1164,13 @@ it.each(
 )(
   "normalizes old $name links in the same visit and caller, retaining $scope scope",
   async ({ name, scope }) => {
+    if (name === "Bestie")
+      localStorage.setItem(
+        "buzzodz.plugins.v1",
+        JSON.stringify({ version: 3, enabled: { "buzz.bestie": true } }),
+      );
     const current = legacyPageFixture();
-    await screen.findByRole("tab", { name: "Activity" });
+    await findActivityRow();
     const pageId = name.toLowerCase();
 
     act(() => {
@@ -1096,7 +1246,11 @@ it("opens a community-scoped page from another community, but not after leaving 
     ],
     other,
   );
-  await screen.findByRole("tab", { name: "Activity" });
+  await waitFor(() =>
+    expect(member.plugins.snapshot().activation["fixture.notes"]?.status).toBe(
+      "active",
+    ),
+  );
   let result!: ReturnType<typeof member.navigation.open>;
   act(() => {
     result = member.navigation.open(target);
@@ -1112,7 +1266,11 @@ it("opens a community-scoped page from another community, but not after leaving 
     [{ id: other, name: "Other community" }],
     other,
   );
-  await screen.findByRole("tab", { name: "Activity" });
+  await waitFor(() =>
+    expect(left.plugins.snapshot().activation["fixture.notes"]?.status).toBe(
+      "active",
+    ),
+  );
   act(() => {
     result = left.navigation.open(target);
   });
@@ -1198,7 +1356,7 @@ it("cold Settings Close uses required Messages when Inbox is disabled", async ()
 
 it("Close returns to the immediately preceding failed destination, not an older retained workspace", async () => {
   const current = legacyPageFixture();
-  await screen.findByRole("tab", { name: "Activity" });
+  await findActivityRow();
   await act(async () => {
     void current.navigation.open({
       version: 1,
@@ -1238,4 +1396,251 @@ it("Close returns to the immediately preceding failed destination, not an older 
       target: failed,
     }),
   );
+});
+
+/** The card for Activity turned off, with its copy and actions. */
+async function activityTurnedOff() {
+  const card = (
+    await screen.findByRole("heading", { name: "Activity is turned off" })
+  ).closest<HTMLElement>('[role="alert"]');
+  if (!card) throw new Error("Expected the failure alert");
+  expect(
+    within(card).getByText("Turn it on in Manage plugins to open this page."),
+  ).toBeVisible();
+  expect(
+    within(card)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Manage plugins", "Go to Messages"]);
+  return card;
+}
+
+/** Turns Activity off while it's open, then goes to Messages and Back. */
+async function backOntoTurnedOffActivity() {
+  const current = legacyPageFixture();
+  await userEvent.click(await findActivityRow());
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: { target: { kind: "page", pluginId: "buzz.inbox" } },
+    }),
+  );
+  const visit = current.navigation.snapshot().entry.id;
+  await act(() => current.plugins.change("disable", "buzz.inbox"));
+  await userEvent.click(
+    within(await activityTurnedOff()).getByRole("button", {
+      name: "Go to Messages",
+    }),
+  );
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: { target: { kind: "page", pluginId: "buzz.channels" } },
+    }),
+  );
+  act(() => current.navigation.back());
+  const card = await activityTurnedOff();
+  expect(current.navigation.snapshot()).toMatchObject({
+    status: "failed",
+    reason: "unavailable",
+    entry: { id: visit },
+  });
+  return { current, visit, card };
+}
+
+it("says when the open page's plugin is turned off, again after Back, and its Manage plugins opens that plugin and returns to the page", async () => {
+  const { current, visit, card } = await backOntoTurnedOffActivity();
+
+  await userEvent.click(
+    within(card).getByRole("button", { name: "Manage plugins" }),
+  );
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target).toEqual({
+      version: 1,
+      kind: "settings",
+      section: "plugins",
+      pluginId: "buzz.inbox",
+      scope: { viewer, communityOrigin: origin },
+    }),
+  );
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  await userEvent.click(
+    await within(settings).findByRole("button", { name: "Enable" }),
+  );
+  await waitFor(() =>
+    expect(
+      current.pages.snapshot().some((page) => page.key === "buzz.inbox/inbox"),
+    ).toBe(true),
+  );
+  await userEvent.click(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  );
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: { id: visit, target: { kind: "page", pluginId: "buzz.inbox" } },
+    }),
+  );
+  expect(current.navigation.snapshot().reason).toBeUndefined();
+  expect(screen.queryByText(pageFailure)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("heading", { name: "Activity is turned off" }),
+  ).not.toBeInTheDocument();
+});
+
+// The failed visit doesn't retry by itself; Try again opens it.
+it("turning a plugin back on over its failed page offers Try again, which opens the page", async () => {
+  const { current, visit } = await backOntoTurnedOffActivity();
+
+  // As ⌘K's switch does.
+  await act(() => current.plugins.change("enable", "buzz.inbox"));
+  const card = (
+    await screen.findByRole("heading", { name: "This page isn’t available" })
+  ).closest<HTMLElement>('[role="alert"]');
+  if (!card) throw new Error("Expected the failure alert");
+  expect(
+    within(card).getByText("It didn’t load this time. Try again in a moment."),
+  ).toBeVisible();
+  expect(
+    within(card)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Try again", "Go to Messages"]);
+  expect(
+    screen.queryByRole("heading", { name: "Activity is turned off" }),
+  ).not.toBeInTheDocument();
+
+  await userEvent.click(
+    within(card).getByRole("button", { name: "Try again" }),
+  );
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: { id: visit, target: { kind: "page", pluginId: "buzz.inbox" } },
+    }),
+  );
+  expect(current.navigation.snapshot().reason).toBeUndefined();
+  expect(screen.queryByText(pageFailure)).not.toBeInTheDocument();
+});
+
+// Paused external plugins can't start this launch, so Enable wouldn't help.
+it("keeps the unavailable card for a turned-off external plugin while external plugins are paused", async () => {
+  catalogGate.edit = (result) =>
+    result.status === "ready"
+      ? {
+          ...result,
+          externalPluginsPaused: true,
+          catalog: {
+            ...result.catalog,
+            plugins: result.catalog.plugins.map((plugin) =>
+              plugin.manifest.id === "fixture.notes"
+                ? { ...plugin, source: "external", enabled: false }
+                : plugin,
+            ),
+          },
+        }
+      : result;
+  const current = legacyPageFixture();
+  await findActivityRow();
+  expect(current.plugins.snapshot().configuration).toMatchObject({
+    status: "ready",
+    externalPluginsPaused: true,
+  });
+  act(() => {
+    void current.navigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "fixture.notes",
+      pageId: "notes",
+    });
+  });
+  const card = (
+    await screen.findByRole("heading", { name: "This page isn’t available" })
+  ).closest<HTMLElement>('[role="alert"]');
+  if (!card) throw new Error("Expected the failure alert");
+  expect(
+    within(card).getByText(
+      "It may have been removed, or you may need to update Buzz.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "Notes is turned off" }),
+  ).not.toBeInTheDocument();
+  expect(current.navigation.snapshot()).toMatchObject({
+    status: "failed",
+    reason: "unavailable",
+  });
+});
+
+// Inside Settings, the dialog's own sections and Close are the way out, so
+// its cards never leave for Messages as the page cards above do.
+it("a Settings section that isn’t available offers Try again, not Go to Messages", async () => {
+  const current = legacyPageFixture();
+  await findActivityRow();
+  act(() => {
+    void current.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "fixture.missing/options",
+    });
+  });
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  const card = (
+    await within(settings).findByRole("heading", {
+      name: "This page isn’t available",
+    })
+  ).closest<HTMLElement>('[role="alert"]');
+  if (!card) throw new Error("Expected the failure alert");
+  expect(
+    within(card).getByText(
+      "It may have been removed, or you may need to update Buzz.",
+    ),
+  ).toBeVisible();
+  expect(current.navigation.snapshot()).toMatchObject({
+    status: "failed",
+    reason: "unavailable",
+  });
+  expect(
+    within(card)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Try again"]);
+  expect(
+    within(card).getByRole("button", { name: "Try again" }).dataset.variant,
+  ).toBe("prominent");
+  expect(screen.queryByRole("button", { name: "Go to Messages" })).toBeNull();
+  expect(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  ).toBeVisible();
+});
+
+it("a turned-off plugin's Settings section offers Manage plugins, not Go to Messages", async () => {
+  const current = legacyPageFixture();
+  await findActivityRow();
+  await act(() => current.plugins.change("disable", "buzz.agents"));
+  act(() => {
+    void current.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "buzz.agents/external-apps",
+    });
+  });
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  const card = (
+    await within(settings).findByRole("heading", {
+      name: "Agents is turned off",
+    })
+  ).closest<HTMLElement>('[role="alert"]');
+  if (!card) throw new Error("Expected the failure alert");
+  expect(
+    within(card).getByText(
+      "Turn it on in Manage plugins to open this section.",
+    ),
+  ).toBeVisible();
+  expect(
+    within(card)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Manage plugins"]);
+  expect(screen.queryByRole("button", { name: "Go to Messages" })).toBeNull();
 });

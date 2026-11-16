@@ -44,9 +44,9 @@ semantic tokens, UI authoring rules and the local component reference.
   Messages comes first, then Inbox, Reminders and Bestie; other contributed pages
   follow by displayed label with a full contribution-key tie-breaker. Sidebar
   navigation and page search share this ordering, independent of plugin
-  activation/re-enable order. Primary pages choose `sidebar` (default), `topbar`
-  or `toolbar` placement for contributed pages; the host groups the latter two
-  in its left app dock.
+  activation/re-enable order. Primary pages choose `sidebar` (default, a row in
+  the Messages sidebar) or `dock` (an app in the left dock) placement for
+  contributed pages. `topbar` and `toolbar` are accepted aliases for `dock`.
   `PrimarySidebar` is the conversation sidebar: a capsule All / Solo / Team
   filter above one shared scrollport, Solo projects and chats above Team's channel
   sections, one relay-recovery notice, and the connection fallback. The filter
@@ -54,9 +54,13 @@ semantic tokens, UI authoring rules and the local component reference.
   reveals the inventory its placement belongs to unless the filter is All. Both
   inventories stay mounted when filtered, retaining section state, and share the
   channel sidebar's surface, resize owner, row treatment and section recipes.
-  Bestie and Inbox lead the left app dock, followed by Messages and the other
-  dock destinations. Sidebar-placed contributions remain in the conversation
-  sidebar. Its plus opens New for chat, project, DM and channel creation;
+  Bestie leads the left app dock, followed by Messages and the other dock
+  destinations. Activity (Inbox) is host-placed as the first Messages sidebar
+  row. Sidebar-placed contributions remain in the conversation
+  sidebar; while one is open, `navigationOwner` keeps Messages selected in the
+  dock and the conversation sidebar stays open unless the page supplies its own
+  sidebar, which replaces it. The conversation sidebar's plus opens New for
+  chat, project, DM and channel creation;
   Cmd/Ctrl+N opens that menu only where the current app has a creation sidebar. Every conversation, Solo or Team, opens in Messages; see
   [Solo](solo/README.md) for the Solo treatment, placement and the relay privacy
   boundary. Messages is the default destination.
@@ -132,10 +136,10 @@ semantic tokens, UI authoring rules and the local component reference.
   focus to main once retry removes it, even if reconnect temporarily remounts
   the shell. A new opening or focus elsewhere cancels this
   handoff. A selected dock page is a separately focusable, labelled tabpanel.
-  Dock destinations retain exact selection; sidebar/default-placement pages and
-  missing destinations leave every dock tile unselected. Sidebar page links retain
-  their exact route and focus main content when selected. Dock destinations never
-  become companion launchers.
+  Dock destinations retain exact selection; sidebar-placed pages select Messages,
+  and non-primary or missing destinations leave every dock tile unselected.
+  Sidebar page links retain their exact route and focus main content when
+  selected. Dock destinations never become companion launchers.
   The shell owns one joined Panel around navigation and page content, with a
   panel-gap outer gutter beside the dock, at the right and below. Nested Panels
   keep their opaque fill and clipping but drop individual borders, radii, and shadows. Layout
@@ -458,8 +462,10 @@ closing that profile or losing authorization also removes its log tab.
 Right-click any channel tab and choose **Close all tabs** to close this channel's
 thread, plugin and settings tabs across both panes, including hidden side-pane
 tabs. The permanent channel conversation stays; focus returns there if its previous
-target closed, while typing in surviving content remains uninterrupted. Other
-channels and saved message drafts are untouched. **Close other tabs** in the
+target closed, while typing in surviving content remains uninterrupted. A
+launcher's side panel, such as Todos, is not a tab, so it stays as it was:
+shown in an open pane, or hidden in a closed one. Other channels and saved
+message drafts are untouched. **Close other tabs** in the
 same menu does the same, except that the right-clicked tab stays open, selected
 and focused. On the channel conversation it is the same as Close all tabs. On a
 detail tab, such as an agent log, the tab that owns it stays instead, without
@@ -473,7 +479,9 @@ A thread that offers it also names its conversation above its original message,
 as Inbox rows do (`#channel` or `DM · names`); that name is a link that does
 the same.
 Shift+F10 on a focused tab opens the same
-menu. Hiding the pane remains separate from closing its tabs.
+menu. Hiding the pane remains separate from closing its tabs. It also hides a
+launcher's side panel without closing it: the launcher reads pressed only while
+the pane shows the panel, and one press brings back the pane with it.
 The main-header split control toggles existing pane content without closing its
 tabs or resetting their contents. With no content it is disabled but remains
 focusable, so closing the last tab has a stable focus-return target. There is no
@@ -527,10 +535,11 @@ and their retry controls remain visible.
 The composer preserves the session's text sending and keyboard behavior. Its
 rounded input and lavender send arrow follow the reference; unsupported upload,
 mention, and rich-formatting actions are not presented as working controls.
-Delivery renders like an ordinary message immediately. After ten seconds from the
-message timestamp, unsuccessful/unconfirmed sends show a small notice. Confirmed
-messages never show a success label. Retry remains available for failed/unknown
-operations. `delivery.test.ts` covers the timing boundary and terminal states.
+Delivery renders like an ordinary message immediately. A failed send shows a
+small notice as soon as it fails; an unconfirmed send shows one only after ten
+seconds from the message timestamp. Confirmed messages never show a success
+label. Retry remains available for failed/unknown operations. `delivery.test.ts`
+covers the timing boundary and terminal states.
 
 The shared conversation layer now supplies bounded thread reading/replies and
 [session-owned unread indicators](unread.md). These are separate from this styling

@@ -3,7 +3,9 @@
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
 import type { BuzzClient, Memories } from "./client";
+import { nativeToolClient } from "../features/agents/tool-operation";
 import { prepareAttachment } from "../features/messages/prepare-attachment";
+import { imageType } from "../features/relay/attachment-limits";
 import type { AgentHandle, AgentHandoff } from "../features/agents/service";
 import type {
   HostProcess,
@@ -30,9 +32,15 @@ export function appClient(
     /** Reject operations after the owning turn or community has ended. */
     check?(): void;
     signal?: AbortSignal;
+    /** Exact request cancellation exposed to added tools. */
+    callSignal?: AbortSignal;
     protectionContext?(): Promise<unknown>;
+    /** Retain a file-backed native snapshot until the exact tool check settles. */
+    captureProtectionContext?(): Promise<{ value: unknown; release(): void }>;
     /** The runtime reviews each tool call itself before Buzz dispatches it. */
     nativeToolGate?: boolean;
+    /** Set only by the native runtime for an active tool request. */
+    nativeCall?: () => void;
   }>,
 ): BuzzClient {
   const check = () => {
@@ -45,63 +53,96 @@ export function appClient(
     if (!found) throw new Error("Your community is not connected.");
     return found;
   };
+  const bestie = () => {
+    check();
+    const found = agent.bestie?.();
+    if (!found) throw new Error("Your community is not connected.");
+    return found;
+  };
   const handoff = agent.handoff;
   const plugins = agent.plugins;
-  const { settings, ownerAccess } = agent;
-  /** An owner read, only while the turn still holds before and after it. */
-  const owned = async <T>(read: (signal?: AbortSignal) => Promise<T>) => {
-    check();
-    const result = await read(options.signal);
-    check();
-    return result;
-  };
-  return {
+  const { settings, soloWorkspaces } = agent;
+  const client: BuzzClient = {
+    ...(options.callSignal ? { signal: options.callSignal } : {}),
     ...(agent.protection
       ? {
           protect: async (
             action: import("../features/agent-protection/service").ProtectionAction,
           ) => {
             check();
-            if (
-              action.kind === "tool" &&
-              agent.protection?.phases?.tool !== false
-            ) {
-              if (!options.protectionContext)
-                throw new Error(
-                  "The protected tool has no native conversation context",
-                );
-              action = {
-                ...action,
-                content: {
-                  ...(action.content as object),
-                  conversation: await options.protectionContext(),
-                },
-              };
+            let release = () => {};
+            try {
+              if (
+                action.kind === "tool" &&
+                agent.protection?.phases?.tool !== false
+              ) {
+                if (
+                  !options.protectionContext &&
+                  !options.captureProtectionContext
+                )
+                  throw new Error(
+                    "The protected tool has no native conversation context",
+                  );
+                const context = options.captureProtectionContext
+                  ? await options.captureProtectionContext()
+                  : {
+                      value: await options.protectionContext?.(),
+                      release: () => {},
+                    };
+                release = context.release;
+                action = {
+                  ...action,
+                  content: {
+                    ...(action.content as object),
+                    conversation: context.value,
+                  },
+                };
+              }
+              await agent.protection?.check(
+                action,
+                options.signal ?? new AbortController().signal,
+              );
+              check();
+            } finally {
+              release();
             }
-            await agent.protection?.check(
-              action,
-              options.signal ?? new AbortController().signal,
-            );
-            check();
           },
           ...(options.nativeToolGate ? { nativeToolGate: true as const } : {}),
         }
       : {}),
-    pubkey: agent.pubkey,
-    key: agent.key,
-    owner: agent.owner,
-    ...(ownerAccess && {
-      ownerAccess: {
-        channels: () => owned((signal) => ownerAccess.channels(signal)),
-        channel: (id) => owned((signal) => ownerAccess.channel(id, signal)),
-        members: (id, page) =>
-          owned((signal) => ownerAccess.members(id, page, signal)),
-        held: (execution) => {
+    ...(soloWorkspaces && {
+      soloWorkspaces: {
+        list: async () => {
           check();
-          ownerAccess.held(execution);
+          const result = await soloWorkspaces.list(options.signal);
+          check();
+          return result;
+        },
+        prepare: async (
+          workspace: string,
+          members: readonly string[],
+          channelId: string,
+        ) => {
+          check();
+          const file = await soloWorkspaces.prepare(
+            workspace,
+            members,
+            channelId,
+            options.signal,
+          );
+          check();
+          return async (id: string) => {
+            check();
+            const result = await file(id);
+            check();
+            return result;
+          };
         },
       },
     }),
+    pubkey: agent.pubkey,
+    key: agent.key,
+    owner: agent.owner,
     relayAuthor: options.relayAuthor,
     signingAuthority: options.signingAuthority,
     attention: agent.attention && {
@@ -140,6 +181,12 @@ export function appClient(
       check();
       return events;
     },
+    effectiveEdit: async (id, channel) => {
+      check();
+      const event = await agent.effectiveEdit(id, channel);
+      check();
+      return event;
+    },
     searchProfiles: (query, limit) => {
       check();
       return agent.searchProfiles(query, limit);
@@ -148,8 +195,18 @@ export function appClient(
       check();
       return agent.publish(event, check);
     },
-    upload: (data, mime) => {
+    upload: async (data, mime) => {
       check();
+      // An image loses its metadata as the composer's attachments do.
+      if (imageType(data)) {
+        const image = await prepareAttachment(
+          new File([new Uint8Array(data)], "file", { type: mime }),
+          options.signal ?? new AbortController().signal,
+        );
+        data = new Uint8Array(await image.arrayBuffer());
+        mime = image.type;
+        check();
+      }
       return agent.upload(toBase64(data), mime);
     },
     uploadPicture: async (data, mime) => {
@@ -218,6 +275,24 @@ export function appClient(
         throw new Error("Agent changes are unavailable on this host");
       return agent.updateAgent(input);
     },
+    readAgents: async (target) => {
+      check();
+      if (!agent.readAgents)
+        throw new Error("Agent reads are unavailable on this host");
+      return agent.readAgents(target);
+    },
+    readTeams: async (target) => {
+      check();
+      if (!agent.readTeams)
+        throw new Error("Team reads are unavailable on this host");
+      return agent.readTeams(target);
+    },
+    updateTeam: async (input) => {
+      check();
+      if (!agent.updateTeam)
+        throw new Error("Team changes are unavailable on this host");
+      return agent.updateTeam(input);
+    },
     ...(plugins && {
       plugins: {
         list: () => {
@@ -279,7 +354,25 @@ export function appClient(
           },
         }
       : {}),
+    ...(agent.bestie && {
+      bestie: {
+        read: () => bestie().read(),
+        set: (pubkey: string) => bestie().set(pubkey, check),
+        clear: () => bestie().clear(),
+      },
+    }),
   };
+  if (options.nativeCall && options.callSignal) {
+    nativeToolClient(client, {
+      signal: options.callSignal,
+      check: () => {
+        check();
+        options.nativeCall?.();
+        agent.attention.enabled();
+      },
+    });
+  }
+  return client;
 }
 
 /** Reads a file with the plugin's declared `read` process (`base64 -i`),

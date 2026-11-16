@@ -1,3 +1,8 @@
+import {
+  isTextSource,
+  snapshotJSON,
+  writeJSON,
+} from "../../features/agent-protection/json-stream";
 import { CLAUDE_HOOK_EVENTS, type ClaudeHook } from "./hooks";
 // One `claude` process driven over its stream-json protocol: the protocol the
 // Claude Agent SDK speaks to the same binary, so no Node runtime is needed. The
@@ -15,6 +20,7 @@ import {
   PROTECTED_CLAUDE_ROOT,
   protectedRuntime,
   protectionSources,
+  retainProtectionHistory,
   type ClaudeProtection,
 } from "./security";
 
@@ -22,7 +28,7 @@ export type ActivityReceipt = Readonly<{
   /** Presentation destination; channel-shared sessions may handle several threads. */
   activityScope?: string;
   step?: (tool: string, target?: string) => void;
-  acknowledged?: () => void;
+  acknowledged?: (input?: Readonly<{ steering?: true }>) => void;
   superseded?: () => void;
 }>;
 
@@ -43,10 +49,13 @@ export type ClaudeLaunch = Readonly<{
   pinned?: boolean;
   /** Native validation for a temporary review's structured result. */
   outputSchema?: Readonly<Record<string, unknown>>;
-  /** A security review's own Claude folder (absolute) and `claude
-   * setup-token` sign-in, in place of `~/.claude`, which contained agents
-   * can write. */
-  review?: Readonly<{ home: string; token: string }>;
+  /** A security review's own Claude folder (absolute), in place of
+   * `~/.claude`, which contained agents can write, and the environment it
+   * authenticates with (`ClaudeAuth.review`). */
+  review?: Readonly<{
+    home: string;
+    env: Readonly<Record<string, string | null>>;
+  }>;
   /** Appended to Claude's own system prompt. */
   systemPrompt: string;
   model?: string;
@@ -70,6 +79,8 @@ export type ToolServer = (
   message: unknown,
   /** Aborts when the process stops, so a stopped turn's tool does not act. */
   signal: AbortSignal,
+  /** Checks the exact active work that issued a native tool request. */
+  check?: () => void,
 ) => Promise<unknown>;
 /** Its tools are `mcp__buzz__<name>`. */
 export const TOOL_SERVER = "buzz";
@@ -106,15 +117,15 @@ export type Settled = Readonly<{
 
 const STDERR_LIMIT = 4_000;
 /** What `claude` is started with: as the SDK starts it, reporting when it is
- * idle, signed in as `claude auth login` left it, and never as part of a
- * Claude session that started the app. */
+ * idle, and never as part of a Claude session that started the app. Its
+ * credentials come from `ClaudeAuth`. */
 export const ENV: Readonly<Record<string, string | null>> = {
   CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
   CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1",
   // Buzz keeps its own copy current; Claude must not install itself elsewhere.
   DISABLE_AUTOUPDATER: "1",
-  // A key in the shell that launched the app would outrank the sign-in; the
-  // interactive CLI asks before using one, but stream-json mode uses it silently.
+  // Only `ClaudeAuth` gives a key: one in the shell that launched the app
+  // would outrank it, and stream-json mode uses it without asking.
   ANTHROPIC_API_KEY: null,
   CLAUDECODE: null,
   CLAUDE_CODE_SESSION_ID: null,
@@ -143,11 +154,15 @@ export class ClaudeProcess {
       throw new Error("The security model returned no structured result");
     return JSON.stringify(this.reviewOutput);
   }
-  protectionContext() {
-    return structuredClone({
-      transcript: this.protectedHistory,
-      events: this.protectedEvents,
-    });
+  captureProtectionContext() {
+    const release = retainProtectionHistory(this.protectedHistory);
+    return {
+      value: snapshotJSON({
+        transcript: this.protectedHistory,
+        events: this.protectedEvents,
+      }),
+      release,
+    };
   }
   /** Its session, known once the first turn starts (or at once when resuming). */
   sessionId: string | undefined;
@@ -174,6 +189,7 @@ export class ClaudeProcess {
   /** Aborts when the owner stops the work. The next turn, sent or its own,
    * starts anew, so a stopped turn's tool calls stay stopped. */
   private workLifetime = new AbortController();
+  private callEpoch = 0;
   /** The owner's Stop awaiting Claude's answer, for the work it stopped;
    * another Stop of that work shares it. */
   private stopRequest:
@@ -258,6 +274,10 @@ export class ClaudeProcess {
         "stream-json",
         "--verbose",
         "--replay-user-messages",
+        // A resumed session takes the system prompt it is launched with, not
+        // the one its session file saved when it began.
+        "--system-prompt-snapshot",
+        "off",
         // Recent models return empty thinking unless asked for summaries.
         "--thinking-display",
         "summarized",
@@ -349,11 +369,10 @@ export class ClaudeProcess {
         ...(launch.review
           ? {
               CLAUDE_CONFIG_DIR: launch.review.home,
-              CLAUDE_CODE_OAUTH_TOKEN: launch.review.token,
-              // What would pick another sign-in or endpoint over that one:
+              // What would pick other credentials or an endpoint over them:
               // the pinned release's variables as read from 2.1.312's
               // strings, as hygiene for the person's own environment. Never
-              // set CLAUDE_CODE_SIMPLE, which ignores the token.
+              // set CLAUDE_CODE_SIMPLE, which ignores an OAuth token.
               ANTHROPIC_AUTH_TOKEN: null,
               ANTHROPIC_BASE_URL: null,
               CLAUDE_CODE_API_BASE_URL: null,
@@ -367,6 +386,7 @@ export class ClaudeProcess {
               CLAUDE_CODE_USE_MANTLE: null,
               CLAUDE_CODE_USE_ANTHROPIC_AWS: null,
               CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD: null,
+              ...launch.review.env,
             }
           : {}),
       },
@@ -549,7 +569,7 @@ export class ClaudeProcess {
    * picked model and effort, or the session's own without them; a message
    * folded into a running turn changes only what it asks for. */
   send(
-    text: string,
+    text: import("../../features/agent-protection/json-stream").ReviewText,
     { model, effort, ...activity }: TurnPick & ActivityReceipt = {},
   ): Promise<Settled> {
     if (!this.alive)
@@ -632,7 +652,7 @@ export class ClaudeProcess {
   }
 
   private write(message: Message) {
-    return this.process.write(`${JSON.stringify(message)}\n`);
+    return writeJSON(this.process, message);
   }
   /** Writes a control request: `written` settles with the write, `answer`
    * with Claude's response. */
@@ -704,6 +724,7 @@ export class ClaudeProcess {
     return this.readingEffort;
   }
   private settle(settled: Settled) {
+    this.callEpoch++;
     this.pending = 0;
     this.receipts.clear();
     this.activeReceipts.clear();
@@ -775,6 +796,7 @@ export class ClaudeProcess {
       const active = this.active;
       const starts = !this.working && !this.busy && message.state !== "idle";
       this.working = message.state !== "idle";
+      if (!this.working) this.callEpoch++;
       // A turn of its own, such as a background task's, is new work.
       if (starts) this.renew();
       if (!this.working && this.pending) this.done();
@@ -819,12 +841,13 @@ export class ClaudeProcess {
       const receipt = this.receipts.get(message.uuid);
       if (receipt) {
         this.receipts.delete(message.uuid);
+        const steering = this.activeReceipts.size > 0;
         // Watches/timers have no message activity: they must not hide a mention.
         if (receipt.step) {
           const scope = receipt.activityScope ?? "conversation";
           this.activeReceipts.get(scope)?.superseded?.();
           this.activeReceipts.set(scope, receipt);
-          receipt.acknowledged?.();
+          receipt.acknowledged?.(steering ? { steering: true } : undefined);
         }
       }
       return;
@@ -856,7 +879,10 @@ export class ClaudeProcess {
         typeof message.result === "string" && message.result
           ? message.result
           : `Claude stopped (${String(message.subtype)})`;
-    if (!this.reportsState && this.pending) this.done();
+    if (!this.reportsState) {
+      this.callEpoch++;
+      if (this.pending) this.done();
+    }
   }
   private done() {
     const error = this.lastError;
@@ -880,22 +906,31 @@ export class ClaudeProcess {
       response,
     });
     let response: Message;
-    if (request.subtype === "mcp_message" && this.tools)
+    if (request.subtype === "mcp_message" && this.tools) {
+      const work = this.workLifetime;
+      const epoch = this.callEpoch;
       response = success({
         mcp_response: await this.tools(
           this.conversation,
           request.message,
-          AbortSignal.any([
-            this.protectionLifetime.signal,
-            this.workLifetime.signal,
-          ]),
+          AbortSignal.any([this.protectionLifetime.signal, work.signal]),
+          () => {
+            work.signal.throwIfAborted();
+            if (
+              !this.alive ||
+              !this.active ||
+              this.workLifetime !== work ||
+              this.callEpoch !== epoch
+            )
+              throw new Error("The Claude turn has ended");
+          },
         ).catch((error) => ({
           jsonrpc: "2.0",
           id: (request.message as Message | undefined)?.id ?? 0,
           error: { code: -32603, message: String(error?.message ?? error) },
         })),
       });
-    else if (
+    } else if (
       request.subtype === "hook_callback" &&
       this.protection &&
       [
@@ -905,6 +940,7 @@ export class ClaudeProcess {
         "security-session",
       ].includes(String(request.callback_id))
     ) {
+      let releaseHistory = () => {};
       try {
         const input = request.input as Message;
         if (
@@ -967,7 +1003,12 @@ export class ClaudeProcess {
               return [];
             throw error;
           });
-        this.protectedHistory = structuredClone(history);
+        releaseHistory = retainProtectionHistory(history);
+        if (isTextSource(this.protectedHistory))
+          (this.protectedHistory as { dispose?: () => void }).dispose?.();
+        this.protectedHistory = isTextSource(history)
+          ? history
+          : structuredClone(history);
         const content = {
           ...(tool
             ? { title: input.tool_name, arguments: input.tool_input }
@@ -998,10 +1039,15 @@ export class ClaudeProcess {
                   value: this.protectedInstructions,
                 },
               },
-              ...[
-                ...(Array.isArray(history) ? history : [history]),
-                ...this.protectedEvents,
-              ].flatMap((value) => protectionSources(value)),
+              ...(Array.isArray(history)
+                ? history.flatMap((value) => protectionSources(value))
+                : (["context", "tool-result"] as const).map((phase) => ({
+                    kind: phase,
+                    content: { source: "message", value: history.phase(phase) },
+                  }))),
+              ...this.protectedEvents.flatMap((value) =>
+                protectionSources(value),
+              ),
               ...protectionSources(
                 incoming,
                 "hook",
@@ -1050,6 +1096,8 @@ export class ClaudeProcess {
         await this.process.kill();
         await this.exited;
         return;
+      } finally {
+        releaseHistory();
       }
     } else if (request.subtype === "can_use_tool")
       response = success({

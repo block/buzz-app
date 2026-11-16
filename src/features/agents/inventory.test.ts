@@ -78,11 +78,17 @@ it("keeps either available source visible and makes partial failure explicit", a
     throw new Error("private host detail");
   };
   const signal = new AbortController().signal;
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const read = inventoryReader(async () => data, fail);
   expect(await read(signal)).toMatchObject({
     identities: data.identities,
     error: expect.stringContaining("Relay inventory unavailable"),
   });
+  // The reason stays in the log for diagnosis, out of the notice.
+  expect(warn).toHaveBeenCalledExactlyOnceWith(
+    "Relay agent inventory read failed",
+    expect.objectContaining({ message: "private host detail" }),
+  );
   expect(await inventoryReader(fail, async () => data)(signal)).toMatchObject({
     identities: data.identities,
     error: expect.stringContaining("Local library unavailable"),
@@ -93,6 +99,7 @@ it("keeps either available source visible and makes partial failure explicit", a
   await expect(inventoryReader(fail, fail)(signal)).rejects.toThrow(
     "sources unavailable",
   );
+  warn.mockRestore();
 });
 
 it("quietly retries a transient relay inventory failure before merging", async () => {

@@ -28,6 +28,7 @@ import {
   channelRowKind,
   membershipChange,
 } from "./membership";
+import { reactionTarget } from "./reaction-target";
 import { compareMessages, eventMs } from "./message-order";
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -283,12 +284,10 @@ export function foldMessages(
   const replies = new Map<string, EventData[]>();
   for (const event of events) {
     if (channelRowKind(event.kind)) {
+      // Most callers pass no pending replies; skip the tag scan for them.
+      if (!pendingReplies?.has(event.id)) continue;
       const rootId = threadReference(event)?.rootId;
-      if (
-        rootId &&
-        pendingReplies?.has(event.id) &&
-        channelRowChannel(event) === channelId
-      ) {
+      if (rootId && channelRowChannel(event) === channelId) {
         const list = replies.get(rootId) ?? [];
         list.push(event);
         replies.set(rootId, list);
@@ -301,7 +300,9 @@ export function foldMessages(
         summaries.set(target, newer(summaries.get(target), event));
       continue;
     }
-    for (const entry of event.tags) {
+    const references =
+      event.kind === 7 ? [["e", reactionTarget(event)]] : event.tags;
+    for (const entry of references) {
       if (entry[0] !== "e" || !entry[1]) continue;
       const list = overlays.get(entry[1]) ?? [];
       list.push(event);
@@ -461,6 +462,18 @@ export function foldMessages(
         ...(projected.content !== content ? { sourceContent: content } : {}),
         ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
         ...(agentAudience(event) ? { audience: "agents" as const } : {}),
+        ...(() => {
+          // One exact id, or none: conflicting claims bind no request.
+          const ids = new Set(
+            event.tags
+              .filter(([name]) => name === "buzz:request")
+              .map(([, id]) => id),
+          );
+          const [request] = ids;
+          return ids.size === 1 && request && HEX64.test(request)
+            ? { request }
+            : {};
+        })(),
         ...(event.kind === 9 &&
         event.tags.some(
           (tag) =>

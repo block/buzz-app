@@ -216,7 +216,6 @@
 
 .badge {
   display: inline-grid;
-  margin-inline-end: var(--space-1);
 }
 
 .channelNotice {

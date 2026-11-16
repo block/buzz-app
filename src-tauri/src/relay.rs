@@ -2,7 +2,7 @@
 pub(crate) mod agent;
 mod huddle;
 use crate::federated_identity::{
-    assertion::{Authorization, HEADER},
+    assertion::{Authorization, HEADER, SIGNED_OUT},
     FederatedIdentity,
 };
 use crate::identity::{EventTemplate, IdentityHost};
@@ -351,7 +351,10 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
             return Err("Relay authentication does not match this community".into());
         }
     } else if event.kind == 5 {
-        if !valid_message_deletion(event) && !valid_managed_agent_deletion(event) {
+        if !valid_message_deletion(event)
+            && !valid_reaction_deletion(event)
+            && !valid_managed_agent_deletion(event)
+        {
             validate_workflow_template(event)?;
         }
     } else if matches!(event.kind, 30620 | 46020) {
@@ -391,6 +394,39 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         };
         if !event.content.is_empty() || !scoped {
             return Err("Invalid typing indicator".into());
+        }
+    } else if event.kind == 48103 {
+        let body = serde_json::from_str::<serde_json::Value>(&event.content).ok();
+        let room = body
+            .as_ref()
+            .and_then(|body| body.get("ephemeral_channel_id"))
+            .and_then(|id| id.as_str());
+        let tags: Vec<_> = event
+            .tags
+            .iter()
+            .filter(|tag| !matches!(tag.first().map(String::as_str), Some("client-id" | "ms")))
+            .collect();
+        let valid = event
+            .tags
+            .iter()
+            .all(|tag| match tag.first().map(String::as_str) {
+                Some("client-id") => {
+                    matches!(tag.as_slice(), [_, id] if uuid::Uuid::parse_str(id).is_ok())
+                }
+                Some("ms") => {
+                    matches!(tag.as_slice(), [_, ms] if ms.parse::<u16>().is_ok_and(|ms| ms < 1000))
+                }
+                _ => true,
+            })
+            && matches!(tags.as_slice(), [tag] if matches!(tag.as_slice(), [name, parent]
+            if name == "h" && uuid::Uuid::parse_str(parent).is_ok()
+                && room.is_some_and(|room| room != parent && uuid::Uuid::parse_str(room).is_ok())))
+            && body
+                .as_ref()
+                .and_then(|body| body.as_object())
+                .is_some_and(|body| body.len() == 1);
+        if !valid {
+            return Err("Invalid Huddle ending".into());
         }
     } else if event.kind == 20003 {
         // Owner presence for agents: a status and one `p` tag per agent; the
@@ -502,6 +538,37 @@ fn valid_managed_agent_deletion(event: &EventTemplate) -> bool {
         && parts.next().is_some_and(hex_key)
         && parts.next().is_some_and(hex_key)
         && parts.next().is_none()
+}
+
+/** One reaction outside any channel, such as a star on a shared agent. Like
+ * every kind-5 without `h`, the relay derives scope from the single target and
+ * deletes it only for its author. */
+fn valid_reaction_deletion(event: &EventTemplate) -> bool {
+    event.kind == 5
+        && event.content.is_empty()
+        && event.created_at <= 9_007_199_254_740_991
+        && event
+            .tags
+            .iter()
+            .all(|tag| tag.len() == 2 && tag[1].len() <= 256)
+        && event
+            .tags
+            .iter()
+            .all(|tag| matches!(tag[0].as_str(), "e" | "k" | "client-id"))
+        && ["e", "k"]
+            .iter()
+            .all(|name| event.tags.iter().filter(|tag| tag[0] == *name).count() == 1)
+        && event
+            .tags
+            .iter()
+            .filter(|tag| tag[0] == "client-id")
+            .count()
+            <= 1
+        && event.tags.iter().any(|tag| tag[0] == "k" && tag[1] == "7")
+        && event
+            .tags
+            .iter()
+            .any(|tag| tag[0] == "e" && hex_key(&tag[1]))
 }
 
 /** Keep the shared kind-5 writer aligned with the broker's channel-local deletion shape. */
@@ -969,24 +1036,105 @@ async fn send(
     authenticated: bool,
     response_limit: usize,
 ) -> Result<RelayResponse> {
-    let assertion = if authenticated {
-        evidence(host, fi, &url).await?
-    } else {
-        None
-    };
-    send_authorized(
-        host,
-        AuthorizationContext {
-            fi,
-            assertion: assertion.as_ref(),
+    let community = url.clone();
+    let result = async {
+        let assertion = if authenticated {
+            evidence(host, fi, &url).await?
+        } else {
+            None
+        };
+        send_authorized(
+            host,
+            AuthorizationContext {
+                fi,
+                assertion: assertion.as_ref(),
+            },
+            url,
+            method,
+            body,
+            authenticated,
+            response_limit,
+        )
+        .await
+    }
+    .await;
+    // Only a request sent as the signed-in user speaks for their session: a
+    // native plugin's read or publish goes without federated evidence, so an
+    // FI-gated community refusing it says nothing about the user's sign-in.
+    if authenticated && fi.is_some() {
+        observe_refusal(&community, &result);
+    }
+    result
+}
+
+/// What the whole community refused, as `http-admission.ts` reads it: the
+/// relay's exact NIP-FI denial bodies (buzz-auth `nip_fi/denial.rs`), a
+/// community without NIP-FI refusing a key that isn't a member or is banned
+/// (buzz-relay `api/mod.rs` `admit_member`, and its media routes'
+/// `membership_denial`), and the sign-in this device no longer has. Anything
+/// else stays with its caller.
+fn community_refusal(result: &Result<RelayResponse>) -> Option<&'static str> {
+    match result {
+        Ok(response) => match (response.status, response.body.as_str()) {
+            (401, "authentication required\n") | (403, "evidence rejected\n") => Some("sign-in"),
+            (403, "authorization denied\n") => Some("access"),
+            (403, body) => serde_json::from_str::<serde_json::Value>(body)
+                .ok()
+                .filter(|body| {
+                    matches!(
+                        body["error"].as_str(),
+                        Some(
+                            "relay_membership_required"
+                                | "relay membership required"
+                                | "blocked: you are banned from this community"
+                        )
+                    )
+                })
+                .map(|_| "access"),
+            _ => None,
         },
-        url,
-        method,
-        body,
-        authenticated,
-        response_limit,
-    )
-    .await
+        Err(error) if error == SIGNED_OUT => Some("sign-in"),
+        Err(_) => None,
+    }
+}
+
+#[derive(Clone, Serialize)]
+struct Refusal {
+    community: String,
+    refusal: &'static str,
+}
+
+fn refusals() -> &'static tokio::sync::broadcast::Sender<Refusal> {
+    static REFUSALS: OnceLock<tokio::sync::broadcast::Sender<Refusal>> = OnceLock::new();
+    REFUSALS.get_or_init(|| tokio::sync::broadcast::channel(16).0)
+}
+
+/// Every signed relay request passes here, so a community's refusal reaches
+/// the window whichever command met it first.
+fn observe_refusal(url: &Url, result: &Result<RelayResponse>) {
+    if let Some(refusal) = community_refusal(result) {
+        let _ = refusals().send(Refusal {
+            community: url.origin().ascii_serialization(),
+            refusal,
+        });
+    }
+}
+
+/// Tells the window `relay-refusal` for each community refusal.
+pub(crate) fn watch_refusals<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    use tauri::Emitter as _;
+    let mut refused = refusals().subscribe();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match refused.recv().await {
+                Ok(refusal) => {
+                    let _ = app.emit_to("main", "relay-refusal", refusal);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
 }
 
 async fn send_authorized(
@@ -1465,20 +1613,28 @@ async fn upload_file(
     (size, hash): (usize, String),
     progress: Option<UploadProgress>,
 ) -> Result<RelayResponse> {
-    let assertion = evidence(host, fi, &url).await?;
-    upload_file_authorized(
-        host,
-        AuthorizationContext {
-            fi,
-            assertion: assertion.as_ref(),
-        },
-        url,
-        kind,
-        path,
-        (size, hash),
-        progress,
-    )
-    .await
+    let community = url.clone();
+    let result = async {
+        let assertion = evidence(host, fi, &url).await?;
+        upload_file_authorized(
+            host,
+            AuthorizationContext {
+                fi,
+                assertion: assertion.as_ref(),
+            },
+            url,
+            kind,
+            path,
+            (size, hash),
+            progress,
+        )
+        .await
+    }
+    .await;
+    if fi.is_some() {
+        observe_refusal(&community, &result);
+    }
+    result
 }
 
 async fn upload_file_authorized(
@@ -1613,7 +1769,9 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
         .clone();
     tauri::async_runtime::spawn(async move {
         let response = match media_request(&request) {
-            Ok((url, range)) => serve_media(&host, Some(&fi), url, range).await,
+            Ok((url, range)) => serve_media(&host, Some(&fi), url, range)
+                .await
+                .map(|(_, response)| response),
             Err(status) => Err(status),
         };
         let mut response = response.unwrap_or_else(|status| {
@@ -1996,6 +2154,42 @@ pub(crate) async fn media_copy_image<R: tauri::Runtime>(
     crate::clipboard::write_image(&app, pixels.0, pixels.1, pixels.2).await
 }
 
+/// Lifts the subject out of relay image media as a transparent PNG. As for Copy
+/// image, the host owns authenticated media access; the webview gets only the
+/// result.
+#[tauri::command]
+pub(crate) async fn media_lift_subject(
+    host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
+    source: String,
+) -> Result<tauri::ipc::Response> {
+    crate::subject_lift::supported()?;
+    let url = download_target(&source).ok_or("Invalid media URL")?;
+    let response = fetch_media_bounded(
+        host.inner(),
+        Some(fi.inner()),
+        url,
+        None,
+        crate::subject_lift::MAX_SOURCE_BYTES,
+    )
+    .await
+    .map_err(|_| "Could not fetch image")?;
+    if !response
+        .headers()
+        .get("Content-Type")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|kind| kind.starts_with("image/") && kind != "image/svg+xml")
+    {
+        return Err("Choose an image".into());
+    }
+    let png = tauri::async_runtime::spawn_blocking(move || {
+        crate::subject_lift::lift_subject(response.body())
+    })
+    .await
+    .map_err(|_| "Could not lift the subject".to_owned())??;
+    Ok(tauri::ipc::Response::new(png))
+}
+
 /// Persist an authenticated bounded response without replacing an existing file.
 /// The host, not the webview, owns the save path and collision policy.
 #[tauri::command]
@@ -2019,19 +2213,32 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
         return Err("This attachment is no longer available in this window".into());
     }
     let url = download_target(&source).ok_or("Invalid media URL")?;
-    let filename = download_name(&name, &url).to_owned();
     let directory = app
         .path()
         .download_dir()
         .map_err(|_| "Downloads unavailable")?;
-    let response = fetch_media(host.inner(), Some(fi.inner()), url, None)
+    save_media(host.inner(), Some(fi.inner()), url, directory, &name).await?;
+    Ok(())
+}
+
+/// Fetches relay media `url` as `buzz-media` serves it and saves it to
+/// `directory` as `name`, or else the name of the blob that served it,
+/// numbered if taken, returning where.
+pub(crate) async fn save_media(
+    host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    url: Url,
+    directory: std::path::PathBuf,
+    name: &str,
+) -> Result<std::path::PathBuf> {
+    let (url, response) = serve_media(host, fi, url, None)
         .await
         .map_err(|_| "Media download failed")?;
+    let filename = download_name(name, &url).to_owned();
     let body = response.into_body();
     tauri::async_runtime::spawn_blocking(move || save_download(&directory, &filename, &body))
         .await
-        .map_err(|_| "Media download interrupted".to_owned())??;
-    Ok(())
+        .map_err(|_| "Media download interrupted".to_owned())?
 }
 
 /// Saves an agent snapshot the app built to Downloads as media is saved, and
@@ -2095,16 +2302,20 @@ fn media_request(
     Ok((url, range))
 }
 
+/// `url`'s blob, or an older upload's `.thumb.jpg` for its missing
+/// `.thumb.webp`, with the URL that served it.
 async fn serve_media(
     host: &IdentityHost,
     fi: Option<&FederatedIdentity>,
     url: Url,
     range: Option<(u64, u64)>,
-) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
-    let fallback = jpeg_thumb(&url);
-    match (serve_blob(host, fi, url, range).await, fallback) {
-        (Err(404), Some(url)) => serve_blob(host, fi, url, range).await,
-        (response, _) => response,
+) -> std::result::Result<(Url, tauri::http::Response<Vec<u8>>), u16> {
+    match (
+        serve_blob(host, fi, url.clone(), range).await,
+        jpeg_thumb(&url),
+    ) {
+        (Err(404), Some(jpeg)) => Ok((jpeg.clone(), serve_blob(host, fi, jpeg, range).await?)),
+        (response, _) => Ok((url, response?)),
     }
 }
 

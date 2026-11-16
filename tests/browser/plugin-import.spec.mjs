@@ -13,6 +13,7 @@ import {
 } from "./navigation.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 test.use({ historyCounts: { alpha: 0, beta: 0 } });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
@@ -50,6 +51,8 @@ async function nativeImports(
         error: null,
       }),
     );
+    // A journey can start with external plugins already installed.
+    plugins.push(...(window.installedPlugins ?? []));
     const ready = () => ({
       status: "ready",
       externalPluginsPaused: false,
@@ -60,6 +63,26 @@ async function nativeImports(
         location: "isolated IPC",
         plugins: structuredClone(plugins),
       },
+      ...(window.managedPolicy && {
+        managed: {
+          ...window.managedPolicy,
+          plugins: window.managedPolicy.plugins.map((entry) => {
+            const plugin = plugins.find(
+              (plugin) => plugin.manifest.id === entry.id,
+            );
+            return {
+              ...entry,
+              state: !plugin
+                ? "missing"
+                : plugin.revision === entry.sha256
+                  ? "current"
+                  : plugin.updateSource?.url
+                    ? "outdated"
+                    : "other",
+            };
+          }),
+        },
+      }),
     });
     let importSource = null;
     let pendingPreview = null;
@@ -130,11 +153,17 @@ async function nativeImports(
           );
           if (!candidate)
             throw new Error("Saved source no longer contains this plugin");
-          return window.importCategory
-            ? `${candidate.path}-${window.importCategory}`
-            : candidate.revision;
+          return {
+            revision: window.importCategory
+              ? `${candidate.path}-${window.importCategory}`
+              : candidate.revision,
+            publisher: candidate.publisher ?? null,
+          };
         }
         if (command === "plugin_import_git" && args?.checkOnly) {
+          // A journey can hold an update check to observe it in progress.
+          await window.heldGitCheck;
+          if (window.gitCheckError) throw window.gitCheckError;
           const result = structuredClone(preview);
           if (window.importCategory)
             for (const candidate of result.candidates)
@@ -144,7 +173,8 @@ async function nativeImports(
         if (
           command === "plugin_update_preview" ||
           command === "plugin_import_folder" ||
-          command === "plugin_import_git"
+          command === "plugin_import_git" ||
+          command === "plugin_import_url"
         ) {
           if (importLocked) throw new Error("Another import is in progress");
           importLocked = true;
@@ -158,19 +188,28 @@ async function nativeImports(
               throw new Error(window.importAcquisitionError);
             if (args?.repository === "bad")
               throw new Error("Repository unavailable");
+            if (
+              command === "plugin_import_url" &&
+              args.sha256 !== window.artifactSha256
+            )
+              throw new Error(
+                `The downloaded plugin has SHA-256 ${window.artifactSha256}, not the expected ${args.sha256}`,
+              );
             importSource =
-              command === "plugin_import_git"
-                ? { repository: args.repository, reference: args.reference }
-                : args?.upload
-                  ? null
-                  : {
-                      root:
-                        command === "plugin_update_preview"
-                          ? plugins.find(
-                              (plugin) => plugin.manifest.id === args.id,
-                            )?.updateSource?.root
-                          : "/fixture/plugins",
-                    };
+              command === "plugin_import_url"
+                ? { url: args.url, sha256: args.sha256 }
+                : command === "plugin_import_git"
+                  ? { repository: args.repository, reference: args.reference }
+                  : args?.upload
+                    ? null
+                    : {
+                        root:
+                          command === "plugin_update_preview"
+                            ? plugins.find(
+                                (plugin) => plugin.manifest.id === args.id,
+                              )?.updateSource?.root
+                            : "/fixture/plugins",
+                      };
             if (window.importCategory)
               for (const candidate of preview.candidates) {
                 candidate.revision = `${candidate.path}-${window.importCategory}`;
@@ -181,6 +220,10 @@ async function nativeImports(
 
             pendingPreview = {
               ...structuredClone(preview),
+              ...(command === "plugin_import_url" && {
+                source: args.url,
+                commit: null,
+              }),
               token: `preview-${++previewSequence}`,
             };
             return structuredClone(pendingPreview);
@@ -218,9 +261,11 @@ async function nativeImports(
               existing.manifest = structuredClone(candidate.manifest);
               existing.previous = existing.revision;
               existing.revision = candidate.revision;
-              existing.updateSource = importSource
-                ? { ...importSource, path: candidate.path }
-                : null;
+              existing.updateSource = importSource?.url
+                ? importSource
+                : importSource
+                  ? { ...importSource, path: candidate.path }
+                  : null;
             } else
               plugins.push({
                 ...candidate,
@@ -228,9 +273,11 @@ async function nativeImports(
                 enabled: false,
                 previous: null,
                 reloadable: true,
-                updateSource: importSource
-                  ? { ...importSource, path: candidate.path }
-                  : null,
+                updateSource: importSource?.url
+                  ? importSource
+                  : importSource
+                    ? { ...importSource, path: candidate.path }
+                    : null,
                 error: null,
               });
             return ready();
@@ -537,6 +584,10 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
           dialog.getByRole("textbox", { name: "Branch or tag (optional)" }),
         ).toBeFocused();
         await page.keyboard.press("Tab");
+        await expect(
+          dialog.getByRole("textbox", { name: "Folder (optional)" }),
+        ).toBeFocused();
+        await page.keyboard.press("Tab");
         await expect(button(page, "Find plugins")).toBeFocused();
         await expect(button(page, "Find plugins")).toBeInViewport({ ratio: 1 });
       }
@@ -548,6 +599,110 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       });
     }
   }
+});
+
+test("manual Git release-ref guidance stays readable across scale and themes", async ({
+  page,
+  app,
+}) => {
+  await nativeImports(page);
+  await openPlugins(page, app.origin);
+  await page.setViewportSize({ width: 320, height: 900 });
+  await selectSettingsSection(page, "Appearance");
+  await chooseColorMode(page, "Light");
+  await selectSettingsSection(page, "Manage plugins");
+  await button(page, "Add").click();
+
+  const dialog = page.getByRole("dialog", { name: "Add a plugin" });
+  const guidance = dialog.getByText(
+    /Leave blank to scan the repository’s default branch/,
+  );
+  const reference = dialog.getByRole("textbox", {
+    name: "Branch or tag (optional)",
+  });
+  await expect(guidance).toBeVisible();
+  await reference.scrollIntoViewIfNeeded();
+  await expect(reference).toBeInViewport({ ratio: 1 });
+  const bounds = await guidance.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+
+  await selectSettingsSection(page, "Appearance");
+  for (let i = 0; i < 10; i++)
+    await button(page, "Increase interface size").click();
+  await expect(page.getByRole("status", { name: "Interface size" })).toHaveText(
+    "200%",
+  );
+  await chooseColorMode(page, "Dark");
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await selectSettingsSection(page, "Manage plugins");
+  await button(page, "Add").click();
+  const enlargedDialog = page.getByRole("dialog", { name: "Add a plugin" });
+  const enlargedGuidance = enlargedDialog.getByText(
+    /Leave blank to scan the repository’s default branch/,
+  );
+  const enlargedReference = enlargedDialog.getByRole("textbox", {
+    name: "Branch or tag (optional)",
+  });
+  await expect(enlargedGuidance).toBeVisible();
+  await enlargedReference.scrollIntoViewIfNeeded();
+  await expect(enlargedReference).toBeInViewport({ ratio: 1 });
+  await button(page, "Browse plugin folder").focus();
+  await page.keyboard.press("Tab");
+  await expect(
+    enlargedDialog.getByRole("textbox", { name: "Git or GitHub repository" }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(enlargedReference).toBeFocused();
+  await page.setViewportSize({ width: 320, height: 900 });
+  await enlargedReference.scrollIntoViewIfNeeded();
+  await expect(enlargedGuidance).toBeVisible();
+  await expect(enlargedReference).toBeInViewport({ ratio: 1 });
+  const narrowBounds = await enlargedGuidance.boundingBox();
+  expect(narrowBounds).not.toBeNull();
+  expect(narrowBounds.x).toBeGreaterThanOrEqual(0);
+  expect(narrowBounds.x + narrowBounds.width).toBeLessThanOrEqual(320);
+
+  await page.evaluate(() => {
+    window.importAcquisitionError = "Git output exceeds the import size limit";
+  });
+  const enlargedRepository = enlargedDialog.getByRole("textbox", {
+    name: "Git or GitHub repository",
+  });
+  await enlargedRepository.fill("https://example.org/plugins");
+  await enlargedRepository.press("Enter");
+
+  const alert = enlargedDialog.getByRole("alert");
+  await expect(alert).toBeVisible();
+  const refusal = alert.getByText(
+    "Error: Git output exceeds the import size limit",
+    { exact: true },
+  );
+  const recovery = alert.getByText(
+    "Try another branch or tag. If the same output limit persists, ask the publisher for a ref or repository that Buzz can read.",
+    { exact: true },
+  );
+  await expect(refusal).toBeVisible();
+  await expect(recovery).toBeVisible();
+  await refusal.scrollIntoViewIfNeeded();
+  await expect(refusal).toBeInViewport({ ratio: 1 });
+  await recovery.scrollIntoViewIfNeeded();
+  await expect(recovery).toBeInViewport({ ratio: 1 });
+  await expect(button(page, "Back")).toBeFocused();
+  const alertBounds = await alert.boundingBox();
+  expect(alertBounds).not.toBeNull();
+  expect(alertBounds.x).toBeGreaterThanOrEqual(0);
+  expect(alertBounds.x + alertBounds.width).toBeLessThanOrEqual(320);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.keyboard.press("Enter");
+  await expect(enlargedRepository).toBeFocused();
+  await expect(alert).toHaveCount(0);
 });
 
 test("folder/Git preview selects the exact subfolder and preserves enabled state through updates", async ({
@@ -577,11 +732,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await button(page, "Add").click();
   const sourceDialog = page.getByRole("dialog");
   await expect(sourceDialog).toHaveCSS("opacity", "1");
-  await sourceDialog.evaluate(async (node) => {
-    await Promise.all(
-      node.getAnimations().map((animation) => animation.finished),
-    );
-  });
+  await animationsSettled(sourceDialog);
   await sourceDialog.screenshot({
     path: info.outputPath("plugin-source.png"),
   });
@@ -740,13 +891,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
           return { x, y, width, height };
         }),
       );
-  await details.evaluate(async (node) => {
-    await Promise.all(
-      node
-        .getAnimations({ subtree: true })
-        .map((animation) => animation.finished),
-    );
-  });
+  await animationsSettled(details, { subtree: true });
   const settledActions = await actionPositions();
   await page.evaluate(() => {
     window.importCategory = "productivity";
@@ -966,6 +1111,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await button(page, "Add").click();
   await page.getByLabel("Git or GitHub repository").fill("example/plugins");
   await page.getByLabel("Branch or tag (optional)").fill("feature/plugins");
+  await page.getByLabel("Folder (optional)").fill("plugins/");
   await button(page, "Find plugins").click();
   await expect(page.getByRole("radio")).toHaveCount(2);
   expect(
@@ -973,7 +1119,11 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
       () =>
         window.importCalls.find((c) => c.command === "plugin_import_git").args,
     ),
-  ).toEqual({ repository: "example/plugins", reference: "feature/plugins" });
+  ).toEqual({
+    repository: "example/plugins",
+    reference: "feature/plugins",
+    path: "plugins",
+  });
   await button(page, "Back").click();
   await expect(button(page, "Find plugins")).toBeFocused();
   await expect(page.getByLabel("Git or GitHub repository")).toHaveValue(
@@ -982,6 +1132,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await expect(page.getByLabel("Branch or tag (optional)")).toHaveValue(
     "feature/plugins",
   );
+  await expect(page.getByLabel("Folder (optional)")).toHaveValue("plugins/");
   await page.getByLabel("Git or GitHub repository").fill("bad");
   await page.evaluate(() => {
     window.importDelay = true;
@@ -1719,4 +1870,369 @@ test("a linked preview can close during acquisition and a later link still opens
         .map((call) => call.args.reference),
     ),
   ).toEqual(["first", "next"]);
+});
+
+const artifactSha =
+  "13fca413ba8975075fdec01a0087be6114ace8d935055f7d9ab1d57dd8e706a5";
+const artifactUrl = `https://plugins.example.org/artifacts/example.artifact-${artifactSha}.json`;
+const artifactPlugin = [
+  {
+    path: ".",
+    manifest: {
+      id: "example.artifact",
+      name: "Artifact",
+      apiVersion: 1,
+      host: { files: true },
+    },
+    revision: artifactSha,
+  },
+];
+async function recommendArtifact(page, sha256 = artifactSha) {
+  await page.addInitScript(
+    (policy) => {
+      window.managedPolicy = policy;
+    },
+    {
+      status: "ready",
+      path: "/fixture/managed-plugins.json",
+      source: "Example Org",
+      problems: [],
+      plugins: [{ id: "example.artifact", url: artifactUrl, sha256 }],
+    },
+  );
+}
+async function openRecommendedPlugins(page, origin) {
+  await page.goto(origin);
+  await openSettings(page);
+  await selectSettingsSection(
+    page,
+    "Manage plugins 1 recommended plugin",
+    "Manage plugins",
+  );
+}
+async function servesArtifact(page) {
+  await page.addInitScript((sha) => {
+    window.artifactSha256 = sha;
+  }, artifactSha);
+}
+const importCalls = (page) =>
+  page.evaluate(() =>
+    window.importCalls
+      .filter(({ command }) =>
+        [
+          "plugin_import_url",
+          "plugin_import_git",
+          "plugin_import_install",
+        ].includes(command),
+      )
+      .map(({ command, args }) => ({ command, args })),
+  );
+
+test("a recommended plugin URL installs the pinned artifact without Git", async ({
+  page,
+  app,
+}) => {
+  await nativeImports(page, artifactPlugin, { warnings: [] });
+  await recommendArtifact(page);
+  await servesArtifact(page);
+  await openRecommendedPlugins(page, app.origin);
+  const recommended = page.getByRole("region", {
+    name: "Recommended by Example Org",
+    exact: true,
+  });
+  await expect(recommended).toContainText(artifactUrl);
+  await recommended
+    .getByRole("button", { name: "Review and install example.artifact" })
+    .click();
+  const review = page.getByRole("dialog", {
+    name: "Review Artifact Plugin access",
+    exact: true,
+  });
+  await expect(review).toContainText(`SHA-256: ${artifactSha}`);
+  await expect(review).toContainText("Recommended by Example Org");
+  await review
+    .getByRole("button", { name: "Install plugin", exact: true })
+    .click();
+  await expect(review).toBeHidden();
+  await expect(recommended).toBeHidden();
+  await expect(pluginAction(page, "Artifact")).toHaveAccessibleName(
+    "Disable Artifact",
+  );
+  expect(await importCalls(page)).toEqual([
+    {
+      command: "plugin_import_url",
+      args: { url: artifactUrl, sha256: artifactSha },
+    },
+    {
+      command: "plugin_import_install",
+      args: { token: "preview-1", path: "." },
+    },
+  ]);
+});
+
+test("a recommended plugin URL whose download doesn't match its SHA-256 never installs", async ({
+  page,
+  app,
+}) => {
+  const pinned = "0".repeat(64);
+  await nativeImports(page, artifactPlugin, { warnings: [] });
+  await recommendArtifact(page, pinned);
+  await servesArtifact(page);
+  await openRecommendedPlugins(page, app.origin);
+  await page
+    .getByRole("button", { name: "Review and install example.artifact" })
+    .click();
+  const review = page.getByRole("dialog", {
+    name: "Review example.artifact",
+    exact: true,
+  });
+  await expect(review.getByRole("alert")).toHaveText(
+    `The downloaded plugin has SHA-256 ${artifactSha}, not the expected ${pinned}`,
+  );
+  await expect(
+    review.getByRole("button", { name: "Install plugin" }),
+  ).toHaveCount(0);
+  expect(await importCalls(page)).toEqual([
+    {
+      command: "plugin_import_url",
+      args: { url: artifactUrl, sha256: pinned },
+    },
+  ]);
+});
+
+test("an artifact link reviews and installs the pinned URL", async ({
+  page,
+  app,
+}) => {
+  const link = `buzz://plugin-install?id=example.artifact&url=${encodeURIComponent(artifactUrl)}&sha256=${artifactSha}`;
+  await nativeImports(page, artifactPlugin, { warnings: [] }, [link]);
+  await servesArtifact(page);
+  await page.goto(app.origin);
+  const review = page.getByRole("dialog", {
+    name: "Review Artifact Plugin access",
+    exact: true,
+  });
+  await expect(review).toContainText("Requested by A link");
+  await expect(review).toContainText(artifactUrl);
+  await expect(review).toContainText(`SHA-256: ${artifactSha}`);
+  await review
+    .getByRole("button", { name: "Install plugin", exact: true })
+    .click();
+  await expect(review).toBeHidden();
+  await settingsDialog(page)
+    .getByRole("button", { name: "View Artifact details", exact: true })
+    .click();
+  const updates = page.getByRole("region", {
+    name: "Plugin updates",
+    exact: true,
+  });
+  await expect(updates).toContainText(artifactUrl);
+  await expect(updates).toContainText(`SHA-256: ${artifactSha}`);
+  await expect(page.getByText(/No saved source/)).toHaveCount(0);
+  expect(await importCalls(page)).toEqual([
+    {
+      command: "plugin_import_url",
+      args: { url: artifactUrl, sha256: artifactSha },
+    },
+    {
+      command: "plugin_import_install",
+      args: { token: "preview-1", path: "." },
+    },
+  ]);
+});
+
+test("a Git-installed plugin reviews its URL self-update and survives requester replacement", async ({
+  page,
+  app,
+}) => {
+  const sample = {
+    ...artifactPlugin[0],
+    code: `export function apply(ctx) {
+      const installer = ctx.reflect.get("pluginInstaller");
+      window.requestMigration = () => {
+        window.migrationOutcome = "pending";
+        installer.requestInstall(${JSON.stringify({ id: "example.artifact", url: artifactUrl, sha256: artifactSha })})
+          .then(result => { window.migrationOutcome = result; });
+      };
+      ctx.effect(() => () => { window.migrationDisposals = (window.migrationDisposals ?? 0) + 1; });
+    }`,
+  };
+  await page.addInitScript((sample) => {
+    window.installedPlugins = [
+      {
+        ...sample,
+        source: "external",
+        enabled: true,
+        revision: "git-revision",
+        previous: null,
+        reloadable: false,
+        error: null,
+        updateSource: {
+          repository: "https://example.com/plugins",
+          reference: "v1",
+          path: ".",
+        },
+      },
+    ];
+  }, sample);
+  await nativeImports(page, [sample], { warnings: [] });
+  await servesArtifact(page);
+  await page.goto(app.origin);
+  await expect
+    .poll(() => page.evaluate(() => typeof window.requestMigration))
+    .toBe("function");
+  await page.evaluate(() => window.requestMigration());
+  const review = page.getByRole("dialog", {
+    name: "Update Artifact",
+    exact: true,
+  });
+  await expect(review).toContainText(
+    "This update switches this plugin from Git to a packaged download.",
+  );
+  await expect(review).toContainText(artifactUrl);
+  await review.getByRole("button", { name: "Update", exact: true }).click();
+  await expect(review).toBeHidden();
+  await expect
+    .poll(() => page.evaluate(() => window.migrationOutcome))
+    .toBe("updated");
+  await expect
+    .poll(() => page.evaluate(() => window.migrationDisposals))
+    .toBe(1);
+  await expect(pluginAction(page, "Artifact")).toHaveAccessibleName(
+    "Disable Artifact",
+  );
+  await button(page, "View Artifact details").click();
+  await expect(
+    page.getByRole("region", { name: "Plugin updates", exact: true }),
+  ).toContainText(artifactUrl);
+  expect(
+    await page.evaluate(() =>
+      window.importCalls.filter(({ command }) => command === "plugin_change"),
+    ),
+  ).toEqual([]);
+  expect(await importCalls(page)).toEqual([
+    {
+      command: "plugin_import_url",
+      args: { url: artifactUrl, sha256: artifactSha },
+    },
+    {
+      command: "plugin_import_install",
+      args: { token: "preview-1", path: "." },
+    },
+  ]);
+});
+
+// Native IPC throws Git's own text, as plugin_import_git does when offline.
+test("a failed update check stays on its Settings row, and Check again clears it while it checks", async ({
+  page,
+  app,
+}) => {
+  const offline =
+    "Git could not read this repository: fatal: unable to access 'https://github.com/acme/standup-notes/': Could not resolve host: github.com";
+  await page.addInitScript((offline) => {
+    window.gitCheckError = offline;
+    window.installedPlugins = [
+      {
+        manifest: {
+          id: "acme.standup-notes",
+          name: "Standup Notes",
+          apiVersion: 1,
+          updates: { defaultEnabled: true },
+        },
+        source: "external",
+        enabled: true,
+        revision: "one",
+        previous: null,
+        reloadable: true,
+        error: null,
+        updateSource: {
+          repository: "https://github.com/acme/standup-notes",
+          reference: "main",
+          path: ".",
+        },
+      },
+    ];
+  }, offline);
+  await nativeImports(page, [
+    {
+      path: ".",
+      revision: "one",
+      manifest: {
+        id: "acme.standup-notes",
+        name: "Standup Notes",
+        apiVersion: 1,
+        updates: { defaultEnabled: true },
+      },
+    },
+  ]);
+  const checks = () =>
+    page.evaluate(
+      () =>
+        window.importCalls.filter(
+          (call) =>
+            call.command === "plugin_import_git" && call.args?.checkOnly,
+        ).length,
+    );
+  const notice = page.getByText("Couldn’t check Standup Notes for updates");
+  await page.goto(app.origin);
+  await expect.poll(checks).toBe(1);
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
+  const status = settingsDialog(page).getByText("Couldn’t check for updates.", {
+    exact: true,
+  });
+  await expect(status).toBeVisible();
+  // The check that failed in the background raised nothing over the app.
+  await expect(notice).toHaveCount(0);
+  await expect(page.getByText(/Cannot check/)).toHaveCount(0);
+  const details = settingsDialog(page).locator("details", {
+    hasText: "Could not resolve host",
+  });
+  await expect(details).not.toHaveAttribute("open");
+  await details.getByText("Details", { exact: true }).click();
+  await expect(details).toHaveAttribute("open");
+  await expect(details).toContainText(offline);
+
+  // Hold the check so its in-progress row can be observed.
+  await page.evaluate(() => {
+    window.heldGitCheck = new Promise((resolve) => {
+      window.releaseGitCheck = resolve;
+    });
+  });
+  const again = button(page, "Check again");
+  const checking = settingsDialog(page).locator(
+    '[data-buzz-ui][aria-busy="true"]',
+  );
+  await again.click();
+  await expect(status).toHaveCount(0);
+  await expect(again).toHaveCount(0);
+  await expect(checking).toHaveCount(1);
+  await expect(
+    settingsDialog(page).getByRole("button", {
+      name: "View Standup Notes details",
+    }),
+  ).toBeFocused();
+  await expect.poll(checks).toBe(2);
+  // Still offline, the check fails again and its status returns to the row.
+  await page.evaluate(() => window.releaseGitCheck());
+  await expect(status).toBeVisible();
+  await expect(status).toHaveAttribute("role", "alert");
+  await expect(again).toBeVisible();
+  await expect(details).toContainText(offline);
+  await expect(notice).toHaveCount(0);
+  await expect(page.getByText(/Check your connection/)).toHaveCount(0);
+
+  // Back online, Check again finds nothing wrong and the status goes.
+  await page.evaluate(() => {
+    window.heldGitCheck = undefined;
+    window.gitCheckError = undefined;
+  });
+  await again.click();
+  await expect.poll(checks).toBe(3);
+  // The check has finished once its row is no longer busy.
+  await expect(checking).toHaveCount(0);
+  await expect(status).toHaveCount(0);
+  await expect(again).toHaveCount(0);
+  await expect(notice).toHaveCount(0);
+  await expect(page.getByText("Update Standup Notes")).toHaveCount(0);
 });

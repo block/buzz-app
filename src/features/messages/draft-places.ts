@@ -2,7 +2,9 @@ import { useCallback, useLayoutEffect, useSyncExternalStore } from "react";
 import {
   draftCoordinates,
   listDraftViews,
+  parseDraftView,
   subscribeView,
+  viewRevision,
 } from "../../shared/view-state";
 import {
   attachmentDraftCount,
@@ -40,6 +42,25 @@ function readDraftPlaces(session: Session): readonly DraftPlace[] {
   return places;
 }
 
+// Whether one changed key leaves the set of draft places as it was, so a
+// keystroke in a draft, or a write to any other view key, skips the rescan.
+function sameMembership(
+  session: Session,
+  places: readonly DraftPlace[],
+  key: string,
+) {
+  if (!draftCoordinates(key)) return true;
+  const listed = places.some((place) => place.key === key);
+  const raw = viewRevision(session.scope, key);
+  // Unreadable or oversized keys are left to the full scan, as before; a
+  // forgotten, empty or malformed one is never listed.
+  if (raw === undefined) return false;
+  const draft = parseDraftView(raw);
+  if (draft === "oversized") return false;
+  if (!draft) return !listed;
+  return listed === draftCounts(session, key, draft.value);
+}
+
 type Store = {
   places: readonly DraftPlace[] | undefined;
   listeners: Set<() => void>;
@@ -60,7 +81,13 @@ function subscribePlaces(session: Session, listener: () => void) {
   if (!store.listeners.size) {
     // Storage may have changed while nobody listened.
     store.places = undefined;
-    const changed = () => {
+    const changed = (key?: string) => {
+      if (
+        key !== undefined &&
+        store.places &&
+        sameMembership(session, store.places, key)
+      )
+        return;
       store.places = undefined;
       for (const notify of [...store.listeners]) notify();
     };
@@ -69,11 +96,12 @@ function subscribePlaces(session: Session, listener: () => void) {
       session as ComposerSession,
       changed,
     );
-    window.addEventListener("focus", changed);
+    const focused = () => changed();
+    window.addEventListener("focus", focused);
     store.stop = () => {
       stopViews();
       stopFiles();
-      window.removeEventListener("focus", changed);
+      window.removeEventListener("focus", focused);
     };
   }
   store.listeners.add(listener);
@@ -104,17 +132,6 @@ function useDraftSnapshot<T>(
   );
   const get = () => select(session ? placesOf(session) : NONE);
   return useSyncExternalStore(subscribe, get, get);
-}
-
-/** Whether a channel, or any thread in it, holds a draft. A boolean, so a row
- * re-renders only when its own answer changes, not on every keystroke. */
-export function useChannelDraft(
-  session: Session | undefined,
-  channelId: string,
-) {
-  return useDraftSnapshot(session, (places) =>
-    places.some((place) => place.channelId === channelId),
-  );
 }
 
 // Draft keys whose composer is on screen, so their markers stay out of the way.

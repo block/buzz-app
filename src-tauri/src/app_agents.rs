@@ -713,10 +713,34 @@ pub(crate) async fn app_agent_portable(
     blocking(move || Ok(old.list())).await
 }
 
+#[derive(Deserialize)]
+pub(crate) struct ConvertedPicture {
+    source: String,
+    png: String,
+}
+
+fn port_picture(
+    original: &str,
+    converted: Option<&ConvertedPicture>,
+) -> Option<(&'static str, Vec<u8>)> {
+    // Bind the WebView's rendering to the picture actually read for this import.
+    if original.starts_with("data:image/svg+xml,") {
+        if let Some(converted) = converted.filter(|picture| picture.source == original) {
+            if let Some(("image/png", bytes)) = inline_picture(&converted.png) {
+                if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+                    return Some(("image/png", bytes));
+                }
+            }
+        }
+    }
+    inline_picture(original)
+}
+
 /// Takes over an earlier identity with its key, name, picture and description,
 /// as `app_agent_create` does for a new one, and reports its carried settings.
 /// Its old store keeps it.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri passes each IPC field as an argument.
 pub(crate) async fn app_agent_port(
     state: tauri::State<'_, AppAgentHost>,
     identity: tauri::State<'_, crate::identity::IdentityHost>,
@@ -725,6 +749,7 @@ pub(crate) async fn app_agent_port(
     destination: String,
     owner: String,
     agent_type: String,
+    converted_picture: Option<ConvertedPicture>,
 ) -> Result<Ported, String> {
     // Unavailable storage refuses before the old store gives up its key.
     state.agents.clone()?;
@@ -765,13 +790,14 @@ pub(crate) async fn app_agent_port(
         .picture
         .as_deref()
         .filter(|url| url.starts_with("data:"));
-    if inline.is_some_and(|url| inline_picture(url).is_none()) {
+    let prepared_picture = inline.and_then(|url| port_picture(url, converted_picture.as_ref()));
+    if inline.is_some() && prepared_picture.is_none() {
         notes.push(format!(
             "{} came over without its picture, which isn't a PNG, JPEG, GIF or WebP image under 6 MB.",
             agent.name
         ));
     }
-    if let Some((mime, bytes)) = inline.and_then(inline_picture) {
+    if let Some((mime, bytes)) = prepared_picture {
         match state
             .imported_picture(&agent, &key, incarnation, mime, bytes)
             .await
@@ -999,17 +1025,21 @@ fn publish_error(event_id: &str, error: String) -> String {
 
 /// Publishes changed public metadata. Safe to call any time; one publication
 /// runs per agent at a time and records only what its community accepted.
+/// `force` republishes it even when unchanged. It is always the app's own
+/// profile (name, bot, picture, about and the saved owner proof), so it
+/// replaces any other fields or tags the relay's latest profile has.
 #[tauri::command]
 pub(crate) async fn app_agent_publish_profile(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
     relay: String,
+    force: Option<bool>,
 ) -> Result<(), String> {
     let turn = state.profile_turn(&pubkey);
     let _turn = turn.lock().await;
     let incarnation = state.tokens.stamp(&pubkey, &relay)?;
     let agent = state.agent(pubkey, relay).await?;
-    if agent.profile_is_current() {
+    if !agent.profile_due(force.unwrap_or(false)) {
         return Ok(());
     }
     let (agent, key) = state.key(agent).await?;
@@ -1540,6 +1570,36 @@ async fn post(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    #[test]
+    fn imported_emoji_png_is_bound_to_the_current_source() {
+        let original = "data:image/svg+xml,legacy";
+        let mut converted = ConvertedPicture {
+            source: original.into(),
+            png: "data:image/png;base64,iVBORw0KGgo=".into(),
+        };
+        assert_eq!(
+            port_picture(original, Some(&converted)),
+            Some(("image/png", b"\x89PNG\r\n\x1a\n".to_vec()))
+        );
+        assert!(port_picture(original, None).is_none());
+        assert!(port_picture("data:image/svg+xml,changed", Some(&converted)).is_none());
+        for refused in [
+            "data:image/svg+xml;base64,PHN2Zz4=",
+            "data:image/png;base64,!!",
+            "data:image/png;base64,iVBO",
+            "data:image/jpeg;base64,iVBORw0KGgo=",
+        ] {
+            converted.png = refused.into();
+            assert!(port_picture(original, Some(&converted)).is_none());
+        }
+        converted.png = format!("data:image/png;base64,{}", "A".repeat(8 * 1024 * 1024 + 1));
+        assert!(port_picture(original, Some(&converted)).is_none());
+        assert_eq!(
+            port_picture("data:image/png;base64,iVBO", Some(&converted)),
+            Some(("image/png", vec![0x89, 0x50, 0x4e]))
+        );
+    }
 
     #[test]
     fn git_headers_add_sign_in_evidence_only_when_present() {

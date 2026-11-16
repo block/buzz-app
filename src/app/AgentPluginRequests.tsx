@@ -282,15 +282,11 @@ function ChangeReview({
       finalFocus={returnFocus}
       actions={
         <>
-          <Button
-            variant="prominent"
-            ref={cancel}
-            disabled={working}
-            onClick={onClose}
-          >
+          <Button ref={cancel} disabled={working} onClick={onClose}>
             Cancel
           </Button>
           <Button
+            variant="prominent"
             disabled={working || !plugin}
             loading={working}
             onClick={() => void confirm()}

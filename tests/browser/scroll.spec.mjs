@@ -122,7 +122,7 @@ readingTest(
     for (let cycle = 0; cycle < 3; cycle++) {
       await button(page, "Beta").click();
       await composer(page, "Beta").waitFor();
-      await button(page, "Alpha Draft").click();
+      await button(page, "Alpha").click();
       await settle(page);
       await expectAnchor(page, saved);
       await selectCommunity(page, "Secondary");

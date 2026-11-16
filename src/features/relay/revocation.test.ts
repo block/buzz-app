@@ -2,7 +2,9 @@ import { assert, afterEach, expect, it, vi } from "vitest";
 import type { OutgoingEvent, OutboxStorage } from "./outbox";
 import type { ChannelStoreOptions } from "./store";
 import { createRelaySession } from "./session";
-import type { RelayEvent } from "./events";
+import { ReadError } from "./errors";
+import { eventDto, type RelayEvent } from "./events";
+import type { ReadTransport } from "./transport";
 import {
   type Key,
   bounds,
@@ -26,12 +28,14 @@ afterEach(() => {
 });
 function setup(
   options: ChannelStoreOptions & { outboxStorage?: OutboxStorage } = {},
+  verifyStored?: ReadTransport["verifyStored"],
 ) {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let incoming!: (events: readonly RelayEvent[]) => void;
   const owner = createRelaySession(
     {
       ...wire.transport,
+      ...(verifyStored ? { verifyStored } : {}),
       ...(options.outboxStorage
         ? {
             writer: {
@@ -287,6 +291,39 @@ it.each([false, true])(
   },
 );
 
+it.each([
+  { kind: 40007, channelBound: true },
+  { kind: 30023, channelBound: false },
+  { kind: 46020, channelBound: false },
+])(
+  "requires a channel-bound target for a scoped reaction (kind $kind)",
+  ({ kind, channelBound }) => {
+    const h = setup();
+    const target = signed(alice, {
+      kind,
+      content: "target",
+      tags: [["h", "a"]],
+    });
+    const reaction = (channel: string) =>
+      signed(bob, {
+        kind: 7,
+        content: "+",
+        tags: [
+          ["h", channel],
+          ["e", target.id],
+        ],
+      });
+    const matching = reaction("a");
+    h.emit([matching, reaction("b"), target]);
+    expect(
+      h.session
+        .observe([{ kinds: [7], limit: 20 }])
+        .snapshot()
+        .events.map((e) => e.id),
+    ).toEqual(channelBound ? [matching.id] : []);
+  },
+);
+
 it("purges retained reference-only evidence with a denied parent but keeps global profiles", () => {
   const h = setup();
   const secret = message(alice, "a", "private", 10);
@@ -425,7 +462,7 @@ it("an explicitly single-channel generic read denial revokes that channel too", 
   ).toEqual(["other"]);
 });
 
-it("a mixed-reference ID view cannot keep an edit after its denied parent is purged", () => {
+it("a reference-only ID view cannot keep an edit after its denied parent is purged", () => {
   const h = setup();
   const a = message(alice, "a", "A", 10),
     b = message(alice, "b", "B", 10);
@@ -433,7 +470,6 @@ it("a mixed-reference ID view cannot keep an edit after its denied parent is pur
     kind: 40003,
     content: "private edit",
     tags: [
-      ["h", "b"],
       ["e", a.id],
       ["e", b.id],
     ],
@@ -447,7 +483,7 @@ it("a mixed-reference ID view cannot keep an edit after its denied parent is pur
   expect(view.snapshot().events).toEqual([]);
 });
 
-it("revoking a reference target removes its edit from an unrelated retained channel window", async () => {
+it("revoking a reference-only edit's target removes it from an unrelated retained channel window", async () => {
   const h = setup();
   const a = message(alice, "a", "A", 10),
     b = message(alice, "b", "B", 10);
@@ -456,7 +492,6 @@ it("revoking a reference target removes its edit from an unrelated retained chan
     created_at: 11,
     content: "private multi-target edit",
     tags: [
-      ["h", "b"],
       ["e", a.id],
       ["e", b.id],
     ],
@@ -478,48 +513,78 @@ it("revoking a reference target removes its edit from an unrelated retained chan
   ]);
 });
 
-it("late persisted heads/profiles cannot repopulate after revoke and regrant", async () => {
-  let release!: (records: import("./persistence").SavedHead[]) => void;
-  const disk = {
-    read: () =>
-      new Promise<import("./persistence").SavedHead[]>((resolve) => {
-        release = resolve;
-      }),
-    write: vi.fn(async () => {}),
-    remove: vi.fn(async () => {}),
-    retain: vi.fn(async () => {}),
-    clear: vi.fn(async () => {}),
-    close: vi.fn(),
-  };
-  const h = setup({ prepared: true, persistence: disk });
-  h.emit([roster(relay, "a", [viewer.pubkey], 10)]);
-  h.session.channels.ensure("a");
-  const stale = h.next();
-  const oldLoad = release;
-  h.emit([roster(relay, "a", [], 11)]);
-  h.emit([roster(relay, "a", [viewer.pubkey], 12)]);
-  oldLoad([
-    {
-      channelId: "a",
-      savedAt: Date.now(),
-      events: [
-        message(alice, "a", "private disk", 10),
-        bounds(relay, "a", "head", { has_more: false, next_cursor: null }),
-      ],
-      profiles: [profile(alice, { name: "Private disk identity" })],
-    },
-  ]);
-  stale.respond([
-    message(alice, "a", "private read", 10),
-    bounds(relay, "a", "head", { has_more: false, next_cursor: null }),
-  ]);
-  await flush();
-  expect(h.session.channels.window("a").rows).toEqual([]);
-  expect(h.session.profiles.snapshot().size).toBe(0);
-  expect(h.session.observe(filters).snapshot().events).toEqual([]);
-  expect(disk.retain).toHaveBeenCalledWith([]);
-  expect(disk.clear).not.toHaveBeenCalled();
-});
+it.each(["disk read", "history verification", "profile verification"])(
+  "late persisted heads/profiles cannot repopulate after revoke and regrant during %s",
+  async (stage) => {
+    let release!: (records: import("./persistence").SavedHead[]) => void;
+    let releaseVerification!: () => void;
+    const checking = new Promise<void>((resolve) => {
+      releaseVerification = resolve;
+    });
+    let verificationStarted = false;
+    const verifyStored =
+      stage === "disk read"
+        ? undefined
+        : async (values: readonly unknown[]) => {
+            const kind = stage === "history verification" ? 9 : 0;
+            if (
+              values.some((value) => (value as { kind: number }).kind === kind)
+            ) {
+              verificationStarted = true;
+              await checking;
+            }
+            return values.map(eventDto);
+          };
+    const disk = {
+      read: () =>
+        new Promise<import("./persistence").SavedHead[]>((resolve) => {
+          release = resolve;
+        }),
+      write: vi.fn(async () => {}),
+      remove: vi.fn(async () => {}),
+      retain: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+      close: vi.fn(),
+    };
+    const h = setup({ prepared: true, persistence: disk }, verifyStored);
+    h.emit([roster(relay, "a", [viewer.pubkey], 10)]);
+    h.session.channels.ensure("a");
+    const stale = h.next();
+    const oldLoad = release;
+    const records = [
+      {
+        channelId: "a",
+        savedAt: Date.now(),
+        events: [
+          message(alice, "a", "private disk", 10),
+          bounds(relay, "a", "head", { has_more: false, next_cursor: null }),
+        ],
+        profiles: [profile(alice, { name: "Private disk identity" })],
+      },
+    ];
+    try {
+      if (stage !== "disk read") {
+        oldLoad(records);
+        await vi.waitFor(() => expect(verificationStarted).toBe(true));
+      }
+      h.emit([roster(relay, "a", [], 11)]);
+      h.emit([roster(relay, "a", [viewer.pubkey], 12)]);
+    } finally {
+      if (stage === "disk read") oldLoad(records);
+      releaseVerification();
+    }
+    stale.respond([
+      message(alice, "a", "private read", 10),
+      bounds(relay, "a", "head", { has_more: false, next_cursor: null }),
+    ]);
+    await flush();
+    expect(h.session.channels.window("a").rows).toEqual([]);
+    expect(h.session.profiles.snapshot().size).toBe(0);
+    expect(h.session.observe(filters).snapshot().events).toEqual([]);
+    expect(disk.retain).toHaveBeenCalledWith([]);
+    expect(disk.clear).not.toHaveBeenCalled();
+  },
+);
 
 /** Opens `channelId` with one message from `author` and loads their profile. */
 async function openNamed(
@@ -880,3 +945,157 @@ it("a profile subscriber cannot restore a persisted head after revoking and regr
   h.session.channels.ensure("a");
   expect(h.session.channels.window("a").rows).toEqual([]);
 });
+
+function emptyDisk() {
+  return {
+    read: vi.fn(async () => []),
+    write: vi.fn(async () => {}),
+    remove: vi.fn(async () => {}),
+    retain: vi.fn(async () => {}),
+    clear: vi.fn(async () => {}),
+    close: vi.fn(),
+  };
+}
+
+it.each([
+  ["an ended sign-in", "auth-required: authentication required", 401],
+  ["lost community access", "restricted: authorization denied", 403],
+])(
+  "a channel read refused for %s hides the channel's rows but leaves saved data to the community owner",
+  async (_case, reason, status) => {
+    const disk = emptyDisk();
+    const h = setup({ persistence: disk });
+    h.emit([roster(relay, "a", [viewer.pubkey], 10)]);
+    h.session.channels.ensure("a");
+    h.next().respond([
+      message(alice, "a", "shown", 11),
+      bounds(relay, "a", "head", { has_more: false, next_cursor: null }),
+    ]);
+    await flush();
+    expect(h.session.channels.window("a").rows).toHaveLength(1);
+    // A revalidation of the rows on screen meets the refusal.
+    h.session.channels.refresh?.("a");
+    await vi.waitFor(() => expect(h.pending.length).toBeGreaterThan(0));
+    for (const request of h.pending.splice(0))
+      request.fail(new ReadError("denied", reason, status));
+    await flush();
+    expect(h.session.channels.window("a")).toMatchObject({
+      status: "error",
+      rows: [],
+      loadingOlder: false,
+    });
+    expect(h.session.channels.window("a").refreshing).toBeUndefined();
+    expect(h.pending).toEqual([]);
+    expect(disk.remove).not.toHaveBeenCalled();
+    expect(disk.clear).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  ["an ended sign-in", "auth-required: authentication required", 401],
+  ["lost community access", "restricted: authorization denied", 403],
+])(
+  "revisiting a channel refused for %s does not bring its rows or preview back",
+  async (_case, reason, status) => {
+    const disk = emptyDisk();
+    const h = setup({ prepared: true, persistence: disk });
+    h.emit([roster(relay, "a", [viewer.pubkey], 10)]);
+    await flush();
+    h.session.channels.ensure("a");
+    await vi.waitFor(() => expect(h.pending.length).toBeGreaterThan(0));
+    h.next().respond([
+      message(alice, "a", "shown", 11),
+      bounds(relay, "a", "head", { has_more: false, next_cursor: null }),
+    ]);
+    await flush();
+    for (let i = 0; i < 10 && h.pending.length; i++) {
+      for (const request of h.pending.splice(0)) request.respond([]);
+      await flush();
+    }
+    expect(h.session.channels.window("a").rows).toHaveLength(1);
+    h.session.channels.refresh?.("a");
+    await vi.waitFor(() => expect(h.pending.length).toBeGreaterThan(0));
+    for (const request of h.pending.splice(0))
+      request.fail(new ReadError("denied", reason, status));
+    await flush();
+    h.session.channels.ensure("b");
+    h.session.channels.ensure("a");
+    await flush();
+    expect(h.session.channels.window("a").rows).toEqual([]);
+    expect(
+      h.session.channels.list().channels.find((channel) => channel.id === "a")
+        ?.preview,
+    ).toBeUndefined();
+    expect(disk.remove).not.toHaveBeenCalled();
+  },
+);
+
+it("a first channel read refused by the community settles the window instead of loading forever", async () => {
+  const disk = emptyDisk();
+  const h = setup({ prepared: true, persistence: disk });
+  h.emit([roster(relay, "a", [viewer.pubkey], 10)]);
+  await flush();
+  h.session.channels.ensure("a");
+  await vi.waitFor(() => expect(h.pending.length).toBeGreaterThan(0));
+  for (const request of h.pending.splice(0))
+    request.fail(
+      new ReadError("denied", "auth-required: authentication required", 401),
+    );
+  await flush();
+  expect(h.session.channels.window("a").status).toBe("error");
+  expect(disk.remove).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["the community", "auth-required: authentication required", 401, 0],
+  ["that channel alone", "restricted: not a channel member", 403, 1],
+])(
+  "a single-channel session read refused by %s leaves the channel's saved copy to the right owner",
+  async (_case, reason, status, removals) => {
+    const disk = emptyDisk();
+    const h = setup({ persistence: disk });
+    h.emit([roster(relay, "a", [viewer.pubkey], 10)]);
+    const read = h.session.read([{ kinds: [9], "#h": ["a"], limit: 20 }]);
+    h.next().fail(new ReadError("denied", reason, status));
+    await expect(read).rejects.toThrow(reason);
+    await flush();
+    expect(disk.remove).toHaveBeenCalledTimes(removals);
+  },
+);
+
+it("a channel read refused for that channel alone still forgets its saved copy", async () => {
+  const disk = emptyDisk();
+  const h = setup({ prepared: true, persistence: disk });
+  h.emit([roster(relay, "a", [viewer.pubkey], 10)]);
+  await flush();
+  h.session.channels.ensure("a");
+  await vi.waitFor(() => expect(h.pending.length).toBeGreaterThan(0));
+  for (const request of h.pending.splice(0))
+    request.fail(
+      new ReadError("denied", "restricted: not a channel member", 403),
+    );
+  await flush();
+  await vi.waitFor(() => expect(disk.remove).toHaveBeenCalledWith("a"));
+});
+
+it.each([
+  [
+    "a community refusal keeps",
+    "auth-required: authentication required",
+    401,
+    0,
+  ],
+  ["a directory denial clears", "restricted: not a channel member", 403, 1],
+])(
+  "%s saved data when the first channel directory read is refused",
+  async (_case, reason, status, clears) => {
+    const disk = emptyDisk();
+    const h = setup({ persistence: disk });
+    h.session.channels.ensureList();
+    await vi.waitFor(() => expect(h.pending.length).toBeGreaterThan(0));
+    for (const request of h.pending.splice(0))
+      request.fail(new ReadError("denied", reason, status));
+    await flush();
+    expect(disk.clear).toHaveBeenCalledTimes(clears);
+  },
+);

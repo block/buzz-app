@@ -6,9 +6,19 @@ import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
 import { GooseLogoIcon } from "../../shared/design-system/icons";
-import { type Config, config, DEFAULT_CONFIG, GooseRuntime } from "./runtime";
+import {
+  type Config,
+  config,
+  DEFAULT_CONFIG,
+  GooseRuntime,
+  running,
+} from "./runtime";
+import {
+  type RecommendedCandidate,
+  recommendedRun,
+} from "../../features/agents/recommended";
 import { gooseRun } from "./run";
-import { GooseSetup, REVIEW_REFUSED } from "./setup";
+import { explainTurn, GooseSetup, REVIEW_REFUSED } from "./setup";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
 import { readUsage } from "./usage";
@@ -21,6 +31,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   if (!isTauri()) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.goose"}/${TYPE_ID}`;
+  // goose is bundled: a candidate needs only its provider and model offered.
+  const offered = (candidate: RecommendedCandidate) => setup.offers(candidate);
+  const recommended = recommendedRun(TYPE_ID, offered);
   const runtime = new GooseRuntime(
     host,
     agents.relay,
@@ -29,6 +42,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     () => agents.tools(),
     repositoriesContext,
     agents.storage,
+    recommended,
   );
   const desktop =
     host.spawn && host.resolveDirectory
@@ -38,6 +52,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         }
       : undefined;
   const setup = new GooseSetup(desktop, () => runtime.defaultsChanged());
+  // Failed turns' reports link to where goose's provider keys are set up.
+  runtime.explain = (error) =>
+    explainTurn(
+      error,
+      `buzz://settings?section=agents&provider=${encodeURIComponent(typeKey)}`,
+    );
   ctx.agentProtection.registerModels({
     label: "Goose",
     models: async () => {
@@ -67,6 +87,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const {
     Create,
     CreateModel,
+    CreateThinking,
     SettingsTab,
     ActivityTab,
     DefaultControl,
@@ -75,6 +96,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     setup,
     runtime,
     history,
+    recommended,
   });
   const sync = () => {
     const snapshot = agents.snapshot();
@@ -108,11 +130,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
           }
         : undefined,
     exportShared: (saved) => {
-      const { provider, model } = config(saved);
+      const { provider, model } = running(saved, recommended.current());
       return { runtime: "goose", ...(provider && { provider }), model };
     },
     Create,
     CreateModel,
+    CreateThinking,
     createModelReportsReadiness: true,
     provider: {
       snapshot: setup.snapshot,
@@ -134,7 +157,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       };
     },
     summary: (agent) => {
-      const { model, provider } = config(agent.config);
+      const { model, provider } = running(agent.config, recommended.current());
       return [provider, model].filter(Boolean).join(" · ") || "Goose";
     },
     sessions: {
@@ -190,6 +213,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     ],
     models: (agent) => setup.picks(config(agent.config)),
+    recommends: offered,
     ...gooseRun(runtime),
   });
 };

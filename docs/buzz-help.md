@@ -973,6 +973,12 @@ and are asked to sign in again in Buzz.
   for that community and identity. Collapsed section headings highlight when
   their channels have unread messages or thread replies. Muted channels do not
   highlight the heading.
+- **Dragging channels and DMs between sections**: drag a channel or DM row onto
+  **Starred** or a saved group to move it there, or back to its home section:
+  channels to **Channels** and DMs to **Direct messages**. **Channels** does not
+  accept DMs, and **Direct messages** does not accept channels. Forums do not
+  drag. **Move channel** or **Move conversation** in the row's menu does the same
+  move from the keyboard.
 - Saved sidebar groups, stars, mutes, sorting and filters from another device or
   a paired CLI update the open sidebar automatically while connected, in hosts
   that support saved sidebar preferences. A CLI section-only move keeps a

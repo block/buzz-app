@@ -410,6 +410,11 @@ and are asked to sign in again in Buzz.
   thread's reply box. Quoting keeps formatting and links but does not notify
   anyone mentioned in the quoted text. The floating Quote button hides while
   a menu, picker, or dialog is open.
+- Copying or quoting a selection that takes in a message from its start, such
+  as one dragged from beside the message or across several messages, puts
+  that message's author and time on one line above its text. The time is left
+  out where message timestamps are hidden. A selection inside a message's text
+  copies that text alone.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.

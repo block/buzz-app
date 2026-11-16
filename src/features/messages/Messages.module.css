@@ -920,6 +920,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   flex: none;
   width: var(--space-5);
   height: var(--space-5);
+  -webkit-user-select: none;
   user-select: none;
 }
 .dayCalendar > * {
@@ -1970,6 +1971,7 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   scroll-margin-inline-end: var(--space-3);
   /* Controls are not conversation text: a selection that spans rows passes
      through this bar, and engines copy button labels the user never saw. */
+  -webkit-user-select: none;
   user-select: none;
   @apply popover-surface;
   --floating-radius: var(--radius-control);
@@ -3009,6 +3011,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 
 /* Keep sent and received avatars close to their message in every layout. */
 .messageAvatar {
+  -webkit-user-select: none;
   user-select: none;
   position: absolute;
   bottom: 0;
@@ -3038,6 +3041,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   width: max-content;
   color: var(--text-subtle);
   font-variant-numeric: tabular-nums;
+  -webkit-user-select: none;
   user-select: none;
 }
 .message[data-viewer-message] .messageAvatar {
@@ -3745,6 +3749,7 @@ html[data-keyboard-navigation] .message:focus-visible::after {
 /* Keyboard users can read a grouped message's time without opening a popup. */
 .keyboardMessageTime {
   display: none;
+  -webkit-user-select: none;
   user-select: none;
 }
 html[data-keyboard-navigation]

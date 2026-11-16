@@ -1,3 +1,4 @@
+import { forwardBody, forwardTag } from "../relay/forwarded-message";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
@@ -68,16 +69,14 @@ async function setupReview({
   // The DOM emulator has no playback engine; keep native playback calls observable.
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
-  if (fromThread) {
-    // jsdom has no layout observer; the real thread still owns its read lifecycle.
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
-  }
+  // jsdom has no layout observer; threads and forwarded cards use one.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   const viewer = keypair();
   const relay = keypair();
   const attachment = {
@@ -934,3 +933,38 @@ it.each(["image", "video"] as const)(
     ).toBeVisible();
   },
 );
+
+it("uses only the stripped sender note in a timed forward marker", async () => {
+  const note = "⏱ 0:21 — Review this cut";
+  await setupReview({
+    kind: "video",
+    replies: (viewer, root) => {
+      const snapshot = {
+        id: "a".repeat(64),
+        channelId: "source",
+        authorId: "b".repeat(64),
+        authorName: "Original Author",
+        createdAt: 1,
+        content: "Copied content",
+      };
+      return [
+        message(viewer, "one", forwardBody(snapshot, note), 2, [
+          ["e", root.id, "", "reply"],
+          forwardTag(snapshot),
+        ]),
+      ];
+    },
+  });
+  await screen.findByText("Review this cut");
+  const video = document.querySelector("video");
+  assert.exists(video);
+  Object.defineProperty(video, "duration", { configurable: true, value: 60 });
+  fireEvent.durationChange(video);
+  const marker = await screen.findByRole("button", { name: /^Seek to 0:21,/ });
+  fireEvent.focus(marker);
+  const tooltip = await screen.findByRole("tooltip");
+  expect(tooltip.textContent).toMatch(/^0:21 · .*: Review this cut$/);
+  expect(tooltip.textContent).not.toMatch(
+    /Forwarded message|Original Author|Copied content|⏱/,
+  );
+});

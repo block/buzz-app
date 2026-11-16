@@ -621,7 +621,7 @@ and are asked to sign in again in Buzz.
   can still make the name bold. Muted rows show no unread dots, including thread
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
   their avatar previews. The macOS Dock unread dot follows the rows: a muted channel
-  lights it only for a mention of you, and a muted DM still lights it.
+  lights it only for a mention of you or **Mark as unread**, and a muted DM still lights it.
   Muting does not mark messages or threads as read.
 - **Hidden DMs**: **Close conversation** and **Hide conversation** take a DM out
   of the sidebar without leaving it. To find one again, start a **New message**

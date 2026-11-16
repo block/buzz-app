@@ -151,9 +151,15 @@ function repairOnRoster(
  * room for the selected community, agents' communities and visits. */
 export const BACKGROUND_UNREAD_LIMIT = 24;
 
+/** Background sessions open at a random point in this window, so a fleet of
+ * clients restarting together doesn't connect every community in one tick. */
+export const BACKGROUND_JITTER_MS = 3000;
+
 /** Unread for joined communities, keyed by community id. It opens the first
  * `BACKGROUND_UNREAD_LIMIT` in the background, plus every community selected
  * this launch, and starts each one's unread repair once, as visiting it would.
+ * Each background community opens after its own random delay of up to
+ * `BACKGROUND_JITTER_MS`; the selected community opens at once.
  * Communities without a ready session, or whose unread is stale or
  * unobserved, are absent. */
 export function createCommunityUnreads(
@@ -176,6 +182,15 @@ export function createCommunityUnreads(
   // Badges wait for the selected community's first repair: they share its
   // host's connections, so loading them alongside would delay its own unread.
   let foreground = false;
+  // Background communities whose start delay has elapsed, for `admittedViewer`.
+  const admitted = new Set<string>();
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  let admittedViewer: string | undefined;
+  const cancel = (id: string) => {
+    clearTimeout(timers.get(id));
+    timers.delete(id);
+    admitted.delete(id);
+  };
   const yieldDone = () => {
     if (foreground) return;
     foreground = true;
@@ -239,6 +254,12 @@ export function createCommunityUnreads(
   const update = () => {
     if (closed) return;
     const { viewer, memberships, selected, status } = communities.snapshot();
+    // Another account's allowances never carry over, even for the same ids.
+    if (viewer !== admittedViewer) {
+      for (const id of [...timers.keys(), ...admitted]) cancel(id);
+      for (const [id, entry] of entries) if (id !== selected) drop(id, entry);
+      admittedViewer = viewer;
+    }
     if (selected) visited.add(selected);
     // Nothing to yield to when the selected community has no session coming;
     // while restoring, the saved selection is not known yet.
@@ -257,12 +278,31 @@ export function createCommunityUnreads(
         (id, index) => index < BACKGROUND_UNREAD_LIMIT || visited.has(id),
       ),
     );
+    for (const id of [...timers.keys(), ...admitted])
+      if (!joined.has(id)) cancel(id);
     for (const [id, entry] of entries)
       if (!joined.has(id) || communities.open(id, true) !== entry.relay)
         drop(id, entry);
     for (const id of joined) {
       if (!foreground && id !== selected) continue;
       let entry = entries.get(id);
+      if (id === selected) {
+        clearTimeout(timers.get(id));
+        timers.delete(id);
+        admitted.add(id);
+      } else if (!entry && !admitted.has(id)) {
+        if (!timers.has(id))
+          timers.set(
+            id,
+            setTimeout(() => {
+              timers.delete(id);
+              if (communities.snapshot().viewer !== viewer) return;
+              admitted.add(id);
+              update();
+            }, Math.random() * BACKGROUND_JITTER_MS),
+          );
+        continue;
+      }
       if (!entry) {
         const relay = communities.open(id, true);
         if (!relay) continue;
@@ -293,6 +333,7 @@ export function createCommunityUnreads(
       stopCommunities();
       stopRelay();
       for (const [id, entry] of entries) drop(id, entry);
+      for (const id of [...timers.keys()]) cancel(id);
       listeners.clear();
     },
   };

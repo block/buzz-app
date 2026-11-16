@@ -1,9 +1,10 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Communities } from "../communities/service";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type { UnreadSnapshot } from "../relay/unread";
 import {
+  BACKGROUND_JITTER_MS,
   BACKGROUND_UNREAD_LIMIT,
   createCommunityUnreads,
   observeCommunityUnread,
@@ -16,8 +17,15 @@ const viewer = "a".repeat(64);
 const one = "https://one.example";
 const two = "https://two.example";
 const cleanups: (() => void)[] = [];
+// Background admission waits a random 0–3 s; tests start each at once.
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.spyOn(Math, "random").mockReturnValue(0);
+});
 afterEach(() => {
   for (const stop of cleanups.splice(0).reverse()) stop();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 function signal() {
@@ -453,6 +461,7 @@ it("opens at most the background limit, plus communities selected this launch", 
   const unreads = createCommunityUnreads(communities);
   cleanups.push(unreads.dispose);
   const asked = () => new Set(opened.mock.calls.map(([id]) => id));
+  vi.runOnlyPendingTimers();
   expect(asked()).toEqual(new Set(ids.slice(0, BACKGROUND_UNREAD_LIMIT)));
   // Selecting one past the limit keeps observing it after it is left.
   const late = ids.at(-1) as string;
@@ -541,5 +550,89 @@ it("badges open at once when nothing is selected after loading", () => {
   } as unknown as Communities;
   const unreads = createCommunityUnreads(communities);
   cleanups.push(unreads.dispose);
+  vi.runOnlyPendingTimers();
   expect(opened).toHaveBeenCalledWith(two, true);
+});
+
+it("opens background communities after a bounded random delay, never the selected one", () => {
+  vi.mocked(Math.random).mockReturnValue(0.5);
+  const three = "https://three.example";
+  const client = signal();
+  let snapshot: {
+    viewer: string;
+    selected: string | null;
+    memberships: { id: string }[];
+  } = {
+    viewer,
+    selected: one,
+    memberships: [{ id: one }, { id: two }, { id: three }],
+  };
+  const opened = vi.fn((_id: string) => undefined);
+  const communities = {
+    snapshot: () => snapshot,
+    subscribe: client.subscribe,
+    open: opened,
+    relay: { snapshot: () => ({ status: "error" }), subscribe: () => () => {} },
+  } as unknown as Communities;
+  const unreads = createCommunityUnreads(communities);
+  cleanups.push(unreads.dispose);
+  const asked = () => opened.mock.calls.map(([id]) => id);
+  // The selected community opens at once; the rest wait 1.5 s.
+  expect(asked()).toEqual([one]);
+  vi.advanceTimersByTime(1000);
+  // Ordinary updates don't restart the deadline.
+  client.emit();
+  expect(asked()).not.toContain(two);
+  // Selecting a pending community opens it at once.
+  snapshot = { ...snapshot, selected: two };
+  client.emit();
+  expect(asked()).toContain(two);
+  expect(asked()).not.toContain(three);
+  vi.advanceTimersByTime(499);
+  expect(asked()).not.toContain(three);
+  vi.advanceTimersByTime(1);
+  expect(asked()).toContain(three);
+});
+
+it("cancels a pending admission on leave, viewer change and dispose", () => {
+  vi.mocked(Math.random).mockReturnValue(0.5);
+  const client = signal();
+  let snapshot = {
+    viewer,
+    selected: one as string | null,
+    memberships: [{ id: one }, { id: two }],
+  };
+  const opened = vi.fn((_id: string) => undefined);
+  const communities = {
+    snapshot: () => snapshot,
+    subscribe: client.subscribe,
+    open: opened,
+    relay: { snapshot: () => ({ status: "error" }), subscribe: () => () => {} },
+  } as unknown as Communities;
+  const unreads = createCommunityUnreads(communities);
+  const asked = () => opened.mock.calls.map(([id]) => id);
+  // Leaving before the delay ends never opens it, and rejoining waits again.
+  snapshot = { ...snapshot, memberships: [{ id: one }] };
+  client.emit();
+  vi.advanceTimersByTime(BACKGROUND_JITTER_MS);
+  expect(asked()).not.toContain(two);
+  snapshot = { ...snapshot, memberships: [{ id: one }, { id: two }] };
+  client.emit();
+  vi.advanceTimersByTime(1000);
+  // Another account with the same community ids draws a fresh delay.
+  snapshot = { ...snapshot, viewer: "b".repeat(64) };
+  client.emit();
+  vi.advanceTimersByTime(1000);
+  expect(asked()).not.toContain(two);
+  vi.advanceTimersByTime(500);
+  expect(asked()).toContain(two);
+  // And one admitted for the old account isn't carried over.
+  opened.mockClear();
+  snapshot = { ...snapshot, viewer };
+  client.emit();
+  expect(asked()).not.toContain(two);
+  // Disposing cancels what is still pending.
+  unreads.dispose();
+  vi.advanceTimersByTime(BACKGROUND_JITTER_MS);
+  expect(asked()).not.toContain(two);
 });

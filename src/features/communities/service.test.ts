@@ -294,6 +294,7 @@ it("with the real unread projection, a broker selection gets one session, is nev
     selected: ids[0],
   });
   await flush();
+  vi.spyOn(Math, "random").mockReturnValue(0);
   const unreads = createCommunityUnreads(client);
   await flush();
   const opened = (id: string, path: string) =>
@@ -307,7 +308,8 @@ it("with the real unread projection, a broker selection gets one session, is nev
     string,
     string,
   ];
-  expect(opened(badge, "session")).toBe(1);
+  // The badge opens after its start delay.
+  await vi.waitFor(() => expect(opened(badge, "session")).toBe(1));
   expect(opened(chosen, "session")).toBe(0);
   client.select(chosen);
   await flush();

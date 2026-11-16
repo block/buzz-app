@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { BACKGROUND_JITTER_MS } from "../features/notifications/community-unread";
 import type { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { Host } from "../features/host/service";
@@ -456,7 +457,9 @@ it("restores the selected native community and recovers discovery failure withou
     viewer,
     scope: `${community}:${viewer}`,
   });
-  // The other saved community connects in the background for switcher unread.
+  // The other saved community connects in the background for switcher unread,
+  // once its start delay ends.
+  await vi.advanceTimersByTimeAsync(BACKGROUND_JITTER_MS);
   expect(new Set(destinations)).toEqual(
     new Set([community, "https://unopened.test"]),
   );
@@ -545,6 +548,7 @@ it("seeds a packaged native community after onboarding and preserves the user's 
     selected: null,
     memberships: [membership],
   });
+  await vi.advanceTimersByTimeAsync(BACKGROUND_JITTER_MS);
   expect(new Set(destinations)).toEqual(new Set([membership.id]));
   expect(fetch).not.toHaveBeenCalled();
 });

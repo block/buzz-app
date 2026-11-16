@@ -268,6 +268,7 @@ export async function selectCommunity(page, name) {
           : new RegExp(
               `^Switch to ${escaped}(, unread|, \\d+ items? needs? you)?$`,
             ),
+      exact: true,
     })
     .click();
   await expect(communitySwitcher(page, name)).toBeVisible();

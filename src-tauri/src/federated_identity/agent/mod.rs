@@ -5,7 +5,7 @@ pub(crate) mod grant;
 
 use super::{
     config::canonical_relay,
-    protocol::{self, now, Failure},
+    protocol::{self, Failure},
     FederatedIdentity, SessionChange, Snapshot,
 };
 use base64::{
@@ -57,6 +57,8 @@ pub(super) struct Inner {
     /// The tokens of the build's other sign-in servers, one per peer of
     /// `identity`; only the first server's tokens have them.
     peers: Vec<AgentTokens>,
+    /// The tokens of servers `identity` added after startup, made as each is.
+    derived: Mutex<Vec<AgentTokens>>,
     /// Signalled when the next sign-out waits for a grant write holding `retired`.
     #[cfg(test)]
     contended: Mutex<Option<std::sync::mpsc::Sender<()>>>,
@@ -69,6 +71,8 @@ pub(super) struct Inner {
         )>,
     >,
 }
+/// Each server's grant store, for servers at startup and added later.
+type Stores = Arc<dyn Fn(&FederatedIdentity) -> Arc<dyn GrantStore> + Send + Sync>;
 /// A session being installed, holding the wipe transaction open.
 pub(super) struct Prepared {
     tokens: AgentTokens,
@@ -124,8 +128,9 @@ struct Cached {
     account: String,
     relay: String,
     header: Zeroizing<String>,
-    refresh_at: u64,
+    refresh_at: tokio::time::Instant,
     expires_at: tokio::time::Instant,
+    received: super::assertion::Received,
     grants: u64,
 }
 
@@ -165,7 +170,7 @@ impl Admission {
         if self
             .cached
             .as_ref()
-            .is_some_and(|cached| cached.expires_at <= tokio::time::Instant::now())
+            .is_some_and(|cached| cached.expires_at <= cached.received.now())
         {
             return Err("Agent assertion expired before dispatch".into());
         }
@@ -224,9 +229,12 @@ impl AgentTokens {
     /// Each server's grants are stored under its own account, so the first
     /// server's grants keep the keys they had as the only server.
     pub(crate) fn new(identity: FederatedIdentity) -> Self {
-        Self::with_stores(identity, &|server| {
-            Arc::new(SecureGrantStore(server.0.account.clone()))
-        })
+        Self::with_stores(
+            identity,
+            Arc::new(|server: &FederatedIdentity| {
+                Arc::new(SecureGrantStore(server.0.account.clone())) as Arc<dyn GrantStore>
+            }),
+        )
     }
     /// Tokens for a build without an organization: agents send no evidence.
     #[cfg(test)]
@@ -243,12 +251,12 @@ impl AgentTokens {
     }
     #[cfg(test)]
     fn with_store(identity: FederatedIdentity, store: Arc<dyn GrantStore>) -> Self {
-        Self::with_stores(identity, &|_| store.clone())
+        Self::with_stores(
+            identity,
+            Arc::new(move |_: &FederatedIdentity| store.clone()),
+        )
     }
-    fn with_stores(
-        identity: FederatedIdentity,
-        store: &dyn Fn(&FederatedIdentity) -> Arc<dyn GrantStore>,
-    ) -> Self {
+    fn with_stores(identity: FederatedIdentity, store: Stores) -> Self {
         let (slots, incarnations) = (Arc::default(), Arc::default());
         let peers = identity
             .0
@@ -259,13 +267,30 @@ impl AgentTokens {
                 Self::server(peer.clone(), store(peer), slots, incarnations, Vec::new())
             })
             .collect();
-        Self::server(
+        let tokens = Self::server(
             identity.clone(),
             store(&identity),
             slots,
             incarnations,
             peers,
-        )
+        );
+        let first = Arc::downgrade(&tokens.0);
+        identity.on_peer(Arc::new(move |server| {
+            let Some(first) = first.upgrade() else { return };
+            let (slots, incarnations) = (first.slots.clone(), first.incarnations.clone());
+            let added = Self::server(
+                server.clone(),
+                store(server),
+                slots,
+                incarnations,
+                Vec::new(),
+            );
+            lock(&first.derived).push(added.clone());
+            if let Some(agents) = first.agents.get() {
+                added.follow_account(agents.clone());
+            }
+        }));
+        tokens
     }
     fn server(
         identity: FederatedIdentity,
@@ -280,6 +305,7 @@ impl AgentTokens {
             slots,
             incarnations,
             peers,
+            derived: Mutex::default(),
             retired: Arc::default(),
             wiping: Arc::default(),
             agents: std::sync::OnceLock::new(),
@@ -337,21 +363,22 @@ impl AgentTokens {
     /// The tokens of the server a community's host routes to, never chosen
     /// by the relay. A community no server covers stays with these, which
     /// attach no evidence for it.
-    fn server_for(&self, relay: &str) -> Result<&Self, String> {
-        for peer in &self.0.peers {
-            if let Some(config) = &peer.0.identity.0.config {
-                if config.matches_relay(relay)? {
-                    return Ok(peer);
-                }
-            }
-        }
-        Ok(self)
+    fn server_for(&self, relay: &str) -> Result<Self, String> {
+        let server = self.0.identity.server_for(relay)?;
+        Ok(self.for_server(&server).unwrap_or_else(|| self.clone()))
     }
     /// The tokens of a sign-in server of this build.
-    pub(crate) fn for_server(&self, server: &FederatedIdentity) -> Option<&Self> {
-        std::iter::once(self)
-            .chain(&self.0.peers)
+    pub(crate) fn for_server(&self, server: &FederatedIdentity) -> Option<Self> {
+        self.servers()
+            .into_iter()
             .find(|tokens| tokens.0.identity.is(server))
+    }
+    /// These tokens, then every other server's.
+    fn servers(&self) -> Vec<Self> {
+        let mut servers = vec![self.clone()];
+        servers.extend(self.0.peers.iter().cloned());
+        servers.extend(lock(&self.0.derived).iter().cloned());
+        servers
     }
     fn slot(&self, agent: &str) -> Arc<AsyncMutex<Slot>> {
         lock(&self.0.slots).entry(agent.into()).or_default().clone()
@@ -549,7 +576,6 @@ impl AgentTokens {
             return Err(DELETED.into());
         }
         let retirements = self.admit().await?;
-        let now = now()? as u64;
         let account = self.account();
         if let Some(cached) = &slot.assertion {
             if cached.retirements == retirements
@@ -557,8 +583,8 @@ impl AgentTokens {
                     .as_ref()
                     .is_none_or(|account| *account == cached.account)
                 && cached.relay == relay
-                && cached.refresh_at > now
-                && cached.expires_at > tokio::time::Instant::now() + valid_for
+                && cached.refresh_at > cached.received.now()
+                && cached.expires_at > cached.received.now() + valid_for
             {
                 return Ok(Some(cached.clone()));
             }
@@ -610,14 +636,14 @@ impl AgentTokens {
                             .grants += 1;
                         return Err(STOPPED.into());
                     }
-                    Err(failure) => return Err(refused(failure.code)),
+                    Err(failure) => return Err(refused(failure)),
                 }
             }
             Ok(cached) if grant.replacement => {
                 self.settle(agent, grant, retirements).await?;
                 cached
             }
-            minted => minted.map_err(|failure| refused(failure.code))?,
+            minted => minted.map_err(refused)?,
         };
         if !self.live(&agent.pubkey, incarnation) {
             return Err(DELETED.into());
@@ -639,7 +665,7 @@ impl AgentTokens {
             ..cached
         };
         slot.assertion = Some(cached.clone());
-        if cached.expires_at <= tokio::time::Instant::now() + valid_for {
+        if cached.expires_at <= cached.received.now() + valid_for {
             return Err(SHORT_LIVED.into());
         }
         Ok(Some(cached))
@@ -873,35 +899,45 @@ impl AgentTokens {
             expires_at: u64,
         }
         let client = protocol::client()?;
-        let issued: Issued = protocol::json(|| {
+        let (issued, request_start): (Issued, _) = protocol::json_with(|| {
             let request = client
                 .post(endpoint.clone())
                 .bearer_auth(&grant.token)
                 .header("Content-Type", "application/json")
                 .body(body.clone());
-            match proof() {
+            std::future::ready(Ok(match proof() {
                 Ok(proof) => request.header("Nostr-Authorization", proof),
                 Err(_) => request,
-            }
+            }))
         })
         .await?;
         let assertion = Zeroizing::new(issued.assertion);
-        let now = now()? as u64;
+        let monotonic_now = tokio::time::Instant::now();
+        let wall_now = protocol::wall_now();
+        let now = wall_now
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "clock-unavailable")?
+            .as_secs();
         if issued.nostr_pubkey != agent.pubkey || issued.expires_at <= now {
             return Err("invalid-assertion".into());
         }
-        validate(&assertion, agent, grant, &relay, issued.expires_at, now)?;
+        let minted = validate(&assertion, agent, grant, &relay, issued.expires_at, now)?;
+        let (expires_at, _) = super::assertion::token_deadline(
+            request_start,
+            minted,
+            issued.expires_at,
+            wall_now,
+            monotonic_now,
+        )
+        .ok_or("invalid-assertion")?;
         Ok(Cached {
             header: Zeroizing::new(format!("Bearer {}", assertion.as_str())),
             // One with 30s or less to live is used once, never reused.
-            refresh_at: issued.expires_at.saturating_sub(30),
-            expires_at: super::assertion::monotonic_expiry(
-                issued.expires_at,
-                std::time::SystemTime::now(),
-                tokio::time::Instant::now(),
-            )
-            .ok_or("invalid-assertion")?
-            .0,
+            refresh_at: expires_at
+                .checked_sub(std::time::Duration::from_secs(30))
+                .unwrap_or(monotonic_now),
+            expires_at,
+            received: super::assertion::Received::at(monotonic_now, wall_now),
             grants: 0,
             retirements: 0,
             account: grant.account.clone(),
@@ -921,7 +957,7 @@ impl AgentTokens {
         let mut slot = slot.lock().await;
         slot.assertion = None;
         // Its grant may be with any server.
-        for tokens in std::iter::once(self).chain(&self.0.peers) {
+        for tokens in self.servers() {
             let at = tokens.0.identity.agent_grant_key(owner, agent);
             tokens.storage(move |store| store.delete(&at)).await?;
         }
@@ -938,12 +974,18 @@ impl AgentTokens {
         agents: impl Fn() -> Result<Vec<(String, String)>, String> + Send + Sync + 'static,
     ) {
         let agents: Arc<Agents> = Arc::new(agents);
-        for tokens in std::iter::once(self).chain(&self.0.peers) {
+        // This server's first: a server added from here on finds its supplier
+        // (`with_stores`), and one added before is in the list below.
+        self.follow_account(agents.clone());
+        for tokens in self.servers() {
             tokens.follow_account(agents.clone());
         }
     }
     fn follow_account(&self, agents: Arc<Agents>) {
-        let _ = self.0.agents.set(agents);
+        // Once: a server added while `watch` runs may be offered twice.
+        if self.0.agents.set(agents).is_err() {
+            return;
+        }
         let tokens = self.clone();
         let mut changes = self.0.identity.account_changes();
         tauri::async_runtime::spawn(async move {
@@ -1174,6 +1216,8 @@ fn nostr(event: serde_json::Value) -> Result<String, String> {
 }
 
 /// Local misuse checks on an agent assertion; the relay verifies its signature.
+/// A future `iat` past `CLOCK_SKEW_SECS` is `invalid-assertion` here on
+/// purpose: `clock-skew` is only the human sign-in's diagnosis.
 fn validate(
     token: &str,
     agent: &AppAgent,
@@ -1181,7 +1225,7 @@ fn validate(
     relay: &str,
     expires_at: u64,
     now: u64,
-) -> Result<(), Failure> {
+) -> Result<u64, Failure> {
     let invalid = || Failure::from("invalid-assertion");
     let parts: Vec<_> = token.split('.').collect();
     if token.len() > 8192 || parts.len() != 3 || parts.iter().any(|part| part.is_empty()) {
@@ -1193,19 +1237,21 @@ fn validate(
     };
     let (header, claims) = (decode(parts[0])?, decode(parts[1])?);
     let text = |name: &str| claims.get(name).and_then(serde_json::Value::as_str);
-    let minted = claims.get("iat").and_then(serde_json::Value::as_u64);
+    let minted = super::protocol::numeric_date(&claims, "iat").map(|iat| iat.ceil() as u64);
     let audience = format!("https://{}", &relay["wss://".len()..]);
     if header.get("typ").and_then(serde_json::Value::as_str) != Some("nip-fi-agent+jwt")
         || text("nostr_pubkey") != Some(&agent.pubkey)
         || text("nostr_owner_pubkey") != Some(&agent.owner)
         || text("iss") != Some(&grant.issuer)
         || text("aud") != Some(&audience)
-        || claims.get("exp").and_then(serde_json::Value::as_u64) != Some(expires_at)
-        || !minted.is_some_and(|minted| minted <= now + 5 && minted <= expires_at)
+        || super::protocol::numeric_date(&claims, "exp") != Some(expires_at as f64)
+        || !minted.is_some_and(|minted| {
+            minted <= now + super::protocol::CLOCK_SKEW_SECS && minted <= expires_at
+        })
     {
         return Err(invalid());
     }
-    Ok(())
+    minted.ok_or_else(invalid)
 }
 
 /// A failed enrollment, and whether the organization refused it (rather than
@@ -1231,7 +1277,7 @@ impl From<&str> for Error {
 impl From<Failure> for Error {
     fn from(failure: Failure) -> Self {
         Self {
-            message: refused(failure.code),
+            message: refused(failure),
             refused: matches!(
                 failure.code,
                 "adapter-refused"
@@ -1245,8 +1291,13 @@ impl From<Failure> for Error {
 }
 
 /// What the agent's owner sees when the identity issuer turns it away.
-fn refused(code: &'static str) -> String {
-    match code {
+fn refused(failure: Failure) -> String {
+    if failure.rate_limited {
+        return "Your organization is limiting this agent's requests; try again later. \
+            If it keeps failing, you may have reached your organization's agent limit"
+            .into();
+    }
+    match failure.code {
         "network-unavailable" | "network-timeout" => {
             "Your organization's identity service is unreachable".into()
         }

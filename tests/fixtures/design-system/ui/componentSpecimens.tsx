@@ -1,12 +1,17 @@
 import { SidebarNavigation } from "../../../../src/shared/design-system/ui/SidebarNavigation";
 import { LoadingRegion } from "../../../../src/shared/design-system/ui/LoadingRegion";
-import { SettingsGroup } from "../../../../src/shared/design-system/ui/SettingsGroup";
+import {
+  SettingsGroup,
+  SettingsGroupExpand,
+} from "../../../../src/shared/design-system/ui/SettingsGroup";
+import { ValueChip } from "../../../../src/shared/design-system/ui/ValueChip";
 import { EmptyState } from "../../../../src/shared/design-system/ui/EmptyState";
 import { ExamplePreview } from "./ExamplePreview";
 import { Calendar } from "../../../../src/shared/design-system/ui/Calendar";
 import { FieldButton } from "../../../../src/shared/design-system/ui/FieldButton";
 import {
   MenuRoot,
+  MenuItem,
   MenuTrigger,
   MenuPopup,
   MenuRadioGroup,
@@ -50,6 +55,7 @@ import { PanelSwapPlaygrounds } from "./PanelSwapPlaygrounds";
 import { FlexWorkspace } from "../../../../src/shared/design-system/ui/FlexWorkspace";
 import { BentoSpecimen } from "./BentoSpecimen";
 import {
+  CaretDownIcon,
   DotsThreeIcon,
   TrashIcon,
   ArrowLeftIcon,
@@ -59,6 +65,7 @@ import {
   SmileyIcon,
   SquaresFourIcon,
   GlobeIcon,
+  SparklesIcon,
 } from "../../../../src/shared/design-system/icons/index";
 import type { ReactNode } from "react";
 import { useId, useState } from "react";
@@ -90,7 +97,10 @@ import {
   NavigationCard,
   NavigationItem,
 } from "../../../../src/shared/design-system/ui/NavigationItem";
-import { NavigationSection } from "../../../../src/shared/design-system/ui/NavigationSection";
+import {
+  NavigationSection,
+  NavigationSectionHeading,
+} from "../../../../src/shared/design-system/ui/NavigationSection";
 import {
   PanelHeader,
   PanelHeaderLabel,
@@ -155,6 +165,23 @@ function FieldButtonSpecimen() {
               </MenuRadioItem>
             ))}
           </MenuRadioGroup>
+        </MenuPopup>
+      </MenuRoot>
+      <MenuRoot>
+        <MenuTrigger
+          render={
+            <FieldButton
+              appearance="masked"
+              prefix="key"
+              aria-label="Value actions"
+            />
+          }
+        >
+          <span aria-hidden="true">••••••••••••••••</span>
+        </MenuTrigger>
+        <MenuPopup>
+          <MenuItem>Copy</MenuItem>
+          <MenuItem>Reveal</MenuItem>
         </MenuPopup>
       </MenuRoot>
     </SpecimenFrame>
@@ -830,6 +857,14 @@ function TabsSpecimen() {
         items={DESTINATIONS}
       />
       <Tabs
+        label="Capsule filters"
+        variant="capsule"
+        value={panelDestination}
+        onValueChange={setPanelDestination}
+        items={DESTINATIONS}
+        trailingAction={<Button variant="subtle">Filter action</Button>}
+      />
+      <Tabs
         label="Small segmented filters"
         variant="segmented"
         size="sm"
@@ -842,7 +877,13 @@ function TabsSpecimen() {
         variant="dock"
         value={panelDestination}
         onValueChange={setPanelDestination}
-        items={iconItems}
+        items={iconItems.map((item, index) => ({
+          ...item,
+          trailing:
+            index === 0 ? (
+              <CountBadge count={12} label="12 items" />
+            ) : undefined,
+        }))}
       />
       <Tabs
         label="Icon segmented filters"
@@ -1180,6 +1221,49 @@ function PanelHeaderSpecimen() {
   );
 }
 
+function DisclosureHeadingSpecimen() {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="component-navigation-section-demo">
+      <NavigationSectionHeading
+        disclosure
+        revealActions
+        actions={
+          <>
+            <IconButton
+              size="compact"
+              aria-label="Workspace options"
+              icon={<DotsThreeIcon size={16} aria-hidden="true" />}
+            />
+            <IconButton
+              size="compact"
+              aria-label="New chat in Work"
+              icon={<PlusIcon size={16} aria-hidden="true" />}
+            />
+          </>
+        }
+      >
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          Work with a long workspace name that truncates
+          <span data-navigation-reveal="" aria-hidden="true">
+            <CaretDownIcon size={12} />
+          </span>
+        </button>
+      </NavigationSectionHeading>
+      {open && (
+        <>
+          <NavigationItem label="Launch plan" />
+          <NavigationItem label="Design review" />
+        </>
+      )}
+    </div>
+  );
+}
+
 function NavigationSectionSpecimen() {
   return (
     <div className="component-specimen-stack">
@@ -1230,6 +1314,24 @@ function NavigationSectionSpecimen() {
             <NavigationItem label="design-system" />
           </NavigationSection>
         </div>
+      </SpecimenGroup>
+      <SpecimenGroup
+        label="Disclosure heading — the label fills, actions hug and reveal on hover or focus"
+        code={`<NavigationSectionHeading
+  disclosure
+  revealActions
+  actions={<>
+    <IconButton size="compact" aria-label="Workspace options" icon={…} />
+    <IconButton size="compact" aria-label="New chat in Work" icon={…} />
+  </>}
+>
+  <button type="button" aria-expanded={open} onClick={toggle}>
+    Work
+    <span data-navigation-reveal="" aria-hidden="true">{caret}</span>
+  </button>
+</NavigationSectionHeading>`}
+      >
+        <DisclosureHeadingSpecimen />
       </SpecimenGroup>
     </div>
   );
@@ -2354,6 +2456,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
           </div>
         </SettingsGroup>
       </div>
+      <ExpandSpecimen />
       <div>
         <InlineHeader title="Attached folders" />
         <SettingsGroup layout="cards">
@@ -2362,6 +2465,17 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
         </SettingsGroup>
       </div>
     </div>
+  ),
+  "value-chip": () => (
+    <p className="m-0 flex flex-wrap items-center gap-2 text-body-sm text-secondary">
+      Uses
+      <ValueChip icon={<SparklesIcon size={14} />} label="Example harness">
+        Model A · High
+      </ValueChip>
+      <ValueChip>
+        A much longer value that ellipsizes in a narrow column
+      </ValueChip>
+    </p>
   ),
   "theme-picker": ThemePickerSpecimen,
   "count-badge": () => (
@@ -2589,16 +2703,20 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   ),
   header: () => (
     <SpecimenFrame
-      code={`<div>
+      code={`<div className="buzz-settings-page" style={{ containerType: "inline-size" }}>
   <Header
     title="Profile"
     eyebrow="Account"
     subtitle="Your local default for new communities."
   />
   <InlineHeader title="Preferences" subtitle="Choose what works for you." />
+  <Header title="Communities" align="end" actions={<Button aria-label="Create community">Create</Button>} />
 </div>`}
     >
-      <div>
+      <div
+        className="buzz-settings-page"
+        style={{ containerType: "inline-size" }}
+      >
         <Header
           title="Profile"
           eyebrow="Account"
@@ -2607,6 +2725,11 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
         <InlineHeader
           title="Preferences"
           subtitle="Choose what works for you."
+        />
+        <Header
+          title="Communities"
+          align="end"
+          actions={<Button aria-label="Create community">Create</Button>}
         />
       </div>
     </SpecimenFrame>
@@ -2618,3 +2741,50 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   "navigation-section": NavigationSectionSpecimen,
   "navigation-item": NavigationItemSpecimen,
 };
+
+/** A choice that reveals its rows in place, as Manual does in AI settings. */
+function ExpandSpecimen() {
+  const [mode, setMode] = useState("automatic");
+  return (
+    <div>
+      <InlineHeader title="Expand in place" />
+      <SettingsGroup>
+        <PreferenceRow
+          icon={<SparklesIcon size={20} />}
+          title="Mode"
+          subtitle={
+            mode === "manual" ? "You choose each setting." : "Chosen for you."
+          }
+          trailing={
+            <Select
+              label="Mode"
+              variant="compact"
+              align="end"
+              value={mode}
+              groups={[
+                {
+                  label: "",
+                  options: [
+                    { value: "automatic", label: "Automatic" },
+                    { value: "manual", label: "Manual" },
+                  ],
+                },
+              ]}
+              onValueChange={setMode}
+            />
+          }
+        />
+        <SettingsGroupExpand open={mode === "manual"}>
+          <PreferenceRow
+            title="First"
+            trailing={<Button size="sm">Edit</Button>}
+          />
+          <PreferenceRow
+            title="Second"
+            trailing={<Button size="sm">Edit</Button>}
+          />
+        </SettingsGroupExpand>
+      </SettingsGroup>
+    </div>
+  );
+}

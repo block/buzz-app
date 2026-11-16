@@ -219,6 +219,16 @@ impl Config {
         Ok(servers)
     }
 
+    /// Whether this is the built-in server, which Builderlab customers'
+    /// servers (`customers::builderlab_customer`) come with.
+    #[allow(dead_code)] // Called by the app, not build.rs.
+    pub(crate) fn is_built_in(&self) -> bool {
+        Self::parse(BUILT_IN).is_ok_and(|built_in| {
+            serde_json::to_value(built_in.identity()).ok()
+                == serde_json::to_value(self.identity()).ok()
+        })
+    }
+
     /// The deployment as it identifies saved sessions, without presentation.
     pub(crate) fn identity(&self) -> Self {
         Self {

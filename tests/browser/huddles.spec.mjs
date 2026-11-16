@@ -4,6 +4,7 @@ import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
+import { animationsSettled } from "./animations.mjs";
 
 let server, origin;
 test.beforeAll(async () => {
@@ -410,68 +411,147 @@ test("capsule and companion presentation share mute and leave", async ({
   const keys = ["ab", "cd", "de", "ef", "fa", "bc"].map((key) =>
     key.repeat(32),
   );
-  for (const count of [1, 2, 3, 6]) {
+  // Resolve layout before inspecting motion: style changes can create CSS
+  // transitions only when the browser flushes them. Readiness and bounds must
+  // belong to the same sample, including outer portrait width/translation.
+  const settledGeometry = (el) => {
+    el.getBoundingClientRect();
+    if (
+      el.getAnimations({ subtree: true }).some((animation) => {
+        const end = animation.effect?.getComputedTiming().endTime;
+        return (
+          end !== undefined &&
+          end !== Infinity &&
+          (animation.pending ||
+            (animation.playState !== "finished" &&
+              animation.playState !== "idle"))
+        );
+      }) ||
+      [...el.querySelectorAll("[data-huddle-avatar]")].some(
+        (avatar) => getComputedStyle(avatar).transform !== "none",
+      )
+    )
+      return null;
+    const area = el.getBoundingClientRect();
+    const bounds = (node) => {
+      const rect = node.getBoundingClientRect();
+      return {
+        left: rect.left - area.left,
+        top: rect.top - area.top,
+        right: rect.right - area.left,
+        bottom: rect.bottom - area.top,
+        center: rect.left + rect.width / 2 - area.left,
+      };
+    };
+    return {
+      width: area.width,
+      height: area.height,
+      self: bounds(el.querySelector("[data-self]")),
+      portraitGaps: [
+        ...el.querySelectorAll("[data-self], [data-participant]"),
+      ].map((person) =>
+        Math.abs(
+          person.getBoundingClientRect().height -
+            person.querySelector("[data-huddle-avatar]").getBoundingClientRect()
+              .height,
+        ),
+      ),
+      peers: [...el.querySelectorAll("[data-participant]")].map(bounds),
+    };
+  };
+  const expectSettledGeometry = async () => {
+    let geometry;
+    await expect
+      .poll(
+        async () => {
+          geometry = await roster.evaluate(settledGeometry);
+          return geometry !== null;
+        },
+        { message: "huddle layout and inner avatars finish finite motion" },
+      )
+      .toBe(true);
+    return geometry;
+  };
+
+  // Establish the connected two-person layout before observing the first
+  // two-to-solo change. Hold its real outer CSS transition, not a timer or
+  // a replacement animation: the old inner-only guard must accept this state.
+  await expect(roster.locator("[data-participant]")).toHaveCount(1);
+  await expectSettledGeometry();
+  await roster.evaluate((el) => {
+    el.holdSoloTransition = (event) => {
+      if (
+        !event.target.matches("[data-self]") ||
+        event.propertyName !== "transform"
+      )
+        return;
+      const animation = event.target
+        .getAnimations()
+        .find((animation) => animation.transitionProperty === "transform");
+      if (!animation || el.heldSoloTransition) return;
+      animation.pause();
+      animation.currentTime = animation.effect.getComputedTiming().duration / 2;
+      el.heldSoloTransition = animation;
+    };
+    el.addEventListener("transitionrun", el.holdSoloTransition);
+  });
+  try {
+    await page.evaluate(
+      (keys) => window.huddleFixture.participants(keys),
+      keys.slice(0, 1),
+    );
+    await expect(roster.locator("[data-participant]")).toHaveCount(0);
+    await expect
+      .poll(() => roster.evaluate((el) => !!el.heldSoloTransition))
+      .toBe(true);
+    let premature;
+    await expect
+      .poll(async () => {
+        premature = await roster.evaluate((el) => {
+          if (
+            [...el.querySelectorAll("[data-huddle-avatar]")].some(
+              (avatar) => getComputedStyle(avatar).transform !== "none",
+            )
+          )
+            return null;
+          const area = el.getBoundingClientRect();
+          const self = el.querySelector("[data-self]").getBoundingClientRect();
+          return {
+            center: self.left + self.width / 2 - area.left,
+            expectedCenter: area.width / 2,
+            outerTransform: getComputedStyle(el.querySelector("[data-self]"))
+              .transform,
+            playState: el.heldSoloTransition.playState,
+          };
+        });
+        return premature !== null;
+      })
+      .toBe(true);
+    expect(premature.playState).toBe("paused");
+    expect(
+      Math.abs(premature.center - premature.expectedCenter),
+    ).toBeGreaterThan(0.5);
+    expect(await roster.evaluate(settledGeometry)).toBeNull();
+    await test.info().attach("held-outer-transition", {
+      body: JSON.stringify(premature, null, 2),
+      contentType: "application/json",
+    });
+  } finally {
+    await roster.evaluate((el) => {
+      el.removeEventListener("transitionrun", el.holdSoloTransition);
+      el.heldSoloTransition?.play();
+      delete el.holdSoloTransition;
+      delete el.heldSoloTransition;
+    });
+  }
+  // Include a return to solo, then restore six for the hover/name assertions.
+  for (const count of [1, 2, 3, 6, 1, 6]) {
     await page.evaluate(
       (keys) => window.huddleFixture.participants(keys),
       keys.slice(0, count),
     );
     await expect(roster.locator("[data-participant]")).toHaveCount(count - 1);
-    await roster.evaluate(async (el) => {
-      await Promise.all(
-        el
-          .getAnimations({ subtree: true })
-          .map((animation) => animation.finished),
-      );
-    });
-    // A spring can briefly cross its final size before overshooting, and
-    // Motion can put a sub-pixel transform back on a settled avatar for a
-    // frame or two. Measure in the frame that shows no avatar transform, not
-    // a later one; a separate poll could pass and the snapshot still land on
-    // such a frame.
-    let geometry;
-    await expect
-      .poll(
-        async () => {
-          geometry = await roster.evaluate((el) => {
-            if (
-              [...el.querySelectorAll("[data-huddle-avatar]")].some(
-                (avatar) => getComputedStyle(avatar).transform !== "none",
-              )
-            )
-              return null;
-            const area = el.getBoundingClientRect();
-            const bounds = (node) => {
-              const rect = node.getBoundingClientRect();
-              return {
-                left: rect.left - area.left,
-                top: rect.top - area.top,
-                right: rect.right - area.left,
-                bottom: rect.bottom - area.top,
-                center: rect.left + rect.width / 2 - area.left,
-              };
-            };
-            return {
-              width: area.width,
-              height: area.height,
-              self: bounds(el.querySelector("[data-self]")),
-              portraitGaps: [
-                ...el.querySelectorAll("[data-self], [data-participant]"),
-              ].map((person) =>
-                Math.abs(
-                  person.getBoundingClientRect().height -
-                    person
-                      .querySelector("[data-huddle-avatar]")
-                      .getBoundingClientRect().height,
-                ),
-              ),
-              peers: [...el.querySelectorAll("[data-participant]")].map(bounds),
-            };
-          });
-          return geometry !== null;
-        },
-        { message: "every huddle avatar settles with no transform" },
-      )
-      .toBe(true);
+    const geometry = await expectSettledGeometry();
     const portraits = [geometry.self, ...geometry.peers];
     if (portraits.length > 3) {
       expect(geometry.self.center).toBeCloseTo(geometry.width / 2, 0);
@@ -692,13 +772,7 @@ test("live participant avatars enter on top and reflow without growing the shell
   const avatars = updated.locator("[data-participant]");
   await expect(avatars).toHaveCount(3);
   // Wait for the actual transition lifecycle, not an arbitrary sleep.
-  await updated.evaluate((el) =>
-    Promise.all(
-      el
-        .getAnimations({ subtree: true })
-        .map((animation) => animation.finished),
-    ),
-  );
+  await animationsSettled(updated, { subtree: true });
   const positions = await avatars.evaluateAll((elements) =>
     elements.map((el) => ({
       left: el.getBoundingClientRect().left,
@@ -2012,14 +2086,10 @@ test("portraits can be tossed within the stage and return home, with reduced mot
       );
     })
     .toBe("none");
-  await portrait.evaluate(async (element) => {
-    await Promise.all(
-      element
-        .closest("[data-self]")
-        .getAnimations({ subtree: true })
-        .map((animation) => animation.finished),
-    );
-  });
+  await animationsSettled(
+    portrait.locator("xpath=ancestor-or-self::*[@data-self][1]"),
+    { subtree: true },
+  );
   const home = await portrait.boundingBox();
   const area = await stage.boundingBox();
   const start = { x: home.x + home.width / 2, y: home.y + home.height / 2 };

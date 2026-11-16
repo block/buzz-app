@@ -194,6 +194,7 @@ const PAIRS = [
   ].map((role) => [role, "--affordance-navigation-selected"]),
   // Small status/count badges on a selected row keep their own readable pair.
   ["--text-row-selected-detail", "--surface-row-selected-detail"],
+  ["--text-dock-count", "--surface-dock-count"],
   ["--text-subtle", "--affordance-popover-selected"],
   ...["control", "control-hover", "control-pressed", "selected"].map(
     (state) => ["--text-standard", `--affordance-floating-${state}`],
@@ -214,8 +215,8 @@ const PAIRS = [
   // quieter overlay under the pointer.
   ["--text-standard", "--affordance-reaction"],
   ["--text-message-own", "--affordance-reaction-own"],
-  ["--text-standard", "--affordance-reaction-self"],
-  ["--text-message-own", "--affordance-reaction-self-own"],
+  ["--text-reaction-self", "--affordance-reaction-self"],
+  ["--text-reaction-self-own", "--affordance-reaction-self-own"],
   ["--text-message-own", "--affordance-message-own-hover"],
   // An arrival cue lays the regular step across the whole bubble.
   ["--text-standard", "--affordance-message-highlight"],
@@ -285,6 +286,8 @@ const BOUNDARY_ROLES = [
 
 const TINT_PAIRS = [
   ["--text-warning", "--affordance-warning"],
+  ["--text-on-find-match", "--surface-find-match"],
+  ["--text-on-find-match", "--surface-find-match-active"],
   ["--text-success", "--affordance-success"],
   ["--text-success", "--affordance-success-hover"],
   ["--text-success", "--affordance-success-pressed"],
@@ -360,7 +363,6 @@ const SITS_ON = new Map([
   ["--affordance-message-own-highlight", "--surface-message-own"],
   ["--affordance-reaction", "--surface-message"],
   ["--affordance-reaction-own", "--surface-message-own"],
-  ["--affordance-reaction-self-own", "--surface-message-own"],
 ]);
 
 /** `#rgb` or `#rrggbb` as three 0–255 channels. */
@@ -535,6 +537,7 @@ const accentFamilies = [
   ),
 ];
 const ACCENT_PAIRS = [
+  ["--text-dock-count", "--surface-dock-count"],
   ["--text-on-selection", "--surface-text-selection"],
   ["--text-on-selection-own", "--surface-text-selection-own"],
   ["--text-sidebar-selected", "--surface-sidebar-selected"],
@@ -625,31 +628,6 @@ for (const family of accentFamilies) {
             `${family}/${level}/${mode}: --border-accent on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
           );
       }
-      // The ring is what marks a reaction as yours, so it clears 3:1 against
-      // both the tint inside it and the ground around it.
-      for (const [ringRole, grounds] of [
-        [
-          "--border-reaction-self",
-          [
-            ...BOUNDARY_SURFACES,
-            "--surface-message",
-            "--affordance-reaction-self",
-          ],
-        ],
-        [
-          "--border-reaction-self-own",
-          ["--surface-message-own", "--affordance-reaction-self-own"],
-        ],
-      ])
-        for (const surfaceRole of grounds) {
-          const ring = resolve(map, ringRole);
-          const surface = resolve(map, surfaceRole);
-          const ratio = ring && surface ? wcagRatio(ring, surface) : null;
-          if (ratio === null || ratio < 3)
-            boundaryFailures.push(
-              `${family}/${level}/${mode}: ${ringRole} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
-            );
-        }
       for (const baseRole of MESSAGE_ICON_ROLES) {
         for (const [role, surfaceRole] of [
           [baseRole, "--surface-message"],

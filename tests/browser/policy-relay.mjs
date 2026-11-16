@@ -23,6 +23,9 @@ export function policyRelay({
   // deliver it to, so publish skips its delivery check for that community.
   let closedAcceptance;
   let presenceHeld = false;
+  // A NIP-FI front-door refusal: every signed request gets the relay's exact
+  // plain-text denial (buzz-auth `nip_fi/denial.rs`) until cleared.
+  let refusal;
   const presenceWaiters = [];
   report.presenceSnapshots = [];
   report.presencePublications = [];
@@ -72,6 +75,8 @@ export function policyRelay({
   }
   const heldEose = new Set();
   const pendingEose = [];
+  // Stored events the next replaying REQ for a channel sends before EOSE.
+  const replays = new Map();
   const pendingProfiles = [];
   const pendingUnread = [];
   const unreadHolds = [];
@@ -144,6 +149,13 @@ export function policyRelay({
     holdEose(channel) {
       heldEose.add(channel);
     },
+    /** Model a reconnect's replay: fixture events predate the client's
+     * wall-clock `since`, so the next REQ whose filter for `channel` asks for
+     * a replay (limit above zero) sends these events, up to that limit,
+     * before EOSE. Passing the limit or more cuts the replay. */
+    replayNext(community, channel, events) {
+      replays.set(`${community}/${channel}`, events);
+    },
     releaseEose(channel) {
       heldEose.delete(channel);
       for (let i = pendingEose.length - 1; i >= 0; i--) {
@@ -180,6 +192,10 @@ export function policyRelay({
     quotaNextOlder(channel, seconds = 1) {
       quotas.set(`older:${channel}`, seconds);
     },
+    /** With `only`, just the signed requests to those paths. */
+    refuseSigned(status, body, only) {
+      refusal = status ? { status, body, only } : undefined;
+    },
     async fetch(url, init) {
       try {
         if (latencyMs)
@@ -190,6 +206,14 @@ export function policyRelay({
           expect(new URL(url).pathname).toBe("/");
           return Response.json(discovery?.(communityOf(url)) ?? {});
         }
+        if (
+          refusal &&
+          (!refusal.only || refusal.only.includes(new URL(url).pathname))
+        )
+          return new Response(refusal.body, {
+            status: refusal.status,
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+          });
         expect([
           "/query",
           "/profiles/search",
@@ -695,6 +719,15 @@ export function policyRelay({
               }
             }
             this.routes.set(id, filters);
+            for (const filter of filters) {
+              const key = `${this.community}/${filter["#h"]?.[0]}`;
+              const events = replays.get(key);
+              if (!events || !(filter.limit > 0) || filter["#h"].length !== 1)
+                continue;
+              replays.delete(key);
+              for (const event of events.slice(0, filter.limit))
+                emit(this, ["EVENT", id, event]);
+            }
             if (routes.some((route) => heldEose.has(route)))
               pendingEose.push({ socket: this, id, routes });
             else if (eoseMs) setTimeout(() => emit(this, ["EOSE", id]), eoseMs);

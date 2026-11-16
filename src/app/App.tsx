@@ -3,6 +3,7 @@ import { AgentAvatarArtworkProvider } from "../features/agents/AgentAvatarArtwor
 import { Welcome } from "../features/identity/Welcome";
 import { NewMenu } from "./shell/NewMenu";
 import { PrimarySidebar } from "./shell/PrimarySidebar";
+import { sidebarTarget } from "../features/channel-navigation/routes";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { AgentsContext } from "../features/agents/react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
@@ -32,12 +33,16 @@ import { UpdateReview } from "../bundled/agents/UpdateReview";
 import { TeamUpdateReview } from "../bundled/agents/TeamUpdateReview";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
+import type { PageNavigation } from "../features/navigation/service";
 import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
 import { Settings } from "./Settings";
@@ -61,6 +66,7 @@ import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { ShellBackdrops } from "../features/backdrops/ShellBackdrops";
 import { PanelCard } from "../features/panels/PanelCard";
+import { targetKey } from "../features/navigation/targets";
 import { communityDestination } from "../features/communities/destination";
 import { CommunityLanding } from "../features/communities/CommunityLanding";
 import { LegacyCommunityImport } from "../features/communities/LegacyCommunityImport";
@@ -130,6 +136,25 @@ function ConnectedApp({ services }: { services: AppServices }) {
       </AgentsContext.Provider>
     </ToastProvider>
   );
+}
+
+type Route = ReturnType<typeof useAppNavigation>;
+/** Only this subtree follows the page's request, not the whole shell. */
+function Presented({
+  store,
+  resolve,
+  children,
+}: {
+  store: Route["presented"];
+  resolve: Route["requestFor"];
+  children: (request: PageNavigation | undefined) => ReactNode;
+}) {
+  const presentation = useSyncExternalStore(
+    store.subscribe,
+    store.get,
+    store.get,
+  );
+  return children(resolve(presentation));
 }
 
 function ConnectedAppContent({ services }: { services: AppServices }) {
@@ -349,6 +374,85 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     (settings
       ? !!workspace.request
       : !route.failure && !route.waiting && !failedPage);
+  // A page with its own sidebar follows each request; the primary sidebar
+  // follows only the open conversation, so AppShell keeps its sidebar subtree
+  // when a thread opens or closes there.
+  const ownSidebar =
+    workspace.page?.sidebar && pageSidebarReady
+      ? { target: workspace.target, resolve: route.workspaceRequestFor }
+      : undefined;
+  const conversationKey = targetKey(sidebarTarget(workspace.target));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: A change within the open conversation keeps the sidebar's target.
+  const conversationTarget = useMemo(
+    () => sidebarTarget(workspace.target),
+    [conversationKey],
+  );
+  const sidebar = useCallback(
+    (pageNavigation: ReactNode, creationAction: ReactNode) =>
+      ownSidebar ? (
+        <Presented store={route.presented} resolve={ownSidebar.resolve}>
+          {(request) =>
+            workspace.page && (
+              <OwnedContribution
+                entry={workspace.page}
+                registry={services.pages}
+                resetIdentity={request}
+                fallback={
+                  <div className="shell-sidebar-default">
+                    <SidebarFrame label={`${workspace.page.title} sidebar`}>
+                      <SidebarList>
+                        <p role="alert">This page’s sidebar is unavailable.</p>
+                        {pageNavigation}
+                      </SidebarList>
+                    </SidebarFrame>
+                  </div>
+                }
+              >
+                {(entry) => {
+                  const Sidebar = entry.sidebar;
+                  return Sidebar ? (
+                    <Sidebar target={ownSidebar.target}>
+                      {pageNavigation}
+                    </Sidebar>
+                  ) : null;
+                }}
+              </OwnedContribution>
+            )
+          }
+        </Presented>
+      ) : workspace.page?.sidebar ? (
+        <div className="shell-sidebar-default">
+          <SidebarFrame label="Page navigation">
+            <SidebarList>{pageNavigation}</SidebarList>
+          </SidebarFrame>
+        </div>
+      ) : (
+        <PrimarySidebar
+          creationAction={creationAction}
+          federatedIdentity={services.federatedIdentity}
+          memberships={client.memberships}
+          relay={services.relay}
+          navigator={services.navigation}
+          agents={services.agents}
+          chatIcons={services.conversation.chatIcons}
+          chatMenus={services.conversation.chatMenus}
+          sidebarSections={services.sidebarSections}
+          sidebarScope={services.sidebarScope}
+          sidebarRows={services.sidebarRows}
+          target={conversationTarget}
+        >
+          {pageNavigation}
+        </PrimarySidebar>
+      ),
+    [
+      ownSidebar,
+      workspace.page,
+      route.presented,
+      conversationTarget,
+      client.memberships,
+      services,
+    ],
+  );
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
     return document.getElementById("buzz-launch") ? null : (
@@ -384,6 +488,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             version: 1,
             kind: "settings",
             section: "block.builderlab/login",
+            route: { version: 1, params: "create-community" },
           })
         }
       />
@@ -442,7 +547,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
         setRetriedEntry(route.state.entry.id);
         // Reopening against a refused connection would fail again at once.
         if (services.relay.snapshot().status === "error")
-          services.relay.retry();
+          services.relay.tryAgain();
         route.retry();
         // Retry can remove this control and briefly unmount the
         // shell; hand focus to main only once it has fallen away.
@@ -455,8 +560,10 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
   );
   // The way out must lead elsewhere: Messages itself may be what failed. A
   // link or access failure, or a conversation, still leaves for Messages'
-  // own default. Without one, the app's navigation remains the way out.
+  // own default. Without one, the app's navigation remains the way out, as
+  // the Settings dialog's own sections and Close are for a section.
   const leaveForMessages =
+    !settings &&
     (failureKind === "link" ||
       failureKind === "denied" ||
       route.target.kind === "conversation" ||
@@ -534,7 +641,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
         <EmptyState
           icon={<WarningCircleIcon />}
           title={`${route.turnedOff.name} is turned off`}
-          description="Turn it on in Manage plugins to open this page."
+          description={`Turn it on in Manage plugins to open this ${settings ? "section" : "page"}.`}
           action={
             <>
               <Button
@@ -598,6 +705,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
       {isTauri() && (
         <PairingPrompt
           communities={client.memberships.map((membership) => membership.id)}
+          active={client.selected}
         />
       )}
       <ChannelNavigationProvider relay={services.relay}>
@@ -614,57 +722,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             />
           )}
           workspaceRef={setWorkspaceElement}
-          sidebar={(pageNavigation, creationAction) =>
-            workspace.page?.sidebar && pageSidebarReady ? (
-              <OwnedContribution
-                entry={workspace.page}
-                registry={services.pages}
-                resetIdentity={workspace.request}
-                fallback={
-                  <div className="shell-sidebar-default">
-                    <SidebarFrame label={`${workspace.page.title} sidebar`}>
-                      <SidebarList>
-                        <p role="alert">This page’s sidebar is unavailable.</p>
-                        {pageNavigation}
-                      </SidebarList>
-                    </SidebarFrame>
-                  </div>
-                }
-              >
-                {(entry) => {
-                  const Sidebar = entry.sidebar;
-                  return Sidebar ? (
-                    <Sidebar target={workspace.target}>
-                      {pageNavigation}
-                    </Sidebar>
-                  ) : null;
-                }}
-              </OwnedContribution>
-            ) : workspace.page?.sidebar ? (
-              <div className="shell-sidebar-default">
-                <SidebarFrame label="Page navigation">
-                  <SidebarList>{pageNavigation}</SidebarList>
-                </SidebarFrame>
-              </div>
-            ) : (
-              <PrimarySidebar
-                creationAction={creationAction}
-                federatedIdentity={services.federatedIdentity}
-                memberships={client.memberships}
-                relay={services.relay}
-                navigator={services.navigation}
-                agents={services.agents}
-                chatIcons={services.conversation.chatIcons}
-                chatMenus={services.conversation.chatMenus}
-                sidebarSections={services.sidebarSections}
-                sidebarScope={services.sidebarScope}
-                sidebarRows={services.sidebarRows}
-                target={workspace.target}
-              >
-                {pageNavigation}
-              </PrimarySidebar>
-            )
-          }
+          sidebar={sidebar}
           navigationControls={
             <NavigationControls navigation={services.navigation} />
           }
@@ -691,7 +749,6 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           companion={pageOwnsCompanion ? undefined : companion}
           pages={startup === "ready" ? route.pages : []}
           selected={workspace.selected}
-          target={workspace.target}
           navigationAttempt={workspace.attempt}
           onSelect={select}
           tone={presentation.tone}
@@ -724,14 +781,23 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
               opening
             )
           ) : workspace.page ? (
-            <PageView
-              page={workspace.page}
-              navigation={workspace.request}
-              companion={pageOwnsCompanion ? companion : undefined}
-              companionOpening={
-                pageOwnsCompanion ? launcher.opening : undefined
+            <Presented
+              store={route.presented}
+              resolve={route.workspaceRequestFor}
+            >
+              {(request) =>
+                workspace.page && (
+                  <PageView
+                    page={workspace.page}
+                    navigation={request}
+                    companion={pageOwnsCompanion ? companion : undefined}
+                    companionOpening={
+                      pageOwnsCompanion ? launcher.opening : undefined
+                    }
+                  />
+                )
               }
-            />
+            </Presented>
           ) : null}
         </AppShell>
         <Dialog
@@ -796,48 +862,52 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
                 hidden={settingsBlocked}
                 inert={settingsBlocked}
               >
-                <Settings
-                  agents={services.agents}
-                  decisions={services.decisions}
-                  plugins={plugins}
-                  cards={services.settingsCards}
-                  adminAccess={services.adminAccess}
-                  communities={services.communities}
-                  identity={services.identity}
-                  federatedIdentity={services.federatedIdentity}
-                  builderlabIdentity={services.firstRunFederatedIdentity}
-                  appearance={services.appearance}
-                  shortcuts={services.shortcuts}
-                  shortcutBindings={services.shortcutBindings}
-                  notifications={services.notifications}
-                  updates={services.updates}
-                  navigation={route.request}
-                  installRequests={services.pluginInstallRequests}
-                  navigationPane
-                  onDeparturePending={(pending) => {
-                    const client = services.communities.snapshot();
-                    const attempt = route.state.attempt;
-                    if (pending && client.viewer && client.selected)
-                      setDeparture({
-                        attempt,
-                        viewer: client.viewer,
-                        communityId: client.selected,
-                      });
-                    else if (!pending)
-                      setDeparture((current) =>
-                        current?.attempt === attempt ? null : current,
-                      );
-                  }}
-                  onSection={openSettingsSection}
-                  onPluginImportClosed={() =>
-                    route.dismissPluginImport(route.request)
-                  }
-                  onPluginDetailsClosed={() =>
-                    route.dismissPluginDetails(route.request)
-                  }
-                  onProvider={route.setSettingsProvider}
-                  onUnsavedChange={setSettingsUnsaved}
-                />
+                <Presented store={route.presented} resolve={route.requestFor}>
+                  {(request) => (
+                    <Settings
+                      agents={services.agents}
+                      decisions={services.decisions}
+                      plugins={plugins}
+                      cards={services.settingsCards}
+                      adminAccess={services.adminAccess}
+                      communities={services.communities}
+                      identity={services.identity}
+                      federatedIdentity={services.federatedIdentity}
+                      builderlabIdentity={services.firstRunFederatedIdentity}
+                      appearance={services.appearance}
+                      shortcuts={services.shortcuts}
+                      shortcutBindings={services.shortcutBindings}
+                      notifications={services.notifications}
+                      updates={services.updates}
+                      navigation={request}
+                      installRequests={services.pluginInstallRequests}
+                      navigationPane
+                      onDeparturePending={(pending) => {
+                        const client = services.communities.snapshot();
+                        const attempt = route.state.attempt;
+                        if (pending && client.viewer && client.selected)
+                          setDeparture({
+                            attempt,
+                            viewer: client.viewer,
+                            communityId: client.selected,
+                          });
+                        else if (!pending)
+                          setDeparture((current) =>
+                            current?.attempt === attempt ? null : current,
+                          );
+                      }}
+                      onSection={openSettingsSection}
+                      onPluginImportClosed={() =>
+                        route.dismissPluginImport(request)
+                      }
+                      onPluginDetailsClosed={() =>
+                        route.dismissPluginDetails(request)
+                      }
+                      onProvider={route.setSettingsProvider}
+                      onUnsavedChange={setSettingsUnsaved}
+                    />
+                  )}
+                </Presented>
               </div>
             )}
           </div>

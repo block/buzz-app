@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { eventBody } from "../agent-harness/turn-records";
 import {
   activityTranscript,
+  promptEventIds,
   promptMessage,
   promptSections,
   STEER,
@@ -111,7 +112,7 @@ it("projects one thread turn into prompt, thought, tool, permission and reply", 
         "turn_started",
         {
           source: "channel",
-          triggeringEventIds: [message, "not-an-id"],
+          triggeringEventIds: [message],
           threadRootEventId: root,
         },
         0,
@@ -587,6 +588,28 @@ it("reads an event sent as an exact record, in its own or a steer's section", ()
   ).toEqual({ text: "", author: undefined });
 });
 
+it("reads the ids of a prompt's events, exact or escaped, and nothing else", () => {
+  const event = {
+    id: "e".repeat(64),
+    pubkey: "a".repeat(64),
+    kind: 9,
+    created_at: 1,
+    content: "hi",
+    tags: [],
+  };
+  const body = eventBody(event, "hi");
+  expect(
+    promptEventIds([
+      { tag: "buzz-event", body },
+      { tag: STEER, body: eventBody({ ...event, id: "f".repeat(64) }, "x") },
+      { tag: "buzz-event", body: JSON.stringify({ ...event, id: root }) },
+      { tag: "context", body },
+      { tag: "buzz-event", body: '{"id":"short"}' },
+      { tag: "buzz-event", body: "Content: hi" },
+    ]),
+  ).toEqual([event.id, "f".repeat(64), root]);
+});
+
 it("names an exact-record prompt's author in the turn, as the viewer knows them", () => {
   serial = 0;
   const sender = "f".repeat(64);
@@ -672,4 +695,189 @@ it("reuses a transcript for the same frozen records and scope", () => {
   expect(
     activityTranscript([...records], { agent, channelId: "alpha" }),
   ).not.toBe(first);
+});
+
+it("shows a Buzz message a remote tool posted as the agent's reply", () => {
+  const call = (id: string, title: string, status: string, text?: string) =>
+    update("tool_call_update", {
+      toolCallId: id,
+      title,
+      kind: "other",
+      status,
+      ...(text === undefined
+        ? {}
+        : { rawInput: { text, audience: "everyone" } }),
+    });
+  const turn = activityTranscript(
+    [
+      record([event("remote", "turn_started")]),
+      // kgoose sends the running row without arguments, then the completion.
+      record([
+        event(
+          "remote",
+          "acp_read",
+          update("tool_call", {
+            toolCallId: "send",
+            title: "buzz__send",
+            kind: "other",
+            status: "in_progress",
+          }),
+        ),
+        // Its result names the posted event.
+        event(
+          "remote",
+          "acp_read",
+          update("tool_call_update", {
+            toolCallId: "send",
+            title: "buzz__send",
+            kind: "other",
+            status: "completed",
+            rawInput: { text: "Done", audience: "everyone" },
+            content: [
+              {
+                type: "content",
+                content: { type: "text", text: `sent ${"d".repeat(64)}` },
+              },
+            ],
+          }),
+        ),
+      ]),
+      record([
+        event(
+          "remote",
+          "acp_read",
+          call("sub", "mcp__buzz__reply_in_subthread", "completed", "Nested"),
+        ),
+      ]),
+      record([
+        event(
+          "remote",
+          "acp_read",
+          call("failed", "buzz__send", "failed", "Lost"),
+        ),
+      ]),
+      record([
+        event(
+          "remote",
+          "acp_read",
+          call("read", "buzz__read", "completed", "q"),
+        ),
+      ]),
+      // buzz-agent reports an MCP application error as a completed call.
+      record([
+        event(
+          "remote",
+          "acp_read",
+          update("tool_call", {
+            toolCallId: "rejected",
+            title: "buzz__send",
+            status: "in_progress",
+            rawInput: { text: "Rejected" },
+          }),
+        ),
+        event(
+          "remote",
+          "acp_read",
+          update("tool_call_update", {
+            toolCallId: "rejected",
+            status: "completed",
+            rawOutput: { isError: true, content: "not a member" },
+          }),
+        ),
+      ]),
+    ],
+    { agent },
+  ).turns[0];
+  expect(
+    turn?.items.map((item) =>
+      item.type === "message"
+        ? [item.type, item.text, item.posted, item.messageId]
+        : [item.type, item.type === "tool" ? item.title : ""],
+    ),
+  ).toEqual([
+    ["message", "Done", true, "d".repeat(64)],
+    ["message", "Nested", true, undefined],
+    ["tool", "buzz__send"],
+    ["tool", "buzz__read"],
+    ["tool", "buzz__send"],
+  ]);
+});
+
+it("adds steered messages to the turn's triggers without marking it started", () => {
+  serial = 0;
+  const steered = "f".repeat(64);
+  const records = [
+    record([
+      event("joined", "turn_steered", { triggeringEventIds: [steered] }, 1),
+      event("joined", "turn_started", { triggeringEventIds: [message] }, 2),
+      event(
+        "joined",
+        "turn_steered",
+        { triggeringEventIds: [steered, "not-an-id"] },
+        3,
+      ),
+    ]),
+    record([
+      event("partial", "turn_steered", { triggeringEventIds: [steered] }, 4),
+    ]),
+  ];
+  expect(
+    activityTranscript(records, { agent, channelId: "alpha" }).turns.map(
+      (turn) => [turn.turnId, turn.triggeringEventIds, turn.partial],
+    ),
+  ).toEqual([
+    ["joined", [steered, message], false],
+    ["partial", [steered], true],
+  ]);
+});
+
+it("drops a steer's whole list when one entry is bad or it passes the turn's limit", () => {
+  serial = 0;
+  const id = (n: number) => n.toString(16).padStart(64, "0");
+  const records = [
+    record([
+      event(
+        "one",
+        "turn_started",
+        {
+          triggeringEventIds: [
+            message,
+            ...Array.from({ length: 59 }, (_, i) => id(i + 1)),
+          ],
+        },
+        1,
+      ),
+      event("one", "turn_steered", { triggeringEventIds: [id(500), "x"] }, 2),
+      event(
+        "one",
+        "turn_steered",
+        {
+          triggeringEventIds: Array.from({ length: 4 }, (_, i) => id(i + 600)),
+        },
+        3,
+      ),
+      event(
+        "one",
+        "turn_steered",
+        {
+          triggeringEventIds: Array.from({ length: 5 }, (_, i) => id(i + 700)),
+        },
+        4,
+      ),
+    ]),
+  ];
+  records.push(
+    record([
+      event("two", "turn_started", { triggeringEventIds: [root, "x"] }, 5),
+    ]),
+  );
+  const [turn, two] = activityTranscript(records, {
+    agent,
+    channelId: "alpha",
+  }).turns;
+  expect(two?.triggeringEventIds).toEqual([]);
+  expect(turn?.triggeringEventIds).toHaveLength(64);
+  expect(turn?.triggeringEventIds).not.toContain(id(500));
+  expect(turn?.triggeringEventIds).toContain(id(603));
+  expect(turn?.triggeringEventIds).not.toContain(id(700));
 });

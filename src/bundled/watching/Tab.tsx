@@ -346,27 +346,11 @@ export function createAttentionComponents({
             aria-label="Attention settings"
           >
             {!empty && (
-              <AttentionSonar
-                name={agent.name}
-                picture={agent.picture}
-                active={agent.attentionEnabled}
-              />
+              <AttentionSonar name={agent.name} picture={agent.picture} />
             )}
             <PreferenceRow
               title="Attention"
               subtitle={`Let ${agent.name} watch for updates and check in on a schedule. Runs while Buzz is open on this device.`}
-              trailing={
-                <AttentionStatus
-                  name={agent.name}
-                  active={agent.attentionEnabled}
-                  pending={action.pending}
-                  onChange={(attentionEnabled) =>
-                    void action.run(() =>
-                      agents.save(agent.key, { attentionEnabled }),
-                    )
-                  }
-                />
-              }
             />
           </section>
         </SettingsGroup>
@@ -434,11 +418,7 @@ export function createAttentionComponents({
           </section>
         )}
         {empty && (
-          <AttentionEmptyState
-            name={agent.name}
-            picture={agent.picture}
-            active={agent.attentionEnabled}
-          />
+          <AttentionEmptyState name={agent.name} picture={agent.picture} />
         )}
       </div>
     );

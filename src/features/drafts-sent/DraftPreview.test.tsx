@@ -12,7 +12,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { DraftsSentBadge } from "./DraftsSentNavigation";
+import { DraftsSentBadge } from "./DraftsSentBadge";
 import { DraftPreview } from "./DraftPreview";
 import { MentionCompletion } from "../../bundled/mentions/MentionCompletion";
 import { mentionQuery } from "../../bundled/mentions/mention-query";
@@ -220,6 +220,7 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
     snapshot: () => connection,
     subscribe: () => () => {},
     retry() {},
+    tryAgain() {},
     disconnect() {},
     clearCache: owner.clearCache,
   } as RelayData;

@@ -198,8 +198,6 @@ type Once = {
 /** A queued turn that later messages join once it starts. */
 type Next = {
   began: Promise<Active | undefined>;
-  /** Joining messages in order; the turn steers past them once it begins. */
-  steering: Promise<void>;
   begin: (active?: Active) => void;
 };
 type Lane = {
@@ -208,6 +206,10 @@ type Lane = {
   queued: number;
   /** The latest of them. */
   next?: Next;
+  /** Messages behind a turn, each steered or queued in arrival order. */
+  steering: Promise<void>;
+  /** How many of them are still being placed. */
+  behind: number;
   active?: Active;
   voice?: { loaded: Loaded; signal: AbortSignal };
 };
@@ -1483,7 +1485,12 @@ export class CodexRuntime {
     const { channelId } = seat.conversation;
     const key = JSON.stringify([channelId, "channel"]);
     const entry = this.entry(agent.key, reads.scope);
-    const lane = entry.lanes.get(key) ?? { tail: entry.after, queued: 0 };
+    const lane = entry.lanes.get(key) ?? {
+      tail: entry.after,
+      queued: 0,
+      steering: Promise.resolve(),
+      behind: 0,
+    };
     if (lane.voice)
       throw new Error("This conversation already has a voice seat");
     entry.lanes.set(key, lane);
@@ -1863,24 +1870,22 @@ export class CodexRuntime {
         const text = textOf(request.event, agent.name);
         let lane = entry.lanes.get(key);
         if (!lane) {
-          lane = { tail: entry.after, queued: 0 };
+          lane = {
+            tail: entry.after,
+            queued: 0,
+            steering: Promise.resolve(),
+            behind: 0,
+          };
           entry.lanes.set(key, lane);
         }
-        // Behind a queued turn, a message joins it once it starts, so a
-        // backlog clears in one turn rather than one turn per message.
-        const next = lane.queued ? lane.next : undefined;
-        const running = lane.active;
-        const chain = next ?? running;
-        if (chain) {
+        if (lane.active || lane.queued || lane.behind) {
+          const current = lane;
           let queued = false;
           const queue = () => {
             queued = true;
-            this.start(request, text, key, lane, entry);
+            this.start(request, text, key, current, entry);
           };
-          // Startup and history reads stay ordered without holding Agents delivery.
-          const accepted = chain.steering.then(async () => {
-            const active = next ? await next.began : running;
-            if (!active) return queue();
+          const steer = async (active: Active) => {
             try {
               await active.ready;
               if (entry.abort.signal.aborted) {
@@ -1889,14 +1894,14 @@ export class CodexRuntime {
               }
               // Steering cannot carry a model or effort pick, so a
               // differing pick waits for this turn and runs as the next one.
-              // Everything after it queues too until the lane drains: steering
-              // would run later messages first. A turn keeps the posting policy
-              // it was admitted with, so a request under the other policy waits
-              // for it too. A turn the owner stopped takes nothing more.
+              // Messages after it join that turn instead: steering would run
+              // them first. A turn keeps the posting policy it was admitted
+              // with, so a request under the other policy waits for it too. A
+              // turn the owner stopped takes nothing more.
               if (
                 active.finished ||
                 active.stopped ||
-                lane.queued ||
+                current.queued ||
                 request.conversation.topLevel !==
                   active.reply.conversation.topLevel ||
                 (request.model && request.model !== active.model) ||
@@ -1940,8 +1945,12 @@ export class CodexRuntime {
                 request.failActivity("Codex was stopped");
                 return;
               }
-              // A completion racing the request means this is the next ordinary turn.
-              if (message(error) === "no active turn to steer") {
+              // A completion racing the request, or a turn that never
+              // started, means this is the next ordinary turn.
+              if (
+                !active.turnId ||
+                message(error) === "no active turn to steer"
+              ) {
                 queue();
                 return;
               }
@@ -1960,8 +1969,27 @@ export class CodexRuntime {
             } finally {
               if (!queued) entry.waiting.delete(request);
             }
-          });
-          chain.steering = accepted.catch((error) =>
+          };
+          current.behind++;
+          // Startup and history reads stay ordered without holding Agents delivery.
+          const accepted = current.steering
+            .then(async () => {
+              // Behind a queued turn, a message joins it once it starts, so a
+              // backlog clears in one turn rather than one turn per message.
+              const active = current.queued
+                ? await current.next?.began
+                : current.active;
+              if (!active) return queue();
+              const steered = steer(active);
+              // The turn ends only once what it may take in is placed.
+              active.steering = Promise.all([
+                active.steering,
+                steered.catch(() => {}),
+              ]).then(() => {});
+              await steered;
+            })
+            .finally(() => current.behind--);
+          current.steering = accepted.catch((error) =>
             console.error("Codex steering failed", error),
           );
           return;
@@ -2255,7 +2283,6 @@ export class CodexRuntime {
     let began!: (active?: Active) => void;
     const next: Next = {
       began: new Promise((resolve) => (began = resolve)),
-      steering: Promise.resolve(),
       begin: (active) => {
         next.begin = () => {};
         current.queued--;
@@ -2896,7 +2923,7 @@ export class CodexRuntime {
       released: new Promise((resolve) => {
         release = resolve;
       }),
-      steering: next?.steering ?? Promise.resolve(),
+      steering: Promise.resolve(),
       reply: request,
       finished: false,
       workspace: lane.voice?.loaded.workspace ?? request.settings.workspace,

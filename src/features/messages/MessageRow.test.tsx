@@ -5465,3 +5465,39 @@ it.each([true, false])(
     }
   },
 );
+
+it.each([true, false])(
+  "keeps an emoji forward note in a normal bubble with timestamp=%s",
+  (timed) => {
+    const note = timed ? "⏱ 0:21 — 👍" : "👍";
+    const snapshot = {
+      id: "a".repeat(64),
+      channelId: "source",
+      authorId: "b".repeat(64),
+      authorName: "Original Author",
+      createdAt: 1,
+      content: "Copied content",
+    };
+    const view = renderMessage({
+      row: {
+        ...row,
+        content:
+          note +
+          "\n\nForwarded message from Original Author\n\n> Copied content",
+        forward: { note, snapshot },
+      },
+    });
+    try {
+      expect(
+        view.container.querySelector('[data-emoji-only="true"]'),
+      ).toBeNull();
+      expect(screen.getAllByText("Copied content")).toHaveLength(1);
+      expect(view.container).toHaveTextContent("👍");
+      expect(view.container).not.toHaveTextContent("⏱");
+      if (timed)
+        expect(view.container.textContent?.match(/0:21/g)).toHaveLength(1);
+    } finally {
+      view.unmount();
+    }
+  },
+);

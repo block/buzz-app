@@ -17,6 +17,7 @@ export function apply(ctx) {
       const [draft, setDraft] = React.useState("");
       const [attempted, setAttempted] = React.useState(false);
       const [alerts, setAlerts] = React.useState(false);
+      const formId = React.useId();
       const summary = h(
         "p",
         null,
@@ -35,7 +36,8 @@ export function apply(ctx) {
         setAttempted(false);
         setOpen(true);
       };
-      const save = () => {
+      const save = (event) => {
+        event.preventDefault();
         setAttempted(true);
         if (!draft.trim()) return;
         setName(draft.trim());
@@ -79,21 +81,32 @@ export function apply(ctx) {
               ),
               h(
                 ui.Button,
-                { key: "save", variant: "prominent", onClick: save },
+                // Actions sit outside the body, so Save names the form it submits.
+                {
+                  key: "save",
+                  variant: "prominent",
+                  type: "submit",
+                  form: formId,
+                },
                 "Save",
               ),
             ],
           },
+          // A form makes Enter in the field save, like the Save action.
           h(
-            ui.Field,
-            {
-              label: "Name",
-              error: attempted && !draft.trim() ? "Enter a name" : undefined,
-            },
-            h(ui.Input, {
-              value: draft,
-              onValueChange: setDraft,
-            }),
+            "form",
+            { id: formId, onSubmit: save },
+            h(
+              ui.Field,
+              {
+                label: "Name",
+                error: attempted && !draft.trim() ? "Enter a name" : undefined,
+              },
+              h(ui.Input, {
+                value: draft,
+                onValueChange: setDraft,
+              }),
+            ),
           ),
         ),
       );

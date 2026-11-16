@@ -15,6 +15,8 @@ export type PluginButtonProps = Readonly<{
   disabled?: boolean | undefined;
   /** Default `button`. */
   type?: "button" | "submit" | "reset" | undefined;
+  /** The `id` of the form it submits, for a Dialog action outside the body's form. */
+  form?: string | undefined;
   onClick?: (() => void) | undefined;
   /** Shown as the host's tooltip. */
   title?: string | undefined;
@@ -67,7 +69,10 @@ export type PluginSwitchProps = Readonly<
   )
 >;
 
-/** A modal; the host owns its portal, focus trap, Escape and focus return. */
+/**
+ * A modal; the host owns its portal, focus trap, Escape and focus return. It
+ * opens on the first control in its body, else its first action.
+ */
 export type PluginDialogProps = Readonly<{
   open: boolean;
   onOpenChange: (open: boolean) => void;

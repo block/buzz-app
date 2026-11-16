@@ -47,7 +47,8 @@ it("lets a plugin build a form in a dialog from host controls", async () => {
     const [name, setName] = useState("");
     const [attempted, setAttempted] = useState(false);
     const [alerts, setAlerts] = useState(false);
-    const save = () => {
+    const save = (event: { preventDefault(): void }) => {
+      event.preventDefault();
       setAttempted(true);
       if (!name) return;
       saved(name);
@@ -81,18 +82,27 @@ it("lets a plugin build a form in a dialog from host controls", async () => {
           dismissOnOutsideClick: false,
           // Host-owned options are not part of the contract.
           visit: true,
-          actions: h(Button, { variant: "prominent", onClick: save }, "Save"),
+          // The footer sits outside the body, so Save names the form it submits.
+          actions: h(
+            Button,
+            { variant: "prominent", type: "submit", form: "profile" },
+            "Save",
+          ),
         },
         h(
-          Field,
-          {
-            label: "Display name",
-            error: attempted && !name ? "Required" : "",
-          },
-          h(loose.Input, {
-            value: name,
-            onValueChange: (...args: unknown[]) => setName(args.join("|")),
-          }),
+          "form",
+          { id: "profile", onSubmit: save },
+          h(
+            Field,
+            {
+              label: "Display name",
+              error: attempted && !name ? "Required" : "",
+            },
+            h(loose.Input, {
+              value: name,
+              onValueChange: (...args: unknown[]) => setName(args.join("|")),
+            }),
+          ),
         ),
       ),
     );
@@ -112,7 +122,10 @@ it("lets a plugin build a form in a dialog from host controls", async () => {
     "Shown to people in this community.",
   );
   const input = screen.getByRole("textbox", { name: "Display name" });
+  // Opens on the field, not on header Close, where Enter would discard it.
+  await vi.waitFor(() => expect(input).toHaveFocus());
   expect(input).not.toHaveAttribute("aria-invalid");
+  // The footer Save submits the body's form.
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(input).toHaveAttribute("aria-invalid", "true");
   expect(screen.getByRole("alert")).toHaveTextContent("Required");
@@ -120,7 +133,7 @@ it("lets a plugin build a form in a dialog from host controls", async () => {
   // Only the value reaches the plugin, never Base UI's event details.
   expect(input).toHaveValue("Ada");
   expect(input).not.toHaveAttribute("aria-invalid");
-  await user.click(screen.getByRole("button", { name: "Save" }));
+  await user.type(input, "{Enter}");
   expect(saved).toHaveBeenCalledExactlyOnceWith("Ada");
   await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 

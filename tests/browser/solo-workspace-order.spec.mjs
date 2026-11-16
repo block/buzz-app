@@ -98,6 +98,11 @@ test("ordinary and composed workspace headers reorder, cancel and restore", asyn
         ? home.getByRole("button", { name: "Show tasks and chats in Home" })
         : heading("Home");
     await expect(expanded()).toHaveAttribute("aria-expanded", "false");
+    if (composed) {
+      await heading("Work").click();
+      await expect(heading("Work")).toHaveAttribute("aria-current", "page");
+      await expect(heading("Home")).not.toHaveAttribute("aria-current");
+    }
 
     await pull(page, heading("Home"), heading("Work"));
     await expect(home).toHaveAttribute("data-section-dragging");
@@ -132,6 +137,14 @@ test("ordinary and composed workspace headers reorder, cancel and restore", asyn
     // activation or the next deliberate pointer action.
     await heading("Home").dispatchEvent("click", { detail: 1 });
     await expect(expanded()).toHaveAttribute("aria-expanded", "false");
+    if (composed) {
+      await expect(heading("Work")).toHaveAttribute("aria-current", "page");
+      await expect(heading("Home")).not.toHaveAttribute("aria-current");
+      await heading("Home").press("Enter");
+      await expect(heading("Home")).toHaveAttribute("aria-current", "page");
+      await heading("Work").click();
+      await expect(heading("Work")).toHaveAttribute("aria-current", "page");
+    }
 
     await page.reload();
     await expect.poll(order).toEqual(["Home", "Work"]);

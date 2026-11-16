@@ -38,7 +38,7 @@ it("opens the shared viewer and retires captured actions when hidden or unmounte
     target: "channel",
     close: vi.fn(),
     context: { channelId: "channel", canOpen: () => false, open: () => false },
-    isActive: () => active,
+    isActive: () => true,
   } as unknown as ComponentProps<typeof PanelMediaCard>;
   const view = render(<PanelMediaCard {...props} />);
   const attachment = {
@@ -53,11 +53,11 @@ it("opens the shared viewer and retires captured actions when hidden or unmounte
   });
   expect(screen.getByRole("button").textContent).toBe("message: photo.png");
   active = false;
-  view.rerender(<PanelMediaCard {...props} />);
+  view.rerender(<PanelMediaCard {...props} isActive={() => active} />);
   expect(screen.queryByRole("button")).toBeNull();
   expect(old.openMedia?.("message", attachment)).toBe(false);
   active = true;
-  view.rerender(<PanelMediaCard {...props} />);
+  view.rerender(<PanelMediaCard {...props} isActive={() => active} />);
   expect(screen.queryByRole("button")).toBeNull();
   expect(
     captured?.openMedia?.("message", { ...attachment, kind: "file" }),

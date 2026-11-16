@@ -922,7 +922,9 @@ export function useConversationTabs({
               entry.channelContext?.channelName ?? current?.name ?? ""
             }
             extensions={extensions}
-            isActive={() => panelActive(entry)}
+            isActive={() =>
+              panelActive(entry) && (inMain(entry) || tabState.paneOpen)
+            }
             panel={entry.panel}
             contentKey={panelContentTarget(entry)}
             target={entry.target}

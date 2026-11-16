@@ -31,7 +31,9 @@ export function PanelMediaCard({
     };
   }, []);
   const active = isActive();
+  const visible = useRef(active);
   useLayoutEffect(() => {
+    visible.current = active;
     if (!active) media.review?.close();
   }, [active, media.review]);
   return (
@@ -44,6 +46,7 @@ export function PanelMediaCard({
             openMedia: (messageId, attachment) => {
               if (
                 !live.current ||
+                !visible.current ||
                 !isActive() ||
                 (attachment.kind !== "image" && attachment.kind !== "video")
               )

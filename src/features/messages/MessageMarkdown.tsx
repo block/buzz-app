@@ -148,6 +148,15 @@ function protectInlineContent(
           const partStart = partOffset;
           partOffset += part.length;
           const urlPart = linkPart(part);
+          // GFM runs a bare URL into the Markdown after it; end it where
+          // message links end, so `https://x，[a](y)` still parses the link.
+          const head = urlPart
+            ? messageLinkParts(part).find(({ text }) => text)
+            : undefined;
+          const linkEnd =
+            head?.url && head.text.length < part.length
+              ? head.text.length
+              : undefined;
           let result = "";
           let end = 0;
           // Protect explicitly encoded URL punctuation before GFM's fallback
@@ -171,6 +180,16 @@ function protectInlineContent(
                   literal: undefined,
                 }))),
             ...(urlPart ? [] : encoded),
+            ...(linkEnd === undefined
+              ? []
+              : [
+                  {
+                    start: linkEnd,
+                    end: linkEnd,
+                    literal: undefined,
+                    linkEnd: true,
+                  },
+                ]),
             ...spoilerDelimiters
               .filter(
                 (start) =>
@@ -196,11 +215,13 @@ function protectInlineContent(
             result +=
               "spoiler" in match
                 ? `<${prefix}spoiler\uE002>`
-                : token(
-                    match.literal
-                      ? { text: match.literal, literal: true }
-                      : { text: part.slice(match.start, match.end) },
-                  );
+                : "linkEnd" in match
+                  ? `<${prefix}link\uE002>`
+                  : token(
+                      match.literal
+                        ? { text: match.literal, literal: true }
+                        : { text: part.slice(match.start, match.end) },
+                    );
             end = match.end;
           }
           return result + part.slice(end);
@@ -356,11 +377,16 @@ function rehypeEditedSlot() {
 }
 
 /** GFM ends a bare URL only at whitespace. End it where bare message links end;
- * `<url>` and `[url](url)` keep their destination. */
-function remarkBareLinkEnd(content: string) {
+ * `<url>` and `[url](url)` keep their destination. Drops the `<` markers that
+ * stopped GFM there. */
+function remarkBareLinkEnd(content: string, linkEnd: string) {
   return function visit(parent: MarkdownNode) {
     if (!parent.children) return;
     parent.children = parent.children.flatMap((child) => {
+      if (child.type === "text" && child.value?.includes(linkEnd)) {
+        const value = child.value.replaceAll(linkEnd, "");
+        return value ? [{ ...child, value }] : [];
+      }
       const text = child.url;
       const { start, end } = child.position ?? {};
       if (
@@ -821,7 +847,11 @@ const MarkdownBody = memo(function MarkdownBody({
           // agrees with prepareMarkdown's check on the raw content.
           ...(isPlainProse(protectedContent.content) ? [remarkPlainProse] : []),
           remarkGfm,
-          [remarkBareLinkEnd, protectedContent.content],
+          [
+            remarkBareLinkEnd,
+            protectedContent.content,
+            `<${protectedContent.prefix}link\uE002>`,
+          ],
           remarkBreaks,
           [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
           [remarkInlineContent, protectedContent],

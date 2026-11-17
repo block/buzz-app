@@ -28,6 +28,7 @@ import { parseBuzzLink } from "../navigation/buzz-links";
 import styles from "./Messages.module.css";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { messageEditText } from "./message-edit";
 import { serializeSelection } from "./selection-copy";
 import { buzzCopyDocument } from "./composer-clipboard";
 import { projectComposerDocument } from "./composer-document";
@@ -728,6 +729,27 @@ describe("Markdown profile mentions", () => {
     ]);
     expect(html).toContain('，<button type="button"');
     expect(html).toContain('aria-label="View Mic profile"');
+  });
+
+  it("keeps a mention after a bare link and CJK punctuation through an Edit save", () => {
+    const sent = props("看这个 https://example.test，@Mic").row;
+    const saved = messageEditText(sent, profiles).replace("看这个", "看看");
+    expect(saved).toContain("，[@Mic](nostr:");
+    const html = render(saved, { patch: { edited: true } });
+    expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual([
+      "https://example.test/",
+    ]);
+    expect(html).toContain('aria-label="View Mic profile"');
+    expect(html).not.toContain("](nostr:");
+  });
+
+  it("parses a link right after a bare link that ends at CJK punctuation", () => {
+    const html = render("看 https://example.test，[a](https://example.org)");
+    expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual([
+      "https://example.test/",
+      "https://example.org/",
+    ]);
+    expect(html.replace(/<[^>]*>/g, "")).toBe("看 https://example.test，a");
   });
 
   it.each<[string, RenderOptions]>([

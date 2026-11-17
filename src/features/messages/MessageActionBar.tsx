@@ -315,11 +315,15 @@ function MessageActionBarControls({
               onClick={() => {
                 setHandingOffFocus(true);
                 afterClose.current = () => {
-                  if (!quoteSelection(selection))
+                  if (!quoteSelection(selection)) {
+                    const target = contextFocus.current;
+                    if (target?.isConnected)
+                      target.focus({ preventScroll: true });
                     setNotice({
                       text: "Couldn’t quote. Select the text and try again.",
                       error: true,
                     });
+                  }
                 };
               }}
             >

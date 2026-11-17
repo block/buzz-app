@@ -88,13 +88,40 @@ for (const [scheme, width, scale] of [
     expect(
       (await menu.getByRole("menuitem").allTextContents()).slice(2),
     ).toEqual(messageActions);
-    // Dismissal leaves the draft unchanged and does not resurrect a floating button.
-    await page.keyboard.press("Escape");
-    await expect(menu).toHaveCount(0);
     const input = page.getByRole("textbox", {
       name: "Message #Alpha",
       exact: true,
+      includeHidden: true,
     });
+    if (scheme === "light") {
+      // The public editor setter models a composer locking while its menu is open.
+      await input.evaluate((element) => {
+        element.readOnly = true;
+      });
+      try {
+        await menu
+          .getByRole("menuitem", { name: "Quote highlight", exact: true })
+          .focus();
+        await page.keyboard.press("Enter");
+        await expect(
+          page.getByText("Couldn’t quote. Select the text and try again.", {
+            exact: true,
+          }),
+        ).toBeVisible();
+        await expect(
+          page.getByRole("region", {
+            name: "Channel message history",
+            exact: true,
+          }),
+        ).toBeFocused();
+      } finally {
+        await input.evaluate((element) => {
+          element.readOnly = false;
+        });
+      }
+    } else await page.keyboard.press("Escape");
+    // Failure and dismissal both leave the draft unchanged.
+    await expect(menu).toHaveCount(0);
     await expect(input.locator("blockquote")).toHaveCount(0);
     await selectLink();
     await link.click({ button: "right" });

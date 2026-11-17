@@ -69,7 +69,7 @@ function setup({ canQuote = true, active = true } = {}) {
       <ToastProvider>
         <ConversationPresentation value={active}>
           <MessageContextMenus>
-            <section ref={list} aria-label="Messages">
+            <section ref={list} aria-label="Messages" tabIndex={-1}>
               {show && (
                 <MessageActionBar
                   withToolbar
@@ -269,16 +269,27 @@ it("quotes the captured selection after focus has cleared the live range", async
   expect(document.activeElement).toBe(draft);
 });
 
-it("reports when the composer becomes unavailable while the menu is open", async () => {
-  const user = userEvent.setup();
-  const { open, controller } = setup();
-  open();
-  const item = await screen.findByRole("menuitem", { name: "Quote highlight" });
-  vi.spyOn(controller, "canQuote").mockReturnValue(false);
-  await user.click(item);
-  await screen.findByText("Couldn’t quote. Select the text and try again.");
-  expect(controller.quote).not.toHaveBeenCalled();
-});
+it.each(["unavailable", "rejected"])(
+  "reports a %s quote and restores source focus",
+  async (failure) => {
+    const user = userEvent.setup();
+    const { open, controller, list } = setup();
+    open();
+    const item = await screen.findByRole("menuitem", {
+      name: "Quote highlight",
+    });
+    if (failure === "unavailable")
+      vi.spyOn(controller, "canQuote").mockReturnValue(false);
+    else vi.mocked(controller.quote).mockReturnValue(false);
+    act(() => item.focus());
+    await user.keyboard("{Enter}");
+    await screen.findByText("Couldn’t quote. Select the text and try again.");
+    await waitFor(() => expect(document.activeElement).toBe(list));
+    expect(controller.quote).toHaveBeenCalledTimes(
+      failure === "unavailable" ? 0 : 1,
+    );
+  },
+);
 
 it("reports clipboard failure", async () => {
   const user = userEvent.setup();

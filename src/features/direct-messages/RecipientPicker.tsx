@@ -3,7 +3,10 @@ import { Popover } from "@base-ui/react/popover";
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useAgentChoices } from "../agents/use-choices";
 import { agentUnavailable, canMessageAgent } from "../agents/choices";
+import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
+import { channelIcon, channelText } from "../channels/channel-icon";
+import { matchName } from "../search/match";
 import { MatchedLabel } from "../search/MatchedLabel";
 import { exactName, matchPerson } from "../search/person-match";
 import {
@@ -37,7 +40,14 @@ import styles from "./NewMessage.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 
 const noExclusions: readonly string[] = [];
+const noChannels: readonly ChannelSummary[] = [];
 const personKey = (pubkey: string) => `person:${pubkey}`;
+/** A channel row's key; never a pubkey, which is bare hex. */
+const channelKey = (id: string) => `channel:${id}`;
+/** Matching channels shown above people, so people stay in view. */
+const channelRows = 5;
+/** A chosen channel, as its chip names it. */
+export type RecipientChannel = { id: string; name: string; private?: true };
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 /** At most 24 characters, cut between characters rather than inside one. */
 function shortened(text: string) {
@@ -60,6 +70,9 @@ export function RecipientPicker({
   initiallyOpen = true,
   maxRecipients = 8,
   appearance = "header",
+  channels: channelChoices = noChannels,
+  channel,
+  onChannel,
   onChange,
   onComplete,
   onTyped,
@@ -77,6 +90,11 @@ export function RecipientPicker({
   maxRecipients?: number;
   /** A panel's header row, or a filled control inside a dialog form. */
   appearance?: "header" | "field";
+  /** Channels typed text can also find; a chosen one counts as a recipient. */
+  channels?: readonly ChannelSummary[];
+  channel?: RecipientChannel | undefined;
+  /** A channel chosen from the list, or undefined when its chip is removed. */
+  onChannel?(channel: ChannelSummary | undefined): void;
   onChange(people: Recipient[]): void;
   onComplete(): void;
   /** Whether the To field holds text that is not a recipient yet. */
@@ -102,10 +120,29 @@ export function RecipientPicker({
   });
   const agents = useAgentChoices(session, false, true);
   const removal = useChipRemoval();
-  const atLimit = selected.length >= maxRecipients;
+  const chosen = selected.length + (channel ? 1 : 0);
+  const atLimit = chosen >= maxRecipients;
   const needle = query.trim().toLowerCase();
   const typed = pickerText("dm", needle);
-  const invalid = !open && !!needle && selected.length > 0;
+  const invalid = !open && !!needle && chosen > 0;
+  const withChannels = !!onChannel;
+  // Typed text finds channels by name, best match first, then list order.
+  const found = useMemo(
+    () =>
+      needle && withChannels
+        ? channelChoices
+            .flatMap((item) => {
+              const match =
+                item.id === channel?.id
+                  ? undefined
+                  : matchName(item.name, needle);
+              return match ? [{ item, match }] : [];
+            })
+            .sort((left, right) => left.match.rank - right.match.rank)
+            .slice(0, channelRows)
+        : [],
+    [channelChoices, channel?.id, needle, withChannels],
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: a choice or removal makes the stored usage newer.
   const usage = useMemo(() => readSearchUsage(scope), [scope, selected.length]);
   const known = useRef(new Map<string, Recipient>());
@@ -335,13 +372,20 @@ export function RecipientPicker({
   const label = (person: Recipient) =>
     [person.name, discriminator(person)].filter(Boolean).join(" ");
   const listed = open && !disabled && !atLimit;
+  const rowKeys = useMemo(
+    () => [...found.map(({ item }) => channelKey(item.id)), ...keys],
+    [found, keys],
+  );
+  const pick = (key: string) => {
+    const row = found.find(({ item }) => channelKey(item.id) === key);
+    if (row) return chooseChannel(row.item);
+    const person = byPubkey.get(key);
+    if (person) choose(person);
+  };
   const highlight = useSearchHighlight({
     query,
-    keys,
-    onChoose: (pubkey) => {
-      const person = byPubkey.get(pubkey);
-      if (person) choose(person);
-    },
+    keys: rowKeys,
+    onChoose: pick,
     open: listed,
     onOpen: () => setOpen(true),
   });
@@ -376,10 +420,23 @@ export function RecipientPicker({
       setOpen(true);
     }
   }
+  function chooseChannel(item: ChannelSummary) {
+    if (disabled || atLimit || !onChannel) return;
+    onChannel(item);
+    setQuery("");
+    onTyped(false);
+    focus();
+    if (chosen + 1 >= maxRecipients) setOpen(false);
+  }
+  function removeChannel() {
+    if (disabled || !channel) return;
+    onChannel?.(undefined);
+    focus();
+  }
   function choose(person: Recipient) {
     if (
       disabled ||
-      selection.current.length >= maxRecipients ||
+      selection.current.length + (channel ? 1 : 0) >= maxRecipients ||
       person.pubkey === session.viewer ||
       excludedPubkeys.includes(person.pubkey) ||
       agentUnavailable(session, person.pubkey) ||
@@ -436,8 +493,8 @@ export function RecipientPicker({
       verified={verifiedDetail(person)}
       query={needle}
       media={session.media}
-      position={index + 1}
-      count={candidates.length}
+      position={found.length + index + 1}
+      count={found.length + candidates.length}
     />
   );
   return (
@@ -489,6 +546,13 @@ export function RecipientPicker({
           }}
         >
           <label htmlFor={id}>To:</label>
+          {channel && (
+            <ChannelChip
+              channel={channel}
+              disabled={disabled}
+              onRemove={removeChannel}
+            />
+          )}
           {labels.map((person) => (
             <span className={styles.chip} key={person.pubkey}>
               <button
@@ -540,11 +604,15 @@ export function RecipientPicker({
             aria-describedby={invalid ? errorId : undefined}
             {...highlight.fieldProps}
             placeholder={
-              selected.length
+              chosen
                 ? atLimit
-                  ? `${maxRecipients} ${maxRecipients === 1 ? "person" : "people"} selected`
+                  ? channel && !selected.length
+                    ? "1 channel selected"
+                    : `${maxRecipients} ${maxRecipients === 1 ? "person" : "people"} selected`
                   : "Add another person…"
-                : "Find a person…"
+                : withChannels
+                  ? "Find a person or channel…"
+                  : "Find a person…"
             }
             value={query}
             disabled={disabled}
@@ -570,10 +638,11 @@ export function RecipientPicker({
                 event.altKey
               )
                 return;
-              if (event.key === "Backspace" && !query && selected.length) {
+              if (event.key === "Backspace" && !query && chosen) {
                 event.preventDefault();
                 const last = selected.at(-1);
                 if (last) remove(last.pubkey);
+                else removeChannel();
               } else if (event.key === "Escape") {
                 if (open && !disabled) {
                   event.preventDefault();
@@ -584,7 +653,7 @@ export function RecipientPicker({
                 event.key === "Tab" &&
                 !event.shiftKey &&
                 !query.trim() &&
-                selected.length > 0
+                chosen > 0
               ) {
                 event.preventDefault();
                 setOpen(false);
@@ -600,12 +669,9 @@ export function RecipientPicker({
               } else if (event.key === "Tab" && !event.shiftKey) {
                 // Tab picks the highlighted row, as in @ mentions. With no
                 // highlight it moves focus as usual.
-                const person = listed
-                  ? byPubkey.get(highlight.active)
-                  : undefined;
-                if (person) {
+                if (listed && rowKeys.includes(highlight.active)) {
                   event.preventDefault();
-                  choose(person);
+                  pick(highlight.active);
                 }
               } else if (
                 !highlight.keyDown(event) &&
@@ -655,7 +721,9 @@ export function RecipientPicker({
               {atLimit ? (
                 <p role="status">
                   {maxRecipients === 1
-                    ? "One person at a time. Remove them to choose someone else."
+                    ? channel
+                      ? "One channel at a time. Remove it to choose another."
+                      : "One person at a time. Remove them to choose someone else."
                     : `You can message up to ${maxRecipients} people at once.`}
                 </p>
               ) : (
@@ -663,7 +731,7 @@ export function RecipientPicker({
                   className={styles.people}
                   id={highlight.listId}
                   role="listbox"
-                  aria-label="People"
+                  aria-label={withChannels ? "People and channels" : "People"}
                   onPointerMove={(event) => {
                     const key = optionKey(event.target);
                     if (key) highlight.rowProps(key).onPointerMove(event);
@@ -679,8 +747,8 @@ export function RecipientPicker({
                     if (key) highlight.rowProps(key).onKeyDown(event);
                   }}
                   onClick={(event) => {
-                    const person = byPubkey.get(optionKey(event.target) ?? "");
-                    if (person) choose(person);
+                    const key = optionKey(event.target);
+                    if (key) pick(key);
                   }}
                   onScroll={(event) => {
                     const list = event.currentTarget;
@@ -693,21 +761,38 @@ export function RecipientPicker({
                       directory.loadMore();
                   }}
                 >
+                  {found.map(({ item, match }, index) => (
+                    <ChannelOption
+                      key={item.id}
+                      channel={item}
+                      id={highlight.rowId(channelKey(item.id))}
+                      active={channelKey(item.id) === highlight.active}
+                      positions={match.positions}
+                      position={index + 1}
+                      count={found.length + candidates.length}
+                    />
+                  ))}
                   <Virtualizer
                     data={candidates}
                     keepMounted={
-                      highlight.active ? [keys.indexOf(highlight.active)] : []
+                      // A highlighted channel row sits above the people.
+                      keys.includes(highlight.active)
+                        ? [keys.indexOf(highlight.active)]
+                        : []
                     }
                   >
                     {renderOption}
                   </Virtualizer>
                   {!directory.loading &&
                     !directory.error &&
-                    !candidates.length && (
+                    !candidates.length &&
+                    !found.length && (
                       <p>
                         {directory.tooShort
                           ? `Type at least ${SEARCH_MIN_CHARS} characters to search people.`
-                          : "No matching people."}
+                          : withChannels
+                            ? "No matching people or channels."
+                            : "No matching people."}
                       </p>
                     )}
                   {directory.loading &&
@@ -834,3 +919,76 @@ const RecipientOption = memo(function RecipientOption({
     />
   );
 });
+
+/** A chosen channel in To, removed like a person's chip. */
+function ChannelChip({
+  channel,
+  disabled,
+  onRemove,
+}: {
+  channel: RecipientChannel;
+  disabled: boolean;
+  onRemove(): void;
+}) {
+  const Icon = channelIcon(channel);
+  const name = channelText({ ...channel, channelType: "stream" });
+  return (
+    <span className={styles.chip}>
+      <button
+        type="button"
+        className={styles.remove}
+        aria-label={`Remove ${name}`}
+        disabled={disabled}
+        onPointerDown={(event) => {
+          if (event.button === 0) event.preventDefault();
+        }}
+        onClick={(event) => {
+          event.stopPropagation();
+          onRemove();
+        }}
+      >
+        <Icon size={16} aria-hidden="true" />
+        <span className={styles.removeIcon}>
+          <XIcon size={12} aria-hidden="true" />
+        </span>
+      </button>
+      <span className={styles.chipName}>{channel.name}</span>
+    </span>
+  );
+}
+
+function ChannelOption({
+  channel,
+  id,
+  active,
+  positions,
+  position,
+  count,
+}: {
+  channel: ChannelSummary;
+  id: string;
+  active: boolean;
+  positions: number[];
+  position: number;
+  count: number;
+}) {
+  const Icon = channelIcon(channel);
+  return (
+    <NavigationItem
+      id={id}
+      data-recipient-key={channelKey(channel.id)}
+      variant="option"
+      role="option"
+      aria-posinset={position}
+      aria-setsize={count}
+      aria-label={channelText(channel)}
+      tabIndex={-1}
+      selected={active}
+      aria-selected={active}
+      aria-current={false}
+      icon={<Icon size={20} aria-hidden="true" />}
+      label={<MatchedLabel label={channel.name} positions={positions} />}
+      onMouseDown={(event) => event.preventDefault()}
+    />
+  );
+}

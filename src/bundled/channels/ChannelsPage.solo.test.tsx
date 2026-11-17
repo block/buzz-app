@@ -2021,17 +2021,21 @@ function watchForLossNotice() {
   };
 }
 
-it("offers Unarchive in the lower archived pill without an upper archive notice", async () => {
-  const f = fixture({ type: "stream", archived: true, emptyHistory: true });
+it("announces a remote archive and offers Unarchive in the only visible notice", async () => {
+  const f = fixture({ type: "stream", emptyHistory: true });
   f.mountWithToasts();
+  await screen.findByRole("textbox", { name: "Message Planning" });
+  const liveRegions = screen.getAllByRole("status");
+  act(() => f.setArchived(true));
   const notice = await screen.findByRole("region", {
     name: "Archived channel",
   });
-  expect(
-    within(notice).getByText(
-      "This channel is archived, so it’s read-only and hidden from your sidebar until unarchived.",
-    ),
-  ).toBeVisible();
+  const message =
+    "This channel is archived, so it’s read-only and hidden from your sidebar until unarchived.";
+  expect(within(notice).getByText(message)).toBeVisible();
+  const announcement = screen.getByText(message, { selector: ".sr-only" });
+  const status = announcement.closest('[role="status"]');
+  expect(liveRegions).toContain(status);
   expect(
     screen.queryByRole("region", { name: "Archived · view only" }),
   ).toBeNull();
@@ -2058,6 +2062,7 @@ it("offers Unarchive in the lower archived pill without an upper archive notice"
     ).toHaveFocus(),
   );
   expect(screen.queryByRole("region", { name: "Archived channel" })).toBeNull();
+  expect(status).toBeEmptyDOMElement();
   expect(screen.getByText("Start the conversation below.")).toBeVisible();
 });
 
@@ -2079,11 +2084,6 @@ it("offers no Unarchive to a member of an archived channel", async () => {
     name: "Archived channel",
   });
   expect(within(notice).queryByRole("button")).toBeNull();
-  expect(
-    within(notice).getByText(
-      "This channel is archived, so it’s read-only and hidden from your sidebar until unarchived.",
-    ),
-  ).toBeVisible();
 });
 
 it("shows only the archived pill to a preview reader without Unarchive permission", async () => {

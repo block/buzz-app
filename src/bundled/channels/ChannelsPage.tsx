@@ -2303,7 +2303,13 @@ function ChannelWorkspace({
   // The conversation: full width for Solo, or the first main-pane tab.
   const body = (
     <div className={styles.conversationBody}>
-      <ChannelStateRegion>{stateNotice}</ChannelStateRegion>
+      {/* The pill mounts with its text, so announce changes in the existing status. */}
+      <ChannelStateRegion>
+        {stateNotice ??
+          (current?.archived && !solo && (
+            <span className="sr-only">{archivedMessage}</span>
+          ))}
+      </ChannelStateRegion>
       <MessageManagementStatus />
       <section
         data-channel-history

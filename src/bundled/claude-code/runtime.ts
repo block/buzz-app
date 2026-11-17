@@ -1320,6 +1320,7 @@ export class ClaudeRuntime {
       },
       handed: handed.catch(() => undefined),
       settled: Promise.allSettled([
+        wait,
         same ? prior.settled : undefined,
         done,
       ]).then(() =>

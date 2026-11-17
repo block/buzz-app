@@ -4459,6 +4459,72 @@ it("kills community wake execution if its deadline interrupt is refused", async 
   }
 });
 
+it("keeps a community predecessor's reply destination after later admission fails", async () => {
+  const f = setup([], { hold: true });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("Missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [...listed.channels, { ...first, id: "other" }],
+  });
+  const failed: PromiseLike<unknown>[] = [];
+  try {
+    await f.deliver({ type: "mention", event: message("1", "Z") }, { config });
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("Missing worker");
+    await f.deliver({ type: "mention", event: message("2", "A") }, { config });
+    await f.deliver(
+      { type: "mention", event: message("3", "B") },
+      {
+        config,
+        prepareSession: async () => {
+          throw new Error("Admission refused");
+        },
+        workingUntil: (done) => {
+          failed.push(done);
+        },
+      },
+    );
+    await Promise.all(failed);
+    await flush(10);
+    worker.finish();
+    await vi.waitFor(() => expect(worker.prompts).toHaveLength(2));
+    await f.deliver(
+      {
+        type: "mention",
+        event: message("4", "C", {
+          tags: [
+            ["h", "other"],
+            ["p", self],
+          ],
+        }),
+      },
+      { config, channelId: "other" },
+    );
+    await flush(10);
+    await mcp(worker, 1, "tools/call", {
+      name: "send",
+      arguments: { text: "A reply", audience: "everyone" },
+    });
+    expect(
+      f.published.find((event) => event.content === "A reply")?.tags,
+    ).toContainEqual(["h", channel]);
+    expect(worker.prompts).toHaveLength(2);
+    worker.finish();
+    await vi.waitFor(() => expect(worker.prompts).toHaveLength(3));
+    worker.finish();
+  } finally {
+    for (const worker of f.claudes()) worker.finish();
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    f.runtime.dispose();
+  }
+});
+
 it("does not start a deferred community request cancelled during execution inspection", async () => {
   const f = setup([], { hold: true });
   const config = { ...DEFAULT_CONFIG, scope: "community" as const };

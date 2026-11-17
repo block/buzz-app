@@ -5170,13 +5170,19 @@ it.each(["thread", "channel"] as const)(
   },
 );
 
-it.each(["unpublished", "published", "failed"])(
+it.each(["unpublished", "published", "failed", "delegated"])(
   "drains an expired %s community wake before its successor",
   async (publication) => {
     const f = setup([], { hold: true });
     const config = { ...DEFAULT_CONFIG, scope: "community" as const };
     const abort = new AbortController();
-    const done = f.runtime.runOnce({
+    const outer = publication === "delegated" ? setup() : f;
+    if (outer !== f)
+      Object.assign(outer.runtime, {
+        inspect: async () => ({}),
+        connection: async () => f.runtime,
+      });
+    const done = outer.runtime.runOnce({
       delivery: { agent: f.agent, config, current: () => true },
       key: "expired",
       signal: abort.signal,
@@ -5244,7 +5250,7 @@ it.each(["unpublished", "published", "failed"])(
         },
       });
       await expect(done).resolves.toMatchObject({
-        ok: publication === "published",
+        ok: publication === "published" || publication === "delegated",
       });
       await vi.waitFor(() =>
         expect(f.claudes().flatMap((p) => p.prompts)).toHaveLength(2),
@@ -5257,7 +5263,8 @@ it.each(["unpublished", "published", "failed"])(
     } finally {
       for (const worker of f.claudes()) worker.exit(0);
       await done;
-      f.runtime.dispose();
+      outer.runtime.dispose();
+      if (outer !== f) f.runtime.dispose();
     }
   },
 );

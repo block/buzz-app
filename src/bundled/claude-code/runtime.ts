@@ -1397,11 +1397,15 @@ export class ClaudeRuntime {
 
   /** Runs a standalone turn, such as a watch's or a timer's, as a one-off
    * process: a new session that is not saved. */
-  async runOnce(turn: StandaloneTurn): Promise<TurnResult> {
+  async runOnce(
+    turn: StandaloneTurn,
+    published?: () => void,
+  ): Promise<TurnResult> {
     let answered = false;
     try {
       const result = await this.standalone(turn, false, () => {
         answered = true;
+        published?.();
       });
       return answered ? { ok: true } : result;
     } catch (error) {
@@ -1432,7 +1436,10 @@ export class ClaudeRuntime {
       try {
         signal.throwIfAborted();
         const remote = await this.connection(agent.key, conversation, signal);
-        return await remote.runOnce({ delivery, key, signal, prompt });
+        return await remote.runOnce(
+          { delivery, key, signal, prompt },
+          published,
+        );
       } finally {
         if (!shared) {
           const held = this.remote.get(record);

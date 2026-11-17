@@ -8076,7 +8076,7 @@ it.each([false, true])(
   },
 );
 
-it.each(["interrupt", "deadline"])(
+it.each(["interrupt", "deadline", "delegated deadline"])(
   "preserves published community wake success after %s cancels the native tail",
   async (cancel) => {
     const f = fixture();
@@ -8084,7 +8084,14 @@ it.each(["interrupt", "deadline"])(
     const config = { ...(base.config as object), scope: "community" };
     const agent = { ...base.agent, config } as unknown as Agent;
     const abort = new AbortController();
-    const once = f.runtime.runOnce({
+    const outer = cancel === "delegated deadline" ? fixture() : f;
+    if (outer !== f)
+      Object.assign(outer.runtime, {
+        inspect: async () => ({}),
+        execution: async () => ({}),
+        connection: async () => f.runtime,
+      });
+    const once = outer.runtime.runOnce({
       delivery: { ...base, config },
       key: "watch",
       signal: abort.signal,
@@ -8116,7 +8123,8 @@ it.each(["interrupt", "deadline"])(
       );
     } finally {
       abort.abort();
-      f.runtime.dispose();
+      outer.runtime.dispose();
+      if (outer !== f) f.runtime.dispose();
       await once;
     }
   },

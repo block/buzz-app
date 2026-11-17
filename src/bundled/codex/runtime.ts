@@ -2276,11 +2276,15 @@ export class CodexRuntime {
   /** Runs an unaddressed wake without a default posting destination. Community
    * scope retains it in the shared session; other scopes use an ephemeral
    * thread. Asks for its prompt when admitted and logs failures without posting. */
-  async runOnce(turn: StandaloneTurn): Promise<TurnResult> {
+  async runOnce(
+    turn: StandaloneTurn,
+    published?: () => void,
+  ): Promise<TurnResult> {
     let answered = false;
     try {
       const result = await this.standalone(turn, false, () => {
         answered = true;
+        published?.();
       });
       return answered ? { ok: true } : result;
     } catch (error) {
@@ -2316,7 +2320,10 @@ export class CodexRuntime {
           key,
           turnSignal,
         );
-        return runtime.runOnce({ delivery, key, signal: turnSignal, prompt });
+        return runtime.runOnce(
+          { delivery, key, signal: turnSignal, prompt },
+          published,
+        );
       }
       if (this.disposed) throw new Error("Codex runtime is disposed");
       const entry = this.entry(agent.key, scope);

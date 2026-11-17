@@ -2137,6 +2137,28 @@ it("refuses an answer from a system channel scan it had to cut short", async () 
   expect(await failed).toMatchObject({ name: "ChannelScanIncomplete" });
 });
 
+it("resolves the labeled system channels it found 128 at a time", async () => {
+  const { h, system } = await systemLookup();
+  const found = Array.from({ length: 130 }, (_, n) =>
+    system(n, 1_700_000_000 - n, true),
+  );
+  const done = h.channels.findSystemLabeled?.("buzz-marketplace");
+  assert.exists(done);
+  (await h.next(39000)).respond(found.slice(0, 100));
+  (await h.next(39000)).respond(found.slice(100));
+  const batches: string[][] = [];
+  for (let read = 0; read < 2; read++) {
+    const request = await h.next(39000);
+    const ids = request.filters[0]?.["#d"] ?? [];
+    batches.push([...ids]);
+    request.respond(
+      found.filter((event) => ids.includes(tag(event, "d") ?? "")),
+    );
+  }
+  expect(batches.map((batch) => batch.length)).toEqual([128, 2]);
+  expect(await done).toHaveLength(130);
+});
+
 it("refuses a system label lookup on a relay without channel identity", async () => {
   const h = setup();
   h.channels.ensureList();

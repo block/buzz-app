@@ -3140,8 +3140,13 @@ export function createChannelStore(
         throw new ChannelScanIncomplete();
     }
     const ids = [...found];
-    if (ids.length)
-      await resolve(ids, { ...settings, viewerLookup: true }, true);
+    for (let start = 0; start < ids.length; start += 128) {
+      await resolve(
+        ids.slice(start, start + 128),
+        { ...settings, viewerLookup: true },
+        true,
+      );
+    }
     if (disposed || generation !== epoch)
       throw new DOMException("Stale channel lookup", "AbortError");
     return ids

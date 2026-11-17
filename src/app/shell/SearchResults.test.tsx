@@ -402,7 +402,7 @@ it("shows the first six unread conversations ahead of the rest", async () => {
   }
 });
 
-it("previews and opens the newest unread reply of a channel unread only through threads", async () => {
+it("previews the newest unread reply of a channel unread only through threads and opens its thread", async () => {
   const relay = keypair(),
     viewer = keypair(),
     larry = keypair(),
@@ -558,13 +558,13 @@ it("previews and opens the newest unread reply of a channel unread only through 
       "Thread reply, Larry: Only DM thread reply",
     );
     fireEvent.click(row("Larry") as HTMLElement);
-    expect(open).toHaveBeenLastCalledWith("solo", soloReply.id, soloRoot.id);
+    expect(open).toHaveBeenLastCalledWith("solo", soloRoot.id, soloRoot.id);
     expect(row("Moe")).not.toHaveTextContent("Thread reply,");
     fireEvent.click(row("Moe") as HTMLElement);
     expect(open).toHaveBeenLastCalledWith("pair");
-    // The row opens the reply it previews, in its thread.
+    // The row opens the thread it previews, which starts at its first unread reply.
     fireEvent.click(row("team") as HTMLElement);
-    expect(open).toHaveBeenLastCalledWith("team", newest.id, newerRoot.id);
+    expect(open).toHaveBeenLastCalledWith("team", newerRoot.id, newerRoot.id);
     // Reading that thread previews the other one's newest reply.
     const read = (rootId: string, messageId: string) =>
       act(async () => {
@@ -579,7 +579,7 @@ it("previews and opens the newest unread reply of a channel unread only through 
     );
     expect(row("team")).not.toHaveTextContent("audio");
     fireEvent.click(row("team") as HTMLElement);
-    expect(open).toHaveBeenLastCalledWith("team", older.id, root.id);
+    expect(open).toHaveBeenLastCalledWith("team", root.id, root.id);
     // Reading every thread takes the channel out of Unread.
     await read(root.id, older.id);
     await waitFor(() => expect(row("team")).toBeUndefined());

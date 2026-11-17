@@ -1,3 +1,5 @@
+import { forwardClipboard } from "./forward-clipboard";
+import { splitPartition } from "../relay/partition";
 import { forwardBody, forwardTag } from "../relay/forwarded-message";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
@@ -38,6 +40,7 @@ afterEach(() => {
 type MediaKind = "image" | "video";
 type ReviewFixtureOptions = {
   kind: MediaKind;
+  forwardSource?: boolean;
   typingAgent?: ReturnType<typeof keypair>;
   openComments?: boolean;
   replies?: (
@@ -57,6 +60,7 @@ function mime(kind: MediaKind) {
 
 async function setupReview({
   kind,
+  forwardSource = false,
   typingAgent,
   openComments = true,
   replies: buildReplies = () => [],
@@ -103,7 +107,9 @@ async function setupReview({
     signed(viewer, template),
   );
   const publish = vi.fn(async () => {});
+  const source = message(viewer, "private-source", "Private forward source", 1);
   const events = [
+    ...(forwardSource ? [source] : []),
     root,
     ...replies,
     ...(typingAgent
@@ -131,6 +137,18 @@ async function setupReview({
             return [
               roster(relay, "one", [viewer.pubkey]),
               metadata(relay, "one", "One"),
+              ...(forwardSource
+                ? [
+                    roster(relay, "private-source", [viewer.pubkey]),
+                    metadata(
+                      relay,
+                      "private-source",
+                      "Private source",
+                      1_700_000_000,
+                      [["private"]],
+                    ),
+                  ]
+                : []),
             ];
           if (filter.ids)
             return events.filter((event) => filter.ids?.includes(event.id));
@@ -194,7 +212,7 @@ async function setupReview({
   );
   if (openComments && !fromThread)
     fireEvent.click(screen.getByRole("button", { name: "Show comments" }));
-  return { owner, root, sign, user, attachmentOwner, openReview };
+  return { owner, root, sign, user, attachmentOwner, openReview, source };
 }
 
 function deferredRead() {
@@ -970,7 +988,10 @@ it("uses only the stripped sender note in a timed forward marker", async () => {
 });
 
 it("keeps the comment composer forward announcer inside the media-review modal", async () => {
-  await setupReview({ kind: "image" });
+  const { owner, source } = await setupReview({
+    kind: "image",
+    forwardSource: true,
+  });
   const input = await screen.findByRole("textbox", { name: "Reply to thread" });
   const dialog = input.closest('[role="dialog"][aria-modal="true"]');
   expect(dialog).not.toBeNull();
@@ -980,4 +1001,41 @@ it("keeps the comment composer forward announcer inside the media-review modal",
   expect(announcement).not.toBeNull();
   expect(announcement?.parentElement).toBe(dialog);
   expect(announcement).toHaveAttribute("aria-live", "polite");
+  const partition = splitPartition(owner.session.scope);
+  assert.exists(partition);
+  const payload = forwardClipboard(
+    {
+      version: 1,
+      origin: partition.communityOrigin,
+      channelId: "private-source",
+      id: source.id,
+    },
+    "Private forward source",
+  );
+  fireEvent.paste(input, {
+    clipboardData: {
+      getData: (type: string) =>
+        type === "text/html" ? payload.html : payload.text,
+      items: [],
+    },
+  });
+  await waitFor(() =>
+    expect(announcement).toHaveTextContent(
+      /Everyone in #One will be able to read/,
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Hide comments" }));
+  expect(announcement).toBeEmptyDOMElement();
+  expect(document.getElementById(`${input.id}-forward-announcement`)).toBe(
+    announcement,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Show comments" }));
+  await waitFor(() =>
+    expect(announcement).toHaveTextContent(
+      /Everyone in #One will be able to read/,
+    ),
+  );
+  expect(document.getElementById(`${input.id}-forward-announcement`)).toBe(
+    announcement,
+  );
 });

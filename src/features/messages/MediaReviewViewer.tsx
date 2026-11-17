@@ -524,6 +524,7 @@ function ReviewShell({
                   }}
                 >
                   <MessageComposer
+                    shown={commentsOpen}
                     extensions={extensions}
                     session={session}
                     scope={scope}

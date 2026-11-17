@@ -77,6 +77,10 @@
 .label[data-completed] {
   text-decoration: line-through;
 }
+/* A completed item mutes all of its text, inline code included. */
+.label[data-completed] code {
+  color: inherit;
+}
 @container (max-width: 30rem) {
   .content {
     padding: var(--space-4);

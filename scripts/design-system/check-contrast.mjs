@@ -124,8 +124,9 @@ const SURFACES = [
  * nothing, which is precisely the failure that shipped error text at Lc 34.
  *
  * A step joins this list when a screen starts using it for text. `red-12` is
- * here because three error messages use it; `red-11` is not, because nothing
- * does — and it is the step that fails, at 59.7 on a dark panel.
+ * here because three error messages use it; `red-11` is not, because no screen
+ * writes it directly — and it is the step that fails, at 59.7 on a dark panel.
+ * `--text-inline-code` uses it in light mode only; PAIRS measures that role.
  */
 const TEXT_ROLES = [
   "--text-standard",
@@ -201,6 +202,8 @@ const PAIRS = [
   ),
   ["--text-standard", "--affordance-floating-hover"],
   ["--text-danger", "--affordance-floating-hover"],
+  // Inline code ink on its chip fill.
+  ["--text-inline-code", "--affordance-subtle"],
   ["--text-inverse", "--surface-inverse"],
   ["--text-on-status-success", "--surface-status-success"],
   ["--text-on-status", "--surface-status-danger"],

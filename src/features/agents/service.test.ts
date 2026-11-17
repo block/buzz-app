@@ -15334,7 +15334,12 @@ it.each(["edit", "delete"])(
           ? { instructions: { mode: "synced", subject } }
           : {},
     });
-    f.plugin.agents.register({ ...f.type, id: "placed", execution: true });
+    f.plugin.agents.register<Config & { instructions?: string }>({
+      ...f.type,
+      id: "placed",
+      execution: true,
+      carry: ({ instructions }) => ({ instructions }),
+    });
     await f.service.create({ type: "example/echo", name: "Reader" });
     await f.service.create({ type: "example/placed", name: "Placed" });
     await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
@@ -15371,11 +15376,15 @@ it.each(["edit", "delete"])(
       await entered.promise;
       const next = revise("After", change === "delete" ? "delete" : "edit");
       release.resolve();
-      expect(await pending).toMatchObject({
+      const result = await pending;
+      expect(result).toMatchObject({
         instructions: "Before",
         synced: true,
-        revision,
       });
+      expect(
+        result,
+        "Instruction revision must match captured text",
+      ).toMatchObject({ revision });
       const current = (await handle.readAgents()) as unknown[];
       expect(current).toContainEqual(
         expect.objectContaining(

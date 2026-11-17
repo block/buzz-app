@@ -165,7 +165,7 @@ it("leaves Usage's month whole when its read joins the week's", async () => {
       from,
       new AbortController().signal,
     );
-  const goosey = agentsWith((reader: Agent, options: { since: number }) =>
+  const goosey = agentsWith((_: Agent, options: { since: number }) =>
     read(options.since),
   );
   const [week, month] = await Promise.all([
@@ -281,6 +281,55 @@ it("shows a quiet error when the read rejects, and reads again on Retry", async 
   expect(await screen.findByText("$0.40")).toBeVisible();
   expect(usage).toHaveBeenCalledTimes(2);
 });
+
+it.each([
+  ["Open Usage", usageOn, { role: "button", name: "Open Usage" }],
+  [
+    "the week while Usage is off",
+    cards(false),
+    { role: "img", name: /Daily cost/ },
+  ],
+] as const)(
+  "keeps a focused Retry while it reads, then hands focus to %s",
+  async (_, settingsCards, target) => {
+    const user = userEvent.setup();
+    const reads: ((result: SessionUsage[] | Error) => void)[] = [];
+    const usage = vi.fn(
+      () =>
+        new Promise<SessionUsage[]>((resolve, reject) =>
+          reads.push((result) =>
+            result instanceof Error ? reject(result) : resolve(result),
+          ),
+        ),
+    );
+    render(
+      <CostRow
+        agents={agentsWith(usage)}
+        agent={agent}
+        open={vi.fn()}
+        settingsCards={settingsCards}
+      />,
+    );
+    await vi.waitFor(() => expect(reads).toHaveLength(1));
+    act(() => reads[0]?.(new Error("first")));
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    await user.click(retry);
+    await vi.waitFor(() => expect(reads).toHaveLength(2));
+    // The read is pending: the same Retry stays, busy and focused.
+    expect(screen.getByRole("button", { name: "Retry" })).toBe(retry);
+    expect(retry).toHaveFocus();
+    expect(retry).toHaveAttribute("aria-busy", "true");
+    // A failed retry leaves it focused for another.
+    await act(async () => reads[1]?.(new Error("second")));
+    await vi.waitFor(() => expect(retry).not.toHaveAttribute("aria-busy"));
+    expect(retry).toHaveFocus();
+    await user.click(retry);
+    await vi.waitFor(() => expect(reads).toHaveLength(3));
+    await act(async () => reads[2]?.([session("one", [request(0, 0.4)])]));
+    expect(await screen.findByText("$0.40")).toBeVisible();
+    expect(screen.getByRole(target.role, { name: target.name })).toHaveFocus();
+  },
+);
 
 it("stops reading when the tab closes", async () => {
   let signal: AbortSignal | undefined;

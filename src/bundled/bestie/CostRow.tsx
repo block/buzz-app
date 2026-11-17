@@ -1,4 +1,12 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  type Ref,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { Agent, Agents } from "../../features/agents/service";
 import { settingsTarget } from "../../features/navigation/buzz-links";
 import type { Navigation } from "../../features/navigation/controller";
@@ -19,11 +27,13 @@ const day = (start: number) =>
   });
 
 /** A bar per day, tallest the costliest day; the figures are in its label. */
-function Sparkline({ week }: { week: WeekCost }) {
+function Sparkline({ ref, week }: { ref: Ref<SVGSVGElement>; week: WeekCost }) {
   const top = Math.max(...week.days.map((entry) => entry.cost.value ?? 0), 0);
   return (
     <svg
+      ref={ref}
       role="img"
+      tabIndex={-1}
       aria-label={`Daily cost, oldest first: ${week.days
         .map((entry) => `${day(entry.start)} ${costText(entry.cost)}`)
         .join(", ")}`}
@@ -71,23 +81,45 @@ export function CostRow({
   const usagePage = useSyncExternalStore(settingsCards.subscribe, () =>
     settingsCards.has(USAGE),
   );
-  const [week, setWeek] = useState<WeekCost | "error">();
+  // A read is kept for the agent it was for; Retry keeps the failed one, and
+  // its focused Retry, on screen until the next read settles.
+  const key = `${agent.pubkey}:${agent.type}`;
+  const [read, setRead] = useState<{ key: string; week: WeekCost | "error" }>();
+  const week = read?.key === key ? read.week : undefined;
   const [attempt, setAttempt] = useState(0);
+  const [pending, setPending] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Reads again for another agent or a retry.
   useEffect(() => {
-    setWeek(undefined);
     if (!readable) return;
+    setPending(true);
     const controller = new AbortController();
-    weekCost(agents, agent, controller.signal).then(
-      (read) => {
-        if (!controller.signal.aborted) setWeek(read);
-      },
-      () => {
-        if (!controller.signal.aborted) setWeek("error");
-      },
+    const settle = (result: WeekCost | "error") => {
+      if (controller.signal.aborted) return;
+      setRead({ key, week: result });
+      setPending(false);
+    };
+    weekCost(agents, agent, controller.signal).then(settle, () =>
+      settle("error"),
     );
     return () => controller.abort();
-  }, [agent.pubkey, agent.type, readable, attempt]);
+  }, [key, readable, attempt]);
+  const retryFocus = useRef(false);
+  const retryButton = useCallback((button: HTMLButtonElement | null) => {
+    if (!button) return;
+    // Capture ownership before removal, not after focus has fallen to body.
+    return () => {
+      retryFocus.current = document.activeElement === button;
+    };
+  }, []);
+  const openUsage = useRef<HTMLButtonElement>(null);
+  const cost = useRef<SVGSVGElement>(null);
+  useLayoutEffect(() => {
+    if (!retryFocus.current) return;
+    retryFocus.current = false;
+    // A recovered Retry hands its focus to the week it read.
+    if (week === "error" || document.activeElement !== document.body) return;
+    (openUsage.current ?? cost.current)?.focus({ preventScroll: true });
+  }, [week]);
   const title = `Cost, last ${COST_DAYS} days`;
   if (!readable)
     return (
@@ -107,7 +139,9 @@ export function CostRow({
         subtitle="Couldn't read this agent's sessions."
         trailing={(label) => (
           <Button
+            ref={retryButton}
             variant="outline"
+            loading={pending}
             aria-describedby={label["aria-labelledby"]}
             onClick={() => setAttempt((count) => count + 1)}
           >
@@ -124,10 +158,11 @@ export function CostRow({
       subtitle="An estimate from its sessions on this device, not a bill."
       trailing={(label) => (
         <div className="flex flex-wrap items-center justify-end gap-3">
-          <Sparkline week={week} />
+          <Sparkline ref={cost} week={week} />
           <span className="tabular-nums">{costText(week.total)}</span>
           {usagePage && (
             <Button
+              ref={openUsage}
               variant="outline"
               aria-describedby={label["aria-labelledby"]}
               onClick={() => void open(settingsTarget({ section: USAGE }))}

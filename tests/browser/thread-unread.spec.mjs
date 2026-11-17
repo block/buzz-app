@@ -908,6 +908,91 @@ test("opening a fitting thread reads after unchanged-row continuation without an
     .toBe(false);
 });
 
+test("a line placed just short of the latest reply stays in view", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 1");
+  const button = page
+    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ });
+  const panel = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const history = panel.getByRole("region", { name: "Thread messages" });
+  const line = panel.getByRole("separator", { name: "New messages" });
+  const close = async () => {
+    await history.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect(button).not.toHaveAccessibleName(/Observed unread replies/);
+    await page
+      .locator(
+        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+      )
+      .click();
+    await expect(panel).toHaveCount(0);
+  };
+  const reopen = async () => {
+    for (let index = 0; index < 6; index++) app.reply(root.id);
+    await expect(button).toHaveAccessibleName(/Observed unread replies/);
+    await virtuaIdle(page);
+    await button.click();
+    await expect(line).toBeVisible();
+    await expect(history).not.toHaveAttribute("data-positioning");
+    return measure();
+  };
+  const measure = async () => {
+    // Scroll events and resize observations of the placement have run.
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    return history.evaluate((element) => {
+      const top =
+        element
+          .querySelector("[data-new-messages-boundary]")
+          .getBoundingClientRect().top - element.getBoundingClientRect().top;
+      return {
+        top,
+        block: element.scrollHeight - element.scrollTop - top,
+        height: element.clientHeight,
+        below: element.scrollHeight - element.clientHeight - element.scrollTop,
+      };
+    });
+  };
+  await button.click();
+  await close();
+  // Six new replies well over the viewport start at their line.
+  const { width } = page.viewportSize();
+  await page.setViewportSize({ width, height: 400 });
+  const overflowing = await reopen();
+  expect(overflowing.block - overflowing.height).toBeGreaterThan(80);
+  expect(Math.abs(overflowing.top)).toBeLessThan(1);
+  await close();
+  // The next six overflow it by less than the bottom tolerance.
+  await page.setViewportSize({
+    width,
+    height: Math.round(400 + overflowing.block - overflowing.height - 40),
+  });
+  const placed = await reopen();
+  expect(placed.below).toBeGreaterThan(0);
+  expect(placed.below).toBeLessThan(80);
+  expect(Math.abs(placed.top)).toBeLessThan(1);
+  // Its placement did not make the reader follow the latest reply on reflow.
+  await page.setViewportSize({
+    width: width - 40,
+    height: page.viewportSize().height,
+  });
+  expect(Math.abs((await measure()).top)).toBeLessThan(1);
+});
+
 test("channel bottom quiets ordinary replies newer than the latest top-level message without reading their threads", async ({
   page,
   app,

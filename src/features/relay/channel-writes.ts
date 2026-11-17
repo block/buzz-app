@@ -8,7 +8,7 @@ import {
   promoteSoloAdmins,
   soloAdminKey,
   soloAdminRecovery,
-  ownedSoloAgents,
+  soloAgentOwnership,
 } from "./solo-admins";
 import { isBatchAddition } from "../channel-members/members";
 import { withdraw } from "./withdraw";
@@ -488,7 +488,7 @@ export function createChannelWrites(
       unique.some((key) => !original.members?.includes(key) && !known.has(key))
     )
       throw new Error("Choose an agent from your agent library.");
-    let owned: ReadonlySet<string> | undefined;
+    let profilesReady: Promise<void> | undefined;
     // Additions are published and acknowledged in turn; the roster is then
     // confirmed with one exact read rather than a gate after every command.
     const added: string[] = [];
@@ -525,25 +525,22 @@ export function createChannelWrites(
         throw new Error(
           `This agent-add request expired. Open Outbox, remove the “Add agent ${key.slice(0, 12)}” item, then add the agent again. Check channel membership first if the request was unconfirmed.`,
         );
+      let owned: (() => boolean) | undefined;
       if (
         original.channelType === "solo" &&
         !previous &&
         original.viewerRole === "owner"
       ) {
-        owned ??= await ownedSoloAgents(
-          agents?.profiles,
-          agents?.viewer,
-          unique,
-        );
+        profilesReady ??= agents?.profiles?.ensure(unique);
+        await profilesReady;
+        owned = await soloAgentOwnership(agents?.profiles, agents?.viewer, key);
       }
       const roleTags =
         original.channelType === "solo"
           ? [
               [
                 "role",
-                original.viewerRole === "owner" && owned?.has(key)
-                  ? "admin"
-                  : "bot",
+                original.viewerRole === "owner" && owned?.() ? "admin" : "bot",
               ],
             ]
           : [];
@@ -592,19 +589,25 @@ export function createChannelWrites(
           "Chat admin setup was abandoned. Send a new message to continue.",
         );
       const recovery = saved.recovery;
+      let profilesReady: Promise<void> | undefined;
       await promoteSoloAdmins(
         saved,
         {
           ...adminWriter,
-          publish: (event, signal) =>
-            withRecovery(saved.event.id, recovery, () =>
-              adminWriter.publish(event, signal),
-            ),
+          publish: (event, signal, checkOwnership) =>
+            withRecovery(saved.event.id, recovery, () => {
+              checkOwnership();
+              return adminWriter.publish(event, signal);
+            }),
         },
         discovery,
         relayAuthor,
         signal,
-        (keys) => ownedSoloAgents(agents?.profiles, agents?.viewer, keys),
+        async (key, targets) => {
+          profilesReady ??= agents?.profiles?.ensure(targets);
+          await profilesReady;
+          return soloAgentOwnership(agents?.profiles, agents?.viewer, key);
+        },
       );
       signal.throwIfAborted();
       await finishRecovery(saved.event.id, recovery);

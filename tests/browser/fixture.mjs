@@ -2196,7 +2196,16 @@ export const test = base.extend({
                       Math.abs(report.setupReceiverTime - event.created_at),
                     ).toBeLessThanOrEqual(900);
                     if (event.kind === 9000) {
-                      expect(event.tags).toContainEqual(["role", "admin"]);
+                      expect(
+                        event.tags.filter(([tag]) => tag === "role"),
+                      ).toEqual([
+                        [
+                          "role",
+                          report.setupCreation
+                            ? "admin"
+                            : expect.stringMatching(/^(admin|bot)$/),
+                        ],
+                      ]);
                       report.publications.push({ community, event });
                       return;
                     }
@@ -2857,6 +2866,34 @@ export const test = base.extend({
         serveProfile(key, body) {
           const event = sign(0, [], JSON.stringify(body), key);
           servedProfiles.set(event.pubkey, event);
+          return event;
+        },
+        // A real, newer NIP-OA head; the client still admits it through a read.
+        transferSoloAgent(pubkey) {
+          const index = soloAgents.findIndex(
+            (agent) => agent.pubkey === pubkey,
+          );
+          expect(index).toBeGreaterThanOrEqual(0);
+          const previous = servedProfiles.get(pubkey);
+          const ownerKey = generateSecretKey();
+          const digest = createHash("sha256")
+            .update(`nostr:agent-auth:${pubkey}:`)
+            .digest();
+          const event = sign(
+            0,
+            [
+              [
+                "auth",
+                getPublicKey(ownerKey),
+                "",
+                bytesToHex(schnorr.sign(digest, ownerKey)),
+              ],
+            ],
+            previous.content,
+            soloAgentKeys[index],
+            previous.created_at + 1,
+          );
+          servedProfiles.set(pubkey, event);
           return event;
         },
         // Configure pre-existing members before opening the app. Reads stay at

@@ -25,6 +25,8 @@ function setup() {
   const profiles = Promise.all(
     [...agentKeys, workspaceKey].map((key) => ownedProfile(key, viewer)),
   );
+  let beforeLock = async () => {};
+  const profileOverrides = new Map<string, RelayEvent>();
   let journal: readonly OutgoingEvent[] = [];
   const events = new Map<string, RelayEvent>();
   const roles = new Map<string, string>();
@@ -61,7 +63,9 @@ function setup() {
         ],
       });
       return [
-        ...(await profiles).map(eventDto),
+        ...(await profiles).map((profile) =>
+          eventDto(profileOverrides.get(profile.pubkey) ?? profile),
+        ),
         ...events.values(),
         ...(roles.size
           ? [
@@ -94,6 +98,10 @@ function setup() {
   const open = async () => {
     const owner = createRelaySession(transport, {
       outboxStorage: {
+        async lock(_id, run) {
+          await beforeLock();
+          return run();
+        },
         load: () => structuredClone(journal),
         save: (next) => {
           journal = structuredClone(next);
@@ -129,6 +137,31 @@ function setup() {
   return {
     channel,
     viewer,
+    async transferAgent(
+      owner: Awaited<ReturnType<typeof open>>,
+      index: number,
+    ) {
+      const agent = agentKeys[index];
+      assert.exists(agent);
+      const profile = await ownedProfile(agent, keypair());
+      const previous = (await profiles).find(
+        (event) => event.pubkey === agent.pubkey,
+      );
+      assert.exists(previous);
+      const changed = signed(agent, {
+        ...profile,
+        created_at: previous.created_at + 1,
+      });
+      profileOverrides.set(agent.pubkey, changed);
+      await owner.session.read(
+        [{ kinds: [0], authors: [agent.pubkey], limit: 1 }],
+        { fresh: true },
+      );
+      expect(owner.session.profiles.event?.(agent.pubkey)?.id).toBe(changed.id);
+    },
+    beforeLock: (run: () => Promise<void>) => {
+      beforeLock = run;
+    },
     agents,
     workspaceAgent,
     roles,
@@ -333,4 +366,37 @@ it("abandons expired setup while signing is held without granting or releasing i
     release();
     clock.mockRestore();
   }
+});
+
+it("checks the current profile inside the shared publication lock after signing", async () => {
+  const h = setup();
+  const owner = await h.open();
+  const sign = h.transport.memberAdministration.sign;
+  h.transport.memberAdministration.sign = async (template) => {
+    const event = await sign(template);
+    h.beforeLock(async () => {
+      h.beforeLock(async () => {});
+      await h.transferAgent(owner, 0);
+    });
+    return event;
+  };
+  const { creation, message } = h.start(owner);
+  await creation.ready;
+  await expect(
+    owner.session.channelWrites.prepareOpening(h.channel),
+  ).rejects.toThrow("not verified as owned");
+  expect(h.adminPublish).not.toHaveBeenCalled();
+  expect(h.roles.get(h.agents[0])).toBe("member");
+  expect(h.events.has(message)).toBe(false);
+  await vi.waitFor(() =>
+    expect(
+      owner.session.outbox?.snapshot().find((item) => item.event.id === message)
+        ?.delivery,
+    ).toBe("failed"),
+  );
+  expect(
+    owner.session.outbox
+      ?.snapshot()
+      .some((item) => item.recovery?.key === soloAdminKey(h.channel)),
+  ).toBe(true);
 });

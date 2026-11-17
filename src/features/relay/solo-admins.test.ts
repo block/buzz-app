@@ -4,6 +4,7 @@ import {
   ownedSoloAgents,
   promoteSoloAdmins,
   soloAdminRecovery,
+  soloAgentOwnership,
 } from "./solo-admins";
 import { keypair, ownedProfile, signed } from "./testing";
 import { matchesEvent } from "./projection";
@@ -95,12 +96,18 @@ function setup() {
       filters.some((filter) => matchesEvent(event, filter)),
     );
   });
-  const publish = vi.fn(async (event: RelayEvent) => {
-    const agent = event.tags.find(([tag]) => tag === "p")?.[1];
-    assert.exists(agent);
-    records.set(event.id, event);
-    roles.set(agent, "admin");
-  });
+  const publish = vi.fn(
+    async (
+      event: RelayEvent,
+      _signal: AbortSignal,
+      _checkOwnership: () => void,
+    ) => {
+      const agent = event.tags.find(([tag]) => tag === "p")?.[1];
+      assert.exists(agent);
+      records.set(event.id, event);
+      roles.set(agent, "admin");
+    },
+  );
   const writer = {
     sign: vi.fn(async (template: Parameters<typeof signed>[1]) =>
       signed(owner, template),
@@ -108,7 +115,11 @@ function setup() {
     publish,
   };
   const controller = new AbortController();
-  const owned = vi.fn(async () => new Set(agents));
+  const owned = vi.fn(
+    async (_key: string): Promise<() => boolean> =>
+      () =>
+        true,
+  );
   const run = (saved = creation) =>
     promoteSoloAdmins(
       saved,
@@ -143,7 +154,7 @@ it("does not restore a removed opening agent when replaying a stale creation rec
 it("refuses an unrecorded opening grant after ownership changes without replacing the saved intent", async () => {
   const h = setup();
   const saved = structuredClone(h.creation);
-  h.owned.mockResolvedValue(new Set());
+  h.owned.mockResolvedValue(() => false);
   await expect(h.run()).rejects.toThrow("not verified as owned");
   expect(h.writer.sign).not.toHaveBeenCalled();
   expect(h.publish).not.toHaveBeenCalled();
@@ -153,7 +164,7 @@ it("refuses an unrecorded opening grant after ownership changes without replacin
 it("confirms recorded opening grants after an ownership change without issuing new grants", async () => {
   const h = setup();
   await h.run();
-  h.owned.mockClear().mockResolvedValue(new Set());
+  h.owned.mockClear().mockResolvedValue(() => false);
   await h.run();
   expect(h.owned).not.toHaveBeenCalled();
   expect(h.publish).toHaveBeenCalledTimes(2);
@@ -253,3 +264,75 @@ it("limits abandonment to a valid delivered and expired opening-admin receipt", 
     clock.mockRestore();
   }
 });
+
+it("invalidates a verified ownership guard when its head is replaced or evicted", async () => {
+  const viewer = keypair(),
+    agent = keypair();
+  const initial = eventDto(await ownedProfile(agent, viewer));
+  let head: RelayEvent | undefined = initial;
+  const owns = await soloAgentOwnership(
+    { event: () => head },
+    viewer.pubkey,
+    agent.pubkey,
+  );
+  expect(owns()).toBe(true);
+  head = eventDto(await ownedProfile(agent, keypair()));
+  expect(owns()).toBe(false);
+  head = undefined;
+  expect(owns()).toBe(false);
+});
+
+it("rechecks the next opening target after publishing the previous grant", async () => {
+  const h = setup();
+  const publish = h.publish.getMockImplementation();
+  assert.exists(publish);
+  h.publish.mockImplementationOnce(async (event) => {
+    await publish(event, new AbortController().signal, () => {});
+    h.owned.mockResolvedValue(() => false);
+  });
+  await expect(h.run()).rejects.toThrow("not verified as owned");
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.writer.sign).toHaveBeenCalledOnce();
+  expect(h.roles.get(h.agents[1])).toBe("member");
+});
+
+it.each(["roster read", "signing", "publication lock"])(
+  "refuses an unrecorded grant if ownership changes during %s",
+  async (boundary) => {
+    const h = setup();
+    let current = true;
+    h.owned.mockResolvedValue(() => current);
+    if (boundary === "roster read") {
+      const read = h.read.getMockImplementation();
+      assert.exists(read);
+      h.read.mockImplementation(async (filters) => {
+        const result = await read(filters);
+        if (filters.some((filter) => filter.kinds?.includes(39002)))
+          current = false;
+        return result;
+      });
+    } else if (boundary === "signing") {
+      const sign = h.writer.sign.getMockImplementation();
+      assert.exists(sign);
+      h.writer.sign.mockImplementation(async (template) => {
+        const result = await sign(template);
+        current = false;
+        return result;
+      });
+    } else {
+      // Like the production journal: another holder can change the profile
+      // before this callback acquires permission to publish.
+      h.writer.publish = vi.fn(async (_event, _signal, checkOwnership) => {
+        await Promise.resolve();
+        current = false;
+        checkOwnership();
+      });
+    }
+    await expect(h.run()).rejects.toThrow("not verified as owned");
+    expect(h.records.size).toBe(0);
+    expect(h.roles.get(h.agents[0])).toBe("member");
+    expect(h.writer.sign).toHaveBeenCalledTimes(
+      boundary === "roster read" ? 0 : 1,
+    );
+  },
+);

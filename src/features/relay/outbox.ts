@@ -936,6 +936,7 @@ export function createOutbox(
     id: string,
     recovery: OutboxRecovery,
     run: () => Promise<unknown>,
+    dismissAbsent = false,
   ): Promise<void> {
     await outbox.ready();
     await durable.catch(() => {});
@@ -957,6 +958,9 @@ export function createOutbox(
           snapshot.filter((item) => item.event.id !== id),
         );
         notify();
+        // Only dismissal is idempotent. Missing ownership must still fence
+        // dependent publication and successful recovery completion.
+        if (!shared && dismissAbsent) return;
         throw new Error(
           "This operation was removed or changed in another window. Send a new message to continue.",
         );
@@ -1219,7 +1223,7 @@ export function createOutbox(
         );
       const remove = () => persist(id, "dismiss");
       const work = (
-        owner ? withRecovery(id, owner, remove) : locked(id, remove)
+        owner ? withRecovery(id, owner, remove, true) : locked(id, remove)
       )
         .then(() => {
           admissionGates.delete(id);

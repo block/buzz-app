@@ -819,6 +819,10 @@ it("fences a fresh local recovery against another owner's durable dismissal", as
     "removed or changed",
   );
   expect(publish).not.toHaveBeenCalled();
+  assert.exists(a.outbox.finishRecovery);
+  await expect(a.outbox.finishRecovery(id, recovery)).rejects.toThrow(
+    "removed or changed",
+  );
   expect(await a.outbox.recovery(recovery.key)).toBeUndefined();
   expect(a.outbox.snapshot()).toEqual([]);
   a.outbox.send({ ...input, content: "New explicit Send" });
@@ -873,13 +877,41 @@ it("holds shared recovery ownership through publication before dismissal can com
     await Promise.all([publication, dismissal]);
     expect(order).toEqual(["published", "dismissed"]);
     expect(store.load()).toEqual([]);
-    await expect(a.outbox.dismiss(event.id, recovery)).rejects.toThrow(
-      "removed or changed",
-    );
+    await expect(a.outbox.dismiss(event.id, recovery)).resolves.toBeUndefined();
+    expect(a.outbox.snapshot()).toEqual([]);
   } finally {
     release.release();
   }
 });
+
+it.each(["key", "value"] as const)(
+  "refuses dismissal, publication and completion after shared recovery %s changes",
+  async (field) => {
+    const store = memory();
+    const event = signed(viewer, { ...input, kind: 9007 });
+    store.save([{ event, signed: event, delivery: "accepted", recovery }]);
+    const h = setup(store);
+    await h.outbox.ready();
+    const changed = { ...recovery, [field]: "different owner" };
+    store.save([
+      { event, signed: event, delivery: "accepted", recovery: changed },
+    ]);
+    const publish = vi.fn(async () => {});
+    assert.exists(h.outbox.withRecovery);
+    assert.exists(h.outbox.finishRecovery);
+    await expect(h.outbox.dismiss(event.id, recovery)).rejects.toThrow(
+      "removed or changed",
+    );
+    await expect(
+      h.outbox.withRecovery(event.id, recovery, publish),
+    ).rejects.toThrow("removed or changed");
+    await expect(h.outbox.finishRecovery(event.id, recovery)).rejects.toThrow(
+      "removed or changed",
+    );
+    expect(publish).not.toHaveBeenCalled();
+    expect(store.load()[0]?.recovery).toEqual(changed);
+  },
+);
 
 it("does not release dependent work by joining a pending abandonment", async () => {
   const store = memory();

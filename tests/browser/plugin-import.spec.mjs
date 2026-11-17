@@ -2236,3 +2236,83 @@ test("a failed update check stays on its Settings row, and Check again clears it
   await expect(notice).toHaveCount(0);
   await expect(page.getByText("Update Standup Notes")).toHaveCount(0);
 });
+
+test("a policy's automatic install is noted once and labelled in Settings", async ({
+  page,
+  app,
+}, info) => {
+  await page.addInitScript(
+    ({ policy, plugin }) => {
+      window.managedPolicy = policy;
+      window.installedPlugins = [plugin];
+    },
+    {
+      policy: {
+        status: "ready",
+        path: "/fixture/managed-plugins.json",
+        source: "Example Org",
+        problems: [],
+        plugins: [
+          {
+            id: "example.artifact",
+            url: artifactUrl,
+            sha256: artifactSha,
+            install: "automatic",
+            update: "automatic",
+          },
+        ],
+        automatic: [
+          {
+            id: "example.artifact",
+            name: "Artifact",
+            revision: artifactSha,
+            action: "installed",
+          },
+        ],
+      },
+      plugin: {
+        manifest: artifactPlugin[0].manifest,
+        source: "external",
+        enabled: true,
+        revision: artifactSha,
+        previous: null,
+        reloadable: true,
+        error: null,
+        updateSource: { url: artifactUrl },
+      },
+    },
+  );
+  await nativeImports(page, artifactPlugin, { warnings: [] });
+  await page.setViewportSize({ width: 1100, height: 800 });
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    await page.goto(app.origin);
+    const notice = page.getByText("Example Org installed Artifact", {
+      exact: true,
+    });
+    await expect(notice).toBeVisible();
+    await page.screenshot({
+      path: info.outputPath(`automatic-notice-${mode}.png`),
+    });
+    await button(page, "Dismiss automatic plugin changes").click();
+    await expect(notice).toBeHidden();
+    await openSettings(page);
+    await selectSettingsSection(page, "Manage plugins");
+    const label = "Managed by Example Org · updates automatically";
+    const row = button(page, "View Artifact details");
+    await expect(row.getByText(label, { exact: true })).toBeVisible();
+    await page.screenshot({
+      path: info.outputPath(`automatic-managed-row-${mode}.png`),
+    });
+    await row.click();
+    const details = page.getByRole("complementary", {
+      name: "Artifact details",
+    });
+    await expect(details.getByText(label, { exact: true })).toBeVisible();
+    await animationsSettled(details, { subtree: true });
+    await page.screenshot({
+      path: info.outputPath(`automatic-managed-details-${mode}.png`),
+    });
+    await closeSettings(page);
+  }
+});

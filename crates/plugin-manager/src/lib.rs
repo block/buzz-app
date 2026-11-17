@@ -14,6 +14,7 @@ use std::{
 };
 
 pub mod access;
+pub mod automatic;
 pub mod imports;
 pub mod managed;
 mod migrate_agent_flag;
@@ -903,6 +904,7 @@ pub struct Manager {
     safe_mode: bool,
     existing_profile: bool,
     packaged_fetch: std::sync::Arc<std::sync::Mutex<managed::PackagedFetch>>,
+    automatic: automatic::Session,
 }
 impl Manager {
     /// Host control-plane location that protected workers must not modify.
@@ -929,6 +931,7 @@ impl Manager {
             safe_mode,
             existing_profile,
             packaged_fetch: Default::default(),
+            automatic: Default::default(),
         })
     }
     /// Opens the environment's plugin home, else `home`: the desktop passes its own app data folder.
@@ -945,12 +948,25 @@ impl Manager {
             |_| managed::PackagedFetch::Failed("Policy fetch state is unavailable".into()),
             |fetch| fetch.clone(),
         );
-        managed::effective(
+        let mut managed = managed::effective(
             &self.home,
             std::env::var_os(managed::PATH_ENV),
             (!managed::PACKAGED_URL.is_empty()).then_some((managed::PACKAGED_URL, &fetch)),
             catalog,
-        )
+        );
+        if let managed::Managed::Ready { automatic, .. } = &mut managed {
+            *automatic = self.automatic.changes();
+        }
+        managed
+    }
+    /// Installs and updates the policy's automatic entries that this run has not tried.
+    /// Blocks on downloads and Git; another apply in progress makes this a no-op.
+    pub fn apply_automatic(&self) -> Result<Vec<automatic::Change>> {
+        automatic::apply(self, &automatic::fetch)
+    }
+    /// Whether [`Self::apply_automatic`] has anything to try for `managed`.
+    pub fn automatic_due(&self, managed: &managed::Managed, catalog: &Catalog) -> bool {
+        automatic::due(&self.automatic, managed, catalog)
     }
     /// Repository access rules for Git imports, from the file beside the profile folders.
     pub fn repository_access(&self) -> access::AccessRules {
@@ -1333,17 +1349,6 @@ impl Manager {
         if manifest.id != snapshot.2 {
             return Err("Reloaded plugin manifest ID changed; import it as a new plugin".into());
         }
-        // Compare effective access without changing the stored manifest representation.
-        let effective_grants = |mut grants: HostGrants| {
-            for command in &mut grants.commands {
-                command.max_output_bytes = Some(
-                    command
-                        .max_output_bytes
-                        .unwrap_or(DEFAULT_HOST_COMMAND_OUTPUT_BYTES),
-                );
-            }
-            grants
-        };
         if !live
             && effective_grants(manifest.host.clone().unwrap_or_default())
                 != effective_grants(snapshot.3)
@@ -1696,6 +1701,18 @@ fn read_file_limited(file: File) -> Result<String> {
         return Err("File exceeds 8 MiB".into());
     }
     Ok(text)
+}
+/// Host access with defaults filled in, so equal access compares equal however the
+/// manifest spells it. The stored manifest keeps its own representation.
+fn effective_grants(mut grants: HostGrants) -> HostGrants {
+    for command in &mut grants.commands {
+        command.max_output_bytes = Some(
+            command
+                .max_output_bytes
+                .unwrap_or(DEFAULT_HOST_COMMAND_OUTPUT_BYTES),
+        );
+    }
+    grants
 }
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().ok_or("Missing parent directory")?;

@@ -1,5 +1,6 @@
 use buzzodz_plugins::{
-    managed::{Managed, ManagedSource, ManagedState},
+    automatic::Action,
+    managed::{Install, Managed, ManagedSource, ManagedState, Update},
     pack_release, release_manifest, sign_release_saved, valid_id, Catalog, Manager, Manifest,
     Result,
 };
@@ -19,7 +20,8 @@ Commands:
   install DIRECTORY        Install a plugin (new plugins start disabled)
   reload ID                Reload a folder plugin, preserving its enabled state
   list                     List installed pages and their enabled state
-  managed                  Show the managed plugin sources policy and its status
+  managed [--apply]        Show the managed plugin sources policy and its status;
+                           --apply first installs and updates its automatic entries
   access [URL]             Show repository access rules and how Git would read URL
   enable ID | disable ID | remove ID | rollback ID
   recover                  Back up settings and reset to bundled defaults
@@ -145,6 +147,10 @@ fn run() -> Result<()> {
         ("reload", _) => return Err("Usage: buzzodz plugin reload ID".into()),
         ("list", []) => print_catalog(&manager.catalog()?)?,
         ("managed", []) => print_managed(&manager.managed(&manager.catalog()?)),
+        ("managed", [flag]) if flag == "--apply" => {
+            manager.apply_automatic()?;
+            print_managed(&manager.managed(&manager.catalog()?));
+        }
         ("access", [] | [_]) => {
             let home = dirs::home_dir().ok_or("Cannot find the home directory")?;
             print!(
@@ -229,8 +235,19 @@ fn print_managed(managed: &Managed) {
             source,
             plugins,
             problems,
+            automatic,
         } => {
             println!("Policy: {path}\nManaged by: {source}\n");
+            for change in automatic {
+                let action = match change.action {
+                    Action::Installed => "Installed",
+                    Action::Updated => "Updated",
+                };
+                println!(
+                    "{action} {} ({}) at {}",
+                    change.name, change.id, change.revision
+                );
+            }
             for entry in plugins {
                 let state = match entry.state {
                     ManagedState::Missing => "not installed",
@@ -247,7 +264,19 @@ fn print_managed(managed: &Managed) {
                     } => format!("{repository} {reference} {commit} ({path})"),
                     ManagedSource::Url { url, sha256 } => format!("{url} (sha256 {sha256})"),
                 };
-                println!("{:<24} {}\n  {location}", entry.plugin.id, state);
+                let install = match entry.plugin.install {
+                    Install::Recommend => "",
+                    Install::Automatic => ", installs automatically",
+                    Install::Manual => ", not recommended",
+                };
+                let update = match entry.plugin.update {
+                    Update::Review => "",
+                    Update::Automatic => ", updates automatically",
+                };
+                println!(
+                    "{:<24} {state}{install}{update}\n  {location}",
+                    entry.plugin.id
+                );
             }
             for problem in problems {
                 println!("Ignored: {problem}");

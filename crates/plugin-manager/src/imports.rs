@@ -639,6 +639,38 @@ pub fn valid_sha256(digest: &str) -> bool {
             .all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// Downloads a URL import's artifact over HTTPS. The bytes are untrusted until
+/// [`prepare_url`] matches them to the pinned SHA-256. Blocks; never call it on an
+/// async runtime thread.
+pub fn download(url: &str) -> Result<Vec<u8>> {
+    let url = plugin_url(url)?;
+    let failed = |e: reqwest::Error| format!("Could not download the plugin: {e}");
+    let mut response = reqwest::blocking::Client::builder()
+        .https_only(true)
+        .connect_timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(failed)?
+        .get(&url)
+        .send()
+        .map_err(failed)?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Could not download the plugin: HTTP {}",
+            response.status()
+        ));
+    }
+    let mut body = vec![];
+    (&mut response)
+        .take(LIMIT + 1)
+        .read_to_end(&mut body)
+        .map_err(|e| format!("Could not download the plugin: {e}"))?;
+    if body.len() as u64 > LIMIT {
+        return Err("Plugin artifact exceeds 8 MiB".into());
+    }
+    Ok(body)
+}
+
 /// Previews a downloaded artifact. The caller fetches `bytes` from `url`; nothing is
 /// accepted unless it hashes to `sha256`, so the download itself needs no trust.
 pub fn prepare_url(url: &str, sha256: &str, bytes: Vec<u8>) -> Result<PreparedImport> {

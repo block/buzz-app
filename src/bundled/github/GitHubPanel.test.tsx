@@ -846,6 +846,42 @@ it.each(
   },
 );
 
+it.each(["BLOCKED", "BEHIND", "UNSTABLE"])(
+  "offers only Queue for merge on a queue branch that can be queued (%s)",
+  async (mergeStateStatus) => {
+    const user = userEvent.setup();
+    const gh = vi.fn(async () =>
+      pullData(
+        {
+          mergeStateStatus,
+          reviewDecision: "APPROVED",
+          isMergeQueueEnabled: true,
+          viewerCanEnableAutoMerge: true,
+          viewerCanUpdate: true,
+        },
+        { autoMergeAllowed: true },
+      ),
+    );
+    render(
+      <GitHubPanel
+        target={pull}
+        close={() => {}}
+        gh={gh as unknown as GitHubCli}
+      />,
+    );
+    await screen.findByRole("button", { name: "Queue for merge" });
+    await user.click(
+      screen.getByRole("button", { name: "More pull request actions" }),
+    );
+    await screen.findByRole("menuitem", { name: "Convert to draft" });
+    expect(
+      screen.queryByRole("menuitem", {
+        name: "Merge automatically when ready",
+      }),
+    ).not.toBeInTheDocument();
+  },
+);
+
 it("does not offer auto-merge when the viewer cannot enable it", async () => {
   const gh = vi.fn(async () =>
     pullData(

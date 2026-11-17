@@ -364,7 +364,8 @@ function Actions({
           </MenuItem>
         ))
       : []),
-    ...(canAutoMerge && merge.now
+    // A queue branch that can be queued already has its one way in.
+    ...(canAutoMerge && merge.now && !pull.queueRequired
       ? [
           <MenuItem
             key="auto"

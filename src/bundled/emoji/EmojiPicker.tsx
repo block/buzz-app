@@ -438,7 +438,6 @@ export function EmojiPicker({
             variant="ghost"
             shape="control"
             size="row"
-            style={{ width: "100%" }}
             onClick={() => {
               externalTrigger.remove?.();
               accepted.current = true;

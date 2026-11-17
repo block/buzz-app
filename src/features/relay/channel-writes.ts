@@ -517,7 +517,8 @@ export function createChannelWrites(
           roles.length === roleTags.length &&
           // Recovery finishes the saved grant even if the viewer's role changed.
           roles.every(
-            (tag) => tag.length === 2 && ["bot", "admin"].includes(tag[1]),
+            (tag) =>
+              tag.length === 2 && (tag[1] === "bot" || tag[1] === "admin"),
           )
         );
       });

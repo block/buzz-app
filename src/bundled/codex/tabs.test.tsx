@@ -3242,3 +3242,36 @@ it("reports a failed voice save after the picker has closed", async () => {
     "Voice save failed",
   );
 });
+
+it("preserves other drafts when a rejected voice save is confirmed later", async () => {
+  const f = fixture();
+  const save = vi.fn(async (_config?: Config) => {
+    throw new Error("Confirmation unavailable");
+  });
+  const props = f.props(defaults, save);
+  const user = userEvent.setup();
+  const view = render(
+    <f.tabs.SettingsTab {...props} settingsSection="identity" />,
+  );
+  const instructions = screen.getByRole("textbox", { name: "Instructions" });
+  await user.type(instructions, "Keep this draft");
+  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(await screen.findByRole("radio", { name: "Maple" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  expect(
+    await screen.findAllByText("Confirmation unavailable"),
+  ).not.toHaveLength(0);
+  const config = save.mock.calls[0]?.[0] as Config;
+  view.rerender(
+    <f.tabs.SettingsTab
+      {...props}
+      agent={{ ...props.agent, config }}
+      settingsSection="identity"
+    />,
+  );
+  expect(instructions).toHaveValue("Keep this draft");
+  expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
+    "Maple",
+  );
+});

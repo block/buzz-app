@@ -1530,7 +1530,7 @@ export function createTabs(
                     await save(next);
                     setDraft((current) => readConfig({ ...current, voice }));
                   } catch (reason) {
-                    voiceSave.current = undefined;
+                    // An unconfirmed write can still arrive through sync.
                     setError(message(reason));
                     throw reason;
                   } finally {

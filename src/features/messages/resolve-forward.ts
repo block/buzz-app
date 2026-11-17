@@ -27,12 +27,15 @@ export async function resolveForward(
     reference.origin !== splitPartition(session.scope)?.communityOrigin
   )
     throw new Error("This message belongs to another community.");
+  const aborted = AbortSignal.any([signal, AbortSignal.timeout(15000)]);
+  aborted.throwIfAborted();
+  await session.channels.resolve?.([reference.channelId], { signal: aborted });
+  aborted.throwIfAborted();
   const view = session.thread(reference.channelId, reference.id, {
     exact: true,
     priority: "background",
   });
   let unsubscribe = () => {};
-  const aborted = AbortSignal.any([signal, AbortSignal.timeout(15000)]);
   try {
     const row = await new Promise<import("../relay/contracts").ChannelMessage>(
       (resolve, reject) => {

@@ -251,6 +251,13 @@ mention anyone. Explicit agent watches on that room can still receive them.
   community picker and paste an invite link or type an address such as
   `relay.example.com`; an invite link fills in its invite code. Paste the whole
   link there; a code on its own is refused.
+- In the community switcher, other communities show a number for mentions, DMs
+  and followed-thread replies waiting for you, or a dot for other unread. A dot on
+  the closed switcher means another community has unread. Muted channels count
+  only as their sidebar rows do: a mention there, or a muted DM. A blank row
+  means nothing is unread, or its unread isn't known yet, for example because that
+  community isn't connected or was closed to make room for one you opened. Only
+  the first 24 communities get badges at startup; others show one once opened.
 - Community owners and admins manage access in the community's **Membership**
   settings (also reached from **Invite to community** in the community picker's
   right-click menu). **Members** shows the roster and updates as membership changes arrive.
@@ -390,13 +397,23 @@ and are asked to sign in again in Buzz.
 - Plugins can add actions to this toolbar. A link to an active plugin panel
   opens that panel in the conversation. If the plugin is removed, its actions
   and panel links become unavailable.
-- **Forward message** in a message's menu sends its link to one person in the
-  current community, with an optional note. Buzz sends it in your direct
-  message with them, starting one if needed, and you stay where you are;
-  select the confirmation notice while it's showing to open the forwarded
-  message in that DM. The link previews the original message; the
-  recipient still needs access to its conversation. Forwarding is unavailable
-  when the connection cannot start DMs or the message has no link yet.
+- **Forward message** in a message's menu sends a readable copy to a person,
+  several people (a group DM), or one channel in the current community, with an
+  optional note. Only channels you can post in appear. You stay where you are;
+  select the confirmation notice to open the sent message.
+  The **Forwarded** card includes the original author, time, text and attachments.
+  Recipients can read the copy without access to the original conversation.
+  Private sources have a sharing notice before sending. Their names are shown
+  only to viewers who can access them; others see **Private conversation**.
+  **View original** appears when the original can be opened. Long copies expand
+  inline with **Show full message**. Later edits or deletion of the original do
+  not change the copy. Forwarded attribution is supplied by the sender, not
+  cryptographic proof. Mentions inside the copy retain their labels but do not
+  notify again. The dialog’s optional note is plain text; its mentions do not notify.
+  Messages exceeding the forwarding size limit, or containing a local file
+  without sharable attachment metadata (including custom emoji), show an
+  explanation before sending. Forward is disabled; **Copy link** is available
+  in the dialog. A link still requires access to the original conversation.
 - Select text in a message, such as by double-clicking a word, then right-click
   the highlight and choose **Quote highlight** (or press Q) to add it to that
   conversation's draft as a quote, ready for your reply below it. Published
@@ -489,6 +506,10 @@ and are asked to sign in again in Buzz.
   channel does not grant access; inviting them requires an explicit decision
   from someone with permission.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
+  Drag a workspace header onto another workspace to reorder it, or use **Move up**
+  and **Move down** in its **…** menu. Escape cancels a drag; **Chats** stays below
+  the workspaces. A failed save restores the previous order and offers **Retry move**.
+  If a failed refresh disables **Retry move**, use **Retry workspaces** first.
   Plugins can also group tasks under joined channels. On supported hosts, each
   channel group keeps the native channel actions and details. New task appears
   only when the channel permits starting a chat.
@@ -537,11 +558,12 @@ and are asked to sign in again in Buzz.
   kind, and **From** by sender (Anyone, People or Agents). Turn on **Unread** to see only what you haven't read:
   there, a row's ✓ marks it as read and it leaves the list, with **Undo** for a moment; when nothing is left it
   says **All caught up**. If loading fails, use **Retry activity** on the page or preview to retry; recovered
-  activity clears the loading error.
+  activity clears the loading error. The sidebar's Activity row shows how many conversations are unread,
+  the number Unread lists under All from Anyone, and it drops as you open or mark them read.
   A DM row whose unread messages are all in one thread opens that thread; later DM messages outside it stay
   unread until you open the whole DM, which its row then does.
   **Reactions** shows recent reactions to your messages, with shared emoji grouped together per message and each person’s remaining emoji in their own row; selecting it turns Unread off.
-  Reactions have no unread state or badge count. Clicking one opens your exact message in its conversation or thread.
+  Reactions have no unread state and do not add to the Activity count. Clicking one opens your exact message in its conversation or thread.
   New reactions from updated clients appear; older unaddressed reactions are not backfilled.
   While Buzz is visible, a live reaction briefly replaces the Activity bell with its emoji for three seconds.
   Further reactions during that hold do not change the icon; history loading does not trigger it.
@@ -634,7 +656,8 @@ and are asked to sign in again in Buzz.
   you. Unmute restores ordinary unread emphasis and dots. Manual **Mark as unread**
   can still make the name bold. Muted rows show no unread dots, including thread
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
-  their avatar previews. Muted activity does not light the macOS Dock unread dot.
+  their avatar previews. The macOS Dock unread dot follows the rows: a muted channel
+  lights it only for a mention of you or **Mark as unread**, and a muted DM still lights it.
   Muting does not mark messages or threads as read.
 - **Hidden DMs**: **Close conversation** and **Hide conversation** take a DM out
   of the sidebar without leaving it. To find one again, start a **New message**
@@ -657,6 +680,9 @@ and are asked to sign in again in Buzz.
   Changing this choice does not change existing members' roles. Ordinary
   participants have no role caption; Owner, Admin, and Viewing only mark
   exceptions. Use a person's actions menu to change their role when permitted.
+  An owner can choose **Transfer ownership** there to make another person
+  the owner; the previous owner becomes an admin. Ownership can't be
+  transferred to an agent, or to someone who hasn't set up a profile.
 - **Message search** treats the last word you type as the start of a word, so
   it searches only once that word has at least three characters, even with
   `from:` or `in:`. A shorter last word shows how many characters to type, not
@@ -846,12 +872,13 @@ and are asked to sign in again in Buzz.
   The access dialog offers **View only** for community reading
   or **Private** for people added to the chat. Public is not offered in
   this UI; a Public policy set through another client appears as
-  **Public (existing)**. This is not protocol enforcement. View-only visitors
+  **Public**. Before changing it, the confirmation warns that you cannot switch
+  back to Public here. This is not protocol enforcement. View-only visitors
   cannot post; existing members keep their roles. Returning to Private warns
   about retained viewers unless verified roles show no Guests, including while
-  roles load or fail to load; remove them in People to end their access. Public
-  (existing) → Private also warns that joined members retain their access.
-  Manually changing Public (existing) to View only confirms that existing
+  roles load or fail to load; remove them in People to end their access.
+  Public → Private also warns that joined members retain their access.
+  Manually changing Public to View only confirms that existing
   members keep their access. Agents the owner adds through
   access search or a composer mention receive Bot access so they can reply,
   including with a Guest admission default. Conversion to a channel offers
@@ -965,6 +992,12 @@ and are asked to sign in again in Buzz.
   for that community and identity. Collapsed section headings highlight when
   their channels have unread messages or thread replies. Muted channels do not
   highlight the heading.
+- **Dragging channels and DMs between sections**: drag a channel or DM row onto
+  **Starred** or a saved group to move it there, or back to its home section:
+  channels to **Channels** and DMs to **Direct messages**. **Channels** does not
+  accept DMs, and **Direct messages** does not accept channels. Forums do not
+  drag. **Move channel** or **Move conversation** in the row's menu does the same
+  move from the keyboard.
 - Saved sidebar groups, stars, mutes, sorting and filters from another device or
   a paired CLI update the open sidebar automatically while connected, in hosts
   that support saved sidebar preferences. A CLI section-only move keeps a
@@ -974,6 +1007,11 @@ and are asked to sign in again in Buzz.
   sections. When a plugin is explicitly disabled, its existing chats appear as
   ordinary Solo chats; enabling it again returns them to the plugin's rows when
   available. Opening the channel from Team follows the usual Team navigation.
+- **Open thread marker**: while a thread is displayed in the side pane, its
+  original message keeps the hover highlight in the conversation, including on
+  touch-only devices. Switching threads moves the marker; hiding the pane or
+  closing the thread clears it. The original is also identified as current for
+  assistive technology.
 - **Side panels stay with their conversation**: a tab or panel you open beside a
   conversation, such as a thread, **Canvas**, a huddle, or Todos, stays open for
   that conversation when you go to another conversation or page and come back,
@@ -1043,6 +1081,17 @@ available rather than silently discarding it.
 - On desktop, Buzz starts every agent with `BUZZ_VERSION` set to the app's
   version, and agents usually pass it on to the shell commands they run. A
   script or shell config can check for it to tell it is running under Buzz.
+- On a Mac, agents and the commands plugins run get your login shell's PATH.
+  To pass on more of what your `~/.zprofile` or `~/.zshrc` exports, export
+  `BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS` there as a comma-separated list of
+  names, where `*` matches anything and a leading `!` excludes, such as
+  `export BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS="AWS_PROFILE,TOOL_*,!*_SECRET"`.
+  Only commas separate names, so `"AWS_PROFILE TOOL_*"` is a single pattern.
+  An `!` pattern excludes a name wherever it appears in the list. Variables
+  starting with `BUZZ_` or `NOSTR_` are never passed on. Quit and reopen Buzz
+  after changing it. The list applies when Buzz is opened from the Dock or
+  Finder: started from a terminal, Buzz passes on that terminal's whole
+  environment instead. macOS 12.0 to 12.2 pass on only PATH.
 - **Agents** is where people create and manage agents. For supported types,
   open an agent there and use **Identity → Instructions**. Opening its avatar or
   name in a conversation shows its profile, where **Settings → Instructions**
@@ -1414,6 +1463,13 @@ available rather than silently discarding it.
   (`team_update`). A proposal opens a review: nothing changes until you save
   it, members never change this way, and Save is refused if the team changed
   since the proposal.
+  Agent reads also show saved model and thinking choices for supported local
+  harnesses. They distinguish explicit choices, harness defaults, Recommended
+  policy and unavailable settings. They do not report an active turn's model.
+- Your agents can search messages (`search`) by words, person, channel or DM,
+  and date, and link each message they cite. They search with their own access:
+  channels they're in and open channels. They don't find messages in your
+  private channels or DMs unless they're members.
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. An open transcript updates by itself
   while the agent works; **Refresh transcript** stays at the top as you scroll.
@@ -1595,6 +1651,12 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   in. Scroll position isn’t kept, and reloading the window or turning the
   GitHub plugin off and on forgets all of this.
 - Some desktop plugins can upload images you provide to services they declare.
+- Plugin sharing search groups people who have not been added under **Not yet
+  added**, or a heading chosen by the plugin. Its **Copy link** action appears
+  when the plugin supplies a link to the record.
+- In plugins that use Buzz's sharing controls, switching a record to **Private**
+  keeps existing members' access. The confirmation warns about people who joined
+  while it was open; remove them from the record to end their access.
 - Agents running on this computer can write plugins while the **Plugin
   development** plugin is on (it is by default). It gives them
   `plugin_authoring_guide`, `plugin_status` and `plugin_reload`. The person

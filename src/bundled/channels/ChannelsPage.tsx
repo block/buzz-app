@@ -26,6 +26,7 @@ import { useReturnHighlight } from "../../features/messages/use-return-highlight
 import { useMessageOpening } from "../../features/messages/use-message-opening";
 import { ChannelBody } from "./ChannelBody";
 import {
+  type ConversationTab,
   entryPane,
   panelTabId,
   rootOfTab,
@@ -2010,6 +2011,16 @@ function ChannelWorkspace({
   const hasPanel = companion || hasChannelPanel;
   const showingChannelPanel = tabState.paneOpen && hasChannelPanel;
   const showingPanel = companion || showingChannelPanel;
+  const highlightedThread =
+    showingChannelPanel && !companion
+      ? tabState.tabs.find(
+          (tab): tab is Extract<ConversationTab, { kind: "thread" }> =>
+            tab.kind === "thread" &&
+            tabPane(tab) === "side" &&
+            tab.id === selectedTab &&
+            tab.channelId === currentId,
+        )
+      : undefined;
   // A plain channel visit reads its visible selected thread along with the
   // conversation that holds focus. A link to a message or thread, passive
   // restoration and another channel’s retained tab do not.
@@ -2326,6 +2337,9 @@ function ChannelWorkspace({
             }
             holding={contextHolding}
             inlineTarget={contextTarget}
+            openThreadRootId={
+              highlightedThread ? rootOfTab(highlightedThread) : undefined
+            }
             onOpenThread={openThread}
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined

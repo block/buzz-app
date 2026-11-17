@@ -17,6 +17,7 @@ import userEvent from "@testing-library/user-event";
 import { PageTabs } from "../channels/PageTabs";
 import { InboxPage } from "./InboxPage";
 import { InboxPreview } from "./InboxPreview";
+import { apply } from "./index";
 import { huddleDescription } from "../../features/huddle/lifecycle";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { writeView } from "../../shared/view-state";
@@ -610,6 +611,30 @@ it("previews recent conversations and opens a row directly", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Open Activity" }));
   expect(close).toHaveBeenCalledTimes(2);
   expect(h.open).toHaveBeenLastCalledWith(inboxTarget);
+});
+
+it("counts unread conversations on the sidebar Activity row until they are read", async () => {
+  const h = fixture({ withDm: true });
+  const pages = { register: vi.fn() };
+  apply({
+    pages,
+    relay: h.relay,
+    navigation: { open: h.open },
+    shortcuts: { register: vi.fn() },
+  } as unknown as Parameters<typeof apply>[0]);
+  const Badge = pages.register.mock.calls[0]?.[0].badge;
+  expect(Badge).toBeTypeOf("function");
+  render(<Badge />);
+  // The same three conversations the hover card's header totals.
+  expect(
+    await screen.findByRole("img", { name: "3 unread" }),
+  ).toHaveTextContent("3");
+  await markRead(h, "dm-room");
+  expect(await screen.findByRole("img", { name: "2 unread" })).toBeVisible();
+  await markRead(h, "room");
+  await waitFor(() =>
+    expect(screen.queryByRole("img")).not.toBeInTheDocument(),
+  );
 });
 
 it("keeps Unread only to the card and offers recent activity once caught up", async () => {

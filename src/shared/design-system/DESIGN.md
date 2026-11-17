@@ -1070,6 +1070,11 @@ other IconButtons.
 IconButton also offers `xs` (20px with 12px icons) for dense formatting actions. Mode
 toggles remain `sm`.
 
+An IconButton takes either `icon` or `emoji`. Use `emoji` when the action is
+best shown as an emoji, such as a skin-tone choice shown as a hand in that tone.
+The glyph uses `--font-emoji` at `--size-emoji-inline`, centred in the same
+control. Its accessible name still comes from `aria-label`.
+
 An `xs` Button whose label starts with an icon reduces its leading padding to its
 4px vertical padding, so the icon sits evenly in the capsule's leading corner.
 
@@ -1616,7 +1621,7 @@ separate from status text and the overflow action.
 Selected rows can expand without painting the entire branch in the accent color.
 
 Its `text` variant is a text-only row action, such as a capped list's Show
-more and Show less: the base navigation item's type and padding with no fill, resting in
+more and Show fewer: the base navigation item's type and padding with no fill, resting in
 `--text-subtle` and strengthening to `--text-standard` on hover and keyboard
 focus. Use it where a fill would read as another destination.
 
@@ -1723,9 +1728,10 @@ Values scale with the host interface-size preference.
   independent from caption even though their sizes currently match. `text-mono-lg` and
   `text-mono-sm` are compatibility aliases for this same setting, not extra sizes.
 - Caption uses 12/16 and 0.0133em tracking. Buzz’s `text-body` uses 14/20; `text-label` uses 16/24 and `text-body-lg` uses 20/28.
-- Message prose uses `text-message`: 14px with 22/14 leading (22px at
-  default), keeping a compact reading rhythm for both sent and received
-  messages. The message renderer uses `space-4` between prose blocks, with
+- Message prose and composer text use `text-message`: 14px with 21.5/14 leading
+  (21.5px at default), Regular (400) weight and -0.01em tracking, keeping the
+  same compact reading rhythm while writing and reading messages. The message
+  renderer uses `space-4` between prose blocks, with
   `space-2` between an introductory paragraph and its following list. Labels,
   controls, code, tables and headings retain their existing type roles.
 - Preserve text preferences and browser zoom. Author values in scaled rem and

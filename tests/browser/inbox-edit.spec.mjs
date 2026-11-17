@@ -60,6 +60,11 @@ test("Inbox edits an owned reply in place and restores the reply draft", async (
     await page
       .getByRole("menuitem", { name: "Edit message", exact: true })
       .click();
+    // Both opens must complete the menu's focus handoff before fill selects
+    // the content: focusing ProseMirror restores its saved caret.
+    await expect(
+      detail.getByRole("textbox", { name: "Edit message", exact: true }),
+    ).toBeFocused();
   };
   await edit();
   const editor = detail.getByRole("textbox", {
@@ -84,6 +89,7 @@ test("Inbox edits an owned reply in place and restores the reply draft", async (
   ).toEqual([]);
 
   await edit();
+  await expect(editor).toHaveJSProperty("value", "My reply");
   await editor.fill("Corrected from Inbox");
   await detail.getByRole("button", { name: "Save changes" }).click();
   await expect(row).toContainText("Corrected from Inbox");

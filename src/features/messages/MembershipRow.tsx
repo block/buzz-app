@@ -66,12 +66,18 @@ export const MembershipRow = memo(function MembershipRow({
                 }
                 key={id}
               >
+                {/* Only the virtualized timeline renders this row, and its
+                    buffer already bounds what mounts, so artwork loads on
+                    mount: WebKit's lazy margin sits inside that buffer, and
+                    added people are usually seen once, so Avatar's
+                    remembered-source hint rarely applies. */}
                 <Avatar
                   src={picture}
                   alt=""
                   fallback={name}
                   size="fill"
                   shape={agentPubkeys?.has(id) ? "squircle" : "circle"}
+                  loading="eager"
                 />
               </span>
             );

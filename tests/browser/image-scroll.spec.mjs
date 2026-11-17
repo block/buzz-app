@@ -477,6 +477,293 @@ for (const unavailable of ["canvas", "visibility"]) {
   });
 }
 
+// Native lazy-loading margins and Virtua's mount buffer exist only in a browser.
+// WebKit's lazy margin is about one viewport, inside that buffer, so lazy
+// images in rows scrolled into the buffer wait to be requested.
+test("virtualized rows request images on mount, beyond native lazy margins", async ({
+  page,
+}) => {
+  const requested = new Set();
+  // Held responses keep every placeholder geometry fixed while scrolling.
+  await page.route("https://image.test/**", (route) => {
+    requested.add(route.request().url());
+  });
+  const server = await fixtureServer();
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/image-scroll.html`,
+    );
+    const feed = page.getByRole("region", { name: "Channel message history" });
+    await expect(
+      feed.locator("[data-media-preview] img").first(),
+    ).toBeAttached();
+    await settle(page, feed);
+    await feed.hover();
+    // Stop while older rows remain above the buffer's newly mounted edge.
+    while ((await feed.evaluate((element) => element.scrollTop)) > 4000)
+      await wheel(page, -1500, feed);
+    const mounted = await feed.evaluate((element) => {
+      const top = element.getBoundingClientRect().top;
+      return [...element.querySelectorAll("[data-media-preview] img")].map(
+        (image) => ({
+          source: image.src,
+          distant: image.getBoundingClientRect().bottom < top - innerHeight,
+        }),
+      );
+    });
+    expect(
+      mounted.some(({ distant }) => distant),
+      "an image is mounted beyond one viewport above the reader",
+    ).toBe(true);
+    await expect
+      .poll(() =>
+        mounted
+          .map(({ source }) => source)
+          .filter((source) => !requested.has(source)),
+      )
+      .toEqual([]);
+  } finally {
+    try {
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+    } finally {
+      await server.close();
+    }
+  }
+});
+
+// The same browser-only margin applies to the people a membership row shows,
+// each usually seen once, so no earlier load marks their avatars for eager loading.
+test("membership rows request avatars on mount, beyond native lazy margins", async ({
+  page,
+}) => {
+  const requested = new Set();
+  // Held responses keep each avatar loading while the mounted rows are read.
+  await page.route("https://avatar.test/**", (route) => {
+    requested.add(route.request().url());
+  });
+  const server = await fixtureServer();
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/membership-scroll.html`,
+    );
+    const feed = page.getByRole("region", { name: "Channel message history" });
+    // Avatars mount once the directory has read the added people's profiles.
+    await expect(
+      feed.locator("[data-membership-row] img").first(),
+    ).toBeAttached();
+    await settle(page, feed);
+    const mounted = await feed.evaluate((element) => {
+      const top = element.getBoundingClientRect().top;
+      return [...element.querySelectorAll("[data-membership-row] img")].map(
+        (image) => ({
+          source: image.src,
+          distant: image.getBoundingClientRect().bottom < top - innerHeight,
+        }),
+      );
+    });
+    expect(
+      mounted.some(({ distant }) => distant),
+      "an avatar is mounted beyond one viewport above the reader",
+    ).toBe(true);
+    await expect
+      .poll(() =>
+        mounted
+          .map(({ source }) => source)
+          .filter((source) => !requested.has(source)),
+      )
+      .toEqual([]);
+  } finally {
+    try {
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+    } finally {
+      await server.close();
+    }
+  }
+});
+
+// The same browser-only margin applies to message authors' avatars, here
+// third-party https artwork that no earlier load marks for eager loading.
+test("virtualized rows request author avatars on mount, beyond native lazy margins", async ({
+  page,
+}) => {
+  const requested = new Set();
+  // Held responses keep each avatar loading while the mounted rows are read.
+  await page.route("https://relay.test/**", (route) => {
+    requested.add(route.request().url());
+  });
+  const server = await fixtureServer();
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/avatar-scroll.html?direct`,
+    );
+    const feed = page.getByRole("region", { name: "Channel message history" });
+    await expect(feed.locator(".buzz-avatar img").first()).toBeAttached();
+    await settle(page, feed);
+    const mounted = await feed.evaluate((element) => {
+      const top = element.getBoundingClientRect().top;
+      return [...element.querySelectorAll(".buzz-avatar img")].map((image) => ({
+        source: image.src,
+        distant: image.getBoundingClientRect().bottom < top - innerHeight,
+      }));
+    });
+    expect(
+      mounted.some(({ distant }) => distant),
+      "an avatar is mounted beyond one viewport above the reader",
+    ).toBe(true);
+    await expect
+      .poll(() =>
+        mounted
+          .map(({ source }) => source)
+          .filter((source) => !requested.has(source)),
+      )
+      .toEqual([]);
+  } finally {
+    try {
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+    } finally {
+      await server.close();
+    }
+  }
+});
+
+// The same browser-only margin applies to custom emoji in message text, which
+// a plugin renders without the row's virtualization props.
+test("virtualized rows request custom emoji on mount, beyond native lazy margins", async ({
+  page,
+}) => {
+  const requested = new Set();
+  // Held responses keep each emoji loading while the mounted rows are read.
+  await page.route("https://emoji.test/**", (route) => {
+    requested.add(route.request().url());
+  });
+  const server = await fixtureServer();
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/emoji-scroll.html`,
+    );
+    const feed = page.getByRole("region", { name: "Channel message history" });
+    await expect(feed.locator("img[data-copy-emoji]").first()).toBeAttached();
+    await settle(page, feed);
+    const mounted = await feed.evaluate((element) => {
+      const top = element.getBoundingClientRect().top;
+      return [...element.querySelectorAll("img[data-copy-emoji]")].map(
+        (image) => ({
+          source: image.src,
+          distant: image.getBoundingClientRect().bottom < top - innerHeight,
+        }),
+      );
+    });
+    expect(
+      mounted.some(({ distant }) => distant),
+      "an emoji is mounted beyond one viewport above the reader",
+    ).toBe(true);
+    await expect
+      .poll(() =>
+        mounted
+          .map(({ source }) => source)
+          .filter((source) => !requested.has(source)),
+      )
+      .toEqual([]);
+  } finally {
+    try {
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+    } finally {
+      await server.close();
+    }
+  }
+});
+
+// WebKit keeps no cache for the native `buzz-media` scheme, so each new
+// avatar element there sends another relay read; `no-store` makes both test
+// engines drop an avatar no element shows, as the app's WebKit does. Virtua's
+// real eviction and remounting need a browser.
+test("virtualized rows fetch each native avatar once across remounts", async ({
+  page,
+}) => {
+  const requests = new Map();
+  await page.route("http://buzz-media.localhost/**", (route) => {
+    const url = route.request().url();
+    requests.set(url, (requests.get(url) ?? 0) + 1);
+    const origin = route.request().headers().origin;
+    return route.fulfill({
+      path: fileURLToPath(
+        new URL("../fixtures/attachment-media/profile.webp", import.meta.url),
+      ),
+      contentType: "image/webp",
+      headers: {
+        "Cache-Control": "no-store",
+        ...(origin ? { "Access-Control-Allow-Origin": origin } : {}),
+      },
+    });
+  });
+  const server = await fixtureServer();
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/avatar-scroll.html`,
+    );
+    const feed = page.getByRole("region", { name: "Channel message history" });
+    const mounted = () =>
+      feed.evaluate((element) =>
+        [...element.querySelectorAll(".buzz-avatar")].map((avatar) => {
+          const image = avatar.querySelector("img");
+          return {
+            row: avatar
+              .closest("[data-message-id]")
+              ?.textContent?.match(/Message \d+\./)?.[0],
+            loaded: image?.dataset.loaded === "true",
+            source: image?.src,
+          };
+        }),
+      );
+    // Barrier: every mounted avatar has painted, so its request has settled.
+    const painted = async () => {
+      await settle(page, feed);
+      await expect
+        .poll(async () => (await mounted()).filter(({ loaded }) => !loaded))
+        .toEqual([]);
+      return mounted();
+    };
+    await expect(feed.locator(".buzz-avatar").first()).toBeAttached();
+    const latest = await painted();
+    await feed.hover();
+    while ((await feed.evaluate((element) => element.scrollTop)) > 4)
+      await wheel(page, -1500, feed);
+    const oldest = await painted();
+    while (
+      (await feed.evaluate(
+        (element) =>
+          element.scrollHeight - element.clientHeight - element.scrollTop,
+      )) > 4
+    )
+      await wheel(page, 1500, feed);
+    const returned = await painted();
+    expect(
+      latest.some(({ row }) => !oldest.some((other) => other.row === row)),
+      "rows left the timeline and remounted",
+    ).toBe(true);
+    expect(requests.size).toBeGreaterThan(latest.length);
+    expect(
+      [...requests].filter(([, count]) => count !== 1),
+      "each avatar is requested once",
+    ).toEqual([]);
+    // Remounted avatars show the bytes their first mount fetched.
+    expect(
+      returned.filter(({ source }) => !source?.startsWith("blob:")),
+    ).toEqual([]);
+  } finally {
+    try {
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+    } finally {
+      await server.close();
+    }
+  }
+});
+
 // Virtua measurement, native scroll clamping and actual eviction require a browser.
 test("decoded image resizing preserves reading and bottom following across remounts", async ({
   page,

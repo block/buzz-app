@@ -240,6 +240,32 @@ it("shows the thumbnail once it loads and drops it when the original decodes", a
   expect(original).toHaveStyle({ visibility: "visible" });
 });
 
+it("loads a virtualized row's pixels on mount; unbounded rows stay lazy", () => {
+  const image = (keepMounted?: () => () => void) =>
+    render(
+      <AttachmentImage
+        session={session()}
+        attachment={{ url: relaySource, kind: "image" }}
+        source={relaySource}
+        thumbnail={relayThumbnail}
+        keepMounted={keepMounted}
+      />,
+    ).container.querySelectorAll("img");
+  const loading = (images: NodeListOf<HTMLImageElement>) =>
+    [...images].map((img) => [
+      img.getAttribute("src"),
+      img.getAttribute("loading"),
+    ]);
+  expect(loading(image(() => () => {}))).toEqual([
+    [relaySource, "eager"],
+    [relayThumbnail, "eager"],
+  ]);
+  expect(loading(image())).toEqual([
+    [relaySource, "lazy"],
+    [relayThumbnail, "lazy"],
+  ]);
+});
+
 it("falls back to the blurhash placeholder when the thumbnail fails", () => {
   const view = render(
     <AttachmentImage

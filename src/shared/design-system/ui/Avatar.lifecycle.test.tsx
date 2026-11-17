@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { Avatar } from "./Avatar";
+import { Avatar, AvatarSourceContext } from "./Avatar";
 
 afterEach(() => {
   cleanup();
@@ -145,6 +145,56 @@ it("preserves delayed loading and error fallbacks, resetting when the source cha
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it("keeps a visible initial until artwork that replaces it is ready", () => {
+  vi.useFakeTimers();
+  // Images stay pending until the test fires their load or error event.
+  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
+    false,
+  );
+  const props = { alt: "Agent", fallback: "A" };
+  const view = render(<Avatar {...props} />);
+  const avatar = screen.getByRole("img", { name: "Agent" });
+  const artwork = () => {
+    const image = view.container.querySelector("img");
+    if (!image) throw new Error("Expected avatar artwork");
+    return image;
+  };
+  expect(avatar).toHaveTextContent("A");
+
+  // A picture arriving for an avatar already showing its initial.
+  view.rerender(<Avatar {...props} src="https://example.test/arrived.png" />);
+  expect(artwork()).not.toHaveAttribute("data-loaded");
+  expect(avatar).toHaveTextContent("A");
+  act(() => vi.advanceTimersByTime(150));
+  expect(avatar).toHaveTextContent("A");
+
+  // A new source replacing a still-loading source whose initial is showing.
+  view.rerender(<Avatar {...props} src="https://example.test/resized.png" />);
+  expect(artwork()).toHaveAttribute("src", "https://example.test/resized.png");
+  expect(avatar).toHaveTextContent("A");
+  fireEvent.error(artwork());
+  expect(avatar).toHaveTextContent("A");
+
+  // A new source replacing a failed one.
+  view.rerender(<Avatar {...props} src="https://example.test/ready.png" />);
+  expect(artwork()).not.toHaveAttribute("data-loaded");
+  expect(avatar).toHaveTextContent("A");
+  fireEvent.load(artwork());
+  expect(artwork()).toHaveAttribute("data-loaded", "true");
+  expect(avatar).toHaveTextContent("");
+
+  // Replacing loaded artwork keeps the delay: no initial flashes before the
+  // next image has had its chance to be ready.
+  view.rerender(<Avatar {...props} src="https://example.test/next.png" />);
+  expect(avatar).toHaveTextContent("");
+  act(() => vi.advanceTimersByTime(149));
+  expect(avatar).toHaveTextContent("");
+  act(() => vi.advanceTimersByTime(1));
+  expect(avatar).toHaveTextContent("A");
+  view.unmount();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it("retries a failed source behind the fallback until it or another mount loads", () => {
   vi.useFakeTimers();
   vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
@@ -188,4 +238,108 @@ it("retries a failed source behind the fallback until it or another mount loads"
   reply.unmount();
   view.unmount();
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("shows a host-held source's local URL and fetches the rest through the host, never directly", async () => {
+  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
+    false,
+  );
+  let resolve: ((url: string) => void) | undefined;
+  const load = vi.fn(
+    (_src: string) =>
+      new Promise<string>((done) => {
+        resolve = done;
+      }),
+  );
+  const sources = {
+    held: (src: string) => (src === "native:held" ? "blob:held" : undefined),
+    load,
+    forget: vi.fn(),
+  };
+  const view = render(
+    <StrictMode>
+      <AvatarSourceContext value={sources}>
+        <Avatar src="native:held" alt="Held" fallback="H" />
+        <Avatar src="native:new" alt="New" fallback="N" />
+      </AvatarSourceContext>
+    </StrictMode>,
+  );
+  const image = (name: string) =>
+    view.container.querySelector(`[aria-label="${name}"] img`);
+  // Local bytes need no lazy scheduling.
+  expect(image("Held")).toHaveAttribute("src", "blob:held");
+  expect(image("Held")).toHaveAttribute("loading", "eager");
+  expect(load).not.toHaveBeenCalledWith("native:held");
+  // A source the host has yet to fetch mounts no element that would request it.
+  expect(image("New")).toBeNull();
+  expect(load).toHaveBeenCalledWith("native:new");
+  await act(async () => resolve?.("blob:new"));
+  expect(image("New")).toHaveAttribute("src", "blob:new");
+  fireEvent.load(image("New") as HTMLImageElement);
+  expect(image("New")).toHaveAttribute("data-loaded", "true");
+});
+
+it("retries an avatar the host could not fetch, asking the host again", async () => {
+  vi.useFakeTimers();
+  const load = vi.fn(async (_src: string): Promise<string> => {
+    throw new Error("Avatar unavailable: 502");
+  });
+  const held = vi.fn((_src: string): string | undefined => undefined);
+  render(
+    <AvatarSourceContext value={{ held, load, forget: vi.fn() }}>
+      <Avatar src="native:transient" alt="Transient" fallback="T" />
+    </AvatarSourceContext>,
+  );
+  const avatar = screen.getByRole("img", { name: "Transient" });
+  await act(async () => {});
+  expect(load).toHaveBeenCalledTimes(1);
+  expect(avatar).toHaveTextContent("T");
+  load.mockResolvedValueOnce("blob:transient");
+  await act(async () => vi.advanceTimersByTime(2_000));
+  expect(held).toHaveBeenCalledTimes(2);
+  expect(load).toHaveBeenCalledTimes(2);
+  expect(avatar.querySelector("img")).toHaveAttribute("src", "blob:transient");
+  // The initial stays until the retried artwork is ready.
+  expect(avatar).toHaveTextContent("T");
+});
+
+it("forgets held bytes that fail to decode, so the retry fetches them again", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
+    false,
+  );
+  let stored: string | undefined = "blob:broken";
+  const held = vi.fn((_src: string) => stored);
+  const forget = vi.fn((_src: string) => {
+    stored = undefined;
+  });
+  const load = vi.fn(async (_src: string) => "blob:repaired");
+  render(
+    <AvatarSourceContext value={{ held, load, forget }}>
+      <Avatar src="native:repaired" alt="Repaired" fallback="R" />
+    </AvatarSourceContext>,
+  );
+  const avatar = screen.getByRole("img", { name: "Repaired" });
+  expect(avatar.querySelector("img")).toHaveAttribute("src", "blob:broken");
+  fireEvent.error(avatar.querySelector("img") as HTMLImageElement);
+  expect(forget).toHaveBeenCalledWith("native:repaired");
+  await act(async () => vi.advanceTimersByTime(2_000));
+  expect(load).toHaveBeenCalledWith("native:repaired");
+  expect(avatar.querySelector("img")).toHaveAttribute("src", "blob:repaired");
+});
+
+it("leaves a direct source's failure to the host cache it never used", () => {
+  const forget = vi.fn();
+  render(
+    <AvatarSourceContext
+      value={{ held: (src) => src, load: async (src) => src, forget }}
+    >
+      <Avatar src="https://example.test/a.png" alt="Direct" fallback="D" />
+    </AvatarSourceContext>,
+  );
+  const image = screen
+    .getByRole("img", { name: "Direct" })
+    .querySelector("img") as HTMLImageElement;
+  fireEvent.error(image);
+  expect(forget).not.toHaveBeenCalled();
 });

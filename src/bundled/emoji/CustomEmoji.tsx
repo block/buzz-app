@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
+import { MediaLoadingContext } from "../../features/messages/MediaLoadingContext";
 import type { CustomEmoji as Emoji } from "../../features/relay/emoji";
 import styles from "./Emoji.module.css";
 
@@ -18,6 +19,7 @@ export function CustomEmoji({
 }
 
 function EmojiImage({ src, literal }: { src: string; literal: string }) {
+  const loading = useContext(MediaLoadingContext);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   // Transient media failures must recover while the message stays mounted.
@@ -41,7 +43,7 @@ function EmojiImage({ src, literal }: { src: string; literal: string }) {
       title={literal}
       width={22}
       height={22}
-      loading="lazy"
+      loading={loading}
       onError={() => setFailed(true)}
     />
   ) : (

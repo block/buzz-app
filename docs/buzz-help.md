@@ -45,7 +45,7 @@ leave and rejoin to retry.
 Final voice transcripts appear in the room with speaker credit and do not
 mention anyone. Explicit agent watches on that room can still receive them.
 
-In a Codex agent’s settings, choose **Huddle voice** and save to assign its voice. Each agent has its own choice, synced with its settings. **Codex default** follows the provider’s default. The change applies when the agent next joins a Huddle; leave and rejoin to hear it.
+In a Codex agent’s settings, choose **Huddle voice** and use **Preview voice** to hear a short sample before saving. **Stop preview** ends playback; choosing another voice or leaving settings also stops it. Preview is available on the local Codex host and does not use your microphone. Each agent has its own choice, synced with its settings. **Codex default** follows the provider’s default. The saved change applies when the agent next joins a Huddle.
 
 ## Identity and getting connected
 

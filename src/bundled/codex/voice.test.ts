@@ -17,6 +17,24 @@ afterEach(() => {
   vi.useRealTimers();
 });
 function fixture(resume = Promise.resolve()) {
+  const decoder = {
+    muted: false,
+    srcObject: null as unknown,
+    play: vi.fn(async () => {}),
+    pause: vi.fn(),
+  };
+  vi.stubGlobal(
+    "Audio",
+    vi.fn(function AudioMock() {
+      return decoder;
+    }),
+  );
+  vi.stubGlobal(
+    "MediaStream",
+    vi.fn(function MediaStreamMock(tracks) {
+      return { tracks };
+    }),
+  );
   const tracks = [{ stop: vi.fn() }];
   const node = () => ({ connect: vi.fn(), disconnect: vi.fn() });
   const source = {
@@ -51,7 +69,7 @@ function fixture(resume = Promise.resolve()) {
   const peer = {
     connectionState: "new",
     onconnectionstatechange: () => {},
-    ontrack: () => {},
+    ontrack: (_event: { track: { kind: string } }) => {},
     close: vi.fn(),
     addTrack: vi.fn(),
     createDataChannel: vi.fn(() => events),
@@ -137,8 +155,26 @@ function fixture(resume = Promise.resolve()) {
     capture,
     tracks,
     listeners,
+    decoder,
   };
 }
+it("keeps incoming WebRTC audio decoding and releases its muted sink on close", async () => {
+  const f = fixture();
+  const connection = await f.open();
+  f.peer.ontrack({ track: { kind: "audio" } });
+  expect(f.decoder.muted).toBe(true);
+  expect(f.decoder.play).toHaveBeenCalledOnce();
+  expect(f.decoder.srcObject).toEqual({ tracks: [{ kind: "audio" }] });
+  await connection.close();
+  expect(f.decoder.pause).toHaveBeenCalledOnce();
+  expect(f.decoder.srcObject).toBeNull();
+});
+it("excludes agent context and automatic handoffs from standalone samples", async () => {
+  const f = fixture();
+  const connection = await openVoice(f.rpc as unknown as AppServer, "thread", f.abort.signal, f.output, f.ended, "Greeting only", undefined, "maple", true);
+  expect(f.rpc.request).toHaveBeenCalledWith("thread/realtime/start", expect.objectContaining({ voice: "maple", includeStartupContext: false, clientManagedHandoffs: true }));
+  await connection.close();
+});
 it("forwards output while the seat is busy and cuts it on close", async () => {
   const f = fixture();
   const connection = await f.open();

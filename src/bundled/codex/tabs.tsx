@@ -71,6 +71,7 @@ import {
 import type { CodexRuntime, SavedConversation } from "./runtime";
 import type { CodexSetup } from "./setup";
 import { readTranscript, TURN_LIMIT } from "./transcript";
+import { VoicePreview } from "./VoicePreview";
 
 const label = ({ channelId, name, root }: SavedConversation) =>
   `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
@@ -1455,6 +1456,17 @@ export function createTabs(
                 ]}
                 disabled={saving || checking}
                 onValueChange={(voice) => setDraft({ ...draft, voice })}
+              />
+              <VoicePreview
+                key={`${agent.key}:${draft.voice ?? ""}`}
+                spawn={spawn}
+                voice={draft.voice ?? ""}
+                disabled={
+                  saving ||
+                  checking ||
+                  !!bound ||
+                  (!!draft.voice && !data?.voices?.includes(draft.voice))
+                }
               />
               {data && !data.voices && !checking && (
                 <div className="grid justify-items-start gap-2">

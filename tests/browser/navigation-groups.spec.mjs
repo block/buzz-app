@@ -1032,11 +1032,15 @@ scrollTest(
       release = resolve;
     });
     let decodes = 0;
-    await page.route("**/sidebar-preferences", async (route) => {
-      decodes++;
-      await held;
-      await route.continue();
-    });
+    // This return owns primary's snapshot; secondary can still finish startup.
+    await page.route(
+      "**/api/relay/primary/sidebar-preferences",
+      async (route) => {
+        decodes++;
+        await held;
+        await route.continue();
+      },
+    );
     await page.evaluate(() => {
       window.sidebarFrames = [];
       window.captureSidebar = true;
@@ -1085,7 +1089,8 @@ scrollTest(
       ).toBe(0);
     } finally {
       release();
-      await page.unroute("**/sidebar-preferences");
+      // Let released handlers finish before removing their routes.
+      await page.unrouteAll({ behavior: "wait" });
     }
   },
 );

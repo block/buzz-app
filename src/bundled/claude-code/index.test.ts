@@ -337,6 +337,49 @@ it("recommends a candidate only when Claude is signed in and lists its model and
   ).rejects.toThrow("Claude didn't list its models");
 });
 
+it("waits for a refresh under way instead of answering from the last check", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  let finish = () => {};
+  // As a refresh that finds Claude signed out, while the last check said ready.
+  vi.spyOn(ClaudeSetup.prototype, "check").mockImplementation(function (this: {
+    state: object;
+  }) {
+    return new Promise<void>((resolve) => {
+      finish = () => {
+        this.state = {
+          ...this.state,
+          status: { state: "signed-out", version: "1" },
+          checking: false,
+        };
+        resolve();
+      };
+    });
+  });
+  vi.spyOn(ClaudeSetup.prototype, "catalog").mockResolvedValue([
+    { value: "model-a" },
+  ] as never);
+  const setup = new ClaudeSetup(vi.fn() as never);
+  Object.assign(setup, {
+    state: {
+      ...setup.snapshot(),
+      status: { state: "ready", version: "1" },
+      checking: true,
+    },
+  });
+  let answered: boolean | undefined;
+  const offered = setup
+    .offers({ model: "model-a", effort: "high" })
+    .then((value) => {
+      answered = value;
+    });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(answered).toBeUndefined();
+  finish();
+  await offered;
+  expect(answered).toBe(false);
+});
+
 it("runs an agent on Recommended on the candidate, else on the device default", async () => {
   vi.stubEnv(
     "VITE_BUZZ_RECOMMENDED_AGENT",

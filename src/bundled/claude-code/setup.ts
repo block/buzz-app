@@ -419,7 +419,9 @@ export class ClaudeSetup {
    * Rejects when a failed or unfinished check, or a failed model listing,
    * leaves that unknown, so the answer is unsure rather than no. */
   async offers({ model, effort }: Readonly<{ model: string; effort: string }>) {
-    if (this.state.status?.state !== "ready") await this.check();
+    // A refresh under way keeps the last status meanwhile: wait for its answer.
+    if (this.state.checking || this.state.status?.state !== "ready")
+      await this.check();
     const state = this.state.status?.state;
     if (state !== "ready") {
       if (

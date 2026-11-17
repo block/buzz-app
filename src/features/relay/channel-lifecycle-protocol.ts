@@ -204,8 +204,10 @@ export function lifecycleOffer(
   const type = channel.channelType === "solo" ? "stream" : channel.channelType;
   // Restored membership is display-only until the relay confirms it, and a
   // revoked roster stays read-only (guests read through their membership).
+  // An artifact's conversation has no people or settings of its own.
   if (
     !type ||
+    type === "artifact" ||
     channel.cached ||
     (channel.readOnly && channel.viewerRole !== "guest") ||
     !UUID.test(channel.id) ||

@@ -397,6 +397,10 @@ it("uses independent explicit channel routes and self-p globals; equal interests
   });
   const membershipRequest = h.first.requests()[1];
   assert(membershipRequest);
+  // The relay's "ask again" about the viewer's own access reaches only them.
+  expect(filtersOf(membershipRequest)).toContainEqual(
+    expect.objectContaining({ kinds: [20005], "#p": [h.key.pubkey] }),
+  );
   expect(filtersOf(membershipRequest)).toContainEqual({
     kinds: [13534],
     since: expect.any(Number),

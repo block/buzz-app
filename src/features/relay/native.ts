@@ -1,4 +1,8 @@
 import {
+  channelAccessCapability,
+  createChannelAccessReader,
+} from "./channel-access";
+import {
   artifactIncrementalCapability,
   artifactIncrementalFailure,
   createArtifactIncrementalReader,
@@ -522,6 +526,18 @@ export async function connectNativeTransport(
   return {
     ...transport,
     observeRefusal,
+    ...(channelAccessCapability(info)
+      ? {
+          channelAccess: createChannelAccessReader((body, signal) =>
+            admitSignedRequest(
+              origin,
+              transport.viewer,
+              () => nativeRelayRequest(origin, "/query", body, signal),
+              signal,
+            ),
+          ),
+        }
+      : {}),
     ...(artifactIncrementalCapability(info)
       ? {
           artifactIncremental: createArtifactIncrementalReader(

@@ -1,3 +1,8 @@
+import {
+  ACCESS_CHANGED_KIND,
+  VIEWER_ACCESS_CHANGED_KIND,
+} from "./channel-access";
+import { createChannelReach } from "./channel-reach";
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
 import { createSoloPreferences, soloGroups } from "./solo-preferences";
@@ -112,6 +117,7 @@ import type { ReadTransport } from "./transport";
 import type { LiveGlobal, LiveSnapshot, LiveSubscription } from "./live";
 import {
   hasTag,
+  tag,
   type ReadFilter,
   type RelayEvent,
   type EventData,
@@ -297,6 +303,11 @@ export function createRelaySession(
     else listener();
   };
   let canAccess: (id: string) => boolean = () => true;
+  /** Conversations views hold open by name; set once channels exist. */
+  let reach: ReturnType<typeof createChannelReach> | undefined;
+  /** Conversations opened by name this session. Never listed, so a send
+   * stranded there is kept, failed with its text, never dismissed. */
+  const reachedChannels = new Set<string>();
   const typing = createTyping(
     transport?.viewer ?? "",
     (id) =>
@@ -569,7 +580,11 @@ export function createRelaySession(
           ...new Set(
             items.flatMap((item) => {
               const id = contribution(item);
-              return id && !channels.canParticipate(id) ? [id] : [];
+              // A conversation a view holds keeps its sends while the relay
+              // is asked again; only a confirmed denial strands them.
+              return id && !channels.canParticipate(id) && !reach?.holds(id)
+                ? [id]
+                : [];
             }),
           ),
         ];
@@ -596,12 +611,15 @@ export function createRelaySession(
           if (
             !channelId ||
             !gone.includes(channelId) ||
-            channels.canParticipate(channelId)
+            channels.canParticipate(channelId) ||
+            reach?.holds(channelId)
           )
             continue;
           const { id } = item.event;
-          if (settled.has(item)) void outbox.dismiss(id).catch(() => {});
-          else void attemptEnded(outbox, id).then(dropStrandedSends);
+          if (settled.has(item)) {
+            if (!reachedChannels.has(channelId))
+              void outbox.dismiss(id).catch(() => {});
+          } else void attemptEnded(outbox, id).then(dropStrandedSends);
         }
       })
       .catch(() => {})
@@ -893,12 +911,43 @@ export function createRelaySession(
       events.some((event) => [39000, 39002].includes(event.kind))
     )
       channels.acceptDiscovery(events);
-    // Ephemeral typing and observer telemetry never enter retained content views.
+    // The relay's "ask again" about who may read or post: a hint, never
+    // access itself, so only the held channels it names are rechecked.
+    // The viewer's own restriction changed (a timeout or ban): every held
+    // channel's answer may have.
+    if (
+      channelTraffic &&
+      transport &&
+      events.some(
+        (event) =>
+          event.kind === VIEWER_ACCESS_CHANGED_KIND &&
+          event.pubkey === transport.relayAuthor &&
+          event.tags.some(
+            ([name, value]) => name === "p" && value === transport.viewer,
+          ),
+      )
+    )
+      reach?.recheck();
+    else if (channelTraffic && transport)
+      reach?.recheck(
+        events.flatMap((event) => {
+          const id =
+            event.kind === ACCESS_CHANGED_KIND &&
+            event.pubkey === transport.relayAuthor
+              ? tag(event, "h")
+              : undefined;
+          return id ? [id] : [];
+        }),
+      );
+    // Ephemeral typing, access hints and observer telemetry never enter
+    // retained content views.
     const visible = events
       .filter(
         (event) =>
           event.kind !== OBSERVER_KIND &&
           event.kind !== 20002 &&
+          event.kind !== ACCESS_CHANGED_KIND &&
+          event.kind !== VIEWER_ACCESS_CHANGED_KIND &&
           event.kind !== PRODUCT_FEEDBACK_KIND,
       )
       .filter(visibility(events, true));
@@ -1161,6 +1210,45 @@ export function createRelaySession(
     },
   );
   canAccess = channels.canAccess;
+  const access = transport?.channelAccess;
+  const reached = createChannelReach({
+    ...(access && !options.cachedOnly ? { access } : {}),
+    resolve: async (ids, signal) => {
+      if (!channels.queries.resolve) throw new Error("Relay is unavailable");
+      await channels.queries.resolve(ids, { signal, viewerLookup: true });
+    },
+    preview: channels.preview,
+    member: channels.member,
+    grant: channels.holdAccess,
+    deny: (id) => {
+      channels.denyChannel(id, new Error("Conversation is unavailable"));
+      dropStrandedSends();
+    },
+    suspend: (ids) => {
+      for (const id of ids) channels.holdAccess(id, null);
+    },
+    forget: channels.releaseAccess,
+    current: channels.reachable,
+    subscribe: channels.queries.subscribeList,
+    signal: lifetime.signal,
+  });
+  reach = reached;
+  // A post the relay refused may mean posting rights changed: ask again.
+  let refusedSends = new Set<string>();
+  const stopRefusals = writes?.outbox.subscribe(() => {
+    const items = writes.outbox.snapshot();
+    const refused = new Set<string>();
+    const channelIds: string[] = [];
+    for (const item of items) {
+      if (!item.refused) continue;
+      refused.add(item.event.id);
+      if (refusedSends.has(item.event.id)) continue;
+      const id = contribution(item);
+      if (id) channelIds.push(id);
+    }
+    refusedSends = refused;
+    reached.recheck(channelIds);
+  });
   retainedChannelEvent = channels.retainedEvent;
   retainedChannelEvents = channels.retainedEvents;
   const repositories = repoDestinations(async (filters, signal) => {
@@ -1223,6 +1311,14 @@ export function createRelaySession(
   const projectedChannels = new WeakMap<ChannelSummary, ChannelSummary>();
   const channelQueries = Object.freeze({
     ...channels.queries,
+    ...(transport && !options.cachedOnly
+      ? {
+          reach(id: string) {
+            reachedChannels.add(id);
+            return reached.reach(id);
+          },
+        }
+      : {}),
     // Only the viewer's own surfaces call it from outside the session (a
     // scoped search, a requested channel, a repository page), so what they
     // look up becomes the viewer's, as without any `attend`.
@@ -3917,16 +4013,20 @@ export function createRelaySession(
           }
       // Suspend every affected preview before any recheck: one revocation can
       // cancel another read, but must never leave its old public grant readable.
-      const previews = snapshot.routes
+      const closedChannels = snapshot.routes
         .filter(
           (route) =>
-            revoked(route) &&
-            !previous.has(route.id) &&
-            route.channelId &&
-            !channels.canParticipate(route.channelId) &&
-            channels.queries.get?.(route.channelId)?.readOnly,
+            revoked(route) && !previous.has(route.id) && route.channelId,
         )
         .map((route) => route.channelId as string);
+      // A held conversation waits, hidden, for the relay's answer again.
+      reach?.suspend(closedChannels.filter((id) => reach?.holds(id)));
+      const previews = closedChannels.filter(
+        (id) =>
+          !reach?.holds(id) &&
+          !channels.canParticipate(id) &&
+          channels.queries.get?.(id)?.readOnly,
+      );
       channels.suspendPreviews(previews);
       revalidatePreviews(previews);
       publishLive();
@@ -3956,6 +4056,7 @@ export function createRelaySession(
               activityRosterKey = undefined;
               refreshChannelActivity();
               inboxFeed.reconnect();
+              reach?.recheck();
               for (const refresh of refreshers) void refresh();
             }
           }, 0);
@@ -4097,6 +4198,8 @@ export function createRelaySession(
     dispose() {
       stopSoloGroups();
       closed = true;
+      stopRefusals?.();
+      reach?.dispose();
       resumes.clear();
       stopLiveRecovery();
       recovery?.dispose();

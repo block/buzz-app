@@ -8,6 +8,7 @@ import { huddleParent } from "../huddle/lifecycle";
 import { soloLabels } from "../solo/labels";
 import { objectBody } from "./body";
 import { newer, hasTag, tag, type RelayEvent } from "./events";
+import type { ChannelAccess } from "./channel-access";
 import type { ChannelSummary } from "./contracts";
 import { channelIdentity } from "./channel-labels";
 
@@ -118,6 +119,10 @@ export class DiscoveryState {
   /** Fresh public resolution can restore reading while membership remains denied. */
   private confirmedPreviews = new CountedSet<string>(this.changed);
   private suspended = new CountedSet<string>(this.changed);
+  /** Channels a view holds open by name. While held, the relay's answer
+   * alone decides reading and posting (`null`: no answer to trust yet), and
+   * the other access records stay as they were, to decide again on release. */
+  private held = new CountedMap<string, ChannelAccess | null>(this.changed);
   private closed = false;
   private get complete() {
     return this.closed;
@@ -263,16 +268,24 @@ export class DiscoveryState {
     // A read can race the chat's own creation; only abandon() or a signed
     // roster ends a start.
     if (this.undecided(id)) return;
+    // A confirmed denial outlasts a hold: released, the conversation stays
+    // denied until fresh evidence, never readable again from older records.
+    const held = this.held.get(id);
+    this.held.delete(id);
     // A relay denial outranks an omission that a later read could undo.
     this.absent.delete(id);
-    if (!this.canAccess(id) && !this.suspended.has(id)) return;
-    this.accessRevision++;
-    this.suspended.delete(id);
-    this.confirmedPreviews.delete(id);
-    this.denied.add(id);
+    const readable = this.canAccess(id) || this.suspended.has(id);
+    if (readable) {
+      this.suspended.delete(id);
+      this.confirmedPreviews.delete(id);
+      this.denied.add(id);
+    }
+    if (held !== undefined) this.held.set(id, null);
+    if (readable || held) this.accessRevision++;
   }
   /** A CLOSED preview is unreadable pending fresh evidence, not permanently denied. */
   suspend(id: string): boolean {
+    if (this.held.has(id)) return this.hold(id, null);
     if (this.authorized(id) || !this.get(id)?.readOnly) return false;
     this.suspended.add(id);
     this.accessRevision++;
@@ -280,6 +293,34 @@ export class DiscoveryState {
   }
   suspendedChannels(): string[] {
     return [...this.suspended];
+  }
+  /** Holds `id` open on the relay's answer, or hidden (`null`) until it
+   * answers again. Returns whether that changed what the viewer may do. */
+  hold(id: string, access: ChannelAccess | null): boolean {
+    const readable = this.canAccess(id);
+    const previous = this.held.get(id);
+    // The relay's fresh answer is newer evidence than an earlier denial.
+    if (access) this.denied.delete(id);
+    this.held.set(id, access);
+    if (readable && !access) this.accessRevision++;
+    return (
+      readable !== !!access ||
+      previous?.post !== access?.post ||
+      previous?.joined !== access?.joined ||
+      previous?.role !== access?.role
+    );
+  }
+  /** Ends a hold nobody keeps. Not a denial: membership and public metadata
+   * decide again, exactly as before it was held. */
+  release(id: string): boolean {
+    if (!this.held.has(id)) return false;
+    const readable = this.canAccess(id);
+    this.held.delete(id);
+    if (readable && !this.canAccess(id)) this.accessRevision++;
+    return true;
+  }
+  heldAccess(id: string): ChannelAccess | null | undefined {
+    return this.held.get(id);
   }
   resume(id: string, metadata?: RelayEvent): boolean {
     const resumed = this.suspended.delete(id);
@@ -337,6 +378,7 @@ export class DiscoveryState {
     this.starting.clear();
     this.absent.clear();
     this.confirmedPreviews.clear();
+    for (const id of this.held.keys()) this.held.set(id, null);
     for (const id of [...this.rosters.keys(), ...this.metadata.keys()])
       this.denied.add(id);
   }
@@ -350,6 +392,7 @@ export class DiscoveryState {
   }
   /** Unknown is not denied until a complete roster or local snapshot closes that boundary. */
   canAccess(id: string): boolean {
+    if (this.held.has(id)) return !!this.held.get(id);
     if (this.undecided(id)) return true;
     if (this.suspended.has(id)) return false;
     if (this.denied.has(id))
@@ -361,11 +404,15 @@ export class DiscoveryState {
     );
   }
   /** Explicit signed public metadata grants reading, never membership. */
+  isOpen(id: string): boolean {
+    return this.open(id);
+  }
   private open(id: string): boolean {
     const event = this.metadata.get(id);
     return !!event && openMetadata(event);
   }
   canParticipate(id: string): boolean {
+    if (this.held.has(id)) return !!this.held.get(id)?.post;
     if (this.undecided(id)) return true;
     const roster = this.rosters.get(id);
     return (
@@ -378,6 +425,7 @@ export class DiscoveryState {
     );
   }
   canWrite(id: string): boolean {
+    if (this.held.has(id)) return this.canParticipate(id);
     return this.canParticipate(id) && this.viewerRole(id) !== "guest";
   }
   // Per signed roster event, so a large roster is not parsed, sorted and
@@ -454,13 +502,19 @@ export class DiscoveryState {
   get(id: string): ChannelSummary | undefined {
     const starting = this.starting.get(id);
     if (starting) return starting;
-    if (!this.canAccess(id) || (!this.authorized(id) && !this.open(id))) return;
+    const grant = this.held.get(id);
+    if (
+      !this.canAccess(id) ||
+      (!grant && !this.authorized(id) && !this.open(id))
+    )
+      return;
     const event = this.metadata.get(id);
     // The relay tags a system roster too, so a roster that arrives before its
     // metadata (the full pass reads names later) never lists as a channel.
     const roster = this.rosters.get(id);
     const parsed = roster && this.parse(roster);
-    const viewerRole = this.authorized(id) ? parsed?.viewerRole : undefined;
+    const viewerRole =
+      grant?.role ?? (this.authorized(id) ? parsed?.viewerRole : undefined);
     const type = this.isSolo(id)
       ? "solo"
       : event
@@ -473,6 +527,7 @@ export class DiscoveryState {
       type === "forum" ||
       type === "dm" ||
       type === "system" ||
+      type === "artifact" ||
       (type === "solo" && this.isSolo(id))
         ? type
         : undefined;
@@ -495,7 +550,14 @@ export class DiscoveryState {
       id,
       ...(huddle || legacyHuddle ? { huddle: true as const } : {}),
       ...(huddle ? { parentChannelId: huddle } : {}),
-      ...(!this.authorized(id) || this.cached.has(id) || viewerRole === "guest"
+      // One answer decides posting: the relay's when it gave one.
+      ...((
+        grant
+          ? !grant.post
+          : !this.authorized(id) ||
+            this.cached.has(id) ||
+            viewerRole === "guest"
+      )
         ? { readOnly: true as const }
         : {}),
       ...(viewerRole ? { viewerRole } : {}),
@@ -583,13 +645,18 @@ export class DiscoveryState {
     this.lastReadable = { changes: this.changes, channels };
     return channels;
   }
-  /** The channel list. System channels (NIP-CL) hold app data, not
-   * conversation: they stay readable through get() but never list here. */
+  /** The channel list. System channels (NIP-CL) hold app data and artifact
+   * conversations belong to their artifact, not the sidebar: both stay
+   * readable through get() but never list here. */
   channels(
     readable: readonly ChannelSummary[] = this.readable(),
   ): ChannelSummary[] {
     return readable
-      .filter((channel) => channel.channelType !== "system")
+      .filter(
+        (channel) =>
+          channel.channelType !== "system" &&
+          channel.channelType !== "artifact",
+      )
       .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   }
 }

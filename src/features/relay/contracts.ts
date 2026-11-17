@@ -1,3 +1,4 @@
+import type { ChannelReach } from "./channel-reach";
 import type { VerifiedProfile } from "./verified-profile";
 import type { ReadFilter } from "./events";
 import type { CustomEmoji } from "./emoji";
@@ -33,7 +34,8 @@ export type ChannelSummary = Readonly<{
   lastActivityAt?: number | undefined;
   /** Activity has been observed or read successfully, including an empty result. */
   activityKnown?: true;
-  /** Writing unavailable: public preview, cached membership, or a guest. */
+  /** Writing unavailable: public preview, cached membership, a guest, or the
+   * relay's access answer says this viewer may not post. */
   readOnly?: true;
   /** Downloaded membership is display-only pending current relay confirmation. */
   cached?: true;
@@ -47,8 +49,10 @@ export type ChannelSummary = Readonly<{
   hidden?: true;
   /** Relay-authored metadata; absent while metadata is unavailable. */
   /** `system` (NIP-CL): access control for app data; never in list().
-   * `solo`: a stream with the Solo label (`SOLO_LABEL`), regardless of visibility. */
-  channelType?: "stream" | "forum" | "dm" | "solo" | "system";
+   * `solo`: a stream with the Solo label (`SOLO_LABEL`), regardless of visibility.
+   * `artifact`: an artifact's conversation, such as a task's comments; never
+   * in list(), and readable only through the artifact's home. */
+  channelType?: "stream" | "forum" | "dm" | "solo" | "system" | "artifact";
   /** Relay-authored channel visibility; private channels use restricted presentation. */
   private?: true;
   /** Relay-advertised default: the relay joins new community members here. */
@@ -278,6 +282,10 @@ export type ChannelReference =
  * Commands are idempotent requests; the store decides whether network work is needed. */
 export interface ChannelQueries {
   list(): ChannelList;
+  /** Opens a conversation the relay lets the viewer see, joined or not, such
+   * as an artifact's conversation. Never lists it. While a handle is open,
+   * `get`, windows, threads and messages work for it as the relay allows. */
+  reach?(channelId: string): ChannelReach;
   /** Bounded discovery lookup; never inserts public previews into list(). */
   get?(channelId: string): ChannelSummary | undefined;
   resolve?(

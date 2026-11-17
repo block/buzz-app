@@ -1,3 +1,4 @@
+import type { ChannelAccess } from "./channel-access";
 import { retryRead } from "./read-retry";
 import { channelRowKind, rowProfileIds, messagePreview } from "./membership";
 import type { Outbox } from "./outbox";
@@ -4405,6 +4406,37 @@ export function createChannelStore(
       if (changed) transport?.revokeAccess(() => setList(list, true), ids);
     },
     suspendedPreviews: () => discovery?.suspendedChannels() ?? [],
+    /** Holds a channel a view named open on the relay's answer, or hidden
+     * (`null`) until it answers again. */
+    holdAccess(id: string, access: ChannelAccess | null) {
+      if (disposed || !discovery?.hold(id, access)) return;
+      if (access) return setList(list, true);
+      transport?.revokeAccess(() => setList(list, true), [id]);
+    },
+    /** Ends a hold no view keeps. Content it alone made readable goes. */
+    releaseAccess(id: string) {
+      if (disposed || !discovery?.release(id)) return;
+      if (discovery.canAccess(id)) return setList(list, true);
+      transport?.revokeAccess(() => {
+        heads.delete(id);
+        tails.delete(id);
+        const state = windows.get(id);
+        if (state) closeWindow(state, new Error("Conversation is unavailable"));
+        setList(list, true);
+      }, [id]);
+    },
+    /** Posting and membership as the one access check now decides them. */
+    reachable(id: string): { post: boolean; joined: boolean } | undefined {
+      const channel = discovery?.get(id);
+      if (!channel || !discovery) return;
+      return {
+        post: !channel.readOnly && discovery.canWrite(id),
+        joined: discovery.heldAccess(id)?.joined ?? discovery.authorized(id),
+      };
+    },
+    /** Signed public metadata lets anyone read it. */
+    preview: (id: string) => discovery?.isOpen(id) ?? false,
+    member: (id: string) => discovery?.authorized(id) ?? false,
     acceptDiscovery: applyDiscovery,
     accept,
     clearCache,

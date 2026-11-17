@@ -1,3 +1,4 @@
+import type { ChannelAccessReader } from "./channel-access";
 import type { ArtifactIncrementalReader } from "./artifact-incremental-reader.ts";
 import type { VerifiedProfileAuthority } from "./verified-profile";
 import type { ReminderHost } from "./reminders";
@@ -150,6 +151,10 @@ export interface ReadTransport {
   /** The relay advertises NIP-AR sync (`artifacts.sync.version` 1 in NIP-11):
    * a REQ with `"artifact": "current"` streams a complete set, then live heads. */
   readonly artifactSync?: true;
+  /** The relay's per-viewer access answer for named channels
+   * (`buzz-channel-access`). Absent: posting where the viewer is not a
+   * member stays unavailable. */
+  readonly channelAccess?: ChannelAccessReader;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
   readStateSnapshot?(
     signal: AbortSignal,

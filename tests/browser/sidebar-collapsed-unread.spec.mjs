@@ -2,6 +2,7 @@ import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { holdReadingFocus } from "./reading.mjs";
+import { notificationLevel, notificationLevels } from "./navigation.mjs";
 
 test.use({
   productionBroker: true,
@@ -32,6 +33,11 @@ test("collapsed headings follow unread, confirmed mute and read changes", async 
   const action = async (name) => {
     await beta.click({ button: "right" });
     await menu.getByRole("menuitem", { name, exact: true }).click();
+    await expect(menu).toBeHidden();
+  };
+  const level = async (name) => {
+    await beta.click({ button: "right" });
+    await notificationLevel(await notificationLevels(page, menu), name).click();
     await expect(menu).toBeHidden();
   };
   const ink = (role) =>
@@ -89,14 +95,14 @@ test("collapsed headings follow unread, confirmed mute and read changes", async 
   await summary.press("Enter");
   await expect(beta).toBeVisible();
   await expect(title).toHaveCSS("color", await ink("text-metadata"));
-  await action("Mute");
+  await level("Mute");
   await expect(
     beta.getByRole("img", { name: "Muted", exact: true }),
   ).toBeVisible();
   await summary.click();
   await expect(title).toHaveCSS("color", await ink("text-metadata"));
   await summary.click();
-  await action("Unmute");
+  await level("Just mentions");
   await expect(
     beta.getByRole("img", { name: "Muted", exact: true }),
   ).toHaveCount(0);
@@ -183,7 +189,13 @@ test.describe("thread activity", () => {
     await expect(alpha).toBeHidden();
     await summary.click();
     await alpha.click({ button: "right" });
-    await page.getByRole("menuitem", { name: "Mute", exact: true }).click();
+    await notificationLevel(
+      await notificationLevels(
+        page,
+        page.getByRole("menu", { name: "Actions for Alpha" }),
+      ),
+      "Mute",
+    ).click();
     await expect(
       alpha.getByRole("img", { name: "Muted", exact: true }),
     ).toBeVisible();

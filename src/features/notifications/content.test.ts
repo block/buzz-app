@@ -64,6 +64,7 @@ const message = {
 it.each([
   ["mention", "Pinky mentioned you in #new-notifications"],
   ["thread", "Pinky replied in #new-notifications"],
+  ["post", "Pinky posted in #new-notifications"],
   ["direct", "Pinky sent you a direct message"],
 ] as const)(
   "formats %s with sender, conversation and plain preview",

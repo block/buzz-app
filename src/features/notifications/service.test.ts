@@ -336,6 +336,7 @@ it("plays the selected per-category sound once delivery is accepted", async () =
       mention: "ping",
       direct: "unison",
       thread: "doop",
+      post: "soft",
       agent: "doodone",
     },
   });

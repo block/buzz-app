@@ -672,6 +672,15 @@ and are asked to sign in again in Buzz.
   search open your DM with them. With no DM yet, they open **New message**
   addressed to them; the DM is created only when you send, so choosing someone
   by mistake never shows them an empty conversation.
+- **Adding to a DM**: open the DM's access dialog and search for someone to
+  add. An agent joins right away and can read the DM's earlier messages. For a
+  person, choose **Include history** to add them to this DM with its earlier
+  messages, or **Start a new DM** to message the people in a new DM without the
+  earlier messages. Agents stay in the original DM and can be added later.
+  After Include history, messaging only the original people starts a new DM.
+  If the people you'd end up with already have a DM, Buzz opens that one
+  instead. A DM can include up to nine people; agents don't count. Removing
+  people from a DM isn't available.
 - **Hidden DMs**: **Close conversation** and **Hide conversation** take a DM out
   of the sidebar without leaving it. To find one again, start a **New message**
   to exactly the same people. Its earlier messages appear before you send,
@@ -1025,6 +1034,12 @@ and are asked to sign in again in Buzz.
   for that community and identity. Collapsed section headings highlight when
   their channels have unread messages or thread replies. Muted channels do not
   highlight the heading.
+- **Custom Team sections** can have an optional Unicode or community emoji.
+  Choose it beside the name when creating a section, or use the section's
+  menu → **Rename section** to change its name or emoji, then **Rename**.
+  Open the emoji picker and choose **Remove emoji** to clear only the emoji;
+  the name and channels stay unchanged. These controls require
+  writable saved sidebar preferences.
 - **Dragging channels and DMs between sections**: drag a channel or DM row onto
   **Starred** or a saved group to move it there, or back to its home section:
   channels to **Channels** and DMs to **Direct messages**. **Channels** does not
@@ -1131,6 +1146,13 @@ available rather than silently discarding it.
   offers the same edit. Model, workspace, and other runtime options depend on
   its type. Where offered, **Create agent** also lets people choose Thinking
   before the first config is saved; **Default** follows the provider's setting.
+  Claude and Codex list the explicit model separately even when it matches
+  **Default**. Choose the named model to pin that choice when defaults change;
+  choose **Default** to follow defaults again. It appears first, with the
+  current model or the settings it follows shown as supporting text. The closed
+  picker keeps a known model visible with a **Default** suffix; an unknown model
+  reads **Default** instead. Selecting a named
+  model's thinking level in the family menu also pins that model.
   Do not assume someone can edit another person's agent.
 - In the agent avatar picker, drag the avatar strip with a mouse or scroll it
   to browse more choices. Click an avatar to select it; keyboard users can Tab
@@ -1498,7 +1520,9 @@ available rather than silently discarding it.
   since the proposal.
   Agent reads also show saved model and thinking choices for supported local
   harnesses. They distinguish explicit choices, harness defaults, Recommended
-  policy and unavailable settings. They do not report an active turn's model.
+  policy and unavailable settings. For Codex and Claude, they also include
+  current defaults when Buzz can resolve them, with the source or a reason
+  they are unknown. They do not prove an active session's model.
 - Your agents can search messages (`search`) by words, person, channel or DM,
   and date, and link each message they cite. They search with their own access:
   channels they're in and open channels. They don't find messages in your
@@ -1518,7 +1542,9 @@ available rather than silently discarding it.
   once that turn is loaded. Working indicators describe current work,
   not a guarantee that an agent is available or that a message was delivered.
   Local work includes conversation wakes from plugins, watches, and timers.
-  These wakes have no message link of their own.
+  These wakes have no message link of their own. A plugin can cancel a pending
+  guarded wake when its work is no longer current. It cannot retract input
+  already handed to the agent.
   Expand grouped work updates to read each message; the collapsed excerpt names
   its speaker. Thread work appears inside its thread; the channel’s reply summary
   still shows when an agent is working there. While the activity under your

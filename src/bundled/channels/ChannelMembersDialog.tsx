@@ -7,6 +7,7 @@ import {
 import { useProfileGeneration } from "../../features/relay/react";
 import { agentUnavailable } from "../../features/agents/choices";
 import { archiveHides } from "../../features/relay/identity-archives";
+import { NeedsHistoryChoice } from "../../features/relay/direct-messages";
 import { Button as BaseButton } from "@base-ui/react/button";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import { SEARCH_MIN_CHARS } from "../../shared/search-debounce";
@@ -62,6 +63,7 @@ import {
 } from "../../features/channel-members/administration-protocol";
 import {
   canAddMembers,
+  canAddToDirectMessage,
   canShareSoloChat,
 } from "../../features/channel-members/members";
 import { ownSolo, soloShareDisclosure } from "../../features/solo/labels";
@@ -225,7 +227,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
 }: {
   session: RelaySession;
   channelId: string;
-  place: "chat" | "channel";
+  place: "chat" | "channel" | "DM";
   pubkey: string;
   name: string;
   /** The verified name `name` is not, shown beside it. */
@@ -434,7 +436,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
 });
 
 type MemberNavigation = {
-  /** Opens a person's DM, or a draft to them, by link. */
+  /** Leaves Members for a DM, or a New message draft, by link. */
   onOpenMessage?: ((link: string) => boolean) | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   onOpenLink?:
@@ -805,10 +807,10 @@ export function ChannelMembersDialog({
   const [query, setQuery] = useState("");
   const [selectedIdentity, setSelectedIdentity] = useState("All");
   const [selectedAccess, setSelectedAccess] = useState("All");
-  const [soloAdditions, setSoloAdditions] = useState<
+  const [directAdditions, setDirectAdditions] = useState<
     Record<string, { pending: boolean; error?: string }>
   >({});
-  const soloPending = useRef(new Set<string>());
+  const directPending = useRef(new Set<string>());
   const additions = useSyncExternalStore(
     session.memberAdditions.subscribe,
     session.memberAdditions.snapshot,
@@ -816,10 +818,13 @@ export function ChannelMembersDialog({
   ).filter((item) => item.channelId === channelId);
   const busy = new Set([
     ...additions.filter((item) => item.pending).map((item) => item.pubkey),
-    ...Object.keys(soloAdditions).filter((key) => soloAdditions[key]?.pending),
+    ...Object.keys(directAdditions).filter(
+      (key) => directAdditions[key]?.pending,
+    ),
   ]);
   // One alert per reason: a refused team add names its members together.
-  // Solo agents join directly, one at a time, so each keeps its own Retry.
+  // Solo agents and DM additions join directly, one at a time, so each keeps
+  // its own Retry.
   const refusals = new Map<string, { error: string; keys: string[] }>();
   const refuse = (group: string, error: string, key: string) => {
     const item = refusals.get(group) ?? { error, keys: [] };
@@ -830,7 +835,7 @@ export function ChannelMembersDialog({
   if (!memberActions) {
     for (const item of additions)
       if (item.error) refuse(item.error, item.error, item.pubkey);
-    for (const [key, item] of Object.entries(soloAdditions))
+    for (const [key, item] of Object.entries(directAdditions))
       if (item.error) refuse(key, item.error, key);
   }
   const [notice, setNotice] = useState("");
@@ -885,7 +890,13 @@ export function ChannelMembersDialog({
     list.channels.find((item) => item.id === channelId) ??
     session.channels.get?.(channelId);
   const solo = channel?.channelType === "solo";
-  const place = solo ? "chat" : "channel";
+  const dm = channel?.channelType === "dm";
+  const place = solo ? "chat" : dm ? "DM" : "channel";
+  // The relay's moderation DM carries its notices; no one joins it.
+  const moderationDm =
+    dm &&
+    !!session.relayAuthor &&
+    !!channel?.members?.includes(session.relayAuthor);
   const nonMemberHeading =
     nonMemberLabel?.trim() ||
     (memberActions ? "Not yet added" : `Not in this ${place}`);
@@ -907,7 +918,11 @@ export function ChannelMembersDialog({
     ownSolo(channel, session.viewer) &&
     canShareSoloChat(session, channel) &&
     session.channelWrites.available;
-  const canAddPeople = solo ? share.eligible : canAddMembers(session, channel);
+  const canAddPeople = solo
+    ? share.eligible
+    : dm
+      ? canAddToDirectMessage(session, channel)
+      : canAddMembers(session, channel);
   const generalAccess =
     channel &&
     (solo ||
@@ -964,8 +979,8 @@ export function ChannelMembersDialog({
     changeInFlight.current = undefined;
     setChangingMember(false);
     setAgentsBusy(false);
-    setSoloAdditions({});
-    soloPending.current = new Set();
+    setDirectAdditions({});
+    directPending.current = new Set();
     messagePending.current = false;
     setOpeningMessage(false);
     setMessageError("");
@@ -1665,7 +1680,7 @@ export function ChannelMembersDialog({
     (agentsSnapshot?.agents ?? []).map((agent) => [agent.pubkey, agent.name]),
   );
   const teams = (
-    solo || memberActions ? [] : (agentsSnapshot?.teams ?? [])
+    solo || dm || memberActions ? [] : (agentsSnapshot?.teams ?? [])
   ).flatMap((team) => {
     const missing = team.members.filter(
       (key) => teamNames.has(key) && !members.has(key),
@@ -1727,6 +1742,7 @@ export function ChannelMembersDialog({
     });
     return () => cancelAnimationFrame(frame);
   }, [memberKey, offering]);
+  const [dmChoice, setDmChoice] = useState<string>();
   const changeMember = useCallback(
     async (change: MemberChange, signal: AbortSignal) => {
       if (
@@ -1774,7 +1790,7 @@ export function ChannelMembersDialog({
     [memberActions, session, channelId],
   );
   const add = useCallback(
-    async (key: string, name: string) => {
+    async (key: string, name: string, includeHistory?: boolean) => {
       const signal = lifetime.current?.signal;
       if (!signal || memberPending || (memberActions && !memberActions.canAdd))
         return;
@@ -1802,46 +1818,86 @@ export function ChannelMembersDialog({
         "channel-members",
         input.current?.value.trim().toLowerCase() ?? "",
       );
-      // A Solo owner's agents join directly; people use ordinary additions.
+      const pending = directPending.current;
+      // A Solo owner's agents and DM additions join directly; people use
+      // ordinary additions.
       const direct =
-        canAddSoloAgents &&
-        session.agentChoices
-          .snapshot()
-          .selectable.some((agent) => agent.pubkey === key);
-      const pending = soloPending.current;
+        dm ||
+        (canAddSoloAgents &&
+          session.agentChoices
+            .snapshot()
+            .selectable.some((agent) => agent.pubkey === key));
       if (direct) {
         if (pending.has(key)) return;
         pending.add(key);
-        setSoloAdditions((old) => ({ ...old, [key]: { pending: true } }));
+        setDirectAdditions((old) => ({ ...old, [key]: { pending: true } }));
       }
       try {
-        if (direct)
+        const destination = dm
+          ? await session.directMessages.add(
+              channelId,
+              [key],
+              // Only the relay knows who is an agent: it adds agents, starts
+              // a new DM for a person added to a DM of one person, and asks
+              // when a person would join this one.
+              includeHistory ?? "ask",
+              signal,
+            )
+          : channelId;
+        if (!dm && direct)
           await session.channelWrites.addAgents(
             channelId,
             [key],
             () => !signal.aborted,
           );
-        else await session.memberAdditions.add(channelId, key);
+        else if (!dm) await session.memberAdditions.add(channelId, key);
         if (!signal.aborted) {
           recordChoice(session.scope, typed, personKey(key));
           if (direct) {
-            setSoloAdditions((old) => ({ ...old, [key]: { pending: false } }));
+            setDirectAdditions((old) => ({
+              ...old,
+              [key]: { pending: false },
+            }));
             setQuery("");
             setSelectedIdentity("All");
             setSelectedAccess("All");
           }
-          setNotice(`${name}${direct ? " added." : ` is in the ${place}.`}`);
+          // Without history, or into a DM these people already have: go there.
+          if (destination !== channelId) {
+            openingDestination.current = true;
+            if (
+              onOpenMessage?.(
+                `buzz://channel/${encodeURIComponent(destination)}`,
+              )
+            ) {
+              close();
+              return;
+            }
+            openingDestination.current = false;
+          }
+          setNotice(
+            `${name}${destination !== channelId ? " is in another DM." : direct ? " added." : ` is in the ${place}.`}`,
+          );
         }
       } catch (error: unknown) {
-        if (direct && !signal.aborted)
-          setSoloAdditions((old) => ({
+        if (error instanceof NeedsHistoryChoice && !signal.aborted) {
+          // Nothing was added: they choose, then this adds with their choice.
+          setDirectAdditions((old) => {
+            const { [key]: _, ...rest } = old;
+            return rest;
+          });
+          setDmChoice(key);
+        } else if (direct && !signal.aborted)
+          setDirectAdditions((old) => ({
             ...old,
             [key]: {
               pending: false,
               error:
                 error instanceof Error
                   ? error.message
-                  : "Could not add this agent. Try again.",
+                  : dm
+                    ? "Could not add them. Try again."
+                    : "Could not add this agent. Try again.",
             },
           }));
         // Ordinary additions retain session-owned recovery.
@@ -1854,6 +1910,9 @@ export function ChannelMembersDialog({
       channelId,
       canAddSoloAgents,
       place,
+      dm,
+      onOpenMessage,
+      close,
       memberActions,
       memberPending,
       changeMember,
@@ -2062,6 +2121,7 @@ export function ChannelMembersDialog({
         }
         canAddWithRole={
           !solo &&
+          !dm &&
           session.memberAdministration.available &&
           administration.status === "ready" &&
           administration.authority.canManage &&
@@ -2472,15 +2532,17 @@ export function ChannelMembersDialog({
               !readOnlyAccess &&
               !(solo && rosterBusy) && (
                 <p className="px-control-inset text-body-sm text-subtle">
-                  {channel?.channelType === "dm"
-                    ? "DM membership cannot be changed here."
-                    : channel?.archived
-                      ? `Archived ${place}s cannot add members.`
-                      : !session.outbox?.supports(9000)
-                        ? "Adding members is unavailable in this connection."
-                        : solo
-                          ? "You cannot share this chat."
-                          : "Join this channel to add people and agents."}
+                  {moderationDm
+                    ? "People can’t be added to this DM."
+                    : dm && !channel?.archived
+                      ? "Adding people to this DM is unavailable in this connection."
+                      : channel?.archived
+                        ? `Archived ${place}s cannot add members.`
+                        : !session.outbox?.supports(9000)
+                          ? "Adding members is unavailable in this connection."
+                          : solo
+                            ? "You cannot share this chat."
+                            : "Join this channel to add people and agents."}
                 </p>
               )}
             {rosterError && (
@@ -2868,6 +2930,36 @@ export function ChannelMembersDialog({
                 onClick={() => void share.confirm()}
               >
                 Share
+              </Button>
+            </>
+          }
+        />
+      )}
+      {dmChoice && (
+        <AlertDialog
+          title={`Add ${label(dmChoice)}?`}
+          description="Include history to add them to this DM with its earlier messages."
+          onClose={() => setDmChoice(undefined)}
+          finalFocus={input}
+          actions={
+            <>
+              <Button onClick={() => setDmChoice(undefined)}>Cancel</Button>
+              <Button
+                onClick={() => {
+                  setDmChoice(undefined);
+                  void add(dmChoice, label(dmChoice), false);
+                }}
+              >
+                Start a new DM
+              </Button>
+              <Button
+                variant="prominent"
+                onClick={() => {
+                  setDmChoice(undefined);
+                  void add(dmChoice, label(dmChoice), true);
+                }}
+              >
+                Include history
               </Button>
             </>
           }

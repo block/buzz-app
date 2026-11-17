@@ -3,6 +3,7 @@ import { agentUnavailable, canMessageAgent } from "../agents/choices";
 import { avatarMedia } from "../../shared/avatar-source";
 import { useChannelWindow } from "../relay/react";
 import type { ChannelSummary } from "../relay/contracts";
+import { sameDirectMessage } from "../relay/direct-message-policy";
 import {
   ConversationChannel,
   ConversationTimeline,
@@ -222,7 +223,6 @@ export function NewMessage({
   const [uploadFailed, setUploadFailed] = useState(false);
   const [draftChannel] = useState(() => crypto.randomUUID());
   const attempt = useRef<AbortController | null>(null);
-  const prepared = useRef<{ key: string; id: string } | undefined>(undefined);
   const outbox = session.outbox;
   const operations = useSyncExternalStore(
     outbox?.subscribe ?? noSubscribe,
@@ -242,7 +242,6 @@ export function NewMessage({
   const retire = useCallback(() => {
     clearAttachmentDraft(session, `${scope}:${draftKey}`);
     retiring.current = undefined;
-    prepared.current = undefined;
     draftEdited(undefined);
     setRecipients([]);
     setRestoredDraft(mentionDraft(""));
@@ -327,7 +326,6 @@ export function NewMessage({
   }
   function change(people: Recipient[]) {
     if (locked || attempt.current) return;
-    prepared.current = undefined;
     setRecipients(people);
     writeView(scope, "direct-message:recipients", people.map(recipientView));
     setError("");
@@ -420,15 +418,16 @@ export function NewMessage({
       if (!current) {
         validateAgents();
         onPreparing?.(recipients.map((person) => person.pubkey));
-        const id =
-          prepared.current?.key === key
-            ? prepared.current.id
-            : await session.directMessages.open(
-                recipients.map((person) => person.pubkey),
-                controller.signal,
-              );
+        // The relay picks the DM of these people, which can differ from the
+        // one shown, and named agents join it with its history. The message
+        // goes where the relay says now: someone may have joined the DM it
+        // gave an earlier attempt, so every new message asks again.
+        const id = await session.directMessages.open(
+          recipients.map((person) => person.pubkey),
+          controller.signal,
+          true,
+        );
         controller.signal.throwIfAborted();
-        prepared.current = { key, id };
         validateAgents();
         const messageId = session.messages.send(
           id,
@@ -486,7 +485,12 @@ export function NewMessage({
     }
   }
   const existing = useMemo(() => {
-    if (!recipients.length) return undefined;
+    if (!recipients.length || !session.viewer) return undefined;
+    const agents = new Set(
+      recipients
+        .filter((person) => person.isAgent)
+        .map((person) => person.pubkey),
+    );
     const members = new Set([
       session.viewer,
       ...recipients.map((person) => person.pubkey),
@@ -500,8 +504,12 @@ export function NewMessage({
         channel.readOnly ||
         channel.pending ||
         channel.huddle ||
-        channel.members?.length !== members.size ||
-        !channel.members.every((member) => members.has(member))
+        !channel.members ||
+        !sameDirectMessage(
+          channel.members,
+          members,
+          (key) => agents.has(key) || !!profiles.get(key)?.isAgent,
+        )
       )
         continue;
       const activity = channel.lastActivityAt ?? 0;
@@ -514,7 +522,11 @@ export function NewMessage({
         match = channel;
     }
     return match;
-  }, [channels, recipients, session.viewer]);
+  }, [channels, recipients, session.viewer, profiles]);
+  // Agents named for an existing DM of these people join it, with its history.
+  const joining = existing
+    ? named.filter((person) => !existing.members?.includes(person.pubkey))
+    : [];
   return (
     <section
       className={styles.page}
@@ -562,6 +574,16 @@ export function NewMessage({
         ) : null}
       </div>
       <div className={styles.feedback}>
+        {joining.length > 0 && (
+          <p role="status">
+            Sending adds{" "}
+            {new Intl.ListFormat(undefined, { type: "conjunction" }).format(
+              joining.map((person) => person.name),
+            )}{" "}
+            to this DM. {joining.length === 1 ? "It" : "They"} can read its
+            earlier messages.
+          </p>
+        )}
         {busy && (
           <p role="status">
             {busy === "uploading" ? "Uploading files…" : "Sending message…"}

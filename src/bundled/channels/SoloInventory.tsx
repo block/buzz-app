@@ -1,5 +1,6 @@
 import { useSoloRowActivation } from "../../features/channel-navigation/useSoloRowActivation";
 import { useIsPresent } from "motion/react";
+import { SoloChatTitle } from "../../features/solo/SoloChatTitle";
 import type { ComposeWorkspaces } from "../../features/channel-navigation/WorkspaceComposition";
 import { useSoloNavigation } from "../../features/channel-navigation/solo-navigation-react";
 import { soloNavigationFor } from "../../features/channel-navigation/solo-navigation";
@@ -625,7 +626,7 @@ function SoloConversationRow({
               <UnreadBadge
                 session={session}
                 channelId={id}
-                label={title}
+                label={<SoloChatTitle key={id} title={title} />}
                 labelUnread="all"
               />
             </span>

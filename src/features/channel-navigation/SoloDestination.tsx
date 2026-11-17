@@ -1,4 +1,5 @@
 import { useSoloRowActivation } from "./useSoloRowActivation";
+import { SoloChatTitle } from "../solo/SoloChatTitle";
 import {
   type ReactNode,
   type RefObject,
@@ -302,7 +303,13 @@ function ConversationLink(props: SoloConversationLinkProps) {
       {...(primary ? { "data-solo-destination-id": state.channel.id } : {})}
       aria-label={props["aria-label"]}
       aria-describedby={props["aria-describedby"]}
-      label={props.label}
+      label={
+        !props.multiline && props.label === state.channel.name ? (
+          <SoloChatTitle key={state.channel.id} title={state.channel.name} />
+        ) : (
+          props.label
+        )
+      }
       icon={props.icon}
       trailing={props.trailing}
       multiline={!!props.multiline}

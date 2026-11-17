@@ -6009,33 +6009,81 @@ it.each([
   },
 );
 
-it("completes a channel filter with Tab", async () => {
+it.each([
+  ["deploy in:#cr", "Channels", /crew/, "in:crew deploy "],
+  ["deploy from:@ali", "People", /Alice/, "from:<alice> deploy "],
+  ["deploy after:", "Dates", /Today/, "after:2026-10-07 deploy "],
+])(
+  "completes %s with the highlighted suggestion on Tab",
+  async (query, group, row, completed) => {
+    const relay = keypair(),
+      viewer = keypair(),
+      alice = keypair();
+    const { owner } = operatorSession(viewer, relay, [
+      metadata(relay, "crew", "crew"),
+      roster(relay, "crew", [viewer.pubkey]),
+    ]);
+    const change = vi.fn();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 7, 12));
+    try {
+      render(
+        <SearchResults
+          {...operatorProps}
+          session={{
+            ...owner.session,
+            searchProfiles: async () => [
+              eventDto(profile(alice, { display_name: "Alice" })),
+            ],
+          }}
+          query={query}
+          onQueryChange={change}
+        />,
+      );
+      const option = await within(
+        await screen.findByRole("group", { name: group }),
+      ).findByRole("option", { name: row });
+      await waitFor(() =>
+        expect(option).toHaveAttribute("aria-selected", "true"),
+      );
+      const input = screen.getByRole("combobox", { name: "Search Buzz" });
+      // Shift+Tab still leaves the field.
+      expect(fireEvent.keyDown(input, { key: "Tab", shiftKey: true })).toBe(
+        true,
+      );
+      expect(change).not.toHaveBeenCalled();
+      expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(false);
+      expect(change).toHaveBeenLastCalledWith(
+        completed.replace("<alice>", alice.pubkey),
+      );
+    } finally {
+      vi.useRealTimers();
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+it("moves focus on Tab when a filter has no suggestion to complete", async () => {
   const relay = keypair(),
     viewer = keypair();
-  const { owner } = operatorSession(viewer, relay, [
-    metadata(relay, "crew", "crew"),
-    roster(relay, "crew", [viewer.pubkey]),
-  ]);
+  const { owner } = operatorSession(viewer, relay, []);
   const change = vi.fn();
   try {
     render(
       <SearchResults
         {...operatorProps}
         session={owner.session}
-        query="deploy in:#cr"
+        query="from:@a"
         onQueryChange={change}
       />,
     );
-    const crew = await within(
-      await screen.findByRole("group", { name: "Channels" }),
-    ).findByRole("option", { name: /crew/ });
-    await waitFor(() => expect(crew).toHaveAttribute("aria-selected", "true"));
+    expect(
+      await screen.findByText("Type at least 2 characters to search people."),
+    ).toBeVisible();
     const input = screen.getByRole("combobox", { name: "Search Buzz" });
-    // Shift+Tab still leaves the field.
-    expect(fireEvent.keyDown(input, { key: "Tab", shiftKey: true })).toBe(true);
+    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(true);
     expect(change).not.toHaveBeenCalled();
-    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(false);
-    expect(change).toHaveBeenLastCalledWith("in:crew deploy ");
   } finally {
     cleanup();
     owner.dispose();

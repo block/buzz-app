@@ -2536,6 +2536,16 @@ export function EditableInput({
           }
           if (historyShortcut(event, key)) return true;
           if (named === "ArrowLeft" || named === "ArrowRight") {
+            // Explicit line movement also works when WebKit leaves a restored
+            // composer's native Command-arrow caret in place.
+            if (
+              apple &&
+              primary &&
+              !event.altKey &&
+              !event.shiftKey &&
+              projection().draft.text !== ""
+            )
+              return moveCaret(named, event);
             if (
               !event.altKey &&
               !primary &&
@@ -2641,6 +2651,21 @@ export function EditableInput({
           // default capture otherwise prevents Escape before React can cancel edits.
           keydown(_view, event) {
             flushTokens();
+            // Let the shortcut dispatcher see Command arrows before ProseMirror
+            // captures them for caret movement in an empty message input.
+            if (
+              isApplePlatform(navigator.platform) &&
+              event.metaKey &&
+              !event.ctrlKey &&
+              !event.altKey &&
+              !event.shiftKey &&
+              !event.isComposing &&
+              !composing.current &&
+              event.keyCode !== 229 &&
+              (event.key === "ArrowLeft" || event.key === "ArrowRight") &&
+              projection().draft.text === ""
+            )
+              return true;
             return (
               (event.key === "Enter" || event.key === "Escape") &&
               !event.isComposing &&
@@ -3324,6 +3349,7 @@ export function EditableInput({
         {...events}
         ref={mount}
         role="textbox"
+        data-composer-input=""
         aria-multiline="true"
         aria-label={events["aria-label"] ?? placeholder}
         aria-disabled={disabled || undefined}

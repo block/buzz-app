@@ -55,7 +55,7 @@ import {
 } from "../../features/agent-harness/referenced-folders";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import {
-  abortable,
+  abortable as readUntilAborted,
   MemoryReads,
 } from "../../features/agent-harness/core-memory";
 import { SessionControls } from "../../features/agent-harness/session-control";
@@ -1574,7 +1574,7 @@ export class CodexRuntime {
         const voice = settings.voice;
         if (voice) {
           signal.throwIfAborted();
-          const voices = await abortable(
+          const voices = await readUntilAborted(
             listVoices(rpc).catch(() => undefined),
             signal,
           );

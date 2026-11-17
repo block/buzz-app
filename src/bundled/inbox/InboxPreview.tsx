@@ -268,16 +268,19 @@ function InboxPreviewCard({
   const canRead = sync.capability === "frontier-sync";
   /** Mark as read keeps focus in the card when its action leaves: on its
    * row, which stays read, or when Unread only drops the row, on a neighbor. */
+  const previewRows = () => [
+    ...(listRef.current?.querySelectorAll<HTMLElement>("[data-preview-row]") ??
+      []),
+  ];
   const markRead = async (item: InboxItem) => {
     if (reading.has(item.id)) return;
-    const held = !!listRef.current
-      ?.querySelector(`[data-preview-row="${CSS.escape(item.id)}"]`)
-      ?.contains(document.activeElement);
-    const order = [
-      ...(listRef.current?.querySelectorAll<HTMLElement>(
-        "[data-preview-row]",
-      ) ?? []),
-    ].map((row) => row.dataset.previewRow);
+    const before = previewRows();
+    const held = before.some(
+      (row) =>
+        row.dataset.previewRow === item.id &&
+        row.contains(document.activeElement),
+    );
+    const order = before.map((row) => row.dataset.previewRow);
     const index = order.indexOf(item.id);
     setReading((current) => new Set(current).add(item.id));
     try {
@@ -293,20 +296,19 @@ function InboxPreviewCard({
     }
     if (!held) return;
     requestAnimationFrame(() => {
-      const list = listRef.current;
       // Only focus the action took with it when it left: a failed read keeps
-      // its action, and focus elsewhere stays where the user put it.
+      // its action, and focus elsewhere stays where the user put it. When
+      // Unread only empties the list, Unread only takes focus.
       const focused = document.activeElement;
-      if (!list || (focused && focused !== document.body)) return;
+      if (focused && focused !== document.body) return;
+      const rows = previewRows();
       const row = [item.id, order[index + 1], order[index - 1]]
         .map((id) =>
-          id === undefined
-            ? null
-            : list.querySelector(
-                `[data-preview-row="${CSS.escape(id)}"] button`,
-              ),
+          rows
+            .find((entry) => entry.dataset.previewRow === id)
+            ?.querySelector<HTMLElement>("button"),
         )
-        .find(Boolean) as HTMLElement | null | undefined;
+        .find(Boolean);
       (row ?? unreadOnlyControl.current)?.focus({ preventScroll: true });
     });
   };

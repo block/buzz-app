@@ -665,6 +665,46 @@ it("keeps Unread only to the card and offers recent activity once caught up", as
   expect(unreadOnly()).not.toBeChecked();
 });
 
+it("keeps keyboard focus in the card after its Mark as read, down to Unread only once the list empties", async () => {
+  const h = fixture({ withDm: true });
+  render(previewAt(h));
+  await waitFor(() => expect(previewRows()).toHaveLength(3));
+  const action = (row: HTMLElement) =>
+    within(row).queryByRole("button", { name: /^Mark as read / });
+  const open = (row: HTMLElement) =>
+    within(row).getByRole("button", { name: /^Open / });
+  const readFromKeyboard = (row: HTMLElement) => {
+    const button = action(row);
+    if (!button) throw new Error("Missing Mark as read");
+    button.focus();
+    fireEvent.click(button);
+  };
+
+  // The read row stays without Unread only, and its own row takes focus.
+  const [first] = previewRows();
+  if (!first) throw new Error("Missing preview row");
+  readFromKeyboard(first);
+  await waitFor(() => expect(action(first)).not.toBeInTheDocument());
+  await waitFor(() => expect(open(first)).toHaveFocus());
+  expect(previewRows()).toHaveLength(3);
+
+  // Under Unread only the row leaves, and a neighbor takes focus.
+  fireEvent.click(screen.getByRole("switch", { name: "Unread only" }));
+  await waitFor(() => expect(previewRows()).toHaveLength(2));
+  const [leaving, staying] = previewRows();
+  if (!leaving || !staying) throw new Error("Missing unread rows");
+  readFromKeyboard(leaving);
+  await waitFor(() => expect(previewRows()).toEqual([staying]));
+  await waitFor(() => expect(open(staying)).toHaveFocus());
+
+  // The final row empties the list; Unread only keeps focus in the card.
+  readFromKeyboard(staying);
+  expect(await screen.findByText("You're all caught up")).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole("switch", { name: "Unread only" })).toHaveFocus(),
+  );
+});
+
 it("leads the card's header with the total and counts a mention only while it is unread", async () => {
   const h = fixture({ withSolo: true });
   render(previewAt(h));

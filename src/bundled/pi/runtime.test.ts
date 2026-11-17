@@ -3690,3 +3690,43 @@ it("drains an expired Pi community wake abort before its successor", async () =>
     f.runtime.dispose();
   }
 });
+
+it("drains an addressed Pi community abort before its successor", async () => {
+  const ended = deferred<unknown>();
+  const cancelled = deferred<unknown>();
+  const f = setup({
+    wait: () => ended.promise,
+    abort: () => cancelled.promise,
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  const first = f.deliver(
+    { type: "mention", event: reply("2", "first") },
+    { config, interruptible },
+  );
+  let stopping: Promise<void> | undefined;
+  try {
+    await first.run;
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(1));
+    stopping = interruptible.mock.calls[0]?.[0]();
+    await vi.waitFor(() => expect(f.host.requests("abort")).toHaveLength(1));
+    ended.resolve({ status: "done", answer: 1, text: "done" });
+    const next = f.deliver(
+      { type: "mention", event: reply("3", "next") },
+      { config },
+    );
+    await next.run;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(f.host.requests("deliver")).toHaveLength(1);
+    cancelled.resolve({});
+    await stopping;
+    await f.settled(first);
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(2));
+    await f.settled(next);
+  } finally {
+    cancelled.resolve({});
+    ended.resolve({ status: "done", answer: 1, text: "done" });
+    await stopping;
+    f.runtime.dispose();
+  }
+});

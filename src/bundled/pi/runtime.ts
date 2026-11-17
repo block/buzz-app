@@ -663,6 +663,7 @@ export class PiRuntime {
     const request = wake?.type === "plugin" ? `${WAKE}${wake.id}` : event.id;
     let submitted: Delivered | false | undefined;
     let submitting = false;
+    let stopping: Promise<void> | undefined;
     // A delivery during a session action waits for it, past its handover.
     const control = `${agent.key}/${key}`;
     let interrupted = false;
@@ -829,7 +830,7 @@ export class PiRuntime {
       },
       handed: handed.catch(() => undefined),
       settled: Promise.all([same ? prior?.settled : undefined, settled]).then(
-        () => undefined,
+        () => stopping?.catch(() => undefined),
       ),
     };
     entry.policies.set(key, policy);
@@ -839,15 +840,18 @@ export class PiRuntime {
       this.notify();
     });
     // Stop on its activity stops the run the request is in.
-    interruptible?.(async () => {
+    interruptible?.(() => {
       interrupted = true;
-      if (!submitting) return;
-      await handed;
-      if (!submitted) return;
-      await this.pi.request("abort", {
-        agent: agent.key,
-        conversation: submitted.conversation,
-      });
+      stopping ??= (async () => {
+        if (!submitting) return;
+        await handed;
+        if (!submitted) return;
+        await this.pi.request("abort", {
+          agent: agent.key,
+          conversation: submitted.conversation,
+        });
+      })();
+      return stopping;
     });
     // Deliveries keep their order: a later one waits on this handover, and
     // one with nothing to wait for is handed over before `run` returns.

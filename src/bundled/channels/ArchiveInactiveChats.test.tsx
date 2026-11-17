@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -63,13 +64,30 @@ function chat(
   };
 }
 
+/** A channel list whose activity read the test can finish later. */
+function listOf(channels: ChannelSummary[], activityStatus = "ready") {
+  const listeners = new Set<() => void>();
+  let list = { status: "ready", activityStatus, channels };
+  return {
+    list: () => list,
+    subscribeList: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    settle(status: string) {
+      list = { ...list, activityStatus: status };
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
 function sessionWith(
   channels: ChannelSummary[],
   overrides: Partial<Record<keyof RelaySession, unknown>> = {},
+  list = listOf(channels),
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
-  const list = { status: "ready", channels };
   return {
     ...owner.session,
     viewer: VIEWER,
@@ -87,8 +105,8 @@ function sessionWith(
     },
     channels: {
       ...owner.session.channels,
-      list: () => list,
-      subscribeList: () => () => {},
+      list: list.list,
+      subscribeList: list.subscribeList,
     },
     ...overrides,
   } as unknown as RelaySession;
@@ -132,6 +150,22 @@ it("counts a chat as inactive only after 14 quiet days with nothing running", ()
   ).toBe(false);
 });
 
+it("keeps a chat where someone is typing, as an agent on another device does", () => {
+  const typing = sessionWith([], {
+    typing: {
+      snapshot: () => [
+        {
+          channelId: ids.old,
+          threadRootId: "f".repeat(64),
+          pubkey: "c".repeat(64),
+        },
+      ],
+      subscribe: () => () => {},
+    },
+  });
+  expect(inactiveChat(typing, chat(ids.old, "Old", 30), NOW)).toBe(false);
+});
+
 it("keeps a chat with a queued follow-up or a message still sending", () => {
   const sending = sessionWith([], {
     outbox: {
@@ -158,11 +192,18 @@ async function mount(
   work: readonly string[],
   home: readonly string[],
   run: Run,
+  list = listOf(channels),
+  demandActivity?: () => () => void,
 ) {
   vi.useFakeTimers({ toFake: ["Date"], now: NOW * 1000 });
-  const session = sessionWith(channels, {
-    channelLifecycle: { available: true, run },
-  });
+  const session = sessionWith(
+    channels,
+    { channelLifecycle: { available: true, run } },
+    list,
+  );
+  if (demandActivity)
+    (session.channels as { demandActivity?: () => () => void }).demandActivity =
+      demandActivity;
   const saved: SidebarPreferences = {
     sections: [
       { id: "work", name: "Work", order: 0 },
@@ -334,5 +375,56 @@ it("finishes a run and offers Undo after the sidebar remounts", async () => {
     ["unarchive", ids.old],
     ["unarchive", ids.older],
   ]);
+  store.dispose();
+});
+
+it("waits for chat activity to load before counting, and says so when it can't", async () => {
+  const release = vi.fn();
+  const demand = vi.fn(() => release);
+  const channels = [chat(ids.old, "Old plan", 15)];
+  const list = listOf(channels, "loading");
+  const run = vi.fn<Run>(async () => {});
+  const { user, store, dialog } = await mount(
+    channels,
+    [ids.old],
+    [],
+    run,
+    list,
+    demand,
+  );
+  expect(demand).toHaveBeenCalledOnce();
+  expect(dialog).toHaveTextContent("Checking which chats are inactive…");
+  expect(screen.queryByRole("button", { name: /^Archive/ })).toBeNull();
+  act(() => list.settle("error"));
+  expect(dialog).toHaveTextContent(
+    "Couldn’t check which chats are inactive. Try again later.",
+  );
+  act(() => list.settle("ready"));
+  expect(dialog).toHaveTextContent(
+    "1 chat has been inactive for the last 14 days.",
+  );
+  await user.click(screen.getByRole("button", { name: "Archive 1 chat" }));
+  expect(await screen.findByText("Archived 1 chat")).toBeVisible();
+  expect(release).toHaveBeenCalledOnce();
+  store.dispose();
+});
+
+it("reports a cancelled archive as a failure, not as a chat that became active", async () => {
+  const run = vi.fn<Run>(async (_action, id) => {
+    if (id === ids.older)
+      throw new DOMException("Channel action cancelled", "AbortError");
+  });
+  const { user, store } = await mount(
+    [chat(ids.old, "Old plan", 15), chat(ids.older, "Older plan", 40)],
+    [ids.old, ids.older],
+    [],
+    run,
+  );
+  await user.click(screen.getByRole("button", { name: "Archive 2 chats" }));
+  expect(
+    await screen.findByText(
+      "Archived 1 chat. Couldn’t archive 1. Channel action cancelled",
+    ),
+  ).toBeVisible();
   store.dispose();
 });

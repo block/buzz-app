@@ -97,8 +97,11 @@ type State = {
     | undefined;
   /** Undos chosen while another lifecycle action held the gate, oldest first. */
   queuedUndos: readonly ChannelSummary[];
-  /** Bulk archives of a workspace's inactive chats and their Undos, run in
-   * order. The session owns them, so a sidebar remount cannot drop one. */
+  /** The bulk archive of a workspace's inactive chats, or its Undo, now
+   * holding the lifecycle gate. The session owns it, so a sidebar remount
+   * cannot drop it. */
+  inactiveRun: InactiveChatsRun | undefined;
+  /** Bulk runs waiting for the gate, oldest first. */
   inactiveRuns: readonly InactiveChatsRun[];
   /** The viewer's own Leave or Delete that completed, or failed unconfirmed
    * so the relay may still apply it; its loss of access is then not someone
@@ -224,11 +227,16 @@ export function ChannelNavigationProvider({
   }, [update]);
   // The relay runs one lifecycle action per session, so an Undo waits for the
   // action holding the gate instead of colliding with it.
-  const queuedUndo = !state.lifecycleDialog ? state.queuedUndos[0] : undefined;
+  const queuedUndo =
+    !state.lifecycleDialog && !state.inactiveRun
+      ? state.queuedUndos[0]
+      : undefined;
   useLayoutEffect(() => {
     if (!queuedUndo) return;
     update((previous) =>
-      previous.lifecycleDialog || previous.queuedUndos[0] !== queuedUndo
+      previous.lifecycleDialog ||
+      previous.inactiveRun ||
+      previous.queuedUndos[0] !== queuedUndo
         ? previous
         : {
             ...previous,
@@ -241,6 +249,25 @@ export function ChannelNavigationProvider({
           },
     );
   }, [queuedUndo, update]);
+  // A bulk run takes the gate once no single-chat action holds it.
+  const queuedRun =
+    !state.lifecycleDialog && !state.inactiveRun
+      ? state.inactiveRuns[0]
+      : undefined;
+  useLayoutEffect(() => {
+    if (!queuedRun) return;
+    update((previous) =>
+      previous.lifecycleDialog ||
+      previous.inactiveRun ||
+      previous.inactiveRuns[0] !== queuedRun
+        ? previous
+        : {
+            ...previous,
+            inactiveRun: queuedRun,
+            inactiveRuns: previous.inactiveRuns.slice(1),
+          },
+    );
+  }, [queuedRun, update]);
   const lifecycleOrigin = state.lifecycleDialog?.origin;
   // Navigation is presentation, not evidence of deletion. Keep the session's
   // write owner and listed chat until the relay confirms removal.
@@ -368,7 +395,7 @@ export function ChannelNavigationProvider({
       },
       undoArchive(channel) {
         update((previous) =>
-          previous.lifecycleDialog
+          previous.lifecycleDialog || previous.inactiveRun
             ? {
                 ...previous,
                 queuedUndos: [
@@ -515,13 +542,13 @@ export function ChannelNavigationProvider({
             }}
           />
         )}
-      {state.session === connection.session && state.inactiveRuns[0] && (
+      {state.session === connection.session && state.inactiveRun && (
         <ArchiveInactiveChats
-          key={state.inactiveRuns[0].key}
+          key={state.inactiveRun.key}
           session={connection.session}
-          run={state.inactiveRuns[0]}
+          run={state.inactiveRun}
           eligible={(id) => {
-            const run = state.inactiveRuns[0];
+            const run = state.inactiveRun;
             const channel = connection.session.channels
               .list()
               .channels.find((channel) => channel.id === id);
@@ -535,10 +562,7 @@ export function ChannelNavigationProvider({
           }}
           undo={value.archiveInactive}
           close={() =>
-            update((previous) => ({
-              ...previous,
-              inactiveRuns: previous.inactiveRuns.slice(1),
-            }))
+            update((previous) => ({ ...previous, inactiveRun: undefined }))
           }
         />
       )}
@@ -568,6 +592,7 @@ function restore(session: RelaySession, scope: string): State {
     preparingDm: undefined,
     lifecycleDialog: undefined,
     queuedUndos: [],
+    inactiveRun: undefined,
     inactiveRuns: [],
     ownLosses: [],
   };

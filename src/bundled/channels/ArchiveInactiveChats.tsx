@@ -1,4 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { followUpQueue } from "../../features/messages/follow-up-queue";
 import { ChannelLifecycleUnconfirmed } from "../../features/relay/channel-lifecycle";
 import { ApiPaused } from "../../features/relay/http-admission";
@@ -20,10 +26,12 @@ import { workingAgents } from "./working-agents";
 export const INACTIVE_DAYS = 14;
 const INACTIVE_SECONDS = INACTIVE_DAYS * 24 * 60 * 60;
 
-/** Agent work running, a follow-up queued, or a message still sending. */
+/** Agent work running, someone typing (an app-managed agent's only signal
+ * of work on another device), a follow-up queued, or a message still sending. */
 function busy(session: RelaySession, channelId: string) {
   return (
     workingAgents(session.agentActivity.snapshot(), channelId).length > 0 ||
+    session.typing.snapshot().some((entry) => entry.channelId === channelId) ||
     followUpQueue(session)
       .snapshot()
       .some((entry) => entry.channelId === channelId) ||
@@ -65,6 +73,7 @@ export type InactiveChatsRun = Readonly<{
   /** Archive asks first; unarchive is an Undo and runs at once. */
   action: "archive" | "unarchive";
   workspaceId: string;
+  /** An archive's candidates, the workspace's chats; an Undo's chats. */
   ids: readonly string[];
 }>;
 
@@ -86,7 +95,8 @@ export function ArchiveInactiveChats({
 }: {
   session: RelaySession;
   run: InactiveChatsRun;
-  /** Checked again right before each chat is archived. */
+  /** Counts a candidate once activity loads, and is checked again right
+   * before each chat is archived. */
   eligible(id: string): boolean;
   /** Queues the restore; called from the result toast after this closes. */
   undo(run: Omit<InactiveChatsRun, "key">): void;
@@ -98,25 +108,49 @@ export function ArchiveInactiveChats({
     callbacks.current = { eligible, undo, close };
   });
   const archive = run.action === "archive";
-  const total = run.ids.length;
   const notify = useToastNotification();
+  // Activity loads only for an activity sort or filter; this asks for it.
+  useEffect(() => {
+    if (archive) return session.channels.demandActivity?.();
+  }, [archive, session]);
+  const list = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+  );
+  // Unknown activity is not inactivity: count only once every read is in.
+  const activity = archive ? list.activityStatus : "ready";
+  const [targets, setTargets] = useState<readonly string[]>();
+  const ids =
+    targets ??
+    (activity === "ready"
+      ? archive
+        ? run.ids.filter((id) => eligible(id))
+        : run.ids
+      : undefined);
+  const total = ids?.length ?? 0;
   const cancel = useRef<HTMLButtonElement>(null);
   const operation = useRef<AbortController | undefined>(undefined);
   const [progress, setProgress] = useState<number>();
   useEffect(() => () => operation.current?.abort(), []);
-  const start = async () => {
+  const start = async (chosen: readonly string[]) => {
     if (operation.current) return;
     const controller = new AbortController();
     operation.current = controller;
+    setTargets(chosen);
     const done: string[] = [];
     // Archived, or possibly archived by a request the relay didn't confirm.
     const restorable: string[] = [];
     let failed = 0;
     let failure = "";
-    for (const [index, id] of run.ids.entries()) {
+    for (const [index, id] of chosen.entries()) {
       setProgress(index);
-      // Checked again just before publishing, after the relay reads.
-      const eligible = () => !archive || callbacks.current.eligible(id);
+      // Checked again just before publishing, after the relay reads. Only
+      // this check's refusal is a skip; other cancellations are failures.
+      let refused = false;
+      const eligible = () => {
+        refused = archive && !callbacks.current.eligible(id);
+        return !refused;
+      };
       if (!eligible()) continue;
       try {
         await session.channelLifecycle.run(
@@ -130,11 +164,18 @@ export function ArchiveInactiveChats({
       } catch (error) {
         if (controller.signal.aborted) return;
         // The chat became active while its archive was prepared.
-        if (error instanceof DOMException && error.name === "AbortError")
+        if (
+          refused &&
+          error instanceof DOMException &&
+          error.name === "AbortError"
+        )
           continue;
         if (error instanceof ChannelLifecycleUnconfirmed) restorable.push(id);
         failed += 1;
-        failure ||= error instanceof Error ? error.message : String(error);
+        failure ||=
+          error instanceof Error || error instanceof DOMException
+            ? error.message
+            : String(error);
         // Paused requests would fail every remaining chat the same way.
         if (error instanceof ApiPaused) break;
       }
@@ -179,7 +220,7 @@ export function ArchiveInactiveChats({
   // biome-ignore lint/correctness/useExhaustiveDependencies: start once per mounted Undo.
   useEffect(() => {
     if (archive) return;
-    const timer = setTimeout(() => void start());
+    const timer = setTimeout(() => void start(run.ids));
     return () => clearTimeout(timer);
   }, []);
   if (progress !== undefined)
@@ -195,9 +236,13 @@ export function ArchiveInactiveChats({
     <AlertDialog
       title="Archive inactive chats"
       description={
-        total
-          ? `${total === 1 ? "1 chat has" : `${total} chats have`} been inactive for the last ${INACTIVE_DAYS} days.`
-          : `No chats have been inactive for the last ${INACTIVE_DAYS} days.`
+        !ids
+          ? activity === "error" || activity === "unavailable" || !activity
+            ? "Couldn’t check which chats are inactive. Try again later."
+            : "Checking which chats are inactive…"
+          : total
+            ? `${total === 1 ? "1 chat has" : `${total} chats have`} been inactive for the last ${INACTIVE_DAYS} days.`
+            : `No chats have been inactive for the last ${INACTIVE_DAYS} days.`
       }
       initialFocus={cancel}
       finalFocus={() => workspaceHeading(run.workspaceId) ?? true}
@@ -205,13 +250,13 @@ export function ArchiveInactiveChats({
       actions={
         <>
           <Button ref={cancel} type="button" onClick={close}>
-            {total ? "Cancel" : "Close"}
+            {ids && !total ? "Close" : "Cancel"}
           </Button>
-          {total > 0 && (
+          {ids && total > 0 && (
             <Button
               type="button"
               variant="prominent"
-              onClick={() => void start()}
+              onClick={() => void start(ids)}
             >
               Archive {chats(total)}
             </Button>

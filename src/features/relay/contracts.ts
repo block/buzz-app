@@ -390,6 +390,11 @@ export interface ChannelQueries {
   ): void;
   /** Drops a started chat the relay did not confirm. */
   abandon?(channelId: string): void;
+  /** Reads every listed channel's newest activity, as an activity sort or
+   * filter does, until the returned release; `list().activityStatus` and
+   * each channel's `activityKnown` report progress. Absent when the session
+   * reads no activity. */
+  demandActivity?(): () => void;
   subscribeList(listener: () => void): () => void;
   window(channelId: string): ChannelWindow;
   subscribeWindow(channelId: string, listener: () => void): () => void;

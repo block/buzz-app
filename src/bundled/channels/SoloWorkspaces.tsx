@@ -611,19 +611,19 @@ export function SoloWorkspaces({
               <MenuItem
                 disabled={
                   !session.channelLifecycle.available ||
+                  !!handoff.inactiveRun ||
                   handoff.inactiveRuns.length > 0 ||
                   !!handoff.lifecycleDialog
                 }
                 onClick={() => {
-                  const inactive = project.rows
-                    .filter((item) => inactiveIn(project.id, item.id))
-                    .map((item) => item.id);
-                  // Let the menu restore focus before opening confirmation.
+                  // Counted once activity loads; let the menu restore focus
+                  // before opening confirmation.
+                  const candidates = project.rows.map((item) => item.id);
                   requestAnimationFrame(() =>
                     handoff.archiveInactive({
                       action: "archive",
                       workspaceId: project.id,
-                      ids: inactive,
+                      ids: candidates,
                     }),
                   );
                 }}

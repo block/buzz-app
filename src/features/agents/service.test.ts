@@ -290,7 +290,7 @@ async function setup({
   const run =
     vi.fn<(delivery: Delivery<Config>) => void | Promise<void>>(answer);
   const type: AgentType<Config> = {
-    supportsGuardedWake,
+    ...(supportsGuardedWake ? { supportsGuardedWake } : {}),
     id: typeId,
     title: "Echo",
     timeoutMs,

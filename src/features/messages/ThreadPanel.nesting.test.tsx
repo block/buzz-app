@@ -561,6 +561,29 @@ it("does not silently retarget a deleted parent to the root", () => {
     screen.getByRole("button", { name: "Send fixture reply" }),
   ).toBeEnabled();
 });
+/** The banner's text column after choosing Reply on a reply with `content`. */
+function replyBanner(h: ReturnType<typeof setup>, content: string) {
+  h.update([{ ...row("target", "root"), content }]);
+  const target = document.querySelector('[data-message-id="target"]');
+  fireEvent.click(
+    within(target as HTMLElement).getByRole("button", { name: /^Reply to / }),
+  );
+  return within(screen.getByLabelText("Composer")).getByText(/^Replying to /)
+    .parentElement as HTMLElement;
+}
+it("summarises the reply target as prose, not its Markdown source", () => {
+  const banner = replyBanner(
+    setup(),
+    "**Status:** two items left, see [the rollout PR](https://github.com/example-org/app/pull/42) and run `just iterate` first.",
+  );
+  expect(banner.querySelector("p")?.textContent).toBe(
+    "Status: two items left, see the rollout PR and run just iterate first.",
+  );
+});
+it("names only the author when the reply target has no prose to show", () => {
+  const banner = replyBanner(setup(), "[rollout]: https://example.org/rollout");
+  expect(banner.children).toHaveLength(1);
+});
 
 it("starts replies with a full author header and only groups replies within the time window", () => {
   const h = setup();

@@ -48,6 +48,7 @@ import {
 } from "../relay/threads";
 import { useProfileGeneration, useRowProfiles } from "../relay/react";
 import { rowProfileIds } from "../relay/membership";
+import { plainText } from "../notifications/content";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { MessageContextMenus } from "./MessageActionBar";
 import {
@@ -1706,6 +1707,11 @@ function ThreadMessages({
     });
   }
   const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
+  // The banner names its target in prose, as the row above renders it.
+  const selectedParentText = useMemo(
+    () => plainText(selectedParent?.content ?? ""),
+    [selectedParent?.content],
+  );
   const captureOlderAnchor = (element: HTMLElement) => {
     follow.current = false;
     const row = [
@@ -2086,7 +2092,7 @@ function ThreadMessages({
                   />
                   <div>
                     <span>Replying to {senderName(selectedParent)}</span>
-                    <p>{selectedParent.content}</p>
+                    {selectedParentText && <p>{selectedParentText}</p>}
                   </div>
                   <IconButton
                     size="sm"

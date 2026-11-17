@@ -103,6 +103,16 @@ it("closes on Escape until a new mention starts, and accepts a pointer pick", as
   expect(text).toHaveValue("@Bob \n@Bob ");
 });
 
+it("does not suggest after CJK punctuation, where the relay matches no name", async () => {
+  const user = userEvent.setup();
+  render(<Example />);
+  const text = screen.getByRole("textbox", { name: "Message text" });
+  await user.type(text, "你好，@bo");
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  await user.type(text, "{Backspace}{Backspace}{Backspace} @bo");
+  expect(await screen.findByRole("listbox")).toBeInTheDocument();
+});
+
 it("shows the composer's 50 rows and asks to narrow past them", async () => {
   const user = userEvent.setup();
   const people = Array.from({ length: 51 }, (_, index) => {

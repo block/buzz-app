@@ -159,8 +159,15 @@ export function WorkflowMessageText({
   const [dismissed, setDismissed] = useState<number>();
   // Only navigation pins a member; otherwise the first result is selected.
   const [pinned, setPinned] = useState<{ start: number; pubkey: string }>();
-  const query =
+  const found =
     caret === null || !choices.length ? null : mentionQuery(value, caret);
+  // The relay reads this `@Name` as plain text and does not start a name after
+  // CJK punctuation, so here the menu opens only after whitespace, `(`, `[`
+  // or `{`.
+  const query =
+    found?.start && !/[\s([{]/u.test(value[found.start - 1] ?? "")
+      ? null
+      : found;
   const search = query?.query;
   const matches = useMemo(
     () =>

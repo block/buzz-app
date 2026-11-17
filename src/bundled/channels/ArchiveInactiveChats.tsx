@@ -110,9 +110,12 @@ export function ArchiveInactiveChats({
   const archive = run.action === "archive";
   const notify = useToastNotification();
   // Activity loads only for an activity sort or filter; this asks for it.
+  // Try again renews the demand, which rereads after a failure.
+  const [attempt, setAttempt] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt renews the demand.
   useEffect(() => {
     if (archive) return session.channels.demandActivity?.();
-  }, [archive, session]);
+  }, [archive, session, attempt]);
   const list = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
@@ -128,6 +131,8 @@ export function ArchiveInactiveChats({
         : run.ids
       : undefined);
   const total = ids?.length ?? 0;
+  const unchecked =
+    !ids && (activity === "error" || activity === "unavailable" || !activity);
   const cancel = useRef<HTMLButtonElement>(null);
   const operation = useRef<AbortController | undefined>(undefined);
   const [progress, setProgress] = useState<number>();
@@ -237,8 +242,8 @@ export function ArchiveInactiveChats({
       title="Archive inactive chats"
       description={
         !ids
-          ? activity === "error" || activity === "unavailable" || !activity
-            ? "Couldn’t check which chats are inactive. Try again later."
+          ? unchecked
+            ? "Couldn’t check which chats are inactive."
             : "Checking which chats are inactive…"
           : total
             ? `${total === 1 ? "1 chat has" : `${total} chats have`} been inactive for the last ${INACTIVE_DAYS} days.`
@@ -250,16 +255,29 @@ export function ArchiveInactiveChats({
       actions={
         <>
           <Button ref={cancel} type="button" onClick={close}>
-            {ids && !total ? "Close" : "Cancel"}
+            {(ids && !total) || unchecked ? "Close" : "Cancel"}
           </Button>
-          {ids && total > 0 && (
+          {/* Shown from the start so the actions don't move when the count
+              arrives. */}
+          {unchecked ? (
             <Button
               type="button"
               variant="prominent"
-              onClick={() => void start(ids)}
+              onClick={() => setAttempt((value) => value + 1)}
             >
-              Archive {chats(total)}
+              Try again
             </Button>
+          ) : (
+            (!ids || total > 0) && (
+              <Button
+                type="button"
+                variant="prominent"
+                disabled={!ids}
+                onClick={() => ids && void start(ids)}
+              >
+                {ids ? `Archive ${chats(total)}` : "Archive chats"}
+              </Button>
+            )
           )}
         </>
       }

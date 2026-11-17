@@ -394,18 +394,24 @@ it("waits for chat activity to load before counting, and says so when it can't",
   );
   expect(demand).toHaveBeenCalledOnce();
   expect(dialog).toHaveTextContent("Checking which chats are inactive…");
-  expect(screen.queryByRole("button", { name: /^Archive/ })).toBeNull();
+  // The confirm button holds its place, disabled, until the count arrives.
+  expect(screen.getByRole("button", { name: "Archive chats" })).toBeDisabled();
   act(() => list.settle("error"));
-  expect(dialog).toHaveTextContent(
-    "Couldn’t check which chats are inactive. Try again later.",
-  );
+  expect(dialog).toHaveTextContent("Couldn’t check which chats are inactive.");
+  expect(
+    within(dialog).getAllByRole("button", { name: "Close" }),
+  ).not.toHaveLength(0);
+  // Try again asks for activity again.
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(demand).toHaveBeenCalledTimes(2);
+  expect(release).toHaveBeenCalledOnce();
   act(() => list.settle("ready"));
   expect(dialog).toHaveTextContent(
     "1 chat has been inactive for the last 14 days.",
   );
   await user.click(screen.getByRole("button", { name: "Archive 1 chat" }));
   expect(await screen.findByText("Archived 1 chat")).toBeVisible();
-  expect(release).toHaveBeenCalledOnce();
+  expect(release).toHaveBeenCalledTimes(2);
   store.dispose();
 });
 

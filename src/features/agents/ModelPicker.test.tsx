@@ -475,7 +475,7 @@ it("keeps compact choices finite and includes rich model descriptions", async ()
   expect(onChange).toHaveBeenCalledExactlyOnceWith("opus");
 });
 
-it("lists the inherited default once with its catalog copy", async () => {
+it("offers the matching explicit model while inheriting the default", async () => {
   const onChange = vi.fn();
   const user = userEvent.setup();
   render(
@@ -491,14 +491,16 @@ it("lists the inherited default once with its catalog copy", async () => {
   expect(screen.getByTitle("Opus · Default")).toBeVisible();
   await user.click(control());
   const options = await screen.findAllByRole("option");
-  expect(options).toHaveLength(2);
+  expect(options).toHaveLength(3);
   expect(options[0]).toHaveAccessibleName("Opus · Default");
   expect(options[1]).toHaveAccessibleName("Sonnet");
   expect(options[0]).toHaveAccessibleDescription("Most capable");
   expect(options[0]).toHaveAttribute("aria-selected", "true");
   expect(onChange).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("option", { name: "Sonnet" }));
-  expect(onChange).toHaveBeenCalledWith("sonnet");
+  const pinned = screen.getByRole("option", { name: "Opus" });
+  expect(pinned).toHaveAttribute("aria-selected", "false");
+  await user.click(pinned);
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("opus");
 });
 
 it("keeps a matching explicit pin distinct from inheritance as defaults change", async () => {
@@ -553,6 +555,63 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
     await screen.findByRole("option", { name: "Sonnet · Default" }),
   ).toHaveAttribute("aria-selected", "true");
 });
+
+it.each([true, false])(
+  "pins a matching default model through its family effort menu (default row: %s)",
+  async (includeDefault) => {
+    const user = userEvent.setup();
+    const onEffortChange = vi.fn();
+    const props = {
+      groupByFamily: true,
+      includeDefault,
+      models: [
+        {
+          id: "opus",
+          label: "Opus",
+          efforts: [
+            { id: "", label: "Automatic" },
+            { id: "high", label: "High" },
+          ],
+        },
+      ],
+      value: "",
+      defaultModel: "opus",
+      defaultLabel: "Opus",
+      effort: "",
+      onChange: vi.fn(),
+      onEffortChange,
+    };
+    const view = render(<ModelPicker {...props} />);
+    const trigger = screen.getByRole("button", { name: /^Model:/ });
+    await user.click(trigger);
+    if (includeDefault)
+      expect(
+        await screen.findByRole("menuitemradio", { name: "Opus · Default" }),
+      ).toBeChecked();
+    const openFamily = async () => {
+      (await screen.findByRole("menuitem", { name: "Claude" })).focus();
+      await user.keyboard("{ArrowRight}");
+      return screen.findByRole("menuitemradio", { name: "Opus" });
+    };
+    const model = await openFamily();
+    expect(model).not.toBeChecked();
+    model.focus();
+    await user.keyboard("{ArrowRight}");
+    const high = await screen.findByRole("menuitemradio", { name: "High" });
+    expect(high).not.toBeChecked();
+    await user.click(high);
+    expect(onEffortChange).toHaveBeenCalledExactlyOnceWith("opus", "high");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    view.rerender(<ModelPicker {...props} value="opus" effort="high" />);
+    expect(trigger).not.toHaveTextContent("Default");
+    await user.click(trigger);
+    if (includeDefault)
+      expect(
+        await screen.findByRole("menuitemradio", { name: "Opus · Default" }),
+      ).not.toBeChecked();
+    expect(await openFamily()).toBeChecked();
+  },
+);
 
 it("opens a family before selecting a model and formats only its display name", async () => {
   const onChange = vi.fn();

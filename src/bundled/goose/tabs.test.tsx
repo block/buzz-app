@@ -1400,7 +1400,7 @@ it("retries Goose default model discovery", async () => {
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
 });
 
-it("preserves Goose model inheritance when only thinking changes", async () => {
+it("pins the named Goose model when choosing its thinking level", async () => {
   const fake = fakeSpawn({
     providers: PROVIDERS,
     defaults: { providerId: "databricks", modelId: "goose-claude" },
@@ -1428,7 +1428,7 @@ it("preserves Goose model inheritance when only thinking changes", async () => {
   fireEvent.click(await screen.findByRole("menuitemradio", { name: "Claude" }));
   fireEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
   expect(onChange).toHaveBeenCalledWith(
-    expect.objectContaining({ model: "", effort: "high" }),
+    expect.objectContaining({ model: "goose-claude", effort: "high" }),
   );
 });
 

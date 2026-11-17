@@ -1389,6 +1389,9 @@ it("starts a new agent with finite model choices and preserves its other setting
     }),
   );
   expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "" });
+  await user.click(picker);
+  await user.click(await screen.findByRole("option", { name: "Opus 5.5" }));
+  expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "opus" });
   expect(screen.getByLabelText("Instructions Optional")).toHaveValue("Triage.");
   fireEvent.change(screen.getByLabelText("Instructions Optional"), {
     target: { value: "Plan." },
@@ -2408,7 +2411,7 @@ it("retries failed model discovery from the defaults row", async () => {
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
-it("keeps the model inherited when changing the default model's effort", async () => {
+it("pins the named model when choosing its effort from the defaults menu", async () => {
   const Control = installed().type.provider?.DefaultControl;
   if (!Control) throw new Error("Missing default control");
   render(<Control onConfigure={vi.fn()} />);
@@ -2423,10 +2426,14 @@ it("keeps the model inherited when changing the default model's effort", async (
   );
   fireEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
   expect(new ClaudeDefaults(localStore()).snapshot()).toMatchObject({
-    model: "",
+    model: "opus",
     effort: "high",
   });
-  expect(control).toHaveTextContent("· Default");
+  await waitFor(() =>
+    expect(control).toHaveAccessibleName(
+      "Claude default model: Opus 5.5, High",
+    ),
+  );
 });
 
 it("keeps keyboard focus through Claude defaults discovery retries", async () => {

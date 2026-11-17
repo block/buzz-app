@@ -1195,6 +1195,33 @@ it("preserves unavailable saved choices and closes a late provider check on disp
   await pending;
 });
 
+it("can pin the current default Codex model when creating an agent", async () => {
+  const f = fixture();
+  const onChange = vi.fn();
+  render(
+    <f.tabs.CreateModel
+      config={defaults}
+      onChange={onChange}
+      disabled={false}
+    />,
+  );
+  const picker = await screen.findByRole("combobox", { name: "Model" });
+  await waitFor(() => expect(picker).toBeEnabled());
+  const user = userEvent.setup();
+  await user.click(picker);
+  expect(
+    await screen.findByRole("option", { name: "Model A · Default" }),
+  ).toHaveAttribute("aria-selected", "true");
+  const pinned = screen.getByRole("option", { name: "Model A" });
+  expect(pinned).toHaveAttribute("aria-selected", "false");
+  await user.click(pinned);
+  expect(onChange).toHaveBeenCalledExactlyOnceWith({
+    ...defaults,
+    model: "model-a",
+    effort: "low",
+  });
+});
+
 it("starts a new agent from a model and instructions, keeping the rest", async () => {
   const f = fixture();
   const config = {
@@ -2170,7 +2197,7 @@ it.each(["Identity", "Settings"])(
   },
 );
 
-it("keeps the recommended model inherited when only effort changes", async () => {
+it("pins the named model when choosing its effort from the defaults menu", async () => {
   const f = fixture();
   await f.provider.check();
   render(<f.tabs.DefaultControl onConfigure={vi.fn()} />);
@@ -2184,7 +2211,7 @@ it("keeps the recommended model inherited when only effort changes", async () =>
   fireEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
   await waitFor(() =>
     expect(f.provider.snapshot().defaults).toMatchObject({
-      model: "",
+      model: "model-a",
       effort: "high",
     }),
   );

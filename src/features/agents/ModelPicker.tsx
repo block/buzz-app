@@ -207,9 +207,8 @@ export function ModelPicker({
     label: defaultChoice?.label ?? defaultLabel,
     description: defaultChoice?.description ?? defaultDescription,
   };
-  const listed: ModelChoice[] = includeDefault
-    ? models.filter((model) => model.id !== defaultModel || model.id === value)
-    : [...models];
+  // A named model is always a pin, even when it currently matches Default.
+  const listed: ModelChoice[] = [...models];
   if (value && !listed.some((model) => model.id === value))
     listed.push({
       id: value,
@@ -223,8 +222,7 @@ export function ModelPicker({
     modelLabelPrefixes,
   );
   const shown = includeDefault ? [shownDefault, ...shownListed] : shownListed;
-  const selected =
-    shown.find((model) => model.id === (value || defaultModel)) ?? shownDefault;
+  const selected = shown.find((model) => model.id === value) ?? shownDefault;
   const inherited = value === "";
   const selectedLabel = inherited
     ? `${selected.label} · Default`
@@ -257,15 +255,7 @@ export function ModelPicker({
             resetLabel={resetLabel}
             effort={effort}
             effortLabel={effortLabel}
-            onEffortChange={
-              onEffortChange
-                ? (model, level) =>
-                    onEffortChange(
-                      inherited && model === defaultModel ? "" : model,
-                      level,
-                    )
-                : undefined
-            }
+            onEffortChange={onEffortChange}
             inherited={!discovering && inherited}
             label={label}
             compact={compact}

@@ -282,13 +282,9 @@ export function SoloWorkspaces({
     void preferences
       .removeSection(id)
       .then(() => setConfirmDelete(undefined))
-      .catch((error: unknown) => {
-        setDeleteError(
-          error instanceof Error
-            ? error.message
-            : "Workspace could not be deleted. Try again.",
-        );
-      })
+      // Removal errors are written for developers ("recipe", "Outbox"), so
+      // show one plain message; the dialog stays open for retry.
+      .catch(() => setDeleteError("Workspace could not be deleted. Try again."))
       .finally(() => setDeleting(undefined));
   };
   const activeDraft = drafts.find((draft) => draft.selected);

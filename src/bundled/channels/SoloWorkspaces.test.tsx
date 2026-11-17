@@ -257,7 +257,7 @@ it("keeps chats after project deletion and allows retry after a rejected deletio
   );
   // A failure stays in the dialog, so Delete workspace retries it there.
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-    "Deletion unavailable",
+    "Workspace could not be deleted. Try again.",
   );
   // The workspace stays, behind the dialog.
   expect(

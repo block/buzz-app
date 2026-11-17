@@ -135,7 +135,7 @@ export function MessageContextMenus({ children }: { children: ReactElement }) {
           select: (element) => {
             const id = rowAt(element);
             if (id) setTarget(id);
-            return !!id;
+            return id;
           },
           release: () => setTarget(undefined),
         }}
@@ -205,7 +205,10 @@ function MessageActionBarControls({
   host,
 }: Props & {
   /** A list's menu: selects the row under a press and releases it on close. */
-  host?: { select: (element: Element) => boolean; release: () => void };
+  host?: {
+    select: (element: Element) => string | undefined;
+    release: () => void;
+  };
 }) {
   const active = useConversationPresentation();
   const [open, setOpen] = useState(false);
@@ -502,10 +505,13 @@ function MessageActionBarControls({
               const quote = captureSelectedQuote();
               if (
                 !quote?.element.contains(event.target as Node) ||
-                behindActiveOverlay(event.currentTarget) ||
-                (host && !host.select(event.target as Element))
+                behindActiveOverlay(event.currentTarget)
               )
                 return;
+              const id = host
+                ? host.select(event.target as Element)
+                : messageId;
+              if (!id || !quote.messageIds.has(id)) return;
               // Own a selected link's event before its separate menu can open.
               event.preventDefault();
               event.stopPropagation();

@@ -391,6 +391,31 @@ test("a selection spanning rows copies only the visible conversation", async ({
     page.getByRole("button", { name: /^Close .* tab$/ }),
   ).toHaveCount(0);
 
+  // The endpoint row's chrome is inside the range, but its text is not.
+  await history.evaluate((element) => {
+    const rows = element.querySelectorAll("[data-message-id]");
+    const range = document.createRange();
+    range.setStart(rows[0].querySelector("p").firstChild, 0);
+    range.setEnd(rows[2].querySelector("p").firstChild, 0);
+    const selection = getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.addEventListener(
+      "contextmenu",
+      (event) => {
+        window.selectionContextMenu = event;
+      },
+      { capture: true, once: true },
+    );
+  });
+  const gutter = rows.last().locator("[data-highlight-surface] > span").first();
+  await gutter.click({ button: "right" });
+  expect(
+    await page.evaluate(() => window.selectionContextMenu?.defaultPrevented),
+  ).toBe(false);
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
   // Overflow acts on its own row; a multi-row highlight remains available
   // from each row contributing content. Use real focus/selection handoff.
   await rows.first().locator("p").last().selectText();

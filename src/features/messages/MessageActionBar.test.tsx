@@ -166,6 +166,16 @@ it("leaves a message's links, media, fields, selection and touch native", () => 
     expect(fireEvent.contextMenu(text, { button: 2 })).toBe(true);
     expect(screen.queryByRole("menu")).toBeNull();
 
+    const touch = new MouseEvent("pointerdown", {
+      bubbles: true,
+      clientX: 5,
+      clientY: 5,
+    });
+    Object.defineProperty(touch, "pointerType", { value: "touch" });
+    fireEvent(text, touch);
+    expect(fireEvent.contextMenu(text, { clientX: 5, clientY: 5 })).toBe(true);
+    expect(screen.queryByRole("menu")).toBeNull();
+
     // A press beside the selection opens the message's menu.
     fireEvent.pointerDown(text, { button: 2, clientX: 20, clientY: 5 });
     expect(fireEvent.contextMenu(text, { button: 2 })).toBe(false);

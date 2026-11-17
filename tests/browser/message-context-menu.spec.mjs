@@ -9,6 +9,57 @@ test.use({
   historyCounts: { alpha: 3, beta: 1 },
 });
 
+test.describe("touch selection menus", () => {
+  test.use({
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 900, height: 950 },
+  });
+
+  test("a trusted touch long press keeps the native selected-text menu", async ({
+    page,
+    app,
+    browserName,
+  }) => {
+    test.skip(
+      browserName !== "chromium",
+      "Trusted long-press synthesis uses Chromium CDP.",
+    );
+    await open(page, app);
+    const message = app.append("primary", "alpha", "Touch context target");
+    const row = page.locator(
+      `[data-channel-timeline] [data-message-id="${message.id}"]`,
+    );
+    const prose = row.locator("[data-message-action-anchor] p");
+    await expect(prose).toBeVisible();
+    await prose.selectText();
+    const box = await prose.boundingBox();
+    const cdp = await page.context().newCDPSession(page);
+    try {
+      await cdp.send("Input.synthesizeTapGesture", {
+        x: box.x + box.width / 2,
+        y: box.y + box.height / 2,
+        duration: 1000,
+        gestureSourceType: "touch",
+      });
+    } finally {
+      await cdp.detach();
+    }
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.contextMenus.map((event) => ({
+            trusted: event.isTrusted,
+            pointerType: event.pointerType,
+            prevented: event.defaultPrevented,
+          })),
+        ),
+      )
+      .toEqual([{ trusted: true, pointerType: "touch", prevented: false }]);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+  });
+});
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     window.copied = [];

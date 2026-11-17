@@ -256,7 +256,7 @@ function MessageActionBarControls({
   const [openedByPointer, setOpenedByPointer] = useState(false);
   const [contextAnchor, setContextAnchor] = useState<MenuPosition["anchor"]>();
   const contextFocus = useRef<HTMLElement | null>(null);
-  const selectedAtPress = useRef<boolean>(undefined);
+  const selectedAtPress = useRef<boolean | "touch">(undefined);
   const ownTrigger = useRef<HTMLButtonElement>(null);
   const trigger = menuTriggerRef ?? ownTrigger;
   const copy = async (text: () => string, label: string) => {
@@ -460,8 +460,9 @@ function MessageActionBarControls({
             }
             onPointerDown={(event) => {
               selectedAtPress.current =
-                event.pointerType !== "touch" &&
-                selectionHolds(event.nativeEvent);
+                event.pointerType === "touch"
+                  ? "touch"
+                  : selectionHolds(event.nativeEvent);
             }}
             onContextMenuCapture={(event) => {
               if (
@@ -470,6 +471,7 @@ function MessageActionBarControls({
                 (event.target as Element).closest?.(
                   "[data-message-actions], input, textarea, select, [contenteditable]:not([contenteditable='false'])",
                 ) ||
+                selectedAtPress.current === "touch" ||
                 !(selectedAtPress.current ?? selectionHolds(event.nativeEvent))
               )
                 return;
@@ -504,6 +506,7 @@ function MessageActionBarControls({
                 return;
               }
               if (
+                selected === "touch" ||
                 keepsNativeMenu(event.target, selected) ||
                 (host && !host.select(event.target as Element))
               ) {

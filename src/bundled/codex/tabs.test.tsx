@@ -3157,3 +3157,21 @@ it.each([false, true])(
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   },
 );
+
+it("clears retired recording discovery when its replacement check fails", async () => {
+  const gate = deferred<void>();
+  const host: PreviewHost = { request: vi.fn() };
+  const f = fixture({ previewHost: host, authGate: gate.promise });
+  try {
+    await f.provider.check();
+    expect(f.provider.snapshot().previewChecking).toBe(true);
+    f.disk.signedIn = false;
+    await f.provider.check();
+    expect(f.provider.snapshot().readiness).toBe("attention");
+    expect(f.provider.snapshot().previewChecking).toBe(false);
+    expect(host.request).not.toHaveBeenCalled();
+  } finally {
+    gate.resolve();
+    f.provider.dispose();
+  }
+});

@@ -212,6 +212,7 @@ export class CodexProvider {
     this.set({
       ...(this.state.data ? {} : { readiness: "checking" as const }),
       checking: true,
+      previewChecking: false,
       error: "",
     });
     try {

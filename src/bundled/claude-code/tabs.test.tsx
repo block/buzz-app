@@ -949,7 +949,7 @@ it("edits the model through the Settings dropdown and preserves agent inheritanc
   const control = await screen.findByRole("button", {
     name: /^Claude default model:/,
   });
-  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5"));
+  await waitFor(() => expect(control).toBeEnabled());
   await user.click(control);
   fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
   fireEvent.click(
@@ -960,9 +960,7 @@ it("edits the model through the Settings dropdown and preserves agent inheritanc
   const save = vi.fn(async () => undefined);
   render(<Settings agent={agent()} save={save} />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Fable 5.1",
-    ),
+    expect(screen.getByTitle("Default · Currently Fable 5.1")).toBeVisible(),
   );
   expect(save).not.toHaveBeenCalled();
 });
@@ -978,7 +976,7 @@ it("keeps the saved default and shows the error while a default could not be sav
   const control = await screen.findByRole("button", {
     name: /^Claude default model:/,
   });
-  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5"));
+  await waitFor(() => expect(control).toBeEnabled());
   const pick = async () => {
     fireEvent.click(control);
     fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
@@ -990,7 +988,9 @@ it("keeps the saved default and shows the error while a default could not be sav
   await pick();
   expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
   error.mockRestore();
-  expect(control).toHaveTextContent("Opus 5.5");
+  expect(control).toHaveAccessibleName(
+    "Claude default model: Default · Follows Claude Code settings, Automatic",
+  );
   expect(storage.get("buzz.claude-code.provider-defaults.v1")).toBeNull();
   // The same choice can be saved again.
   failing = false;
@@ -1384,8 +1384,8 @@ it("starts a new agent with finite model choices and preserves its other setting
   ).not.toBeInTheDocument();
   await user.click(
     await screen.findByRole("option", {
-      name: "Opus 5.5 · Default",
-      description: "Best for everyday, complex tasks",
+      name: "Default",
+      description: "Follows Claude Code settings",
     }),
   );
   expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "" });
@@ -1612,7 +1612,7 @@ it("returns Claude create-time effort to Default when the inherited model change
     name: /^Claude default model:/,
   });
   await waitFor(() => {
-    expect(providerModel).toHaveTextContent("Opus 5.5");
+    expect(providerModel).toHaveTextContent("Default");
     expect(providerModel).toBeEnabled();
   });
   fireEvent.click(providerModel);
@@ -2363,7 +2363,7 @@ it("saves model-specific default effort from the nested menu and inherits it", a
   const control = await screen.findByRole("button", {
     name: /^Claude default model:/,
   });
-  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5"));
+  await waitFor(() => expect(control).toBeEnabled());
   expect(control).toHaveTextContent("Automatic");
   fireEvent.click(control);
   fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
@@ -2406,7 +2406,7 @@ it("retries failed model discovery from the defaults row", async () => {
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: /^Claude default model:/ }),
-    ).toHaveTextContent("Opus 5.5"),
+    ).toBeEnabled(),
   );
   expect(screen.queryByRole("alert")).toBeNull();
 });
@@ -2418,7 +2418,8 @@ it("pins the named model when choosing its effort from the defaults menu", async
   const control = await screen.findByRole("button", {
     name: /^Claude default model:/,
   });
-  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5 · Default"));
+  await waitFor(() => expect(control).toBeEnabled());
+  expect(control).toHaveTextContent("Default");
   fireEvent.click(control);
   fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
   fireEvent.click(
@@ -2622,9 +2623,9 @@ it("uses target model settings for remote Claude without a local catalog or a ta
   const save = vi.fn(async () => {});
   render(<Settings agent={agent()} save={save} />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Target default",
-    ),
+    expect(
+      screen.getByTitle("Default · Use the model configured on the target"),
+    ).toBeVisible(),
   );
   expect(screen.getByLabelText("Workspace")).toBeDisabled();
   expect(
@@ -2658,9 +2659,9 @@ it("refreshes mounted Claude Settings after an execution binding changes", async
     />,
   );
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Target default",
-    ),
+    expect(
+      screen.getByTitle("Default · Use the model configured on the target"),
+    ).toBeVisible(),
   );
   expect(screen.getByLabelText("Workspace")).toBeDisabled();
   expect(f.execution).not.toHaveBeenCalled();

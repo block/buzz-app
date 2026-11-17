@@ -6,6 +6,7 @@ import {
   LightningIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import styles from "./ModelFamilyMenu.module.css";
 import {
@@ -129,7 +130,9 @@ export function ModelFamilyMenu({
   const fastModels = models.filter((model) => model.fast);
   const fastSection =
     fastModels.length > 0 && fastModels.length < models.length;
-  const selectedLabel = `${selected.label}${selected.fast ? " · Fast" : ""}${inherited ? " · Default" : ""}`;
+  const selectedLabel = inherited
+    ? `Default${selected.description ? ` · ${selected.description}` : ""}`
+    : `${selected.label}${selected.fast ? " · Fast" : ""}`;
   const choiceRow = (model: ModelChoice, inFastSection: boolean) => {
     const leading = inFastSection && hasFamilyLogos && (
       <span className="buzz-select-leading" aria-hidden="true">
@@ -183,17 +186,11 @@ export function ModelFamilyMenu({
               </span>
             )}
             {modelLogo(modelFamily(selected), "buzz-select-leading")}
-            {/* Card labels keep Default accessible without crowding the model. */}
             <span className={styles.value}>
               <span className={`buzz-select-value ${styles.model}`}>
-                {selected.label}
+                {inherited ? "Default" : selected.label}
               </span>
               {selected.fast && <FastMark />}
-              {inherited && appearance !== "glass-ghost" && (
-                <span className="buzz-select-value-suffix text-subtle">
-                  {" · Default"}
-                </span>
-              )}
               {effortLabel && (
                 <span className={`${styles.effort} text-body-sm text-subtle`}>
                   {effortLabel}
@@ -210,11 +207,19 @@ export function ModelFamilyMenu({
             value={inherited ? "" : selected.id}
             onValueChange={(id) => onChange(id)}
           >
-            <MenuRadioItem value="" closeOnClick>
+            <MenuRadioItem
+              value=""
+              aria-label="Default"
+              aria-description={defaultChoice.description}
+              closeOnClick
+            >
               {hasFamilyLogos && (
                 <span className="buzz-select-leading" aria-hidden="true" />
               )}
-              {defaultChoice.label} · Default
+              <ChoiceRow
+                label="Default"
+                description={defaultChoice.description}
+              />
             </MenuRadioItem>
           </MenuRadioGroup>
         )}

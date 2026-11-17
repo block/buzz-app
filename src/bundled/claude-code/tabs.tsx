@@ -497,7 +497,11 @@ export function createTabs({
           providerDefaults.model,
           state.models,
         )}
-        defaultDescription="Following the provider's model default"
+        defaultDescription={
+          providerDefaults.model
+            ? `Currently ${providerDefaultLabel(providerDefaults.model, state.models)}`
+            : "Follows Claude Code settings"
+        }
         loading={state.modelsChecking}
         error={state.modelsError}
         retry={() => void setup.loadModels(true)}
@@ -801,6 +805,7 @@ export function createTabs({
             }
             defaultModel={providerDefaultModel("", state.models)}
             defaultLabel={providerDefaultLabel("", state.models)}
+            defaultDescription="Follows Claude Code settings"
             onConfigure={onConfigure}
             onChange={(model) => {
               defaults.save({ model }).then(
@@ -1304,7 +1309,9 @@ export function createTabs({
           defaultDescription={
             remote
               ? "Use the model configured on the target"
-              : "Following the provider's model default"
+              : providerDefaults.model
+                ? `Currently ${providerDefaultLabel(providerDefaults.model, setupState.models)}`
+                : "Follows Claude Code settings"
           }
           loading={setupState.modelsChecking}
           onChange={(model) => {

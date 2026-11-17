@@ -257,7 +257,7 @@ it.each([false, true])(
       ).toBeNull();
       expect(
         screen
-          .getByRole("menuitemradio", { name: "Provider default · Default" })
+          .getByRole("menuitemradio", { name: "Default" })
           .querySelector(".buzz-select-leading"),
       ).toBeNull();
     } else {
@@ -297,7 +297,7 @@ it("aligns mixed family rows with empty slots rather than generic icons", async 
   ).toBeInTheDocument();
   expect(
     screen
-      .getByRole("menuitemradio", { name: "Provider default · Default" })
+      .getByRole("menuitemradio", { name: "Default" })
       .querySelector(".buzz-select-leading"),
   ).toBeEmptyDOMElement();
 });
@@ -312,9 +312,7 @@ it("picks a listed model", async () => {
 it("picks the default as an empty value", async () => {
   const { onChange, user } = setup("opus");
   await user.click(control());
-  await user.click(
-    await screen.findByRole("option", { name: /Default model/ }),
-  );
+  await user.click(await screen.findByRole("option", { name: "Default" }));
   expect(onChange).toHaveBeenCalledExactlyOnceWith("");
 });
 
@@ -366,7 +364,7 @@ it("does not submit a form around the custom-model dialog", async () => {
 it("uses a dropdown to pick listed models when custom entry is disabled", async () => {
   const { onChange, user } = setup("", { allowCustomModel: false });
   expect(control().tagName).toBe("BUTTON");
-  expect(control()).toHaveTextContent("Default model");
+  expect(control()).toHaveTextContent("Default");
   await user.click(control());
   expect(
     screen.queryByRole("option", { name: "Custom model" }),
@@ -487,14 +485,14 @@ it("offers the matching explicit model while inheriting the default", async () =
       onChange={onChange}
     />,
   );
-  expect(control()).toHaveTextContent("Opus · Default");
-  expect(screen.getByTitle("Opus · Default")).toBeVisible();
+  expect(control()).toHaveTextContent("Default");
+  expect(screen.getByTitle("Default · Currently Opus")).toBeVisible();
   await user.click(control());
   const options = await screen.findAllByRole("option");
   expect(options).toHaveLength(3);
-  expect(options[0]).toHaveAccessibleName("Opus · Default");
+  expect(options[0]).toHaveAccessibleName("Default");
   expect(options[1]).toHaveAccessibleName("Sonnet");
-  expect(options[0]).toHaveAccessibleDescription("Most capable");
+  expect(options[0]).toHaveAccessibleDescription("Currently Opus");
   expect(options[0]).toHaveAttribute("aria-selected", "true");
   expect(onChange).not.toHaveBeenCalled();
   const pinned = screen.getByRole("option", { name: "Opus" });
@@ -517,7 +515,7 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
   expect(control()).not.toHaveTextContent("Default");
   await user.click(control());
   const inherited = await screen.findByRole("option", {
-    name: "Opus · Default",
+    name: "Default",
   });
   const pinned = screen.getByRole("option", { name: "Opus" });
   expect(pinned).toHaveAttribute("aria-selected", "true");
@@ -537,9 +535,7 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
   await user.keyboard("{Escape}");
   view.rerender(<ModelPicker {...props} />);
   await user.click(control());
-  await user.click(
-    await screen.findByRole("option", { name: "Opus · Default" }),
-  );
+  await user.click(await screen.findByRole("option", { name: "Default" }));
   expect(onChange).toHaveBeenCalledExactlyOnceWith("");
   view.rerender(
     <ModelPicker
@@ -549,11 +545,11 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
       defaultLabel="Sonnet"
     />,
   );
-  expect(control()).toHaveTextContent("Sonnet · Default");
+  expect(control()).toHaveTextContent("Default");
   await user.click(control());
-  expect(
-    await screen.findByRole("option", { name: "Sonnet · Default" }),
-  ).toHaveAttribute("aria-selected", "true");
+  const updatedDefault = await screen.findByRole("option", { name: "Default" });
+  expect(updatedDefault).toHaveAttribute("aria-selected", "true");
+  expect(updatedDefault).toHaveAccessibleDescription("Currently Sonnet");
 });
 
 it.each([true, false])(
@@ -586,7 +582,7 @@ it.each([true, false])(
     await user.click(trigger);
     if (includeDefault)
       expect(
-        await screen.findByRole("menuitemradio", { name: "Opus · Default" }),
+        await screen.findByRole("menuitemradio", { name: "Default" }),
       ).toBeChecked();
     const openFamily = async () => {
       (await screen.findByRole("menuitem", { name: "Claude" })).focus();
@@ -607,7 +603,7 @@ it.each([true, false])(
     await user.click(trigger);
     if (includeDefault)
       expect(
-        await screen.findByRole("menuitemradio", { name: "Opus · Default" }),
+        await screen.findByRole("menuitemradio", { name: "Default" }),
       ).not.toBeChecked();
     expect(await openFamily()).toBeChecked();
   },
@@ -671,7 +667,7 @@ it("keeps the IDs of Databricks models whose names read the same", async () => {
   );
   await user.click(
     screen.getByRole("button", {
-      name: "Model: acme_models.goose.goose-gpt-6-1-sol · Default",
+      name: "Model: Default · Currently acme_models.goose.goose-gpt-6-1-sol",
     }),
   );
   (await screen.findByRole("menuitem", { name: "OpenAI" })).focus();
@@ -763,7 +759,7 @@ it("keeps custom entry and default selection in the family menu", async () => {
   await user.click(screen.getByRole("button", { name: /^Model:/ }));
   await user.click(
     await screen.findByRole("menuitemradio", {
-      name: "Provider default · Default",
+      name: "Default",
     }),
   );
   expect(onChange).toHaveBeenLastCalledWith("");
@@ -780,7 +776,7 @@ it("keeps custom entry and default selection in the family menu", async () => {
   );
 });
 
-it("keeps a Default suffix beside inherited card models as defaults change", async () => {
+it("shows Default first and keeps its current model in supporting text", async () => {
   const user = userEvent.setup();
   const onChange = vi.fn();
   const props = {
@@ -795,32 +791,60 @@ it("keeps a Default suffix beside inherited card models as defaults change", asy
     onChange,
   };
   const view = render(<ModelPicker {...props} />);
-  expect(control()).toHaveTextContent(/^GPT-6.1-Sol · Default$/);
-  expect(control().querySelector(".buzz-select-value")).toHaveTextContent(
-    /^GPT-6.1-Sol$/,
-  );
-  expect(
-    control().querySelector(".buzz-select-value-suffix"),
-  ).toHaveTextContent("· Default");
-  expect(screen.getByTitle("GPT-6.1-Sol · Default")).toBeVisible();
+  expect(control()).toHaveTextContent(/^Default$/);
+  expect(screen.getByTitle("Default · Currently GPT-6.1-Sol")).toBeVisible();
   await user.click(control());
-  expect(
-    await screen.findByRole("option", { name: "GPT-6.1-Sol · Default" }),
-  ).toHaveAttribute("aria-selected", "true");
+  const inherited = await screen.findByRole("option", { name: "Default" });
+  expect(inherited).toHaveAttribute("aria-selected", "true");
+  expect(inherited).toHaveAccessibleDescription("Currently GPT-6.1-Sol");
+  expect((await screen.findAllByRole("option"))[0]).toBe(inherited);
   await user.keyboard("{Escape}");
 
   view.rerender(<ModelPicker {...props} defaultLabel="GPT-6.1-Astra" />);
-  expect(control()).toHaveTextContent(/^GPT-6.1-Astra · Default$/);
+  expect(control()).toHaveTextContent(/^Default$/);
+  await user.click(control());
+  expect(
+    await screen.findByRole("option", { name: "Default" }),
+  ).toHaveAccessibleDescription("Currently GPT-6.1-Astra");
   expect(onChange).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
 
   view.rerender(<ModelPicker {...props} value="gpt-6.1-sol" />);
   expect(control()).toHaveTextContent(/^GPT-6.1-Sol$/);
-  expect(control().querySelector(".buzz-select-value-suffix")).toBeNull();
-
   view.rerender(<ModelPicker {...props} loading />);
   expect(control()).toHaveTextContent("Loading models…");
-  expect(control().querySelector(".buzz-select-value-suffix")).toBeNull();
 });
+
+it.each([false, true])(
+  "describes the inherited settings without claiming a current model (grouped: %s)",
+  async (groupByFamily) => {
+    const user = userEvent.setup();
+    render(
+      <ModelPicker
+        groupByFamily={groupByFamily}
+        models={models}
+        value=""
+        defaultModel="opus"
+        defaultLabel="Opus"
+        defaultDescription="Follows Claude Code settings"
+        onChange={vi.fn()}
+      />,
+    );
+    await user.click(
+      groupByFamily
+        ? screen.getByRole("button", { name: /^Model:/ })
+        : control(),
+    );
+    const inherited = await screen.findByRole(
+      groupByFamily ? "menuitemradio" : "option",
+      { name: "Default" },
+    );
+    expect(inherited).toHaveAccessibleDescription(
+      "Follows Claude Code settings",
+    );
+    expect(inherited).not.toHaveTextContent("Currently Opus");
+  },
+);
 
 it.each(["", "reasoning"])(
   "offers supported effort without changing model inheritance (%s)",

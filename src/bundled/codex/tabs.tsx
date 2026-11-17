@@ -701,7 +701,6 @@ export function createTabs(
           value={current.model}
           defaultModel={catalogModel(providerDefaults.model, data)?.model ?? ""}
           defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
-          defaultDescription="Following the provider's model default"
           loading={checking}
           error={error}
           retry={retry}
@@ -1337,11 +1336,9 @@ export function createTabs(
               ? "Codex default"
               : providerDefaultLabel(providerDefaults.model, data)
           }
-          defaultDescription={
-            bound
-              ? "Use the model default on the target computer"
-              : "Following the provider's model default"
-          }
+          {...(bound && {
+            defaultDescription: "Use the model default on the target computer",
+          })}
           loading={checking}
           disabled={saving}
           // A manual choice, even of the default, is never Recommended.

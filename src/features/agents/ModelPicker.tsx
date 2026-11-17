@@ -144,7 +144,7 @@ export function CustomModelDialog({
   );
 }
 
-/** `value` is a model ID, or "" for the type's default, `defaultLabel`. */
+/** `value` is a model ID, or "" to follow the type's default. */
 export function ModelPicker({
   label = "Model",
   groupByFamily = false,
@@ -205,7 +205,6 @@ export function ModelPicker({
   const fallback: ModelChoice = {
     id: "",
     label: defaultChoice?.label ?? defaultLabel,
-    description: defaultChoice?.description ?? defaultDescription,
   };
   // A named model is always a pin, even when it currently matches Default.
   const listed: ModelChoice[] = [...models];
@@ -217,15 +216,19 @@ export function ModelPicker({
       unlisted: true,
     });
   // The default takes part in telling names apart, even when it is not a row.
-  const [shownDefault = fallback, ...shownListed] = formatModelChoices(
+  const [formattedDefault = fallback, ...shownListed] = formatModelChoices(
     [fallback, ...listed],
     modelLabelPrefixes,
   );
+  const shownDefault = {
+    ...formattedDefault,
+    description: defaultDescription ?? `Currently ${formattedDefault.label}`,
+  };
   const shown = includeDefault ? [shownDefault, ...shownListed] : shownListed;
   const selected = shown.find((model) => model.id === value) ?? shownDefault;
   const inherited = value === "";
   const selectedLabel = inherited
-    ? `${selected.label} · Default`
+    ? `Default · ${shownDefault.description}`
     : selected.label;
   const discovering = loading && !pending;
   const choices =
@@ -275,8 +278,13 @@ export function ModelPicker({
           <Select
             label={label}
             value={selected.id}
-            valueLabel={discovering ? "Loading models…" : selected.label}
-            valueSuffix={!discovering && inherited ? " · Default" : undefined}
+            valueLabel={
+              discovering
+                ? "Loading models…"
+                : inherited
+                  ? "Default"
+                  : selected.label
+            }
             valueTitle={discovering ? "Loading models…" : selectedLabel}
             leading={modelLogo(`${selected.id} ${selected.label}`)}
             variant={compact ? "compact" : "preference"}
@@ -289,9 +297,7 @@ export function ModelPicker({
                 options: choices.map((model, index) => ({
                   value: model.id,
                   label:
-                    includeDefault && model.id === ""
-                      ? `${model.label} · Default`
-                      : model.label,
+                    includeDefault && model.id === "" ? "Default" : model.label,
                   description: model.description,
                   // The empty fragment reserves Select's icon column only in mixed lists.
                   leading: hasOptionLogos

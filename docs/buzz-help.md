@@ -1085,7 +1085,8 @@ available rather than silently discarding it.
   before the first config is saved; **Default** follows the provider's setting.
   Claude and Codex list the explicit model separately even when it matches
   **Default**. Choose the named model to pin that choice when defaults change;
-  choose the **· Default** option to follow defaults again. Selecting a named
+  choose **Default** to follow defaults again. It appears first, with the
+  current model or the settings it follows shown as supporting text. Selecting a named
   model's thinking level in the family menu also pins that model.
   Do not assume someone can edit another person's agent.
 - In the agent avatar picker, drag the avatar strip with a mouse or scroll it

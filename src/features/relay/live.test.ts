@@ -1738,7 +1738,7 @@ it("isolates denial, fences removed/readded routes and late sockets, and dispose
 });
 it("restores prompt reconnects after each healthy connection across repeated rollouts", async () => {
   vi.useFakeTimers();
-  const h = setup([]);
+  const h = setup([], undefined, undefined, () => 0.5);
   try {
     for (let cycle = 0; cycle < 7; cycle++) {
       const socket = h.sockets[cycle];
@@ -1749,8 +1749,12 @@ it("restores prompt reconnects after each healthy connection across repeated rol
         await socket.receive(["EOSE", request[1]]);
       await vi.advanceTimersByTimeAsync(60000);
       expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connected");
+      // Half the spread each time: without the reset, the sixth drop's
+      // backoff (16s) would widen it to 8s.
       socket.close();
-      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(h.sockets).toHaveLength(cycle + 1);
+      await vi.advanceTimersByTimeAsync(1);
       expect(h.sockets).toHaveLength(cycle + 2);
     }
   } finally {

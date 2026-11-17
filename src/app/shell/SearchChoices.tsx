@@ -225,6 +225,7 @@ export function SearchChoices({
   highlightEmpty = false,
   onRowsShown,
   peek,
+  completing = false,
 }: SearchInputProps & {
   groups: readonly SearchGroup[];
   children?: ReactNode;
@@ -245,6 +246,9 @@ export function SearchChoices({
    * reading only for the rows someone can see. */
   onRowsShown?: ((keys: readonly string[]) => void) | undefined;
   peek?: SearchPeek | undefined;
+  /** The rows complete an unfinished filter, such as `in:` or `from:`, so
+   * Tab chooses the highlighted one as Enter does. */
+  completing?: boolean;
 }) {
   const palette = useRef<HTMLDivElement>(null);
   // A hidden preview would still read; it mounts only where it shows.
@@ -842,6 +846,22 @@ export function SearchChoices({
             }
             if (event.key === "ArrowDown" || event.key === "ArrowUp")
               restore.current = 0;
+            // Tab completes a filter with its highlighted row. With nothing
+            // to complete it moves on, so other controls stay in reach.
+            if (
+              completing &&
+              event.key === "Tab" &&
+              !event.shiftKey &&
+              !event.ctrlKey &&
+              !event.metaKey &&
+              !event.altKey &&
+              !event.nativeEvent.isComposing &&
+              keys.includes(selected)
+            ) {
+              event.preventDefault();
+              if (!event.repeat) highlight.choose(selected);
+              return;
+            }
             // Tab moves between groups, and stays in the field while results
             // are still landing. Past the first or last group it moves on as
             // Tab does, so retry and other controls stay in reach.

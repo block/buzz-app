@@ -2266,6 +2266,12 @@ export function SearchResults({
           )
         }
         isAction={isSearchAction}
+        completing={
+          pickerPrompt ||
+          showAmbiguousPicker ||
+          showDateChoices ||
+          showChannelPicker
+        }
         footer={offline}
         peek={{
           // A filter asks for messages only, so they aren't ranked with

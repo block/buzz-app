@@ -6009,6 +6009,39 @@ it.each([
   },
 );
 
+it("completes a channel filter with Tab", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const { owner } = operatorSession(viewer, relay, [
+    metadata(relay, "crew", "crew"),
+    roster(relay, "crew", [viewer.pubkey]),
+  ]);
+  const change = vi.fn();
+  try {
+    render(
+      <SearchResults
+        {...operatorProps}
+        session={owner.session}
+        query="deploy in:#cr"
+        onQueryChange={change}
+      />,
+    );
+    const crew = await within(
+      await screen.findByRole("group", { name: "Channels" }),
+    ).findByRole("option", { name: /crew/ });
+    await waitFor(() => expect(crew).toHaveAttribute("aria-selected", "true"));
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    // Shift+Tab still leaves the field.
+    expect(fireEvent.keyDown(input, { key: "Tab", shiftKey: true })).toBe(true);
+    expect(change).not.toHaveBeenCalled();
+    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(false);
+    expect(change).toHaveBeenLastCalledWith("in:crew deploy ");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("turns date and channel picks into chips that Backspace edits", async () => {
   const relay = keypair(),
     viewer = keypair();

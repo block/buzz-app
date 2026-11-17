@@ -49,3 +49,19 @@ it("settles on the original title when renamed back during the reveal", async ()
   await waitFor(() => expect(characters().join("")).toBe(first));
   await expectSettled(first);
 });
+
+it.each([
+  ["Hebrew", "שלום"],
+  ["Arabic", "خطة الإصدار"],
+  ["right-to-left mark", "Plan \u200f2026"],
+  ["right-to-left override", "Plan \u202eABC"],
+  ["right-to-left isolate", "Plan \u2067ABC"],
+  ["Phoenician", "Plan \u{10900}"],
+  ["Adlam", "Plan \u{1e900}"],
+])("keeps %s in one text run as the new title appears", async (_, title) => {
+  const { value, rename } = setup();
+  rename(title);
+  // Check the first appearance so a split reveal cannot pass by settling.
+  await waitFor(() => expect(value()?.textContent).toBe(title));
+  expect(value()?.childElementCount).toBe(0);
+});

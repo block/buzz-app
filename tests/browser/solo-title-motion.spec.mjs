@@ -87,8 +87,7 @@ test("Solo rename animates both titles without interrupting typing or overflowin
   await expect(composer).toBeFocused();
 
   const titles = titlesFor(title);
-  await expect(titles.filter({ hasText: localTitle })).toHaveCount(2);
-  await expect(titles.locator("> span")).toHaveCount(0);
+  await expect(titles).toHaveText([localTitle, localTitle]);
   await expect
     .poll(() =>
       titles.evaluateAll((nodes) =>
@@ -155,8 +154,7 @@ test("Solo rename animates both titles without interrupting typing or overflowin
     .toEqual([true, true]);
   await finishPhase(titles);
   await expect(characters).toHaveCount(0);
-  await expect(row.locator(titleSelector)).toHaveText(title);
-  await expect(renamedHeader.locator(titleSelector)).toHaveText(title);
+  await expect(titles).toHaveText([title, title]);
 
   for (const [mode, width, scale] of [
     ["light", 1440, 1],
@@ -189,66 +187,56 @@ test("Solo rename animates both titles without interrupting typing or overflowin
   await page.evaluate(() =>
     document.documentElement.style.removeProperty("--buzz-text-scale"),
   );
-  let previous = title;
-  for (const name of ["שלום", "Release שלום 2026"]) {
-    rename(name);
-    const values = titlesFor(name);
-    await expect(values).toHaveText([previous, previous]);
-    await expect
+  const mixed = "Release שלום 2026";
+  rename(mixed);
+  const mixedTitles = titlesFor(mixed);
+  const expectOpacityPhase = (from, to) =>
+    expect
       .poll(() =>
-        values.evaluateAll((nodes) =>
-          nodes.map((node) =>
-            (window.titleAnimations.get(node) ?? []).some(
-              (track) =>
-                track.playState === "paused" &&
-                track.effect.getKeyframes().at(-1)?.opacity === "0",
-            ),
-          ),
+        mixedTitles.evaluateAll(
+          (nodes, { from, to }) =>
+            nodes.filter((node) =>
+              (window.titleAnimations.get(node) ?? []).some((track) => {
+                const frames = track.effect.getKeyframes();
+                return (
+                  track.playState === "paused" &&
+                  frames[0]?.opacity === from &&
+                  frames.at(-1)?.opacity === to
+                );
+              }),
+            ).length,
+          { from, to },
         ),
       )
-      .toEqual([true, true]);
-    await finishPhase(values);
-    await expect(values).toHaveText([name, name]);
-    await expect(values.locator("> span")).toHaveCount(0);
-    await expect
-      .poll(() =>
-        values.evaluateAll((nodes) =>
-          nodes.map((node) =>
-            (window.titleAnimations.get(node) ?? []).some(
-              (track) =>
-                track.playState === "paused" &&
-                track.effect.getKeyframes()[0]?.opacity === "0" &&
-                track.effect.getKeyframes().at(-1)?.opacity === "1",
-            ),
-          ),
-        ),
-      )
-      .toEqual([true, true]);
-    const hebrewRunIsRTL = () =>
-      values.evaluateAll((nodes) =>
-        nodes.map((node) => {
-          const text = node.firstChild;
-          const range = document.createRange();
-          const left = (character) => {
-            const offset = text.textContent.indexOf(character);
-            range.setStart(text, offset);
-            range.setEnd(text, offset + 1);
-            return range.getBoundingClientRect().left;
-          };
-          return left("ו") < left("ל");
-        }),
-      );
-    expect(await hebrewRunIsRTL()).toEqual([true, true]);
-    await finishPhase(values);
-    expect(await hebrewRunIsRTL()).toEqual([true, true]);
-    previous = name;
-  }
+      .toBe(2);
+  await expect(mixedTitles).toHaveText([title, title]);
+  await expectOpacityPhase("1", "0");
+  await finishPhase(mixedTitles);
+  await expect(mixedTitles).toHaveText([mixed, mixed]);
+  await expectOpacityPhase("0", "1");
+  const hebrewRunIsRTL = () =>
+    mixedTitles.evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const text = node.firstChild;
+        const range = document.createRange();
+        const left = (character) => {
+          const offset = text.textContent.indexOf(character);
+          range.setStart(text, offset);
+          range.setEnd(text, offset + 1);
+          return range.getBoundingClientRect().left;
+        };
+        return left("ו") < left("ל");
+      }),
+    );
+  expect(await hebrewRunIsRTL()).toEqual([true, true]);
+  await finishPhase(mixedTitles);
+  expect(await hebrewRunIsRTL()).toEqual([true, true]);
 
   // The old local save must not suppress an incoming return to the same name.
   rename(localTitle);
-  const reverted = titlesFor(localTitle);
-  await expect(reverted).toHaveText([previous, previous]);
-  await expect(reverted.and(page.locator("[data-exiting]"))).toHaveCount(2);
+  await expect(
+    titlesFor(localTitle).and(page.locator("[data-exiting]")),
+  ).toHaveText([mixed, mixed]);
   await row.dblclick();
   const inlineName = sidebar.getByRole("textbox", { name: "Chat name" });
   await inlineName.fill("Handoff notes");

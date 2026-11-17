@@ -3550,22 +3550,21 @@ export class AgentRunners {
               const enabling =
                 !prior?.enabled ||
                 sourceCompleted(before.sourceRuns, before.attention[slug]);
-              if (
-                value.type === "event" &&
-                value.channels !== "all" &&
-                (enabling ||
-                  prior?.type !== "event" ||
-                  JSON.stringify(prior.channels) !==
-                    JSON.stringify(value.channels))
-              ) {
-                await this.host.resolveChannels?.(
-                  agent,
-                  value.channels,
-                  lifetime,
-                );
+              const channels =
+                value.type === "event" && value.channels !== "all"
+                  ? value.channels.filter(
+                      (channel) =>
+                        enabling ||
+                        prior?.type !== "event" ||
+                        prior.channels === "all" ||
+                        !prior.channels.includes(channel),
+                    )
+                  : [];
+              if (channels.length) {
+                await this.host.resolveChannels?.(agent, channels, lifetime);
                 lifetime.throwIfAborted();
                 check?.();
-                for (const channel of value.channels)
+                for (const channel of channels)
                   if (
                     this.host.reads(agent, { tags: [["h", channel]] }) !== true
                   )

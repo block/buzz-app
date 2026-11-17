@@ -106,6 +106,11 @@ async function catalog(spawn: Spawn, signal: AbortSignal, host?: PreviewHost) {
     void rpc.close();
   };
   signal.addEventListener("abort", abort, { once: true });
+  const close = async () => {
+    signal.removeEventListener("abort", abort);
+    await rpc.close();
+  };
+  let detached = false;
   try {
     signal.throwIfAborted();
     await rpc.open(spawn, defaults.workspace);
@@ -113,26 +118,30 @@ async function catalog(spawn: Spawn, signal: AbortSignal, host?: PreviewHost) {
     if (await needsSignIn(rpc)) throw new Error(SIGN_IN_ERROR);
     const models = await listModels(rpc);
     // Older Codex releases do not publish a v3 catalog. Model selection still works.
-    const [voices, config, auth] = await Promise.all([
+    const [voices, config] = await Promise.all([
       voiceCatalog(rpc).catch(() => undefined),
       rpc
         .request<{ config: { realtime?: { voice?: string } } }>("config/read", {
           includeLayers: false,
         })
         .catch(() => undefined),
-      host
-        ? rpc
-            .request<PreviewAuth>("getAuthStatus", {
-              includeToken: true,
-              refreshToken: false,
-            })
-            .catch(() => undefined)
-        : undefined,
     ]);
+    const previews = host
+      ? rpc
+          .request<PreviewAuth>("getAuthStatus", {
+            includeToken: true,
+            refreshToken: false,
+          })
+          .finally(close)
+          .then((auth) => {
+            signal.throwIfAborted();
+            return discoverPreviews(auth, host);
+          })
+          .catch(() => undefined)
+      : undefined;
+    detached = !!previews;
     return {
-      previews: host
-        ? discoverPreviews(auth, host).catch(() => undefined)
-        : undefined,
+      previews,
       models,
       voices: voices?.v3,
       defaultVoice: config
@@ -140,8 +149,7 @@ async function catalog(spawn: Spawn, signal: AbortSignal, host?: PreviewHost) {
         : undefined,
     };
   } finally {
-    signal.removeEventListener("abort", abort);
-    await rpc.close();
+    if (!detached) await close();
   }
 }
 

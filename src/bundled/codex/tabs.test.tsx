@@ -75,6 +75,7 @@ function fixture({
   configured = {},
   voices = ["cove", "maple"],
   voicesGate,
+  authGate,
   voicesError = () => false,
   modelAReasoningEfforts = ["low", "high"],
   modelBReasoningEfforts = ["medium"],
@@ -106,6 +107,7 @@ function fixture({
   };
   voices?: string[] | null;
   voicesGate?: Promise<void>;
+  authGate?: Promise<void>;
   voicesError?: () => boolean;
   modelAReasoningEfforts?: string[];
   modelBReasoningEfforts?: string[];
@@ -175,8 +177,10 @@ function fixture({
             nextCursor: null,
           };
         }
-        if (wire.method === "getAuthStatus")
+        if (wire.method === "getAuthStatus") {
+          await authGate;
           result = { authMethod: "chatgpt", authToken: "test-token" };
+        }
         if (wire.method === "account/read")
           result = {
             account: disk.signedIn
@@ -2992,6 +2996,29 @@ it("publishes Codex readiness while optional recording discovery is held", async
       headers: {},
       body: JSON.stringify({ voices: [] }),
     });
+    await checking;
+    f.provider.dispose();
+  }
+});
+
+it("does not hold model readiness for optional preview authentication", async () => {
+  const gate = deferred<void>();
+  const host: PreviewHost = {
+    request: vi.fn(async () => ({
+      status: 200,
+      headers: {},
+      body: '{"voices":[]}',
+    })),
+  };
+  const f = fixture({ previewHost: host, authGate: gate.promise });
+  const checking = f.provider.check();
+  try {
+    await waitFor(() => expect(f.provider.snapshot().readiness).toBe("ready"));
+    expect(host.request).not.toHaveBeenCalled();
+    gate.resolve();
+    await waitFor(() => expect(host.request).toHaveBeenCalledOnce());
+  } finally {
+    gate.resolve();
     await checking;
     f.provider.dispose();
   }

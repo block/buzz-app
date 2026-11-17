@@ -96,10 +96,12 @@ test("Channels offers empty-section creation with keyboard focus, emoji and conf
       if (filters.every((filter) => filter.consistency === "strong")) {
         writerReads++;
         if (failWriterRead) {
-          failWriterRead = false;
           // Relay recovery retries a transient failure such as a 502 about a
           // second later, which can remove Retry preferences while a slow
           // click is still landing. A denial leaves the retry to the user.
+          // Keep denying until the test retries: the accepted creation's live
+          // invalidation can land after the first denial and owe one more
+          // strong read, which must not recover preferences on its own.
           app.report.relayFailures ??= [];
           app.report.relayFailures.push(route.request().url());
           await route.fulfill({
@@ -205,18 +207,20 @@ test("Channels offers empty-section creation with keyboard focus, emoji and conf
   await expect(dialog.getByRole("alert")).toContainText(
     "Couldn't confirm the section was saved. Try again.",
   );
-  expect(writerReads).toBe(2);
+  expect(writerReads).toBeGreaterThanOrEqual(2);
   await expect(
     dialog.getByRole("button", { name: "Create", exact: true }),
   ).toBeDisabled();
   await expect(dialog.getByRole("alert")).not.toContainText("403");
   // Recover preferences without replaying creation, then Cancel/reopen.
+  const deniedReads = writerReads;
+  failWriterRead = false;
   await dialog.getByRole("button", { name: "Retry preferences" }).click();
   await expect(field).toBeFocused();
   await expect(
     dialog.getByRole("button", { name: "Create", exact: true }),
   ).toBeEnabled();
-  expect(writerReads).toBe(3);
+  expect(writerReads).toBe(deniedReads + 1);
   expect(creations).toHaveLength(3);
   const accepted = page
     .locator("summary")

@@ -118,14 +118,19 @@ export function WorkflowCommunity({
   AnsweredRoute) {
   const capability = session.workflows;
   const channels = useChannelList(session.channels);
+  // A channel restored from the saved list is not read until the roster
+  // confirms it: the session refuses its workflow reads, and one refusal
+  // clears the landing with nothing to start it again.
   const eligible = channels.channels.filter(
-    (item) => !item.huddle && !item.metadataPending,
+    (item) => !item.huddle && !item.metadataPending && !item.cached,
   );
-  // More channels can become eligible while the list is still being read or
-  // one awaits the metadata that classifies it.
+  // More channels can become eligible while the list is still being read, or
+  // one awaits its roster or the metadata that classifies it.
   const settled =
     channels.status === "ready" &&
-    !channels.channels.some((item) => !item.huddle && item.metadataPending);
+    !channels.channels.some(
+      (item) => !item.huddle && (item.metadataPending || item.cached),
+    );
   // Archived channels stay eligible, so their workflows can still be found,
   // turned off and deleted, and an open editor keeps its draft.
   const creatable = eligible.filter((item) => !item.archived);
@@ -330,9 +335,11 @@ export function WorkflowCommunity({
               }
             />
             <div className="workflows-body">
-              {channels.status === "loading" && !eligible.length && (
-                <p role="status">Reading channels…</p>
-              )}
+              {!eligible.length &&
+                (channels.status === "loading" ||
+                  (channels.status === "ready" && !settled)) && (
+                  <p role="status">Reading channels…</p>
+                )}
               {channels.status === "error" && (
                 <div className="workflow-page-state">
                   <p role="alert" className="text-danger">
@@ -343,7 +350,7 @@ export function WorkflowCommunity({
                   </Button>
                 </div>
               )}
-              {channels.status === "ready" && !eligible.length && (
+              {settled && !eligible.length && (
                 <div className="workflow-page-state">
                   <p>No channels are available in this community.</p>
                 </div>

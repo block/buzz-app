@@ -6279,6 +6279,53 @@ describe("voice seats", () => {
       }
     },
   );
+  it("releases a cancelled seat while voice verification is pending", async () => {
+    const f = fixture();
+    vi.stubGlobal("RTCPeerConnection", class {});
+    f.huddleChannels.add("channel");
+    const gate = deferred<void>();
+    f.held.set("thread/realtime/listVoices", gate.promise);
+    const delivery = f.delivery("hello");
+    const abort = new AbortController();
+    const seat = {
+      config: { workspace: "/tmp/voices", voice: "maple" },
+      agent: { ...delivery.agent, config: delivery.config } as unknown as Agent,
+      conversation: { channelId: "channel" },
+      signal: abort.signal,
+      async output() {},
+      async transcript() {},
+      ended() {},
+    };
+    const opening = f.runtime.voice(seat, delivery.agent);
+    let cancelled = false;
+    const rejected = expect(opening)
+      .rejects.toThrow()
+      .then(() => {
+        cancelled = true;
+      });
+    try {
+      await vi.waitFor(() =>
+        expect(
+          f.sent.some((wire) => wire.method === "thread/realtime/listVoices"),
+        ).toBe(true),
+      );
+      abort.abort();
+      await vi.waitFor(() => expect(cancelled).toBe(true));
+      await rejected;
+      const connection = await f.runtime.voice(
+        {
+          ...seat,
+          config: { workspace: "/tmp/voices" },
+          signal: new AbortController().signal,
+        },
+        delivery.agent,
+      );
+      await connection.close();
+    } finally {
+      gate.resolve();
+      await rejected;
+    }
+  });
   it("opens media after verifying an offered synced voice", async () => {
     const f = await seated({
       config: { workspace: "/tmp/voices", voice: "maple" },

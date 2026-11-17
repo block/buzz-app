@@ -51,7 +51,10 @@ import {
   referencedSkills,
 } from "../../features/agent-harness/referenced-folders";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
-import { MemoryReads } from "../../features/agent-harness/core-memory";
+import {
+  abortable,
+  MemoryReads,
+} from "../../features/agent-harness/core-memory";
 import { SessionControls } from "../../features/agent-harness/session-control";
 import type {
   SessionPlace,
@@ -1551,7 +1554,11 @@ export class CodexRuntime {
         const rpc = await server.opening;
         const voice = settings.voice;
         if (voice) {
-          const voices = await listVoices(rpc).catch(() => undefined);
+          signal.throwIfAborted();
+          const voices = await abortable(
+            listVoices(rpc).catch(() => undefined),
+            signal,
+          );
           if (!voices)
             throw new Error(
               seat.synced?.voice

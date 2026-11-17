@@ -2901,21 +2901,12 @@ it("keeps a DM turn's results in its thread when a new top-level message steers 
         ["p", self],
       ],
     });
-  const { runtime, claudes, agent } = setup([], { hold: true, dm: true });
+  const { runtime, claudes, deliver } = setup([], { hold: true, dm: true });
   runtime.sync([{ key: self, pubkey: self, config: DEFAULT_CONFIG } as Agent]);
   await flush(10);
-  const run = (event: RelayEvent) =>
-    runtime.run({
-      trigger: { type: "mention", event },
-      channelId: channel,
-      agent,
-      config: DEFAULT_CONFIG,
-      signal: new AbortController().signal,
-      workingUntil: () => undefined,
-    } as unknown as Delivery);
-  await run(mention("1"));
+  await deliver({ type: "mention", event: mention("1") });
   await flush(10);
-  await run(mention("2"));
+  await deliver({ type: "mention", event: mention("2") });
   await flush(10);
   const claude = claudes().find((process) => process.prompts.length);
   expect(claude?.prompts).toHaveLength(2);

@@ -358,6 +358,20 @@ it("keeps the running turn's thread for its results when another thread steers i
   ]);
   process.finish();
   await expect(Promise.all([first, other, same])).resolves.toHaveLength(3);
+  // The next turn on the same process names its own thread.
+  const next = pool.deliver("c", "next", 4, { activityScope: "B" });
+  await flush();
+  const late = pool.deliver("c", "plain", 5, {
+    steer: "late",
+    activityScope: "A",
+  });
+  await flush();
+  expect(process.prompts.slice(3)).toEqual([
+    "next",
+    'late\n\nThe reply target above is for the new message only. If you are still working on an earlier request, ordinary replies about that work still go to `reply: "B"`.',
+  ]);
+  process.finish();
+  await expect(Promise.all([next, late])).resolves.toHaveLength(2);
 });
 
 const interruptsOf = (process: { received: Record<string, unknown>[] }) =>

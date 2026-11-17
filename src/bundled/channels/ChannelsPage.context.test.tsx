@@ -158,6 +158,7 @@ async function channelsPage({
   cached = false,
   extensions = undefined as ConversationExtensions | undefined,
   navigationOwner = undefined as Navigation | undefined,
+  panelContributions = [] as ReturnType<Panels["snapshot"]>,
 } = {}) {
   const { viewer, authority, reply, newer, channels } = fixture;
   const alpha = [...(root ? [fixture.root] : []), reply, ...newer];
@@ -237,12 +238,12 @@ async function channelsPage({
     disconnect() {},
     clearCache: async () => {},
   };
-  const none: ReturnType<Panels["snapshot"]> = [];
+  const none = panelContributions;
   const panelHandlers = new Set<Parameters<Panels["handleOpenRequests"]>[0]>();
   const panels: Panels = {
     snapshot: () => none,
     subscribe: () => () => {},
-    resolve: () => undefined,
+    resolve: (target) => none.find((panel) => panel.matches(target)),
     register() {},
     requestOpen: (request) =>
       [...panelHandlers].some((handler) => handler(request)),
@@ -457,10 +458,11 @@ it("replaces a resolved channel's reader with its plugin view, restores native c
   expect(screen.queryByText("Board for alpha")).toBeNull();
 });
 
-it.each(["individual", "bulk"])(
+it.each(["individual", "bulk", "keep-local", "thread-bulk"])(
   "restores the custom view through settings history and retires every settings visit on %s close",
   async (mode) => {
     const host = provideNavigation(new Context());
+    const dismiss = vi.fn(host.navigation.dismiss);
     const entry: Contribution<ChannelView> = {
       key: "example/board",
       id: "board",
@@ -472,12 +474,39 @@ it.each(["individual", "bulk"])(
     };
     const empty: readonly never[] = [],
       entries = [entry];
+    const panelContributions: ReturnType<Panels["snapshot"]> =
+      mode === "keep-local"
+        ? [
+            {
+              key: "example/canvas",
+              id: "canvas",
+              pluginId: "example",
+              revision: "one",
+              title: "Canvas",
+              matches: () => true,
+              component: () => <p>Canvas content</p>,
+              channelPlacement: "tab",
+              channelLauncher: ({ toggle }) => (
+                <button
+                  type="button"
+                  onClick={() => toggle("https://example.org/canvas")}
+                >
+                  View canvas
+                </button>
+              ),
+            },
+          ]
+        : [];
     const h = await channelsPage({
-      navigationOwner: host.navigation,
+      navigationOwner: { ...host.navigation, dismiss },
+      panelContributions,
       extensions: {
         tools: { snapshot: () => empty, subscribe: () => () => {} },
         inline: { snapshot: () => empty, subscribe: () => () => {} },
-        channelViews: { snapshot: () => entries, subscribe: () => () => {} },
+        channelViews: {
+          snapshot: () => (mode === "keep-local" ? empty : entries),
+          subscribe: () => () => {},
+        },
       },
     });
     let shown = "";
@@ -504,34 +533,65 @@ it.each(["individual", "bulk"])(
     };
     try {
       await open(h.target("alpha"));
-      await screen.findByText("Custom board");
+      if (mode === "keep-local")
+        await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
+      else await screen.findByText("Custom board");
       await open(h.target("alpha", { panel: "settings" }));
       const first = host.navigation.snapshot().entry.id;
       await screen.findByRole("tab", { name: "Channel settings" });
       act(() => host.navigation.back());
-      await screen.findByText("Custom board");
+      if (mode === "keep-local")
+        await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
+      else await screen.findByText("Custom board");
       act(() => host.navigation.forward());
       await screen.findByRole("tab", { name: "Channel settings" });
       await open(h.target("beta"));
       await open(h.target("alpha", { panel: "settings" }));
       const second = host.navigation.snapshot().entry.id;
+      if (mode === "keep-local") {
+        fireEvent.click(screen.getByRole("button", { name: "View canvas" }));
+        await screen.findByText("Canvas content");
+      }
+      if (mode === "thread-bulk") {
+        const root = fixture.newer.at(-1)?.id;
+        if (!root) throw new Error("Missing thread fixture");
+        await open(h.target("alpha", { messageId: root, threadRootId: root }));
+      }
       if (mode === "individual")
         fireEvent.click(
           screen.getByRole("button", { name: "Close Channel settings tab" }),
         );
       else {
         fireEvent.contextMenu(
-          screen.getByRole("tab", { name: "Channel settings" }),
+          screen.getByRole("tab", {
+            name: mode === "keep-local" ? "Canvas" : "Channel settings",
+          }),
         );
         fireEvent.click(
-          await screen.findByRole("menuitem", { name: "Close all tabs" }),
+          await screen.findByRole("menuitem", {
+            name: mode === "keep-local" ? "Close other tabs" : "Close all tabs",
+          }),
         );
       }
+      expect(dismiss).toHaveBeenCalledTimes(1);
       await vi.waitFor(() => {
         expect(host.navigation.snapshot().retainedVisits).not.toContain(first);
         expect(host.navigation.snapshot().retainedVisits).not.toContain(second);
       });
+      if (mode === "keep-local") {
+        await open(h.target("beta"));
+        await open(h.target("alpha"));
+        expect(await screen.findByText("Canvas content")).toBeVisible();
+      }
       act(() => host.navigation.back());
+      if (mode === "thread-bulk") {
+        await vi.waitFor(() =>
+          expect(host.navigation.snapshot().entry.target).toMatchObject({
+            kind: "conversation",
+            channelId: "beta",
+          }),
+        );
+      }
       act(() => host.navigation.forward());
       expect(
         screen.queryByRole("tab", { name: "Channel settings" }),

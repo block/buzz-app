@@ -912,16 +912,11 @@ function ChannelWorkspace({
     settings.channelId === currentId &&
     tabState.selected === "settings";
   const channelView = showingSettings ? undefined : matchedChannelView;
-  const retireSettings = (fallback: OpenTarget) => {
-    if (!currentId) return;
-    navigator.dismiss(
-      (target) =>
-        target.kind === "conversation" &&
-        target.panel === "settings" &&
-        matchesConversation(target, scope, currentId),
-      fallback,
-    );
-  };
+  const settingsTarget = (target: OpenTarget) =>
+    !!currentId &&
+    target.kind === "conversation" &&
+    target.panel === "settings" &&
+    matchesConversation(target, scope, currentId);
   const closeSettings = () => {
     setSettings(undefined);
     if (
@@ -930,11 +925,17 @@ function ChannelWorkspace({
       !navigation.signal.aborted
     ) {
       const { panel: _panel, ...target } = navigation.target;
-      retireSettings(target);
+      dismissContent([], target, "side", tabState.entries, true);
       return;
     }
     afterClose("settings");
-    retireSettings(navigator.snapshot().entry.target);
+    dismissContent(
+      [],
+      navigator.snapshot().entry.target,
+      "side",
+      tabState.entries,
+      true,
+    );
   };
   // The Solo treatment: an agent conversation. In the owner's own chat it
   // also files into a project; the conversation scope owns composer policy.
@@ -1366,6 +1367,7 @@ function ChannelWorkspace({
     fallback: OpenTarget,
     pane: "main" | "side",
     entries = tabState.entries,
+    includeSettings = false,
   ) => {
     keptTabReturn.current = undefined;
     if (!navigator) return;
@@ -1374,13 +1376,16 @@ function ChannelWorkspace({
     const keptTab = tabState.tabs.find((tab) => tab.id === keep);
     const keptEntry = entries.find((entry) => panelTabId(entry) === keep);
     const current = navigator.snapshot().entry;
+    const closing = (target: OpenTarget, id: string) =>
+      visits.includes(id) || (includeSettings && settingsTarget(target));
+    const retiring = closing(current.target, current.id);
     if (
       keep !== undefined &&
       (keptTab ||
         keptEntry ||
         keep === "settings" ||
         (pane === "side" && tabState.sidePanel)) &&
-      visits.includes(current.id) &&
+      retiring &&
       keptTab?.kind !== "thread" &&
       !(keptEntry && historyPanel(keptEntry))
     ) {
@@ -1395,17 +1400,14 @@ function ChannelWorkspace({
           !!(keptTab || keptEntry || keep === "settings") || tabState.paneOpen,
       };
     }
-    navigator.dismiss(visits, fallback);
+    navigator.dismiss(includeSettings ? closing : visits, fallback);
     // A later close can retire more visits before the return lands, moving
     // where it lands.
     const pending =
       pendingReturn.current?.from === current.id
         ? pendingReturn.current
         : undefined;
-    if (
-      (pending || visits.includes(current.id)) &&
-      navigator.snapshot().entry.id === current.id
-    )
+    if ((pending || retiring) && navigator.snapshot().entry.id === current.id)
       pendingReturn.current = {
         ...pending,
         from: current.id,
@@ -1507,8 +1509,8 @@ function ChannelWorkspace({
         fallback,
         keep === "settings" ? "side" : pane,
         remaining,
+        !!settings && keep !== "settings",
       );
-      if (settings && keep !== "settings") retireSettings(fallback);
     },
     onClosePanel: (entry, remaining) => {
       if (!historyPanel(entry)) return;

@@ -1,3 +1,4 @@
+import { isAdminAddition } from "../channel-members/administration-protocol.ts";
 import type { ArtifactIncrementalReader } from "./artifact-incremental-reader.ts";
 import type { VerifiedProfileAuthority } from "./verified-profile";
 import type { ReminderHost } from "./reminders";
@@ -37,6 +38,7 @@ import {
   type SidebarAssignmentMutator,
   type SidebarSectionOrderMutator,
   type SidebarSectionRenameMutator,
+  type SidebarSectionEdit,
   type SidebarSectionRemovalMutator,
   type SidebarStarMutator,
   type SidebarSortMutator,
@@ -580,6 +582,7 @@ export async function connectBrokerTransport(
       "invalid-response",
       "Relay broker session is malformed",
     );
+  const viewer = session.viewer;
   let traffic: LiveSubscription | undefined;
   const presence = presenceObservation();
   const relayHttpUrl = relayHttpBase(session.relayHttpUrl, session.relayUrl);
@@ -589,6 +592,8 @@ export async function connectBrokerTransport(
     "X-Buzz-Live-ID": traffic?.identity?.() ?? "",
   });
   const publish = async (event: RelayEvent, signal: AbortSignal) => {
+    if (session.memberAdministration === true && isAdminAddition(event, viewer))
+      return routeWriter("member-administration").publish(event, signal);
     const result = await fetch(`${endpoint}/publish`, {
       method: "POST",
       credentials: "same-origin",
@@ -600,6 +605,11 @@ export async function connectBrokerTransport(
     return acceptPublish(result, event.id);
   };
   const sign = async (template: EventTemplate, signal: AbortSignal) => {
+    if (
+      session.memberAdministration === true &&
+      isAdminAddition(template, viewer)
+    )
+      return routeWriter("member-administration").sign(template, signal);
     const result = await fetch(`${endpoint}/sign`, {
       method: "POST",
       credentials: "same-origin",
@@ -613,7 +623,7 @@ export async function connectBrokerTransport(
     return event;
   };
   /** Dedicated shape-limited host sign/publish routes, separate from the outbox writer. */
-  const routeWriter = (route: string): RelayWriter => ({
+  const routeWriter = (route: string) => ({
     async sign(template: EventTemplate, signal: AbortSignal) {
       const response = await fetch(`${endpoint}/${route}-sign`, {
         method: "POST",
@@ -1169,7 +1179,7 @@ export async function connectBrokerTransport(
     ...(session.sidebarSectionRename
       ? {
           async renameSidebarSection(
-            intent: { sectionId: string; name: string },
+            intent: SidebarSectionEdit & Readonly<{ sectionId: string }>,
             signal: AbortSignal,
           ) {
             const response = await fetch(`${endpoint}/sidebar-section-rename`, {

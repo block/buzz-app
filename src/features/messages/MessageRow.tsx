@@ -505,10 +505,11 @@ function MessageRowContent({
   const timeReply =
     shown.diff || bodyContent != null
       ? undefined
-      : parseMediaTimeReply(shown.content);
-  const sourceRow = timeReply
-    ? { ...shown, content: timeReply.content }
-    : shown;
+      : parseMediaTimeReply(row.forward?.note ?? shown.content);
+  const sourceRow =
+    timeReply && !row.forward
+      ? { ...shown, content: timeReply.content }
+      : shown;
   const { caption: displayRow, cards: chatCards } = useMemo(
     () =>
       bodyContent != null
@@ -998,11 +999,12 @@ function MessageRowContent({
     [row.forward, row.attachments],
   );
   const { edited: _forwardEdited, ...forwardDisplayRow } = displayRow;
+  const forwardNote = timeReply?.content ?? row.forward?.note;
   const body =
     bodyContent ??
     (row.forward ? (
       <>
-        {row.forward.note && (
+        {forwardNote && (
           <MessageMarkdown
             directory={directory}
             session={references}
@@ -1010,7 +1012,7 @@ function MessageRowContent({
             row={{
               ...displayRow,
               content: projectMarkdownAttachments(
-                row.forward.note,
+                forwardNote,
                 new Set(row.attachments.map(({ url }) => url)),
               ).content,
               attachmentSeams: [],

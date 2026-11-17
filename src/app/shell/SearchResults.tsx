@@ -678,6 +678,8 @@ export function SearchResults({
   // Search unmounts as it closes, so each opening reads previews afresh.
   const [previews] = useState<PreviewCache>(() => new Map());
   const [sort, setSort] = useState<SearchSort>("relevance");
+  // The chip or a single resolved `in:` limits results to one conversation.
+  const effectiveChannelId = scopedChannelId ?? operatorChannelId;
   const search = useSearchMessages(
     session,
     offline || asking ? "" : query,
@@ -691,10 +693,18 @@ export function SearchResults({
         )
         .map((agent) => [agent.pubkey, agent.name]),
     ),
-    // Only scoped search offers the choice, so global search keeps relevance.
-    scopedChannelId ? sort : "relevance",
+    // Only one conversation's results offer the choice; across
+    // conversations, search keeps relevance.
+    effectiveChannelId ? sort : "relevance",
   );
-  const messageOrder = search.newestFirst ? "Most recent" : "Most relevant";
+  // Offline or asking, nothing is searched, so there is no order to choose.
+  const sortable =
+    !offline &&
+    !asking &&
+    !!effectiveChannelId &&
+    session.searchSort &&
+    !!parsed.text;
+  const order = search.newestFirst ? "Most recent" : "Most relevant";
   const showAmbiguousPicker = !!search.ambiguousAuthor && !pickerPrompt;
   // Ambiguity is known only after a completed token. Keep its original span so
   // choosing a key does not discard free text or other operators after it.
@@ -750,7 +760,6 @@ export function SearchResults({
       agent,
     ]),
   );
-  const effectiveChannelId = scopedChannelId ?? operatorChannelId;
   // The notice is a new element each render; the lookup below reruns only
   // when search goes offline or back.
   const savedOnly = !!offline;
@@ -1765,9 +1774,8 @@ export function SearchResults({
   // none of their lookups.
   const resultsShown =
     !showAuthorPicker && !showDateChoices && !showChannelPicker;
-  /** Results with a preview beside them: not a question, a conversation's
-   * own search or a picker. */
-  const previewed = !asking && !scopedChannelId && resultsShown;
+  /** Results with a preview beside them: not a question or a picker. */
+  const previewed = !asking && resultsShown;
   const searchAnnouncement = useSearchAnnouncement(
     resultsShown && slowChannels,
     slowPeople,
@@ -2034,12 +2042,14 @@ export function SearchResults({
           : scopedChannelId || hasOperator
             ? [
                 {
-                  label: scopedChannelId ? messageOrder : "Messages",
+                  label: "Messages",
                   rank: Infinity,
                   icon: ChatCircleIcon,
-                  why: scopedChannelId
-                    ? undefined
-                    : "Filters apply to messages",
+                  why: sortable
+                    ? order
+                    : hasOperator
+                      ? "Filters apply to messages"
+                      : undefined,
                   destinations: messageRows,
                   headingStatus: slowMessages ? "Searching…" : undefined,
                   empty: messageEmpty,
@@ -2195,15 +2205,16 @@ export function SearchResults({
         onDisplayQueryChange={updateDisplayQuery}
         input={input}
         label={scopedChannelId ? "Search this conversation" : "Search Buzz"}
-        scopeAction={
-          scopedChannelId && session.searchSort && parsed.text ? (
+        fieldAction={
+          sortable ? (
             <MenuRoot>
               <MenuTrigger
                 render={(props) => (
                   <IconButton
                     {...props}
                     variant="ghost"
-                    aria-label="Sort messages"
+                    // The heading's order is visual only; name it here.
+                    aria-label={`Sort messages: ${order}`}
                     title="Sort messages"
                     icon={<ArrowsDownUpIcon size={16} aria-hidden="true" />}
                   />
@@ -2268,9 +2279,10 @@ export function SearchResults({
         isAction={isSearchAction}
         footer={offline}
         peek={{
-          // A filter asks for messages only, so they aren't ranked with
-          // other results, but each still previews.
-          ranked: previewed && !hasOperator,
+          // A filter or a conversation's own search asks for messages
+          // only, so they aren't ranked with other results, but each still
+          // previews.
+          ranked: previewed && !scopedChannelId && !hasOperator,
           hints,
           busy: !!query.trim() && (messagesPending || directoryPending),
           unsearched:

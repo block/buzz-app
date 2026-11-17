@@ -3547,7 +3547,9 @@ export class AgentRunners {
               const previous = before.attention[slug]?.value;
               const prior =
                 previous?.type === "interest" ? undefined : previous;
-              const enabling = !prior?.enabled;
+              const enabling =
+                !prior?.enabled ||
+                sourceCompleted(before.sourceRuns, before.attention[slug]);
               if (
                 value.type === "event" &&
                 value.channels !== "all" &&

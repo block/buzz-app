@@ -14620,6 +14620,66 @@ describe("Attention plugin sources", () => {
       expect(texts(service)).toEqual(["final output"]);
     },
   );
+  it.each(["cached", "private"] as const)(
+    "refuses completed source restarts without losing output when destination is %s",
+    async (state) => {
+      const { service, run, plugin, native, session } = await sourceFixture();
+      run.mockRejectedValue(new Error("delivery failed"));
+      const produce = vi.fn(
+        async ({ emit }: Parameters<AttentionSource["run"]>[0]) => {
+          emit("final output");
+        },
+      );
+      plugin.agents.addAttentionSource({ id: "command", run: produce });
+      await service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
+      await service.save(bot, { attentionEnabled: true, attention: watches });
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() =>
+        expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
+      );
+      const list = session.channels.list();
+      const channels = vi.spyOn(session.channels, "list").mockReturnValue({
+        ...list,
+        channels: list.channels.map((row) =>
+          row.id === channel
+            ? {
+                ...row,
+                ...(state === "cached"
+                  ? { cached: true as const }
+                  : { members: [], visibility: "private" as const }),
+              }
+            : row,
+        ),
+      });
+      const attention = plugin.agents.handle(bot)?.attention;
+      if (!attention) throw new Error("Missing agent handle");
+      const before = await attention.show("watch/pr");
+      const completed = service.find(bot)?.sourceRuns;
+      expect(texts(service)).toEqual(["final output"]);
+      for (const operation of ["watch_enable", "watch_update"] as const) {
+        await expect(
+          callAttentionTool(attention, operation, {
+            id: "pr",
+            interest: "pr",
+            expected_state: before.expected_state,
+            ...(operation === "watch_update" ? { name: "Renamed" } : {}),
+          }),
+        ).rejects.toThrow(/delivery channel/i);
+        expect(await attention.show("watch/pr")).toEqual(before);
+        expect(service.find(bot)?.sourceRuns).toEqual(completed);
+        expect(texts(service)).toEqual(["final output"]);
+      }
+      expect(produce).toHaveBeenCalledTimes(1);
+      channels.mockRestore();
+      await callAttentionTool(attention, "watch_enable", {
+        id: "pr",
+        interest: "pr",
+        expected_state: before.expected_state,
+      });
+      await vi.waitFor(() => expect(produce).toHaveBeenCalledTimes(2));
+    },
+  );
   it("delivers nonempty output, preserves queued output on completion, and does not rerun after restart", async () => {
     const { service, run, plugin, native, storage, ctx } =
       await sourceFixture();

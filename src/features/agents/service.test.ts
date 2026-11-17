@@ -1720,7 +1720,7 @@ describe("a conversation folder", () => {
     );
   });
 
-  it("does not mistake community navigation for a legacy session", async () => {
+  it("allows a conversation folder when only a community session exists", async () => {
     const list = vi.fn((): readonly AgentSession[] => [
       { channelId: channel, community: true } as AgentSession,
     ]);

@@ -1459,8 +1459,9 @@ export class ClaudeRuntime {
               entry.project.resolve(undefined, NO_PROJECT);
               entry.directories.delete(COMMUNITY_SESSION);
               entry.contexts.set(COMMUNITY_SESSION, {});
+              let stopping: Promise<void> | undefined;
               const stop = () => {
-                void entry.sessions
+                stopping = entry.sessions
                   .interrupt(COMMUNITY_SESSION, true)
                   .catch((error) =>
                     console.error("Claude could not stop expired work", error),
@@ -1485,6 +1486,7 @@ export class ClaudeRuntime {
                 return result;
               } finally {
                 signal.removeEventListener("abort", stop);
+                await stopping;
               }
             },
             () => this.notify(),

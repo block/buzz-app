@@ -925,8 +925,16 @@ export class ClaudeProcess {
           ? message.result
           : `Claude stopped (${String(message.subtype)})`;
     if (!this.reportsState) {
+      const active = this.active;
+      this.continuation = undefined;
       this.callEpoch++;
       if (this.pending) this.done();
+      if (!this.active) this.stopping = false;
+      if (active !== this.active) this.onActivity?.();
+      if (active && !this.active) {
+        this.onQuiet?.();
+        this.releaseIdle();
+      }
     }
   }
   private done() {

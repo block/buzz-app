@@ -1208,3 +1208,41 @@ it.each(["foreground", "continuation"] as const)(
     }
   },
 );
+
+it("releases result-only background continuations and their idle waiters", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(
+    (id, options) =>
+      spawn(id, {
+        ...options,
+        env: { ...options?.env, CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "0" },
+      }),
+    { ...launch, sessionId: "result-only" },
+  );
+  try {
+    await claude.send("start background");
+    const fake = processes[0];
+    if (!fake) throw new Error("missing process");
+    fake.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "build" }],
+    });
+    const settled = vi.fn();
+    const idle = claude.idle().then(settled);
+    fake.emit({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "build",
+    });
+    backgroundTasks(fake);
+    expect(claude.active).toBe(true);
+    fake.emit({ type: "result", subtype: "success", is_error: false });
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce());
+    await idle;
+    expect(claude.active).toBe(false);
+    await expect(claude.send("next request")).resolves.toEqual({ ok: true });
+  } finally {
+    await claude.kill();
+  }
+});

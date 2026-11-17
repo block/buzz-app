@@ -74,7 +74,7 @@ export function SelectedChannelView({
       }
     >
       {(view, owned) => (
-        <FullPageSurface aria-label={entry.title}>
+        <FullPageSurface aria-label={entry.title} style={{ height: "100%" }}>
           <MountedView
             entry={view}
             channel={channel}

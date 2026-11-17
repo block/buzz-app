@@ -2674,8 +2674,9 @@ in place to an ordinary page target: the named page, else the plugin's primary p
 else its first page. `params` become that page's route params only when the page
 declares a route and its `validate` accepts them; otherwise the page opens without
 params. A plugin that is absent, disabled, or lacks the page fails `unavailable`.
-Conversation targets may include `panel: "members"` to restore that channel’s
-Members dialog without replacing its channel/message identity. Unknown panel
+Conversation targets may include `panel: "members"` for the Members dialog or
+`panel: "settings"` for native channel details, including when a plugin replaces
+channel content. Both preserve the channel/message identity. Unknown panel
 values are rejected; this is presentation state, never mutation or confirmation state.
 The boundary copies, freezes and bounds route data; an address is never an access
 grant. Scoped targets require the original viewer and an already joined community.

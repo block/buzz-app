@@ -40,7 +40,10 @@ import {
   useFloatingActionBar,
   useMessageActionBarReady,
 } from "./useFloatingActionBar";
-import { writeClipboardText } from "../../shared/clipboard";
+import {
+  writeClipboardRichText,
+  writeClipboardText,
+} from "../../shared/clipboard";
 import { captureSelectedQuote, quoteSelection } from "./selection-quote";
 
 const AfterMenuClose = createContext<
@@ -262,13 +265,15 @@ function MessageActionBarControls({
     useRef<ReturnType<typeof captureSelectedQuote>>(undefined);
   const ownTrigger = useRef<HTMLButtonElement>(null);
   const trigger = menuTriggerRef ?? ownTrigger;
-  const copy = async (text: () => string, label: string) => {
+  const copy = async (text: () => string, label: string, html?: string) => {
     if (busy.current) return;
     busy.current = true;
     setCopying(true);
     setNotice(undefined);
     try {
-      await writeClipboardText(text());
+      await (html === undefined
+        ? writeClipboardText(text())
+        : writeClipboardRichText(text(), html));
       setNotice({ text: `${label} copied`, error: false });
     } catch {
       setNotice({
@@ -307,7 +312,9 @@ function MessageActionBarControls({
           <>
             <MenuItem
               disabled={copying}
-              onClick={() => void copy(() => selection.text, "Text")}
+              onClick={() =>
+                void copy(() => selection.text, "Text", selection.html)
+              }
             >
               <MenuIcon>
                 <CopyIcon />

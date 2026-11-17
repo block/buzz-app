@@ -202,6 +202,9 @@ it("prepends selection actions to the message menu, including over a selected li
 it("copies the whole message or the captured highlight independently", async () => {
   const user = userEvent.setup();
   const copy = vi.spyOn(clipboard, "writeClipboardText").mockResolvedValue();
+  const rich = vi
+    .spyOn(clipboard, "writeClipboardRichText")
+    .mockResolvedValue();
   const { open, select, controller } = setup();
   open();
   await user.click(
@@ -231,8 +234,11 @@ it("copies the whole message or the captured highlight independently", async () 
     "https://example.org/",
     "buzz://message?channel=general&id=one",
     "Whole message",
-    "Quote me (https://example.org/)",
   ]);
+  expect(rich).toHaveBeenCalledExactlyOnceWith(
+    "Quote me (https://example.org/)",
+    '<div data-buzz-copy="timeline"><a href="https://example.org/">Quote me</a></div>',
+  );
   expect(controller.quote).not.toHaveBeenCalled();
 });
 
@@ -381,7 +387,7 @@ it.each(["unavailable", "rejected"])(
 
 it("reports clipboard failure", async () => {
   const user = userEvent.setup();
-  vi.spyOn(clipboard, "writeClipboardText").mockRejectedValue(
+  vi.spyOn(clipboard, "writeClipboardRichText").mockRejectedValue(
     new Error("Denied"),
   );
   const { open } = setup();

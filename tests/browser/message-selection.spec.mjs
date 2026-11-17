@@ -17,6 +17,14 @@ for (const [scheme, width, scale] of [
       navigator.clipboard.writeText = async (text) => {
         window.copied.push(text);
       };
+      // Observe real ClipboardItem flavors without replacing the operator's
+      // system clipboard. The editor below consumes the captured payload.
+      navigator.clipboard.write = async ([item]) => {
+        window.copiedHighlight = {
+          text: await (await item.getType("text/plain")).text(),
+          html: await (await item.getType("text/html")).text(),
+        };
+      };
     });
     await page.emulateMedia({ colorScheme: scheme });
     await page.setViewportSize({ width, height: 950 });
@@ -32,7 +40,7 @@ for (const [scheme, width, scale] of [
     const message = app.append(
       "primary",
       "alpha",
-      "Before [Example link](https://example.org/pull/1) after.",
+      "Before **bold** [Example link](https://example.org/pull/1) after.",
     );
     const link = page
       .locator(`[data-channel-timeline] [data-message-id="${message.id}"]`)
@@ -120,6 +128,45 @@ for (const [scheme, width, scale] of [
       exact: true,
       includeHidden: true,
     });
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    const paragraph = link.locator("xpath=ancestor::p[1]");
+    await paragraph.selectText();
+    await paragraph.locator("strong").click({ button: "right" });
+    await menu
+      .getByRole("menuitem", { name: "Copy highlight", exact: true })
+      .click();
+    await expect(menu).toHaveCount(0);
+    await expect
+      .poll(() => page.evaluate(() => window.copiedHighlight?.text))
+      .toBe("Before bold Example link (https://example.org/pull/1) after.");
+    const copied = await page.evaluate(() => window.copiedHighlight);
+    expect(copied.html).toContain('<a href="https://example.org/pull/1">');
+    expect(copied.html).toContain("<strong>bold</strong>");
+    await input.evaluate((element, copied) => {
+      const data = new DataTransfer();
+      data.setData("text/plain", copied.text);
+      data.setData("text/html", copied.html);
+      element.focus();
+      element.dispatchEvent(
+        new ClipboardEvent("paste", {
+          clipboardData: data,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }, copied);
+    await expect(input.locator("strong")).toHaveText("bold");
+    const pastedLink = input.locator("[data-source]");
+    await expect(pastedLink).toHaveAttribute(
+      "data-source",
+      "[Example link](https://example.org/pull/1)",
+    );
+    await expect(pastedLink).toHaveText("Example link");
+    await input.fill("");
+    await expect(input).toBeEmpty();
+    await selectLink();
+    await link.click({ button: "right" });
     if (scheme === "light") {
       // The public editor setter models a composer locking while its menu is open.
       await input.evaluate((element) => {
@@ -301,4 +348,42 @@ test("a selection spanning rows copies only the visible conversation", async ({
   await expect(
     page.getByRole("button", { name: /^Close .* tab$/ }),
   ).toHaveCount(0);
+
+  // Overflow acts on its own row; a multi-row highlight remains available
+  // from each row contributing content. Use real focus/selection handoff.
+  await rows.first().locator("p").last().selectText();
+  const other = rows.nth(1);
+  await other.hover();
+  const more = other.getByRole("button", { name: "More message actions" });
+  await more.click();
+  const menu = page.getByRole("menu");
+  await expect(
+    menu.getByRole("menuitem", { name: "Copy message", exact: true }),
+  ).toBeVisible();
+  await expect(
+    menu.getByRole("menuitem", { name: "Copy highlight" }),
+  ).toHaveCount(0);
+  await expect(
+    menu.getByRole("menuitem", { name: "Quote highlight" }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await history.evaluate((element) => {
+    const rows = element.querySelectorAll("[data-message-id]");
+    const range = document.createRange();
+    range.setStartBefore(rows[0].querySelector("p"));
+    range.setEndAfter(rows[1].querySelector("p:last-of-type"));
+    const selection = getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await other.hover();
+  await more.click();
+  await expect(
+    menu.getByRole("menuitem", { name: "Copy highlight" }),
+  ).toBeVisible();
+  await expect(
+    menu.getByRole("menuitem", { name: "Quote highlight" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
 });

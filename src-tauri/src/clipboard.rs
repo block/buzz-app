@@ -77,17 +77,21 @@ pub(crate) async fn write_image<R: tauri::Runtime>(
 ///
 /// `clear_after_secs` is for secrets such as a private key: see `copy_secret`
 /// and `clear_secret`. The wait is at most 10 minutes; quitting cancels it.
+/// Non-secret copies may include semantic HTML alongside the plain text.
 #[tauri::command]
 pub(crate) async fn clipboard_write_text<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     text: String,
+    html: Option<String>,
     clear_after_secs: Option<u64>,
 ) -> Result<(), String> {
     let Some(secs) = clear_after_secs else {
         return write(&app, move |clipboard, _| {
-            clipboard
-                .set_text(text)
-                .map_err(|_| "Could not copy text".to_owned())
+            match html {
+                Some(html) => clipboard.set_html(html, Some(text)),
+                None => clipboard.set_text(text),
+            }
+            .map_err(|_| "Could not copy text".to_owned())
         })
         .await;
     };

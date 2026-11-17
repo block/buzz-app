@@ -421,7 +421,8 @@ and are asked to sign in again in Buzz.
   followed by a blank line for your reply. A selection
   in a thread quotes into the thread's reply box. Quoting keeps formatting and
   links but does not notify anyone mentioned in the quoted text. **Copy highlight**
-  and **Quote highlight** appear above the usual message actions when you right-click
+  keeps formatting and links where supported, with a plain-text alternative.
+  Both highlight actions appear above the usual message actions when you right-click
   highlighted text. On a selected link, **Copy link URL** copies the link's
   destination; **Copy message link** copies the message's permalink.
   Supported browsers keep that text highlighted while the menu is

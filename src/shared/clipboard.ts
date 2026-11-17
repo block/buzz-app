@@ -10,6 +10,28 @@ export function writeClipboardText(text: string): Promise<void> {
     : navigator.clipboard.writeText(text);
 }
 
+/** Keep the semantic selection HTML and its plain-text alternative together.
+ * The desktop host retains clipboard ownership and avoids WebKit activation
+ * loss. Browser writes start synchronously inside the menu's user gesture. */
+export function writeClipboardRichText(
+  text: string,
+  html: string,
+): Promise<void> {
+  if (isTauri()) return invoke("clipboard_write_text", { text, html });
+  if (
+    typeof ClipboardItem === "undefined" ||
+    typeof navigator.clipboard?.write !== "function" ||
+    ClipboardItem.supports?.("text/html") === false
+  )
+    return writeClipboardText(text);
+  return navigator.clipboard.write([
+    new ClipboardItem({
+      "text/plain": new Blob([text], { type: "text/plain" }),
+      "text/html": new Blob([html], { type: "text/html" }),
+    }),
+  ]);
+}
+
 /** How long a copied secret stays on the clipboard before Buzz clears it. */
 export const SECRET_CLIPBOARD_SECONDS = 60;
 

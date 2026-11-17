@@ -13,21 +13,22 @@ export const inject = [
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   const indexUrl = communityIndexUrl();
-  const host = ctx.host;
+  const host = ctx.host?.canRequest?.() === false ? undefined : ctx.host;
   const installer = ctx.reflect.get("pluginInstaller") as
     | PluginInstaller
     | undefined;
   const inventory = ctx.pluginInventory;
-  // Without an index there is nothing to browse, so nothing is recorded.
-  const recorder = indexUrl
-    ? createRecorder({
-        relay: ctx.relay,
-        inventory: {
-          installed: () => inventory.installed(),
-          subscribe: (listener) => inventory.subscribe(listener),
-        },
-      })
-    : undefined;
+  // Where the page can't browse, its switch isn't shown, so nothing is recorded.
+  const recorder =
+    indexUrl && host
+      ? createRecorder({
+          relay: ctx.relay,
+          inventory: {
+            installed: () => inventory.installed(),
+            subscribe: (listener) => inventory.subscribe(listener),
+          },
+        })
+      : undefined;
   if (recorder) ctx.effect(() => () => recorder.stop());
   const openPluginSettings = () =>
     void ctx.navigation.open({
@@ -44,7 +45,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <CommunityPluginsPage
         indexUrl={indexUrl}
         listingRepository={listingRepository(indexUrl)}
-        host={host.canRequest?.() === false ? undefined : host}
+        host={host}
         installer={installer}
         relay={ctx.relay}
         recorder={recorder}

@@ -107,9 +107,10 @@ it("says the page needs the desktop app when host requests can't run, instead of
     snapshot: () => disconnected,
     subscribe: () => () => {},
   });
+  const watchInventory = vi.fn(() => () => {});
   ctx.provide("pluginInventory", {
     installed: () => [],
-    subscribe: () => () => {},
+    subscribe: watchInventory,
   });
   ctx.provide("host", { request, canRequest: () => false });
   const scope = ctx
@@ -126,6 +127,7 @@ it("says the page needs the desktop app when host requests can't run, instead of
     expect(screen.getByText(/needs the Buzz desktop app/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
     expect(request).not.toHaveBeenCalled();
+    expect(watchInventory).not.toHaveBeenCalled();
   } finally {
     await scope.dispose();
     await ctx.fiber.dispose();

@@ -483,9 +483,9 @@ test("message actions reveal, copy, restore focus and reply across responsive la
 
 // Browser-only: jsdom has neither CSS animations nor native popovers. An arrow
 // key typed in the composer turns keyboard navigation on, so the bar opens
-// without its entry animation. The pointer press on More then clears that
-// flag under the open bar; replaying the entry there resizes the bar and moves
-// the menu anchored to it.
+// with no entry motion. The pointer press on More then clears that flag under
+// the open bar; replaying the entry there resizes the bar and moves the menu
+// anchored to it.
 test("a pointer press on More after keyboard input leaves the open toolbar in place", async ({
   page,
   app,
@@ -537,8 +537,10 @@ test("a pointer press on More after keyboard input leaves the open toolbar in pl
   await expect(
     page.getByRole("menuitem", { name: "Copy message", exact: true }),
   ).toBeVisible();
-  // The test proves nothing unless the press really left keyboard navigation.
+  // The test proves nothing unless the press really left keyboard navigation
+  // and gave the open bar's entry a duration again, which a restart needs.
   await expect(root).not.toHaveAttribute("data-keyboard-navigation");
+  await expect(actions).not.toHaveCSS("animation-duration", "0s");
   // The rendering update after the press is the one that reports a restart.
   await frames(page);
   expect(

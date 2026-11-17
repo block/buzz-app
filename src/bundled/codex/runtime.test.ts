@@ -8188,6 +8188,47 @@ it("waits for native completion after a community wake deadline", async () => {
   }
 });
 
+it("retires a cancelled community wake whose interrupt never completes", async () => {
+  const f = fixture();
+  const base = f.delivery("seed");
+  const config = { ...(base.config as object), scope: "community" };
+  const abort = new AbortController();
+  f.delayedInterruptCompletions.add("turn-1");
+  f.process.end.mockResolvedValue(undefined);
+  const once = f.runtime.runOnce({
+    delivery: { ...base, config },
+    key: "watch",
+    signal: abort.signal,
+    prompt: async () => "check",
+  });
+  let retiring: Promise<void> | undefined;
+  try {
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    vi.useFakeTimers();
+    abort.abort(new Error("deadline"));
+    await expect(once).resolves.toEqual({ ok: false, error: "deadline" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(true);
+    const retired = vi.fn();
+    retiring = f.runtime.retire(pubkey).then(retired);
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(f.process.end).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(f.process.end).toHaveBeenCalledOnce();
+    expect(retired).not.toHaveBeenCalled();
+    f.exits.resolve(0);
+    await retiring;
+    expect(retired).toHaveBeenCalledOnce();
+  } finally {
+    abort.abort();
+    f.exits.resolve(0);
+    f.runtime.dispose();
+    await retiring;
+    await once;
+    vi.useRealTimers();
+  }
+});
+
 it("runs an unaddressed wake in the community session without inheriting a posting destination", async () => {
   const f = fixture();
   const base = f.delivery("first");

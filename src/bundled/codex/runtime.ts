@@ -1,3 +1,4 @@
+import { withTimeout } from "../../plugins/timeout";
 import { ownerInstructions } from "../../features/agent-harness/plugin-instructions";
 import {
   ProjectSource,
@@ -284,6 +285,8 @@ export type SavedConversation = Partial<ChannelLabel> & {
 /** How long a stopped turn's shells are looked for, and how often. Codex hands
  * one over about 50ms after the turn ends. */
 const STOP_LINGER_MS = 1_000;
+// An acknowledged interrupt may never produce its completion notification.
+const INTERRUPTED_WAKE_COMPLETION_MS = 30_000;
 const LINGER_POLL_MS = 100;
 /** The binding a run under `protection` may resume: threads never cross
  * protection state keys, protected or not. */
@@ -3619,13 +3622,16 @@ export class CodexRuntime {
       ) {
         try {
           if (!drainingWake || !active.finished) {
-            const interrupt = server.rpc.request("turn/interrupt", {
+            await server.rpc.request("turn/interrupt", {
               threadId: active.threadId,
               turnId: active.turnId,
             });
             if (drainingWake)
-              await Promise.all([interrupt, followed.completed]);
-            else await interrupt;
+              await withTimeout(
+                followed.completed,
+                "Codex did not finish the interrupted wake",
+                INTERRUPTED_WAKE_COMPLETION_MS,
+              );
           }
           await this.terminals(server.rpc, active.threadId);
         } catch {

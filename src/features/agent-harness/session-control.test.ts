@@ -253,3 +253,55 @@ it.each(["queued", "preparing"])(
     if (boundary === "queued") expect(run).not.toHaveBeenCalled();
   },
 );
+
+it("preserves ordered admissions when only compaction is interrupted", async () => {
+  const controls = new SessionControls(() => {});
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let compactSignal: AbortSignal | undefined;
+  const compacted = controls
+    .run("shared", "compact", async (signal) => {
+      compactSignal = signal;
+      await gate;
+      signal.throwIfAborted();
+    })
+    .catch((error) => error);
+  const first = vi.fn(async () => {});
+  const second = vi.fn(async () => {});
+  const a = controls.deliver("shared", first, true);
+  const b = controls.deliver("shared", second, true);
+  try {
+    await Promise.resolve();
+    expect(controls.interrupt("shared")).toBe(true);
+    expect(compactSignal?.aborted).toBe(true);
+    expect(a.signal.aborted).toBe(false);
+    expect(b.signal.aborted).toBe(false);
+  } finally {
+    release();
+    await compacted;
+    await Promise.all([a.done, b.done]);
+  }
+  expect(first).toHaveBeenCalledOnce();
+  expect(second).toHaveBeenCalledOnce();
+  expect(first.mock.invocationCallOrder[0]).toBeLessThan(
+    second.mock.invocationCallOrder[0] ?? 0,
+  );
+});
+
+it("disposal cancels queued admissions even when compaction owns the session", async () => {
+  const controls = new SessionControls(() => {});
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const compacted = controls.run("shared", "compact", async () => gate);
+  const run = vi.fn(async () => {});
+  const queued = controls.deliver("shared", run, true);
+  controls.dispose();
+  release();
+  await compacted;
+  await queued.done;
+  expect(run).not.toHaveBeenCalled();
+});

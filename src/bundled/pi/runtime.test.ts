@@ -3730,3 +3730,49 @@ it("drains an addressed Pi community abort before its successor", async () => {
     f.runtime.dispose();
   }
 });
+
+it.each(["community", "channel", "thread"] as const)(
+  "preserves queued Pi %s work when compaction is interrupted",
+  async (scope) => {
+    const gate = deferred<void>();
+    const f = setup({
+      wait: () => ({ status: "done", answer: 1, text: "done" }),
+      session: ({ action }) => (action === "compact" ? gate.promise : {}),
+    });
+    const config = { ...DEFAULT_CONFIG, scope };
+    const agent = { ...f.agent, config } as unknown as Agent;
+    const place = { channelId: channel, root: root.id };
+    const first = f.deliver(
+      { type: "mention", event: reply("2", "first") },
+      { config },
+    );
+    await first.run;
+    await f.settled(first);
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    const compacted = f.runtime
+      .session(agent, place, "compact")
+      .catch((error) => error);
+    await vi.waitFor(() => expect(f.host.requests("session")).toHaveLength(1));
+    const next = f.deliver(
+      { type: "mention", event: reply("3", "QUEUED_AFTER_COMPACT_INTERRUPT") },
+      { config },
+    );
+    try {
+      await next.run;
+      await f.runtime.session(agent, place, "interrupt");
+      gate.resolve();
+      await compacted;
+      await f.settled(next);
+      expect(f.host.requests("deliver")).toHaveLength(2);
+      expect(f.host.requests("deliver")[1]?.params.text).toContain(
+        "QUEUED_AFTER_COMPACT_INTERRUPT",
+      );
+    } finally {
+      gate.resolve();
+      await compacted;
+      f.runtime.dispose();
+    }
+  },
+);

@@ -708,13 +708,13 @@ export class CodexRuntime {
     const control = `${agent.key}/${key}`;
     const entry = this.entry(agent.key, reads.scope);
     if (action === "interrupt") {
+      if (this.controls.interrupt(control)) return;
       if (key === scopedKey("community", ""))
         for (const request of entry.waiting)
           if (request.settings.scope === "community") {
             request.current = () => false;
             request.answered(true);
           }
-      if (this.controls.interrupt(control)) return;
       const active = entry.lanes.get(key)?.active;
       if (active) await this.interrupt(entry, key, active.reply);
       return;
@@ -956,6 +956,7 @@ export class CodexRuntime {
   retire(agent: AgentKey): Promise<void> {
     this.controls.interrupt(
       `${agent}/${scopedKey("community", COMMUNITY_SESSION)}`,
+      true,
     );
     const prior = this.stopping.get(agent);
     const disposals = [...(this.disposals.get(agent)?.keys() ?? [])].map(

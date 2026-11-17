@@ -481,7 +481,7 @@ export class ClaudeRuntime {
    * agent is here. */
   private readonly retirements = new Map<string, Promise<void>>();
   async retire(pubkey: string) {
-    this.controls.interrupt(`${pubkey}/${COMMUNITY_SESSION}`);
+    this.controls.interrupt(`${pubkey}/${COMMUNITY_SESSION}`, true);
     let retiring = this.retirements.get(pubkey);
     if (!retiring) {
       retiring = (async () => {

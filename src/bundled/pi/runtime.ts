@@ -296,7 +296,7 @@ export class PiRuntime {
   }
 
   async retire(pubkey: string) {
-    this.controls.interrupt(`${pubkey}/${COMMUNITY_SESSION}`);
+    this.controls.interrupt(`${pubkey}/${COMMUNITY_SESSION}`, true);
     const entry = this.agents.get(pubkey);
     if (entry) {
       entry.closed = true;
@@ -540,9 +540,10 @@ export class PiRuntime {
       await this.pi.request("session", { agent: agent.key, key, action });
     };
     if (action === "interrupt") {
-      this.controls.interrupt(control);
       const entry = this.agents.get(agent.key);
-      entry?.policies.get(key)?.cancel();
+      if (!this.controls.compacting(control))
+        entry?.policies.get(key)?.cancel();
+      this.controls.interrupt(control);
       return act();
     }
     if (this.sessionState(agent, place) !== "idle")

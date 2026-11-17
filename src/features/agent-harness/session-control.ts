@@ -140,12 +140,15 @@ export class SessionControls {
     }
   }
   dispose() {
-    for (const key of this.pending.keys()) this.interrupt(key);
+    for (const key of this.pending.keys()) this.interrupt(key, true);
   }
-  interrupt(key: string) {
-    for (const controller of this.pending.get(key) ?? [])
-      controller.abort(new Error("Session work interrupted"));
+  /** Interrupt the current action, or the work queue when no action owns it.
+   * Retirement also cancels queued work, even behind an action. */
+  interrupt(key: string, all = false) {
     const change = this.changes.get(key);
+    if (all || !change)
+      for (const controller of this.pending.get(key) ?? [])
+        controller.abort(new Error("Session work interrupted"));
     change?.controller.abort(new Error("Session action interrupted"));
     return !!change;
   }

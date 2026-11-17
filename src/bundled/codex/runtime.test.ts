@@ -9104,3 +9104,36 @@ it("abandons an empty remote binding when a wake is invalidated during history",
     f.runtime.dispose();
   }
 });
+
+it("preserves queued Codex community work when compaction is interrupted", async () => {
+  const f = fixture();
+  const d = f.delivery("first");
+  const config = { ...(d.config as object), scope: "community" };
+  const agent = { ...d.agent, config } as unknown as Agent;
+  const place = { channelId: "channel" };
+  await f.runtime.run({ ...d, config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+  );
+  const compacted = f.runtime
+    .session(agent, place, "compact")
+    .catch((error) => error);
+  await vi.waitFor(() =>
+    expect(f.sent.some((w) => w.method === "thread/compact/start")).toBe(true),
+  );
+  await f.runtime.run({
+    ...f.delivery("QUEUED_AFTER_COMPACT_INTERRUPT"),
+    config,
+  });
+  f.emit({
+    method: "turn/started",
+    params: { threadId: "thread-1", turn: { id: "compact" } },
+  });
+  await f.runtime.session(agent, place, "interrupt");
+  await compacted;
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(inputText(f.starts()[1])).toContain("QUEUED_AFTER_COMPACT_INTERRUPT");
+  await f.complete(1);
+});

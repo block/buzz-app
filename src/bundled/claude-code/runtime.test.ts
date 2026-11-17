@@ -5121,7 +5121,7 @@ it("reaps an unresponsive Claude community wake after its deadline", async () =>
   }
 });
 
-it.each(["thread", "channel"] as const)(
+it.each(["thread", "channel", "community"] as const)(
   "keeps queued Claude work separate from compaction cancellation (%s)",
   async (scope) => {
     const f = setup([], { hold: true });

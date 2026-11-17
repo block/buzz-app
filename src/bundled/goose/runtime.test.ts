@@ -3403,7 +3403,7 @@ it("reaps an unresponsive Goose community wake after its deadline", async () => 
   }
 });
 
-it.each(["thread", "channel"] as const)(
+it.each(["thread", "channel", "community"] as const)(
   "keeps queued Goose work separate from compaction cancellation (%s)",
   async (scope) => {
     const f = setup({ hold: true, scope, reply: "Compaction complete" });

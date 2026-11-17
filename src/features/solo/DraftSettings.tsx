@@ -85,7 +85,10 @@ export function DraftSettings({
         try {
           const workspace = readWorkspace(content);
           setWorkspace(workspace);
-          setOpened(workspaceCanvas(workspace));
+          setOpened(
+            instructionsCanvas(workspace, undefined) ??
+              JSON.stringify(workspace),
+          );
         } catch {
           setRaw(content);
           setOpened(content);
@@ -105,7 +108,9 @@ export function DraftSettings({
       dirty={
         canonicalDetailsName(value) !== canonicalDetailsName(openedName) ||
         ttl !== ttlSeconds ||
-        (loaded && instructionsCanvas(workspace, raw) !== opened)
+        (loaded &&
+          (instructionsCanvas(workspace, raw) ?? JSON.stringify(workspace)) !==
+            opened)
       }
       finalFocus={finalFocus}
       close={close}

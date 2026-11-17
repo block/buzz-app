@@ -96,7 +96,7 @@ export function WorkspaceSettings({
       setWorkspace(value);
       setRaw(undefined);
       // Dirty tracking follows the form's normalized legacy instructions.
-      return workspaceCanvas(value);
+      return instructionsCanvas(value, undefined) ?? JSON.stringify(value);
     } catch {
       setRaw(canvas);
       return canvas;
@@ -397,7 +397,10 @@ export function WorkspaceSettings({
         (lifetime.changed && !lifetime.checkOnly) ||
         (target.kind === "project" && projectName !== keptName.current) ||
         (loaded &&
-          snapshot(instructionsCanvas(workspace, raw), lineup) !== kept.current)
+          snapshot(
+            instructionsCanvas(workspace, raw) ?? JSON.stringify(workspace),
+            lineup,
+          ) !== kept.current)
       }
       busy={busy || lifetime.busy}
       title={target.kind === "project" ? "Workspace settings" : undefined}

@@ -105,6 +105,9 @@ it("reads worktree Canvas saved with the earlier worktree rule without treating 
   );
   const full = saved.slice(0, -workspace.canvas.length) + body;
   expect(readWorkspace(full)).toEqual({ ...workspace, canvas: body });
+  expect(() =>
+    readWorkspace(full.replace("Make all changes", "Make no changes")),
+  ).toThrow("edited");
   expect(() => workspaceCanvas({ ...workspace, canvas: body })).toThrow(
     LIVE_CANVAS_LIMIT,
   );

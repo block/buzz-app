@@ -3070,3 +3070,14 @@ it("rediscovers both catalogs when retained settings return without losing the d
     screen.getByRole("button", { name: "Huddle voice" }),
   ).toHaveTextContent("Maple");
 });
+it("returns to a clean draft when a named voice is changed back to Codex default", async () => {
+  const f = fixture();
+  const user = userEvent.setup();
+  render(<f.tabs.SettingsTab {...f.props()} settingsSection="identity" />);
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await user.click(await screen.findByRole("radio", { name: "Maple" }));
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await user.click(screen.getByRole("radio", { name: /^Codex default/ }));
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+});

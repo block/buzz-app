@@ -1485,7 +1485,7 @@ export function createTabs(
                 defaultVoice={data?.defaultVoice}
                 disabled={saving || checking}
                 previewDisabled={!!bound}
-                onChange={(voice) => setDraft({ ...draft, voice })}
+                onChange={(voice) => setDraft(readConfig({ ...draft, voice }))}
                 onShown={() => {
                   if (local) provider.check();
                 }}

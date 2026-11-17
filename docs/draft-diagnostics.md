@@ -48,9 +48,11 @@ An immediate read-back can succeed before WebKit reports the storage failure.
 This is one possible cause, not a diagnosis for every draft conflict.
 
 Buzz extends its GPU recovery to Networking helpers reported by the main
-webview's data store. It stops an earlier helper only after two valid checks no
-longer report it. The helper's expected executable, process ID, and start time
-must still match. An unreadable reported identity pauses that helper watch.
+webview's data store. GPU helpers get two valid missing checks. Networking
+helpers get ten checks, about ten seconds, before the watcher signals them. This
+gives a Networking helper more time to exit. The helper's expected executable,
+process ID, and start time must still match. An unreadable reported identity
+pauses that helper watch.
 Current helpers and helpers Buzz never observed remain untouched.
 
 This recovery runs only while Buzz is open. It does not scan for helpers left

@@ -5,9 +5,9 @@
 //! the page blank. A dropped Networking process can keep storage locked.
 //!
 //! One main-thread timer records the GPU and Networking processes reported
-//! by the main webview and its data store, with their start times. A helper
-//! unreported for `GRACE` checks is killed only if its identity still matches.
-//! A helper that exits on its own is forgotten instead.
+//! by the main webview and its data store, with their start times. Each helper
+//! type has a grace period before a still-matching process is killed. A helper
+//! that exits on its own is forgotten instead.
 //!
 //! A helper the timer never saw reported is never killed. Checks pause while
 //! the webview has no content process or a reported identity cannot be read.
@@ -15,8 +15,11 @@
 /// Seconds between checks. WebKit reports a GPU process for the 3 s it waits.
 #[cfg(target_os = "macos")]
 const INTERVAL: f64 = 1.0;
-/// Checks a recorded process must go unreported before it is killed.
-const GRACE: u8 = 2;
+/// Checks a GPU process must go unreported before it is killed.
+const GPU_GRACE: u8 = 2;
+/// Give Networking helpers more time to exit before recovery.
+#[cfg(any(target_os = "macos", test))]
+const NETWORK_GRACE: u8 = 10;
 
 /// A process, told from a later one reusing its pid by when it started.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +39,7 @@ struct Seen {
 fn abandoned(
     seen: &mut Vec<Seen>,
     reported: Option<Process>,
+    grace: u8,
     running: impl Fn(Process) -> bool,
 ) -> Vec<Process> {
     let mut abandoned = Vec::new();
@@ -48,7 +52,7 @@ fn abandoned(
             return false;
         }
         entry.unreported += 1;
-        if entry.unreported < GRACE {
+        if entry.unreported < grace {
             return true;
         }
         abandoned.push(entry.process);
@@ -77,6 +81,16 @@ fn check(
     helper: i32,
     process: impl Fn(i32) -> Option<Process>,
 ) -> Vec<Process> {
+    check_with_grace(seen, content, helper, GPU_GRACE, process)
+}
+
+fn check_with_grace(
+    seen: &mut Vec<Seen>,
+    content: i32,
+    helper: i32,
+    grace: u8,
+    process: impl Fn(i32) -> Option<Process>,
+) -> Vec<Process> {
     if content <= 0 {
         return Vec::new();
     }
@@ -89,7 +103,7 @@ fn check(
     } else {
         None
     };
-    abandoned(seen, reported, |earlier| {
+    abandoned(seen, reported, grace, |earlier| {
         process(earlier.pid) == Some(earlier)
     })
 }
@@ -107,7 +121,7 @@ mod macos {
     use objc2_web_kit::WKWebView;
     use tauri::{AppHandle, Manager, Runtime};
 
-    use super::{check, Process, INTERVAL};
+    use super::{check, check_with_grace, Process, INTERVAL, NETWORK_GRACE};
 
     /// The executable of every WebKit GPU process.
     const GPU_BINARY: &[u8] = b"/com.apple.WebKit.GPU";
@@ -145,6 +159,10 @@ mod macos {
     pub(super) fn kill(expected: Process, binary: &[u8], kind: &str) {
         // Recheck at the signal boundary, not only during the timer's sample.
         if process(expected.pid, binary) != Some(expected) {
+            log(&format!(
+                "Skipped signaling WebKit {kind} process {} because its identity no longer matched",
+                expected.pid
+            ));
             return;
         }
         // SAFETY: `kill` takes no pointers.
@@ -211,8 +229,13 @@ mod macos {
                         0
                     };
                     let identity = |pid| process(pid, NETWORK_BINARY);
-                    for dropped in check(&mut network_seen.borrow_mut(), content, network, identity)
-                    {
+                    for dropped in check_with_grace(
+                        &mut network_seen.borrow_mut(),
+                        content,
+                        network,
+                        NETWORK_GRACE,
+                        identity,
+                    ) {
                         kill(dropped, NETWORK_BINARY, "Networking");
                     }
                 }
@@ -247,50 +270,53 @@ mod tests {
     }
 
     #[test]
-    fn a_dropped_process_that_still_runs_is_killed_after_the_grace() {
-        let mut seen = Vec::new();
-        assert!(abandoned(&mut seen, Some(OLD), |_| true).is_empty());
-        assert!(abandoned(&mut seen, Some(OLD), |_| true).is_empty());
+    fn a_dropped_process_is_signaled_after_its_configured_grace() {
+        for grace in [GPU_GRACE, NETWORK_GRACE] {
+            let mut seen = Vec::new();
+            assert!(abandoned(&mut seen, Some(OLD), grace, |_| true).is_empty());
 
-        // WebKit gave up: the first unreported check only counts.
-        assert!(abandoned(&mut seen, None, |_| true).is_empty());
-        assert_eq!(abandoned(&mut seen, None, |_| true), [OLD]);
+            // Each missing check before the limit only counts.
+            for _ in 1..grace {
+                assert!(abandoned(&mut seen, None, grace, |_| true).is_empty());
+            }
+            assert_eq!(abandoned(&mut seen, None, grace, |_| true), [OLD]);
 
-        // Killed once, whether or not the kill worked.
-        assert!(seen.is_empty());
-        assert!(abandoned(&mut seen, None, |_| true).is_empty());
+            // Signaled once, whether or not the signal worked.
+            assert!(seen.is_empty());
+            assert!(abandoned(&mut seen, None, grace, |_| true).is_empty());
+        }
     }
 
     #[test]
     fn a_process_that_exits_is_forgotten_not_killed() {
         let mut seen = Vec::new();
-        abandoned(&mut seen, Some(OLD), |_| true);
-        assert!(abandoned(&mut seen, None, |_| true).is_empty());
+        abandoned(&mut seen, Some(OLD), GPU_GRACE, |_| true);
+        assert!(abandoned(&mut seen, None, GPU_GRACE, |_| true).is_empty());
         // Gone, or its pid now belongs to another process.
-        assert!(abandoned(&mut seen, None, |_| false).is_empty());
+        assert!(abandoned(&mut seen, None, GPU_GRACE, |_| false).is_empty());
         assert!(seen.is_empty());
-        assert!(abandoned(&mut seen, None, |_| true).is_empty());
+        assert!(abandoned(&mut seen, None, GPU_GRACE, |_| true).is_empty());
     }
 
     #[test]
     fn a_process_reported_again_starts_a_new_grace() {
         let mut seen = Vec::new();
-        abandoned(&mut seen, Some(OLD), |_| true);
-        assert!(abandoned(&mut seen, None, |_| true).is_empty());
-        assert!(abandoned(&mut seen, Some(OLD), |_| true).is_empty());
-        assert!(abandoned(&mut seen, None, |_| true).is_empty());
-        assert_eq!(abandoned(&mut seen, None, |_| true), [OLD]);
+        abandoned(&mut seen, Some(OLD), GPU_GRACE, |_| true);
+        assert!(abandoned(&mut seen, None, GPU_GRACE, |_| true).is_empty());
+        assert!(abandoned(&mut seen, Some(OLD), GPU_GRACE, |_| true).is_empty());
+        assert!(abandoned(&mut seen, None, GPU_GRACE, |_| true).is_empty());
+        assert_eq!(abandoned(&mut seen, None, GPU_GRACE, |_| true), [OLD]);
     }
 
     #[test]
     fn a_replacement_is_kept_while_the_dropped_process_is_killed() {
         let mut seen = Vec::new();
-        abandoned(&mut seen, Some(OLD), |_| true);
+        abandoned(&mut seen, Some(OLD), GPU_GRACE, |_| true);
         // Another page made WebKit start a new GPU process meanwhile.
-        assert!(abandoned(&mut seen, Some(NEW), |_| true).is_empty());
-        assert_eq!(abandoned(&mut seen, Some(NEW), |_| true), [OLD]);
+        assert!(abandoned(&mut seen, Some(NEW), GPU_GRACE, |_| true).is_empty());
+        assert_eq!(abandoned(&mut seen, Some(NEW), GPU_GRACE, |_| true), [OLD]);
         assert_eq!(pids(&seen), [NEW.pid]);
-        assert!(abandoned(&mut seen, Some(NEW), |_| true).is_empty());
+        assert!(abandoned(&mut seen, Some(NEW), GPU_GRACE, |_| true).is_empty());
     }
 
     #[test]
@@ -300,10 +326,18 @@ mod tests {
             ..OLD
         };
         let mut seen = Vec::new();
-        abandoned(&mut seen, Some(OLD), |_| true);
+        abandoned(&mut seen, Some(OLD), GPU_GRACE, |_| true);
         // WebKit's next GPU process got the old pid: the old one is gone.
-        assert!(abandoned(&mut seen, Some(reused), |process| process == reused).is_empty());
-        assert!(abandoned(&mut seen, Some(reused), |process| process == reused).is_empty());
+        assert!(
+            abandoned(&mut seen, Some(reused), GPU_GRACE, |process| process
+                == reused)
+            .is_empty()
+        );
+        assert!(
+            abandoned(&mut seen, Some(reused), GPU_GRACE, |process| process
+                == reused)
+            .is_empty()
+        );
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].process, reused);
     }
@@ -312,7 +346,7 @@ mod tests {
     fn a_process_never_reported_is_never_killed() {
         let mut seen = Vec::new();
         for _ in 0..5 {
-            assert!(abandoned(&mut seen, None, |_| true).is_empty());
+            assert!(abandoned(&mut seen, None, GPU_GRACE, |_| true).is_empty());
         }
     }
 

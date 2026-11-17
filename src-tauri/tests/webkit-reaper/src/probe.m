@@ -26,6 +26,7 @@
 static WKWebViewConfiguration *configuration;
 static WKWebsiteDataStore *fixtureStore;
 static NSTimer *capturedTimer;
+static const int networkGraceChecks = 10;
 static Method timerFactory;
 static IMP originalTimerFactory;
 
@@ -189,8 +190,12 @@ int storage_probe_run(void *rawView, void *rawTimer, const char *path) {
         require(sameProcess(old, oldIdentity), @"dropped helper remains alive after WebKit termination");
         require(writerLocked(database, old), @"dropped helper still holds the SQLite write lock");
         NSLog(@"WebKit dropped PID %d; replacement PID %d; old SQLite writer lock remains", old, replacement);
+        // One missing callback already ran before WebKit started the replacement.
+        int missingChecks = 1;
+        for (; missingChecks < networkGraceChecks - 1; ++missingChecks) [timer fire];
+        require(sameProcess(old, oldIdentity), @"abandoned helper survives the longer Networking grace");
         [timer fire];
-        require(spin(^BOOL { return !sameProcess(old, oldIdentity); }, 5), @"production reaper stops the abandoned Networking helper");
+        require(spin(^BOOL { return !sameProcess(old, oldIdentity); }, 5), @"production reaper stops the abandoned Networking helper after its grace");
         require(spin(^BOOL {
             return [evaluate(view, @"localStorage.getItem('pending-write') === null") isEqual:@YES];
         }, 5), @"existing page reconnects to committed storage");

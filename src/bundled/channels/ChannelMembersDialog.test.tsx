@@ -310,8 +310,8 @@ async function setup(
           roster(relay, forkId, forkMembers, clock),
         ]
       : [];
-    return [currentRoster(), ...fork, ...stableEvents].filter(
-      (event) => filters.some((filter) => matchesEvent(event, filter)),
+    return [currentRoster(), ...fork, ...stableEvents].filter((event) =>
+      filters.some((filter) => matchesEvent(event, filter)),
     );
   });
   const readAgentLibrary = vi.fn(

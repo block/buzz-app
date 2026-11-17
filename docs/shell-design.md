@@ -463,7 +463,7 @@ Right-click any channel tab and choose **Close all tabs** to close this channel'
 thread, plugin and settings tabs across both panes, including hidden side-pane
 tabs. The permanent channel conversation stays; focus returns there if its previous
 target closed, while typing in surviving content remains uninterrupted. A
-launcher's side panel, such as Todos, is not a tab, so it stays as it was:
+launcher's side panel, such as a huddle, is not a tab, so it stays as it was:
 shown in an open pane, or hidden in a closed one. Other channels and saved
 message drafts are untouched. **Close other tabs** in the
 same menu does the same, except that the right-clicked tab stays open, selected
@@ -486,8 +486,8 @@ The main-header split control toggles existing pane content without closing its
 tabs or resetting their contents. With no content it is disabled but remains
 focusable, so closing the last tab has a stable focus-return target. There is no
 blank-tab creation action or channel/DM/tool picker. Tabs open from content such
-as threads, profiles, channel settings and linked sessions. Todos and native
-desktop Terminal remain available through their existing channel launchers;
+as threads, profiles, channel settings and linked sessions. Native desktop
+Terminal remains available through its existing channel launcher;
 closing a terminal presentation does not stop its plugin-owned shell.
 Conversation tabs reuse the timeline, composer, draft and message-management owners;
 selecting an already-open conversation selects its existing tab. Each main channel
@@ -550,4 +550,3 @@ Harness logs remain owned and authorized by the profile. `PanelSubview` presents
 the log as a sibling tab in the channel pane, with standalone Back navigation
 elsewhere. Closing the log or losing authorization unmounts it and stops its
 polling; switching tabs retains it and the profile state.
-Todos uses the standard 2.5rem header to align with other side panels.

@@ -730,7 +730,7 @@ and are asked to sign in again in Buzz.
 - **Join** in a View only chat or channel adds you as a viewer, with a sidebar
   entry and normal unread tracking. Notifications follow your existing settings
   and mention/thread rules. You appear in People as **Viewing only**; you still
-  cannot post, react, or change Canvas or Todos. Reading without joining
+  cannot post, react, or change Canvas. Reading without joining
   stays available.
   Use **Leave chat** or **Leave channel** to remove your membership and sidebar
   entry. Joined viewers keep reading after a switch to Private until they leave
@@ -1019,7 +1019,7 @@ and are asked to sign in again in Buzz.
   closing the thread clears it. The original is also identified as current for
   assistive technology.
 - **Side panels stay with their conversation**: a tab or panel you open beside a
-  conversation, such as a thread, **Canvas**, a huddle, or Todos, stays open for
+  conversation, such as a thread, **Canvas**, or a huddle, stays open for
   that conversation when you go to another conversation or page and come back,
   until you close it. Reloading Buzz does not restore it. The Terminal drawer
   closes when you leave the conversation.

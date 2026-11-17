@@ -1328,7 +1328,7 @@ PanelHeader owns one consistent header frame: leading `navigation`, title/icon,
 and trailing `actions`. `PanelHeaderLabel` supplies the smaller tab-aligned
 label role; omit its optional icon for image and video detail titles. Use a small IconButton with ArrowLeft for a local back
 action and X for closing the panel. The default 2.5rem (40px at the default root size) minimum height aligns conversation,
-thread, profile, tabbed workspace, and Todos headers. The compact variant shares
+thread, profile and tabbed workspace headers. The compact variant shares
 this height. Headers use 0.25rem inline padding (matching the centered 2rem controls’
 block inset), 1rem identity icons, and
 0.25rem gaps between action buttons without reducing their hit areas. Navigation

@@ -1388,6 +1388,7 @@ export function WorkflowLanding({
   session,
   capability,
   channels,
+  channelsSettled = true,
   filter,
   onFilterChange,
   refreshRequest,
@@ -1399,13 +1400,16 @@ export function WorkflowLanding({
   detailTarget,
   selected,
   onSelect,
-  reveal,
+  reveal: requested,
   onRevealed,
 }: {
   /** Live identity names; offline diagnostic fixtures use public-key labels. */
   session?: RelaySession | undefined;
   capability: WorkflowCapability;
   channels: readonly ChannelSummary[];
+  /** False while more channels may still be listed: `reveal` then waits
+   * rather than report its workflow missing. */
+  channelsSettled?: boolean | undefined;
   /** Element that receives the selected workflow's detail. */
   detailTarget: HTMLElement | null;
   selected: string | undefined;
@@ -1413,8 +1417,8 @@ export function WorkflowLanding({
   onSelect: (key: string | undefined, name?: string) => void;
   /** A visit's request to open one workflow, until `onRevealed` answers it. */
   reveal?: Readonly<{ entryId: string; owner: string; id: string }> | undefined;
-  /** The request is answered and its owner withdraws it: the workflow opened
-   * or was not found, or the reader selected or filtered for themselves. */
+  /** The request is answered for good and its owner withdraws it: the
+   * workflow opened or was not found. */
   onRevealed?: ((entryId: string) => void) | undefined;
   /** Channel IDs to show; every channel is still read. Empty shows all. */
   filter: readonly string[];
@@ -1519,12 +1523,16 @@ export function WorkflowLanding({
   }, [snapshots, mineOnly, status, triggers, viewer]);
   const filtered =
     mineOnly || status !== "all" || triggers.length > 0 || filter.length > 0;
-  // The reader's own selection or filter change answers a visit still waiting
-  // for its workflow: a read that lands later must not replace their choice.
+  // The reader's own selection or filter change also answers a visit still
+  // waiting for its workflow: a read that lands later must not replace their
+  // choice. That answer is kept here, with the filters it protects, so a
+  // remount that resets them leaves the visit to open its workflow.
+  const [declined, setDeclined] = useState<string>();
+  const reveal = requested?.entryId === declined ? undefined : requested;
   const own =
     <Args extends unknown[]>(choose: (...args: Args) => void) =>
     (...args: Args) => {
-      if (reveal) onRevealed?.(reveal.entryId);
+      if (reveal) setDeclined(reveal.entryId);
       choose(...args);
     };
   const resetFilters = own(() => {
@@ -1592,10 +1600,12 @@ export function WorkflowLanding({
           definition.owner === reveal.owner && definition.id === reveal.id,
       );
   const revealShown = !!revealItem && items.includes(revealItem);
-  // Only a completed read of every channel shows that it is not here.
+  // Only a completed read of every channel, once no more can be listed, shows
+  // that it is not here.
   const revealAbsent =
     !!reveal &&
     !revealItem &&
+    channelsSettled &&
     ordered.every((channel) => snapshots[channel.id]?.status === "ready");
   useEffect(() => {
     if (!reveal || (!revealItem && !revealAbsent)) return;

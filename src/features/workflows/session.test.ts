@@ -9,6 +9,7 @@ import { PublishRejected } from "../relay/outbox";
 import {
   flush,
   keypair,
+  metadata,
   roster,
   signed,
   scriptedTransport,
@@ -426,6 +427,22 @@ it("locates nothing in a channel the session knows the viewer is outside, and dr
   h.next().respond([definition]);
   await reread;
   expect(later.snapshot()).toEqual({ status: "ready", data: undefined });
+});
+it("locates nothing in an open channel the viewer has not joined", async () => {
+  const h = setup();
+  // Signed public metadata lets anyone read the channel, so the session's
+  // reader keeps its events. The roster leaves the viewer out, and only the
+  // participation rule refuses the definition.
+  h.emit([
+    metadata(relay, channelId, "Open channel", 1, [["public"]]),
+    roster(relay, channelId, [], 1),
+  ]);
+  const open = h.session.workflows.locate({ owner: viewer.pubkey, id });
+  const read = open.refresh();
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  h.next().respond([definition]);
+  await read;
+  expect(open.snapshot()).toEqual({ status: "ready", data: undefined });
 });
 it("regrant cannot resurrect stale history; clear-cache and dispose cancel interest", async () => {
   const h = setup();

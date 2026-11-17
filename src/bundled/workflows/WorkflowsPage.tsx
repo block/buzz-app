@@ -48,8 +48,9 @@ type WorkflowsNavigation = {
   navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
 };
-/** The visit whose route is answered, kept by the page: the community below
- * is rebuilt on every reconnect and must not open that workflow again. */
+/** The visit whose workflow opened or was not found, kept by the page: the
+ * community below is rebuilt on every reconnect and must not open that
+ * workflow, or report it missing, again. */
 type AnsweredRoute = {
   revealed?: string | undefined;
   onRevealed?: ((entryId: string) => void) | undefined;
@@ -120,6 +121,11 @@ export function WorkflowCommunity({
   const eligible = channels.channels.filter(
     (item) => !item.huddle && !item.metadataPending,
   );
+  // More channels can become eligible while the list is still being read or
+  // one awaits the metadata that classifies it.
+  const settled =
+    channels.status === "ready" &&
+    !channels.channels.some((item) => !item.huddle && item.metadataPending);
   // Archived channels stay eligible, so their workflows can still be found,
   // turned off and deleted, and an open editor keeps its draft.
   const creatable = eligible.filter((item) => !item.archived);
@@ -350,6 +356,7 @@ export function WorkflowCommunity({
                   session={session}
                   capability={capability}
                   channels={eligible}
+                  channelsSettled={settled}
                   filter={filter}
                   onFilterChange={setFilter}
                   detailTarget={detailTarget}

@@ -801,6 +801,7 @@ it.each(["private", "dm", "solo", "public"] as const)(
       .spyOn(h.session.messages, "forward")
       .mockReturnValue("forwarded-id");
     Object.assign(h.session.channels, {
+      resolve: async () => {},
       describe: () => ({
         state: "found",
         name: "Source",
@@ -812,7 +813,7 @@ it.each(["private", "dm", "solo", "public"] as const)(
           privacy === "dm" || privacy === "solo" ? privacy : "stream",
       }),
     });
-    const { remote } = await h.connect();
+    let { remote } = await h.connect();
     expect(
       (
         await remote.forwarding?.resolve(
@@ -872,6 +873,8 @@ it.each(["private", "dm", "solo", "public"] as const)(
         ),
       ).toHaveTextContent("Everyone in this Huddle");
     view.unmount();
+    // A detached host owns one bridge client at a time. Reconnect after closing it.
+    ({ remote } = await h.connect());
     content = "Current authorized source @Local Agent";
     expect(
       await remote.forwarding?.send(reference, "Note", [], [], [], {}),

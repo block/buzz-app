@@ -926,6 +926,9 @@ export type AgentVoiceConnection = Readonly<{
 }>;
 
 export type AgentType<Config = unknown> = {
+  /** Checks Delivery.current() and signal after waits, immediately before each
+   * prompt/steer handoff, then calls Delivery.accepted() at that handoff. */
+  readonly supportsGuardedWake?: true;
   /** Carries Delivery.session into tool context and sessionContext into the prompt. */
   sessionAdmission?: true;
   /** Huddles supplies a running agent owned by the current viewer.

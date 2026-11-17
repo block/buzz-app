@@ -218,6 +218,7 @@ async function setup({
     | Pick<NonNullable<AgentType<Config>["sessionControls"]>, "state" | "run">
     | undefined,
   resumes = false,
+  supportsGuardedWake = undefined as AgentType<Config>["supportsGuardedWake"],
   /** Settings the type syncs across devices. */
   syncedSettings = undefined as AgentType<Config>["syncedSettings"],
   protection = undefined as true | undefined,
@@ -289,6 +290,7 @@ async function setup({
   const run =
     vi.fn<(delivery: Delivery<Config>) => void | Promise<void>>(answer);
   const type: AgentType<Config> = {
+    supportsGuardedWake,
     id: typeId,
     title: "Echo",
     timeoutMs,
@@ -2319,8 +2321,26 @@ describe("a plugin's wake", () => {
 
 describe("guarded plugin wakes", () => {
   const wake = { channel, root: "e".repeat(64), text: "Check current work" };
-  it("uses guarded delivery only after strict capability detection, without probe wakes", async () => {
+  it("refuses unsupported guarded wakes before run and preserves ordinary wakes", async () => {
     const f = await setup();
+    try {
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      await expect(
+        f.plugin.agents.wake(bot, wake, { current: () => true }),
+      ).resolves.toEqual({ status: "dropped", reason: "refused" });
+      expect(f.run).not.toHaveBeenCalled();
+      const entered = runnerGate();
+      f.run.mockImplementationOnce(() => entered.resolve());
+      expect(f.plugin.agents.wake(bot, wake)).toBeUndefined();
+      await entered.promise;
+      expect(f.run).toHaveBeenCalledOnce();
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("uses guarded delivery only after strict capability detection, without probe wakes", async () => {
+    const f = await setup({ supportsGuardedWake: true });
     const oldWake = vi.fn();
     const sendIfSupported = (agents: {
       supportsGuardedWake?: unknown;
@@ -2359,7 +2379,7 @@ describe("guarded plugin wakes", () => {
   });
 
   it("preserves void calls and synchronous queue errors while guarded calls return refused", async () => {
-    const f = await setup();
+    const f = await setup({ supportsGuardedWake: true });
     const gate = runnerGate();
     const started = runnerGate();
     try {
@@ -2386,7 +2406,7 @@ describe("guarded plugin wakes", () => {
   it.each(["aborted", "stale", "guard-error"] as const)(
     "drops %s before queue admission",
     async (reason) => {
-      const f = await setup();
+      const f = await setup({ supportsGuardedWake: true });
       try {
         await f.service.create({ type: "example/echo", name: "Echo" });
         const signal = reason === "aborted" ? AbortSignal.abort() : undefined;
@@ -2418,7 +2438,7 @@ describe("guarded plugin wakes", () => {
     "access",
     "session",
   ] as const)("drops a wake invalidated by %s while queued", async (change) => {
-    const f = await setup();
+    const f = await setup({ supportsGuardedWake: true });
     const gate = runnerGate();
     const started = runnerGate();
     let caller!: Context;
@@ -2483,7 +2503,7 @@ describe("guarded plugin wakes", () => {
   });
 
   it("checks again after harness queue waits and resolves at handoff, before completion", async () => {
-    const f = await setup();
+    const f = await setup({ supportsGuardedWake: true });
     const gate = runnerGate();
     const entered = runnerGate<Delivery<Config>>();
     let valid = true;
@@ -2540,7 +2560,7 @@ describe("guarded plugin wakes", () => {
   it.each(["stale", "stop", "delivered"] as const)(
     "settles %s through the public API, host queue and real ACP delivery queue",
     async (change) => {
-      const f = await setup();
+      const f = await setup({ supportsGuardedWake: true });
       const transport = fakeSpawn({ hold: true });
       const acp = await AcpProcess.start(transport.spawn, GOOSE, {
         cwd: "/work",
@@ -2607,7 +2627,7 @@ describe("guarded plugin wakes", () => {
   );
 
   it("returns refused when a harness ignores a wake without accepting it", async () => {
-    const f = await setup();
+    const f = await setup({ supportsGuardedWake: true });
     try {
       await f.service.create({ type: "example/echo", name: "Echo" });
       expect(() => f.service.wake(bot, wake, { current: () => true })).toThrow(

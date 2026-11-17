@@ -840,6 +840,8 @@ export class AgentRunners {
     const runner = this.runners.get(key);
     if (!runner || !this.runs(key) || !this.host.ready(key))
       return Promise.resolve({ status: "dropped", reason: "unavailable" });
+    if (runner.type?.supportsGuardedWake !== true)
+      return Promise.resolve({ status: "dropped", reason: "refused" });
     const controller = runner.controller.signal;
     return new Promise((resolve) => {
       let outcome: WakeOutcome | undefined;

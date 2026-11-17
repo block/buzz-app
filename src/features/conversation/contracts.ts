@@ -455,11 +455,14 @@ export type ComposerCompletion = Readonly<{
  * that message: in its thread when `threadId` is given, or else in the
  * conversation, or its thread if it is a reply or too old to find. Without
  * `messageId`, keyboard focus moves to the tab's composer once it is ready,
- * unless the user clicks or types first. */
+ * unless the user clicks or types first. With `threadId` and no `messageId`,
+ * `firstUnread` names the thread's first unread reply for a page that reads
+ * the thread as it opens it; the New messages divider goes there. */
 export type PageTabTarget = {
   channelId: string;
   threadId?: string;
   messageId?: string;
+  firstUnread?: string;
 };
 /** A page-owned conversation with the host's reader, composer, and side pane. */
 export type ConversationWorkspaceProps = {

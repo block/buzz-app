@@ -367,8 +367,22 @@ function InboxList({
   // The tab a row opened, kept even after its row regroups.
   // Selection lasts as long as that tab.
   const [opened, setOpened] = useState(() => selections.get(session)?.opened);
-  const openRow = (item: InboxItem, channel?: { channelType?: string }) => {
-    const tab = tabTarget(item, channel);
+  const openRow = (
+    item: InboxItem,
+    channel?: { channelType?: string },
+    unread = false,
+  ) => {
+    const target = tabTarget(item, channel);
+    // An unread channel thread opens at its first unread reply, which the
+    // row's own read must not hide.
+    const tab =
+      unread && target.threadId && item.rootId && item.target.kind === "thread"
+        ? {
+            channelId: target.channelId,
+            threadId: target.threadId,
+            firstUnread: item.messageId,
+          }
+        : target;
     const shown = openTab(tab);
     setOpened(shown ? tab : undefined);
     return shown;
@@ -1221,7 +1235,13 @@ function InboxList({
                             if (
                               reselect
                                 ? !openTab(reselect)
-                                : !openRow(item, channel)
+                                : !openRow(
+                                    item,
+                                    channel,
+                                    unread &&
+                                      activity !== "mentions" &&
+                                      selectedId !== item.id,
+                                  )
                             )
                               void navigator.open({
                                 version: 1,

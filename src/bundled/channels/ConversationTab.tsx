@@ -171,6 +171,7 @@ export function ConversationTab({
             focusRequest={focusRequest}
             revealSelected={threadReveal !== undefined}
             revealRequest={threadReveal}
+            firstUnread={tab.firstUnread}
             close={close}
             parent={parent}
           />

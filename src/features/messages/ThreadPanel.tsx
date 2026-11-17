@@ -100,6 +100,9 @@ export type ThreadPanelProps = {
   revealFocus?: boolean | undefined;
   /** With revealSelected: each new value reveals the selected message again. */
   revealRequest?: number | undefined;
+  /** The first unread reply, named by an opener that reads the thread as it
+   * opens it: the divider goes above its branch. */
+  firstUnread?: string | undefined;
   headerActions?: ReactNode | undefined;
   /** Saved drafts may compose only against a verified matching root. */
   requireReadyRoot?: boolean | undefined;
@@ -428,6 +431,7 @@ function OwnedThreadPanel({
   active = true,
   revealSelected,
   revealFocus,
+  firstUnread,
   requireReadyRoot,
   onDraftSaved,
   onSend,
@@ -503,6 +507,7 @@ function OwnedThreadPanel({
       active={active}
       revealSelected={revealSelected}
       revealFocus={revealFocus}
+      firstUnread={firstUnread}
       requireReadyRoot={requireReadyRoot}
       onDraftSaved={onDraftSaved}
       onSend={onSend}
@@ -536,6 +541,7 @@ function ThreadMessages({
   revealSelected,
   revealFocus,
   revealRequest,
+  firstUnread,
   requireReadyRoot,
   onDraftSaved,
   onSend,
@@ -569,6 +575,7 @@ function ThreadMessages({
   /** Reveal an inline target without taking focus from its host. */
   revealFocus?: boolean | undefined;
   revealRequest?: number | undefined;
+  firstUnread?: string | undefined;
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: ThreadPanelProps["onDraftSaved"];
   onSend?: ThreadPanelProps["onSend"];
@@ -1018,6 +1025,18 @@ function ThreadMessages({
       if (shown) setBoundary({ ...boundary, id: null });
       return;
     }
+    // A named first unread reply outlasts the read that opened it.
+    if (firstUnread) {
+      if (snapshot.replies.some((row) => row.id === firstUnread))
+        setBoundary({
+          ...boundary,
+          id: tree.ancestors(firstUnread).at(-1) ?? firstUnread,
+        });
+      else if (snapshot.direction === "older" && snapshot.canLoadMore)
+        void view.loadMore();
+      else setBoundary({ ...boundary, id: null });
+      return;
+    }
     const unread = (id: string): boolean => {
       const attention = session.unread.attention(channelId, id);
       return (
@@ -1054,6 +1073,7 @@ function ThreadMessages({
   }, [
     boundary,
     active,
+    firstUnread,
     revealSelected,
     returning,
     navigation,

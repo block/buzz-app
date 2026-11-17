@@ -901,7 +901,7 @@ it("opens at the first unread reply behind a line that reading keeps, paging pas
 });
 it("pages past an own or individually read reply until history or a thread-wide read reaches it", () => {
   const h = messagesHarness(ordinaryNavigation());
-  const { reply, unread, read } = unreadReplies(h);
+  const { reply, unread } = unreadReplies(h);
   const [older, own, later] = [
     reply("older unread", 2),
     reply("own", 3),
@@ -942,7 +942,6 @@ it("pages past an own or individually read reply until history or a thread-wide 
   expect(limited.view.loadMore).not.toHaveBeenCalled();
   expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
   expect(limited.element).not.toHaveAttribute("data-positioning");
-  void read;
 });
 it("leaves focus the person moved while the first unread reply loads", () => {
   const h = messagesHarness(ordinaryNavigation());
@@ -1148,6 +1147,31 @@ it("opens a read thread at its latest reply, and an explicit target at itself, w
   exact.render();
   expect(exact.view.loadMore).not.toHaveBeenCalled();
   expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+});
+it("places a named first unread reply's line above its branch after its read, paging older to find it", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply } = unreadReplies(h);
+  // The opener has already read the thread: nothing is unread any more.
+  const top = reply("top", 2);
+  const named = { ...reply("named", 3), replyParentId: top.id };
+  Object.assign(h.props as ThreadPanelProps, { firstUnread: named.id });
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [reply("later", 4)];
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(h.element).toHaveAttribute("data-positioning");
+
+  h.snapshot.canLoadMore = false;
+  h.snapshot.replies = [top, named, reply("later", 4)];
+  h.render();
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(
+    line.compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${top.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(h.element.scrollTop).toBe(300);
 });
 it("renders replies after the original without a reply-count divider", () => {
   const h = messagesHarness();

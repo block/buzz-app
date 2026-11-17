@@ -198,6 +198,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   adding,
   picture,
   isAgent,
+  profiled,
   roleLabel,
   archived,
   ownerName,
@@ -234,6 +235,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   adding: boolean;
   picture: string | undefined;
   isAgent: boolean;
+  profiled: boolean;
   roleLabel: string | undefined;
   archived: boolean;
   ownerName: string;
@@ -357,6 +359,8 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
       place={place}
       pubkey={pubkey}
       name={name}
+      agent={isAgent}
+      profiled={profiled}
       verifiedOwner={verifiedOwner}
       onChange={onChange}
       returnFocus={input}
@@ -668,8 +672,10 @@ export function ChannelMembersDialog({
     if (shownIntent === previous) return;
     lastShown.current = shownIntent;
     if (shownIntent) {
-      // Enter confirms reversible changes; removal starts on Cancel.
-      (shownIntent.change.role !== "remove" && !apply.current?.disabled
+      // Enter confirms reversible changes; removal and transfer start on Cancel.
+      (shownIntent.change.role !== "remove" &&
+      shownIntent.change.role !== "owner" &&
+      !apply.current?.disabled
         ? apply.current
         : cancel.current
       )?.focus();
@@ -1538,6 +1544,9 @@ export function ChannelMembersDialog({
         session.viewer ?? "",
         selection,
         ownership.owners.get(selection.pubkey),
+        known.has(selection.pubkey) ||
+          !profiles.has(selection.pubkey) ||
+          !!profiles.get(selection.pubkey)?.isAgent,
       );
       changePermitted = true;
     } catch {
@@ -1864,6 +1873,7 @@ export function ChannelMembersDialog({
         adding={adding}
         picture={picture ?? profiles.get(key)?.picture}
         isAgent={isAgent}
+        profiled={profiles.has(key)}
         archived={isArchived(key)}
         roleLabel={
           isAgent && role === "bot"
@@ -2137,9 +2147,11 @@ export function ChannelMembersDialog({
         selection
           ? selection.role === "remove"
             ? `Remove ${removalTarget} from ${place}`
-            : selection.expectedRole === "absent"
-              ? "Add member?"
-              : `Change access to ${memberAccessLabel(selection.role)}?`
+            : selection.role === "owner"
+              ? `Transfer ownership to ${selectedName}?`
+              : selection.expectedRole === "absent"
+                ? "Add member?"
+                : `Change access to ${memberAccessLabel(selection.role)}?`
           : (title ?? memberAccess(channel).title)
       }
       height={selection ? "content" : generalAccess ? "stable-tall" : "stable"}
@@ -2178,7 +2190,9 @@ export function ChannelMembersDialog({
             <Button
               ref={apply}
               variant={
-                selection.role === "remove" ? "destructive" : "prominent"
+                selection.role === "remove" || selection.role === "owner"
+                  ? "destructive"
+                  : "prominent"
               }
               disabled={!changePermitted}
               onClick={() => {
@@ -2199,11 +2213,13 @@ export function ChannelMembersDialog({
             >
               {selection.role === "remove"
                 ? `Remove ${removalTarget}`
-                : selectedAddition
-                  ? selectedAddition.action
-                  : selection.role === "admin"
-                    ? "Set as admin"
-                    : `Set to ${memberAccessLabel(selection.role).toLowerCase()}`}
+                : selection.role === "owner"
+                  ? "Transfer ownership"
+                  : selectedAddition
+                    ? selectedAddition.action
+                    : selection.role === "admin"
+                      ? "Set as admin"
+                      : `Set to ${memberAccessLabel(selection.role).toLowerCase()}`}
             </Button>
           </>
         ) : (
@@ -2218,8 +2234,10 @@ export function ChannelMembersDialog({
       {selection ? (
         selection.role !== "remove" && (
           <p className="text-body-sm">
-            {selectedAddition?.description ??
-              `Change access from ${memberAccessLabel(selection.expectedRole)} to ${memberAccessLabel(selection.role)}. ${selection.role === "admin" ? `Admins can manage this ${place} and its members.` : `This changes what they can do in this ${place}.`}`}
+            {selection.role === "owner"
+              ? `${selectedName} becomes the owner of this ${place} and you'll become an admin. They can change your role, remove you or delete the ${place}. Only an owner can make you an owner again.`
+              : (selectedAddition?.description ??
+                `Change access from ${memberAccessLabel(selection.expectedRole)} to ${memberAccessLabel(selection.role)}. ${selection.role === "admin" ? `Admins can manage this ${place} and its members.` : `This changes what they can do in this ${place}.`}`)}
           </p>
         )
       ) : (

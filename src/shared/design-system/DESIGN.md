@@ -1070,6 +1070,11 @@ other IconButtons.
 IconButton also offers `xs` (20px with 12px icons) for dense formatting actions. Mode
 toggles remain `sm`.
 
+An IconButton takes either `icon` or `emoji`. Use `emoji` when the action is
+best shown as an emoji, such as a skin-tone choice shown as a hand in that tone.
+The glyph uses `--font-emoji` at `--size-emoji-inline`, centred in the same
+control. Its accessible name still comes from `aria-label`.
+
 An `xs` Button whose label starts with an icon reduces its leading padding to its
 4px vertical padding, so the icon sits evenly in the capsule's leading corner.
 
@@ -1616,7 +1621,7 @@ separate from status text and the overflow action.
 Selected rows can expand without painting the entire branch in the accent color.
 
 Its `text` variant is a text-only row action, such as a capped list's Show
-more and Show less: the base navigation item's type and padding with no fill, resting in
+more and Show fewer: the base navigation item's type and padding with no fill, resting in
 `--text-subtle` and strengthening to `--text-standard` on hover and keyboard
 focus. Use it where a fill would read as another destination.
 

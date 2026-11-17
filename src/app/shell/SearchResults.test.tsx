@@ -19,6 +19,7 @@ import {
   type IdentityNames,
 } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
+import { BestieConversationContext } from "./bestie-context";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import type { ChannelList } from "../../features/relay/contracts";
@@ -8205,6 +8206,108 @@ it.each([true, false])(
     }
   },
 );
+
+it("puts the viewer's Bestie DM right under its new chat, ahead of its chats", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    bestie = keypair(),
+    other = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const dm = (id: string, member: string) => [
+    metadata(relay, id, "opaque", 1700000000, [
+      ["hidden", ""],
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    roster(relay, id, [viewer.pubkey, member]),
+  ];
+  const chat = (id: string, name: string, at: number, member: string) => [
+    metadata(relay, id, name, at, [
+      ["t", "stream"],
+      ["private"],
+      ["t", "buzz.solo"],
+    ]),
+    roster(relay, id, [viewer.pubkey, member]),
+  ];
+  const discovery = [
+    ...dm("bestie-dm", bestie.pubkey),
+    ...dm("other-dm", other.pubkey),
+    ...chat("bestie-chat", "Plan the week", 1700000002, bestie.pubkey),
+    ...chat("other-chat", "Fix the build", 1700000003, other.pubkey),
+    profile(bestie, { name: "Scout", is_agent: true }),
+    profile(other, { name: "Scotia", is_agent: true }),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined)) return [];
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const source = owner.session.agentChoices;
+  const mine = [
+    { pubkey: bestie.pubkey, name: "Scout", managed: true },
+    { pubkey: other.pubkey, name: "Scotia", managed: true },
+  ];
+  const choices = { ...source.snapshot(), identities: mine, selectable: mine };
+  const session = {
+    ...owner.session,
+    agentChoices: {
+      ...source,
+      snapshot: () => choices,
+      subscribe: () => () => {},
+      retain: () => () => {},
+      ensure: () => {},
+    },
+  } as typeof owner.session;
+  const openAgentSession = vi.fn();
+  const openConversation = vi.fn();
+  try {
+    render(
+      <BestieConversationContext value={{ session, channelId: "bestie-dm" }}>
+        <SearchResults
+          session={session}
+          query="sco"
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          openConversation={openConversation}
+          openAgentSession={openAgentSession}
+        />
+      </BestieConversationContext>,
+    );
+    const agents = within(await screen.findByRole("group", { name: "Agents" }));
+    await waitFor(() =>
+      expect(
+        agents.getAllByRole("option").map((row) => row.textContent),
+      ).toEqual([
+        expect.stringMatching(/Scout.*New chat/),
+        expect.stringMatching(/Scout.*Direct message/),
+        expect.stringMatching(/Scotia.*New chat/),
+      ]),
+    );
+    await screen.findByRole("group", { name: "Chats" });
+    const options = screen.getAllByRole("option");
+    const bestieDm = agents.getAllByRole("option")[1];
+    assert(bestieDm);
+    // The DM follows its new chat at once, before any chat.
+    expect(options.indexOf(bestieDm)).toBe(1);
+    // Other agents keep their chats-then-DM order, and the Bestie DM shows once.
+    const direct = within(
+      await screen.findByRole("group", { name: "Direct messages" }),
+    );
+    expect(direct.getByRole("option", { name: /Scotia/ })).toBeVisible();
+    expect(direct.queryByRole("option", { name: /Scout/ })).toBeNull();
+    fireEvent.click(bestieDm);
+    expect(openConversation).toHaveBeenCalledExactlyOnceWith("bestie-dm");
+    expect(openAgentSession).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
 
 it.each([
   {

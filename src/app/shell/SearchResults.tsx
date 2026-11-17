@@ -104,6 +104,7 @@ import {
 } from "../../features/search/people-rank";
 import { peopleRelationships } from "../../features/profiles/relationships";
 import { knownAgentPubkeys } from "../../features/agents/known";
+import { useBestieConversation } from "./bestie-context";
 import { usePersonDirectory } from "./usePersonDirectory";
 import {
   isChannelUuid,
@@ -1241,6 +1242,7 @@ export function SearchResults({
   // DMs, are where the viewer works with their agents. Removing DM-listed
   // people below only lifts the rest, so a row shown here still shows in the
   // Agents group.
+  const bestieDmId = useBestieConversation(session);
   const newChats = new Map(
     rankPeople(
       people.filter(({ agent }) => agent),
@@ -1538,10 +1540,27 @@ export function SearchResults({
     .filter(({ person }) => !person.agent)
     .slice(0, PERSON_ROWS)
     .map(personDestination);
-  const agentResults = rankedPeople
+  // The viewer's Bestie is reached through its DM, so that DM follows its
+  // "New chat" row directly rather than its chats; other agents keep #1471's
+  // order.
+  const bestieDm = directMessageResults.find(
+    (channel) => channel.id === bestieDmId && dmAgent(channel),
+  );
+  const bestieKey = personKey(bestieDm?.participants?.[0] ?? "");
+  const agentRows = rankedPeople
     .filter(({ person }) => person.agent)
     .slice(0, PERSON_ROWS)
     .map(personDestination);
+  const bestieShown =
+    !!bestieDm && agentRows.some(({ key }) => key === bestieKey);
+  const agentResults = agentRows.flatMap((row) =>
+    bestieShown && bestieDm && row.key === bestieKey
+      ? [row, { ...conversationDestination(bestieDm), score: row.score }]
+      : [row],
+  );
+  const dmResults = directMessageResults.filter(
+    (channel) => !bestieShown || channel !== bestieDm,
+  );
   const suggestions = channels
     .filter(
       (channel) =>
@@ -1863,8 +1882,8 @@ export function SearchResults({
       label: "Direct messages",
       tone: "person" as const,
       icon: UsersIcon,
-      destinations: directMessageResults.map(conversationDestination),
-      best: Math.min(...directMessageResults.map(dmRank)),
+      destinations: dmResults.map(conversationDestination),
+      best: Math.min(...dmResults.map(dmRank)),
     },
     {
       label: "Pages",

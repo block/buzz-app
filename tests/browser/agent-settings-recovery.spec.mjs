@@ -17,6 +17,9 @@ test("repairs incompatible saved settings and retains the repaired revision afte
   await expect(
     page.getByRole("dialog", { name: "Repair settings", exact: true }),
   ).toContainText("maple");
+  await expect(
+    page.getByRole("button", { name: "Cancel", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(repair).toBeFocused();
   expect(

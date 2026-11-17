@@ -154,6 +154,12 @@ function subscribeDocumentActive(listener: () => void) {
 const TIMELINE_PLACE = "timeline";
 // Older pages a visit reads unasked to fill a screen its head leaves empty.
 const FILL_PAGES = 5;
+function readingInset(row: HTMLElement | null | undefined) {
+  const text = row?.querySelector("p");
+  return row && text
+    ? text.getBoundingClientRect().top - row.getBoundingClientRect().top
+    : undefined;
+}
 function positionAt(
   element: HTMLElement,
   restoredAnchor?: string,
@@ -945,10 +951,16 @@ function Timeline({
     paging: false,
   });
   // The reader's anchor row and its offset before this render's rows.
-  const reader = useRef<{ id: string | undefined; top: number; y: number }>({
+  const reader = useRef<{
+    id: string | undefined;
+    top: number;
+    y: number;
+    inset: number | undefined;
+  }>({
     id: undefined,
     top: 0,
     y: 0,
+    inset: undefined,
   });
   const heldReader = useRef<
     { id: string; y: number; intent: number; ended: boolean } | undefined
@@ -1323,6 +1335,12 @@ function Timeline({
     id: held < 0 ? undefined : heldId,
     top: held < 0 ? 0 : (handle.current?.getItemOffset(held) ?? 0),
     y: retained?.y ?? savedPosition.current?.anchor?.y ?? 0,
+    inset: readingInset(
+      Array.from(
+        scroller.current?.querySelectorAll<HTMLElement>("[data-message-id]") ??
+          [],
+      ).find((row) => row.dataset.messageId === heldId),
+    ),
   };
   const prepend =
     !!previous.length &&
@@ -1376,12 +1394,17 @@ function Timeline({
     );
     // A divider changes the anchor's inset inside its virtual item before
     // Virtua commits the new item height. Hold the same message through both.
+    const inset = readingInset(row);
+    const insetChange =
+      inset === undefined || reader.current.inset === undefined
+        ? 0
+        : inset - reader.current.inset;
     const delta =
-      boundaryChanged && row
+      (boundaryChanged && row
         ? row.getBoundingClientRect().top -
           element.getBoundingClientRect().top -
           reader.current.y
-        : moved;
+        : moved) + insetChange;
     // WebKit truncates fractional scrollTop writes; use the nearest pixel
     // when a caption's fractional line height changes the message inset.
     correctScrollTop(element, boundaryChanged ? Math.round(delta) : delta);
@@ -1392,7 +1415,7 @@ function Timeline({
     // ended during an earlier hold sends no further pointerup to end this one.
     const anchor = {
       id,
-      y: reader.current.y,
+      y: reader.current.y - insetChange,
       intent: intent.current,
       ended:
         heldReader.current?.intent === intent.current &&

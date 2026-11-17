@@ -1,13 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import {
-  act,
-  cleanup,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { VoicePreview } from "./VoicePreview";
@@ -336,11 +329,12 @@ it("stops hidden retained previews without checkVisibility", async () => {
   }
 });
 
-it("groups supported choices by discovered accent and leaves unknown choices available", async () => {
+it("filters supported voices by locale without changing the saved voice", async () => {
   const user = userEvent.setup();
+  const onChange = vi.fn();
   render(
     <VoicePreview
-      voice=""
+      voice="vale"
       voices={["cove", "vale", "neer", "new"]}
       accents={{
         cove: "American English",
@@ -349,28 +343,30 @@ it("groups supported choices by discovered accent and leaves unknown choices ava
         unsupported: "French",
       }}
       disabled={false}
-      onChange={vi.fn()}
+      onChange={onChange}
     />,
   );
   const trigger = screen.getByRole("button", { name: "Voice" });
   expect(trigger).toHaveAttribute("data-variant", "outline");
   await user.click(trigger);
+  const locale = screen.getByRole("combobox", { name: "Language and region" });
+  expect(locale).toHaveTextContent("British English");
+  expect(screen.getByRole("radio", { name: "Vale" })).toBeChecked();
+  expect(screen.queryByRole("radio", { name: "Cove" })).toBeNull();
+  await user.click(locale);
+  expect(screen.queryByRole("option", { name: "French" })).toBeNull();
+  await user.click(screen.getByRole("option", { name: "Hindi" }));
+  expect(screen.getByRole("radio", { name: "Neer" })).toBeEnabled();
+  expect(screen.queryByRole("radio", { name: "Vale" })).toBeNull();
+  expect(onChange).not.toHaveBeenCalled();
+  locale.focus();
+  await user.keyboard("{ArrowDown}");
+  await user.click(await screen.findByRole("option", { name: "Other voices" }));
+  expect(screen.getByRole("radio", { name: "New" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  await user.click(trigger);
+  expect(locale).not.toBeInTheDocument();
   expect(
-    within(screen.getByRole("group", { name: "British English" })).getByRole(
-      "radio",
-      { name: "Vale" },
-    ),
-  ).toBeEnabled();
-  expect(
-    within(screen.getByRole("group", { name: "Hindi" })).getByRole("radio", {
-      name: "Neer",
-    }),
-  ).toBeEnabled();
-  expect(
-    within(screen.getByRole("group", { name: "Other voices" })).getByRole(
-      "radio",
-      { name: "New" },
-    ),
-  ).toBeEnabled();
-  expect(screen.queryByRole("group", { name: "French" })).toBeNull();
+    screen.getByRole("combobox", { name: "Language and region" }),
+  ).toHaveTextContent("British English");
 });

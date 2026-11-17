@@ -17,12 +17,25 @@ test("Codex Voices persist separately through the settings host", async ({
   });
   await expect(preview).toBeEnabled();
   await voice.click();
+  const locale = page.getByRole("combobox", { name: "Language and region" });
+  await expect(locale).toContainText("American English");
   await expect(
-    page.getByRole("group", { name: "American English", exact: true }),
+    page.getByRole("radio", { name: "Vale", exact: true }),
+  ).toHaveCount(0);
+  await locale.click();
+  await page
+    .getByRole("option", { name: "British English", exact: true })
+    .click();
+  await expect(
+    page.getByRole("radio", { name: "Vale", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("group", { name: "British English", exact: true }),
-  ).toBeVisible();
+    page.getByRole("radio", { name: "Maple", exact: true }),
+  ).toHaveCount(0);
+  await locale.click();
+  await page
+    .getByRole("option", { name: "American English", exact: true })
+    .click();
   await page
     .getByRole("radio", { name: "Codex default (Cove)", exact: true })
     .focus();

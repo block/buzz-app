@@ -8,7 +8,7 @@ import {
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { Select } from "../../shared/design-system/ui/Select";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
@@ -47,6 +47,7 @@ export function VoicePreview({
   onShown?(): void;
 }) {
   const [open, setOpen] = useState(false);
+  const [locale, setLocale] = useState<string>();
   const trigger = useRef<HTMLButtonElement>(null);
   const [playing, setPlaying] = useState<{
     voice: string;
@@ -235,6 +236,15 @@ export function VoicePreview({
     const accent = accents?.[value] ?? "Other voices";
     groups.set(accent, [...(groups.get(accent) ?? []), value]);
   }
+  const locales = [...groups.keys()].sort((a, b) => a.localeCompare(b));
+  const selectedLocale =
+    accents?.[voice || defaultVoice || ""] ?? "Other voices";
+  const shownLocale =
+    locale && groups.has(locale)
+      ? locale
+      : groups.has(selectedLocale)
+        ? selectedLocale
+        : (locales[0] ?? "");
   return (
     <>
       <PreferenceRow
@@ -248,7 +258,10 @@ export function VoicePreview({
               variant="outline"
               disabled={disabled}
               aria-haspopup="dialog"
-              onClick={() => setOpen(true)}
+              onClick={() => {
+                setLocale(undefined);
+                setOpen(true);
+              }}
             >
               {!voice && defaultVoice
                 ? `${name(defaultVoice)} · Default`
@@ -301,32 +314,41 @@ export function VoicePreview({
         footerGap="none"
         finalFocus={trigger}
       >
-        <Field label="Voice" labelVisibility="hidden">
-          <RadioGroup
-            size="sm"
-            value={voice}
-            onValueChange={(value) => {
-              stop();
-              onChange(value);
-            }}
-            disabled={disabled}
-          >
-            {row("")}
-            {[...groups]
-              .sort(([a], [b]) => a.localeCompare(b))
-              .map(([accent, choices]) => (
-                <fieldset
-                  key={accent}
-                  aria-label={accent}
-                  className="grid gap-1"
-                >
-                  <InlineHeader title={accent} />
-                  {choices.map(row)}
-                </fieldset>
-              ))}
-          </RadioGroup>
-        </Field>
-        {failure}
+        <div className="grid gap-3">
+          {!!locales.length && (
+            <Select
+              label="Language and region"
+              variant="field"
+              disabled={disabled}
+              value={shownLocale}
+              groups={[
+                {
+                  label: "",
+                  options: locales.map((value) => ({ value, label: value })),
+                },
+              ]}
+              onValueChange={(value) => {
+                stop();
+                setLocale(value);
+              }}
+            />
+          )}
+          <Field label="Voice" labelVisibility="hidden">
+            <RadioGroup
+              size="sm"
+              value={voice}
+              onValueChange={(value) => {
+                stop();
+                onChange(value);
+              }}
+              disabled={disabled}
+            >
+              {row("")}
+              {(groups.get(shownLocale) ?? []).map(row)}
+            </RadioGroup>
+          </Field>
+          {failure}
+        </div>
       </Dialog>
     </>
   );

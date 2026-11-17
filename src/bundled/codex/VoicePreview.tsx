@@ -270,6 +270,7 @@ export function VoicePreview({
           setOpen(next);
         }}
         title="Choose voice"
+        dismissOnOutsideClick={false}
         size="compact"
         headerGap="compact"
         finalFocus={trigger}

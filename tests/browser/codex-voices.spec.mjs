@@ -68,6 +68,8 @@ test("Codex Voices persist separately through the settings host", async ({
   await page
     .getByRole("option", { name: "British English", exact: true })
     .click();
+  await page.mouse.click(8, 8);
+  await expect(chooserRows).toBeVisible();
   await expect(
     page.getByRole("radio", { name: "Vale", exact: true }),
   ).toBeVisible();

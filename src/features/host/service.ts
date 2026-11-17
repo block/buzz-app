@@ -240,6 +240,9 @@ export interface Host {
     signal: AbortSignal,
   ) => Promise<readonly HostRepositoryFolder[]>;
   request(input: HostRequest): Promise<HostResponse>;
+  /** Whether `request` can run here: an installed plugin on desktop. Absent on
+   * a host that always can. */
+  canRequest?: () => boolean;
   /** POST-only, desktop and compatible native host required. A repeated call
    * authority rejects with unknown outcome, never resubmits or caches success.
    * Blocks IPC-fallback resends only, not fresh calls or upstream retries.
@@ -674,6 +677,10 @@ export class HostService extends Service implements Host {
         },
       ).catch(rethrow),
     );
+  }
+
+  canRequest(): boolean {
+    return !!this.ctx.pluginOwner && isTauri();
   }
 
   async request(input: HostRequest): Promise<HostResponse> {

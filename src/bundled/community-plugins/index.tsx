@@ -44,7 +44,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <CommunityPluginsPage
         indexUrl={indexUrl}
         listingRepository={listingRepository(indexUrl)}
-        host={host}
+        host={host.canRequest?.() === false ? undefined : host}
         installer={installer}
         relay={ctx.relay}
         recorder={recorder}

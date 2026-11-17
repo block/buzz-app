@@ -184,7 +184,7 @@ export function CommunityPluginsPage({
       <EmptyState
         icon={<StorefrontIcon size="1.5rem" />}
         title="Community plugins aren't available here"
-        description="This Buzz can't reach the community index."
+        description="Browsing and adding community plugins needs the Buzz desktop app."
       />
     );
   else if (adding && listingRepository)

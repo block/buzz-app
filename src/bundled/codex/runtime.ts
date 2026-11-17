@@ -1552,16 +1552,23 @@ export class CodexRuntime {
     const key = scopedKey(settings.scope, channelId);
     if (settings.scope === "community" && !reserved) {
       let connection: AgentVoiceConnection | undefined;
-      // A running wake owns ordered admission until its turn ends.
-      const entry = this.entries.get(agent.key);
-      const active = entry?.lanes.get(key)?.active;
-      const interrupted =
-        entry && active?.reply.unaddressed
-          ? this.interrupt(entry, key, active.reply)
-          : Promise.resolve();
+      // Queued wakes can take the lane before ordered voice admission.
+      const failed = new AbortController();
+      let interrupted = Promise.resolve();
+      const interrupt = () => {
+        const entry = this.entries.get(agent.key);
+        const active = entry?.lanes.get(key)?.active;
+        if (entry && active && !active.stopped) {
+          interrupted = this.interrupt(entry, key, active.reply);
+          void interrupted.catch((error) => failed.abort(error));
+        }
+      };
+      const off = this.subscribe(interrupt);
+      interrupt();
       const handoff = this.controls.deliver(
         `${agent.key}/${key}`,
         async (_deferred, signal) => {
+          off();
           await interrupted;
           connection = await this.openVoice(
             { ...seat, signal: AbortSignal.any([seat.signal, signal]) },
@@ -1572,12 +1579,16 @@ export class CodexRuntime {
         true,
       );
       try {
-        await interrupted;
-        await abortable(handoff.done, seat.signal);
+        await abortable(
+          handoff.done,
+          AbortSignal.any([seat.signal, failed.signal]),
+        );
       } catch (error) {
         handoff.cancel();
         void handoff.done.catch(() => {});
         throw error;
+      } finally {
+        off();
       }
       if (!connection) throw new Error("Voice startup was interrupted");
       return connection;
@@ -2328,7 +2339,9 @@ export class CodexRuntime {
           tags: [],
         } as EventData,
         ...(delivery.synced ? { synced: delivery.synced } : {}),
-        answered() {},
+        answered(stopped) {
+          if (stopped) outcome = { ok: false, error: "Codex was stopped" };
+        },
         failActivity(error) {
           if (error !== "Codex ended without a final reply")
             outcome = { ok: false, error };

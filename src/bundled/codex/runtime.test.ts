@@ -9038,48 +9038,56 @@ it.each(["channel", "community"] as const)(
   },
 );
 
-it("interrupts an executing community wake before waiting for voice admission", async () => {
-  vi.stubGlobal("RTCPeerConnection", class {});
-  const f = fixture();
-  const d = f.delivery("seed");
-  const config = { ...(d.config as object), scope: "community" };
-  const agent = { ...d.agent, config } as unknown as Agent;
-  const signal = new AbortController();
-  const once = f.runtime.runOnce({
-    delivery: { ...d, config },
-    key: "watch",
-    signal: signal.signal,
-    prompt: async () => "background work",
-  });
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  f.huddleChannels.add("room");
-  const opening = f.runtime.voice(
-    {
-      config,
-      agent,
-      conversation: { channelId: "room" },
-      signal: new AbortController().signal,
-      async output() {},
-      async transcript() {},
-      ended() {},
-    },
-    d.agent,
-  );
-  try {
-    await vi.waitFor(() =>
-      expect(f.sent.some((w) => w.method === "turn/interrupt")).toBe(true),
+it.each(["wake", "typed-wake", "wake-typed"])(
+  "interrupts community work and queued wakes before voice admission (%s)",
+  async (order) => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const f = fixture();
+    const d = f.delivery("seed");
+    const config = { ...(d.config as object), scope: "community" };
+    const agent = { ...d.agent, config } as unknown as Agent;
+    const signal = new AbortController();
+    if (order === "typed-wake") {
+      await f.runtime.run({ ...d, config });
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    }
+    const once = f.runtime.runOnce({
+      delivery: { ...d, config },
+      key: "watch",
+      signal: signal.signal,
+      prompt: async () => "background work",
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    if (order === "wake-typed") await f.runtime.run({ ...d, config });
+    f.huddleChannels.add("room");
+    const opening = f.runtime.voice(
+      {
+        config,
+        agent,
+        conversation: { channelId: "room" },
+        signal: new AbortController().signal,
+        async output() {},
+        async transcript() {},
+        ended() {},
+      },
+      d.agent,
     );
-    await once;
-    await opening;
-    expect(vi.mocked(openVoice).mock.calls.at(-1)?.[1]).toBe("thread-1");
-  } finally {
-    await f.complete(0, "");
-    signal.abort();
-    await once;
-    await (await opening)?.close();
-    f.runtime.dispose();
-  }
-});
+    try {
+      await vi.waitFor(() =>
+        expect(f.sent.some((w) => w.method === "turn/interrupt")).toBe(true),
+      );
+      await expect(once).resolves.toMatchObject({ ok: false });
+      await opening;
+      expect(vi.mocked(openVoice).mock.calls.at(-1)?.[1]).toBe("thread-1");
+    } finally {
+      await f.complete(0, "");
+      signal.abort();
+      await once;
+      await (await opening)?.close();
+      f.runtime.dispose();
+    }
+  },
+);
 
 it("cancels voice admission when interrupting a community wake fails", async () => {
   vi.stubGlobal("RTCPeerConnection", class {});

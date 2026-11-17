@@ -710,9 +710,12 @@ test.describe("remote archive focus", () => {
             owner
               .locator("..")
               .getByRole("status")
-              .filter({
-                hasText: /^This channel is archived, so it’s read-only/,
-              }),
+              .getByText(
+                "This channel is archived. It's read-only and hidden from your sidebar.",
+                {
+                  exact: true,
+                },
+              ),
           ).toHaveCount(1);
         }
         await expect(editor).toHaveCount(0);

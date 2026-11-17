@@ -2290,7 +2290,7 @@ function ChannelWorkspace({
   const archivedMessage =
     current?.readOnly && !current.cached && current.viewerRole !== "guest"
       ? "This channel is archived and read-only."
-      : "This channel is archived, so it’s read-only and hidden from your sidebar until unarchived.";
+      : "This channel is archived. It's read-only and hidden from your sidebar.";
   useChannelHistoryFocus(
     historyContainer,
     navigation,

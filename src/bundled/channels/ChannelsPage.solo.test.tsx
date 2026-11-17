@@ -2031,7 +2031,7 @@ it("announces a remote archive and offers Unarchive in the only visible notice",
     name: "Archived channel",
   });
   const message =
-    "This channel is archived, so it’s read-only and hidden from your sidebar until unarchived.";
+    "This channel is archived. It's read-only and hidden from your sidebar.";
   expect(within(notice).getByText(message)).toBeVisible();
   const announcement = screen.getByText(message, { selector: ".sr-only" });
   const status = announcement.closest('[role="status"]');

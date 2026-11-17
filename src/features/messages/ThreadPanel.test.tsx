@@ -810,6 +810,118 @@ it("leaves a sibling reply it hides unread while a DM reply's original is unavai
   expect(unread.attention(dm, target.id).unread).toBe(false);
   expect(unread.attention(dm, sibling.id).unread).toBe(true);
 });
+function unreadReplies(h: ReturnType<typeof messagesHarness>) {
+  const reply = (name: string, createdAt: number): ChannelMessage => ({
+    ...row,
+    id: name,
+    content: name,
+    createdAt,
+    replyCount: 0,
+    threadRootId: row.id,
+    replyParentId: row.id,
+  });
+  const unread = new Set<string>();
+  Object.assign(h.session.unread, {
+    attention: (_channelId: string, id: string) => ({
+      unread: unread.has(id),
+      forced: false,
+    }),
+  });
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      return new DOMRect(
+        0,
+        this.hasAttribute("data-new-messages-boundary") ? 300 : 0,
+        500,
+        20,
+      );
+    },
+  );
+  return { reply, unread };
+}
+it("opens at the first unread reply behind a line that reading keeps, paging past the newest page to find it", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread } = unreadReplies(h);
+  const [read, first, later] = [
+    reply("read", 2),
+    reply("first unread", 3),
+    reply("later unread", 4),
+  ];
+  unread.add(first.id).add(later.id);
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [first, later];
+  h.render();
+  // Every loaded reply is unread: an earlier page may hold the first one.
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(h.element).toHaveAttribute("data-positioning");
+  h.snapshot.status = "loading";
+  h.snapshot.readKind = "older";
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(h.element).toHaveAttribute("data-positioning");
+
+  h.snapshot.status = "ready";
+  h.snapshot.readKind = undefined;
+  h.snapshot.replies = [read, first, later];
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  const line = screen.getByRole("separator", { name: "New messages" });
+  const firstRow = h.element.querySelector(`[data-message-id="${first.id}"]`);
+  const readRow = h.element.querySelector(`[data-message-id="${read.id}"]`);
+  expect(
+    line.compareDocumentPosition(firstRow as Node) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    line.compareDocumentPosition(readRow as Node) &
+      Node.DOCUMENT_POSITION_PRECEDING,
+  ).toBeTruthy();
+  // The line starts the view instead of the latest reply.
+  expect(h.element.scrollTop).toBe(300);
+  // Reading starts there, so content-focused navigation moves focus in.
+  expect(h.element).toHaveFocus();
+
+  // Reading the replies leaves the line where the visit found it.
+  unread.clear();
+  h.snapshot.replies = [read, first, later, reply("arrival", 5)];
+  h.render();
+  expect(screen.getAllByRole("separator", { name: "New messages" })).toEqual([
+    line,
+  ]);
+});
+it("opens a read thread at its latest reply, and an explicit target at itself, without a line", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply } = unreadReplies(h);
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [reply("read", 2), reply("also read", 3)];
+  h.render();
+  expect(h.view.loadMore).not.toHaveBeenCalled();
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+  expect(h.element.scrollTop).toBe(4000 - 600);
+  h.unmount();
+  cleanup();
+
+  const exact = messagesHarness();
+  const { reply: exactReply, unread } = unreadReplies(exact);
+  const target = exactReply("target", 3);
+  unread.add("first unread").add(target.id);
+  Object.assign(exact.props as ThreadPanelProps, {
+    messageId: target.id,
+    revealSelected: true,
+  });
+  exact.snapshot.direction = "older";
+  exact.snapshot.canLoadMore = true;
+  exact.snapshot.replies = [exactReply("first unread", 2), target];
+  exact.snapshot.target = target;
+  exact.snapshot.targetStatus = "ready";
+  exact.render();
+  expect(exact.view.loadMore).not.toHaveBeenCalled();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+});
 it("renders replies after the original without a reply-count divider", () => {
   const h = messagesHarness();
   h.snapshot.root = { ...row, replyCount: 0 };

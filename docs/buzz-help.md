@@ -575,6 +575,12 @@ and are asked to sign in again in Buzz.
   meanwhile get a divider above the first of them when you come back, before
   anything is marked read; older unread messages, or a read elsewhere on this
   device while you were away, leave that visit without one.
+- **Opening a thread** without choosing a reply starts at its first unread
+  reply, below a **New messages** divider that stays for that visit as you
+  read. Buzz loads older replies until it finds where unread replies begin.
+  A thread with nothing unread opens at its latest reply. Replies nested under
+  another reply are not marked by the divider; their reply counts show what
+  is new. Opening a specific reply, such as a mention, opens at that reply.
 - **Marking a channel read** keeps the cut from your click when retried. If a newer
   manual unread choice was saved in another window while it waited, the read fails
   rather than clearing that choice. Mark the channel read again to clear it.
@@ -624,7 +630,7 @@ and are asked to sign in again in Buzz.
   nothing typed lists up to six of your other unread channels and DMs first,
   most recently active first, and selects the first, so Enter opens it, instead
   of reopening where you left it. A conversation unread only through thread
-  replies previews its newest unread reply and opens it in its thread. Muted
+  replies previews its newest unread reply and opens that thread. Muted
   conversations are left out. Turn this off with **Show unread first in
   search** in Settings → Appearance → Conversations.
 - **Activity** threads name their channel above the original message. Select that

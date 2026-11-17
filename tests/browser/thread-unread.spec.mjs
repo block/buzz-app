@@ -350,7 +350,7 @@ test.describe("mentioned reply priority", () => {
     await expect(composer).toHaveText("Still typing");
   });
 
-  test("search's Unread row opens the previewed thread reply with focus, and reading it updates the row", async ({
+  test("search's Unread row opens the previewed thread at its first unread reply with focus, and reading it updates the row", async ({
     page,
     app,
   }) => {
@@ -397,8 +397,9 @@ test.describe("mentioned reply priority", () => {
       name: "Thread",
       exact: true,
     });
+    // It opens at the thread's first unread reply, below a line.
     await expect(
-      thread.locator(`[data-message-id="${newest.latestMessageId}"]`),
+      thread.getByRole("separator", { name: "New messages" }),
     ).toBeVisible();
     // The thread takes focus from search, so it reads without another gesture.
     await expect
@@ -408,6 +409,11 @@ test.describe("mentioned reply priority", () => {
         ),
       )
       .toBe(true);
+    // Unread replies nested under another reply wait in their branch.
+    for (const branch of await thread
+      .getByRole("button", { name: /new in available replies/ })
+      .all())
+      await branch.click();
     await expect
       .poll(async () => (await unread()).items.map(({ rootId }) => rootId))
       .toEqual([other.rootId]);

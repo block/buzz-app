@@ -660,7 +660,11 @@ function ThreadMessages({
       }),
     [session.unread, channelId, snapshot.root?.id, messageId],
   );
-  useSyncExternalStore(subscribeUnread, unreadSnapshot, unreadSnapshot);
+  const threadUnread = useSyncExternalStore(
+    subscribeUnread,
+    unreadSnapshot,
+    unreadSnapshot,
+  );
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     new Set(),
   );
@@ -938,6 +942,66 @@ function ThreadMessages({
     !initialPositioned &&
     (!navigation || positionedVisit) &&
     snapshot.status !== "error";
+  // An ordinary open starts at its first unread top-level reply, decided once
+  // before positioning so reading it does not move the line. Pages older
+  // history while the oldest loaded reply is unread. Undefined while deciding.
+  const [unreadBoundary, setUnreadBoundary] = useState<string | null>();
+  useEffect(() => {
+    // Attention changes without a new thread snapshot.
+    void threadUnread;
+    if (unreadBoundary !== undefined) return;
+    if (
+      revealSelected ||
+      returning ||
+      (navigation && !rootTarget) ||
+      initialPositioned ||
+      snapshot.status === "error" ||
+      (snapshot.status === "ready" && snapshot.root?.id !== messageId)
+    ) {
+      setUnreadBoundary(null);
+      return;
+    }
+    // Decide once positioning could proceed, but not while an older page
+    // this decision asked for is in flight.
+    if (
+      snapshot.readKind === "older" ||
+      (!(snapshot.root && snapshot.direction) &&
+        (snapshot.status !== "ready" ||
+          (snapshot.direction !== "older" && snapshot.canLoadMore)))
+    )
+      return;
+    const replies = tree.children.get(undefined) ?? [];
+    const first = replies.findIndex((row) => {
+      const attention = session.unread.attention(channelId, row.id);
+      return attention.unread || attention.forced;
+    });
+    // A legacy walk reads forward from the oldest reply, so its first unread
+    // one is already loaded.
+    if (
+      first === 0 &&
+      snapshot.direction === "older" &&
+      snapshot.canLoadMore &&
+      !snapshot.limited
+    ) {
+      void view.loadMore();
+      return;
+    }
+    setUnreadBoundary(replies[first]?.id ?? null);
+  }, [
+    unreadBoundary,
+    revealSelected,
+    returning,
+    navigation,
+    rootTarget,
+    initialPositioned,
+    snapshot,
+    messageId,
+    tree,
+    session.unread,
+    channelId,
+    view,
+    threadUnread,
+  ]);
   const [inlineReveal, setInlineReveal] = useState<AbortSignal>();
   // biome-ignore lint/correctness/useExhaustiveDependencies: each reveal request needs its own signal.
   useEffect(() => {
@@ -1218,7 +1282,8 @@ function ThreadMessages({
       (!positioned.current &&
         !(snapshot.root && snapshot.direction) &&
         (snapshot.status !== "ready" ||
-          (snapshot.direction !== "older" && snapshot.canLoadMore)))
+          (snapshot.direction !== "older" && snapshot.canLoadMore))) ||
+      (!positioned.current && unreadBoundary === undefined)
     )
       return;
     // Native scroll anchoring is off here, so this panel owns ordinary reading
@@ -1311,6 +1376,21 @@ function ThreadMessages({
     }
     // Initial positioning waits for one strict page or the legacy bounded walk.
     // subsequent live changes follow only while the reader is at the bottom.
+    const line =
+      !positioned.current && unreadBoundary
+        ? element.querySelector<HTMLElement>("[data-new-messages-boundary]")
+        : null;
+    if (line) {
+      follow.current = false;
+      correctScrollTop(
+        element,
+        line.getBoundingClientRect().top - element.getBoundingClientRect().top,
+      );
+      // Like a revealed message, the line is where the visit's reading
+      // starts, so content-focused navigation moves focus in.
+      if (active && navigation && navigation.focus !== "preserve")
+        element.focus({ preventScroll: true });
+    }
     if (follow.current) element.scrollTop = element.scrollHeight;
     positioned.current = true;
     if (!routePending) {
@@ -1350,6 +1430,7 @@ function ThreadMessages({
     selectedOffset,
     tree,
     expanded,
+    unreadBoundary,
   ]);
   // The effect above re-pins only when thread data changes. A growing composer
   // shrinks this viewport, late media grows rows and a join error grows the end
@@ -1372,7 +1453,7 @@ function ThreadMessages({
   // Main's retained presentation can be usable before the initial history walk
   // finishes. That is not yet automatic reading intent. Exact revealed targets
   // remain individually readable; later background refreshes keep earned readiness.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: active can complete an exact background visit in the preceding layout effect without changing the snapshot.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active can complete an exact background visit, and a decided unread line can position one, in the preceding layout effect without changing the snapshot.
   useLayoutEffect(() => {
     if (
       !positioned.current ||
@@ -1388,7 +1469,15 @@ function ThreadMessages({
       readingSettled.current = true;
       readingPositioned(scroller.current);
     }
-  }, [active, navigation, routePending, rootTarget, revealed, snapshot]);
+  }, [
+    active,
+    navigation,
+    routePending,
+    rootTarget,
+    revealed,
+    snapshot,
+    unreadBoundary,
+  ]);
   // An own send can land in the middle of a branch, not at the list bottom.
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry DOM lookup after history or branch visibility changes.
   useLayoutEffect(() => {
@@ -1617,6 +1706,14 @@ function ThreadMessages({
           className={styles.replyItem}
           data-layout={continuation ? "continuation" : "thread"}
         >
+          {!parent && row.id === unreadBoundary && (
+            <div className={styles.newMessages} data-new-messages-boundary>
+              <hr className="sr-only select-none" aria-label="New messages" />
+              <span className="select-none" aria-hidden="true">
+                New messages
+              </span>
+            </div>
+          )}
           {!parent &&
             row.replyParentId &&
             row.replyParentId !== rootId &&

@@ -196,9 +196,22 @@ async function testRelease(spawn: Spawn, version: string) {
   ]);
   if (code !== 0 || !stdout.startsWith(version))
     throw new Error(stderr.trim() || "it did not report its version");
-  const claude = await ClaudeProcess.start(release, {
-    cwd: "~",
-    systemPrompt: "",
+  // Its last words, which say why it quit, e.g. a setting it refused. It
+  // can quit before taking the first request, so this is kept out here.
+  let said = "";
+  const lastWords = () => said.trim().split("\n").at(-1);
+  const claude = await ClaudeProcess.start(
+    (id, options) =>
+      release(id, {
+        ...options,
+        onStderr: (data) => {
+          said = (said + data).slice(-4_000);
+          options?.onStderr?.(data);
+        },
+      }),
+    { cwd: "~", systemPrompt: "" },
+  ).catch((error: unknown) => {
+    throw new Error(lastWords() || message(error));
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -206,11 +219,19 @@ async function testRelease(spawn: Spawn, version: string) {
       claude.models(),
       new Promise<never>((_, reject) => {
         timer = setTimeout(
-          () => reject(new Error("it did not list its models")),
+          () =>
+            reject(
+              new Error(
+                `it did not list its models within ${CHECK_TIMEOUT_MS / 1000} seconds`,
+              ),
+            ),
           CHECK_TIMEOUT_MS,
         );
       }),
     ]);
+    // A release that quits answers nothing, so its stderr is the reason.
+    if (!claude.running)
+      throw new Error(lastWords() || "it quit before listing its models");
     if (!models.length) throw new Error("it did not list its models");
   } finally {
     clearTimeout(timer);
@@ -384,6 +405,20 @@ export class ClaudeSetup {
         this.set({ modelsChecking: false });
       }
     }
+  }
+  /** Whether Claude is installed and signed in here and lists `model`, by
+   * its name or the model an alias stands for, on `effort` when it takes one. */
+  async offers({ model, effort }: Readonly<{ model: string; effort: string }>) {
+    if (this.state.status?.state !== "ready") await this.check();
+    if (this.state.status?.state !== "ready") return false;
+    const listed = (await this.catalog()).find(
+      (item) => item.value === model || item.resolvedModel === model,
+    );
+    return (
+      !!listed &&
+      (!listed.supportsEffort ||
+        !!listed.supportedEffortLevels?.includes(effort))
+    );
   }
   /** The catalog for a surface that opens without the model picker: looked
    * for again after a discovery that listed nothing, or once it is stale. A

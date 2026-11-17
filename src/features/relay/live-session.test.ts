@@ -17,6 +17,7 @@ import {
 import {
   bounds,
   flush,
+  isNoticeRead,
   keypair,
   message,
   metadata,
@@ -465,17 +466,22 @@ function reconnectHarness(
     wire.pending.filter(
       (entry) => !entry.signal?.aborted && entry.filters[0]?.top_level === true,
     );
-  /** The one outstanding window read, after answering profile reads empty. */
+  /** The one outstanding window read, after answering profile reads empty.
+   * A head's notice read, sent beside it, stays pending. */
   const read = (channelId = "c") => {
     for (const entry of wire.pending.splice(0)) {
       if (entry.signal?.aborted) continue;
       if (entry.filters[0]?.kinds?.includes(0)) entry.respond([]);
       else wire.pending.push(entry);
     }
-    expect(wire.pending.map((entry) => entry.filters)).toMatchObject([
+    const reads = wire.pending.filter((entry) => !isNoticeRead(entry.filters));
+    expect(reads.map((entry) => entry.filters)).toMatchObject([
       [{ "#h": [channelId], top_level: true }],
     ]);
-    return wire.next();
+    const [entry] = reads;
+    assert(entry);
+    wire.pending.splice(wire.pending.indexOf(entry), 1);
+    return entry;
   };
   const page = (
     suffix: string,
@@ -1672,7 +1678,31 @@ it("skips the reads a continuous global replay covers, and keeps them after a cu
     establish(false, false);
     expect(covered(await drain())).toEqual(once);
     ready();
+    // Unwatched authors stay loaded only while the profiles route is live.
+    const profiles = (status: "live" | "error") =>
+      ({
+        status: "connected",
+        routes: [{ id: "profiles", status, replay: "unknown" }],
+      }) as const;
+    const rows = async () => {
+      const unwatch = owner.session.statuses.watch([alice.pubkey]);
+      const reads = covered(await drain()).statuses;
+      unwatch();
+      return reads;
+    };
+    live.state(profiles("live"));
     stop();
+    expect(await rows()).toBe(0);
+    // The route closes after its EOSE, on the same connection: a returning
+    // row reads again, since nothing kept its status current.
+    live.state(profiles("error"));
+    expect(await rows()).toBe(1);
+    expect(await rows()).toBe(1);
+    // Re-established: loaded again once, then kept while out of view.
+    live.state(profiles("live"));
+    establish(true, true);
+    expect(await rows()).toBe(1);
+    expect(await rows()).toBe(0);
   } finally {
     owner.dispose();
   }

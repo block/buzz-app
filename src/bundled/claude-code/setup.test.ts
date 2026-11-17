@@ -251,7 +251,13 @@ function scripted(
   const spawn = async (id: string, options: HostProcessOptions = {}) => {
     const args = options.args ?? [];
     calls.push({ id, args });
-    const result = output[`${id} ${args.join(" ")}`.trim()];
+    const command = `${id} ${args.join(" ")}`.trim();
+    // No setup of the person's own unless the script says otherwise.
+    const result =
+      output[command] ??
+      (command === "claude auth status --json"
+        ? { stdout: '{"loggedIn": false}', code: 1 }
+        : undefined);
     if (result instanceof Error) throw result;
     queueMicrotask(() => {
       if (result?.stdout) options.onStdout?.(result.stdout);
@@ -414,8 +420,8 @@ it("caches failed model discovery until retry and closes a late probe on disposa
   await setup.loadModels();
   expect(setup.snapshot().modelsError).toBe("probe failed");
   await setup.loadModels();
-  // The version and the failed probe.
-  expect(spawn).toHaveBeenCalledTimes(2);
+  // The version, the setup check and the failed probe.
+  expect(spawn).toHaveBeenCalledTimes(3);
   spawn.mockImplementationOnce(() => late);
   const pending = setup.loadModels(true);
   expect(setup.snapshot().modelsChecking).toBe(true);
@@ -588,7 +594,16 @@ const CHECKSUM = "a".repeat(64);
 /** Buzz's copy on a fake disk, and downloads.claude.ai offering `latest`. */
 function releases(
   latest: string,
-  { current, broken }: { current?: string; broken?: string } = {},
+  {
+    current,
+    broken,
+    quits,
+  }: {
+    current?: string;
+    broken?: string;
+    /** Reports its version, then quits with this on stderr when driven. */
+    quits?: Readonly<{ version: string; stderr: string }>;
+  } = {},
 ) {
   const state = {
     current,
@@ -599,13 +614,25 @@ function releases(
   const claude = fakeSpawn();
   const spawn = async (id: string, options: HostProcessOptions = {}) => {
     const args = options.args ?? [];
-    if (id === "claude" && args.includes("stream-json"))
-      return claude.spawn(id, options);
     const version = options.env?.BUZZ_CLAUDE_VERSION ?? state.current;
+    if (id === "claude" && args.includes("stream-json")) {
+      if (!quits || version !== quits.version) return claude.spawn(id, options);
+      queueMicrotask(() => options.onStderr?.(quits.stderr));
+      return {
+        write: async () => undefined,
+        end: async () => undefined,
+        kill: async () => undefined,
+        exited: new Promise<number | null>((resolve) =>
+          setTimeout(() => resolve(1), 0),
+        ),
+      };
+    }
     let result: { stdout?: string; stderr?: string; code: number } = {
       code: 0,
     };
     if (id === "platform") result = { stdout: "Darwin arm64\n", code: 0 };
+    else if (args[0] === "auth")
+      result = { stdout: '{"loggedIn": false}', code: 1 };
     else if (id === "install") {
       state.fetched.push(args.join(" "));
       if (state.offline) result = { code: 1 };
@@ -685,6 +712,24 @@ it("keeps the copy in use when a new release fails its test", async () => {
   expect(state.fetched).toHaveLength(1);
   await setup.run("install");
   expect(state.fetched).toHaveLength(2);
+});
+
+it("says why a new release quit during its test", async () => {
+  const { spawn, request, state } = releases("2.1.300", {
+    current: "2.1.280",
+    quits: {
+      version: "2.1.300",
+      stderr: "Starting Claude\nError: bypassPermissions is disabled\n",
+    },
+  });
+  const setup = new ClaudeSetup(spawn, request);
+  await setup.update(false);
+  expect(state.used).toEqual([]);
+  expect(setup.snapshot()).toMatchObject({
+    notice:
+      "Claude 2.1.300 failed its test: Error: bypassPermissions is disabled. Buzz keeps using 2.1.280.",
+    status: { state: "ready", version: "2.1.280" },
+  });
 });
 
 it("does nothing when the copy is already the latest", async () => {

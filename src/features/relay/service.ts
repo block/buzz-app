@@ -6,6 +6,7 @@ import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
 import { createRelaySession, type RelaySession } from "./session";
 import { createHeadPersistence } from "./persistence";
+import { savedVerifiedProfileAuthority } from "./verified-profile";
 import {
   relayPartition,
   transportOrigin,
@@ -56,6 +57,9 @@ export type RelayData = {
   tryAgain(): void;
   disconnect(): void;
   clearCache(): Promise<void>;
+  /** The selected community's origin, known before it connects; undefined
+   * with none selected. */
+  selected?(): string | undefined;
 };
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -137,7 +141,8 @@ export function provideRelay(
     let cached: ReturnType<typeof createRelaySession> | undefined;
     let handedOff = false;
     try {
-      const saved = (await persistence.readStartup?.())?.discovery;
+      const startup = await persistence.readStartup?.();
+      const saved = startup?.discovery;
       if (
         !saved ||
         !/^[0-9a-f]{64}$/.test(saved.relayAuthor) ||
@@ -151,6 +156,9 @@ export function provideRelay(
           viewer: resume.viewer,
           scope: resume.scope,
           relayAuthor: saved.relayAuthor,
+          verifiedProfiles: savedVerifiedProfileAuthority(
+            startup?.verifiedProfiles,
+          ),
           query: () =>
             Promise.reject(
               new ReadError(

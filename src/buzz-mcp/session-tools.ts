@@ -18,6 +18,7 @@ import {
   callAttentionTool,
   isAttentionTool,
 } from "./attention";
+import { BESTIE_TOOLS, callBestieTool, isBestieTool } from "./bestie";
 import type { BuzzClient, Context } from "./client";
 import {
   callToolOperation,
@@ -78,6 +79,7 @@ export const BUZZ_SESSION: BuzzSession = Object.freeze({
     ...SOLO_WORKER_TOOLS,
     ...PLUGIN_TOOLS,
     ...SETTINGS_TOOLS,
+    ...BESTIE_TOOLS,
   ],
 });
 
@@ -103,6 +105,7 @@ export const sessionTools = (
   ...SOLO_WORKER_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
   ...PLUGIN_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
   ...SETTINGS_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...BESTIE_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
   ...added.map((tool) => ({ ...listed(tool), load: "search" as const })),
 ];
 
@@ -113,7 +116,7 @@ export function sessionHint(added: readonly AddedTool[] = []) {
   const plugins = added.length
     ? " and tools from enabled plugins. Search by capability to discover specific plugin tools"
     : "";
-  return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work), this device's plugins (plugin_list; install, update, enable and remove are requests your owner confirms)${plugins}.`;
+  return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work), this device's plugins (plugin_list; install, update, enable and remove are requests your owner confirms)${plugins}. To answer from Buzz history, you can search again with a reformulated query or other filters when the results don't answer the question.`;
 }
 
 /** Changes when the added tools change, so a session that keeps the list it
@@ -235,13 +238,14 @@ async function dispatchSessionTool(
 ): Promise<Reply> {
   const tool = added.find((tool) => tool.name === name);
   if (tool) {
-    // A plugin's tool doesn't get the agent's device settings.
-    const { settings: _, ...plugin } = client;
+    // A plugin's tool doesn't get the agent's device settings or Bestie.
+    const { settings: _, bestie: __, ...plugin } = client;
     return tool.call(plugin, context, args);
   }
   if (isSoloWorkerTool(name)) return callSoloWorkerTool(client, name, args);
   if (isPluginTool(name)) return callPluginTool(client, context, name, args);
   if (isSettingsTool(name)) return callSettingsTool(client, name, args);
+  if (isBestieTool(name)) return callBestieTool(client, name, args);
   if (!isAttentionTool(name)) return callTool(client, context, name, args);
   const { attention } = client;
   if (!attention) throw new Error(`No tool ${name}`);

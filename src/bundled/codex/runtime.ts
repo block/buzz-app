@@ -2274,19 +2274,30 @@ export class CodexRuntime {
   /** Runs an unaddressed wake without a default posting destination. Community
    * scope retains it in the shared session; other scopes use an ephemeral
    * thread. Asks for its prompt when admitted and logs failures without posting. */
-  runOnce(turn: StandaloneTurn): Promise<TurnResult> {
-    return this.standalone(turn);
+  async runOnce(turn: StandaloneTurn): Promise<TurnResult> {
+    let answered = false;
+    try {
+      const result = await this.standalone(turn, false, () => {
+        answered = true;
+      });
+      return answered ? { ok: true } : result;
+    } catch (error) {
+      if (answered) return { ok: true };
+      throw error;
+    }
   }
   private async standalone(
     { delivery, key, signal: turnSignal, prompt }: StandaloneTurn,
     reserved = false,
+    published = () => {},
   ): Promise<TurnResult> {
     if (this.disposed) throw new Error("Codex runtime is disposed");
     if (this.resolveConfig(delivery.config).scope === "community" && !reserved)
       return this.controls.wake(
         `${delivery.agent.key}/${scopedKey("community", COMMUNITY_SESSION)}`,
         turnSignal,
-        (signal) => this.standalone({ delivery, key, signal, prompt }, true),
+        (signal) =>
+          this.standalone({ delivery, key, signal, prompt }, true, published),
       );
     const { agent } = delivery;
     const reads = this.reads(agent.key);
@@ -2341,8 +2352,8 @@ export class CodexRuntime {
         } as EventData,
         ...(delivery.synced ? { synced: delivery.synced } : {}),
         answered(stopped) {
-          if (stopped && request.finalDelivery !== true)
-            outcome = { ok: false, error: "Codex was stopped" };
+          if (request.finalDelivery === true) published();
+          else if (stopped) outcome = { ok: false, error: "Codex was stopped" };
         },
         failActivity(error) {
           if (error !== "Codex ended without a final reply")

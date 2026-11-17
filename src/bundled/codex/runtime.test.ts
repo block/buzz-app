@@ -7921,7 +7921,7 @@ it.each([false, true])(
       expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Working");
       if (cancelled) abort.abort(new Error("deadline"));
       else await f.complete(0, "");
-      await once;
+      await expect(once).resolves.toMatchObject({ ok: !cancelled });
       await vi.waitFor(() =>
         expect(f.runtime.sessionState(agent, { channelId: "channel" })).toBe(
           "idle",
@@ -7929,6 +7929,52 @@ it.each([false, true])(
       );
       expect(f.runtime.sessions(pubkey)[0]?.status).toBe(
         cancelled ? "Stopped" : "Idle",
+      );
+    } finally {
+      abort.abort();
+      f.runtime.dispose();
+      await once;
+    }
+  },
+);
+
+it.each(["interrupt", "deadline"])(
+  "preserves published community wake success after %s cancels the native tail",
+  async (cancel) => {
+    const f = fixture();
+    const base = f.delivery("seed");
+    const config = { ...(base.config as object), scope: "community" };
+    const agent = { ...base.agent, config } as unknown as Agent;
+    const abort = new AbortController();
+    const once = f.runtime.runOnce({
+      delivery: { ...base, config },
+      key: "watch",
+      signal: abort.signal,
+      prompt: async () => "check",
+    });
+    try {
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      expect(
+        (
+          await f.tool("send", {
+            channel: "channel",
+            audience: "everyone",
+            text: "DONE",
+            final: true,
+          })
+        )?.result,
+      ).toMatchObject({ success: true });
+      if (cancel === "interrupt")
+        await f.runtime.session(agent, { channelId: "channel" }, "interrupt");
+      else abort.abort(new Error("deadline"));
+      await expect(once).resolves.toEqual({ ok: true });
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, { channelId: "channel" })).toBe(
+          "idle",
+        ),
+      );
+      expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(
+        true,
       );
     } finally {
       abort.abort();

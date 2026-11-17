@@ -157,18 +157,21 @@ gateway's to enforce and is ignored. A type with no declared harness, no
 upstream, or a harness the gateway doesn't list keeps its existing behavior.
 While an access check is in flight, such as the first one at startup or the
 re-check after the gateway refuses a request, a turn waits for it for up to 5
-seconds. A check that fails with anything but a 401 or 403 is tried once more
-after a short pause. If the gateway refuses access (a 401 or 403), the turn
-fails with a message asking the user to sign in again; it never falls back.
+seconds; a turn after a failed check waits for its recheck the same way. If
+the check is still unresolved after the wait, the turn fails with a message
+asking the user to try again in a moment; it never falls back while access
+could yet be refused. A check that fails with anything but a 401 or 403 is
+tried once more after a short pause. If the gateway refuses access (a 401 or
+403), the turn fails with a message asking the user to sign in again; it never
+falls back.
 That refusal remains effective while access is checked again, including if
 the recheck hangs or fails with a network or gateway error. Only a successful
 access check or a changed membership context (identity, community or relay
 session) clears it. A 401/403 from discovery or inference applies the same rule.
-When the route is otherwise blocked (network, gateway error, still checking
-after the wait, or a community or identity problem), the harness runs with the
-user's own configuration and none of the Buzz request context, and the turn is
-noted "Ran without the agent gateway" with the reason: under the request for a
-mention, and in the harness's own turn activity for other turns, which receive
+When the route is otherwise blocked (network, gateway error, or a community or
+identity problem), the harness runs with the user's own configuration and none
+of the Buzz request context, and the turn is noted "Ran without the agent
+gateway" with the reason: under the request for a mention, and in the harness's own turn activity for other turns, which receive
 it as `delivery.gatewayFallback`. The note stays under the request even when a
 later message supersedes it. That choice is made before dispatch; a turn whose
 gateway access is revoked after dispatch fails visibly and is never

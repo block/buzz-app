@@ -835,9 +835,9 @@ export type Delivery<Config = unknown> = Readonly<{
   }>;
   /** A blocked route sent this turn to the type's own configuration, decided
    * before dispatch, after waiting up to `TURN_READINESS_WAIT_MS` for an
-   * access check in flight; never with `gateway`. Every blocked reason but
-   * `auth` falls back this way, including a route still pending after the
-   * wait; a 401 or 403 (`auth`) fails the turn before dispatch instead. The
+   * access check in flight; never with `gateway`. Every blocked reason
+   * falls back this way except a 401 or 403 (`auth`) and a route still
+   * pending after the wait, which fail the turn before dispatch instead. The
    * host owns the decision and `notice`; a type shows `notice` in this turn's
    * visible activity where the host can't (any turn but a mention, whose
    * request it already notes). */

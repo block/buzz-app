@@ -16,12 +16,13 @@ import { gatewayDescriptor, type GatewayDescriptor } from "./descriptor";
 // as a stale eligible route on the way.
 //
 // What a turn does with a blocked route is the runner's policy, decided
-// before dispatch: `auth` (a 401 or 403) fails the turn. Every other reason,
-// including a route still pending after the bounded wait
-// (`TURN_READINESS_WAIT_MS`), runs the turn on the harness's own
-// configuration (direct providers) with a notice. An invalid runtime
-// descriptor gives no upstream, so its turns run unchanged with no notice:
-// that fails open, and the build-time descriptor checks keep it rare.
+// before dispatch: `auth` (a 401 or 403) fails the turn, and so does a route
+// still pending after the bounded wait (`TURN_READINESS_WAIT_MS`), since its
+// access decision could yet be a denial. Every other reason runs the turn on
+// the harness's own configuration (direct providers) with a notice. An
+// invalid runtime descriptor gives no upstream, so its turns run unchanged
+// with no notice: that fails open, and the build-time descriptor checks keep
+// it rare.
 //
 // Every route carries the membership's eligibility revision. It rises
 // synchronously whenever the route returns to pending (a membership change,
@@ -83,7 +84,8 @@ export type GatewayMembership = Readonly<{
 export type GatewayRequest = (request: HostRequest) => Promise<HostResponse>;
 
 const MESSAGES: Record<BlockedReason, string> = {
-  readiness_pending: "Checking gateway access for this agent…",
+  readiness_pending:
+    "Buzz is still checking this agent's gateway access. Try again in a moment.",
   descriptor_invalid:
     "This build's agent gateway configuration is invalid, so its agents can't run.",
   community_id_missing:
@@ -99,11 +101,14 @@ const MESSAGES: Record<BlockedReason, string> = {
     "The agent gateway couldn't confirm model access. Try again shortly.",
 };
 
-/** A blocked reason a turn falls back on; `auth` fails the turn instead. */
-export type FallbackReason = Exclude<BlockedReason, "auth">;
+/** A blocked reason a turn falls back on; `auth` and an unresolved
+ * `readiness_pending` fail the turn instead. */
+export type FallbackReason = Exclude<
+  BlockedReason,
+  "auth" | "readiness_pending"
+>;
 /** Why a turn ran without the gateway, as its per-turn notice says. */
 const FALLBACK: Record<FallbackReason, string> = {
-  readiness_pending: "gateway access was still being checked",
   descriptor_invalid: "this build's agent gateway configuration is invalid",
   community_id_missing: "this community didn't identify itself",
   community_id_mismatch:
@@ -117,8 +122,8 @@ const FALLBACK: Record<FallbackReason, string> = {
 export const fallbackNotice = (reason: FallbackReason) =>
   `Ran without the agent gateway: ${FALLBACK[reason]}.`;
 
-/** How long a turn waits for an access check already in flight, such as the
- * first one at cold start, before it falls back. Below the probe's own
+/** How long a turn waits for an access check in flight, such as the first
+ * one at cold start, before it fails as still pending. Below the probe's own
  * request timeout, so a hung gateway delays a turn by this much at most. */
 export const TURN_READINESS_WAIT_MS = 5_000;
 /** The pause before a failed access check (anything but a 401 or 403) is
@@ -244,30 +249,30 @@ export class GatewayRoutes {
 
   /** The membership's route for a turn starting now. While an access check
    * is in flight (pending at cold start, or after `invalidate`), the turn
-   * waits for it until `wait` aborts, then takes the route as it stands; it
-   * never starts a probe to wait on, so with no request bound or nothing in
-   * flight it doesn't wait at all. A route that is already failed is
-   * returned at once and retried in the background, so a later turn can
-   * route after a network blip. A known auth refusal remains effective
-   * throughout rechecks, even when they fail or outlast the wait. The caller owns the wait's cap and any
-   * cancellation, and checks its own signal afterwards. */
+   * waits for it until `wait` aborts, then takes the route as it stands, so
+   * a check that outlasts the wait leaves it pending. With no request bound
+   * or nothing in flight it doesn't wait at all. A failed route is checked
+   * again, so a turn can route after a network blip; the turn waits for that
+   * recheck like any other, since its answer could be a denial. A known auth
+   * refusal is returned at once instead and remains effective throughout
+   * rechecks, even when they fail or outlast the wait. The caller owns the
+   * wait's cap and any cancellation, and checks its own signal afterwards. */
   async routeForTurn(key: AgentKey, wait?: AbortSignal): Promise<GatewayRoute> {
     const route = this.routeFor(key);
     const decided = this.decide(key);
     if (decided.kind !== "pending") return route;
     const state = this.readiness.get(decided.cache);
     if (state?.status === "failed") {
+      if (!this.request) return route;
       // Nothing is admitted at a failed revision, so retrying revokes nothing.
+      this.readiness.delete(decided.cache);
+      this.bump(key);
+      this.probe(key);
+      this.notify(key);
       // Auth refusals stand independently of the recheck's readiness.
-      if (this.request) {
-        this.readiness.delete(decided.cache);
-        this.bump(key);
-        this.probe(key);
-        this.notify(key);
-      }
-      return route;
+      if (route.kind === "blocked" && route.reason === "auth") return route;
     }
-    if (!wait) return route;
+    if (!wait) return this.routeFor(key);
     // A probe discarded because the membership changed meanwhile leaves a
     // newer one in flight: wait for that too, under the same cap.
     for (

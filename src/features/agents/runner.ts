@@ -2721,12 +2721,13 @@ export class AgentRunners {
    * keeps its existing behavior, without a notice. While an access check is
    * in flight, such as the first one at cold start, the turn waits for it
    * for up to `TURN_READINESS_WAIT_MS`, or until the turn is cancelled. A
-   * blocked `auth` route (a 401 or 403) then fails the turn. Any other
-   * blocked route, including one still pending after the wait, runs it with
-   * its own configuration and none of the Buzz context, as
-   * `gatewayFallback`, and notes that on a mention's request. The choice is
-   * made here, before dispatch, so nothing is ever replayed. A turn whose
-   * access is revoked after dispatch is the harness's to fail visibly. */
+   * blocked `auth` route (a 401 or 403) then fails the turn, and so does one
+   * still pending after the wait, whose answer could yet be a denial. Any
+   * other blocked route runs it with its own configuration and none of the
+   * Buzz context, as `gatewayFallback`, and notes that on a mention's
+   * request. The choice is made here, before dispatch, so nothing is ever
+   * replayed. A turn whose access is revoked after dispatch is the harness's
+   * to fail visibly. */
   private async gatewayRouting(
     agent: Agent,
     type: RegisteredAgentType,
@@ -2744,7 +2745,8 @@ export class AgentRunners {
     signal.throwIfAborted();
     if (route.kind === "external") return {};
     if (route.kind === "blocked") {
-      if (route.reason === "auth") throw new Error(route.message);
+      if (route.reason === "auth" || route.reason === "readiness_pending")
+        throw new Error(route.message);
       const notice = fallbackNotice(route.reason);
       job.work?.notice(notice);
       return {

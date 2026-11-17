@@ -1369,6 +1369,8 @@ available rather than silently discarding it.
   a refused sign-in or access check stops the turn and asks you to sign in again.
   Later turns stay blocked while access is rechecked, even if that check stalls
   or loses its connection. A successful access check lets the agent run again.
+  If access is still being checked after a few seconds, the turn stops and asks
+  you to try again in a moment instead of running without the gateway.
 - **Settings → Agent details** says where an agent's configuration lives:
   **Synced in** its community, or **Only on this Mac** with why (the relay
   doesn't sync agent settings, or the first copy failed and Buzz will try

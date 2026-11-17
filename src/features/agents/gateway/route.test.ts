@@ -402,7 +402,7 @@ describe("GatewayRoutes", () => {
     });
   });
 
-  it("gives a turn a failed route at once, retrying the probe in the background", async () => {
+  it("rechecks a failed route for a turn and waits for that recheck, never returning the cached failure", async () => {
     const retry = retryClock();
     const { routes, answer, pending } = setup();
     routes.setMembership(member("b1", {}));
@@ -414,19 +414,50 @@ describe("GatewayRoutes", () => {
     await answer("", 500);
     await retry();
     await answer("", 500);
+    expect(routes.routeFor(key("b1"))).toMatchObject({
+      reason: "gateway_error",
+    });
+    // The wait ends before the recheck answers: pending, so its answer could
+    // still be a denial.
+    await expect(
+      routes.routeForTurn(key("b1"), AbortSignal.abort()),
+    ).resolves.toMatchObject({ kind: "blocked", reason: "readiness_pending" });
+    expect(pending).toHaveLength(1);
+    // A later turn waits for that recheck, which here refuses access.
+    const denied = routes.routeForTurn(key("b1"), new AbortController().signal);
+    await answer("", 403);
+    await expect(denied).resolves.toMatchObject({ reason: "auth" });
+    // A known refusal is returned at once while it is checked again.
     await expect(
       routes.routeForTurn(key("b1"), new AbortController().signal),
-    ).resolves.toMatchObject({ kind: "blocked", reason: "gateway_error" });
+    ).resolves.toMatchObject({ reason: "auth" });
     expect(pending).toHaveLength(1);
-    expect(routes.routeFor(key("b1"))).toMatchObject({
-      reason: "readiness_pending",
-    });
     await answer('{"harnesses":[]}');
     await expect(routes.routeForTurn(key("b1"))).resolves.toMatchObject({
       kind: "eligible",
-      revision: 4,
+      harnesses: [],
     });
     expect(pending).toHaveLength(0);
+  });
+
+  it("gives a turn its recheck's own failure when that recheck fails again inside the wait", async () => {
+    const retry = retryClock();
+    const { routes, answer } = setup();
+    routes.setMembership(member("b1", {}));
+    await answer("", 500);
+    await retry();
+    await answer("", 500);
+    const turn = routes.routeForTurn(key("b1"), new AbortController().signal);
+    expect(routes.routeFor(key("b1"))).toMatchObject({
+      reason: "readiness_pending",
+    });
+    await answer("", 503);
+    await retry();
+    await answer("", 502);
+    await expect(turn).resolves.toMatchObject({
+      kind: "blocked",
+      reason: "gateway_error",
+    });
   });
 
   it("keeps a failed 403 standing for later turns while no request path is bound", async () => {

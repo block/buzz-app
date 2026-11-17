@@ -19791,23 +19791,81 @@ describe("agent gateway gate", () => {
   const AUTH =
     "The agent gateway didn't accept your sign-in or denied this agent. Sign in again, then retry.";
 
-  it("falls back once a readiness probe outlasts the turn's wait, with the pending notice", async () => {
+  const PENDING =
+    "Buzz is still checking this agent's gateway access. Try again in a moment.";
+
+  it("fails a turn whose access check outlasts the wait, before any type code runs, so a late 403 finds nothing dispatched", async () => {
     const cap = capReached();
     try {
-      const { request } = liveRoutes();
+      const { routes, request, answer } = liveRoutes();
       expect(request).toHaveBeenCalledTimes(1);
       const f = await mentioned(true);
-      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() =>
+        expect(f.activity.reader.work()[0]).toMatchObject({
+          state: "error",
+          error: PENDING,
+        }),
+      );
       expect(cap).toHaveBeenCalledWith(TURN_READINESS_WAIT_MS);
-      expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
-      expect(f.run.mock.calls[0]?.[0]?.gatewayFallback).toEqual({
-        reason: "readiness_pending",
-        notice:
-          "Ran without the agent gateway: gateway access was still being checked.",
-      });
+      expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
+      expect(f.run).not.toHaveBeenCalled();
+      answer(403);
+      await vi.waitFor(() =>
+        expect(routes.routeFor(bot as never)).toMatchObject({
+          reason: "auth",
+        }),
+      );
+      expect(f.run).not.toHaveBeenCalled();
     } finally {
       cap.mockRestore();
     }
+  });
+
+  /** Live routes for `bot` whose first check failed twice with a 503. */
+  async function failedRoutes() {
+    const live = liveRoutes();
+    live.answer(503);
+    await vi.waitFor(() => expect(live.request).toHaveBeenCalledTimes(2));
+    live.answer(503);
+    await vi.waitFor(() =>
+      expect(live.routes.routeFor(bot as never)).toMatchObject({
+        reason: "gateway_error",
+      }),
+    );
+    return live;
+  }
+
+  it("waits for a turn's recheck after a cached gateway error instead of falling back on it, and fails on its 403", async () => {
+    const { request, answer } = await failedRoutes();
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(3));
+    expect(f.run).not.toHaveBeenCalled();
+    answer(403);
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        state: "error",
+        error: AUTH,
+      }),
+    );
+    expect(f.run).not.toHaveBeenCalled();
+  });
+
+  it("falls back on a recheck that fails again inside the wait, with its own notice", async () => {
+    const { request, answer } = await failedRoutes();
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(3));
+    expect(f.run).not.toHaveBeenCalled();
+    answer(503);
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(4));
+    answer(502);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    const delivery = f.run.mock.calls[0]?.[0];
+    expect(delivery).not.toHaveProperty("gateway");
+    expect(delivery?.gatewayFallback).toEqual({
+      reason: "gateway_error",
+      notice:
+        "Ran without the agent gateway: the gateway couldn't confirm model access.",
+    });
   });
 
   it("routes a turn through the gateway once a probe in flight settles inside the wait", async () => {

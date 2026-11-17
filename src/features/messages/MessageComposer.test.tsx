@@ -17454,7 +17454,7 @@ it.each([
       for (const [active, shown] of [
         [false, true],
         [true, false],
-      ]) {
+      ] as const) {
         h.present(active, shown);
         expect(region).toBeInTheDocument();
         expect(region).toBeEmptyDOMElement();

@@ -2044,10 +2044,18 @@ it("separates identity fields from runtime settings without changing the stored 
     model.compareDocumentPosition(instructions) &
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: "Huddle voice" }),
+  ).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Workspace")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Sessions")).not.toBeInTheDocument();
   expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
   view.rerender(<Settings {...props} settingsSection="runtime" />);
+  expect(
+    screen.getByRole("button", { name: "Huddle voice" }),
+  ).toHaveAccessibleDescription(
+    "Determines which voice your agent speaks with in Huddles (Codex only).",
+  );
   expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
   expect(screen.getByLabelText("Sessions")).toBeInTheDocument();
   expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
@@ -2813,13 +2821,8 @@ it("saves an agent's Voice and restores it without changing another agent", asyn
   const f = fixture();
   const save = vi.fn(async () => {});
   const user = userEvent.setup();
-  const view = render(
-    <f.tabs.SettingsTab
-      {...f.props(defaults, save)}
-      settingsSection="identity"
-    />,
-  );
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  const view = render(<f.tabs.SettingsTab {...f.props(defaults, save)} />);
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(await screen.findByRole("radio", { name: "Maple" }));
   await waitFor(() =>
     expect(save).toHaveBeenCalledWith(
@@ -2829,22 +2832,15 @@ it("saves an agent's Voice and restores it without changing another agent", asyn
   const saved = vi.mocked(save as (config: Config) => Promise<void>).mock
     .calls[0]?.[0] as Config;
   view.unmount();
-  const reopened = render(
-    <f.tabs.SettingsTab {...f.props(saved)} settingsSection="identity" />,
-  );
-  expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
-    "Maple",
-  );
+  const reopened = render(<f.tabs.SettingsTab {...f.props(saved)} />);
+  expect(
+    screen.getByRole("button", { name: "Huddle voice" }),
+  ).toHaveTextContent("Maple");
   reopened.unmount();
-  render(
-    <f.tabs.SettingsTab
-      {...f.props({ ...defaults, voice: "cove" })}
-      settingsSection="identity"
-    />,
-  );
-  expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
-    "Cove",
-  );
+  render(<f.tabs.SettingsTab {...f.props({ ...defaults, voice: "cove" })} />);
+  expect(
+    screen.getByRole("button", { name: "Huddle voice" }),
+  ).toHaveTextContent("Cove");
 });
 
 it("offers only v3 voices and lets an unavailable assignment return to default", async () => {
@@ -2855,7 +2851,7 @@ it("offers only v3 voices and lets an unavailable assignment return to default",
       {...f.props({ ...defaults, voice: "future-voice" }, save)}
     />,
   );
-  const voice = screen.getByRole("button", { name: "Voice" });
+  const voice = screen.getByRole("button", { name: "Huddle voice" });
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
   expect(voice).toHaveTextContent("Future-voice (unavailable)");
   const user = userEvent.setup();
@@ -2875,9 +2871,9 @@ it("keeps model settings usable when an older Codex has no v3 voice catalog", as
   const f = fixture({ voices: null });
   render(<f.tabs.SettingsTab {...f.props({ ...defaults, voice: "cove" })} />);
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
-  expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
-    "Cove",
-  );
+  expect(
+    screen.getByRole("button", { name: "Huddle voice" }),
+  ).toHaveTextContent("Cove");
   expect(
     screen.getByRole("button", { name: "Check voices again" }),
   ).toBeEnabled();
@@ -2887,7 +2883,7 @@ it("retains the saved voice label while discovery is pending", async () => {
   const gate = deferred<void>();
   const f = fixture({ voicesGate: gate.promise });
   render(<f.tabs.SettingsTab {...f.props({ ...defaults, voice: "cove" })} />);
-  const voice = screen.getByRole("button", { name: "Voice" });
+  const voice = screen.getByRole("button", { name: "Huddle voice" });
   try {
     await waitFor(() => expect(f.provider.snapshot().checking).toBe(true));
     expect(voice).toHaveAttribute("aria-disabled", "true");
@@ -2909,9 +2905,9 @@ it("explains failed voice discovery and retries without losing the saved choice"
   });
   expect(screen.getByText(/Voice choices could not be checked/)).toBeVisible();
   expect(screen.getByLabelText("Model")).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
-    "Cove",
-  );
+  expect(
+    screen.getByRole("button", { name: "Huddle voice" }),
+  ).toHaveTextContent("Cove");
   failed = false;
   await userEvent.setup().click(retry);
   await waitFor(() =>
@@ -2919,7 +2915,7 @@ it("explains failed voice discovery and retries without losing the saved choice"
       screen.queryByRole("button", { name: "Check voices again" }),
     ).not.toBeInTheDocument(),
   );
-  const voice = screen.getByRole("button", { name: "Voice" });
+  const voice = screen.getByRole("button", { name: "Huddle voice" });
   await waitFor(() => expect(voice).toBeEnabled());
   await userEvent.setup().click(voice);
   expect(await screen.findByRole("radio", { name: "Maple" })).toBeVisible();
@@ -2927,13 +2923,11 @@ it("explains failed voice discovery and retries without losing the saved choice"
 
 it("shows the configured realtime voice as the Codex default", async () => {
   const f = fixture({ configured: { realtime: { voice: "maple" } } });
-  render(
-    <f.tabs.SettingsTab {...f.props(defaults)} settingsSection="identity" />,
-  );
+  render(<f.tabs.SettingsTab {...f.props(defaults)} />);
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
-      "Maple · Default",
-    ),
+    expect(
+      screen.getByRole("button", { name: "Huddle voice" }),
+    ).toHaveTextContent("Maple · Default"),
   );
   expect(
     screen.queryByText("Applies when this agent next joins a Huddle."),
@@ -2987,14 +2981,14 @@ it("publishes Codex readiness while optional recording discovery is held", async
   }>();
   const host: PreviewHost = { request: vi.fn(() => gate.promise) };
   const f = fixture({ previewHost: host });
-  render(<f.tabs.SettingsTab {...f.props()} settingsSection="identity" />);
+  render(<f.tabs.SettingsTab {...f.props()} />);
   const checking = f.provider.check();
   try {
     await waitFor(() => expect(host.request).toHaveBeenCalledOnce());
     await waitFor(() => expect(f.provider.snapshot().readiness).toBe("ready"));
     await checking;
     expect(f.provider.snapshot().data?.models.length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "Voice" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Huddle voice" })).toBeEnabled();
   } finally {
     gate.resolve({
       status: 200,
@@ -3080,14 +3074,14 @@ it("rediscovers both catalogs when retained settings return without losing the d
   const f = fixture({ previewHost: host, voices });
   const view = render(
     <div data-testid="retained">
-      <f.tabs.SettingsTab {...f.props()} settingsSection="identity" />
+      <f.tabs.SettingsTab {...f.props()} />
     </div>,
   );
   const user = userEvent.setup();
   await waitFor(() =>
     expect(f.provider.snapshot().data?.previews?.cove).toContain("cove.1.m4a"),
   );
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(screen.getByRole("radio", { name: "Maple" }));
   view.getByTestId("retained").hidden = true;
   await act(async () => {});
@@ -3097,21 +3091,16 @@ it("rediscovers both catalogs when retained settings return without losing the d
     expect(f.provider.snapshot().data?.previews?.cove).toContain("cove.2.m4a"),
   );
   expect(f.provider.snapshot().data?.voices).toEqual(voices);
-  expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
-    "Maple",
-  );
+  expect(
+    screen.getByRole("button", { name: "Huddle voice" }),
+  ).toHaveTextContent("Maple");
 });
 it("saves voice changes immediately without a separate Save button", async () => {
   const f = fixture();
   const save = vi.fn(async () => {});
   const user = userEvent.setup();
-  render(
-    <f.tabs.SettingsTab
-      {...f.props(defaults, save)}
-      settingsSection="identity"
-    />,
-  );
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  render(<f.tabs.SettingsTab {...f.props(defaults, save)} />);
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(await screen.findByRole("radio", { name: "Maple" }));
   await waitFor(() =>
     expect(save).toHaveBeenCalledWith(
@@ -3133,12 +3122,10 @@ it.each([false, true])(
         : defaults,
       save,
     );
-    const view = render(
-      <f.tabs.SettingsTab {...props} settingsSection="identity" />,
-    );
+    const view = render(<f.tabs.SettingsTab {...props} />);
     const instructions = screen.getByRole("textbox", { name: "Instructions" });
     await user.type(instructions, "Keep this draft");
-    await user.click(screen.getByRole("button", { name: "Voice" }));
+    await user.click(screen.getByRole("button", { name: "Huddle voice" }));
     await user.click(await screen.findByRole("radio", { name: "Maple" }));
     await waitFor(() =>
       expect(save).toHaveBeenCalledWith(
@@ -3151,11 +3138,7 @@ it.each([false, true])(
     const config = { ...save.mock.calls[0]?.[0] } as Config;
     delete config.preset;
     view.rerender(
-      <f.tabs.SettingsTab
-        {...props}
-        agent={{ ...props.agent, config }}
-        settingsSection="identity"
-      />,
+      <f.tabs.SettingsTab {...props} agent={{ ...props.agent, config }} />,
     );
     await user.click(screen.getByRole("button", { name: "Close" }));
     expect(instructions).toHaveValue("Keep this draft");
@@ -3211,6 +3194,9 @@ it("reports a failed voice save after the picker has closed", async () => {
       createBufferSource() {
         return { disconnect() {} };
       }
+      createGain() {
+        return { gain: { value: 1 }, disconnect() {} };
+      }
       resume() {
         return new Promise<void>(() => {});
       }
@@ -3228,13 +3214,8 @@ it("reports a failed voice save after the picker has closed", async () => {
       }),
   );
   const user = userEvent.setup();
-  render(
-    <f.tabs.SettingsTab
-      {...f.props(defaults, save)}
-      settingsSection="identity"
-    />,
-  );
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  render(<f.tabs.SettingsTab {...f.props(defaults, save)} />);
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(await screen.findByRole("radio", { name: "Maple" }));
   await user.click(screen.getByRole("button", { name: "Close" }));
   await act(async () => reject(new Error("Voice save failed")));
@@ -3250,12 +3231,10 @@ it("preserves other drafts when a rejected voice save is confirmed later", async
   });
   const props = f.props(defaults, save);
   const user = userEvent.setup();
-  const view = render(
-    <f.tabs.SettingsTab {...props} settingsSection="identity" />,
-  );
+  const view = render(<f.tabs.SettingsTab {...props} />);
   const instructions = screen.getByRole("textbox", { name: "Instructions" });
   await user.type(instructions, "Keep this draft");
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(await screen.findByRole("radio", { name: "Maple" }));
   await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
   await user.click(screen.getByRole("button", { name: "Close" }));
@@ -3264,16 +3243,12 @@ it("preserves other drafts when a rejected voice save is confirmed later", async
   ).not.toHaveLength(0);
   const config = save.mock.calls[0]?.[0] as Config;
   view.rerender(
-    <f.tabs.SettingsTab
-      {...props}
-      agent={{ ...props.agent, config }}
-      settingsSection="identity"
-    />,
+    <f.tabs.SettingsTab {...props} agent={{ ...props.agent, config }} />,
   );
   expect(instructions).toHaveValue("Keep this draft");
-  expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
-    "Maple",
-  );
+  expect(
+    screen.getByRole("button", { name: "Huddle voice" }),
+  ).toHaveTextContent("Maple");
 });
 
 it("keeps a legacy configuration clean after a voice-only save", async () => {
@@ -3284,19 +3259,13 @@ it("keeps a legacy configuration clean after a voice-only save", async () => {
     save,
   );
   const user = userEvent.setup();
-  const view = render(
-    <f.tabs.SettingsTab {...props} settingsSection="identity" />,
-  );
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  const view = render(<f.tabs.SettingsTab {...props} />);
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(await screen.findByRole("radio", { name: "Maple" }));
   await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
   const config = save.mock.calls[0]?.[0] as Config;
   view.rerender(
-    <f.tabs.SettingsTab
-      {...props}
-      agent={{ ...props.agent, config }}
-      settingsSection="identity"
-    />,
+    <f.tabs.SettingsTab {...props} agent={{ ...props.agent, config }} />,
   );
   await user.click(screen.getByRole("button", { name: "Close" }));
   expect(

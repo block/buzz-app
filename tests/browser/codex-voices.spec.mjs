@@ -9,8 +9,9 @@ test("Codex Voices persist separately through the settings host", async ({
     waitUntil: "domcontentloaded",
   });
   await page.getByText("Ada", { exact: true }).click();
-  const pane = page.getByRole("tabpanel", { name: "Identity", exact: true });
-  const voice = pane.getByRole("button", { name: "Voice", exact: true });
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  const pane = page.getByRole("tabpanel", { name: "Settings", exact: true });
+  const voice = pane.getByRole("button", { name: "Huddle voice", exact: true });
   await voice.click();
   await expect(
     page.getByRole("button", { name: "Close", exact: true }),
@@ -83,8 +84,10 @@ test("Codex Voices persist separately through the settings host", async ({
   ).toHaveCount(0);
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByText("Ada", { exact: true }).click();
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await expect(voice).toContainText("Maple");
   await page.getByText("Bo", { exact: true }).click();
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await expect(voice).toContainText("Cove · Default");
   await voice.click();
   await page.getByRole("radio", { name: "Cove", exact: true }).click();
@@ -94,6 +97,7 @@ test("Codex Voices persist separately through the settings host", async ({
   ).toHaveCount(0);
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByText("Bo", { exact: true }).click();
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await expect(voice).toContainText("Cove");
   for (const { width, dark, fontSize } of [
     { width: 1280, dark: false, fontSize: "16px" },
@@ -108,7 +112,7 @@ test("Codex Voices persist separately through the settings host", async ({
       { dark, fontSize },
     );
     await voice.scrollIntoViewIfNeeded();
-    const label = pane.getByText("Voice", { exact: true });
+    const label = pane.getByText("Huddle voice", { exact: true });
     expect(
       await label.evaluate(
         (el) =>

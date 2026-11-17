@@ -52,7 +52,7 @@ it("previews the unsaved choice, stops immediately, and ignores a late failure",
       onChange={vi.fn()}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(screen.getByRole("radio", { name: voiceName() }));
   expect(previewVoice).toHaveBeenCalledWith(
     host,
@@ -64,7 +64,9 @@ it("previews the unsaved choice, stops immediately, and ignores a late failure",
   await user.click(screen.getByRole("button", { name: "Close" }));
   expect(signal?.aborted).toBe(true);
   reject(new Error("Late error"));
-  expect(await screen.findByRole("button", { name: "Voice" })).toBeEnabled();
+  expect(
+    await screen.findByRole("button", { name: "Huddle voice" }),
+  ).toBeEnabled();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
@@ -82,7 +84,7 @@ it("ends a preview when its keyed voice changes or settings closes", async () =>
       onChange={vi.fn()}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(screen.getByRole("radio", { name: voiceName() }));
   const first = vi.mocked(previewVoice).mock.calls[0]?.[2];
   view.rerender(
@@ -98,7 +100,7 @@ it("ends a preview when its keyed voice changes or settings closes", async () =>
   );
   expect(first?.aborted).toBe(true);
   if (!screen.queryByRole("dialog"))
-    await user.click(screen.getByRole("button", { name: "Voice" }));
+    await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(screen.getByRole("radio", { name: voiceName() }));
   const second = vi.mocked(previewVoice).mock.calls[1]?.[2];
   view.unmount();
@@ -121,13 +123,13 @@ it("shows errors and lets the user retry the default voice", async () => {
     />,
   );
   if (!screen.queryByRole("dialog"))
-    await user.click(screen.getByRole("button", { name: "Voice" }));
+    await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(screen.getByRole("radio", { name: voiceName() }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Sign in to Codex.",
   );
   if (!screen.queryByRole("dialog"))
-    await user.click(screen.getByRole("button", { name: "Voice" }));
+    await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(screen.getByRole("radio", { name: voiceName() }));
   await waitFor(() =>
     expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
@@ -155,7 +157,7 @@ it("selects and previews rows, replaces playback and stops on dismissal", async 
       onChange={onChange}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   expect(screen.getByRole("radio", { name: "Cove" })).toBeChecked();
   await user.click(screen.getByRole("radio", { name: "Maple" }));
   const first = vi.mocked(previewVoice).mock.calls[0]?.[2];
@@ -166,7 +168,7 @@ it("selects and previews rows, replaces playback and stops on dismissal", async 
   const second = vi.mocked(previewVoice).mock.calls[1]?.[2];
   await user.keyboard("{Escape}");
   expect(second?.aborted).toBe(true);
-  expect(screen.getByRole("button", { name: "Voice" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Huddle voice" })).toBeVisible();
 });
 
 it("chooses and previews a row without closing the picker", async () => {
@@ -183,10 +185,10 @@ it("chooses and previews a row without closing the picker", async () => {
       onChange={onChange}
     />,
   );
-  expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
-    "Cove · Default",
-  );
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  expect(
+    screen.getByRole("button", { name: "Huddle voice" }),
+  ).toHaveTextContent("Cove · Default");
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(screen.getByRole("radio", { name: "Maple" }));
   expect(onChange).toHaveBeenCalledWith("maple");
   expect(previewVoice).toHaveBeenCalledWith(
@@ -211,7 +213,7 @@ it("ignores stale audio callbacks after another selection", async () => {
       onChange={vi.fn()}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(screen.getByRole("radio", { name: "Cove" }));
   const first = vi.mocked(previewVoice).mock.calls[0];
   await user.click(screen.getByRole("radio", { name: "Maple" }));
@@ -237,7 +239,7 @@ it("preloads the selected recording, then the other choices when the picker open
     expect(preloadPreview).toHaveBeenCalledWith(host, previews.cove),
   );
   expect(preloadPreview).not.toHaveBeenCalledWith(host, previews.maple);
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   expect(preloadPreview).toHaveBeenCalledWith(host, previews.maple);
 });
 
@@ -255,7 +257,7 @@ it("keeps playback alive when loading changes to playing", async () => {
     />,
   );
   if (!screen.queryByRole("dialog"))
-    await user.click(screen.getByRole("button", { name: "Voice" }));
+    await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(screen.getByRole("radio", { name: voiceName() }));
   const call = vi.mocked(previewVoice).mock.calls[0];
   act(() => call?.[3]?.());
@@ -277,7 +279,7 @@ it("keeps arrow navigation and activation of the selected row open", async () =>
       onChange={onChange}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   screen.getByRole("radio", { name: "Codex default (Cove)" }).focus();
   await user.keyboard("{ArrowDown}");
   expect(screen.getByRole("dialog", { name: "Choose voice" })).toBeVisible();
@@ -306,7 +308,7 @@ it("stops a pending preview when retained settings become hidden", async () => {
   );
   try {
     if (!screen.queryByRole("dialog"))
-      await user.click(screen.getByRole("button", { name: "Voice" }));
+      await user.click(screen.getByRole("button", { name: "Huddle voice" }));
     await user.click(screen.getByRole("radio", { name: voiceName() }));
     const signal = vi.mocked(previewVoice).mock.calls[0]?.[2];
     visible = false;
@@ -340,7 +342,7 @@ it("stops hidden retained previews without checkVisibility", async () => {
   );
   try {
     if (!screen.queryByRole("dialog"))
-      await user.click(screen.getByRole("button", { name: "Voice" }));
+      await user.click(screen.getByRole("button", { name: "Huddle voice" }));
     await user.click(screen.getByRole("radio", { name: voiceName() }));
     const signal = vi.mocked(previewVoice).mock.calls[0]?.[2];
     view.getByTestId("older").hidden = true;
@@ -367,7 +369,7 @@ it("filters supported voices by locale without changing the saved voice", async 
       onChange={onChange}
     />,
   );
-  const trigger = screen.getByRole("button", { name: "Voice" });
+  const trigger = screen.getByRole("button", { name: "Huddle voice" });
   expect(trigger).toHaveAttribute("data-variant", "outline");
   await user.click(trigger);
   const locale = screen.getByRole("combobox", { name: "Language and region" });
@@ -413,7 +415,7 @@ it("reports a failed save without previewing it and allows a retry", async () =>
       onChange={onChange}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(screen.getByRole("radio", { name: "Maple" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not save voice",
@@ -446,7 +448,7 @@ it("does not start audio when a save finishes after closing the picker", async (
       onChange={onChange}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(screen.getByRole("radio", { name: "Maple" }));
   await user.click(screen.getByRole("button", { name: "Close" }));
   await act(async () => finish());
@@ -469,7 +471,7 @@ it("starts preparing audio in the click gesture while persistence is pending", a
       }
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(screen.getByRole("radio", { name: "Maple" }));
   try {
     expect(previewVoice).toHaveBeenCalledOnce();
@@ -486,7 +488,7 @@ it("retains a selected preview through recording discovery and uses its new URL"
     onChange: vi.fn(),
   };
   const view = render(<VoicePreview {...props} previewLoading />);
-  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   await user.click(screen.getByRole("radio", { name: "Maple" }));
   view.rerender(<VoicePreview {...props} previews={previews} />);
   await waitFor(() => expect(previewVoice).toHaveBeenCalledOnce());
@@ -496,7 +498,7 @@ it("returns focus to Voice when the picker closes during persistence", async () 
   const user = userEvent.setup();
   const props = { voice: "cove", disabled: false, onChange: vi.fn() };
   const view = render(<VoicePreview {...props} />);
-  const trigger = screen.getByRole("button", { name: "Voice" });
+  const trigger = screen.getByRole("button", { name: "Huddle voice" });
   await user.click(trigger);
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),

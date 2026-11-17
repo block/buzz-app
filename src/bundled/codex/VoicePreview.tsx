@@ -231,7 +231,8 @@ export function VoicePreview({
   return (
     <>
       <PreferenceRow
-        title="Voice"
+        title="Huddle voice"
+        subtitle="Determines which voice your agent speaks with in Huddles (Codex only)."
         trailing={(accessible) => (
           <Button
             {...accessible}

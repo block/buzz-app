@@ -1504,6 +1504,17 @@ export function createTabs(
                   {customization}
                 </>
               )}
+            </SettingsGroup>
+            <AgentInstructions
+              value={draft.instructions}
+              disabled={saving}
+              onChange={(instructions) => setDraft({ ...draft, instructions })}
+            />
+          </>
+        )}
+        {settingsSection !== "identity" && (
+          <>
+            <SettingsGroup>
               <VoicePreview
                 key={agent.key}
                 host={provider.previewHost}
@@ -1557,15 +1568,6 @@ export function createTabs(
                   </div>
                 )}
             </SettingsGroup>
-            <AgentInstructions
-              value={draft.instructions}
-              disabled={saving}
-              onChange={(instructions) => setDraft({ ...draft, instructions })}
-            />
-          </>
-        )}
-        {settingsSection !== "identity" && (
-          <>
             <Field
               label="Workspace"
               description={

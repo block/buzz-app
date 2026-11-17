@@ -561,28 +561,46 @@ it("does not silently retarget a deleted parent to the root", () => {
     screen.getByRole("button", { name: "Send fixture reply" }),
   ).toBeEnabled();
 });
-/** The banner's text column after choosing Reply on a reply with `content`. */
-function replyBanner(h: ReturnType<typeof setup>, content: string) {
-  h.update([{ ...row("target", "root"), content }]);
-  const target = document.querySelector('[data-message-id="target"]');
+/** What the banner reads below its "Replying to …" line after choosing Reply on `target`. */
+function replyBannerText(target: Partial<ChannelMessage>) {
+  setup().update([{ ...row("target", "root"), ...target }]);
+  const reply = document.querySelector('[data-message-id="target"]');
   fireEvent.click(
-    within(target as HTMLElement).getByRole("button", { name: /^Reply to / }),
+    within(reply as HTMLElement).getByRole("button", { name: /^Reply to / }),
   );
-  return within(screen.getByLabelText("Composer")).getByText(/^Replying to /)
-    .parentElement as HTMLElement;
+  const label = within(screen.getByLabelText("Composer")).getByText(
+    /^Replying to /,
+  );
+  // The text column holds the label and whatever is said about the target.
+  return label.parentElement?.textContent.slice(label.textContent.length);
 }
 it("summarises the reply target as prose, not its Markdown source", () => {
-  const banner = replyBanner(
-    setup(),
-    "**Status:** two items left, see [the rollout PR](https://github.com/example-org/app/pull/42) and run `just iterate` first.",
-  );
-  expect(banner.querySelector("p")?.textContent).toBe(
+  expect(
+    replyBannerText({
+      content:
+        "**Status:** two items left, see [the rollout PR](https://github.com/example-org/app/pull/42) and run `just iterate` first.",
+    }),
+  ).toBe(
     "Status: two items left, see the rollout PR and run just iterate first.",
   );
 });
 it("names only the author when the reply target has no prose to show", () => {
-  const banner = replyBanner(setup(), "[rollout]: https://example.org/rollout");
-  expect(banner.children).toHaveLength(1);
+  expect(
+    replyBannerText({ content: "[rollout]: https://example.org/rollout" }),
+  ).toBe("");
+});
+it("summarises a diff reply target by its file and description, not its patch", () => {
+  expect(
+    replyBannerText({
+      content:
+        "diff --git a/src/__init__.py b/src/__init__.py\n+Hello *world*\n",
+      diff: {
+        filePath: "src/__init__.py",
+        description: "Greet the world",
+        truncated: false,
+      },
+    }),
+  ).toBe("Diff: src/__init__.py — Greet the world");
 });
 
 it("starts replies with a full author header and only groups replies within the time window", () => {

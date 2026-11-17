@@ -47,7 +47,7 @@ import {
   type ThreadView,
 } from "../relay/threads";
 import { useProfileGeneration, useRowProfiles } from "../relay/react";
-import { rowProfileIds } from "../relay/membership";
+import { diffPreview, rowProfileIds } from "../relay/membership";
 import { plainText } from "../notifications/content";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { MessageContextMenus } from "./MessageActionBar";
@@ -1707,10 +1707,16 @@ function ThreadMessages({
     });
   }
   const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
-  // The banner names its target in prose, as the row above renders it.
+  // The banner's one line about its target. `plainText` flattens CommonMark
+  // and bounds the result; GFM that the row renders (strikethrough, tables,
+  // task-list boxes) still reaches the banner as source. A diff's content is
+  // a raw patch, never Markdown, so it gets the sidebar's summary instead.
   const selectedParentText = useMemo(
-    () => plainText(selectedParent?.content ?? ""),
-    [selectedParent?.content],
+    () =>
+      selectedParent?.diff
+        ? diffPreview(selectedParent.diff)
+        : plainText(selectedParent?.content ?? ""),
+    [selectedParent?.diff, selectedParent?.content],
   );
   const captureOlderAnchor = (element: HTMLElement) => {
     follow.current = false;

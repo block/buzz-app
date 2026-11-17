@@ -7879,10 +7879,7 @@ it("renders a leading custom emoji inline without changing trailing text", () =>
   );
 });
 
-it.each([
-  ["12:25:30: :25:", ":25:"],
-  ["10:30:party:", ":party:"],
-])("keeps time fragments literal beside custom emoji: %s", (text, image) => {
+it("keeps time fragments literal beside numeric and overlapping emoji", () => {
   const h = mount();
   h.setEmoji(
     ["25", "30", "party"].map((shortcode) => ({
@@ -7890,10 +7887,14 @@ it.each([
       url: `https://example.org/emoji/${shortcode}.png`,
     })),
   );
+  const text = "12:25:30: :25: 10:30:party:";
   h.fill(text);
   expect(h.input()).toHaveValue(text);
-  expect(within(h.input()).getAllByRole("img")).toHaveLength(1);
-  expect(within(h.input()).getByRole("img")).toHaveAttribute("alt", image);
+  expect(
+    within(h.input())
+      .getAllByRole("img")
+      .map((image) => image.getAttribute("alt")),
+  ).toEqual([":25:", ":party:"]);
   h.submit();
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",

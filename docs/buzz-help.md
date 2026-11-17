@@ -1454,16 +1454,15 @@ available rather than silently discarding it.
   restores its instructions and keeps its current name; members are not
   versioned. Teams kept only on this Mac have no versions.
 - Your agents can read your agents and teams here (`agent_read`,
-  `team_read`). Model reads include saved choices and, for local Codex and
-  Claude agents, current defaults when Buzz can resolve them. The result names
-  the source or says why it is unknown. It does not prove a running session's
-  model. Your agents can also propose a team's new name or instructions
+  `team_read`) and propose a team's new name or instructions
   (`team_update`). A proposal opens a review: nothing changes until you save
   it, members never change this way, and Save is refused if the team changed
   since the proposal.
   Agent reads also show saved model and thinking choices for supported local
   harnesses. They distinguish explicit choices, harness defaults, Recommended
-  policy and unavailable settings. They do not report an active turn's model.
+  policy and unavailable settings. For Codex and Claude, they also include
+  current defaults when Buzz can resolve them, with the source or a reason
+  they are unknown. They do not prove an active session's model.
 - Your agents can search messages (`search`) by words, person, channel or DM,
   and date, and link each message they cite. They search with their own access:
   channels they're in and open channels. They don't find messages in your

@@ -118,19 +118,25 @@ export function scanMarkdown(content: string): MarkdownScan {
   return { tree, tooDeep, definitions, images, links };
 }
 
-/** Source ranges of reference definitions, in order. They render no text. */
+/** Source ranges of reference definitions, in order. They render no text.
+ * GFM renders a `[^label]:` definition as a footnote, so it is not one. */
 export function definitionRanges(
   content: string,
 ): readonly { start: number; end: number }[] {
   if (!content.includes("]:") || content.length > MAX_MARKDOWN_LENGTH)
     return [];
-  const { tree } = scanMarkdown(content);
+  const tree = fromMarkdown(content) as MarkdownNode;
   const ranges: { start: number; end: number }[] = [];
   const pending = [tree];
   for (let node = pending.pop(); node; node = pending.pop()) {
     const start = node.position?.start.offset;
     const end = node.position?.end.offset;
-    if (node.type === "definition" && start !== undefined && end !== undefined)
+    if (
+      node.type === "definition" &&
+      !/^\^\S+$/.test(node.identifier ?? "") &&
+      start !== undefined &&
+      end !== undefined
+    )
       ranges.push({ start, end });
     for (let index = (node.children?.length ?? 0) - 1; index >= 0; index--) {
       const child = node.children?.[index];

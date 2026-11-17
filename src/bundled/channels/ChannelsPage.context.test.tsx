@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  fireEvent,
+} from "@testing-library/react";
 import type {
   ChannelView,
   ConversationExtensions,
@@ -9,6 +15,10 @@ import type { Contribution } from "../../plugins/contributions";
 import type { ComponentProps, ReactElement } from "react";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
+import { Context } from "@deepseek-ai/cordis";
+import { provideNavigation } from "../../features/navigation/service";
+import type { Navigation } from "../../features/navigation/controller";
+import { targetKey } from "../../features/navigation/targets";
 import { createNavigationController } from "../../features/navigation/controller";
 import { createMemoryHistory } from "../../features/navigation/history";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -147,6 +157,7 @@ async function channelsPage({
   root = true,
   cached = false,
   extensions = undefined as ConversationExtensions | undefined,
+  navigationOwner = undefined as Navigation | undefined,
 } = {}) {
   const { viewer, authority, reply, newer, channels } = fixture;
   const alpha = [...(root ? [fixture.root] : []), reply, ...newer];
@@ -242,9 +253,9 @@ async function channelsPage({
       };
     },
   };
-  const navigator = createNavigationController(
-    createMemoryHistory(),
-  ).navigation;
+  const navigator =
+    navigationOwner ??
+    createNavigationController(createMemoryHistory()).navigation;
   const target = (
     channelId: string,
     extra: Partial<Extract<OpenTarget, { kind: "conversation" }>> = {},
@@ -445,6 +456,92 @@ it("replaces a resolved channel's reader with its plugin view, restores native c
   await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
   expect(screen.queryByText("Board for alpha")).toBeNull();
 });
+
+it.each(["individual", "bulk"])(
+  "restores the custom view through settings history and retires every settings visit on %s close",
+  async (mode) => {
+    const host = provideNavigation(new Context());
+    const entry: Contribution<ChannelView> = {
+      key: "example/board",
+      id: "board",
+      pluginId: "example",
+      revision: "one",
+      title: "Board",
+      matches: (channel) => channel.id === "alpha",
+      component: () => <p>Custom board</p>,
+    };
+    const empty: readonly never[] = [],
+      entries = [entry];
+    const h = await channelsPage({
+      navigationOwner: host.navigation,
+      extensions: {
+        tools: { snapshot: () => empty, subscribe: () => () => {} },
+        inline: { snapshot: () => empty, subscribe: () => () => {} },
+        channelViews: { snapshot: () => entries, subscribe: () => () => {} },
+      },
+    });
+    let shown = "";
+    const sync = () => {
+      const snapshot = host.navigation.snapshot(),
+        key = `${snapshot.attempt.id}:${targetKey(snapshot.entry.target)}`;
+      if (shown === key) return;
+      shown = key;
+      h.go(
+        host.request(snapshot.attempt, {
+          valid: () => true,
+          subscribe: () => () => {},
+        }).request,
+      );
+    };
+    const stop = host.navigation.subscribe(sync);
+    const open = async (target: OpenTarget) => {
+      act(() => {
+        void host.navigation.open(target);
+      });
+      await vi.waitFor(() =>
+        expect(host.navigation.snapshot().status).toBe("opened"),
+      );
+    };
+    try {
+      await open(h.target("alpha"));
+      await screen.findByText("Custom board");
+      await open(h.target("alpha", { panel: "settings" }));
+      const first = host.navigation.snapshot().entry.id;
+      await screen.findByRole("tab", { name: "Channel settings" });
+      act(() => host.navigation.back());
+      await screen.findByText("Custom board");
+      act(() => host.navigation.forward());
+      await screen.findByRole("tab", { name: "Channel settings" });
+      await open(h.target("beta"));
+      await open(h.target("alpha", { panel: "settings" }));
+      const second = host.navigation.snapshot().entry.id;
+      if (mode === "individual")
+        fireEvent.click(
+          screen.getByRole("button", { name: "Close Channel settings tab" }),
+        );
+      else {
+        fireEvent.contextMenu(
+          screen.getByRole("tab", { name: "Channel settings" }),
+        );
+        fireEvent.click(
+          await screen.findByRole("menuitem", { name: "Close all tabs" }),
+        );
+      }
+      await vi.waitFor(() => {
+        expect(host.navigation.snapshot().retainedVisits).not.toContain(first);
+        expect(host.navigation.snapshot().retainedVisits).not.toContain(second);
+      });
+      act(() => host.navigation.back());
+      act(() => host.navigation.forward());
+      expect(
+        screen.queryByRole("tab", { name: "Channel settings" }),
+      ).toBeNull();
+    } finally {
+      stop();
+      host.dispose();
+    }
+  },
+);
 
 it("holds the list from the visit's start, then reveals the root beside the thread", async () => {
   const h = await channelsPage();

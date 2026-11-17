@@ -877,13 +877,7 @@ function ChannelWorkspace({
   const settingsRequested =
     navigation?.target.kind === "conversation" &&
     navigation.target.panel === "settings";
-  useLayoutEffect(() => {
-    if (settingsRequested && currentId && !cached && !navigation.signal.aborted)
-      channelTabs(queries).openSettings(
-        currentId,
-        navigator.snapshot().attempt.id,
-      );
-  }, [settingsRequested, currentId, cached, navigation, navigator, queries]);
+
   useEffect(() => {
     if (!currentId || composingMessage || draft) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
@@ -917,6 +911,16 @@ function ChannelWorkspace({
     settings.channelId === currentId &&
     tabState.selected === "settings";
   const channelView = showingSettings ? undefined : matchedChannelView;
+  const retireSettings = (fallback: OpenTarget) => {
+    if (!currentId) return;
+    navigator.dismiss(
+      (target) =>
+        target.kind === "conversation" &&
+        target.panel === "settings" &&
+        matchesConversation(target, scope, currentId),
+      fallback,
+    );
+  };
   const closeSettings = () => {
     setSettings(undefined);
     if (
@@ -925,10 +929,11 @@ function ChannelWorkspace({
       !navigation.signal.aborted
     ) {
       const { panel: _panel, ...target } = navigation.target;
-      navigator.dismiss([navigation.entryId], target);
+      retireSettings(target);
       return;
     }
     afterClose("settings");
+    retireSettings(navigator.snapshot().entry.target);
   };
   // The Solo treatment: an agent conversation. In the owner's own chat it
   // also files into a project; the conversation scope owns composer policy.
@@ -1502,6 +1507,7 @@ function ChannelWorkspace({
         keep === "settings" ? "side" : pane,
         remaining,
       );
+      if (settings && keep !== "settings") retireSettings(fallback);
     },
     onClosePanel: (entry, remaining) => {
       if (!historyPanel(entry)) return;
@@ -1795,6 +1801,14 @@ function ChannelWorkspace({
     panels,
     panelTrigger,
   ]);
+  // Restore the outgoing visit before selecting the routed settings pane.
+  useLayoutEffect(() => {
+    if (settingsRequested && currentId && !cached && !navigation.signal.aborted)
+      channelTabs(queries).openSettings(
+        currentId,
+        navigator.snapshot().attempt.id,
+      );
+  }, [settingsRequested, currentId, cached, navigation, navigator, queries]);
   const mounted = useRef(false);
   const channel = useRef(current?.id);
   useLayoutEffect(() => {

@@ -933,3 +933,34 @@ it.each([true, false])(
     expect(h.save).not.toHaveBeenCalled();
   },
 );
+
+it("refuses a staged opening the opening check closes after consent opened", async () => {
+  const h = harness();
+  h.load.mockResolvedValue({ ...base, visibility: "private" });
+  const user = userEvent.setup();
+  const view = render(
+    <ChannelGeneralAccess capability={h.capability} channelId="alpha" />,
+  );
+  await select(user, "General access", "View only");
+  const confirm = await screen.findByRole("button", { name: "Change access" });
+  expect(confirm).toBeEnabled();
+  view.rerender(
+    <ChannelGeneralAccess
+      capability={h.capability}
+      channelId="alpha"
+      openingBlocked
+    />,
+  );
+  expect(confirm).toBeDisabled();
+  expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
+    expect.stringContaining(
+      "Has other members. Create a new public channel instead.",
+    ),
+  );
+  await user.click(confirm);
+  expect(h.save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+});

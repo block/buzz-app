@@ -171,6 +171,8 @@ export function ConvertToChannel({
     !!attempt ||
     !eligible ||
     !!signal?.aborted;
+  // The opening check can settle after the user picked an open access.
+  const openingRefused = closed && !savedDraft && selectedAccess !== "private";
 
   const acceptDetails = useCallback(
     (next: ChannelDetails) => {
@@ -245,7 +247,7 @@ export function ConvertToChannel({
           (!base ||
             (action === "check"
               ? !matchingAttempt || attempt?.status !== "unconfirmed"
-              : !eligible || !!attempt || !!nameError))
+              : !eligible || !!attempt || !!nameError || openingRefused))
         )
           return;
         if (action === "finish" && !canFinish) return;
@@ -369,6 +371,7 @@ export function ConvertToChannel({
                 !!attempt ||
                 !eligible ||
                 !!nameError ||
+                openingRefused ||
                 !!signal?.aborted
               }
             >
@@ -428,6 +431,7 @@ export function ConvertToChannel({
           Channel converted. Finish to return to the conversation.
         </p>
       )}
+      {openingRefused && <p role="status">{OPENING_BLOCKED_REASON}</p>}
       {!base && !error && <p role="status">Loading chat details…</p>}
       {base && !base.canEdit && !canFinish && (
         <p role="status">You don’t have permission to convert this chat.</p>

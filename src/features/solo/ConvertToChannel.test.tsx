@@ -796,3 +796,18 @@ it("leaves an untagged member to the relay until the agent inventory is complete
   act(() => h.setInventoryComplete(true));
   expect(await viewOnlyDisabled(user)).toBe(true);
 });
+
+it("refuses a View only pick the opening check closes after it was made", async () => {
+  const h = setup(true, "private", undefined, [viewer, "d".repeat(64)], false);
+  await ready();
+  await selectAccess("View only");
+  act(() => h.loadProfiles());
+  expect(confirm()).toBeDisabled();
+  expect(
+    screen.getAllByRole("status").map((status) => status.textContent),
+  ).toContain("Has other members. Create a new public channel instead.");
+  fireEvent.click(confirm());
+  await selectAccess("Private");
+  await ready();
+  expect(h.publish).not.toHaveBeenCalled();
+});

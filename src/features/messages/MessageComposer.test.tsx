@@ -8210,6 +8210,7 @@ it.each([
   ["ax b", 1, 2, "😀", "a😀 b", 4],
   ["ab", 1, 1, ":party:", "a:party: b", 9],
   ["5x", 1, 1, ":25:", "5 :25: x", 7],
+  ["5x", 1, 1, ":25::30:", "5 :25::30: x", 11],
   ["5 x", 1, 1, ":25:", "5 :25: x", 7],
   ["5xx z", 1, 3, ":25:", "5 :25: z", 7],
   ["5x", 0, 1, ":25:", ":25: x", 5],
@@ -8221,7 +8222,7 @@ it.each([
   async (text, start, end, inserted, expected, after) => {
     const h = mount();
     h.setEmoji(
-      ["party", "25"].map((shortcode) => ({
+      ["party", "25", "30"].map((shortcode) => ({
         shortcode,
         url: `https://example.org/emoji/${shortcode}.png`,
       })),
@@ -8232,7 +8233,7 @@ it.each([
       expect(h.commands().insertText(inserted)).toBe(true);
     });
     expect(h.input()).toHaveValue(expected);
-    if (inserted === ":25:")
+    if (inserted.startsWith(":25:"))
       expect(
         within(h.input()).getByRole("img", { name: ":25:" }),
       ).toBeVisible();

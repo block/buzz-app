@@ -216,6 +216,10 @@ export function RichComposerInput({
     () => emoji.filter((entry) => !!session.media(entry.url)),
     [emoji, session],
   );
+  const emojiByShortcode = useMemo(
+    () => new Map(renderableEmoji.map((entry) => [entry.shortcode, entry])),
+    [renderableEmoji],
+  );
   // The normalizer, the render and the token reconcile decorate the same
   // document in one keystroke; parse its Markdown once.
   const scanned = useRef<{
@@ -363,7 +367,7 @@ export function RichComposerInput({
       };
     for (const reference of referenced.current.references)
       add(reference.start, reference.end, undefined, true);
-    for (const match of emojiMatches(context.text, renderableEmoji))
+    for (const match of emojiMatches(context.text, emojiByShortcode))
       add(match.start, match.end);
     for (const [start, { end }] of gifPreviews)
       if (!ranges.some((range) => start < range.end && end > range.start))

@@ -1859,7 +1859,7 @@ function Composer({
     const separated = /^[ \t]/.test(valueRef.current.text.slice(at));
     const start = range?.start ?? input.current?.selectionStart ?? at;
     const value =
-      /^:\d{1,64}:$/.test(text) &&
+      /^:\d{1,64}:/.test(text) &&
       /\d/.test(valueRef.current.text[start - 1] ?? "")
         ? ` ${text}`
         : text;

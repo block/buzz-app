@@ -861,6 +861,20 @@ describe("Markdown profile mentions", () => {
 });
 
 describe("Markdown inline extensions", () => {
+  it.each(["Agent2", "Agent"])(
+    "keeps numeric boundaries across a mention named %s",
+    (name) => {
+      const html = render(`@${name}:25: @${name} :25: @${name}:party_parrot:`, {
+        participantProfiles: new Map([[mic, { name }]]),
+        emoji: [party, { shortcode: "25", url: party.url }],
+        extensions,
+        media: () => "https://media.test/emoji.png",
+      });
+      expect(html.match(/<button/g)).toHaveLength(3);
+      expect(html.match(/<img/g)).toHaveLength(name === "Agent2" ? 2 : 3);
+    },
+  );
+
   it("preserves custom emoji and plugin prose alongside profile mentions", () => {
     const html = render("**:party_parrot:** PLUGIN @Mic", {
       emoji: [party],

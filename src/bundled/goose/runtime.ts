@@ -775,8 +775,34 @@ export class GooseRuntime {
               entry.handle = agent;
               entry.team = team ?? "";
               entry.contexts.set(COMMUNITY_SESSION, {});
+              let stopping: Promise<void> | undefined;
               const stop = () => {
-                void entry.sessions.interrupt(COMMUNITY_SESSION);
+                const process =
+                  entry.sessions.serving(COMMUNITY_SESSION)?.process;
+                if (!process) return;
+                stopping ??= (async () => {
+                  let timer: ReturnType<typeof setTimeout> | undefined;
+                  try {
+                    await Promise.race([
+                      entry.sessions
+                        .interrupt(COMMUNITY_SESSION)
+                        .then(() => entry.sessions.idle(COMMUNITY_SESSION)),
+                      new Promise<never>((_, reject) => {
+                        timer = setTimeout(
+                          () => reject(new Error("Goose did not stop")),
+                          15_000,
+                        );
+                      }),
+                    ]);
+                  } catch {
+                    await process?.kill();
+                    await process?.exited;
+                  } finally {
+                    clearTimeout(timer);
+                  }
+                })().catch((error) =>
+                  console.error("Goose could not stop expired work", error),
+                );
               };
               signal.addEventListener("abort", stop, { once: true });
               try {
@@ -804,6 +830,7 @@ export class GooseRuntime {
                 return result;
               } finally {
                 signal.removeEventListener("abort", stop);
+                await stopping;
               }
             },
             () => this.notify(),

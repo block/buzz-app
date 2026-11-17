@@ -3368,3 +3368,37 @@ it("retains the Solo Canvas after a community turn fails effort admission", asyn
     f.runtime.dispose();
   }
 });
+
+it("reaps an unresponsive Goose community wake after its deadline", async () => {
+  const f = setup({ hold: true, scope: "community" });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const abort = new AbortController();
+  const done = f.runtime.runOnce({
+    delivery: { agent: f.agent, config, current: () => true },
+    key: "stalled",
+    signal: abort.signal,
+    prompt: async () => "check",
+  } as unknown as Parameters<GooseRuntime["runOnce"]>[0]);
+  void done.catch(() => {});
+  try {
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const worker = f.goose();
+    if (!worker) throw new Error("missing Goose");
+    worker.silent.add("session/cancel");
+    vi.useFakeTimers();
+    abort.abort(new Error("deadline"));
+    await vi.advanceTimersByTimeAsync(15_001);
+    expect(worker.killed).toBe(true);
+    vi.useRealTimers();
+    await done.catch(() => {});
+    await f.deliver(message("2", "next"));
+    await vi.waitFor(() =>
+      expect(f.fake.geese.flatMap((p) => p.turns)).toHaveLength(2),
+    );
+  } finally {
+    vi.useRealTimers();
+    f.goose()?.turns[0]?.finish();
+    await done.catch(() => {});
+    f.runtime.dispose();
+  }
+});

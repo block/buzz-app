@@ -5066,3 +5066,57 @@ it("retains the Solo Canvas after a community turn fails effort admission", asyn
     f.runtime.dispose();
   }
 });
+
+it("reaps an unresponsive Claude community wake after its deadline", async () => {
+  const f = setup([], { hold: true });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const abort = new AbortController();
+  const done = f.runtime.runOnce({
+    delivery: { agent: f.agent, config, current: () => true },
+    key: "stalled",
+    signal: abort.signal,
+    prompt: async () => "check",
+  } as unknown as Parameters<ClaudeRuntime["runOnce"]>[0]);
+  void done.catch(() => {});
+  try {
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("missing Claude");
+    const emit = worker.emit.bind(worker);
+    vi.spyOn(worker, "emit").mockImplementation((message) => {
+      const response = message.response as { request_id?: unknown } | undefined;
+      const request = worker.received.find(
+        (row) => row.request_id === response?.request_id,
+      );
+      if (
+        message.type === "control_response" &&
+        (request?.request as { subtype?: string })?.subtype === "interrupt"
+      )
+        return;
+      emit(message);
+    });
+    worker.exitOnKill = false;
+    vi.useFakeTimers();
+    abort.abort(new Error("deadline"));
+    await vi.advanceTimersByTimeAsync(15_001);
+    expect(worker.killed).toBe(true);
+    await f.deliver(
+      { type: "mention", event: message("2", "next") },
+      { config },
+    );
+    expect(f.claudes().flatMap((p) => p.prompts)).toHaveLength(1);
+    worker.exit(0);
+    vi.useRealTimers();
+    await done;
+    await vi.waitFor(() =>
+      expect(f.claudes().flatMap((p) => p.prompts)).toHaveLength(2),
+    );
+  } finally {
+    vi.useRealTimers();
+    for (const p of f.claudes()) p.exit(0);
+    await done.catch(() => {});
+    f.runtime.dispose();
+  }
+});

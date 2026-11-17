@@ -3650,3 +3650,43 @@ it("retains the Solo Canvas after a native community delivery is refused", async
     f.runtime.dispose();
   }
 });
+
+it("drains an expired Pi community wake abort before its successor", async () => {
+  const ended = deferred<unknown>();
+  const cancelled = deferred<unknown>();
+  const f = setup({
+    wait: () => ended.promise,
+    abort: () => cancelled.promise,
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const abort = new AbortController();
+  const done = f.runtime.runOnce({
+    delivery: { agent: f.agent, config, current: () => true },
+    key: "expired",
+    signal: abort.signal,
+    prompt: async () => "check",
+  } as unknown as Parameters<PiRuntime["runOnce"]>[0]);
+  void done.catch(() => {});
+  try {
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(1));
+    abort.abort(new Error("deadline"));
+    await vi.waitFor(() => expect(f.host.requests("abort")).toHaveLength(1));
+    ended.resolve({ status: "done", answer: 1, text: "done" });
+    const next = f.deliver(
+      { type: "mention", event: reply("2", "next") },
+      { config },
+    );
+    await next.run;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(f.host.requests("deliver")).toHaveLength(1);
+    cancelled.resolve({});
+    await done;
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(2));
+    await f.settled(next);
+  } finally {
+    cancelled.resolve({});
+    ended.resolve({ status: "done", answer: 1, text: "done" });
+    await done.catch(() => {});
+    f.runtime.dispose();
+  }
+});

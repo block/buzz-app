@@ -903,6 +903,7 @@ export class PiRuntime {
         () => this.notify(),
       );
     let stop: (() => void) | undefined;
+    let stopping: Promise<unknown> | undefined;
     let request: string | undefined;
     let release: (() => void) | undefined;
     try {
@@ -974,7 +975,7 @@ export class PiRuntime {
       // A removed agent's storage is closed, and stays so.
       stop = () => {
         if (!entry.closed)
-          void this.pi
+          stopping ??= this.pi
             .request("abort", { agent: agent.key, conversation })
             .catch(() => undefined);
       };
@@ -990,6 +991,7 @@ export class PiRuntime {
       return { ok: false, error: errorText(error) };
     } finally {
       if (stop) signal.removeEventListener("abort", stop);
+      await stopping;
       release?.();
       if (request) {
         entry.standalone.delete(request);

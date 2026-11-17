@@ -397,12 +397,24 @@ export class AgentSessions {
   async interrupt(key: string, killOnFailure = false) {
     await this.opening.get(key);
     const process = this.live.get(key)?.process;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await process?.interrupt();
+      if (!killOnFailure) return await process?.interrupt();
+      await Promise.race([
+        Promise.all([process?.interrupt(), process?.idle()]),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("Claude did not stop")),
+            15_000,
+          );
+        }),
+      ]);
     } catch (error) {
       if (!killOnFailure) throw error;
       await process?.kill();
       await process?.exited;
+    } finally {
+      clearTimeout(timer);
     }
   }
   /** Compacts the conversation's session, resuming it when its process has

@@ -206,6 +206,7 @@ export class CodexProvider {
     return pending;
   }
   private async runCheck() {
+    this.abort?.abort();
     const abort = new AbortController();
     this.abort = abort;
     this.set({

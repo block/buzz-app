@@ -3028,6 +3028,32 @@ it("does not hold model readiness for optional preview authentication", async ()
   }
 });
 
+it("retires pending preview authentication before another provider check", async () => {
+  const gate = deferred<void>();
+  const host: PreviewHost = {
+    request: vi.fn(async () => ({
+      status: 200,
+      headers: {},
+      body: '{"voices":[]}',
+    })),
+  };
+  const f = fixture({ previewHost: host, authGate: gate.promise });
+  try {
+    await f.provider.check();
+    const previous = f.processes.at(-1);
+    expect(previous?.end).not.toHaveBeenCalled();
+    await f.provider.check();
+    await waitFor(() => expect(previous?.end).toHaveBeenCalledOnce());
+    expect(f.provider.snapshot().readiness).toBe("ready");
+    expect(host.request).not.toHaveBeenCalled();
+    f.provider.dispose();
+    await waitFor(() => expect(f.processes.at(-1)?.end).toHaveBeenCalledOnce());
+  } finally {
+    gate.resolve();
+    f.provider.dispose();
+  }
+});
+
 it("rediscovers both catalogs when retained settings return without losing the draft", async () => {
   let revision = 0;
   const host: PreviewHost = {

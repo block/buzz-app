@@ -672,6 +672,7 @@ export class GooseRuntime {
             ? channel
             : (threadReference(event)?.rootId ?? event.id),
           ...(step ? { step } : {}),
+          delivered: () => acceptProject?.(),
           ...(acknowledged ? { acknowledged } : {}),
           ...(accepted ? { accepted } : {}),
           ...(superseded ? { superseded } : {}),
@@ -682,8 +683,6 @@ export class GooseRuntime {
     const done = handed
       .then(async () => {
         const result = await delivered;
-        if (result.ok && !result.undelivered && !result.stopped)
-          acceptProject?.();
         return key === COMMUNITY_SESSION &&
           interrupted &&
           (!submitted || result.undelivered)

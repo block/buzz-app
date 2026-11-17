@@ -3344,7 +3344,7 @@ it.each(["thread", "channel"] as const)(
   },
 );
 
-it.each(["effort admission", "native prompt rejection"])(
+it.each(["effort admission", "native prompt rejection", "rejected wake"])(
   "retains the Solo Canvas after %s",
   async (failure) => {
     const f = setup({
@@ -3366,27 +3366,42 @@ it.each(["effort admission", "native prompt rejection"])(
     try {
       await f.deliver(message("1", "first"), { workingUntil });
       await Promise.all(workingUntil.mock.calls.map(([done]) => done));
-      if (failure === "native prompt rejection") {
+      if (failure !== "effort admission") {
         const worker = f.fake.geese.find((process) => process.turns.length);
         if (!worker) throw new Error("missing worker");
         worker.rejectPrompt = true;
       }
-      await f.deliver(
-        message("2", "refused", {
-          tags: [
-            ["h", "other"],
-            ["p", self],
-          ],
-        }),
-        {
-          channelId: "other",
-          ...(failure === "effort admission"
-            ? { synced: { effort: "high" } }
-            : {}),
-          workingUntil,
-        },
-      );
-      await Promise.all(workingUntil.mock.calls.map(([done]) => done));
+      if (failure === "rejected wake") {
+        await expect(
+          f.runtime.runOnce({
+            delivery: {
+              agent: f.agent,
+              config: { ...DEFAULT_CONFIG, scope: "community" },
+              current: () => true,
+            },
+            key: "rejected",
+            signal: new AbortController().signal,
+            prompt: async () => "check",
+          } as unknown as Parameters<GooseRuntime["runOnce"]>[0]),
+        ).resolves.toMatchObject({ ok: false });
+      } else {
+        await f.deliver(
+          message("2", "refused", {
+            tags: [
+              ["h", "other"],
+              ["p", self],
+            ],
+          }),
+          {
+            channelId: "other",
+            ...(failure === "effort admission"
+              ? { synced: { effort: "high" } }
+              : {}),
+            workingUntil,
+          },
+        );
+        await Promise.all(workingUntil.mock.calls.map(([done]) => done));
+      }
       expect(f.fake.geese.flatMap((p) => p.turns)).toHaveLength(1);
       f.session.canvas.read.mockRejectedValue(new Error("offline"));
       await f.deliver(message("3", "back"), { workingUntil });
@@ -3394,6 +3409,55 @@ it.each(["effort admission", "native prompt rejection"])(
       expect(f.fake.geese.flatMap((p) => p.turns).at(-1)?.text).toContain(
         "RETAINED_CANVAS",
       );
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
+it.each(["updated", "cleared"])(
+  "retains a %s Solo Canvas after stopping its native turn",
+  async (change) => {
+    const f = setup({
+      scope: "community",
+      hold: true,
+      solo: new Set([channel]),
+      canvas: "PREVIOUS_CANVAS",
+    });
+    const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+    const agent = { ...f.agent, config } as unknown as Agent;
+    try {
+      await f.deliver(message("1", "first"));
+      await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+      const worker = f.goose();
+      if (!worker) throw new Error("missing Goose");
+      worker.turns[0]?.finish();
+      const head = await f.session.canvas.read();
+      if (!head) throw new Error("missing Canvas");
+      f.session.canvas.read.mockResolvedValue(
+        change === "cleared"
+          ? null
+          : {
+              ...head,
+              created_at: 2,
+              content: "UPDATED_CANVAS",
+            },
+      );
+      await f.deliver(message("2", "refresh Canvas"));
+      await vi.waitFor(() => expect(worker.turns).toHaveLength(2));
+      await f.runtime.session(agent, { channelId: channel }, "interrupt");
+      expect(worker.cancelled).toHaveLength(1);
+      f.session.canvas.read.mockRejectedValue(new Error("offline"));
+      await f.deliver(message("3", "after Stop"));
+      await vi.waitFor(() => expect(worker.turns).toHaveLength(3));
+      const text = worker.turns[2]?.text;
+      expect(text).not.toContain("PREVIOUS_CANVAS");
+      expect(text).toContain(
+        change === "cleared"
+          ? "Disregard any earlier workspace Canvas"
+          : "UPDATED_CANVAS",
+      );
+      worker.turns[2]?.finish();
     } finally {
       f.runtime.dispose();
     }

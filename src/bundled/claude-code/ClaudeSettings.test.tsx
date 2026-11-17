@@ -81,7 +81,7 @@ function fixture(active = () => true) {
     throw new Error("API-key auth must supply its Settings component");
   let present!: (open: boolean) => void;
   const onOpenChange = vi.fn((open: boolean): void => present(open));
-  const Surface = () => {
+  const Surface = ({ currentActive }: { currentActive: () => boolean }) => {
     const [open, setOpen] = useState<boolean>();
     present = setOpen;
     return (
@@ -89,19 +89,26 @@ function fixture(active = () => true) {
         <button type="button">Before settings</button>
         <Settings
           setup={setup}
-          active={active}
+          active={currentActive}
           connection={open === undefined ? undefined : { open, onOpenChange }}
         />
         <button type="button">After settings</button>
       </>
     );
   };
-  render(
+  const tree = (currentActive: () => boolean) => (
     <StrictMode>
-      <Surface />
-    </StrictMode>,
+      <Surface currentActive={currentActive} />
+    </StrictMode>
   );
-  return { setup, spawn, present, onOpenChange };
+  const view = render(tree(active));
+  return {
+    setup,
+    spawn,
+    present,
+    onOpenChange,
+    rerenderActive: (next: () => boolean) => view.rerender(tree(next)),
+  };
 }
 
 async function savedKey() {
@@ -161,7 +168,11 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
   expect(add).toHaveAccessibleDescription(
     "Your key will be stored securely on this computer.",
   );
-  await waitFor(() => expect(add).toHaveFocus());
+  await waitFor(() =>
+    expect(
+      within(dialog).getByLabelText("Anthropic workspace ID"),
+    ).toHaveFocus(),
+  );
   await user.type(add, " ");
   expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
     "aria-disabled",
@@ -209,6 +220,74 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
   await savedKey();
   expect(native.saved).toBe(true);
 });
+
+it("saves the workspace with a replacement key and clears both drafts", async () => {
+  const user = userEvent.setup();
+  fixture();
+  const input = await replaceKey(user);
+  await user.type(
+    screen.getByLabelText("Anthropic workspace ID"),
+    "  wrkspc_example  ",
+  );
+  await user.type(input, "sk-ant-new");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await savedKey();
+  expect(native.invoke).toHaveBeenCalledWith("claude_api_key_set", {
+    value: "sk-ant-new",
+    workspace: "wrkspc_example",
+  });
+  await replaceKey(user);
+  expect(screen.getByLabelText("Anthropic workspace ID")).toHaveValue("");
+  expect(screen.getByLabelText("Anthropic API key")).toHaveValue("");
+});
+
+it("keeps the replacement focus when the host refreshes its visit callback", async () => {
+  const user = userEvent.setup();
+  const { rerenderActive } = fixture();
+  const input = await replaceKey(user);
+  await user.type(input, "sk-ant-");
+  rerenderActive(() => true);
+  expect(input).toHaveFocus();
+  await user.keyboard("new");
+  expect(input).toHaveValue("sk-ant-new");
+  expect(screen.getByLabelText("Anthropic workspace ID")).toHaveValue("");
+});
+
+it.each([false, true])(
+  "preserves focus and visit ownership through a pending replacement (retired: %s)",
+  async (retired) => {
+    let active = true;
+    const user = userEvent.setup();
+    const { setup } = fixture(() => active);
+    const input = await replaceKey(user);
+    await user.type(input, "sk-ant-new");
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = native.invoke.getMockImplementation();
+    if (!original) throw new Error("Missing native credential fixture");
+    native.invoke.mockImplementation(async (command, args) => {
+      if (command === "claude_api_key_set") await pending;
+      return original(command, args);
+    });
+    const refresh = vi.spyOn(setup, "check");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const after = screen.getByRole("button", { name: "After settings" });
+    await user.click(after);
+    if (retired) active = false;
+    await act(async () => release());
+    await waitFor(() => expect(native.value).toBe("sk-ant-new"));
+    expect(after).toHaveFocus();
+    if (retired) {
+      expect(notify).not.toHaveBeenCalled();
+      expect(refresh).not.toHaveBeenCalled();
+    } else {
+      await savedKey();
+      expect(notify).toHaveBeenCalledWith("Saved", "success");
+    }
+  },
+);
 
 it.each(["Save", "Remove key"])(
   "keeps successful %s separate from a failed runtime refresh",
@@ -329,7 +408,11 @@ it.each(["saved elsewhere", "read failure"] as const)(
       const input = within(screen.getByRole("dialog")).getByLabelText(
         "Anthropic API key",
       );
-      await waitFor(() => expect(input).toHaveFocus());
+      const workspace = within(screen.getByRole("dialog")).getByLabelText(
+        "Anthropic workspace ID",
+      );
+      await waitFor(() => expect(workspace).toHaveFocus());
+      expect(workspace).toHaveAttribute("readonly");
       expect(input).toHaveAttribute("readonly");
       await user.type(input, "ignored");
       expect(input).toHaveValue("sk-ant-draft");
@@ -353,7 +436,9 @@ it.each(["saved elsewhere", "read failure"] as const)(
       ).toHaveAttribute("aria-disabled", "true");
       await user.click(within(dialog).getByRole("button", { name: "Retry" }));
       await waitFor(() => expect(input).not.toHaveAttribute("readonly"));
-      expect(input).toHaveFocus();
+      expect(
+        within(dialog).getByLabelText("Anthropic workspace ID"),
+      ).toHaveFocus();
       await user.type(input, "-recovered");
       expect(input).toHaveValue("sk-ant-draft-recovered");
       expect(onOpenChange).not.toHaveBeenCalled();
@@ -429,9 +514,10 @@ it("preserves a rejected replacement and blocks other actions while saving", asy
   expect(input).not.toHaveAttribute("readonly");
   expect(native.value).toBe("sk-ant-saved");
   await user.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(input).not.toHaveValue("sk-ant-saved");
-  expect(input).toHaveAttribute("readonly");
-  expect(input).toHaveFocus();
+  const restored = screen.getByLabelText("Anthropic API key");
+  expect(restored).not.toHaveValue("sk-ant-saved");
+  expect(restored).toHaveAttribute("readonly");
+  expect(restored).toHaveFocus();
   expect(
     screen.queryByRole("button", { name: "Save" }),
   ).not.toBeInTheDocument();
@@ -578,12 +664,13 @@ it("opens replacement from input focus without trapping reverse Tab or reopening
   await waitFor(() =>
     expect(screen.getByLabelText("Anthropic API key")).toHaveValue(""),
   );
-  expect(input).toHaveFocus();
+  expect(screen.getByLabelText("Anthropic workspace ID")).toHaveFocus();
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(input).not.toHaveValue(native.value);
+  const restored = screen.getByLabelText("Anthropic API key");
+  expect(restored).not.toHaveValue(native.value);
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-  await user.click(input);
+  await user.click(restored);
   await screen.findByRole("menuitem", { name: "Replace" });
 });
 
@@ -595,11 +682,12 @@ it("discards a replacement draft when credentials change elsewhere", async () =>
   await act(async () => {
     await setup.auth.save("sk-ant-other");
   });
-  expect(input).not.toHaveValue("sk-ant-saved");
-  expect(input).not.toHaveValue("sk-ant-other");
-  expect(input).not.toHaveValue("sk-ant-draft");
-  expect(input).toHaveAttribute("readonly");
-  expect(input).toHaveAttribute("type", "password");
+  const restored = screen.getByLabelText("Anthropic API key");
+  expect(restored).not.toHaveValue("sk-ant-saved");
+  expect(restored).not.toHaveValue("sk-ant-other");
+  expect(restored).not.toHaveValue("sk-ant-draft");
+  expect(restored).toHaveAttribute("readonly");
+  expect(restored).toHaveAttribute("type", "password");
   expect(
     screen.queryByRole("button", { name: "Save" }),
   ).not.toBeInTheDocument();
@@ -641,9 +729,11 @@ it("starts replacement blank, gates Save, and discards the draft on Cancel", asy
   const input = await replaceKey(user);
   expect(input).toHaveValue("");
   expect(input).toHaveAttribute("type", "password");
-  await waitFor(() => expect(input).toHaveFocus());
+  await waitFor(() =>
+    expect(screen.getByLabelText("Anthropic workspace ID")).toHaveFocus(),
+  );
   const save = screen.getByRole("button", { name: "Save" });
-  expect(save).toBeDisabled();
+  expect(save).toHaveAttribute("aria-disabled", "true");
   expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
   expect(
     screen.queryByRole("menuitem", { name: "Remove" }),
@@ -654,19 +744,20 @@ it("starts replacement blank, gates Save, and discards the draft on Cancel", asy
   ).not.toBeInTheDocument();
   await user.keyboard("{Enter}");
   fireEvent.change(input, { target: { value: "" } });
-  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  expect(save).toHaveAttribute("aria-disabled", "true");
   fireEvent.keyDown(input, { key: "Enter" });
   fireEvent.change(input, { target: { value: "sk-ant-draft" } });
   expect(save).toBeEnabled();
-  expect(input).toHaveFocus();
+  expect(screen.getByLabelText("Anthropic workspace ID")).toHaveFocus();
   fireEvent.change(input, { target: { value: native.value } });
   expect(save).toBeEnabled();
   fireEvent.change(input, { target: { value: "sk-ant-draft" } });
   expect(native.value).toBe("sk-ant-saved");
   await user.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(input).toHaveAttribute("readonly");
-  expect(input).not.toHaveValue("sk-ant-draft");
-  expect(input).not.toHaveValue(native.value);
+  const restored = screen.getByLabelText("Anthropic API key");
+  expect(restored).toHaveAttribute("readonly");
+  expect(restored).not.toHaveValue("sk-ant-draft");
+  expect(restored).not.toHaveValue(native.value);
   expect(save).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "API key actions" })).toBeEnabled();
   expect(await removeKey(user)).toBeInTheDocument();
@@ -694,9 +785,10 @@ it("saves a replacement with Enter after composition ends", async () => {
       screen.queryByRole("button", { name: "Save" }),
     ).not.toBeInTheDocument(),
   );
-  await waitFor(() => expect(input).toHaveFocus());
+  const restored = screen.getByLabelText("Anthropic API key");
+  await waitFor(() => expect(restored).toHaveFocus());
   expect(native.value).toBe("sk-ant-new");
-  expect(input).toHaveAttribute("type", "password");
+  expect(restored).toHaveAttribute("type", "password");
   expect(input).toHaveAttribute("readonly");
 });
 

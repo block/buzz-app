@@ -2610,3 +2610,21 @@ it("reads no edits or deletions for a turn with nothing new to show", async () =
   expect(host.requests("deliver")).toHaveLength(1);
   expect(session.read).toHaveBeenCalledOnce();
 });
+
+it("tells a new conversation nothing came before when all of it was deleted", async () => {
+  const deletion = message("2", "", {
+    kind: 5,
+    tags: [
+      ["h", channel],
+      ["e", root.id],
+    ],
+  });
+  const { host, deliver, session } = setup();
+  session.read.mockImplementation(async (filters?: readonly ReadFilter[]) =>
+    filters?.some((filter) => filter.kinds?.includes(5)) ? [deletion] : [root],
+  );
+  await deliver({ type: "mention", event: reply("6", "@Pi go") }).run;
+  const text = String(host.requests("deliver")[0]?.params.text);
+  expect(text).not.toContain("Build is red");
+  expect(text).not.toContain("Earlier context is already available");
+});

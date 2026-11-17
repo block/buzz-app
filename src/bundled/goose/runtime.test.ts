@@ -2693,6 +2693,39 @@ it("shows a new turn's history as the thread shows it now", async () => {
   expect(changes()).toBe(changed);
 });
 
+it("tells a new session nothing came before when all of it was deleted", async () => {
+  const root = message("1", "Use the red palette", {
+    created_at: 50,
+    tags: [["h", channel]],
+  });
+  const deletion = message("2", "", {
+    kind: 5,
+    created_at: 70,
+    tags: [
+      ["h", channel],
+      ["e", root.id],
+    ],
+  });
+  const f = setup();
+  f.read.mockImplementation(async (filters?: readonly ReadFilter[]) =>
+    filters?.some((filter) => filter.kinds?.includes(5)) ? [deletion] : [root],
+  );
+  await f.deliver(
+    message("3", "@Gander go", {
+      created_at: 110,
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+      ],
+    }),
+  );
+  await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+  const text = f.goose()?.turns[0]?.text ?? "";
+  expect(text).not.toContain("Use the red palette");
+  expect(text).not.toContain("Earlier context is already available");
+});
+
 it("runs an agent on Recommended on the current candidate", () => {
   // A synthetic candidate.
   const candidate = {

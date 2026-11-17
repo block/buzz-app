@@ -1333,7 +1333,8 @@ export class PiRuntime {
           reads,
           signingAuthority,
         );
-        earlier = found;
+        // A new session counts only the messages still there.
+        earlier = seen ? found : unseen;
       } catch (error) {
         console.warn("Pi could not read the conversation", error);
       }

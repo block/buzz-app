@@ -816,7 +816,8 @@ export class GooseRuntime {
           reads,
           signingAuthority,
         );
-        earlier = found;
+        // A new session counts only the messages still there.
+        earlier = seen ? found : unseen;
       } catch (error) {
         console.warn("goose could not read the conversation", error);
       }

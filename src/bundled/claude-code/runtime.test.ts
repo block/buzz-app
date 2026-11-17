@@ -3652,6 +3652,45 @@ it("shows a new turn's history as the thread shows it now", async () => {
   }
 });
 
+it("tells a new session nothing came before when all of it was deleted", async () => {
+  const root = message("1", "Use the red palette", { created_at: 50 });
+  const deletion = message("2", "", {
+    kind: 5,
+    created_at: 70,
+    tags: [
+      ["h", channel],
+      ["e", root.id],
+    ],
+  });
+  const mention = message("3", "@Claude go", {
+    created_at: 110,
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const f = setup();
+  f.read.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.kinds?.includes(5)) ? [deletion] : [root],
+  );
+  try {
+    await f.deliver({ type: "mention", event: mention });
+    await vi.waitFor(() => expect(f.workingUntil).toHaveBeenCalledTimes(1));
+    await f.workingUntil.mock.calls[0]?.[0];
+    const text =
+      f
+        .claudes()
+        .find((process) => process.prompts.length)
+        ?.prompts.at(-1) ?? "";
+    expect(text).toContain("@Claude go");
+    expect(text).not.toContain("Use the red palette");
+    expect(text).not.toContain("Earlier context is already available");
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 it("runs a new turn without history when its edits cannot be read", async () => {
   const root = message("1", "Use the red palette", { created_at: 50 });
   const mention = message("2", "@Claude go", {

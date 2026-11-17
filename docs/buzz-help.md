@@ -1877,6 +1877,10 @@ Desktop builds save a small local trace when a draft conflict or save failure
 occurs. It contains operation metadata, with no draft text or secrets. See
 [draft diagnostics](draft-diagnostics.md) for the file location and collection steps.
 
+On macOS, Buzz can stop a storage helper that WebKit replaces but leaves running.
+This recovery only covers helpers observed during the current launch. It does
+not clear saved drafts or bypass conflict checks.
+
 ## Plugin account actions
 
 Plugins can add actions to your avatar menu. Profile-related actions may appear just above Settings; other plugin actions appear below it.

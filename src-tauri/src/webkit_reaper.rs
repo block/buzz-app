@@ -1,19 +1,16 @@
-//! Kills a WebKit GPU process that WebKit dropped but left running.
+//! Kills WebKit helpers that WebKit dropped but left running.
 //!
-//! WebKit gives its GPU process 3 s to answer a page. After that it stops
-//! reporting the process and asks launchd to kill it, which macOS refuses
-//! (WebKit bug 324797). The page stays connected to the dropped process and
-//! never paints: at login, Buzz opens to a window that stays empty. Once the
-//! process is gone, WebKit starts a new one and the page paints, unreloaded.
+//! WebKit can stop reporting a helper after asking macOS to kill it. macOS
+//! can refuse that request (WebKit bug 324797). A dropped GPU process leaves
+//! the page blank. A dropped Networking process can keep storage locked.
 //!
-//! A main-thread timer records each GPU process the main webview reports,
-//! with its start time. One that goes unreported for `GRACE` checks and is
-//! still that process is killed. A process WebKit could shut down exits
-//! within that time and is forgotten instead.
+//! One main-thread timer records the GPU and Networking processes reported
+//! by the main webview and its data store, with their start times. A helper
+//! unreported for `GRACE` checks is killed only if its identity still matches.
+//! A helper that exits on its own is forgotten instead.
 //!
-//! A process the timer never saw reported is never killed. A check made while
-//! the webview has no content process is skipped: WebKit then reports no GPU
-//! process for it, dropped or not.
+//! A helper the timer never saw reported is never killed. Checks pause while
+//! the webview has no content process or a reported identity cannot be read.
 
 /// Seconds between checks. WebKit reports a GPU process for the 3 s it waits.
 #[cfg(target_os = "macos")]
@@ -33,8 +30,8 @@ struct Seen {
     unreported: u8,
 }
 
-/// One check. `reported` is the GPU process WebKit reports now, and `running`
-/// tells whether a process seen earlier still runs. Returns the processes to
+/// One check. `reported` is the helper WebKit reports now, and `running`
+/// tells whether a helper seen earlier still runs. Returns the processes to
 /// kill, which are forgotten: a failed kill is not retried.
 fn abandoned(
     seen: &mut Vec<Seen>,
@@ -68,8 +65,8 @@ fn abandoned(
     abandoned
 }
 
-/// One check of the pids the webview reports for its content process and its
-/// GPU process, 0 for none. `process` reads the identity of a GPU process.
+/// One check of the reported content and helper pids, 0 for none.
+/// `process` reads the identity of the expected helper binary.
 ///
 /// A webview whose content process is gone reports no GPU process, even one
 /// WebKit still uses for other webviews. That check is skipped: it kills
@@ -77,13 +74,21 @@ fn abandoned(
 fn check(
     seen: &mut Vec<Seen>,
     content: i32,
-    gpu: i32,
+    helper: i32,
     process: impl Fn(i32) -> Option<Process>,
 ) -> Vec<Process> {
     if content <= 0 {
         return Vec::new();
     }
-    let reported = (gpu > 0).then(|| process(gpu)).flatten();
+    let reported = if helper > 0 {
+        let Some(reported) = process(helper) else {
+            // An unreadable identity is not evidence that WebKit dropped it.
+            return Vec::new();
+        };
+        Some(reported)
+    } else {
+        None
+    };
     abandoned(seen, reported, |earlier| {
         process(earlier.pid) == Some(earlier)
     })
@@ -97,7 +102,7 @@ mod macos {
     use std::{cell::RefCell, ptr::NonNull};
 
     use block2::RcBlock;
-    use objc2::{msg_send, rc::Weak, sel};
+    use objc2::{msg_send, rc::Weak, runtime::Bool, sel};
     use objc2_foundation::{NSObjectProtocol, NSTimer};
     use objc2_web_kit::WKWebView;
     use tauri::{AppHandle, Manager, Runtime};
@@ -106,6 +111,7 @@ mod macos {
 
     /// The executable of every WebKit GPU process.
     const GPU_BINARY: &[u8] = b"/com.apple.WebKit.GPU";
+    const NETWORK_BINARY: &[u8] = b"/com.apple.WebKit.Networking";
 
     /// The running process `pid`, if its executable path ends with `binary`.
     pub(super) fn process(pid: libc::pid_t, binary: &[u8]) -> Option<Process> {
@@ -126,8 +132,8 @@ mod macos {
         })
     }
 
-    /// Finder and login launches discard stderr, so also write to the unified log:
-    /// log show --predicate 'process == "Buzz" AND eventMessage CONTAINS "GPU process"'
+    /// Finder and login launches discard stderr, so also use the unified log.
+    /// Filter Buzz's messages for "WebKit".
     fn log(message: &str) {
         eprintln!("{message}");
         if let Ok(message) = std::ffi::CString::new(message) {
@@ -136,17 +142,21 @@ mod macos {
         }
     }
 
-    pub(super) fn kill(process: Process) {
+    pub(super) fn kill(expected: Process, binary: &[u8], kind: &str) {
+        // Recheck at the signal boundary, not only during the timer's sample.
+        if process(expected.pid, binary) != Some(expected) {
+            return;
+        }
         // SAFETY: `kill` takes no pointers.
-        if unsafe { libc::kill(process.pid, libc::SIGKILL) } == 0 {
+        if unsafe { libc::kill(expected.pid, libc::SIGKILL) } == 0 {
             log(&format!(
-                "Killed WebKit GPU process {} that WebKit dropped but left running",
-                process.pid
+                "Killed WebKit {kind} process {} that WebKit dropped but left running",
+                expected.pid
             ));
         } else {
             log(&format!(
-                "Could not kill WebKit GPU process {} that WebKit dropped: {}",
-                process.pid,
+                "Could not kill WebKit {kind} process {} that WebKit dropped: {}",
+                expected.pid,
                 std::io::Error::last_os_error()
             ));
         }
@@ -159,31 +169,52 @@ mod macos {
         let installed = window.with_webview(|webview| {
             // SAFETY: Wry's macOS webview is a WKWebView.
             let webview = unsafe { &*webview.inner().cast::<WKWebView>() };
-            if !webview.respondsToSelector(sel!(_gpuProcessIdentifier))
-                || !webview.respondsToSelector(sel!(_webProcessIdentifier))
+            let gpu_supported = webview.respondsToSelector(sel!(_gpuProcessIdentifier));
+            // SAFETY: Tauri provides this WKWebView on the main thread.
+            let store = unsafe { webview.configuration().websiteDataStore() };
+            let network_supported = store.respondsToSelector(sel!(_networkProcessIdentifier))
+                && store.respondsToSelector(sel!(_networkProcessExists));
+            if !webview.respondsToSelector(sel!(_webProcessIdentifier))
+                || (!gpu_supported && !network_supported)
             {
-                log("This WebKit does not report its processes; not watching the GPU process");
+                log("This WebKit does not report its processes; not watching its helpers");
                 return;
             }
             let webview = Weak::from(webview);
-            let seen = RefCell::new(Vec::new());
+            let gpu_seen = RefCell::new(Vec::new());
+            let network_seen = RefCell::new(Vec::new());
             let check = RcBlock::new(move |timer: NonNull<NSTimer>| {
                 let Some(webview) = webview.load() else {
                     // SAFETY: the run loop supplies its live timer.
                     unsafe { timer.as_ref() }.invalidate();
                     return;
                 };
-                // SAFETY: the webview has these private properties, each a
-                // `pid_t` that is 0 while it has no such launched process.
-                let (content, gpu): (libc::pid_t, libc::pid_t) = unsafe {
-                    (
-                        msg_send![&*webview, _webProcessIdentifier],
-                        msg_send![&*webview, _gpuProcessIdentifier],
-                    )
-                };
-                let identity = |pid| process(pid, GPU_BINARY);
-                for dropped in check(&mut seen.borrow_mut(), content, gpu, identity) {
-                    kill(dropped);
+                // SAFETY: selector availability was checked above. Each pid
+                // is 0 while WebKit has no such launched process.
+                let content: libc::pid_t = unsafe { msg_send![&*webview, _webProcessIdentifier] };
+                if gpu_supported {
+                    let gpu = unsafe { msg_send![&*webview, _gpuProcessIdentifier] };
+                    let identity = |pid| process(pid, GPU_BINARY);
+                    for dropped in check(&mut gpu_seen.borrow_mut(), content, gpu, identity) {
+                        kill(dropped, GPU_BINARY, "GPU");
+                    }
+                }
+                if network_supported {
+                    // SAFETY: the timer runs on the main thread with a live WKWebView.
+                    let store = unsafe { webview.configuration().websiteDataStore() };
+                    // The pid getter starts a process if no proxy exists.
+                    // Read only an existing proxy; this watcher must not launch one.
+                    let exists: Bool = unsafe { msg_send![&*store, _networkProcessExists] };
+                    let network = if exists.as_bool() {
+                        unsafe { msg_send![&*store, _networkProcessIdentifier] }
+                    } else {
+                        0
+                    };
+                    let identity = |pid| process(pid, NETWORK_BINARY);
+                    for dropped in check(&mut network_seen.borrow_mut(), content, network, identity)
+                    {
+                        kill(dropped, NETWORK_BINARY, "Networking");
+                    }
                 }
             });
             // SAFETY: the block only runs on this thread, the main thread,
@@ -193,7 +224,7 @@ mod macos {
             };
         });
         if let Err(error) = installed {
-            log(&format!("Could not watch the WebKit GPU process: {error}"));
+            log(&format!("Could not watch WebKit helpers: {error}"));
         }
     }
 }
@@ -304,23 +335,74 @@ mod tests {
         assert_eq!(check(&mut seen, 8, 0, healthy), [OLD]);
     }
 
+    #[test]
+    fn an_unreadable_reported_identity_pauses_the_grace() {
+        let healthy = |pid| (pid == OLD.pid).then_some(OLD);
+        let mut seen = Vec::new();
+        check(&mut seen, 7, OLD.pid, healthy);
+        assert!(check(&mut seen, 7, 0, healthy).is_empty());
+
+        for _ in 0..5 {
+            // The first lookup fails, but a later lookup could succeed.
+            let first = std::cell::Cell::new(true);
+            assert!(check(&mut seen, 7, OLD.pid, |pid| {
+                if first.replace(false) {
+                    None
+                } else {
+                    healthy(pid)
+                }
+            })
+            .is_empty());
+        }
+
+        // The skipped checks neither forgot the helper nor spent its grace.
+        assert_eq!(check(&mut seen, 7, 0, healthy), [OLD]);
+    }
+
     /// The identity read and the kill, on a child this test starts.
     #[cfg(target_os = "macos")]
     #[test]
     fn a_process_is_identified_by_pid_start_time_and_binary() {
-        let mut child = std::process::Command::new("/bin/sleep")
-            .arg("60")
+        use std::{
+            io::{Read, Write},
+            os::unix::process::ExitStatusExt,
+            process::{Command, Stdio},
+        };
+
+        let mut child = Command::new("/bin/cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
             .spawn()
             .unwrap();
+        let mut input = child.stdin.take().unwrap();
+        let mut output = child.stdout.take().unwrap();
+        let mut assert_alive = || {
+            input.write_all(b"alive\n").unwrap();
+            let mut echoed = [0; 6];
+            output.read_exact(&mut echoed).unwrap();
+            assert_eq!(&echoed, b"alive\n");
+        };
+        assert_alive();
+
         let pid = child.id() as i32;
-        let found = macos::process(pid, b"/sleep").unwrap();
+        let found = macos::process(pid, b"/cat").unwrap();
         assert_eq!(found.pid, pid);
         assert_ne!(found.started, (0, 0));
-        assert_eq!(macos::process(pid, b"/sleep"), Some(found));
+        assert_eq!(macos::process(pid, b"/cat"), Some(found));
         assert_eq!(macos::process(pid, b"/com.apple.WebKit.GPU"), None);
 
-        macos::kill(found);
-        assert!(!child.wait().unwrap().success());
-        assert_eq!(macos::process(pid, b"/sleep"), None);
+        let other_identity = Process {
+            started: (found.started.0, found.started.1 + 1),
+            ..found
+        };
+        macos::kill(other_identity, b"/cat", "test");
+        assert_alive();
+        macos::kill(found, b"/com.apple.WebKit.Networking", "Networking");
+        assert_alive();
+
+        macos::kill(found, b"/cat", "test");
+        drop(input);
+        assert_eq!(child.wait().unwrap().signal(), Some(libc::SIGKILL));
+        assert_eq!(macos::process(pid, b"/cat"), None);
     }
 }

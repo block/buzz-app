@@ -203,7 +203,7 @@ async function pickFor(
   }
 }
 
-type WakeOutcome = Awaited<ReturnType<NonNullable<Agents["wakeGuarded"]>>>;
+type WakeOutcome = Awaited<ReturnType<Agents["wake"]>>;
 type WakeDropReason = Extract<WakeOutcome, { status: "dropped" }>["reason"];
 type Job = {
   work?: ReturnType<LocalAgentActivity["begin"]>;
@@ -833,7 +833,7 @@ export class AgentRunners {
   wakeGuarded(
     key: AgentKey,
     trigger: PluginTrigger,
-    options: Parameters<NonNullable<Agents["wakeGuarded"]>>[2],
+    options: Parameters<Agents["wake"]>[2],
     available: () => boolean,
     lifetime: AbortSignal,
   ): Promise<WakeOutcome> {

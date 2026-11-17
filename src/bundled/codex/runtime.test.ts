@@ -6034,66 +6034,92 @@ it("does not steer a wake invalidated while active history loads", async () => {
   await f.complete();
 });
 
-it("drops a guarded wake invalidated during pending session save", async () => {
-  const guest = fixture();
-  const target = guestTarget(guest);
-  const gate = deferred<void>();
-  const saving = deferred<void>();
-  const values = new Map<string, string>();
-  const store: AgentStore = {
-    keys: () => [...values.keys()],
-    get: (key) => values.get(key) ?? null,
-    read: async (key) => values.get(key) ?? null,
-    scan: async () => Object.fromEntries(values),
-    add: async (key, value) => {
-      values.set(key, value);
-      return value;
-    },
-    set: async (key, value) => {
-      if (value?.includes('"pending":true')) {
-        saving.resolve();
-        await gate.promise;
-      }
-      if (value === null) values.delete(key);
-      else values.set(key, value);
-    },
-  };
-  const f = fixture(
-    [],
-    undefined,
-    false,
-    {},
-    undefined,
-    undefined,
-    async () => target,
-    store,
-  );
-  let current = true;
-  const checked = deferred<void>();
-  const accepted = vi.fn(() => checked.resolve());
-  await f.runtime.run({
-    ...pluginWake(f, root),
-    accepted,
-    current: () => {
-      if (!current) checked.resolve();
-      return current;
-    },
-  });
-  await saving.promise;
-  try {
-    current = false;
-  } finally {
-    gate.resolve();
-  }
-  await checked.promise;
-  expect(accepted).not.toHaveBeenCalled();
-  // This ordinary request is the completion barrier for the canceled job's lane.
-  await f.runtime.run(f.delivery("ordinary request"));
-  await vi.waitFor(() => expect(guest.starts()).toHaveLength(1));
-  expect(inputText(guest.starts()[0])).toContain("ordinary request");
-  expect(accepted).not.toHaveBeenCalled();
-  await guest.complete();
-});
+it.each(["stale", "aborted"] as const)(
+  "drops a guarded wake %s during pending session save and permits the next request",
+  async (change) => {
+    let guest = fixture();
+    let target = guestTarget(guest);
+    guest.failures.set(
+      "thread/resume",
+      "no rollout found for thread id thread-1",
+    );
+    const gate = deferred<void>();
+    const saving = deferred<void>();
+    const saved = deferred<void>();
+    const values = new Map<string, string>();
+    const store: AgentStore = {
+      keys: () => [...values.keys()],
+      get: (key) => values.get(key) ?? null,
+      read: async (key) => values.get(key) ?? null,
+      scan: async () => Object.fromEntries(values),
+      add: async (key, value) => {
+        values.set(key, value);
+        return value;
+      },
+      set: async (key, value) => {
+        if (value?.includes('"pending":true')) {
+          saving.resolve();
+          await gate.promise;
+        }
+        if (value === null) values.delete(key);
+        else values.set(key, value);
+        if (value?.includes('"pending":true')) saved.resolve();
+      },
+    };
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      async () => target,
+      store,
+    );
+    let current = true;
+    const checked = deferred<void>();
+    const accepted = vi.fn(() => checked.resolve());
+    await f.runtime.run({
+      ...pluginWake(f, root),
+      accepted,
+      current: () => {
+        if (!current) checked.resolve();
+        return current;
+      },
+    });
+    await saving.promise;
+    try {
+      if (change === "aborted") {
+        await target.dispose();
+        guest = fixture();
+        guest.failures.set(
+          "thread/resume",
+          "no rollout found for thread id thread-1",
+        );
+        target = guestTarget(guest);
+      } else current = false;
+    } finally {
+      gate.resolve();
+    }
+    await saved.promise;
+    if (change === "stale") await checked.promise;
+    else
+      await vi.waitFor(() =>
+        expect(
+          [...values.values()].some((value) =>
+            value.includes('"pending":true'),
+          ),
+        ).toBe(false),
+      );
+    expect(accepted).not.toHaveBeenCalled();
+    // This ordinary request is the completion barrier for the canceled job's lane.
+    await f.runtime.run(f.delivery("ordinary request"));
+    await vi.waitFor(() => expect(guest.starts()).toHaveLength(1));
+    expect(inputText(guest.starts()[0])).toContain("ordinary request");
+    expect(accepted).not.toHaveBeenCalled();
+    await guest.complete();
+  },
+);
 
 it("drops source output invalidated while compaction waits without blocking other work", async () => {
   const f = fixture();

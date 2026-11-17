@@ -66,6 +66,7 @@ import { huddleDescription } from "../huddle/lifecycle";
 import type { AgentIdentity } from "./native";
 import {
   type Agent,
+  type Agents,
   type AgentHandle,
   type AgentSession,
   AgentsService,
@@ -2236,27 +2237,40 @@ describe("a plugin's wake", () => {
       ]);
   });
 
-  it("throws outside a plugin, without text or a well-formed root, or for an agent this copy does not run", async () => {
-    const { service, plugin, native } = await setup();
-    await service.create({ type: "example/echo", name: "Echo" });
-    await held(native);
-    expect(() => service.wake(bot, { channel, text: "hi" })).toThrow(
-      /Only a plugin/,
-    );
-    expect(() => plugin.agents.wake(bot, { channel, text: " " })).toThrow(
-      /needs a channel and text/,
-    );
-    for (const bad of ["", "note1abc", "r".repeat(63), ` ${"a".repeat(64)}`])
+  it.each([false, true])(
+    "throws synchronously on invalid wake arguments (guarded: %s)",
+    async (guarded) => {
+      const { service, plugin, native } = await setup();
+      await service.create({ type: "example/echo", name: "Echo" });
+      await held(native);
+      const send = (
+        key: Parameters<Agents["wake"]>[0],
+        wake: Parameters<Agents["wake"]>[1],
+      ) =>
+        guarded
+          ? plugin.agents.wake(key, wake, { current: () => true })
+          : plugin.agents.wake(key, wake);
       expect(() =>
-        plugin.agents.wake(bot, { channel, root: bad, text: "hi" }),
-      ).toThrow(/64-hex event id/);
-    expect(() =>
-      plugin.agents.wake(bot, { channel, root, topLevel: true, text: "hi" }),
-    ).toThrow(/not both/);
-    expect(() => plugin.agents.wake(sibling, { channel, text: "hi" })).toThrow(
-      /does not run that agent/,
-    );
-  });
+        guarded
+          ? service.wake(bot, { channel, text: "hi" }, { current: () => true })
+          : service.wake(bot, { channel, text: "hi" }),
+      ).toThrow(/Only a plugin/);
+      expect(() => send(bot, { channel, text: " " })).toThrow(
+        /needs a channel and text/,
+      );
+      for (const bad of ["", "note1abc", "r".repeat(63), ` ${"a".repeat(64)}`])
+        expect(() => send(bot, { channel, root: bad, text: "hi" })).toThrow(
+          /64-hex event id/,
+        );
+      expect(() =>
+        send(bot, { channel, root, topLevel: true, text: "hi" }),
+      ).toThrow(/not both/);
+      if (!guarded)
+        expect(() => send(sibling, { channel, text: "hi" })).toThrow(
+          /does not run that agent/,
+        );
+    },
+  );
 
   it("comes from the agent itself through its run's handle, marked from where", async () => {
     const { service, run, plugin, native } = await setup();
@@ -2305,6 +2319,70 @@ describe("a plugin's wake", () => {
 
 describe("guarded plugin wakes", () => {
   const wake = { channel, root: "e".repeat(64), text: "Check current work" };
+  it("uses guarded delivery only after strict capability detection, without probe wakes", async () => {
+    const f = await setup();
+    const oldWake = vi.fn();
+    const sendIfSupported = (agents: {
+      supportsGuardedWake?: unknown;
+      wake: Agents["wake"];
+    }) => {
+      if (agents.supportsGuardedWake === true)
+        return agents.wake(bot, wake, { current: () => false });
+      return undefined;
+    };
+    try {
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      for (const flag of [undefined, false, "true", 1])
+        expect(
+          sendIfSupported({ supportsGuardedWake: flag, wake: oldWake }),
+        ).toBeUndefined();
+      expect(oldWake).not.toHaveBeenCalled();
+      await expect(sendIfSupported(f.plugin.agents)).resolves.toEqual({
+        status: "dropped",
+        reason: "stale",
+      });
+      expect(f.run).not.toHaveBeenCalled();
+      // @ts-expect-error malformed JavaScript callers still get a synchronous error
+      expect(() => f.plugin.agents.wake(bot, wake, {})).toThrow(
+        "current predicate",
+      );
+      expect(() =>
+        f.plugin.agents.wake(bot, wake, {
+          current: () => true,
+          // @ts-expect-error invalid caller signal
+          signal: {},
+        }),
+      ).toThrow();
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("preserves void calls and synchronous queue errors while guarded calls return refused", async () => {
+    const f = await setup();
+    const gate = runnerGate();
+    const started = runnerGate();
+    try {
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      f.run.mockImplementationOnce(async () => {
+        started.resolve();
+        await gate.promise;
+      });
+      expect(f.plugin.agents.wake(bot, wake)).toBeUndefined();
+      await started.promise;
+      for (let i = 0; i < 32; i++)
+        expect(f.plugin.agents.wake(bot, wake)).toBeUndefined();
+      expect(() => f.plugin.agents.wake(bot, wake)).toThrow("busy");
+      await expect(
+        f.plugin.agents.wake(bot, wake, { current: () => true }),
+      ).resolves.toEqual({ status: "dropped", reason: "refused" });
+      expect(f.run).toHaveBeenCalledOnce();
+    } finally {
+      gate.resolve();
+      await f.ctx.fiber.dispose();
+    }
+  });
+
   it.each(["aborted", "stale", "guard-error"] as const)(
     "drops %s before queue admission",
     async (reason) => {
@@ -2318,7 +2396,7 @@ describe("guarded plugin wakes", () => {
           return reason !== "stale";
         };
         await expect(
-          f.plugin.agents.wakeGuarded?.(bot, wake, {
+          f.plugin.agents.wake(bot, wake, {
             ...(signal ? { signal } : {}),
             current,
           }),
@@ -2358,7 +2436,7 @@ describe("guarded plugin wakes", () => {
       await started.promise;
       let valid = true;
       const abort = new AbortController();
-      const result = caller.agents.wakeGuarded?.(bot, wake, {
+      const result = caller.agents.wake(bot, wake, {
         signal: abort.signal,
         current: () => {
           if (!valid && change === "guard-error")
@@ -2416,7 +2494,7 @@ describe("guarded plugin wakes", () => {
         delivery.workingUntil(gate.promise);
         return gate.promise;
       });
-      const dropped = f.plugin.agents.wakeGuarded?.(bot, wake, {
+      const dropped = f.plugin.agents.wake(bot, wake, {
         current: () => valid,
       });
       const delivery = await entered.promise;
@@ -2434,7 +2512,7 @@ describe("guarded plugin wakes", () => {
         next.accepted?.();
         next.workingUntil(completed.promise);
       });
-      const delivered = f.plugin.agents.wakeGuarded?.(bot, wake, {
+      const delivered = f.plugin.agents.wake(bot, wake, {
         signal: abort.signal,
         current: () => true,
       });
@@ -2494,7 +2572,7 @@ describe("guarded plugin wakes", () => {
             }),
           );
         });
-        const result = f.plugin.agents.wakeGuarded?.(bot, wake, {
+        const result = f.plugin.agents.wake(bot, wake, {
           current: () => valid,
         });
         let settled = false;
@@ -2532,15 +2610,15 @@ describe("guarded plugin wakes", () => {
     const f = await setup();
     try {
       await f.service.create({ type: "example/echo", name: "Echo" });
+      expect(() => f.service.wake(bot, wake, { current: () => true })).toThrow(
+        "Only a plugin",
+      );
       await expect(
-        f.service.wakeGuarded(bot, wake, { current: () => true }),
-      ).rejects.toThrow("Only a plugin");
-      await expect(
-        f.plugin.agents.wakeGuarded?.(sibling, wake, { current: () => true }),
+        f.plugin.agents.wake(sibling, wake, { current: () => true }),
       ).resolves.toEqual({ status: "dropped", reason: "unavailable" });
       f.run.mockImplementationOnce(({ ignored }) => ignored?.());
       await expect(
-        f.plugin.agents.wakeGuarded?.(bot, wake, { current: () => true }),
+        f.plugin.agents.wake(bot, wake, { current: () => true }),
       ).resolves.toEqual({ status: "dropped", reason: "refused" });
     } finally {
       await f.ctx.fiber.dispose();

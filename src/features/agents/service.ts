@@ -1476,11 +1476,14 @@ export type Agents = {
    * comes from this plugin, not its owner, and is data. Throws when this copy does not run the agent or its queue is full;
    * like a mention, a queued wake is dropped if the agent stops running here. */
   wake(agent: AgentKey, wake: AgentWake): void;
-  /** Optional on older hosts. Checks the caller's guard at admission and before
+  /** Check `=== true` before passing guard options to `wake`. Older hosts can
+   * ignore extra arguments; never send a wake to probe for support. */
+  readonly supportsGuardedWake?: true;
+  /** Checks the caller's guard at admission and before
    * prompt/steer submission. Delivered means transport handoff, not completion;
    * cancellation cannot retract accepted input. Host authority still applies.
-   * Invalid wake arguments reject as for `wake`; guard errors drop the wake. */
-  wakeGuarded?(
+   * Invalid arguments throw synchronously; guard errors drop the wake. */
+  wake(
     agent: AgentKey,
     wake: AgentWake,
     options: Readonly<{ signal?: AbortSignal; current: () => boolean }>,
@@ -3536,20 +3539,36 @@ export class AgentsService extends Service implements Agents {
     added: () => this.tools(),
     repositories: repositoriesContext,
   });
-  wake(key: AgentKey, wake: AgentWake) {
-    const plugin = this.ctx.pluginOwner?.id;
-    if (!plugin) throw new Error("Only a plugin wakes an agent");
-    this.wakeIn(key, wake, { plugin });
-  }
-  async wakeGuarded(
+  readonly supportsGuardedWake = true as const;
+  wake(key: AgentKey, wake: AgentWake): void;
+  wake(
     key: AgentKey,
     wake: AgentWake,
-    options: Parameters<NonNullable<Agents["wakeGuarded"]>>[2],
-  ): ReturnType<NonNullable<Agents["wakeGuarded"]>> {
+    options: Parameters<Agents["wake"]>[2],
+  ): ReturnType<Agents["wake"]>;
+  wake(
+    key: AgentKey,
+    wake: AgentWake,
+    options?: Parameters<Agents["wake"]>[2],
+  ) {
+    const owner = this.ctx.pluginOwner;
+    if (!owner) throw new Error("Only a plugin wakes an agent");
+    const trigger = this.pluginWake(wake, { plugin: owner.id });
+    if (options === undefined) return this.runners.wakeIn(key, trigger);
+    if (typeof options?.current !== "function")
+      throw new Error("A guarded wake needs a current predicate");
+    // Validate before returning a Promise, as with the wake arguments.
+    if (options.signal !== undefined) AbortSignal.any([options.signal]);
+    return this.guardedWake(key, trigger, options);
+  }
+  private async guardedWake(
+    key: AgentKey,
+    trigger: Extract<Trigger, { type: "plugin" }>,
+    options: Parameters<Agents["wake"]>[2],
+  ): ReturnType<Agents["wake"]> {
     const ctx = this.ctx;
     const owner = ctx.pluginOwner;
     if (!owner) throw new Error("Only a plugin wakes an agent");
-    const trigger = this.pluginWake(wake, { plugin: owner.id });
     const { signal, current: isCurrent } = options;
     const agent = this.ready(key);
     const binding = agent && this.bindingOf(agent);

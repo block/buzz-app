@@ -626,15 +626,20 @@ Then the wake's run
 goes on, and only what it sends is posted. Pi still waits for the wake, so a
 run of its own that fails fails what is queued behind it too, which reports it.
 
-Plugins can feature-detect the optional `ctx.agents.wakeGuarded` capability:
+Plugins can pass guard options to `ctx.agents.wake` when the host advertises
+support. Check the flag strictly before calling; older JavaScript hosts can
+ignore extra arguments and enqueue an unguarded wake. Never send a wake as a
+capability probe.
 
 ```ts
-const result = await ctx.agents.wakeGuarded?.(agentKey, wake, {
-  signal: controller.signal,
-  current: () => workIsStillCurrent(),
-});
-if (result?.status === "dropped") {
-  // No input was handed to the prompt/steer transport.
+if (ctx.agents.supportsGuardedWake === true) {
+  const result = await ctx.agents.wake(agentKey, wake, {
+    signal: controller.signal,
+    current: () => workIsStillCurrent(),
+  });
+  if (result.status === "dropped") {
+    // No input was handed to the prompt/steer transport.
+  }
 }
 ```
 
@@ -652,8 +657,10 @@ has been handed off, cancellation cannot retract it. A dropped result has
 `status: "dropped"` and a `reason`: `aborted` for caller cancellation, `stale` for
 a false predicate, `guard-error` for a thrown predicate, `unavailable` for a lost
 host binding or authority, or `refused` for a full queue or a harness that ends
-without handoff. Invalid wake arguments reject as with `wake`. A host without
-this method returns no capability; plugins must choose their own fallback.
+without handoff. Invalid wake or guard arguments throw synchronously.
+Two-argument calls still return `void` and throw on an unavailable agent or
+full queue. Plugins must
+choose their own fallback when the support flag is absent.
 The guard and result are local and are not saved across shutdown. Dropped guarded
 wakes have no retry action that could bypass the original guard.
 

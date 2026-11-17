@@ -235,9 +235,12 @@ Keyring.
 
 The first time an alert would appear before macOS has been asked, Buzz shows
 the system permission prompt in place of that alert. It asks this way only
-once on a device; after that, use **Settings → Notifications → Allow
-notifications**. Windows and Linux have no permission prompt, and a browser
-asks only from Settings.
+once on a device. If that prompt is declined or left unanswered, macOS reports
+notifications as off and Buzz cannot ask again: turn them on in macOS
+**System Settings → Notifications → Buzz**. In Buzz, **Settings →
+Notifications → Allow notifications** works only while macOS has never been
+asked. Windows and Linux have no permission prompt, and a browser asks only
+from Settings.
 
 ### Huddle voice isn't working
 

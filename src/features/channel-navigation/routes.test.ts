@@ -115,7 +115,7 @@ it("orders a choice after one stored by an earlier load, even when the clock mov
   });
   const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
   vi.resetModules();
-  const fresh = await import("./routes");
+  const fresh = await import("./new-message-route");
   const next = fresh.nextMessageIntent();
   expect(next).toBe(9_001);
   expect(stored.get("buzz-message-intent.v1")).toBe("9001");

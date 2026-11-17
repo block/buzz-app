@@ -3,7 +3,7 @@ import {
   parseEntityLink,
   type EntityRoute,
 } from "../repos/routes";
-import { newMessageTarget } from "../channel-navigation/routes";
+import { newMessageTarget } from "../channel-navigation/new-message-route";
 import {
   parseGitPluginSource,
   parseUrlPluginSource,

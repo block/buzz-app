@@ -5,7 +5,7 @@ import { matchesEvent } from "./projection";
 import { SOLO_LABEL } from "../solo/labels";
 import { soloAdminKey } from "./solo-admins";
 import { validateMemberAdministrationTemplate } from "../channel-members/administration-protocol";
-import type { OutgoingEvent } from "./outbox";
+import { PublishRejected, type OutgoingEvent } from "./outbox";
 import type { ReadFilter, RelayEvent } from "./events";
 import type { EventTemplate } from "nostr-tools";
 
@@ -290,8 +290,38 @@ it("abandons expired setup while signing is held without granting or releasing i
         outbox.snapshot().find((item) => item.event.id === message)?.delivery,
       ).toBe("failed"),
     );
+    const oldMessage = outbox
+      .snapshot()
+      .find((item) => item.event.id === message);
+    assert.exists(oldMessage);
+    assert.exists(oldMessage.event.created_at);
+    expect(oldMessage.event.created_at).toBeLessThan(
+      Date.now() / 1000 - 15 * 60,
+    );
+    // Model the relay's timestamp rejection: Retry preserves the old event.
+    h.genericPublish.mockRejectedValueOnce(
+      new PublishRejected("Event too old"),
+    );
     outbox.retry(message);
-    await vi.waitFor(() => expect(h.events.has(message)).toBe(true));
+    await vi.waitFor(() =>
+      expect(
+        outbox.snapshot().find((item) => item.event.id === message),
+      ).toMatchObject({
+        delivery: "failed",
+        error: "Event too old",
+      }),
+    );
+    expect(h.genericPublish.mock.lastCall?.[0]).toEqual(oldMessage.signed);
+    const fresh = owner.session.messages.send(
+      h.channel,
+      "Continue with current roles",
+      h.agents,
+    );
+    await vi.waitFor(() => expect(h.events.has(fresh)).toBe(true));
+    expect(h.events.has(message)).toBe(false);
+    expect(
+      outbox.snapshot().find((item) => item.event.id === message)?.event,
+    ).toEqual(oldMessage.event);
     expect(h.adminPublish).not.toHaveBeenCalled();
   } finally {
     release();

@@ -139,7 +139,7 @@ export function OutboxStatus({
             {item.abandonSetup && (
               <span>
                 Admin setup expired. Abandoning keeps this chat and any roles
-                already granted. Retry your message to continue with the current
+                already granted. Send a new message to continue with the current
                 roles.
               </span>
             )}{" "}

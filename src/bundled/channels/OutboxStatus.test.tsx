@@ -633,7 +633,7 @@ it("abandons expired admin setup durably through Outbox and releases the chat ga
     await screen.findByRole("button", { name: "Abandon admin setup" });
     expect(outbox.snapshot().some((item) => item.recovery)).toBe(true);
     expect(
-      screen.getByText(/Retry your message to continue with the current roles/),
+      screen.getByText(/Send a new message to continue with the current roles/),
     ).toBeVisible();
     const remove = () =>
       screen.getByRole("button", { name: "Abandon admin setup" });

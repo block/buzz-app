@@ -112,7 +112,7 @@ behavior on the label, so a rename touches copy only.
   after a later demotion or removal. Expired, unrecorded grants are never re-dated.
   Outbox offers **Abandon admin setup** for the expired, delivered create: explicit
   abandonment retires its recovery receipt while keeping the chat and granted
-  roles. It sends no message automatically; the user retries with current roles
+  roles. It sends no message automatically; the user sends a new message with current roles
   or starts a new chat for automatic Admin setup. This needs no relay update
   and does not migrate existing members' roles or change tool-created grants.
 - The Buzz tools' `channel_create` with `solo` sends the same create for any

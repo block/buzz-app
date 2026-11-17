@@ -731,16 +731,27 @@ describe("Markdown profile mentions", () => {
     expect(html).toContain('aria-label="View Mic profile"');
   });
 
-  it("keeps a mention after a bare link and CJK punctuation through an Edit save", () => {
-    const sent = props("看这个 https://example.test，@Mic").row;
-    const saved = messageEditText(sent, profiles).replace("看这个", "看看");
-    expect(saved).toContain("，[@Mic](nostr:");
-    const html = render(saved, { patch: { edited: true } });
+  it.each(["https", "HTTPS"])(
+    "keeps a mention after a bare %s link and CJK punctuation through an Edit save",
+    (scheme) => {
+      const sent = props(`看这个 ${scheme}://example.test，@Mic`).row;
+      const saved = messageEditText(sent, profiles).replace("看这个", "看看");
+      expect(saved).toContain("，[@Mic](nostr:");
+      const html = render(saved, { patch: { edited: true } });
+      expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual([
+        "https://example.test/",
+      ]);
+      expect(html).toContain('aria-label="View Mic profile"');
+      expect(html).not.toContain("](nostr:");
+    },
+  );
+
+  it("keeps an entity at the end of a bare link", () => {
+    const html = render("https://example.test/a&gt;");
     expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual([
-      "https://example.test/",
+      "https://example.test/a",
     ]);
-    expect(html).toContain('aria-label="View Mic profile"');
-    expect(html).not.toContain("](nostr:");
+    expect(html.replace(/<[^>]*>/g, "")).toBe("https://example.test/a&gt;");
   });
 
   it("parses a link right after a bare link that ends at CJK punctuation", () => {

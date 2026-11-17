@@ -34,7 +34,11 @@ import { CodeFence, observeTableOverflow } from "../markdown/code-blocks";
 import { InlineText } from "../conversation/InlineText";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { emojiMatches, linkPart, messageParts } from "../relay/emoji";
-import { safeLinkUrl, visibleHtmlSource } from "../relay/message-content";
+import {
+  BARE_URL_REST,
+  safeLinkUrl,
+  visibleHtmlSource,
+} from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { profileMentionNames, profileMentionParts } from "./profile-mentions";
 import {
@@ -73,6 +77,8 @@ type ProtectedContent = {
   prefix: string;
   parts: InlinePart[];
 };
+const bareUrlEnd = new RegExp(`https?://${BARE_URL_REST}`, "gi");
+
 /** Bind exact names on the FULL signed body, before Markdown decodes escapes or
  * divides emphasis. Reference labels must also survive unchanged for resolution. */
 function protectInlineContent(
@@ -148,15 +154,6 @@ function protectInlineContent(
           const partStart = partOffset;
           partOffset += part.length;
           const urlPart = linkPart(part);
-          // GFM runs a bare URL into the Markdown after it; end it where
-          // message links end, so `https://x，[a](y)` still parses the link.
-          const head = urlPart
-            ? messageLinkParts(part).find(({ text }) => text)
-            : undefined;
-          const linkEnd =
-            head?.url && head.text.length < part.length
-              ? head.text.length
-              : undefined;
           let result = "";
           let end = 0;
           // Protect explicitly encoded URL punctuation before GFM's fallback
@@ -180,16 +177,14 @@ function protectInlineContent(
                   literal: undefined,
                 }))),
             ...(urlPart ? [] : encoded),
-            ...(linkEnd === undefined
-              ? []
-              : [
-                  {
-                    start: linkEnd,
-                    end: linkEnd,
-                    literal: undefined,
-                    linkEnd: true,
-                  },
-                ]),
+            // GFM runs a bare URL into the Markdown after it; end it where
+            // message links end, so `https://x，[a](y)` still parses the link.
+            ...Array.from(part.matchAll(bareUrlEnd), (match) => ({
+              start: match.index + match[0].length,
+              end: match.index + match[0].length,
+              literal: undefined,
+              linkEnd: true,
+            })).filter(({ start }) => /[^\s<]/.test(part[start] ?? "")),
             ...spoilerDelimiters
               .filter(
                 (start) =>

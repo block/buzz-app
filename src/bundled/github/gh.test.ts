@@ -53,6 +53,10 @@ it("gives GitHub's data, GitHub's own error, or says gh is unavailable", () => {
     );
   expect(timedOut).toThrow(GitHubError);
   expect(timedOut).toThrow("HTTP 504");
+  const failed = () =>
+    parseAnswer('{"message":"Server Error"}', "gh: Server Error (HTTP 502)", 1);
+  expect(failed).toThrow(GitHubError);
+  expect(failed).toThrow("Server Error (HTTP 502)");
 });
 
 it("writes the request to gh and reads its answer, and has no client without processes", async () => {

@@ -1036,7 +1036,29 @@ it.each(["sidebar", "topbar"] as const)(
           "title",
           "Inbox",
         );
+        view.rerender(shell("example/Home"));
       }
+      // Returning to another page restores the hover preview even after
+      // clicking Inbox and hovering it while selected.
+      await user.unhover(inbox);
+      await user.hover(inbox);
+      const reopened = await screen.findByRole("dialog", { name: "Inbox" });
+      expect(reopened).toBeVisible();
+      // Clicking immediately while the preview just opened (<500ms stickIfOpen)
+      // also leaves future hover previews working.
+      await user.click(inbox);
+      view.rerender(shell("example/Inbox"));
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      );
+      await user.unhover(inbox);
+      await user.hover(inbox);
+      view.rerender(shell("example/Home"));
+      await user.unhover(inbox);
+      await user.hover(inbox);
+      expect(
+        await screen.findByRole("dialog", { name: "Inbox" }),
+      ).toBeVisible();
       view.unmount();
 
       // Devices without hover never get one.

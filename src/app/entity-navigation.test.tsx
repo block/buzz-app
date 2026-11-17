@@ -360,8 +360,7 @@ it("opens Inbox for a malformed launch link when the catalog settles after the c
     }),
   );
   expect(current.plugins.startup()).toBe("loading");
-  release();
-  await screen.findByRole("dialog", { name: "This link doesn’t work" });
+  await act(async () => release());
   await waitFor(() =>
     expect(current.navigation.snapshot()).toMatchObject({
       status: "opened",
@@ -375,6 +374,7 @@ it("opens Inbox for a malformed launch link when the catalog settles after the c
       },
     }),
   );
+  await screen.findByRole("dialog", { name: "This link doesn’t work" });
 });
 
 it("opens Inbox for a malformed launch link when Inbox activates last", async () => {

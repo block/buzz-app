@@ -216,6 +216,12 @@
     calc(100% - 2 * var(--message-side-space) + var(--space-1) - var(--space-8))
   );
 }
+.message[data-full-width] {
+  width: 100%;
+}
+.message:where([data-full-width]):has(> .messageGutter) > .messageBody {
+  max-width: none;
+}
 .message[data-viewer-message] > .messageBody {
   flex: 0 1 auto;
   width: fit-content;
@@ -800,6 +806,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   padding-inline-start: var(--space-1);
 }
 .composerInput {
+  @apply text-message;
   box-sizing: border-box;
   position: relative;
   min-width: 0;

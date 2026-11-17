@@ -70,7 +70,7 @@ for (const [name, options] of [
         await hold(SETTLE_MS);
         const startHeap = await collected();
         const sent = [];
-        let idle, traffic, trafficWallMs;
+        let idle, traffic, trafficWallMs, queriesBefore, admitted;
         try {
           await cdp.send("Emulation.setCPUThrottlingRate", {
             rate: Number(process.env.PERF_CPU),
@@ -79,6 +79,7 @@ for (const [name, options] of [
           await hold(IDLE_MS);
           idle = spent(idleStart, await read());
 
+          queriesBefore = app.report.queries.length;
           const trafficStart = await read();
           const began = Date.now();
           while (Date.now() - began < TRAFFIC_MS) {
@@ -98,10 +99,41 @@ for (const [name, options] of [
           trafficWallMs = Date.now() - began;
           await hold(DRAIN_MS);
           traffic = spent(trafficStart, await read());
+          // Read without waiting, so only work inside the window counts.
+          admitted = await page.evaluate(
+            (ids) =>
+              ids.filter((id) =>
+                document.querySelector(
+                  `[data-ordinary] [data-channel-id="${id}"]`,
+                ),
+              ),
+            others,
+          );
         } finally {
           await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
         }
         const endHeap = await collected();
+
+        // HTTP history also holds every message, so admission must come from
+        // the live stream: each message was written to a stream subscribed to
+        // its channel, no history read covered these channels, and every row
+        // already showed unread when the counters stopped.
+        const ids = new Set(sent.map(({ event }) => event.id));
+        expect(
+          app.report.liveAppends.filter((a) => ids.has(a.id) && a.writes > 0),
+          "every background message was written to a live stream",
+        ).toHaveLength(sent.length);
+        expect(
+          app.report.queries
+            .slice(queriesBefore)
+            .filter(({ filter }) =>
+              (filter["#h"] ?? []).some((id) => others.includes(id)),
+            ),
+          "no history read supplied the background channels",
+        ).toEqual([]);
+        expect(admitted, "every background channel was admitted live").toEqual(
+          others,
+        );
 
         const last = sent.at(-1);
         await perf.open(last.channel);

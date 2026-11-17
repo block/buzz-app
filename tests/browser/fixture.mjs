@@ -1004,6 +1004,7 @@ export const test = base.extend({
       sessions: [],
       streamConnections: [],
       streamInterests: [],
+      liveAppends: [],
       errors: [],
       consoleErrors: [],
       unexpected: [],
@@ -3014,9 +3015,14 @@ export const test = base.extend({
           else if (relay) return event;
           else {
             expect(streams.get(community)?.size).toBeGreaterThan(0);
+            let writes = 0;
             for (const client of streams.get(community))
-              if (client.channels.includes(channel))
+              if (client.channels.includes(channel)) {
                 client.response.write(`data: ${JSON.stringify(event)}\n\n`);
+                writes++;
+              }
+            if (deliver)
+              report.liveAppends.push({ id: event.id, channel, writes });
           }
           return event;
         },

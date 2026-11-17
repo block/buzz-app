@@ -19,7 +19,7 @@ import { inTeamInventory } from "../../features/channel-navigation/team-inventor
 import type { RelayData } from "../../features/relay/service";
 import type { Agents } from "../../features/agents/service";
 import type { RelaySession } from "../../features/relay/session";
-import { useChannelList } from "../../features/relay/react";
+import { useChannelRoster } from "../../features/relay/react";
 import type { Navigation } from "../../features/navigation/controller";
 import type { OpenTarget } from "../../features/navigation/targets";
 import type {
@@ -200,11 +200,29 @@ export function ChannelInventory({
     contributedRows?.settled ?? noPendingPlugins,
     contributedRows?.settled ?? noPendingPlugins,
   );
-  const list = useChannelList(queries.channels);
+  const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  const sectionSort = useCallback(
+    (key: string): SidebarSortMode => {
+      const saved =
+        preferences.data?.sort?.[
+          key.startsWith("group:") ? `section:${key.slice(6)}` : key
+        ];
+      return saved &&
+        (saved === "recent" || rowSortModes.some((mode) => mode.id === saved))
+        ? saved
+        : "alpha";
+    },
+    [preferences.data, rowSortModes],
+  );
+  const list = useChannelRoster(queries.channels, {
+    activity:
+      Object.keys(preferences.data?.sort ?? {}).some(
+        (key) => sectionSort(key) !== "alpha",
+      ) || Object.values(preferences.data?.filters ?? {}).includes("active"),
+  });
   const rosterRecovers = useRecoveryOwns(queries, (live) =>
     rosterRecovering(live.roster),
   );
-  const preferences = useSidebarPreferences(queries.sidebarPreferences);
   const sortModesReady =
     pluginsSettled ||
     Object.values(preferences.data?.sort ?? {}).every(
@@ -583,19 +601,6 @@ export function ChannelInventory({
         sidebar.toggle(key, true),
       );
   };
-  const sectionSort = useCallback(
-    (key: string): SidebarSortMode => {
-      const saved =
-        preferences.data?.sort?.[
-          key.startsWith("group:") ? `section:${key.slice(6)}` : key
-        ];
-      return saved &&
-        (saved === "recent" || rowSortModes.some((mode) => mode.id === saved))
-        ? saved
-        : "alpha";
-    },
-    [preferences.data, rowSortModes],
-  );
   const rowUnread = useSidebarRowUnread(
     queries.unread,
     JSON.stringify(

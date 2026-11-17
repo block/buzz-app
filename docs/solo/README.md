@@ -109,8 +109,11 @@ behavior on the label, so a rename touches copy only.
   The create's local Outbox receipt retains the opening
   recipients across interruptions; retries reconstruct the same grants and
   confirm their recorded IDs before sending. A recorded grant stays complete
-  after a later demotion or removal. Expired, unrecorded grants require a new
-  chat; recovery never changes a command's timestamp. This needs no relay update
+  after a later demotion or removal. Expired, unrecorded grants are never re-dated.
+  Outbox offers **Abandon admin setup** for the expired, delivered create: explicit
+  abandonment retires its recovery receipt while keeping the chat and granted
+  roles. It sends no message automatically; the user retries with current roles
+  or starts a new chat for automatic Admin setup. This needs no relay update
   and does not migrate existing members' roles or change tool-created grants.
 - The Buzz tools' `channel_create` with `solo` sends the same create for any
   caller, including the standalone stdio server: signed by the caller, with the

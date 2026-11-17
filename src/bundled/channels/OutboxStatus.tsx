@@ -7,6 +7,7 @@ import { PRODUCT_FEEDBACK_KIND } from "../../features/relay/product-feedback";
 import { HELD_RETRY_REFUSED, type Outbox } from "../../features/relay/outbox";
 import type { RelaySession } from "../../features/relay/session";
 import { isBatchAddition } from "../../features/channel-members/members";
+import { isExpiredSoloAdminSetup } from "../../features/relay/solo-admins";
 
 /** A batch names everyone its Retry re-adds. */
 function additionLabel(tags: readonly (readonly string[])[]) {
@@ -30,7 +31,9 @@ export function OutboxStatus({
     outbox.subscribe,
     outbox.snapshot,
     outbox.snapshot,
-  ).filter((item) => item.event.kind !== PRODUCT_FEEDBACK_KIND);
+  )
+    .filter((item) => item.event.kind !== PRODUCT_FEEDBACK_KIND)
+    .map((item) => ({ ...item, abandonSetup: isExpiredSoloAdminSetup(item) }));
   const [error, setError] = useState<string>();
 
   return (
@@ -47,9 +50,11 @@ export function OutboxStatus({
         {operations.map((item) => (
           <li key={item.event.id}>
             <span>
-              {item.event.kind === 9000
-                ? additionLabel(item.event.tags)
-                : item.event.content.slice(0, 100)}{" "}
+              {item.abandonSetup
+                ? "Opening agent admin setup"
+                : item.event.kind === 9000
+                  ? additionLabel(item.event.tags)
+                  : item.event.content.slice(0, 100)}{" "}
               ·{" "}
               {
                 {
@@ -131,11 +136,25 @@ export function OutboxStatus({
               (item.delivery === "failed" || item.delivery === "unknown") && (
                 <span>{HELD_RETRY_REFUSED}</span>
               )}{" "}
+            {item.abandonSetup && (
+              <span>
+                Admin setup expired. Abandoning keeps this chat and any roles
+                already granted. Retry your message to continue with the current
+                roles.
+              </span>
+            )}{" "}
             {item.delivery !== "sending" && (
               <Button
                 type="button"
                 onClick={async () => {
                   try {
+                    // A view left open across expiry first exposes the explicit action.
+                    if (!item.abandonSetup && isExpiredSoloAdminSetup(item)) {
+                      setError(
+                        "Admin setup expired. Choose Abandon admin setup to continue with the current roles.",
+                      );
+                      return;
+                    }
                     const shareReceipt =
                       item.event.kind === 9 &&
                       // Share receipts, including those of earlier flows.
@@ -145,14 +164,19 @@ export function OutboxStatus({
                       (item.delivery === "accepted" ||
                         item.delivery === "seen");
                     if (shareReceipt) await outbox.acknowledge(item.event.id);
-                    await outbox.dismiss(item.event.id);
+                    await outbox.dismiss(
+                      item.event.id,
+                      item.abandonSetup ? item.recovery : undefined,
+                    );
                     setError(undefined);
                   } catch (reason) {
                     setError(String(reason));
                   }
                 }}
               >
-                Remove from outbox
+                {item.abandonSetup
+                  ? "Abandon admin setup"
+                  : "Remove from outbox"}
               </Button>
             )}
           </li>

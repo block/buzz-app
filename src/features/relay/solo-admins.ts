@@ -23,6 +23,36 @@ export function soloAdminRecovery(
   return { key: soloAdminKey(channel), value: JSON.stringify(unique) };
 }
 
+/** Only explicit abandonment of a delivered, expired setup may waive its gate.
+ * No unrecorded grant can start after this deadline; recorded roles stay put. */
+export function isExpiredSoloAdminSetup(item: OutgoingEvent): boolean {
+  const create = item.event;
+  const channel = create.tags.find(([tag]) => tag === "h")?.[1];
+  if (
+    create.kind !== 9007 ||
+    !channel ||
+    !["accepted", "seen"].includes(item.delivery) ||
+    item.recovery?.key !== soloAdminKey(channel) ||
+    !(Date.now() / 1000 - (create.created_at ?? Infinity) >= 15 * 60)
+  )
+    return false;
+  try {
+    const admins: unknown = JSON.parse(item.recovery.value);
+    return (
+      Array.isArray(admins) &&
+      admins.length > 0 &&
+      admins.every((key) => typeof key === "string" && key !== create.pubkey) &&
+      soloAdminRecovery(
+        channel,
+        create.tags.flatMap(([tag, key]) => (tag === "p" && key ? [key] : [])),
+        admins,
+      )?.value === item.recovery.value
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Reconstruct the exact same promotions after interruption. Their timestamp
  * and channel come from the saved create, so retries never invent a new grant
  * that could undo a later demotion or removal. */
@@ -78,7 +108,9 @@ export async function promoteSoloAdmins(
     // A recorded grant remains complete even when its recipient was demoted.
     if (await recorded()) continue;
     if (Date.now() / 1000 - create.created_at >= 15 * 60)
-      throw new Error("Chat admin setup expired. Start a new chat to retry.");
+      throw new Error(
+        "Chat admin setup expired. Abandon setup in Outbox to continue with current roles, or start a new chat.",
+      );
     const rosters = await read([
       {
         kinds: [39002],

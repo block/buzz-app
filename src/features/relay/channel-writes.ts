@@ -562,19 +562,30 @@ export function createChannelWrites(
       const source = writer();
       if (!adminWriter || !relayAuthor)
         throw new Error("This connection cannot set up chat admins.");
-      await created(pending.event.id);
-      const saved = await source.recovery(soloAdminKey(id));
-      // An explicit dismissal in another window retires this setup too.
-      if (!saved) return;
-      await promoteSoloAdmins(
-        saved,
-        adminWriter,
-        discovery,
-        relayAuthor,
-        signal,
-      );
-      signal.throwIfAborted();
-      await source.dismiss(saved.event.id, saved.recovery);
+      const abandoned = new AbortController();
+      const stop = source.observeDismiss((item) => {
+        if (item.event.id === pending.event.id)
+          abandoned.abort(
+            new DOMException("Chat admin setup was abandoned", "AbortError"),
+          );
+      });
+      try {
+        await created(pending.event.id);
+        const saved = await source.recovery(soloAdminKey(id));
+        // An explicit dismissal in another window retires this setup too.
+        if (!saved) return;
+        await promoteSoloAdmins(
+          saved,
+          adminWriter,
+          discovery,
+          relayAuthor,
+          AbortSignal.any([signal, abandoned.signal]),
+        );
+        signal.throwIfAborted();
+        await source.dismiss(saved.event.id, saved.recovery);
+      } finally {
+        stop();
+      }
     })();
     adminSetups.set(id, work);
     void work.catch(() => {}).finally(() => adminSetups.delete(id));

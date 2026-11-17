@@ -129,6 +129,7 @@ function setup() {
     events,
     genericPublish,
     adminPublish,
+    transport,
     open,
     start,
   };
@@ -238,4 +239,62 @@ it("resumes a partial setup from the durable outbox after restart without restor
   expect(
     h.genericPublish.mock.calls.filter(([event]) => event.kind === 9),
   ).toHaveLength(1);
+});
+
+it("abandons expired setup while signing is held without granting or releasing its message", async () => {
+  const h = setup();
+  const sign = h.transport.memberAdministration.sign;
+  let release = () => {};
+  let started = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const signing = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  h.transport.memberAdministration.sign = async (template) => {
+    started();
+    await held;
+    return sign(template);
+  };
+  const owner = await h.open();
+  const clock = vi.spyOn(Date, "now");
+  try {
+    const { message } = h.start(owner);
+    await signing;
+    const outbox = owner.session.outbox;
+    assert.exists(outbox);
+    const receipt = outbox
+      .snapshot()
+      .find((item) => item.recovery?.key === soloAdminKey(h.channel));
+    assert.exists(receipt);
+    const active = owner.session.channelWrites.prepareOpening(h.channel);
+    assert.exists(active);
+    const outcome = active.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    clock.mockReturnValue(Date.now() + 16 * 60 * 1000);
+    await outbox.dismiss(receipt.event.id, receipt.recovery);
+    release();
+    const error = await outcome;
+    expect(h.adminPublish).not.toHaveBeenCalled();
+    expect(error).toBeInstanceOf(Error);
+    expect(h.agents.map((key) => h.roles.get(key))).toEqual([
+      "member",
+      "member",
+    ]);
+    expect(h.events.has(message)).toBe(false);
+    await vi.waitFor(() =>
+      expect(
+        outbox.snapshot().find((item) => item.event.id === message)?.delivery,
+      ).toBe("failed"),
+    );
+    outbox.retry(message);
+    await vi.waitFor(() => expect(h.events.has(message)).toBe(true));
+    expect(h.adminPublish).not.toHaveBeenCalled();
+  } finally {
+    release();
+    clock.mockRestore();
+  }
 });

@@ -1027,16 +1027,16 @@ scrollTest(
     expect(scroll).toBeGreaterThan(100);
     await openPage(page, "Workflows");
     await expect(sidebar).toBeHidden();
-    const held = gate();
-    // Other communities may warm their unread preferences independently.
-    const preferences = "**/api/relay/primary/sidebar-preferences";
-    const continuations = [];
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
     let decodes = 0;
-    await page.route(preferences, (route) => {
+    // Other communities can warm in the background; this return reuses Primary.
+    await page.route("**/primary/sidebar-preferences", async (route) => {
       decodes++;
-      const continued = held.promise.then(() => route.continue());
-      continuations.push(continued);
-      return continued;
+      await held;
+      await route.continue();
     });
     await page.evaluate(() => {
       window.sidebarFrames = [];
@@ -1085,10 +1085,8 @@ scrollTest(
         "Page return must reuse the engine snapshot, not fetch/decode again",
       ).toBe(0);
     } finally {
-      held.resolve();
-      // Removing the route can auto-continue an in-flight request.
-      await Promise.all(continuations);
-      await page.unroute(preferences);
+      release();
+      await page.unrouteAll({ behavior: "wait" });
     }
   },
 );

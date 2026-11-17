@@ -133,7 +133,7 @@ export function definitionRanges(
     const end = node.position?.end.offset;
     if (
       node.type === "definition" &&
-      !/^\^\S+$/.test(node.identifier ?? "") &&
+      !/^\^[^ \t\r\n]+$/.test(node.identifier ?? "") &&
       start !== undefined &&
       end !== undefined
     )

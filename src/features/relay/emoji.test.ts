@@ -95,6 +95,7 @@ it("tags a shortcode after a link and CJK punctuation, but not inside links", ()
     "Check this\n[x]: https://example.com，:party:",
     "](\n\n[x]: https://example.com\n\nhttps://example.com，:party:",
     "See[^1]\n\n[^1]: :party:",
+    "See[^a\u3000b]\n\n[^a\u3000b]: :party:",
   ]) {
     expect(contentEmojiTags(content, entries)).toEqual([
       ["emoji", "party", url],

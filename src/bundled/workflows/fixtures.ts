@@ -154,6 +154,12 @@ export function createWorkflowFixture(
       trigger: true,
       delete: true,
     },
+    locate: ({ owner, id }) =>
+      fixtureView(
+        definitionState.data.items.find(
+          (item) => item.owner === owner && item.id === id,
+        ),
+      ).view,
     definitions: () => {
       const owned = fixtureView(definitionState.data);
       owned.update(definitionState);

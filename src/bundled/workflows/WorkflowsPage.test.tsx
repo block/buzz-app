@@ -23,6 +23,18 @@ import { bindNames } from "../../features/identity-names/service";
 import { agentDirectory } from "../../features/identity-names/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { WorkflowCommunity } from "./WorkflowsPage";
+import { apply } from "./index";
+import { useSyncExternalStore } from "react";
+import { workflowLink } from "../../features/workflows/route";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
+import { linkedPageTarget } from "../../features/pages/plugin-link";
+import { createNavigationController } from "../../features/navigation/controller";
+import { createMemoryHistory } from "../../features/navigation/history";
+import type { PageNavigation } from "../../features/navigation/service";
+import type { OpenTarget } from "../../features/navigation/targets";
+import type { Page, RegisteredPage } from "../../features/pages/service";
+import type { RelayData } from "../../features/relay/service";
+import type { WorkflowDefinition } from "../../features/workflows/types";
 import {
   createWorkflowFixture,
   fixtureChannel,
@@ -34,6 +46,7 @@ vi.stubGlobal(
   "ResizeObserver",
   class {
     observe() {}
+    unobserve() {}
     disconnect() {}
   },
 );
@@ -1801,4 +1814,319 @@ it("keeps an open editor and its draft when its channel is archived, and blocks 
     within(editor).getByRole("button", { name: "Run now" }),
   ).toHaveAttribute("aria-disabled", "true");
   expect(fixture.calls.save).toBe(0);
+});
+
+const community = {
+  viewer: fixtureViewer,
+  communityOrigin: "https://relay.test",
+};
+const messageVisit: OpenTarget = {
+  version: 1,
+  kind: "conversation",
+  scope: community,
+  channelId: fixtureChannel,
+  messageId: "ee".repeat(32),
+};
+/** The registered Workflows page under a miniature shell: a message's
+ * conversation visit, and the page for a page visit, kept mounted across
+ * visits to it as the shell keeps it. `open` follows a workflow link the way a
+ * message's View workflow does. */
+function linkedVisit(
+  items: readonly WorkflowDefinition[] = [fixtureDefinition],
+  sessionScope = `${community.communityOrigin}:${community.viewer}`,
+) {
+  const fixture = createWorkflowFixture();
+  fixture.definitions.update({
+    status: "ready",
+    data: { partial: false, items },
+  });
+  const list: ChannelList = {
+    status: "ready",
+    channels: [{ id: fixtureChannel, name: "Fixture channel" }],
+  };
+  const session = {
+    scope: sessionScope,
+    profiles: createProfileDirectory({ read: async () => [] }).queries,
+    workflows: fixture.capability,
+    channels: {
+      list: () => list,
+      ensureList: () => {},
+      subscribeList: () => () => {},
+    },
+  } as unknown as RelaySession;
+  const connection = {
+    status: "ready",
+    scope: sessionScope,
+    generation: 1,
+    session,
+    viewer: fixtureViewer,
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  const controller = createNavigationController(
+    createMemoryHistory(messageVisit),
+  );
+  const navigator = controller.navigation;
+  let page: Page | undefined;
+  void apply({
+    relay,
+    navigation: navigator,
+    pages: { register: (next: Page) => (page = next) },
+  } as unknown as Parameters<typeof apply>[0]);
+  if (!page) throw new Error("The Workflows page did not register");
+  const registered = {
+    ...page,
+    pluginId: "buzz.workflows",
+    key: "buzz.workflows/workflows",
+    revision: "test",
+  } as RegisteredPage;
+  const Component = page.component;
+  function Shell() {
+    const { entry, attempt } = useSyncExternalStore(
+      navigator.subscribe,
+      navigator.snapshot,
+    );
+    return entry.target.kind === "page" ? (
+      <Component
+        navigation={
+          {
+            entryId: entry.id,
+            target: entry.target,
+            signal: attempt.signal,
+          } as PageNavigation
+        }
+      />
+    ) : (
+      <p>The message in Fixture channel</p>
+    );
+  }
+  render(
+    <ToastProvider>
+      <Shell />
+    </ToastProvider>,
+  );
+  return {
+    fixture,
+    navigator,
+    registered,
+    dispose: () => controller.dispose(),
+    target(reference: Pick<WorkflowDefinition, "owner" | "id">) {
+      const link = buzzLinkTarget(workflowLink(reference), community);
+      if (link?.kind !== "plugin") throw new Error("Not a plugin page link");
+      // The shell accepts link text as route params only through the page.
+      return linkedPageTarget(link, registered);
+    },
+    open(reference: Pick<WorkflowDefinition, "owner" | "id">) {
+      act(() => void navigator.open(this.target(reference)));
+    },
+  };
+}
+const detailShown = () =>
+  screen.queryByRole("region", { name: "Workflow details" });
+
+it("opens at the workflow a message links to, and Back returns to the message", async () => {
+  // Another member's workflow: the default My workflows filter would hide it.
+  const theirs = { ...fixtureDefinition, owner: "22".repeat(32) };
+  const visit = linkedVisit([theirs]);
+  const user = userEvent.setup();
+  try {
+    expect(screen.getByText("The message in Fixture channel")).toBeVisible();
+    visit.open(theirs);
+    expect(visit.navigator.snapshot().entry.target).toEqual({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.workflows",
+      pageId: "workflows",
+      scope: community,
+      route: { version: 1, params: { owner: theirs.owner, id: theirs.id } },
+    });
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText(/isn’t available/)).toBeNull();
+
+    // Passive traversal keeps the visit: Back is the message, Forward the workflow.
+    act(() => visit.navigator.back());
+    expect(screen.getByText("The message in Fixture channel")).toBeVisible();
+    expect(visit.navigator.snapshot().entry.target).toEqual(messageVisit);
+    act(() => visit.navigator.forward());
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+
+    // Closing the detail ends that visit without leaving the page.
+    await user.click(
+      detailPane().getByRole("button", { name: "Close Message helper tab" }),
+    );
+    expect(detailShown()).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(visit.navigator.snapshot().entry.target).toEqual({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.workflows",
+      pageId: "workflows",
+      scope: community,
+    });
+    act(() => visit.navigator.back());
+    expect(screen.getByText("The message in Fixture channel")).toBeVisible();
+    expect(visit.navigator.snapshot().canGoBack).toBe(false);
+    // Forward returns to the page with the detail still closed.
+    act(() => visit.navigator.forward());
+    expect(
+      await screen.findByRole("button", { name: "Refresh workflows" }),
+    ).toBeVisible();
+    expect(detailShown()).toBeNull();
+    expect(visit.navigator.snapshot().canGoForward).toBe(false);
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("selects a linked workflow once: choosing another and closing stay the reader's", async () => {
+  const other = {
+    ...fixtureDefinition,
+    id: "66666666-6666-4666-8666-666666666666",
+    revision: "bb".repeat(32),
+    yaml: fixtureYaml.replace("Message helper", "Other helper"),
+  };
+  const visit = linkedVisit([fixtureDefinition, other]);
+  const user = userEvent.setup();
+  try {
+    visit.open(other);
+    expect(
+      await detailPane().findByRole("tab", { name: "Other helper" }),
+    ).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    );
+    expect(
+      detailPane().getByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    // A later read of the same definitions does not pull the reader back.
+    act(() =>
+      visit.fixture.definitions.update({
+        status: "ready",
+        data: { partial: false, items: [fixtureDefinition, { ...other }] },
+      }),
+    );
+    expect(
+      detailPane().getByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    expect(
+      detailPane().queryByRole("tab", { name: "Other helper" }),
+    ).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("waits for the definitions, then says a linked workflow is unavailable without opening anything", async () => {
+  const visit = linkedVisit([]);
+  try {
+    act(() =>
+      visit.fixture.definitions.update({
+        status: "loading",
+        data: { partial: false, items: [] },
+      }),
+    );
+    visit.open(fixtureDefinition);
+    // A read in flight is not evidence either way.
+    expect(detailShown()).toBeNull();
+    expect(screen.queryByText(/isn’t available/)).toBeNull();
+    act(() =>
+      visit.fixture.definitions.update({
+        status: "error",
+        data: { partial: false, items: [] },
+        error: "Couldn't read workflow data. Try again.",
+      }),
+    );
+    expect(detailShown()).toBeNull();
+    expect(screen.queryByText(/isn’t available/)).toBeNull();
+    // Deleted, or in a channel this viewer cannot read: the page names nothing.
+    act(() =>
+      visit.fixture.definitions.update({
+        status: "ready",
+        data: { partial: false, items: [] },
+      }),
+    );
+    expect(
+      await screen.findByText(
+        "That workflow isn’t available. It may have been deleted, or you may no longer have access to its channel.",
+      ),
+    ).toBeVisible();
+    expect(detailShown()).toBeNull();
+    expect(screen.queryByText("Message helper")).toBeNull();
+    // The visit stays, so Back still returns to the message.
+    act(() => visit.navigator.back());
+    expect(screen.getByText("The message in Fixture channel")).toBeVisible();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("opens nothing for another community's visit or link text the page does not accept", async () => {
+  // The session shown is not the community the visit was opened for.
+  const elsewhere = linkedVisit(
+    [fixtureDefinition],
+    `https://other.test:${fixtureViewer}`,
+  );
+  try {
+    elsewhere.open(fixtureDefinition);
+    expect(
+      await screen.findByRole("button", { name: /^Open Message helper:/ }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(detailShown()).toBeNull();
+    expect(screen.queryByText(/isn’t available/)).toBeNull();
+  } finally {
+    cleanup();
+    elsewhere.dispose();
+  }
+  const visit = linkedVisit();
+  try {
+    const { owner, id } = fixtureDefinition;
+    for (const params of [
+      {},
+      { owner },
+      { id },
+      { owner, id, channel: fixtureChannel },
+      { owner: owner.toUpperCase().replace("1", "A"), id },
+      { owner: "npub1owner", id },
+      { owner, id: "workflow" },
+      { owner, id: `${id} ` },
+      { owner: [owner], id },
+      { owner, id: 5 },
+      [owner, id],
+      "workflow",
+      null,
+    ])
+      expect(visit.registered.route?.validate(params)).toBe(false);
+    expect(visit.registered.route?.validate({ owner, id })).toBe(true);
+    // Rejected params open the page plainly, with no route to act on.
+    const link = buzzLinkTarget(
+      `buzz://plugin?id=buzz.workflows&page=workflows&route.owner=${owner}&route.id=nope`,
+      community,
+    );
+    if (link?.kind !== "plugin") throw new Error("Not a plugin page link");
+    const plain = linkedPageTarget(link, visit.registered);
+    expect(plain).not.toHaveProperty("route");
+    act(() => void visit.navigator.open(plain));
+    expect(
+      await screen.findByRole("button", { name: /^Open Message helper:/ }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(detailShown()).toBeNull();
+    expect(screen.queryByText(/isn’t available/)).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
 });

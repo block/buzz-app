@@ -1399,6 +1399,7 @@ export function WorkflowLanding({
   detailTarget,
   selected,
   onSelect,
+  reveal,
 }: {
   /** Live identity names; offline diagnostic fixtures use public-key labels. */
   session?: RelaySession | undefined;
@@ -1409,6 +1410,8 @@ export function WorkflowLanding({
   selected: string | undefined;
   /** Reports the selected workflow and its name, or clears the selection. */
   onSelect: (key: string | undefined, name?: string) => void;
+  /** A visit's request to open one workflow, applied once per `entryId`. */
+  reveal?: Readonly<{ entryId: string; owner: string; id: string }> | undefined;
   /** Channel IDs to show; every channel is still read. Empty shows all. */
   filter: readonly string[];
   onFilterChange: (channelIds: readonly string[]) => void;
@@ -1566,6 +1569,53 @@ export function WorkflowLanding({
       onSelect(undefined);
     else if (selected && selectedName) onSelect(selected, selectedName);
   }, [onSelect, reading, selected, selectedName, selectionFilteredOut]);
+  // A visit opened at one workflow selects it once, clearing the filters that
+  // hide it; selecting, filtering and closing afterwards stay the reader's.
+  const [revealed, setRevealed] = useState<string>();
+  const revealing = reveal && reveal.entryId !== revealed ? reveal : undefined;
+  const revealItem =
+    revealing &&
+    ordered
+      .flatMap((channel) => snapshots[channel.id]?.data.items ?? [])
+      .find(
+        (definition) =>
+          definition.owner === revealing.owner &&
+          definition.id === revealing.id,
+      );
+  const revealShown = !!revealItem && items.includes(revealItem);
+  // Only a completed read of every channel shows that it is not here.
+  const revealAbsent =
+    !!revealing &&
+    !revealItem &&
+    ordered.every((channel) => snapshots[channel.id]?.status === "ready");
+  useEffect(() => {
+    if (!revealing || (!revealItem && !revealAbsent)) return;
+    setRevealed(revealing.entryId);
+    if (!revealItem) {
+      setError(
+        "That workflow isn’t available. It may have been deleted, or you may no longer have access to its channel.",
+      );
+      return;
+    }
+    if (!revealShown) {
+      onFilterChange([]);
+      setMineOnly(false);
+      setStatus("all");
+      setTriggers([]);
+    }
+    onSelect(
+      workflowKey(revealItem),
+      readWorkflowDocumentFields(revealItem.yaml).name ||
+        "Unnamed or malformed workflow",
+    );
+  }, [
+    revealing,
+    revealItem,
+    revealShown,
+    revealAbsent,
+    onFilterChange,
+    onSelect,
+  ]);
   const cleared = visible.some(
     (channel) =>
       snapshots[channel.id]?.status === "idle" ||

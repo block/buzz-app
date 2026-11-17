@@ -136,6 +136,8 @@ export type ChannelMessage = Readonly<{
   signerId?: string | undefined;
   /** Display-only owner attested by this community’s explicit relay signer. */
   workflowOwnerId?: string | undefined;
+  /** That workflow's definition ID, when the relay named it. Not permission. */
+  workflowId?: string | undefined;
   /** Unix seconds from the signed event. */
   createdAt: number;
   /** Effective send ms (valid `ms` tag, else createdAt * 1000); ordered by `compareMessages`. */

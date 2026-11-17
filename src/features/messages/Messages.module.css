@@ -3998,6 +3998,9 @@ html[data-keyboard-navigation]
   gap: var(--space-1);
   min-width: 0;
 }
+.workflowAction {
+  margin: var(--space-2) 0 0;
+}
 html[data-keyboard-navigation] .activityExpansion {
   transition: none;
 }

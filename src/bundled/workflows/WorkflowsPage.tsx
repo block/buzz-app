@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -9,7 +10,12 @@ import { useWorkflowAgentMentions } from "./useWorkflowAgentMentions";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { WorkflowDefinition } from "../../features/workflows/types";
+import { workflowRoute } from "../../features/workflows/route";
+import type { Navigation } from "../../features/navigation/controller";
+import type { PageNavigation } from "../../features/navigation/service";
+import { targetKey, type OpenTarget } from "../../features/navigation/targets";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
+import { relayPartition } from "../../features/relay/partition";
 import {
   ArrowsClockwiseIcon,
   LightningIcon,
@@ -37,13 +43,29 @@ import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import "./workflows.css";
 
-export function WorkflowsPage({ relay }: { relay: RelayData }) {
+type WorkflowsNavigation = {
+  /** This visit; its route may name one workflow to open. */
+  navigation?: PageNavigation | undefined;
+  navigator?: Navigation | undefined;
+};
+const withoutRoute = (target: Extract<OpenTarget, { kind: "page" }>) => {
+  const { route: _route, ...page } = target;
+  return page;
+};
+
+export function WorkflowsPage({
+  relay,
+  navigation,
+  navigator,
+}: { relay: RelayData } & WorkflowsNavigation) {
   const connection = useRelayConnection(relay);
   return connection.status === "ready" ? (
     <WorkflowCommunity
       key={`${connection.scope}:${connection.generation}`}
       session={connection.session}
       viewer={connection.viewer ?? ""}
+      navigation={navigation}
+      navigator={navigator}
     />
   ) : (
     <WorkflowsPanel>
@@ -75,10 +97,12 @@ function WorkflowsPanel({ children }: { children: ReactNode }) {
 export function WorkflowCommunity({
   session,
   viewer,
+  navigation,
+  navigator,
 }: {
   session: RelaySession;
   viewer: string;
-}) {
+} & WorkflowsNavigation) {
   const capability = session.workflows;
   const channels = useChannelList(session.channels);
   const eligible = channels.channels.filter(
@@ -102,6 +126,25 @@ export function WorkflowCommunity({
   const [detail, setDetail] = useState<{ key: string; name: string }>();
   const [detailTarget, setDetailTarget] = useState<HTMLElement | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
+  // A visit opened at one workflow, as from a message it sent. The address
+  // applies only in the community it was opened for, and grants nothing: the
+  // landing selects the workflow only among the definitions it could read.
+  const target = navigation?.target.kind === "page" ? navigation.target : null;
+  const route = workflowRoute(target?.route?.params);
+  const entryId = navigation?.entryId;
+  const inScope =
+    !target?.scope ||
+    relayPartition(target.scope.communityOrigin, target.scope.viewer) ===
+      session.scope;
+  const reveal = useMemo(
+    () =>
+      entryId && inScope && route?.owner && route.id
+        ? { entryId, owner: route.owner, id: route.id }
+        : undefined,
+    [entryId, inScope, route?.owner, route?.id],
+  );
+  const visit = useRef({ navigation, navigator, reveal });
+  visit.current = { navigation, navigator, reveal };
   const selectDetail = useCallback((key: string | undefined, name?: string) => {
     setDetail((current) =>
       !key
@@ -110,6 +153,29 @@ export function WorkflowCommunity({
           ? current
           : { key, name: name ?? (current?.key === key ? current.name : "") },
     );
+    const { navigation, navigator, reveal } = visit.current;
+    if (
+      key ||
+      !reveal ||
+      !navigator ||
+      navigation?.target.kind !== "page" ||
+      navigation.signal.aborted ||
+      navigator.snapshot().entry.id !== navigation.entryId
+    )
+      return;
+    // Closing the detail ends the visits that opened this workflow here: Back
+    // returns to their opener and Forward leaves the detail closed.
+    const page = withoutRoute(navigation.target);
+    const pageKey = targetKey(page);
+    navigator.dismiss((other) => {
+      if (other.kind !== "page") return false;
+      const opened = workflowRoute(other.route?.params);
+      return (
+        opened?.owner === reveal.owner &&
+        opened.id === reveal.id &&
+        targetKey(withoutRoute(other)) === pageKey
+      );
+    }, page);
   }, []);
   // The landing that reconciles the selection unmounts without channels.
   if (detail && !eligible.length) setDetail(undefined);
@@ -277,6 +343,7 @@ export function WorkflowCommunity({
                   detailTarget={detailTarget}
                   selected={detail?.key}
                   onSelect={selectDetail}
+                  reveal={reveal}
                   onCreate={beginCreate}
                   onDelete={deleteWorkflow}
                   onOpen={(definition, nextChannel) =>

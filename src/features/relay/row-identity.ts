@@ -23,6 +23,7 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.authorId === right.authorId &&
     left.signerId === right.signerId &&
     left.workflowOwnerId === right.workflowOwnerId &&
+    left.workflowId === right.workflowId &&
     left.createdAt === right.createdAt &&
     left.createdAtMs === right.createdAtMs &&
     left.content === right.content &&

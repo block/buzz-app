@@ -243,12 +243,10 @@ function setup({ archived = [] as string[] } = {}) {
       signal: new AbortController().signal,
     }),
   });
-  const onAddressed = vi.fn();
   const mount = (visit?: PageNavigation, to?: string) =>
     render(
       <NewMessage
         to={to}
-        onAddressed={onAddressed}
         channels={channels.channels}
         host={
           {
@@ -271,7 +269,6 @@ function setup({ archived = [] as string[] } = {}) {
       />,
     );
   return {
-    onAddressed,
     session,
     profiles,
     channels,
@@ -1031,8 +1028,6 @@ it("addresses the draft to the person it was opened from, creating the DM only o
   expect(
     await screen.findByRole("button", { name: "Remove Person 1" }),
   ).toBeVisible();
-  // The visit drops the person, so returning keeps recipients chosen since.
-  expect(t.onAddressed).toHaveBeenCalledOnce();
   expect(t.directMessages.open).not.toHaveBeenCalled();
   await t.user.type(screen.getByRole("textbox"), "Hello");
   await t.user.click(send());
@@ -1042,6 +1037,35 @@ it("addresses the draft to the person it was opened from, creating the DM only o
     expect.any(AbortSignal),
   );
   expect(t.messages.send).toHaveBeenCalledOnce();
+});
+
+it("addresses the draft once per visit, so returning keeps later recipients", async () => {
+  const t = setup();
+  const [first, , third] = people;
+  if (!first || !third) throw new Error("No people");
+  t.profiles.set(first.pubkey, { name: first.name });
+  const visit = (entryId: string) =>
+    ({ entryId, passThrough: () => () => {} }) as unknown as PageNavigation;
+  const view = t.mount(visit("from-person-1"), first.pubkey);
+  await t.user.click(
+    await screen.findByRole("button", { name: "Remove Person 1" }),
+  );
+  await t.user.click(await screen.findByRole("option", { name: "Person 3" }));
+  view.unmount();
+  // Back, a reload or closing Settings returns to the same visit.
+  const again = t.mount(visit("from-person-1"), first.pubkey);
+  expect(
+    await screen.findByRole("button", { name: "Remove Person 3" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Remove Person 1" }),
+  ).not.toBeInTheDocument();
+  again.unmount();
+  // A new Message on that person is a new visit.
+  t.mount(visit("from-person-1-again"), first.pubkey);
+  expect(
+    await screen.findByRole("button", { name: "Remove Person 1" }),
+  ).toBeVisible();
 });
 
 it("keeps a held message's recipients when opened from another person", async () => {
@@ -1078,7 +1102,6 @@ it("keeps a failed message's recipients when opened from another person", async 
   expect(
     await screen.findByRole("button", { name: "Remove Person 1" }),
   ).toBeVisible();
-  await waitFor(() => expect(t.onAddressed).toHaveBeenCalledOnce());
   expect(
     screen.queryByRole("button", { name: "Remove Person 3" }),
   ).not.toBeInTheDocument();

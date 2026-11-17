@@ -144,15 +144,11 @@ export function NewMessage({
   onStarted,
   visit,
   to,
-  onAddressed,
 }: {
   session: RelaySession;
   scope: string;
   /** The person this visit was opened from, such as by their profile's Message. */
   to?: string | undefined;
-  /** `to` was taken, so its visit drops it: returning here (Back, reload)
-   * keeps the recipients chosen since. */
-  onAddressed?: (() => void) | undefined;
   /** The visit presenting this composer, a Back stop only once drafted. */
   visit?: PageNavigation | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -337,11 +333,12 @@ export function NewMessage({
     setUploadFailed(false);
   }
   // Opened from a person, the restored draft is addressed to them as if they
-  // were chosen in To, once: the visit then drops the person. A message held
-  // for delivery, even a failed one, keeps its recipients, so a retry never
-  // reaches someone new.
+  // were chosen in To, once per visit: returning to it (Back, reload, closing
+  // Settings) keeps the recipients chosen since. A message held for delivery,
+  // even a failed one, keeps its recipients, so a retry never reaches someone
+  // new.
   const addressed = useRef<string | undefined>(undefined);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Each person addresses the draft once, after its restore.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Each visit addresses the draft once, after its restore.
   useEffect(() => {
     if (!to) {
       addressed.current = undefined;
@@ -349,6 +346,14 @@ export function NewMessage({
     }
     if (!ready || addressed.current === to) return;
     addressed.current = to;
+    const taken = readView<unknown>(scope, "direct-message:addressed", []);
+    const visits = Array.isArray(taken) ? taken : [];
+    if (visit && visits.includes(visit.entryId)) return;
+    if (visit)
+      writeView(scope, "direct-message:addressed", [
+        ...visits.slice(-49),
+        visit.entryId,
+      ]);
     if (!pending && to !== session.viewer) {
       const profile = session.profiles.snapshot().get(to);
       void session.profiles.ensure([to]).catch(() => {});
@@ -360,7 +365,6 @@ export function NewMessage({
         },
       ]);
     }
-    onAddressed?.();
   }, [ready, to]);
   async function send(draft: MentionDraft, files?: AttachmentDraft) {
     const content = composerMarkdown(draft);

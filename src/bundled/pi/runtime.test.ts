@@ -3586,3 +3586,67 @@ it.each(["thread", "channel"] as const)(
     }
   },
 );
+
+it("retains the Solo Canvas after a native community delivery is refused", async () => {
+  let refuse = false;
+  let submission = 0;
+  const f = setup(
+    {
+      deliver: () => {
+        if (refuse) throw new Error("refused");
+        return { submission: ++submission, conversation: CONVERSATION };
+      },
+      wait: () => ({ status: "done", answer: 1, text: "done" }),
+    },
+    [],
+    { content: "RETAINED_CANVAS" },
+  );
+  f.solo.add(channel);
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [
+      { ...first, channelType: "solo" },
+      { ...first, id: "other", channelType: "stream" },
+    ],
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  try {
+    const a = f.deliver(
+      { type: "mention", event: reply("2", "first") },
+      { config },
+    );
+    await a.run;
+    await f.settled(a);
+    refuse = true;
+    const b = f.deliver(
+      {
+        type: "mention",
+        event: message("3", "refused", {
+          tags: [
+            ["h", "other"],
+            ["p", self],
+          ],
+        }),
+      },
+      { config, channelId: "other" },
+    );
+    await b.run;
+    await f.settled(b);
+    refuse = false;
+    f.session.canvas.read.mockRejectedValue(new Error("offline"));
+    const back = f.deliver(
+      { type: "mention", event: reply("4", "back") },
+      { config },
+    );
+    await back.run;
+    await f.settled(back);
+    expect(f.host.requests("deliver").at(-1)?.params.text).toContain(
+      "RETAINED_CANVAS",
+    );
+  } finally {
+    f.runtime.dispose();
+  }
+});

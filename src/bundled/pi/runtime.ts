@@ -689,23 +689,26 @@ export class PiRuntime {
         agent: agent.key,
         key,
       });
+      let acceptProject: (() => void) | undefined;
       const prompt = async () => {
         const wakePrompt = wake
           ? ((await wakeText?.()) ?? wake.text)
           : undefined;
+        const turn = await this.turn(
+          agent,
+          event,
+          channel,
+          key,
+          topLevel,
+          seen,
+          solo,
+          () => !interrupted && (!current || current()),
+        );
+        acceptProject = turn.acceptProject;
         return this.review(
           entry,
           turnPrompt({
-            ...(await this.turn(
-              agent,
-              event,
-              channel,
-              key,
-              topLevel,
-              seen,
-              solo,
-              () => !interrupted && (!current || current()),
-            )),
+            ...turn,
             agent: agent.key,
             channelLevel: topLevel && !solo,
             ...(wake
@@ -742,7 +745,10 @@ export class PiRuntime {
             }
           : {}),
         ...(step ? { step } : {}),
-        ...(acknowledged ? { acknowledged } : {}),
+        acknowledged: (input) => {
+          acceptProject?.();
+          acknowledged?.(input);
+        },
         ...(superseded ? { superseded } : {}),
       });
       const picked = await this.turnOf(entry, agent.key, model, effort);
@@ -767,6 +773,7 @@ export class PiRuntime {
         () => !interrupted && (!wake || !current || current()),
       );
       if (!submitted) return;
+      acceptProject?.();
       if (submitted.session !== undefined)
         void this.prompts(agent.key).save(
           `${submitted.conversation}:${submitted.session}`,
@@ -918,13 +925,13 @@ export class PiRuntime {
       );
       signal.throwIfAborted();
       if (delivery.current && !delivery.current()) return { ok: true };
-      if (community) entry.project.resolve(undefined, NO_PROJECT);
       request = `${key}/${crypto.randomUUID()}`;
       entry.standalone.add(request);
       if (community)
         entry.receipts.set(request, {
           key: COMMUNITY_SESSION,
           scope: COMMUNITY_SESSION,
+          acknowledged: () => entry.project.resolve(undefined, NO_PROJECT),
           settled: new Promise<void>((resolve) => {
             release = resolve;
           }),
@@ -950,6 +957,7 @@ export class PiRuntime {
           : {}),
       });
       if (community) {
+        entry.project.resolve(undefined, NO_PROJECT);
         this.remember(
           agent.key,
           COMMUNITY_SESSION,
@@ -1535,7 +1543,7 @@ export class PiRuntime {
     const entry = this.agents.get(agent.key);
     const project =
       scope === "community" && entry && current()
-        ? entry.project.resolve(channelId, solo ? loadedProject : NO_PROJECT)
+        ? entry.project.preview(channelId, solo ? loadedProject : NO_PROJECT)
         : loadedProject;
     return {
       event,
@@ -1552,6 +1560,9 @@ export class PiRuntime {
       names,
       ...(signingAuthority ? { signingAuthority } : {}),
       ...(project ? { project: project.section } : {}),
+      ...(scope === "community" && project && entry
+        ? { acceptProject: () => entry.project.resolve(channelId, project) }
+        : {}),
     };
   }
 

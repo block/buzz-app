@@ -516,6 +516,7 @@ export class GooseRuntime {
     const topLevel = solo || wake?.topLevel === true;
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // `fresh` is for a session that has been shown nothing yet.
+    let acceptProject: (() => void) | undefined;
     const prompt = async (
       fresh: boolean,
       admitted?: string,
@@ -535,6 +536,7 @@ export class GooseRuntime {
         admitted,
         current,
       );
+      acceptProject = turn.acceptProject;
       const { channel: where } = turn;
       const text = turnPrompt({
         ...turn,
@@ -668,6 +670,7 @@ export class GooseRuntime {
             ? channel
             : (threadReference(event)?.rootId ?? event.id),
           ...(step ? { step } : {}),
+          delivered: () => acceptProject?.(),
           ...(acknowledged ? { acknowledged } : {}),
           ...(superseded ? { superseded } : {}),
         });
@@ -771,7 +774,6 @@ export class GooseRuntime {
               signal.throwIfAborted();
               entry.handle = agent;
               entry.team = team ?? "";
-              entry.project.resolve(undefined, NO_PROJECT);
               entry.contexts.set(COMMUNITY_SESSION, {});
               const stop = () => {
                 void entry.sessions.interrupt(COMMUNITY_SESSION);
@@ -790,6 +792,8 @@ export class GooseRuntime {
                   0,
                   {
                     signal,
+                    delivered: () =>
+                      entry.project.resolve(undefined, NO_PROJECT),
                     current: () => !signal.aborted && delivery.current(),
                     ...(delivery.synced?.effort
                       ? { kept: delivery.synced.effort }
@@ -987,7 +991,7 @@ export class GooseRuntime {
     ]);
     const project =
       scope === "community" && admitted && current()
-        ? entry.project.resolve(channelId, solo ? loadedProject : NO_PROJECT)
+        ? entry.project.preview(channelId, solo ? loadedProject : NO_PROJECT)
         : loadedProject;
     return {
       key,
@@ -1014,6 +1018,9 @@ export class GooseRuntime {
       ...(signingAuthority ? { signingAuthority } : {}),
       names,
       ...(project ? { project: project.section } : {}),
+      ...(scope === "community" && project
+        ? { acceptProject: () => entry.project.resolve(channelId, project) }
+        : {}),
     };
   }
 

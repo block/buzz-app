@@ -1168,6 +1168,7 @@ export class ClaudeRuntime {
         session = admitted?.session ?? session;
         sessionContext = admitted?.context ?? sessionContext;
         // `fresh` is for a session that has been shown nothing yet.
+        let acceptProject: (() => void) | undefined;
         const prompt = async (fresh: boolean) => {
           const wakePrompt = wake
             ? ((await wakeText?.()) ?? wake.text)
@@ -1183,6 +1184,7 @@ export class ClaudeRuntime {
             solo,
             () => !interrupted && (!current || current()),
           );
+          acceptProject = turn.acceptProject;
           const text = turnPrompt({
             ...turn,
             agent: agent.key,
@@ -1280,6 +1282,7 @@ export class ClaudeRuntime {
             ? channel
             : (threadReference(event)?.rootId ?? event.id),
           ...(step ? { step } : {}),
+          delivered: () => acceptProject?.(),
           ...(acknowledged ? { acknowledged } : {}),
           ...(superseded ? { superseded } : {}),
           pick: {
@@ -1456,7 +1459,6 @@ export class ClaudeRuntime {
               signal.throwIfAborted();
               entry.handle = agent;
               entry.team = team ?? "";
-              entry.project.resolve(undefined, NO_PROJECT);
               entry.directories.delete(COMMUNITY_SESSION);
               entry.contexts.set(COMMUNITY_SESSION, {});
               let stopping: Promise<void> | undefined;
@@ -1480,6 +1482,8 @@ export class ClaudeRuntime {
                   0,
                   {
                     current: () => !signal.aborted && delivery.current(),
+                    delivered: () =>
+                      entry.project.resolve(undefined, NO_PROJECT),
                   },
                 );
                 await entry.sessions.idle(COMMUNITY_SESSION);
@@ -1676,7 +1680,7 @@ export class ClaudeRuntime {
     const commit = current();
     const project =
       scope === "community" && commit
-        ? entry.project.resolve(channelId, solo ? loadedProject : NO_PROJECT)
+        ? entry.project.preview(channelId, solo ? loadedProject : NO_PROJECT)
         : loadedProject;
     const referenced = [
       ...new Set([
@@ -1720,6 +1724,9 @@ export class ClaudeRuntime {
       names,
       ...(signingAuthority ? { signingAuthority } : {}),
       ...(section ? { project: section } : {}),
+      ...(scope === "community" && project
+        ? { acceptProject: () => entry.project.resolve(channelId, project) }
+        : {}),
     };
   }
 

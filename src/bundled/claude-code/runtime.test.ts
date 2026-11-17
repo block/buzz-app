@@ -5021,3 +5021,48 @@ it("drains an expired community wake's interrupt before admitting its successor"
     f.runtime.dispose();
   }
 });
+
+it("retains the Solo Canvas after a community turn fails effort admission", async () => {
+  const f = setup([], {
+    solo: new Set([channel]),
+    canvas: { content: "RETAINED_CANVAS" },
+  });
+  const config = {
+    ...DEFAULT_CONFIG,
+    scope: "community" as const,
+    model: "haiku",
+  };
+  const listed = f.session.channels.list();
+  const first = listed.channels[0];
+  if (!first) throw new Error("missing channel");
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    ...listed,
+    channels: [
+      ...listed.channels,
+      { ...first, id: "other", channelType: "stream" },
+    ],
+  });
+  const deliver = (id: string, extra = {}) =>
+    f.deliver(
+      { type: "mention", event: message(id, "work") },
+      { config, ...extra },
+    );
+  try {
+    await deliver("1");
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    await deliver("2", { channelId: "other", synced: { effort: "medium" } });
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(f.claudes().flatMap((p) => p.prompts)).toHaveLength(1);
+    f.session.canvas.read.mockRejectedValue(new Error("offline"));
+    await deliver("3");
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(
+      f
+        .claudes()
+        .flatMap((p) => p.prompts)
+        .at(-1),
+    ).toContain("RETAINED_CANVAS");
+  } finally {
+    f.runtime.dispose();
+  }
+});

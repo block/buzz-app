@@ -270,6 +270,7 @@ export class AgentSessions {
       contextRoot,
       admit,
       step,
+      delivered: accepted,
       acknowledged,
       superseded,
       activityScope,
@@ -340,6 +341,7 @@ export class AgentSessions {
         ...pick,
         ...(activityScope ? { activityScope } : {}),
         ...(step ? { step } : {}),
+        ...(accepted ? { delivered: accepted } : {}),
         ...(acknowledged ? { acknowledged } : {}),
         ...(superseded ? { superseded } : {}),
       };

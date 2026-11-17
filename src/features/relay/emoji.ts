@@ -81,9 +81,10 @@ export function emojiTags(event: {
 }
 /** Share token boundaries with the renderer: never substitute inside HTTP(S) links.
  * Bare links end at the same CJK punctuation as rendered ones. Within a `<url>` or
- * `](url)` destination, a URL ends only at whitespace or `<>"\``. */
+ * `](url)` destination, a URL ends only at whitespace or `<>"\``. A destination
+ * may start on a quoted line, after its `>` markers. */
 const destinations =
-  /<[a-zA-Z][a-zA-Z\d+.-]{1,31}:[^ \t\r\n<>]*|\]\\?\([ \t\r\n]*(?:<(?:\\[^\r\n]|[^<>\r\n\\])*|[^ \t\r\n]*)/
+  /<[a-zA-Z][a-zA-Z\d+.-]{1,31}:[^ \t\r\n<>]*|\]\\?\([ \t\r\n>]*(?:<(?:\\[^\r\n]|[^<>\r\n\\])*|[^ \t\r\n]*)/
     .source;
 const scheme = /https?:\/\/(?=[^\s<>"`])/.source;
 const links = new RegExp(`(${destinations}|${scheme}${BARE_URL_REST})`, "g");

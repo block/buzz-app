@@ -120,6 +120,7 @@ it("tags a shortcode after a link and CJK punctuation, but not inside links", ()
     "[a](<https://x.com/a\\\u2028https://y.com/a，:party:>)",
     "[a](<https://x.com/a\\\u2029https://y.com/a，:party:>)",
     "[a](\u2028<x>https://y.com/a，:party:)",
+    "> [a](\n> https://example.com/a，:party:)",
     "https://github。COM/:party:",
     "[ref]: https://example.com/a，:party:",
     "Hi\n\n> [ref]: https://example.com/a，:party:",

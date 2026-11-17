@@ -272,3 +272,31 @@ it("keeps arrow navigation open and dismisses activation of the selected row", a
     screen.queryByRole("dialog", { name: "Choose Huddle voice" }),
   ).not.toBeInTheDocument();
 });
+
+it("stops a pending preview when retained settings become hidden", async () => {
+  let visible = true;
+  const previous = HTMLElement.prototype.checkVisibility;
+  HTMLElement.prototype.checkVisibility = () => visible;
+  vi.mocked(previewVoice).mockImplementation(() => new Promise(() => {}));
+  const user = userEvent.setup();
+  const view = render(
+    <div data-testid="retained">
+      <VoicePreview
+        host={host}
+        previews={previews}
+        voice="maple"
+        disabled={false}
+        onChange={vi.fn()}
+      />
+    </div>,
+  );
+  try {
+    await user.click(screen.getByRole("button", { name: "Preview voice" }));
+    const signal = vi.mocked(previewVoice).mock.calls[0]?.[2];
+    visible = false;
+    view.getByTestId("retained").hidden = true;
+    await waitFor(() => expect(signal?.aborted).toBe(true));
+  } finally {
+    HTMLElement.prototype.checkVisibility = previous;
+  }
+});

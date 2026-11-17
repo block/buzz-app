@@ -73,6 +73,36 @@ export function VoicePreview({
   }, [playing, disabled, previewDisabled]);
   const playback = playing?.abort;
   useEffect(() => () => playback?.abort(), [playback]);
+  useEffect(() => {
+    if (!playback) return;
+    const check = () => {
+      if (
+        document.hidden ||
+        trigger.current?.checkVisibility?.({ visibilityProperty: true }) ===
+          false
+      ) {
+        playback.abort();
+        setPlaying(undefined);
+        setOpen(false);
+      }
+    };
+    const observer = new MutationObserver(check);
+    for (
+      let element: HTMLElement | null = trigger.current;
+      element;
+      element = element.parentElement
+    )
+      observer.observe(element, {
+        attributes: true,
+        attributeFilter: ["hidden", "class", "style", "inert"],
+      });
+    document.addEventListener("visibilitychange", check);
+    check();
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [playback]);
   const stop = () => {
     playing?.abort.abort();
     setPlaying(undefined);

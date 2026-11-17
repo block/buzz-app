@@ -103,10 +103,12 @@ jobs:
           rustup toolchain install "$version" --profile minimal --target "$TARGET"
           echo "RUSTUP_TOOLCHAIN=$version" >> "$GITHUB_ENV"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      # Previews from main save; stable and beta tags only restore main's cache.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: macos-prerelease-${{ matrix.arch }}
           cache-all-crates: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Set release version
         id: version
@@ -351,6 +353,11 @@ jobs:
           rustup toolchain install $env:RUST_VERSION --profile minimal
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "RUSTUP_TOOLCHAIN=$env:RUST_VERSION" >> $env:GITHUB_ENV
+      # Previews from main save; stable and beta tags only restore main's cache.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: windows-release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ steps.pins.outputs.node }}

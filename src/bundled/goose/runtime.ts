@@ -35,7 +35,7 @@ import {
   turnNote,
 } from "../../buzz-mcp/session-tools";
 import {
-  fromOwner,
+  mentionAuthority,
   type Agent,
   type AgentHandle,
   type Agents,
@@ -472,23 +472,16 @@ export class GooseRuntime {
     // goose runs commands as you; mentions need owner or delegated authority.
     if (trigger.type === "mention") {
       const snapshot = this.relay(agent.key)?.snapshot();
-      if (
-        !(await fromOwner(trigger.event, agent.owner, {
-          agent: agent.pubkey,
-          community: snapshot?.origin,
-          authority:
-            snapshot?.status === "ready"
-              ? snapshot.session.workflowAuthority
-              : undefined,
-          profiles:
-            snapshot?.status === "ready"
-              ? snapshot.session.profiles
-              : undefined,
-        }))
-      ) {
-        ignored?.();
-        return;
-      }
+      const authority = await mentionAuthority(trigger.event, agent.owner, {
+        agent: agent.pubkey,
+        authority:
+          snapshot?.status === "ready"
+            ? snapshot.session.workflowAuthority
+            : undefined,
+        profiles:
+          snapshot?.status === "ready" ? snapshot.session.profiles : undefined,
+      });
+      if (authority !== "owner") return ignored?.(authority);
       signal.throwIfAborted();
     }
     if (this.settings(raw).scope === "community" && !reserved)

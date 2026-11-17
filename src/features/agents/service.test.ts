@@ -44,6 +44,7 @@ import {
   describe,
   expect,
   it,
+  onTestFinished,
   vi,
 } from "vitest";
 import {
@@ -2336,6 +2337,32 @@ it("shows no typing for a mention its runtime ignores", async () => {
   await settle();
   await vi.advanceTimersByTimeAsync(9_000);
   expect(await published(native, 20002)).toEqual([]);
+});
+
+it("keeps a runtime's refusal reason for its owner's decline note", async () => {
+  const { service, run, emit, activity } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  run.mockImplementationOnce(async ({ ignored }) => ignored?.("workflow"));
+  emit({
+    events: [
+      event("m", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() =>
+    expect(activity.reader.declined?.()).toEqual([
+      expect.objectContaining({
+        agent: bot,
+        channelId: channel,
+        refusal: "workflow",
+      }),
+    ]),
+  );
 });
 
 it("wakes on a reply in a thread it started only by a mention or a watch", async () => {
@@ -6600,6 +6627,126 @@ it("reads the list again on refresh and clears the error a failed read left", as
     ],
   });
   expect(service.snapshot().error).toBeUndefined();
+});
+
+it("rereads agent execution bindings only after one may have changed", async () => {
+  const storage = memoryStorage();
+  const get = vi.spyOn(storage, "get");
+  const page = new EventTarget();
+  vi.stubGlobal("addEventListener", page.addEventListener.bind(page));
+  vi.stubGlobal("removeEventListener", page.removeEventListener.bind(page));
+  onTestFinished(() => {
+    vi.unstubAllGlobals();
+  });
+  const { service } = await setup({ storage });
+  const agent = await service.create({ type: "example/echo", name: "Echo" });
+  const reads = () =>
+    get.mock.calls.filter(([key]) => key.startsWith("buzz.agent.execution.v1:"))
+      .length;
+  const stored = (key: string) =>
+    page.dispatchEvent(Object.assign(new Event("storage"), { key }));
+  const local = service.local();
+  const before = reads();
+  // Each name lookup asks again; nothing changed, so no binding is read.
+  for (let lookup = 0; lookup < 5; lookup++)
+    expect(service.local()).toBe(local);
+  stored("buzz.agent.other");
+  expect(service.local()).toBe(local);
+  expect(reads()).toBe(before);
+  // Another window saved this agent's binding: the next snapshot shows it.
+  storage.setItem(
+    `buzz.agent.execution.v1:${agent.key}`,
+    JSON.stringify({ provider: "example/remote" }),
+  );
+  stored(`buzz.agent.execution.v1:${agent.key}`);
+  expect(
+    service.local().agents.find((item) => item.pubkey === agent.pubkey)
+      ?.execution,
+  ).toBe("remote");
+});
+
+it("filters the agent list for hosted choices only when the list changes", async () => {
+  const { service } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const filter = vi.spyOn(Array.prototype, "filter");
+  onTestFinished(() => {
+    filter.mockRestore();
+  });
+  const agents = service.snapshot().agents;
+  const filtered = () =>
+    filter.mock.contexts.filter((list) => list === agents).length;
+  service.local();
+  const first = filtered();
+  // Each name lookup asks again; the same list is not filtered again.
+  for (let lookup = 0; lookup < 5; lookup++) service.local();
+  expect(filtered()).toBe(first);
+});
+
+it("classifies an agent as remote after an update overlaps its held binding save", async () => {
+  let entered = () => {};
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const saving = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const storage = fileStore(
+    new Map(),
+    async () => {},
+    async (key) => {
+      if (key.startsWith("buzz.agent.execution.v1:")) {
+        entered();
+        await held;
+      }
+      return null;
+    },
+  );
+  const { ctx, plugin, service } = await setup({ storage });
+  plugin.agents.register({
+    id: "native",
+    title: "Native",
+    execution: true,
+    retire: async () => {},
+    defaults: () => ({ config: {} }),
+    run: vi.fn(),
+  });
+  const adapter = ctx.extend({
+    pluginOwner: {
+      id: "internal",
+      revision: "one",
+      agentExecution: ["example/native"],
+    },
+  });
+  adapter.agents.registerExecution({
+    id: "remote",
+    harnesses: ["example/native"],
+    connect: vi.fn(),
+  });
+  const agent = await service.create({
+    type: "example/native",
+    name: "Dedicated",
+  });
+  const execution = () =>
+    service.local().agents.find((item) => item.pubkey === agent.pubkey)
+      ?.execution;
+  // What a subscriber, such as a Remote badge, last saw.
+  let seen = execution();
+  const off = service.subscribe(() => {
+    seen = execution();
+  });
+  onTestFinished(off);
+  expect(seen).toBeUndefined();
+  const binding = adapter.agents.bindExecution(agent.key, { id: "remote" });
+  await saving;
+  try {
+    // An update while the binding is saved.
+    await service.save(agent.pubkey, { attentionEnabled: true });
+  } finally {
+    release();
+  }
+  await binding;
+  expect(seen).toBe("remote");
 });
 
 it("keeps local selection evidence stable across unrelated agent attention changes", async () => {
@@ -14915,6 +15062,148 @@ it("changes instructions in place and discards a dismissed change draft", async 
   expect(native.setType).not.toHaveBeenCalled();
 });
 
+it("reads model selections through MCP by name and in lists without exposing config", async () => {
+  const f = await setup();
+  f.plugin.agents.register({
+    ...f.type,
+    id: "models",
+    readModelSettings: () => ({
+      model: { source: "configured", value: "model-a" },
+      effort: { source: "default" },
+    }),
+  });
+  await f.service.create({ type: "example/echo", name: "Reader" });
+  await f.service.create({ type: "example/models", name: "Model" });
+  await f.service.save(sibling, { config: { reply: "secret config" } });
+  await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+  const handle = f.plugin.agents.handle(bot);
+  if (!handle?.readAgents) throw new Error("Missing read handle");
+  const client = appClient(handle, {
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+  });
+  const read = async (agent?: string) =>
+    JSON.parse((await callTool(client, {}, "agent_read", { agent })) as string);
+  try {
+    const expected = {
+      pubkey: sibling,
+      name: "Model",
+      type: "example/models",
+      instructions: "secret config",
+      synced: false,
+      modelSettings: {
+        model: { source: "configured", value: "model-a" },
+        effort: { source: "default" },
+      },
+    };
+    expect(await read("Model")).toEqual(expected);
+    expect(await read(sibling)).toEqual(expected);
+    expect(await read()).toContainEqual(expected);
+    expect(await read("Reader")).toMatchObject({
+      modelSettings: { unavailable: expect.any(String) },
+    });
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it("does not infer another device's model settings from its local type", async () => {
+  const f = await setup({ listed: [record(sibling)] });
+  await f.service.create({ type: "example/echo", name: "Reader" });
+  await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+  const handle = f.plugin.agents.handle(bot);
+  if (!handle?.readAgents) throw new Error("Missing read handle");
+  try {
+    expect(await handle.readAgents(sibling)).toMatchObject({
+      pubkey: sibling,
+      modelSettings: {
+        unavailable: "Its model settings are on another device",
+      },
+    });
+    expect(await handle.readAgents()).toContainEqual(
+      expect.objectContaining({
+        pubkey: sibling,
+        modelSettings: {
+          unavailable: "Its model settings are on another device",
+        },
+      }),
+    );
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it("reads confirmed synced model settings and refuses stale local choices", async () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: sibling,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.settings",
+  };
+  const f = await setup({
+    binding: (agent) =>
+      agent.pubkey === sibling ? { settings: { mode: "synced", subject } } : {},
+  });
+  const project = vi.fn(({ reply }: Config) => ({
+    model: { source: "configured" as const, value: reply },
+    effort: { source: "default" as const },
+  }));
+  f.plugin.agents.register({
+    ...f.type,
+    id: "models",
+    readModelSettings: project,
+    syncedSettings: {
+      schema: { model: "string" },
+      withSynced: (config, settings) => ({
+        ...config,
+        reply: settings.model ?? "",
+      }),
+    },
+  });
+  await f.service.create({ type: "example/echo", name: "Reader" });
+  await f.service.create({ type: "example/models", name: "Model" });
+  await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+  const handle = f.plugin.agents.handle(bot);
+  if (!handle?.readAgents) throw new Error("Missing read handle");
+  try {
+    expect(await handle.readAgents(sibling)).toMatchObject({
+      modelSettings: { unavailable: "Its synced config could not be read" },
+    });
+    expect(project).not.toHaveBeenCalled();
+    const store = internals(f.service).configStore;
+    const revise = (settings: object) =>
+      store.applyRead(subject, store.capture(subject), {
+        kind: "head",
+        event: finalizeEvent(
+          {
+            kind: 45010,
+            created_at: 1,
+            content: JSON.stringify({
+              version: 1,
+              agentType: "example/models",
+              settings,
+            }),
+            tags: [["op", "create"]],
+          },
+          generateSecretKey(),
+        ) as RelayEvent,
+      });
+    revise({ model: "synced-model" });
+    expect(await handle.readAgents(sibling)).toMatchObject({
+      modelSettings: {
+        model: { source: "configured", value: "synced-model" },
+      },
+    });
+    revise({ model: { secret: "invalid config" } });
+    expect(await handle.readAgents(sibling)).toMatchObject({
+      modelSettings: { unavailable: "Its synced config could not be read" },
+    });
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
 it("reads synced instructions it can't use as unavailable, not empty", async () => {
   const subject: Subject = {
     owner: viewer,
@@ -14949,6 +15238,7 @@ it("reads synced instructions it can't use as unavailable, not empty", async () 
     pubkey: bot,
     name: "Echo",
     type: "example/echo",
+    modelSettings: { unavailable: expect.any(String) },
     unavailable: expect.any(String),
   });
   head(JSON.stringify({ version: 1 }), "create", "No instructions text");
@@ -14987,6 +15277,7 @@ it("reads the owner's agents and teams, and saves only a reviewed team draft", a
       pubkey: hostedKey,
       name: "Sky",
       type: "example/cloud",
+      modelSettings: { unavailable: "Its provider keeps its model settings" },
       unavailable: "Its provider keeps its config",
     },
   ]);
@@ -15020,6 +15311,7 @@ it("reads the owner's agents and teams, and saves only a reviewed team draft", a
       pubkey: hostedKey,
       name: "Sky",
       type: "example/cloud",
+      modelSettings: { unavailable: "Its provider keeps its model settings" },
       instructions: "Fly.",
       revision: "r1",
       synced: true,

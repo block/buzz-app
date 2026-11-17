@@ -349,7 +349,7 @@ test.describe("exact history resize ownership", () => {
     const held = new Promise((r) => (release = r)),
       seen = new Promise((r) => (intercepted = r));
     let first = true;
-    await page.route("**/api/relay/**/query", async (route) => {
+    await page.route("**/api/relay/primary/query", async (route) => {
       if (
         !first ||
         !route

@@ -17,10 +17,13 @@ type Json = Record<string, unknown>;
 /** A Buzz conversation's Pi conversation, as `places` lists it. */
 type Place = Readonly<{
   conversation: number;
-  channelId: string;
+  /** Absent for a standalone turn's conversation. */
+  channelId?: string;
   community?: true;
   root?: string;
-  at: number;
+  /** When it was last active; absent for a standalone turn's conversation,
+   * which is read whatever its age. */
+  at?: number;
 }>;
 
 /** pi-ai's counts, named as Buzz names them. */
@@ -169,7 +172,8 @@ async function entries(
   return found.reverse();
 }
 
-/** The agent's Buzz conversations used since `since`. A conversation's
+/** The agent's Buzz conversations, and conversations of its standalone turns,
+ * used since `since`. A conversation's
  * requests follow the newest message it was shown. */
 export async function readUsage(
   pi: Pick<Pi, "request">,
@@ -180,7 +184,7 @@ export async function readUsage(
 ): Promise<SessionUsage[]> {
   const found: SessionUsage[] = [];
   for (const place of places) {
-    if (place.at < since) continue;
+    if (place.at !== undefined && place.at < since) continue;
     // Totals first: an answer recorded between the reads is then in the
     // entries, not counted as a request without one.
     const { models } = await pi.request<{ models: Record<string, unknown> }>(

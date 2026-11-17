@@ -50,6 +50,7 @@ import { PanelSubview } from "../../features/panels/PanelSubview";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -248,8 +249,12 @@ export class CodexProvider {
   private found: RecommendedCandidate | undefined;
   resolve(raw: unknown, remote = false): Config {
     // A remote target's catalog isn't this computer's: an agent on
-    // Recommended there runs on its Codex default.
-    if (remote) return readConfig(raw);
+    // Recommended there runs on its Codex default. Apps follow this
+    // computer's Codex sign-in, so they stay off there.
+    if (remote) {
+      const { apps: _apps, ...config } = readConfig(raw);
+      return config;
+    }
     // Recommended picks the model and level, as an explicit choice would.
     const explicit = followRecommended(
       raw,
@@ -1438,7 +1443,7 @@ export function createTabs(
               description={
                 bound
                   ? "The adapter selects a workspace for each conversation session."
-                  : "Codex starts here with full access to your files and network. Buzz tools run inside the app. Inherited MCP/Apps/plugin tools are disabled."
+                  : "Codex starts here with full access to your files and network. Buzz tools run inside the app. Inherited MCP tools are disabled."
               }
             >
               <Input
@@ -1465,6 +1470,22 @@ export function createTabs(
                 })
               }
             />
+            {!bound && (
+              <SwitchPreferenceRow
+                label="Codex apps and plugins"
+                description={
+                  agent.protection
+                    ? "Protected agents never use Codex apps or plugins."
+                    : "The agent may use apps and plugins that are installed in Codex."
+                }
+                checked={!!draft.apps && !agent.protection}
+                disabled={saving || !!agent.protection}
+                onCheckedChange={(checked) => {
+                  const { apps: _apps, ...rest } = draft;
+                  setDraft(checked ? { ...rest, apps: true } : rest);
+                }}
+              />
+            )}
           </>
         )}
         <AgentSaveButton form={form} saving={saving} disabled={!changed} />

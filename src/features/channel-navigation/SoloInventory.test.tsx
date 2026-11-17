@@ -5,6 +5,7 @@ import {
   cleanup,
   fireEvent,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -898,6 +899,49 @@ it("renames and opens settings for a chat the roster delivers after mount", asyn
     await screen.findByRole("menuitem", { name: "Chat settings" }),
   );
   expect(await screen.findByRole("dialog")).toBeVisible();
+});
+
+it("opens chat settings with the current visit after a thread move", async () => {
+  const f = fixture(true);
+  Object.assign(f.session, {
+    channelDetails: {
+      ...f.session.channelDetails,
+      available: true,
+      load: vi.fn(async (channelId: string) => ({
+        channelId,
+        name: "Planning",
+        description: "",
+        visibility: "private",
+        labels: ["buzz.solo"],
+        canEdit: true,
+        version: "one",
+      })),
+    },
+  });
+  f.replaceSession();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /^Planning/ }));
+  // Opening a thread ends the previous visit without rendering the sidebar.
+  f.navigateWithin({
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: "https://relay.test" },
+    channelId: id,
+    messageId: root,
+    threadRootId: root,
+  });
+  await user.click(
+    screen.getByRole("button", { name: "Actions for Planning" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Chat settings" }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Save changes" }),
+    ).toBeEnabled(),
+  );
 });
 
 it("describes a Solo row as Shared only when its Shared mark renders", () => {

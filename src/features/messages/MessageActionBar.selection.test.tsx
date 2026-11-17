@@ -97,7 +97,12 @@ function setup({
                       Before{" "}
                       <ContextMenuRoot>
                         <ContextMenuTrigger
-                          render={<a href="https://example.org" />}
+                          render={
+                            <a
+                              href="https://example.org/"
+                              data-link-label="Quote me"
+                            />
+                          }
                         >
                           Quote me
                         </ContextMenuTrigger>
@@ -205,11 +210,14 @@ it("copies the whole message or the captured highlight independently", async () 
   const rich = vi
     .spyOn(clipboard, "writeClipboardRichText")
     .mockResolvedValue();
-  const { open, select, controller } = setup();
+  const { open, select, controller, link } = setup();
+  const authored = "/panel/release-notes?mode=compact#summary";
+  link.setAttribute("href", authored);
   open();
   await user.click(
     await screen.findByRole("menuitem", { name: "Copy link URL" }),
   );
+  link.setAttribute("href", "https://example.org/");
   select();
   open();
   await user.click(
@@ -226,7 +234,7 @@ it("copies the whole message or the captured highlight independently", async () 
   act(() => document.getSelection()?.removeAllRanges());
   await user.click(item);
   expect(copy.mock.calls.map(([text]) => text)).toEqual([
-    "https://example.org/",
+    authored,
     "buzz://message?channel=general&id=one",
     "Whole message",
   ]);

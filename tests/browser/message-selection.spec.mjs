@@ -246,6 +246,50 @@ for (const [scheme, width, scale] of [
         page.evaluate(() => CSS.highlights.has("buzz-message-highlight")),
       )
       .toBe(false);
+    if (scheme === "light") {
+      // Attachment sources may be app proxy URLs, never message-link actions.
+      await page.route("**/media?url=**", (route) =>
+        route.fulfill({
+          contentType: "image/png",
+          body: Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y79d4sAAAAASUVORK5CYII=",
+            "base64",
+          ),
+        }),
+      );
+      const url = "https://primary.example/media/photo.png";
+      const attachment = app.append(
+        "primary",
+        "alpha",
+        `Photo caption\n\n${url}`,
+        true,
+        true,
+        undefined,
+        undefined,
+        [["imeta", `url ${url}`, "m image/png", "dim 240x160"]],
+      );
+      const row = page.locator(
+        `[data-channel-timeline] [data-message-id="${attachment.id}"]`,
+      );
+      const image = row.locator("[data-message-attachments] img");
+      await expect(image).toBeVisible();
+      await image.scrollIntoViewIfNeeded();
+      await row.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const selection = getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      });
+      await image.click({ button: "right" });
+      await expect(
+        menu.getByRole("menuitem", { name: "Copy highlight", exact: true }),
+      ).toBeVisible();
+      await expect(
+        menu.getByRole("menuitem", { name: "Copy link URL", exact: true }),
+      ).toHaveCount(0);
+      await page.keyboard.press("Escape");
+    }
   });
 }
 

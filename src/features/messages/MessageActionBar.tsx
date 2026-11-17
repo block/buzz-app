@@ -512,8 +512,9 @@ function MessageActionBarControls({
               selectedAtPress.current = undefined;
               setSelection(quote);
               setContextLink(
-                (event.target as Element).closest<HTMLAnchorElement>("a[href]")
-                  ?.href,
+                (event.target as Element)
+                  .closest<HTMLAnchorElement>("a[data-link-label]")
+                  ?.getAttribute("href") ?? undefined,
               );
               setHandingOffFocus(false);
               afterClose.current = undefined;

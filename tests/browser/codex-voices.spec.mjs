@@ -11,7 +11,10 @@ test("Codex Huddle voices persist separately through the settings host", async (
   await page.getByText("Ada", { exact: true }).click();
   const pane = page.getByRole("tabpanel", { name: "Identity", exact: true });
   const voice = pane.getByRole("combobox", { name: "Huddle voice" });
-  const preview = pane.getByRole("button", { name: "Preview voice", exact: true });
+  const preview = pane.getByRole("button", {
+    name: "Preview voice",
+    exact: true,
+  });
   await expect(preview).toBeEnabled();
   await voice.click();
   await page.getByRole("option", { name: "Maple", exact: true }).click();

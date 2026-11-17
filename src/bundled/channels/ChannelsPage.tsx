@@ -924,8 +924,8 @@ function ChannelWorkspace({
       navigation?.target.kind === "conversation" &&
       !navigation.signal.aborted
     ) {
-      const { panel: _panel, ...target } = navigation.target;
-      dismissContent([], target, "side", tabState.entries, true);
+      const target = closeTarget("side");
+      if (target) dismissContent([], target, "side", tabState.entries, true);
       return;
     }
     afterClose("settings");

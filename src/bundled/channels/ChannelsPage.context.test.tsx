@@ -461,6 +461,7 @@ it("replaces a resolved channel's reader with its plugin view, restores native c
 it.each([
   "individual",
   "individual-local",
+  "inactive-settings",
   "bulk",
   "keep-local",
   "thread-bulk",
@@ -546,9 +547,38 @@ it.each([
         fireEvent.click(screen.getByRole("button", { name: "View Notes" }));
         await screen.findByText("Notes content");
       }
+      const root = fixture.newer.at(-1)?.id;
+      if (!root) throw new Error("Missing thread fixture");
+      if (mode === "inactive-settings")
+        await open(h.target("alpha", { messageId: root, threadRootId: root }));
       await open(h.target("alpha", { panel: "settings" }));
       const first = host.navigation.snapshot().entry.id;
       await screen.findByRole("tab", { name: "Channel settings" });
+      if (mode === "inactive-settings") {
+        const threadTab = screen.getByRole("tab", { name: "Newer 24" });
+        fireEvent.click(threadTab);
+        await vi.waitFor(() =>
+          expect(channelTabs(h.session).list("alpha")[0]?.shown).toBe(true),
+        );
+        fireEvent.click(
+          screen.getByRole("button", { name: "Close Channel settings tab" }),
+        );
+        await vi.waitFor(() =>
+          expect(host.navigation.snapshot().entry.target).toMatchObject({
+            kind: "conversation",
+            channelId: "alpha",
+            messageId: root,
+            threadRootId: root,
+          }),
+        );
+        expect(channelTabs(h.session).list("alpha")[0]?.shown).toBe(true);
+        expect(threadTab).toHaveAttribute("aria-selected", "true");
+        expect(
+          screen.queryByRole("tab", { name: "Channel settings" }),
+        ).toBeNull();
+        expect(host.navigation.snapshot().retainedVisits).not.toContain(first);
+        return;
+      }
       if (mode === "individual-local") {
         fireEvent.click(
           screen.getByRole("button", { name: "Close Channel settings tab" }),

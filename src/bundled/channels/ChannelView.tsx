@@ -85,12 +85,13 @@ export function SelectedChannelView({
             active={() => {
               const current = navigator.snapshot().entry;
               return (
+                !!navigation &&
                 owned() &&
-                !navigation?.signal.aborted &&
+                !navigation.signal.aborted &&
                 relay.snapshot().session === session &&
                 current.target.kind === "conversation" &&
                 current.target.channelId === channel.id &&
-                (!navigation || current.id === navigation.entryId)
+                current.id === navigation.entryId
               );
             }}
           />

@@ -180,7 +180,7 @@ it.each(["render", "layout"])(
   },
 );
 
-it("leaves a default page attempt pending until its channel destination is resolved", async () => {
+it("binds activity to a resolved visit and leaves default page attempts pending", async () => {
   const host = provideNavigation(new Context());
   const scope = {
     viewer: "a".repeat(64),
@@ -224,7 +224,9 @@ it("leaves a default page attempt pending until its channel destination is resol
     channel: { id: "alpha", name: "Alpha" },
   };
   const defaultRequest = request();
-  const mounted = render(
+  const mounted = render(<SelectedChannelView {...props} />);
+  const unbound = active;
+  mounted.rerender(
     <SelectedChannelView {...props} navigation={defaultRequest} />,
   );
   expect(host.navigation.snapshot().status).toBe("opening");
@@ -239,6 +241,30 @@ it("leaves a default page attempt pending until its channel destination is resol
   mounted.rerender(<SelectedChannelView {...props} navigation={request()} />);
   await expect(opening).resolves.toMatchObject({ status: "opened" });
   expect(active?.()).toBe(true);
+  expect(unbound?.()).toBe(false);
+  const bound = active;
+  const reopening = host.navigation.open({
+    version: 1,
+    kind: "page",
+    pluginId: "channels",
+    pageId: "main",
+    scope,
+  });
+  mounted.rerender(<SelectedChannelView {...props} />);
+  const nextRequest = request();
+  expect(
+    nextRequest.resolve({
+      version: 1,
+      kind: "conversation",
+      channelId: "alpha",
+      scope,
+    }),
+  ).toBe(true);
+  mounted.rerender(<SelectedChannelView {...props} navigation={request()} />);
+  await expect(reopening).resolves.toMatchObject({ status: "opened" });
+  expect(active?.()).toBe(true);
+  expect(bound?.()).toBe(false);
+  expect(unbound?.()).toBe(false);
   mounted.unmount();
   host.dispose();
 });

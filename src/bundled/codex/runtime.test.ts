@@ -7902,6 +7902,42 @@ it("keeps community sessions apart for memberships of the same identity", async 
   await Promise.all([f.complete(0, "here"), f.complete(1, "there")]);
 });
 
+it.each([false, true])(
+  "clears the community wake status after completion (cancelled: %s)",
+  async (cancelled) => {
+    const f = fixture();
+    const base = f.delivery("seed");
+    const config = { ...(base.config as object), scope: "community" };
+    const agent = { ...base.agent, config } as unknown as Agent;
+    const abort = new AbortController();
+    const once = f.runtime.runOnce({
+      delivery: { ...base, config },
+      key: "watch",
+      signal: abort.signal,
+      prompt: async () => "check",
+    });
+    try {
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Working");
+      if (cancelled) abort.abort(new Error("deadline"));
+      else await f.complete(0, "");
+      await once;
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, { channelId: "channel" })).toBe(
+          "idle",
+        ),
+      );
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe(
+        cancelled ? "Stopped" : "Idle",
+      );
+    } finally {
+      abort.abort();
+      f.runtime.dispose();
+      await once;
+    }
+  },
+);
+
 it("runs an unaddressed wake in the community session without inheriting a posting destination", async () => {
   const f = fixture();
   const base = f.delivery("first");

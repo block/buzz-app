@@ -3569,7 +3569,11 @@ export class CodexRuntime {
           .request("thread/unsubscribe", { threadId: active.threadId })
           .catch(() => server.rpc.close());
       await hookBridge?.close();
-      if (lane.active === active) delete lane.active;
+      if (lane.active === active) {
+        delete lane.active;
+        if (request.unaddressed?.signal.aborted && !entry.abort.signal.aborted)
+          this.status(agent.key, key, "Stopped");
+      }
       release();
     }
   }

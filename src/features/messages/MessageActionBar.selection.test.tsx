@@ -39,7 +39,7 @@ afterEach(() => {
   document.getSelection()?.removeAllRanges();
 });
 
-function setup({ canQuote = true, active = true } = {}) {
+function setup({ canQuote = true, active = true, more = false } = {}) {
   // jsdom lays nothing out; selected text occupies this explicit geometry.
   Range.prototype.getClientRects = () =>
     [new DOMRect(10, 100, 100, 20)] as unknown as DOMRectList;
@@ -105,6 +105,7 @@ function setup({ canQuote = true, active = true } = {}) {
                   </div>
                 </MessageActionBar>
               )}
+              {more && <MessageActionBar copyText={() => "Whole message"} />}
               <textarea aria-label="Draft" />
             </section>
           </MessageContextMenus>
@@ -247,27 +248,42 @@ it("drops a queued quote when its message is removed before dismissal completes"
   expect(controller.quote).not.toHaveBeenCalled();
 });
 
-it("quotes the captured selection after focus has cleared the live range", async () => {
-  const user = userEvent.setup();
-  const { open, controller } = setup();
-  const draft = screen.getByRole("textbox", { name: "Draft" });
-  vi.mocked(controller.quote).mockImplementation(() => {
-    draft.focus();
-    return true;
-  });
-  open();
-  const item = await screen.findByRole("menuitem", { name: "Quote highlight" });
-  act(() => document.getSelection()?.removeAllRanges());
-  await user.click(item);
-  await waitFor(() =>
-    expect(controller.quote).toHaveBeenCalledExactlyOnceWith(
-      '<div data-buzz-copy="timeline"><a href="https://example.org/">Quote me</a></div>',
-      [],
-    ),
-  );
-  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-  expect(document.activeElement).toBe(draft);
-});
+it.each(["context", "touch overflow"])(
+  "quotes from %s after focus has cleared the live range",
+  async (source) => {
+    const user = userEvent.setup();
+    const { open, controller } = setup({ more: source === "touch overflow" });
+    const draft = screen.getByRole("textbox", { name: "Draft" });
+    vi.mocked(controller.quote).mockImplementation(() => {
+      draft.focus();
+      return true;
+    });
+    if (source === "context") open();
+    else {
+      const more = screen.getByRole("button", { name: "More message actions" });
+      const touch = new MouseEvent("pointerdown", { bubbles: true });
+      Object.defineProperty(touch, "pointerType", { value: "touch" });
+      fireEvent(more, touch);
+      act(() => document.getSelection()?.removeAllRanges());
+      fireEvent.mouseDown(more, { button: 0, detail: 1 });
+      fireEvent.mouseUp(more);
+      fireEvent.click(more);
+    }
+    const item = await screen.findByRole("menuitem", {
+      name: "Quote highlight",
+    });
+    act(() => document.getSelection()?.removeAllRanges());
+    await user.click(item);
+    await waitFor(() =>
+      expect(controller.quote).toHaveBeenCalledExactlyOnceWith(
+        '<div data-buzz-copy="timeline"><a href="https://example.org/">Quote me</a></div>',
+        [],
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(document.activeElement).toBe(draft);
+  },
+);
 
 it.each(["unavailable", "rejected"])(
   "reports a %s quote and restores source focus",

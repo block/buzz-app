@@ -257,6 +257,8 @@ function MessageActionBarControls({
   const [contextAnchor, setContextAnchor] = useState<MenuPosition["anchor"]>();
   const contextFocus = useRef<HTMLElement | null>(null);
   const selectedAtPress = useRef<boolean | "touch">(undefined);
+  const overflowSelection =
+    useRef<ReturnType<typeof captureSelectedQuote>>(undefined);
   const ownTrigger = useRef<HTMLButtonElement>(null);
   const trigger = menuTriggerRef ?? ownTrigger;
   const copy = async (text: () => string, label: string) => {
@@ -604,7 +606,10 @@ function MessageActionBarControls({
               open={open}
               onOpenChange={(next, details) => {
                 if (next) {
-                  setSelection(undefined);
+                  const quote = overflowSelection.current;
+                  overflowSelection.current = undefined;
+                  setSelection(quote);
+                  if (quote) contextFocus.current = quote.element;
                   setHandingOffFocus(false);
                   // Base UI opens on mousedown, so a real pointer press carries a
                   // click count; keyboard and assistive presses arrive as a click
@@ -626,6 +631,18 @@ function MessageActionBarControls({
               onOpenChangeComplete={closed}
             >
               <MenuTrigger
+                onPointerDownCapture={(event) => {
+                  // Save the same conversation's highlight before ⋯ takes focus.
+                  const quote = captureSelectedQuote();
+                  overflowSelection.current = quote?.element.contains(
+                    event.currentTarget,
+                  )
+                    ? quote
+                    : undefined;
+                }}
+                onKeyDownCapture={() => {
+                  overflowSelection.current = undefined;
+                }}
                 render={
                   <IconButton
                     hint="familiar"

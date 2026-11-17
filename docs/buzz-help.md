@@ -406,7 +406,8 @@ and are asked to sign in again in Buzz.
   links but does not notify anyone mentioned in the quoted text. **Copy highlight**
   and **Quote highlight** appear above the usual message actions when you right-click
   highlighted text. Supported browsers keep that text highlighted while the menu is
-  open. Touch devices keep their native text-selection menu.
+  open. On touch devices, select text and open the message's **⋯** menu for these
+  highlight actions. Long presses keep the native text-selection menu.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.

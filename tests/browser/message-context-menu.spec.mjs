@@ -16,15 +16,11 @@ test.describe("touch selection menus", () => {
     viewport: { width: 900, height: 950 },
   });
 
-  test("a trusted touch long press keeps the native selected-text menu", async ({
+  test("touch ⋯ quotes the highlight; Chromium long presses stay native", async ({
     page,
     app,
     browserName,
   }) => {
-    test.skip(
-      browserName !== "chromium",
-      "Trusted long-press synthesis uses Chromium CDP.",
-    );
     await open(page, app);
     const message = app.append("primary", "alpha", "Touch context target");
     const row = page.locator(
@@ -33,30 +29,60 @@ test.describe("touch selection menus", () => {
     const prose = row.locator("[data-message-action-anchor] p");
     await expect(prose).toBeVisible();
     await prose.selectText();
-    const box = await prose.boundingBox();
-    const cdp = await page.context().newCDPSession(page);
-    try {
-      await cdp.send("Input.synthesizeTapGesture", {
-        x: box.x + box.width / 2,
-        y: box.y + box.height / 2,
-        duration: 1000,
-        gestureSourceType: "touch",
-      });
-    } finally {
-      await cdp.detach();
+    // Trusted long-press synthesis needs CDP; both engines exercise the ⋯ tap.
+    if (browserName === "chromium") {
+      const box = await prose.boundingBox();
+      const cdp = await page.context().newCDPSession(page);
+      try {
+        await cdp.send("Input.synthesizeTapGesture", {
+          x: box.x + box.width / 2,
+          y: box.y + box.height / 2,
+          duration: 1000,
+          gestureSourceType: "touch",
+        });
+      } finally {
+        await cdp.detach();
+      }
+      await expect
+        .poll(() =>
+          page.evaluate(() =>
+            window.contextMenus.map((event) => ({
+              trusted: event.isTrusted,
+              pointerType: event.pointerType,
+              prevented: event.defaultPrevented,
+            })),
+          ),
+        )
+        .toEqual([{ trusted: true, pointerType: "touch", prevented: false }]);
+      await expect(page.getByRole("menu")).toHaveCount(0);
+      await page.keyboard.press("Escape");
     }
-    await expect
-      .poll(() =>
-        page.evaluate(() =>
-          window.contextMenus.map((event) => ({
-            trusted: event.isTrusted,
-            pointerType: event.pointerType,
-            prevented: event.defaultPrevented,
-          })),
-        ),
-      )
-      .toEqual([{ trusted: true, pointerType: "touch", prevented: false }]);
-    await expect(page.getByRole("menu")).toHaveCount(0);
+    await prose.selectText();
+    await row.getByRole("button", { name: "More message actions" }).tap();
+    const menu = page.getByRole("menu");
+    await expect(menu.getByRole("menuitem").nth(0)).toHaveText(
+      "Copy highlight",
+    );
+    await expect(menu.getByRole("menuitem").nth(1)).toHaveText(
+      "Quote highlight",
+    );
+    // Touch focus may clear the live range; the captured content must survive.
+    await page.evaluate(() => getSelection()?.removeAllRanges());
+    await menu.getByRole("menuitem", { name: "Quote highlight" }).tap();
+    const input = page.getByRole("textbox", {
+      name: "Message #Alpha",
+      exact: true,
+    });
+    await expect(input.locator("blockquote")).toHaveText(
+      "Touch context target",
+    );
+    await expect(
+      input.locator(":scope > p:first-child [data-source]"),
+    ).toHaveAttribute(
+      "data-source",
+      `buzz://message?channel=alpha&id=${message.id}`,
+    );
+    await expect(input).toBeFocused();
   });
 });
 

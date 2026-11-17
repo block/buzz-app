@@ -1,5 +1,4 @@
 import type { Host } from "../../features/host/service";
-import type { AppServer } from "./rpc";
 
 export type PreviewHost = Pick<Host, "request" | "requestBytes">;
 const LIMIT = 1024 * 1024;
@@ -25,12 +24,12 @@ function previewUrl(value: unknown): value is string {
 }
 
 /** Refresh with the settings catalog; only ChatGPT credentials go to ChatGPT. */
-export async function discoverPreviews(rpc: AppServer, host: PreviewHost) {
-  const auth = await rpc.request<{ authMethod?: string; authToken?: string }>(
-    "getAuthStatus",
-    { includeToken: true, refreshToken: false },
-  );
-  if (auth.authMethod !== "chatgpt" || !auth.authToken) return {};
+export type PreviewAuth = { authMethod?: string; authToken?: string };
+export async function discoverPreviews(
+  auth: PreviewAuth | undefined,
+  host: PreviewHost,
+) {
+  if (auth?.authMethod !== "chatgpt" || !auth.authToken) return {};
   const response = await host.request({
     url: "https://chatgpt.com/backend-api/settings/voices?spoken_language=en&voice_mode=wingman",
     headers: { Authorization: `Bearer ${auth.authToken}` },

@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { AppServer } from "./rpc";
 
 beforeEach(() => vi.resetModules());
 afterEach(() => vi.unstubAllGlobals());
@@ -11,12 +10,12 @@ const response = (bytes = 12) => ({
   body: new Uint8Array(bytes),
 });
 function fixture(authMethod = "chatgpt") {
-  const request = vi.fn(async () => ({ authMethod, authToken: "test-token" }));
+  const auth = { authMethod, authToken: "test-token" };
   const host = {
     request: vi.fn(),
     requestBytes: vi.fn(async () => response()),
   };
-  return { rpc: { request } as unknown as AppServer, request, host };
+  return { auth, host };
 }
 
 it("discovers aliases from returned names and refreshes URLs on every request", async () => {
@@ -46,11 +45,11 @@ it("discovers aliases from returned names and refreshes URLs on every request", 
         ],
       }),
     });
-  expect(await discoverPreviews(f.rpc, f.host)).toEqual({
+  expect(await discoverPreviews(f.auth, f.host)).toEqual({
     orbit: url("orbit"),
     spruce: url("orbit"),
   });
-  expect(await discoverPreviews(f.rpc, f.host)).toEqual({
+  expect(await discoverPreviews(f.auth, f.host)).toEqual({
     orbit: url("new-orbit"),
     spruce: url("new-orbit"),
   });
@@ -66,7 +65,7 @@ it("discovers aliases from returned names and refreshes URLs on every request", 
 it("never sends an API key to ChatGPT", async () => {
   const { discoverPreviews } = await import("./voice-preview");
   const f = fixture("apikey");
-  expect(await discoverPreviews(f.rpc, f.host)).toEqual({});
+  expect(await discoverPreviews(f.auth, f.host)).toEqual({});
   expect(f.host.request).not.toHaveBeenCalled();
 });
 

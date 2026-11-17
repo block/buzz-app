@@ -2971,3 +2971,28 @@ it("rediscovers supported voices and preview URLs whenever settings is reopened"
   expect(f.provider.snapshot().data?.voices).toEqual(["cove", "maple"]);
   next.unmount();
 });
+
+it("publishes Codex readiness while optional recording discovery is held", async () => {
+  const gate = deferred<{
+    status: number;
+    headers: Record<string, string>;
+    body: string;
+  }>();
+  const host: PreviewHost = { request: vi.fn(() => gate.promise) };
+  const f = fixture({ previewHost: host });
+  const checking = f.provider.check();
+  try {
+    await waitFor(() => expect(host.request).toHaveBeenCalledOnce());
+    await waitFor(() => expect(f.provider.snapshot().readiness).toBe("ready"));
+    await checking;
+    expect(f.provider.snapshot().data?.models.length).toBeGreaterThan(0);
+  } finally {
+    gate.resolve({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({ voices: [] }),
+    });
+    await checking;
+    f.provider.dispose();
+  }
+});

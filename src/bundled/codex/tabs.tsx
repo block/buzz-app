@@ -72,7 +72,11 @@ import type { CodexRuntime, SavedConversation } from "./runtime";
 import type { CodexSetup } from "./setup";
 import { readTranscript, TURN_LIMIT } from "./transcript";
 import { VoicePreview } from "./VoicePreview";
-import { discoverPreviews, type PreviewHost } from "./voice-preview";
+import {
+  discoverPreviews,
+  type PreviewAuth,
+  type PreviewHost,
+} from "./voice-preview";
 
 const label = ({ channelId, name, root }: SavedConversation) =>
   `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
@@ -109,17 +113,26 @@ async function catalog(spawn: Spawn, signal: AbortSignal, host?: PreviewHost) {
     if (await needsSignIn(rpc)) throw new Error(SIGN_IN_ERROR);
     const models = await listModels(rpc);
     // Older Codex releases do not publish a v3 catalog. Model selection still works.
-    const [voices, config, previews] = await Promise.all([
+    const [voices, config, auth] = await Promise.all([
       voiceCatalog(rpc).catch(() => undefined),
       rpc
         .request<{ config: { realtime?: { voice?: string } } }>("config/read", {
           includeLayers: false,
         })
         .catch(() => undefined),
-      host ? discoverPreviews(rpc, host).catch(() => undefined) : undefined,
+      host
+        ? rpc
+            .request<PreviewAuth>("getAuthStatus", {
+              includeToken: true,
+              refreshToken: false,
+            })
+            .catch(() => undefined)
+        : undefined,
     ]);
     return {
-      previews,
+      previews: host
+        ? discoverPreviews(auth, host).catch(() => undefined)
+        : undefined,
       models,
       voices: voices?.v3,
       defaultVoice: config
@@ -200,13 +213,21 @@ export class CodexProvider {
               ? SIGN_IN_ERROR
               : status.message,
         );
-      const data = await catalog(this.spawn, abort.signal, this.previewHost);
+      const { previews, ...data } = await catalog(
+        this.spawn,
+        abort.signal,
+        this.previewHost,
+      );
       if (this.abort === abort) {
         this.set({
           readiness: "ready",
           checking: false,
           data,
           error: "",
+        });
+        void previews?.then((previews) => {
+          if (this.abort === abort && !abort.signal.aborted)
+            this.set({ data: { ...data, previews } });
         });
       }
     } catch (error) {
@@ -224,8 +245,6 @@ export class CodexProvider {
           data: undefined,
           error: reason,
         });
-    } finally {
-      if (this.abort === abort) this.abort = undefined;
     }
   }
   /** Settles once the defaults are saved, and only then uses them; rejects,

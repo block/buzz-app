@@ -75,6 +75,7 @@ function fixture({
   configured = {},
   voices = ["cove", "maple"],
   voicesGate,
+  configGate,
   authGate,
   voicesError = () => false,
   modelAReasoningEfforts = ["low", "high"],
@@ -107,6 +108,7 @@ function fixture({
   };
   voices?: string[] | null;
   voicesGate?: Promise<void>;
+  configGate?: Promise<void>;
   authGate?: Promise<void>;
   voicesError?: () => boolean;
   modelAReasoningEfforts?: string[];
@@ -160,7 +162,10 @@ function fixture({
             nextCursor: null,
           };
         }
-        if (wire.method === "config/read") result = { config: configured };
+        if (wire.method === "config/read") {
+          await configGate;
+          result = { config: configured };
+        }
         if (wire.method === "thread/list") {
           if (typeof threads === "string") {
             options?.onStdout?.(
@@ -3175,3 +3180,26 @@ it("clears retired recording discovery when its replacement check fails", async 
     f.provider.dispose();
   }
 });
+
+it.each(["voices", "config"])(
+  "publishes model readiness while optional %s discovery is pending",
+  async (kind) => {
+    const gate = deferred<void>();
+    const f = fixture(
+      kind === "voices"
+        ? { voicesGate: gate.promise }
+        : { configGate: gate.promise },
+    );
+    const checking = f.provider.check();
+    try {
+      await waitFor(() =>
+        expect(f.provider.snapshot().readiness).toBe("ready"),
+      );
+      expect(f.provider.snapshot().data?.models.length).toBeGreaterThan(0);
+    } finally {
+      gate.resolve();
+      await checking;
+      f.provider.dispose();
+    }
+  },
+);

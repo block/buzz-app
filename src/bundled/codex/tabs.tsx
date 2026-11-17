@@ -93,6 +93,7 @@ type ProviderState = AgentProviderSnapshot &
   Readonly<{
     checking: boolean;
     previewChecking?: boolean;
+    voiceChecking?: boolean;
     data: Catalog | undefined;
     error: string;
     defaults: ProviderDefaults;
@@ -119,37 +120,37 @@ async function catalog(spawn: Spawn, signal: AbortSignal, host?: PreviewHost) {
     signal.throwIfAborted();
     if (await needsSignIn(rpc)) throw new Error(SIGN_IN_ERROR);
     const models = await listModels(rpc);
-    // Older Codex releases do not publish a v3 catalog. Model selection still works.
-    const [voices, config] = await Promise.all([
+    // Optional voice RPCs must not hold text-model readiness.
+    const voices = Promise.all([
       voiceCatalog(rpc).catch(() => undefined),
       rpc
         .request<{ config: { realtime?: { voice?: string } } }>("config/read", {
           includeLayers: false,
         })
         .catch(() => undefined),
-    ]);
-    const previews = host
+    ]).then(([voices, config]) => ({
+      voices: voices?.v3,
+      defaultVoice: config
+        ? (config.config?.realtime?.voice ?? voices?.defaultV1)
+        : undefined,
+    }));
+    const auth = host
       ? rpc
           .request<PreviewAuth>("getAuthStatus", {
             includeToken: true,
             refreshToken: false,
           })
-          .finally(close)
-          .then((auth) => {
-            signal.throwIfAborted();
-            return discoverPreviews(auth, host);
-          })
           .catch(() => undefined)
-      : undefined;
-    detached = !!previews;
-    return {
-      previews,
-      models,
-      voices: voices?.v3,
-      defaultVoice: config
-        ? (config.config.realtime?.voice ?? voices?.defaultV1)
-        : undefined,
-    };
+      : Promise.resolve(undefined);
+    const previews = Promise.all([voices, auth])
+      .finally(close)
+      .then(([, auth]) => {
+        signal.throwIfAborted();
+        return host ? discoverPreviews(auth, host) : undefined;
+      })
+      .catch(() => undefined);
+    detached = true;
+    return { models, voices, previews };
   } finally {
     if (!detached) await close();
   }
@@ -213,6 +214,7 @@ export class CodexProvider {
       ...(this.state.data ? {} : { readiness: "checking" as const }),
       checking: true,
       previewChecking: false,
+      voiceChecking: false,
       error: "",
     });
     try {
@@ -225,7 +227,7 @@ export class CodexProvider {
               ? SIGN_IN_ERROR
               : status.message,
         );
-      const { previews, ...data } = await catalog(
+      const { previews, voices, ...data } = await catalog(
         this.spawn,
         abort.signal,
         this.previewHost,
@@ -235,13 +237,21 @@ export class CodexProvider {
           readiness: "ready",
           checking: false,
           previewChecking: !!previews,
+          voiceChecking: true,
           data,
           error: "",
+        });
+        void voices.then((voices) => {
+          if (this.abort === abort && !abort.signal.aborted)
+            this.set({
+              data: { ...data, ...this.state.data, ...voices },
+              voiceChecking: false,
+            });
         });
         void previews?.then((previews) => {
           if (this.abort === abort && !abort.signal.aborted)
             this.set({
-              data: { ...data, ...previews },
+              data: { ...data, ...this.state.data, ...previews },
               previewChecking: false,
             });
         });
@@ -1498,7 +1508,9 @@ export function createTabs(
                 voice={draft.voice ?? ""}
                 voices={data?.voices}
                 defaultVoice={data?.defaultVoice}
-                disabled={saving || checking}
+                disabled={
+                  saving || checking || !!provider.snapshot().voiceChecking
+                }
                 previewDisabled={!!bound}
                 previewLoading={provider.snapshot().previewChecking ?? false}
                 onChange={async (voice) => {
@@ -1527,17 +1539,20 @@ export function createTabs(
                   if (local) provider.check();
                 }}
               />
-              {data && !data.voices && !checking && (
-                <div className="grid justify-items-start gap-2">
-                  <p role="status" className="m-0 text-body-sm text-subtle">
-                    Voice choices could not be checked. Try again, update Codex,
-                    or choose Codex default.
-                  </p>
-                  <Button variant="ghost" onClick={check}>
-                    Check voices again
-                  </Button>
-                </div>
-              )}
+              {data &&
+                !data.voices &&
+                !checking &&
+                !provider.snapshot().voiceChecking && (
+                  <div className="grid justify-items-start gap-2">
+                    <p role="status" className="m-0 text-body-sm text-subtle">
+                      Voice choices could not be checked. Try again, update
+                      Codex, or choose Codex default.
+                    </p>
+                    <Button variant="ghost" onClick={check}>
+                      Check voices again
+                    </Button>
+                  </div>
+                )}
             </SettingsGroup>
             <AgentInstructions
               value={draft.instructions}

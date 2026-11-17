@@ -3976,6 +3976,36 @@ it.each(["channel", "thread"] as const)(
   },
 );
 
+it("judges a reply's unread as of an earlier thread read time, keeping its individual marks", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.viewer, "room", "root", 11);
+  const first = message(h.alice, "room", "first", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const second = message(h.alice, "room", "second", 13, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([root, first, second]);
+  const thread = {
+    kind: "thread" as const,
+    channelId: "room",
+    rootId: root.id,
+  };
+  const reading = h.session.unread.reading("room", root.id);
+  await reading.observe([first.id]);
+  reading.dispose();
+  const before = h.session.unread.threadReadThrough("room", root.id);
+  await h.session.unread.markThrough(thread, second.id);
+  const unread = (id: string, through?: number) =>
+    h.session.unread.attention("room", id, through).unread;
+  expect([unread(first.id), unread(second.id)]).toEqual([false, false]);
+  // As of the earlier time, the reply read on its own stays read.
+  expect([unread(first.id, before), unread(second.id, before)]).toEqual([
+    false,
+    true,
+  ]);
+});
 it("thread bottom catch-up clears only its thread and preserves local and remote manual intent", async () => {
   const h = setup();
   h.grant("room");

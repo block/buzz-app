@@ -224,10 +224,13 @@ function withThread(
       intent === "focus" || (attention && intent === undefined)
         ? (prior?.focusRequest ?? 0) + 1
         : prior?.focusRequest,
+    // An opening at a read time asks for its line, not an earlier reveal.
     revealRequest:
       intent === "reveal"
         ? (prior?.revealRequest ?? 0) + 1
-        : prior?.revealRequest,
+        : unreadSince === undefined
+          ? prior?.revealRequest
+          : undefined,
     // Detail visits need the source thread in the other pane.
     pane: prior && !relocate ? tabPane(prior) : pane,
     rootId: prior?.rootId,

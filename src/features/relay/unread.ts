@@ -152,8 +152,15 @@ export interface UnreadCapability {
   inbox(): InboxSnapshot;
   subscribeInbox(listener: () => void): () => void;
   snapshot(target: ReadTarget): UnreadSnapshot;
-  /** Same verified attention/frontier policy as badges, not a notification event source. */
-  attention(channelId: string, messageId: string): MessageAttention;
+  /** Same verified attention/frontier policy as badges, not a notification event source.
+   * With `threadReadThrough`, a reply's thread is read only through that
+   * earlier `threadReadThrough` result, as if its later thread reads had not
+   * happened; individual reply marks still count. */
+  attention(
+    channelId: string,
+    messageId: string,
+    threadReadThrough?: number,
+  ): MessageAttention;
   subscribe(target: ReadTarget, listener: () => void): () => void;
   activity(channelId: string): ThreadActivitySnapshot;
   subscribeActivity(channelId: string, listener: () => void): () => void;
@@ -822,7 +829,13 @@ export function createUnread({
     chosen(entry) === undefined &&
     !lookups.get(conversationKey(entry.channelId, entry.parentId))?.done;
   /** `seen` is the row's `seen:` cut: only a channel row passes one. */
-  function isUnread(entry: Evidence, state: ReadState, dm: boolean, seen = -1) {
+  function isUnread(
+    entry: Evidence,
+    state: ReadState,
+    dm: boolean,
+    seen = -1,
+    threadReadThrough?: number,
+  ) {
     const { event, channelId } = entry;
     // Coordination between agents is never unread for people, whatever
     // read state or unread intent says.
@@ -834,32 +847,36 @@ export function createUnread({
       reads.localUnread(`msg:${event.id}`)
     )
       return true;
-    return relevant(entry, dm) && afterFrontier(entry, state, dm, seen);
+    return (
+      relevant(entry, dm) &&
+      afterFrontier(entry, state, dm, seen, threadReadThrough)
+    );
   }
-  /** The read-state half of unread, before conversation relevance. */
+  /** The read-state half of unread, before conversation relevance. With
+   * `threadReadThrough`, that earlier time stands for the thread's own marks. */
   function afterFrontier(
     entry: Evidence,
     state: ReadState,
     dm: boolean,
     seen = -1,
+    threadReadThrough?: number,
   ) {
-    const { event, channelId, rootId } = entry;
-    const frontier = effectiveFrontier(
-      state,
-      `msg:${event.id}`,
-      channelId,
-      rootId,
-    );
+    const { event, channelId } = entry;
+    const earlier = entry.rootId === undefined ? undefined : threadReadThrough;
+    const rootId = earlier === undefined ? entry.rootId : undefined;
+    const own = effectiveFrontier(state, `msg:${event.id}`, channelId, rootId);
+    const frontier = earlier === undefined ? own : Math.max(own ?? -1, earlier);
     const forced =
       overrideActive(state.overrides[`msg:${event.id}`], frontier) ||
       overrideActive(
         state.overrides[channelId],
         effectiveFrontier(state, channelId),
       ) ||
-      (rootId !== undefined &&
+      (entry.rootId !== undefined &&
         overrideActive(
-          state.overrides[`thread:${rootId}`],
-          effectiveFrontier(state, `thread:${rootId}`, channelId),
+          state.overrides[`thread:${entry.rootId}`],
+          earlier ??
+            effectiveFrontier(state, `thread:${entry.rootId}`, channelId),
         ));
     // Channel catch-up never acknowledges thread replies: retained evidence
     // cannot prove nonparticipation, especially after reload. Only ordinary
@@ -1042,7 +1059,11 @@ export function createUnread({
   function priority(entry: Evidence, dm: boolean) {
     return !!category(entry, dm) || entry.broadcast;
   }
-  function attention(channelId: string, messageId: string): MessageAttention {
+  function attention(
+    channelId: string,
+    messageId: string,
+    threadReadThrough?: number,
+  ): MessageAttention {
     const unknown = Object.freeze({
       status: "unknown",
       unread: false,
@@ -1100,7 +1121,7 @@ export function createUnread({
       ...(pending ? { pending: true } : {}),
       ...(entry.mentioned ? { mentioned: true } : {}),
       ...(entry.rootId ? { rootId: entry.rootId } : {}),
-      unread: isUnread(entry, state, dm),
+      unread: isUnread(entry, state, dm, -1, threadReadThrough),
       forced: forcedMessages.get(channelId)?.has(messageId) ?? false,
       viewing,
       ...(prefixRead ? { prefixRead: true as const } : {}),

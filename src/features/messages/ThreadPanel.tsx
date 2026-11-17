@@ -1027,15 +1027,14 @@ function ThreadMessages({
       if (shown) setBoundary({ ...boundary, id: null });
       return;
     }
-    // A requested read time outlasts the read that opened the thread: what
-    // others posted after it is unread.
+    // A requested read time outlasts the read that opened the thread: unread
+    // is judged as of that time.
     const since = unreadRequest?.readThrough;
     const unread = (row: ChannelMessage): boolean => {
-      const attention = session.unread.attention(channelId, row.id);
+      const attention = session.unread.attention(channelId, row.id, since);
       return (
-        (since === undefined
-          ? attention.unread || attention.forced
-          : row.createdAt > since && row.authorId !== session.viewer) ||
+        attention.unread ||
+        attention.forced ||
         (tree.children.get(row.id) ?? []).some(unread)
       );
     };
@@ -1076,7 +1075,6 @@ function ThreadMessages({
     messageId,
     tree,
     session.unread,
-    session.viewer,
     channelId,
     view,
     threadUnread,

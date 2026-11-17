@@ -188,9 +188,13 @@ test.describe("with the thread's root beyond the channel's newest page", () => {
       () => history.state.buzzNavigationV1.entry.target,
     );
     expect(target.threadRootId).toBe(root.id);
-    // The tab opened the whole thread, so the channel opens it at its root.
-    // Seeking the root in the channel must not take focus.
+    // The tab opened the whole thread, so the channel opens it at its root,
+    // and focus stays on the thread's tab, where its menu returned it, while
+    // the channel seeks the root.
     expect(target.messageId).toBe(root.id);
+    const tab = page
+      .getByRole("tablist", { name: "Panel tabs" })
+      .getByRole("tab", { name: /^Thread/ });
     const channel = page.getByRole("region", {
       name: "Channel history",
       exact: true,
@@ -200,11 +204,13 @@ test.describe("with the thread's root beyond the channel's newest page", () => {
         .getByRole("region", { name: "Thread messages", exact: true })
         .locator(`[data-message-id="${root.id}"]`),
     ).toContainText("Thread root 1");
+    await expect(tab).toBeFocused();
     // Beside it, the channel waits to show its list at the thread's root,
     // reading the older page the fixture holds.
     await expect.poll(() => app.pending.length).toBe(1);
     expect(app.pending[0].channel).toBe("alpha");
     await expect(channel.getByRole("status")).toHaveText("Loading messages…");
+    await expect(tab).toBeFocused();
     app.pending.shift().release();
     const head = app.report.queries.find(
       ({ community, filter }) =>
@@ -223,11 +229,7 @@ test.describe("with the thread's root beyond the channel's newest page", () => {
         .locator(`[data-message-id="${root.id}"]`),
     ).toBeInViewport();
     await expect.poll(() => page.evaluate(() => window.rootMarked)).toBe(true);
-    expect(
-      await channel.evaluate((element) =>
-        element.contains(document.activeElement),
-      ),
-    ).toBe(false);
+    await expect(tab).toBeFocused();
   });
 });
 

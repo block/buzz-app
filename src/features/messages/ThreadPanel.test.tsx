@@ -822,10 +822,15 @@ function unreadReplies(h: ReturnType<typeof messagesHarness>) {
     replyParentId: row.id,
   });
   const unread = new Set<string>();
+  // Replies unread as of an earlier thread read time.
+  const asOf = new Map<number, Set<string>>();
   const read = { through: -1 };
   Object.assign(h.session.unread, {
-    attention: (_channelId: string, id: string) => ({
-      unread: unread.has(id),
+    attention: (_channelId: string, id: string, through?: number) => ({
+      unread:
+        through === undefined
+          ? unread.has(id)
+          : (asOf.get(through)?.has(id) ?? false),
       forced: false,
     }),
     threadReadThrough: () => read.through,
@@ -843,7 +848,7 @@ function unreadReplies(h: ReturnType<typeof messagesHarness>) {
       );
     },
   );
-  return { reply, unread, read };
+  return { reply, unread, asOf, read };
 }
 it("opens at the first unread reply behind a line that reading keeps, paging past the newest page to find it", () => {
   const h = messagesHarness(ordinaryNavigation());
@@ -1148,15 +1153,17 @@ it("opens a read thread at its latest reply, and an explicit target at itself, w
   expect(exact.view.loadMore).not.toHaveBeenCalled();
   expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
 });
-it("places a requested read time's line above the first branch with a later reply from someone else, after the opener's read, and again for each request", () => {
+it("places a requested read time's line above the first branch unread as of that time, after the opener's read, and again for each request", () => {
   // Page tabs open without navigation.
   const h = messagesHarness();
-  const { reply } = unreadReplies(h);
+  const { reply, asOf } = unreadReplies(h);
   // The opener has already read the thread: nothing is unread any more.
   const top = reply("top", 2);
   const nested = { ...reply("nested", 3), replyParentId: top.id };
   const own = { ...reply("own", 4), authorId: viewer };
   const later = reply("later", 5);
+  asOf.set(2, new Set([nested.id, later.id]));
+  asOf.set(4, new Set([later.id]));
   const line = () => screen.getByRole("separator", { name: "New messages" });
   const above = (message: ChannelMessage) =>
     line().compareDocumentPosition(

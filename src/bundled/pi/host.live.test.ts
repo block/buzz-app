@@ -573,8 +573,8 @@ finished.release();
 out.afterRun = { first: ar1Wait, second: await pi.rpc("wait", { agent: afterAgent, submission: ar2.submission }), saw: afterSaw };
 await pi.stop();
 // A wake that read the run as done before its prompt's refresh may join the
-// next run rather than start it: a later steer then names the thread of the
-// request that started that run, not the wake's.
+// next run rather than start it: it and a later steer then name the thread of
+// the request that started that run, not the wake's.
 {
   const holding = held(), holdGate = held(), asked = held(), answered = held(), working = held(), joined = held(), taken = held();
   const holdRun = defineExtension({ name: "hold-run", hooks: [hook(GenerationTask, { afterRun: async () => { holding.release(); await holdGate.gate; return undefined; } })] });
@@ -584,7 +584,7 @@ await pi.stop();
   faux.setResponses([
     fauxAssistantMessage("Done"),
     async () => { await working.gate; return fauxAssistantMessage(fauxToolCall("buzz_send", { text: "working" }), { stopReason: "toolUse" }); },
-    async () => { joined.release(); await taken.gate; return fauxAssistantMessage(fauxToolCall("buzz_send", { text: "working" }), { stopReason: "toolUse" }); },
+    async (context) => { out.joinedWake = context.messages.filter((m) => m.role === "user").map((m) => m.content).at(-1); joined.release(); await taken.gate; return fauxAssistantMessage(fauxToolCall("buzz_send", { text: "working" }), { stopReason: "toolUse" }); },
     (context) => { out.joined = context.messages.filter((m) => m.role === "user").map((m) => m.content).at(-1); return fauxAssistantMessage("Answer"); },
   ]);
   const shared = (request, scope, more) => ({ ...turn(request, request), agent: joinAgent, key: "join", context: { channel: "chan" }, scope, ...more });
@@ -910,6 +910,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.promotedSteer).toBe("steer: more");
     expect(out.woken).toBe(running("steer: wake", "C"));
     expect(out.after).toBe("later");
+    expect(out.joinedWake).toBe(running("wake", "B"));
     expect(out.joined).toBe(running("steer: J4", "B"));
     expect(out.stopped).toEqual({ status: "closed" });
     expect(out.unfinished).toEqual([

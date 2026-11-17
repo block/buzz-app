@@ -1348,16 +1348,17 @@ export function serve({
       if (!prompt) return;
       turn = { ...turn, ...prompt };
     }
-    // Read after the waits above, in which the run may have ended. Pi runs a
-    // steer as a run of its own when the run ends before taking it, so the
-    // added line is worded to hold then too. The run's first input started
-    // it, whether a turn or a steer Pi queued.
+    // Read after the waits above, in which the run may have ended, or the next
+    // one started and taken this turn in. Pi runs a steer as a run of its own
+    // when the run ends before taking it, so the added line is worded to hold
+    // then too. The run's first input started it, whether a turn or a steer
+    // Pi queued.
     const running = opened.scopes.get(watched?.inputs[0]);
-    const content = !steers
-      ? turn.text
-      : running && running !== turn.scope
-        ? `${turn.steer}\n\nThe reply target above is for the new message only. Unfinished work from thread ${running} keeps \`reply: "${running}"\`. Later messages keep their own reply targets.`
-        : turn.steer;
+    const text = steers ? turn.steer : turn.text;
+    const content =
+      running && running !== turn.scope
+        ? `${text}\n\nThe reply target above is for the new message only. Unfinished work from thread ${running} keeps \`reply: "${running}"\`. Later messages keep their own reply targets.`
+        : text;
     const submission = await conversation.submit(
       {
         type: "input",

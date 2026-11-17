@@ -108,6 +108,7 @@ it("captures the original message link with its thread hint", () => {
   const { element, controller } = list(id, { threadRootId: root });
   select(text(element, "strong"), 0);
   const quote = captureSelectedQuote();
+  expect([...(quote?.messageIds ?? [])]).toEqual([id]);
   expect(quote?.sourceLinks).toEqual([
     `buzz://message?channel=general&id=${id}&thread=${root}`,
   ]);
@@ -130,7 +131,12 @@ it("attributes each selected message and skips the next row when selection ends 
     `buzz://message?channel=general&id=${firstId}`,
     `buzz://message?channel=general&id=${secondId}`,
   ]);
+  expect([...(captureSelectedQuote()?.messageIds ?? [])]).toEqual([
+    firstId,
+    secondId,
+  ]);
   range.setEnd(text(second, "p"), 0);
+  expect([...(captureSelectedQuote()?.messageIds ?? [])]).toEqual([firstId]);
   expect(captureSelectedQuote()?.sourceLinks).toEqual([
     `buzz://message?channel=general&id=${firstId}`,
   ]);
@@ -140,6 +146,7 @@ it("keeps quoting without inventing a link for an unpublished message", () => {
   const { element, controller } = list("a".repeat(64), { delivery: "sending" });
   select(text(element, "strong"), 0);
   const quote = captureSelectedQuote();
+  expect([...(quote?.messageIds ?? [])]).toEqual(["a".repeat(64)]);
   expect(quote?.sourceLinks).toEqual([]);
   expect(quoteSelection(quote)).toBe(true);
   expect(controller.quote).toHaveBeenCalledOnce();

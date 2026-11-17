@@ -32,6 +32,7 @@ export function captureSelectedQuote() {
   const target = quotableSelection(selection);
   if (!selection || !target) return;
   const sourceLinks = new Set<string>();
+  const messageIds = new Set<string>();
   for (const element of target.element.querySelectorAll<HTMLElement>(
     "[data-message-id]",
   )) {
@@ -45,6 +46,7 @@ export function captureSelectedQuote() {
     )
       continue;
     const row = target.list.row(element.dataset.messageId ?? "");
+    if (row) messageIds.add(row.id);
     const link = row && messageCopyLink(row, target.list.scope);
     if (link) sourceLinks.add(link);
   }
@@ -54,6 +56,7 @@ export function captureSelectedQuote() {
     html: timelineCopy(selection),
     text: serializeSelection(selection, "text"),
     sourceLinks: [...sourceLinks],
+    messageIds,
   };
 }
 

@@ -424,7 +424,9 @@ and are asked to sign in again in Buzz.
   and **Quote highlight** appear above the usual message actions when you right-click
   highlighted text. Supported browsers keep that text highlighted while the menu is
   open. On touch devices, select text and open the message's **⋯** menu for these
-  highlight actions. Long presses keep the native text-selection menu.
+  highlight actions. Only messages included in the selection offer them; a
+  selection spanning messages works from any included message. Long presses
+  keep the native text-selection menu.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.

@@ -636,11 +636,12 @@ function MessageActionBarControls({
                 onPointerDownCapture={(event) => {
                   // Save the same conversation's highlight before ⋯ takes focus.
                   const quote = captureSelectedQuote();
-                  overflowSelection.current = quote?.element.contains(
-                    event.currentTarget,
-                  )
-                    ? quote
-                    : undefined;
+                  overflowSelection.current =
+                    messageId &&
+                    quote?.messageIds.has(messageId) &&
+                    quote.element.contains(event.currentTarget)
+                      ? quote
+                      : undefined;
                 }}
                 onKeyDownCapture={() => {
                   overflowSelection.current = undefined;

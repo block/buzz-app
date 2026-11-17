@@ -39,7 +39,12 @@ afterEach(() => {
   document.getSelection()?.removeAllRanges();
 });
 
-function setup({ canQuote = true, active = true, more = false } = {}) {
+function setup({
+  canQuote = true,
+  active = true,
+  more = false,
+  other = false,
+} = {}) {
   // jsdom lays nothing out; selected text occupies this explicit geometry.
   Range.prototype.getClientRects = () =>
     [new DOMRect(10, 100, 100, 20)] as unknown as DOMRectList;
@@ -105,7 +110,21 @@ function setup({ canQuote = true, active = true, more = false } = {}) {
                   </div>
                 </MessageActionBar>
               )}
-              {more && <MessageActionBar copyText={() => "Whole message"} />}
+              {more && (
+                <MessageActionBar
+                  messageId="one"
+                  copyText={() => "Whole message"}
+                />
+              )}
+              {other && (
+                <div data-message-id="two" data-layout="timeline">
+                  <p>Other message</p>
+                  <MessageActionBar
+                    messageId="two"
+                    copyText={() => "Other message"}
+                  />
+                </div>
+              )}
               <textarea aria-label="Draft" />
             </section>
           </MessageContextMenus>
@@ -199,6 +218,42 @@ it("copies the whole message or the captured highlight independently", async () 
   ]);
   expect(controller.quote).not.toHaveBeenCalled();
 });
+
+it.each(["another row", "both rows", "ends at row start"])(
+  "limits overflow highlight actions to contributing rows: %s",
+  async (mode) => {
+    const user = userEvent.setup();
+    const { link } = setup({ other: true });
+    const other = screen.getByText("Other message", { selector: "p" });
+    if (mode !== "another row") {
+      const range = document.createRange();
+      range.setStart(link.firstChild as Node, 0);
+      range.setEnd(
+        other.firstChild as Node,
+        mode === "both rows" ? (other.textContent ?? "").length : 0,
+      );
+      act(() => {
+        document.getSelection()?.removeAllRanges();
+        document.getSelection()?.addRange(range);
+      });
+    }
+    const more = screen.getByRole("button", { name: "More message actions" });
+    fireEvent.pointerDown(more, { pointerType: "touch" });
+    // Focus may clear the live range; the captured row membership must survive.
+    act(() => document.getSelection()?.removeAllRanges());
+    fireEvent.mouseDown(more, { button: 0, detail: 1 });
+    fireEvent.mouseUp(more);
+    fireEvent.click(more);
+    await screen.findByRole("menuitem", { name: "Copy message" });
+    expect(!!screen.queryByRole("menuitem", { name: "Copy highlight" })).toBe(
+      mode === "both rows",
+    );
+    expect(!!screen.queryByRole("menuitem", { name: "Quote highlight" })).toBe(
+      mode === "both rows",
+    );
+    await user.keyboard("{Escape}");
+  },
+);
 
 it.each(["dismissed", "hidden", "unmounted"])(
   "keeps the captured highlight painted until the menu is %s",

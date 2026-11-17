@@ -454,6 +454,7 @@ export class GooseRuntime {
       signal,
       step,
       acknowledged,
+      accepted,
       superseded,
       interruptible,
       named,
@@ -673,6 +674,7 @@ export class GooseRuntime {
           ...(step ? { step } : {}),
           delivered: () => acceptProject?.(),
           ...(acknowledged ? { acknowledged } : {}),
+          ...(accepted ? { accepted } : {}),
           ...(superseded ? { superseded } : {}),
         });
       },

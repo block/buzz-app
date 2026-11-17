@@ -1012,6 +1012,7 @@ export class ClaudeRuntime {
       signal,
       step,
       acknowledged,
+      accepted,
       superseded,
       interruptible,
       named,
@@ -1285,6 +1286,7 @@ export class ClaudeRuntime {
           ...(step ? { step } : {}),
           delivered: () => acceptProject?.(),
           ...(acknowledged ? { acknowledged } : {}),
+          ...(accepted ? { accepted } : {}),
           ...(superseded ? { superseded } : {}),
           pick: {
             ...(model ? { model } : {}),

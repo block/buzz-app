@@ -195,3 +195,29 @@ test("zooming keeps the framed subject under the frame's centre", async ({
   expect(zoomedX).toBeCloseTo(x, 3);
   expect(zoomedY).toBeCloseTo(y, 3);
 });
+
+test("the zoom slider stays while its thumb is dragged off the avatar", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/tests/fixtures/agent-avatar-picker.html");
+  await splitImage(page);
+  const frame = page.getByRole("application", { name: "Image position" });
+  await expect(frame).toBeVisible();
+  const zoom = page.getByRole("slider", { name: "Zoom" });
+  const pill = page.locator("label", { has: zoom });
+  const slider = await zoom.boundingBox();
+  const avatar = await frame.boundingBox();
+  await page.mouse.move(slider.x + 4, slider.y + slider.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    slider.x + slider.width / 2,
+    avatar.y + avatar.height + 40,
+    { steps: 4 },
+  );
+  await expect(zoom).not.toHaveValue("1");
+  await expect(pill).toHaveCSS("opacity", "1");
+  await page.mouse.up();
+  await page.mouse.move(0, 0);
+  await expect(pill).toHaveCSS("opacity", "0");
+});

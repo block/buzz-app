@@ -66,8 +66,8 @@ consent. Owner review decides expansion; this checklist does not authorize it.
 
 ## Known limits and deferred choices
 
-- Thread windows open newest-first on supporting relays; scrollback stops at half
-  the thread view's event budget. Legacy fallback still traverses oldest-first and cannot guarantee the newest
+- Thread windows open newest-first on supporting relays; scrollback past ten
+  pages stops at half the thread view's event budget. Legacy fallback still traverses oldest-first and cannot guarantee the newest
   tail in long threads. Empty unsigned probes stay unavailable rather than imply
   exhaustion. [Thread behavior](channels.md#viewing-threads).
 

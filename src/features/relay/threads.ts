@@ -24,8 +24,9 @@ const INITIAL_WINDOW_SIZE = 10;
 const MAX_PAGES = 10;
 const MAX_EVENTS = 2000;
 const MAX_BYTES = 4 * 1024 * 1024;
-/** Scrollback stops at this share of the budget, so live traffic and a repair
- * after reconnect do not push a fully scrolled view over it and clear it. */
+/** Scrollback past ten pages stops at this share of the budget, so live traffic
+ * and a repair after reconnect do not push a fully scrolled view over it and
+ * clear it. */
 const SCROLLBACK_SHARE = 0.5;
 const overBudget = (events: readonly RelayEvent[], share = 1) =>
   events.length > MAX_EVENTS * share ||
@@ -952,11 +953,11 @@ export function createThreadView({
       else if (replace && (unreached || !held?.size)) held = unverified();
       if (replace) shown = undefined;
       // The legacy oldest-first walk loads pages unasked, so it stays bounded
-      // by page count; newest-first scrollback is bounded by the event budget.
+      // by page count. Newest-first scrollback may also pass that count while
+      // it stays within its share of the event budget.
       const stop =
-        mode === "older"
-          ? overBudget(remote, SCROLLBACK_SHARE)
-          : pages >= MAX_PAGES;
+        pages >= MAX_PAGES &&
+        (mode !== "older" || overBudget(remote, SCROLLBACK_SHARE));
       publish({
         status: "ready",
         error: undefined,

@@ -225,7 +225,10 @@ it("pages 303 tied replies newest-first, deduplicates live rows and repairs reta
     h.view.snapshot().replies.find((r) => r.id === oldest.id)?.content,
   ).toBe(oldest.content);
 });
-function newestFirst(rows: readonly RelayEvent[]) {
+function newestFirst(
+  rows: readonly RelayEvent[],
+  aux: readonly RelayEvent[] = [],
+) {
   const newest = [...rows].sort(
     (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
   );
@@ -242,6 +245,9 @@ function newestFirst(rows: readonly RelayEvent[]) {
     assert.exists(last);
     return [
       ...page,
+      ...aux.filter((e) =>
+        e.tags.some(([k, id]) => k === "e" && page.some((r) => r.id === id)),
+      ),
       bounds(
         f,
         eligible.length > page.length
@@ -297,6 +303,36 @@ it("stops scrollback at half the thread budget, keeping the loaded replies and r
     ...loaded,
     late.id,
   ]);
+});
+it("never stops scrollback short of ten pages when replies carry reactions", async () => {
+  const rows = Array.from({ length: 762 }, (_, n) => reply(n));
+  const reactions = rows.flatMap((row) =>
+    [0, 1].map((n) =>
+      signed(author, {
+        kind: 7,
+        created_at: row.created_at + n,
+        content: n ? "+" : "🎉",
+        tags: [
+          ["h", channel],
+          ["e", row.id],
+        ],
+      }),
+    ),
+  );
+  const h = await setup(newestFirst(rows, reactions));
+  await h.view.refresh();
+  while (h.view.snapshot().canLoadMore) await h.view.loadMore();
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    error: undefined,
+    limited: true,
+  });
+  const newest = [...rows].sort(
+    (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+  );
+  expect(h.view.snapshot().replies.map((e) => e.id)).toEqual(
+    ordered(newest.slice(0, 460)),
+  );
 });
 it("uses raw scan progress across empty pages without deriving cursors from rows", async () => {
   let pages = 0;

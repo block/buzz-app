@@ -1517,10 +1517,11 @@ bottom placement. New replies arrive through the existing session and the panel
 follows near the bottom, preserving reading position above it. Sending a reply is
 explicit navigation intent and reveals the new local row.
 
-**Bounded history:** strict mode keeps loading older pages on scrollback until the
-thread's start or until the view holds half its event budget (1,000 events or
-2 MiB), leaving the rest for live traffic and repair; legacy mode retains at most
-ten pages of 50. A limit notice is
+**Bounded history:** strict mode always loads up to ten pages (10 initial replies
+plus nine pages of 50) and keeps loading older pages past them on scrollback until
+the thread's start or until the view holds half its event budget (1,000 events,
+reactions and edits included, or 2 MiB), leaving the rest for live traffic and
+repair; legacy mode retains at most ten pages of 50. A limit notice is
 not a completeness claim. An older relay returning verified replies without thread
 bounds on the initial probe triggers a clean legacy restart: automatic oldest-first
 traversal, whose bottom may not be the newest reply in a long thread. An empty

@@ -1545,7 +1545,8 @@ export function SearchResults({
   // order. The row finds Bestie by any of its names (with or without "@"), so
   // its DM comes from the eligible channels, after the hidden-DM rule but
   // before the label match and the Direct messages cap, and shows only beside
-  // Bestie's shown "New chat" row.
+  // Bestie's shown "New chat" row. Top results keeps the two together where
+  // it cuts the Agents group short.
   const bestieDm = channels.find(
     (channel) =>
       channel.id === bestieDmId &&
@@ -1565,7 +1566,14 @@ export function SearchResults({
     agentRows.some(({ key }) => key === bestieKey);
   const agentResults = agentRows.flatMap((row) =>
     bestieShown && bestieDm && row.key === bestieKey
-      ? [row, { ...conversationDestination(bestieDm), score: row.score }]
+      ? [
+          row,
+          {
+            ...conversationDestination(bestieDm),
+            score: row.score,
+            attached: true,
+          },
+        ]
       : [row],
   );
   const dmResults = directMessageResults.filter(

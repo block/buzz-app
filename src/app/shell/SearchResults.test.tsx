@@ -8218,11 +8218,13 @@ function renderBestieSearch({
   bestieProfile = "Scout",
   humans = 0,
   hideBestieDm = false,
+  extraOwnedAgents = 0,
 }: {
   query: string;
   bestieProfile?: string;
   humans?: number;
   hideBestieDm?: boolean;
+  extraOwnedAgents?: number;
 }) {
   const relay = keypair(),
     viewer = keypair(),
@@ -8249,6 +8251,10 @@ function renderBestieSearch({
     key: keypair(),
     name: `Scoby ${String.fromCharCode(97 + index)}`,
   }));
+  const extraAgents = Array.from({ length: extraOwnedAgents }, (_, index) => ({
+    key: keypair(),
+    name: `Scout ${String.fromCharCode(65 + index)}`,
+  }));
   const discovery = [
     ...dm("bestie-dm", bestie.pubkey),
     ...dm("other-dm", other.pubkey),
@@ -8256,6 +8262,10 @@ function renderBestieSearch({
     ...chat("other-chat", "Fix the build", 1700000003, other.pubkey),
     profile(bestie, { name: bestieProfile, is_agent: true }),
     profile(other, { name: "Scotia", is_agent: true }),
+    ...extraAgents.flatMap(({ key, name }, index) => [
+      ...dm(`extra-agent-dm-${index}`, key.pubkey),
+      profile(key, { name, is_agent: true }),
+    ]),
     ...people.flatMap(({ key, name }, index) => [
       ...dm(`human-dm-${index}`, key.pubkey, 1700000010 + index),
       profile(key, { name }),
@@ -8274,6 +8284,11 @@ function renderBestieSearch({
   const mine = [
     { pubkey: bestie.pubkey, name: "Scout", managed: true },
     { pubkey: other.pubkey, name: "Scotia", managed: true },
+    ...extraAgents.map(({ key, name }) => ({
+      pubkey: key.pubkey,
+      name,
+      managed: true,
+    })),
   ];
   const choices = { ...source.snapshot(), identities: mine, selectable: mine };
   const lifecycle = owner.session.channelLifecycle;
@@ -8326,6 +8341,43 @@ function renderBestieSearch({
     },
   };
 }
+
+it("keeps the Bestie DM under its New chat when Top results cuts Agents after it", async () => {
+  // Four better-matching agents put Bestie's New chat fifth, the last row
+  // Top results shows of its lead group; its DM is not listed under Direct
+  // messages, so it must stay with that row.
+  localStorage.clear();
+  const { dispose } = renderBestieSearch({
+    query: "scout",
+    bestieProfile: "Z Scout",
+    extraOwnedAgents: 4,
+  });
+  try {
+    const agents = within(await screen.findByRole("group", { name: "Agents" }));
+    await waitFor(() => {
+      const rows = agents.getAllByRole("option").map((row) => row.textContent);
+      expect(rows.slice(0, 4)).toEqual(
+        Array.from({ length: 4 }, () =>
+          expect.stringMatching(/Scout [A-D].*New chat/),
+        ),
+      );
+      expect(rows.slice(4)).toEqual([
+        expect.stringMatching(/Z Scout.*New chat/),
+        expect.stringMatching(/Z Scout.*Direct message/),
+      ]);
+    });
+    expect(
+      screen.getAllByRole("option", { name: /Z Scout.*Direct message/ }),
+    ).toHaveLength(1);
+    // Those six rows are the whole group, so nothing is left to show.
+    expect(
+      screen.queryByRole("button", { name: "Show all Agents" }),
+    ).toBeNull();
+  } finally {
+    dispose();
+    localStorage.clear();
+  }
+});
 
 it("puts the viewer's Bestie DM right under its new chat, ahead of its chats", async () => {
   const { openAgentSession, openConversation, dispose } = renderBestieSearch({

@@ -67,6 +67,9 @@ export type SearchDestination = {
   /** What choosing the row does, said in a preview that has nothing else to
    * show, e.g. "Open Activity". */
   action?: string | undefined;
+  /** Stays with the row above it: a group cut short in Top results keeps
+   * the two together, one row past its usual limit if need be. */
+  attached?: boolean | undefined;
   run: () => void;
 };
 
@@ -364,7 +367,8 @@ export function SearchChoices({
             const place = ranked.indexOf(group);
             if (place < 0) return group;
             const rows = resultRows(group);
-            const limit = place === 0 ? LEAD_ROWS : GROUP_ROWS;
+            const cap = place === 0 ? LEAD_ROWS : GROUP_ROWS;
+            const limit = rows[cap]?.attached ? cap + 1 : cap;
             if (rows.length <= limit && !group.count)
               return { ...group, destinations: rows };
             truncated.set(group.label, rows.length);

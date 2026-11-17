@@ -298,10 +298,9 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
         !navigation &&
         prior.messageId === messageId &&
         prior.revealRequest === revealRequest &&
-        prior.unreadRequest === unreadRequest &&
         !retrying.current
       ) {
-        const next = { ...prior, navigation: undefined };
+        const next = { ...prior, navigation: undefined, unreadRequest };
         current.current = next;
         setOpening(next);
         return;

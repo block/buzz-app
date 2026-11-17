@@ -1200,13 +1200,21 @@ it("places a requested read time's line above the first branch unread as of that
   expect(above(own)).toBeFalsy();
   expect(h.element.scrollTop).toBe(300);
 });
-it("a retained panel shown at a reply places a requested read time's line once it retargets to the root", async () => {
+it("a retained panel shown at a reply places a requested read time's line once it retargets to the root, and moves it for the next request without reselecting", async () => {
   const h = messagesHarness();
   const { reply, asOf } = unreadReplies(h);
   const earlier = reply("earlier", 2);
   const later = reply("later", 5);
-  asOf.set(2, new Set([later.id]));
-  h.snapshot.replies = [earlier, later];
+  const newest = reply("newest", 6);
+  asOf.set(2, new Set([later.id, newest.id]));
+  asOf.set(5, new Set([newest.id]));
+  h.snapshot.replies = [earlier, later, newest];
+  const above = (message: ChannelMessage) =>
+    screen
+      .getByRole("separator", { name: "New messages" })
+      .compareDocumentPosition(
+        h.element.querySelector(`[data-message-id="${message.id}"]`) as Node,
+      ) & Node.DOCUMENT_POSITION_FOLLOWING;
   Object.assign(h.props as ThreadPanelProps, {
     messageId: earlier.id,
     retainThread: true,
@@ -1229,12 +1237,18 @@ it("a retained panel shown at a reply places a requested read time's line once i
   });
   h.rerenderProps();
   await act(async () => release("selected"));
-  const line = screen.getByRole("separator", { name: "New messages" });
-  expect(
-    line.compareDocumentPosition(
-      h.element.querySelector(`[data-message-id="${later.id}"]`) as Node,
-    ) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
+  expect(above(later)).toBeTruthy();
+  expect(above(earlier)).toBeFalsy();
+
+  // The root is already shown: the next request needs no relay selection.
+  h.view.retarget.mockClear();
+  Object.assign(h.props as ThreadPanelProps, {
+    unreadRequest: { readThrough: 5 },
+  });
+  h.rerenderProps();
+  expect(above(newest)).toBeTruthy();
+  expect(above(later)).toBeFalsy();
+  expect(h.view.retarget).not.toHaveBeenCalled();
 });
 it("renders replies after the original without a reply-count divider", () => {
   const h = messagesHarness();

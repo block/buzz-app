@@ -123,7 +123,7 @@ it("updates a mounted profile from the shared name view without replacing its id
     expect(
       screen.getByRole("img", { name: `${name} avatar, online` }),
     ).toBeTruthy();
-    expect(screen.queryByRole("img", { name: "Presence: Online" })).toBeNull();
+    expect(screen.queryByRole("img", { name: /^Presence:/ })).toBeNull();
     expect(screen.getByText("Online", { exact: true })).toBeVisible();
     await user.click(screen.getByRole("tab", { name: "Info" }));
     expect(screen.queryByRole("img", { name: /^Presence:/ })).toBeNull();
@@ -157,7 +157,7 @@ it("updates a mounted profile from the shared name view without replacing its id
       notify();
     });
     expect(screen.getByRole("img", { name: `${name} avatar` })).toBeTruthy();
-    expect(screen.queryByRole("img", { name: "Presence: Online" })).toBeNull();
+    expect(screen.queryByRole("img", { name: /^Presence:/ })).toBeNull();
     expect(document.querySelector(".buzz-avatar-status")).not.toHaveAttribute(
       "data-status",
     );

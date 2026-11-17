@@ -463,7 +463,9 @@ function MessageActionBarControls({
             onPointerDown={(event) => {
               selectedAtPress.current =
                 event.pointerType === "touch"
-                  ? "touch"
+                  ? withToolbar
+                    ? "touch"
+                    : false
                   : selectionHolds(event.nativeEvent);
             }}
             onContextMenuCapture={(event) => {

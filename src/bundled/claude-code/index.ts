@@ -276,7 +276,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           const found = await Promise.all(
             runtime
               .sessionPlaces(agent.key, config(agent.config).workspace)
-              .map(({ place, saved }) =>
+              .map(({ place, saved, standalone }) =>
                 readUsage(
                   { spawn, readFile },
                   place,
@@ -284,6 +284,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
                   saved,
                   since,
                   signal,
+                  standalone,
                 ),
               ),
           );

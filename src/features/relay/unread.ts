@@ -270,6 +270,23 @@ const EVIDENCE_LOW_EVENTS = 3072;
 const EVIDENCE_LOW_BYTES = 6 * 1024 * 1024;
 const eventBytes = (event: RelayEvent) =>
   new TextEncoder().encode(JSON.stringify(event)).byteLength;
+/** A row's preview text: its body, or a plain description of its attachments
+ * when attachment presentation left no text, so the row is never blank. */
+const previewText = (message: ChannelMessage) => {
+  if (message.content.trim() || !message.attachments.length)
+    return message.content;
+  const count = message.attachments.length;
+  const [first] = message.attachments;
+  const kind = message.attachments.every((item) => item.kind === first?.kind)
+    ? first?.kind
+    : undefined;
+  const noun =
+    kind === "image" ? "image" : kind === "video" ? "video" : "attachment";
+  return count === 1
+    ? `${noun[0]?.toUpperCase()}${noun.slice(1)}`
+    : `${count} ${noun}s`;
+};
+
 /** Rendered message order: effective ms, then event id. */
 const order = (a: RelayEvent, b: RelayEvent) =>
   eventMs(a) - eventMs(b) || a.id.localeCompare(b.id);
@@ -1291,7 +1308,7 @@ export function createUnread({
     let presented: Map<string, string> | undefined;
     const previewOf = (event: RelayEvent) => {
       presented ??= new Map(
-        folded(channelId).map((message) => [message.id, message.content]),
+        folded(channelId).map((message) => [message.id, previewText(message)]),
       );
       return presented.get(event.id) ?? event.content;
     };
@@ -1484,7 +1501,7 @@ export function createUnread({
         }
         if (!groups.size) continue;
         const rows = folded(channel.id);
-        const content = new Map(rows.map((row) => [row.id, row.content]));
+        const content = new Map(rows.map((row) => [row.id, previewText(row)]));
         // A session's top-level row shows its newest message from someone
         // else, unless that message is the root of its own thread row. This
         // mostly matches its newest evidence, but follows a relay-signed row's

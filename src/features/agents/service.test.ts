@@ -15338,7 +15338,7 @@ it.each(["edit", "delete"])(
       ...f.type,
       id: "placed",
       execution: true,
-      carry: ({ instructions }) => ({ instructions }),
+      carry: ({ instructions }) => ({ instructions: instructions ?? "" }),
     });
     await f.service.create({ type: "example/echo", name: "Reader" });
     await f.service.create({ type: "example/placed", name: "Placed" });

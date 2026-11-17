@@ -1441,8 +1441,8 @@ export class ClaudeRuntime {
     }
     const refused = await this.refusal(agent.key, delivery.synced?.effort);
     if (refused) return { ok: false, error: refused };
-    // Its new process launches on the core memory read now.
-    entry.memory = await this.core(agent.key);
+    if (settings.scope !== "community")
+      entry.memory = await this.core(agent.key);
     const done =
       settings.scope === "community"
         ? communityTurn(
@@ -1451,6 +1451,7 @@ export class ClaudeRuntime {
             this.controls,
             `${agent.key}/${COMMUNITY_SESSION}`,
             async (signal) => {
+              entry.memory = await this.core(agent.key);
               const text = await prompt();
               if (text === undefined || !delivery.current())
                 return { ok: true };

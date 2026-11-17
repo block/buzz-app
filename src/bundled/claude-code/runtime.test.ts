@@ -1326,6 +1326,50 @@ it("puts the agent's teams in its system prompt, resuming idle sessions when the
   runtime.dispose();
 });
 
+it("refreshes core memory after a queued community wake acquires ownership", async () => {
+  const f = setup([], { hold: true });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  f.core.mockResolvedValue("OLD_CORE");
+  await f.deliver(
+    { type: "mention", event: message("1", "active") },
+    { config },
+  );
+  await vi.waitFor(() =>
+    expect(f.claudes().find((p) => p.prompts.length)).toBeDefined(),
+  );
+  const first = f.claudes().find((p) => p.prompts.length);
+  if (!first) throw new Error("Missing active worker");
+  const read = vi.fn(async () => "OLD_CORE");
+  f.core.mockImplementation(read);
+  const wake = f.runtime.runOnce({
+    delivery: { agent: f.agent, config, current: () => true },
+    key: "queued",
+    signal: new AbortController().signal,
+    prompt: async () => "queued wake",
+  } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+  try {
+    await flush(10);
+    f.core.mockResolvedValue("NEW_CORE");
+    first.finish();
+    await vi.waitFor(() =>
+      expect(f.claudes().flatMap((p) => p.prompts)).toContainEqual(
+        expect.stringContaining("queued wake"),
+      ),
+    );
+    const current = f
+      .claudes()
+      .find((p) => p.prompts.some((text) => text.includes("queued wake")));
+    if (!current) throw new Error("Missing queued wake worker");
+    expect(systemPromptOf(current)).toContain("NEW_CORE");
+    current.finish();
+    await wake;
+  } finally {
+    for (const p of f.claudes()) p.finish();
+    await wake;
+    f.runtime.dispose();
+  }
+});
+
 it("runs a timer on the core memory as it is then, after an ordinary turn read it", async () => {
   const root = message("2", "@Claude hi", {
     tags: [

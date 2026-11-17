@@ -1572,7 +1572,9 @@ export function createTabs(
                 setError("");
                 setSaving(true);
                 try {
-                  await save(next);
+                  await (agent.configBase
+                    ? save(next, { base: agent.configBase })
+                    : save(next));
                   if (configRevision.current === revision)
                     setDraft((current) => voiceConfig(current, voice));
                 } catch (reason) {

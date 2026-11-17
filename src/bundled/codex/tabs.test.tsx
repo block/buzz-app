@@ -3306,3 +3306,42 @@ it("keeps a newer synced voice when an earlier save finishes", async () => {
     gate.resolve();
   }
 });
+
+it("saves an immediate voice choice against the latest synced revision", async () => {
+  const f = fixture();
+  const save = vi.fn(
+    async (
+      _config?: Config,
+      _options?: { base: { settings?: string | null } },
+    ) => {},
+  );
+  const props = f.props(defaults, save);
+  const view = render(
+    <f.tabs.SettingsTab
+      {...props}
+      agent={{ ...props.agent, configBase: { settings: "opened" } }}
+    />,
+  );
+  view.rerender(
+    <f.tabs.SettingsTab
+      {...props}
+      agent={{
+        ...props.agent,
+        config: { ...defaults, instructions: "Synced instructions" },
+        configBase: { settings: "synced" },
+      }}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await user.click(await screen.findByRole("radio", { name: "Maple" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        voice: "maple",
+        instructions: "Synced instructions",
+      }),
+      { base: { settings: "synced" } },
+    ),
+  );
+});

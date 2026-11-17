@@ -2,105 +2,93 @@ import { test, expect } from "./fixture.mjs";
 import { stopRoutes } from "./playwright-test.mjs";
 import { open } from "./timeline.mjs";
 import {
+  channelRow,
   closeSettings,
+  hideNarrowConversationList,
   openSettings,
   selectSettingsSection,
   settingsDialog,
   settingsSections,
+  showConversationList,
 } from "./navigation.mjs";
 
-// The shell owns the divider; the inner aside excludes its 1px border.
-const sidebarWidth = (sidebar) =>
-  sidebar.evaluate(
-    (element) =>
-      element
-        .closest(".shell-sidebar, .shell-sidebar-default")
-        .getBoundingClientRect().width,
-  );
+// Team's list column: its rendered width, whether or not it is reachable.
+const listColumn = (page) => page.locator("[data-list-open] > :first-child");
+const listWidth = (page) =>
+  listColumn(page).evaluate((element) => element.getBoundingClientRect().width);
 
-// Settings is a modal over the retained workspace: the channel sidebar stays
-// mounted behind it but is hidden from the accessibility tree while it is open.
-const retainedChannels = (page) =>
-  page.getByRole("complementary", {
-    name: "Sidebar",
+// Settings is its own rail destination: Team's list column is not mounted
+// while it is open, and returns at the saved width when Settings closes.
+const channels = (page) =>
+  page.getByRole("list", { name: "Conversations", exact: true });
+const mountedChannels = (page) =>
+  page.getByRole("list", {
+    name: "Conversations",
     exact: true,
     includeHidden: true,
   });
 
+const resizeHandle = (page) =>
+  page.getByRole("separator", { name: "Resize sidebar", exact: true });
+
 // Real shell layout and route remounts must preserve the user's resized width.
-test("Settings keeps the channel sidebar width across navigation and reload", async ({
+test("Settings keeps the list column width across navigation and reload", async ({
   page,
   app,
 }) => {
   await open(page, app);
-  const channels = page.getByRole("complementary", {
-    name: "Sidebar",
-    exact: true,
-  });
-  const retained = retainedChannels(page);
-  const handle = page.getByRole("separator", {
-    name: "Resize sidebar",
-    exact: true,
-  });
+  const handle = resizeHandle(page);
   for (const [key, width] of [
     ["Home", 220],
     ["End", 520],
   ]) {
     await handle.press(key);
-    await expect.poll(() => sidebarWidth(channels)).toBe(width);
+    await expect.poll(() => listWidth(page)).toBe(width);
     await openSettings(page);
-    await expect(channels).toHaveCount(0);
-    await expect.poll(() => sidebarWidth(retained)).toBe(width);
+    await expect(mountedChannels(page)).toHaveCount(0);
     await selectSettingsSection(page, "Notifications");
     await page.reload();
     await expect(settingsDialog(page)).toBeVisible();
-    await expect(channels).toHaveCount(0);
-    await expect(retained).toBeHidden();
+    await expect(mountedChannels(page)).toHaveCount(0);
     await closeSettings(page);
-    await expect.poll(() => sidebarWidth(channels)).toBe(width);
+    await expect(channels(page)).toBeVisible();
+    await expect.poll(() => listWidth(page)).toBe(width);
   }
 });
 
-// Settings has no drawer of its own; at narrow widths its modal stacks its
-// navigation, and the channel drawer behind it keeps the clamped width.
-test("narrow Settings keeps the clamped channel drawer behind its modal", async ({
+// Settings has no drawer of its own; at narrow widths it stacks its
+// navigation, and Team's list returns at its saved width afterwards.
+test("narrow Settings keeps the saved list width for Team's list", async ({
   page,
   app,
 }) => {
   await open(page, app);
-  await page.getByRole("separator", { name: "Resize sidebar" }).press("End");
+  await resizeHandle(page).press("End");
+  await expect.poll(() => listWidth(page)).toBe(520);
   await page.setViewportSize({ width: 600, height: 950 });
-  await expect(
-    page.getByRole("complementary", { name: "Sidebar", exact: true }),
-  ).not.toBeVisible();
-  const conversation = page.getByRole("article", {
-    name: "Conversation",
-    exact: true,
-  });
+  // Too narrow for both, the list lies over the reader within its frame.
+  await showConversationList(page);
+  const frame = await page.locator("[data-detail-workspace]").boundingBox();
+  await expect.poll(() => listWidth(page)).toBeLessThanOrEqual(frame.width);
+  const conversation = page.locator("[data-list-page]");
   const contentWidth = (await conversation.boundingBox()).width;
-  const showNavigation = page.getByRole("button", {
-    name: "Show navigation",
-    exact: true,
-  });
-  await showNavigation.click();
-  expect((await conversation.boundingBox()).width).toBe(contentWidth);
-  const channels = page.getByRole("complementary", {
-    name: "Sidebar",
-    exact: true,
-  });
-  await expect.poll(() => sidebarWidth(channels)).toBe(220);
-  await channels
-    .getByRole("button", { name: "Beta", exact: true })
-    .press("Enter");
-  await expect(channels).toBeHidden();
+  await channelRow(page, "beta").press("Enter");
   const composer = page.getByRole("textbox", {
     name: "Message #Beta",
     exact: true,
   });
-  await expect(composer).toBeFocused();
+  await expect(composer).toBeVisible();
+  await hideNarrowConversationList(page);
+  expect((await conversation.boundingBox()).width).toBe(contentWidth);
+  await composer.click();
   await page.keyboard.type("Usable destination");
   await expect(composer).toHaveText("Usable destination");
   await composer.fill("");
+  const showNavigation = page.getByRole("button", {
+    name: "Show navigation",
+    exact: true,
+  });
+  await expect(showNavigation).toBeVisible();
   await openSettings(page);
   // The workspace's drawer toggle is behind the modal; Settings keeps its own
   // section navigation in view instead of a drawer.
@@ -125,13 +113,12 @@ test("narrow Settings keeps the clamped channel drawer behind its modal", async 
   ).toHaveAttribute("aria-current", "page");
   await closeSettings(page);
   await expect(composer).toBeVisible();
-  await showNavigation.click();
-  await expect.poll(() => sidebarWidth(channels)).toBe(220);
   await page.setViewportSize({ width: 1440, height: 950 });
-  await expect.poll(() => sidebarWidth(channels)).toBe(520);
+  await showConversationList(page);
+  await expect.poll(() => listWidth(page)).toBe(520);
 });
 
-test("sidebar width survives route remounts when saving it fails", async ({
+test("list width survives route remounts when saving it fails", async ({
   page,
   app,
 }) => {
@@ -148,68 +135,61 @@ test("sidebar width survives route remounts when saving it fails", async ({
       return setItem.call(this, key, value);
     };
   });
-  await page.getByRole("separator", { name: "Resize sidebar" }).press("End");
-  const channels = page.getByRole("complementary", {
-    name: "Sidebar",
-    exact: true,
-  });
-  await expect.poll(() => sidebarWidth(channels)).toBe(520);
+  await resizeHandle(page).press("End");
+  await expect.poll(() => listWidth(page)).toBe(520);
   await openSettings(page);
-  await expect.poll(() => sidebarWidth(retainedChannels(page))).toBe(520);
-  // Section changes are route changes; the retained sidebar keeps its width.
+  await expect(mountedChannels(page)).toHaveCount(0);
+  // Section changes are route changes; the unsaved width survives them.
   await selectSettingsSection(page, "Notifications");
-  await expect.poll(() => sidebarWidth(retainedChannels(page))).toBe(520);
+  await expect(mountedChannels(page)).toHaveCount(0);
   await closeSettings(page);
-  await expect.poll(() => sidebarWidth(channels)).toBe(520);
+  await expect(channels(page)).toBeVisible();
+  await expect.poll(() => listWidth(page)).toBe(520);
 });
 
 // Native storage delivery and rendered width across two real documents are not
 // established by the component's synthetic StorageEvent tests.
-test("sidebar width updates across open windows without losing a draft", async ({
+test("list width updates across open windows without losing a draft", async ({
   page,
   context,
   app,
 }) => {
   await open(page, app);
-  const channels = page.getByRole("complementary", {
-    name: "Sidebar",
-    exact: true,
-  });
-  const resize = page.getByRole("separator", {
-    name: "Resize sidebar",
-    exact: true,
-  });
+  const resize = resizeHandle(page);
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
   });
   await composer.fill("Keep this draft while another window resizes");
   await resize.press("End");
-  await expect.poll(() => sidebarWidth(channels)).toBe(520);
+  await expect.poll(() => listWidth(page)).toBe(520);
   const other = await context.newPage();
   app.watchPageErrors(other);
   try {
     await open(other, app);
+    await expect.poll(() => listWidth(other)).toBe(520);
     await openSettings(other);
-    const retained = retainedChannels(other);
-    await expect.poll(() => sidebarWidth(retained)).toBe(520);
-    // The resize handle is behind the modal; resize from the restored workspace.
+    // Settings has no list; resize from the restored workspace.
     await closeSettings(other);
-    await other
-      .getByRole("separator", { name: "Resize sidebar", exact: true })
-      .press("Home");
-    await expect.poll(() => sidebarWidth(channels)).toBe(220);
+    await expect.poll(() => listWidth(other)).toBe(520);
+    await resizeHandle(other).press("Home");
+    await expect.poll(() => listWidth(page)).toBe(220);
     await expect(composer).toHaveText(
       "Keep this draft while another window resizes",
     );
+    // A width saved while the other window shows Settings is the one its
+    // list returns with.
     await openSettings(other);
     await resize.press("ArrowRight");
-    await expect.poll(() => sidebarWidth(retained)).toBe(236);
+    await expect.poll(() => listWidth(page)).toBe(236);
+    await closeSettings(other);
+    await expect.poll(() => listWidth(other)).toBe(236);
+    await openSettings(other);
     await other.reload();
     await expect(settingsDialog(other)).toBeVisible();
-    await expect(retained).toBeHidden();
+    await expect(mountedChannels(other)).toHaveCount(0);
     await closeSettings(other);
-    await expect.poll(() => sidebarWidth(retainedChannels(other))).toBe(236);
+    await expect.poll(() => listWidth(other)).toBe(236);
   } finally {
     await stopRoutes(context);
     await other.close();

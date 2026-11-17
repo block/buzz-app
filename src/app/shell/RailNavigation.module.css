@@ -74,11 +74,12 @@
   min-width: 0;
 }
 
+/* Team keeps its view strip above the recent conversation rows. */
 .teamViews {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-1);
+  gap: var(--space-half);
   flex-wrap: wrap;
   padding: var(--space-1) var(--space-2);
   margin-block: var(--space-1) var(--space-2);
@@ -90,18 +91,18 @@
 }
 .teamCount {
   position: absolute;
-  inset-block-start: calc(100% + var(--space-half));
+  inset-block-end: var(--space-half);
   inset-inline-start: 50%;
   transform: translateX(-50%);
-  inline-size: var(--space-2);
-  block-size: var(--space-half);
+  inline-size: var(--space-1);
+  block-size: var(--space-1);
   overflow: hidden;
   pointer-events: none;
 }
-
 .teamUnreadMark {
   display: block;
-  inline-size: var(--space-2);
-  block-size: var(--space-half);
+  inline-size: var(--space-1);
+  block-size: var(--space-1);
+  border-radius: var(--radius-pill);
   background: var(--affordance-accent-prominent);
 }

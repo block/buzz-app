@@ -11,7 +11,6 @@ const data: SidebarPreferences = {
     { id: "b", name: "B", order: 1 },
   ],
   assignments: { alpha: "a" },
-  starred: [],
   muted: [],
 };
 function setup(rename?: SidebarSectionRenameMutator) {
@@ -19,7 +18,6 @@ function setup(rename?: SidebarSectionRenameMutator) {
     read: async () => data,
     available: true,
     write: async () => data,
-    writeStar: async () => [],
     renameSection: rename,
   });
   return store.queries;

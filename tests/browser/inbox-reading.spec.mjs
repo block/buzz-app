@@ -1,4 +1,4 @@
-import { activityRow } from "./navigation.mjs";
+import { activityRow, conversationList } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, settle, virtuaIdle } from "./timeline.mjs";
 import {
@@ -32,13 +32,9 @@ test("Inbox DM composer focus reads a visible peer arrival after dwell without r
     )
     .toEqual({ status: "reconciled", completeness: "snapshot" });
   await activityRow(page).click();
-  const inbox = page.getByRole("region", { name: "Activity", exact: true });
-  const dm = inbox
-    .getByRole("list", { name: "Activity", exact: true })
-    .getByRole("listitem")
-    .filter({ hasText: "Inbox DM fixture reply" });
+  const dm = conversationList(page).locator('[data-activity-row="dm-peer"]');
+  await expect(dm).toContainText("Inbox DM fixture reply");
   await expect(dm.getByRole("img", { name: "Unread" })).toBeVisible();
-  await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
 
   // Give the next fixture arrival a timestamp beyond the captured selection
   // cutoff without moving the browser outside the broker's signing clock.
@@ -55,9 +51,9 @@ test("Inbox DM composer focus reads a visible peer arrival after dwell without r
   app.relay.publish("primary", seed);
   await page.clock.setFixedTime(base);
   await releaseReadingFocus(page);
-  await dm.getByRole("button", { name: /^Open / }).click();
-  const detail = inbox.getByRole("region", {
-    name: "Conversation in Alice Fixture",
+  await dm.locator("[data-conversation-row]").click();
+  const detail = page.getByRole("article", {
+    name: "Conversation",
     exact: true,
   });
   const history = detail.getByRole("region", {
@@ -80,8 +76,9 @@ test("Inbox DM composer focus reads a visible peer arrival after dwell without r
     .toBe(cutoff);
   await expect(dm.getByRole("img", { name: "Unread" })).toHaveCount(0);
 
-  const filter = inbox.getByRole("button", {
-    name: /^From /,
+  const filter = page.getByRole("button", {
+    name: "Filter and sort conversations",
+    exact: true,
   });
   await filter.focus();
   await page.clock.install({ time: base });
@@ -105,11 +102,17 @@ test("Inbox DM composer focus reads a visible peer arrival after dwell without r
   await page.clock.runFor(16);
   await settle(page, history);
   await expect(composer).toBeFocused();
-  const dmRow = inbox
-    .getByRole("list", { name: "Activity", exact: true })
-    .getByRole("listitem")
-    .filter({ hasText: incoming.content });
-  await expect(dmRow.getByRole("img", { name: "Unread" })).toBeVisible();
+  // The open conversation's row stays quiet; its unread count is the evidence.
+  const unreadCount = () =>
+    page.evaluate(
+      () =>
+        window.fixtureRelay.snapshot().session.unread.snapshot({
+          kind: "channel",
+          channelId: "dm-peer",
+        }).observedCount,
+    );
+  await expect.poll(unreadCount).toBe(1);
+  await expect(dm.getByRole("img", { name: "Unread" })).toHaveCount(0);
   await expect
     .poll(() =>
       page.evaluate(
@@ -127,14 +130,14 @@ test("Inbox DM composer focus reads a visible peer arrival after dwell without r
   await composer.focus();
   await page.clock.runFor(299);
   expect((await readJournal(page)).state.frontiers["dm-peer"]).toBe(cutoff);
-  await expect(dmRow.getByRole("img", { name: "Unread" })).toBeVisible();
+  expect(await unreadCount()).toBe(1);
   await page.clock.runFor(1);
   // Reading a DM reads all of it, through the newest message, with one
   // channel mark rather than a mark per message.
   await expect
     .poll(async () => (await readJournal(page)).state.frontiers["dm-peer"])
     .toBe(incoming.created_at);
-  await expect(dmRow.getByRole("img", { name: "Unread" })).toHaveCount(0);
+  await expect.poll(unreadCount).toBe(0);
   expect(
     (await readJournal(page)).state.frontiers[`msg:${incoming.id}`],
   ).toBeUndefined();

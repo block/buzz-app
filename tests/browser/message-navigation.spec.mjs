@@ -3,6 +3,7 @@ import { pluginAction } from "./plugin-settings.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, end, settle, wheel } from "./timeline.mjs";
+import { openChannel } from "./navigation.mjs";
 import {
   holdReadingFocus,
   releaseReadingFocus,
@@ -520,7 +521,7 @@ test("superseding a held exact read cancels it; a late response cannot steal foc
   }, target(app));
   await seen;
   expect(await status(page)).toBe("opening");
-  await page.getByRole("button", { name: "Beta", exact: true }).click();
+  await openChannel(page, "beta");
   expect(await page.evaluate(() => window.exactResult)).toEqual({
     status: "superseded",
   });
@@ -880,6 +881,9 @@ readTest(
     const frontiers = async () =>
       (await readJournal(page))?.state.frontiers ?? {};
     await page.clock.pauseAt(base + 20_000);
+    // Reading the channel before the exact open already marked its newest
+    // message; only marks beyond these belong to the opening.
+    const baseline = await frontiers();
     try {
       const opening = openTarget(page, target(app));
       // Exact reveal requires real focus for two animation frames. Advance one
@@ -892,9 +896,11 @@ readTest(
         .toBe("opened");
       expect(await opening).toEqual({ status: "opened" });
       await seen;
-      // Opening marks nothing read locally, so nothing can have been published.
-      expect(await frontiers()).toEqual({});
-      expect(app.report.readPublications.length).toBe(before);
+      // Opening marks nothing read locally, so nothing of it can have been
+      // published. The earlier reading's own publication may land only now.
+      expect(await frontiers()).toEqual(baseline);
+      for (const { blob } of app.report.readPublications.slice(before))
+        expect(blob.contexts).toEqual(baseline);
       await expect(
         thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
       ).toBeFocused();
@@ -903,6 +909,7 @@ readTest(
       // debounced, signed publication itself is covered by unread.spec.mjs.
       await page.clock.runFor(300);
       await expect.poll(frontiers).toEqual({
+        ...baseline,
         [`msg:${app.exact.target.id}`]: app.exact.target.created_at,
       });
     } finally {

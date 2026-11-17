@@ -6508,7 +6508,6 @@ it("delivers a canonical sidebar event through the emitted wire into the real se
   const data = {
     sections: [{ id: "work", name: "Work", order: 0 }],
     assignments: { alpha: "work" },
-    starred: ["beta"],
     muted: [],
   };
   const decode = vi.fn<SidebarDecoder>(async () => data);

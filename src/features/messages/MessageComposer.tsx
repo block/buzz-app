@@ -362,6 +362,8 @@ export type MessageComposerProps = {
   mediaTargetUrl?: string | undefined;
   replyContext?: ReactNode;
   onCancelReply?: (() => void) | undefined;
+  /** The reader that owns the reply target: Escape from its rows cancels it. */
+  replyScope?: RefObject<Element | null> | undefined;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
   /** Focus once on entry; an owner can cancel its target before a delayed mount. */
@@ -550,6 +552,7 @@ function Composer({
   replyParentId,
   mediaTargetUrl,
   onCancelReply,
+  replyScope,
   replyContext,
   mediaTimeSeconds,
   clearMediaTime,
@@ -1355,8 +1358,8 @@ function Composer({
   // Notices float above the composer, not over Send.
   useToastClearance(form);
   const notify = useToastNotification();
-  // Escape also cancels a reply target while focus is elsewhere in its own
-  // conversation (or nowhere): before page Escape closes the conversation,
+  // Escape also cancels a reply target while focus is elsewhere in the reader
+  // that owns it (or nowhere): before page Escape closes the conversation,
   // leaving other fields, menus and dialogs their own Escape.
   const cancelReply = useEffectEvent(() => onCancelReply?.());
   const replying = !!onCancelReply && active;
@@ -1380,11 +1383,8 @@ function Composer({
       // The composer's own handler owns Escape inside it.
       if (focused && own.contains(focused)) return;
       if (focused && focused !== own.ownerDocument.body) {
-        let surface = own.parentElement;
-        while (surface && !surface.querySelector("[data-message-id]"))
-          surface = surface.parentElement;
         if (
-          !surface?.contains(focused) ||
+          !replyScope?.current?.contains(focused) ||
           focused.closest(
             'input, textarea, select, [role="textbox"], [contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="menu"], [role="listbox"]',
           )
@@ -1397,7 +1397,7 @@ function Composer({
     };
     document.addEventListener("keydown", cancel, true);
     return () => document.removeEventListener("keydown", cancel, true);
-  }, [replying]);
+  }, [replying, replyScope]);
   const handOffFocus = useEffectEvent(() => {
     if (!form.current?.contains(document.activeElement)) return;
     const text = input.current?.value ?? "";

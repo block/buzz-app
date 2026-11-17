@@ -7,36 +7,20 @@ import {
   verifyEvent,
 } from "nostr-tools";
 import {
-  assertSidebarStarIntent,
-  prepareSidebarStar,
-  mutateSidebarStar,
-  assertSidebarMuteIntent,
-  prepareSidebarMute,
-  mutateSidebarMute,
+  assertSidebarMuteIntent as assertIntent,
+  prepareSidebarMute as prepare,
+  mutateSidebarMute as mutate,
 } from "./sidebar-toggle.mjs";
 import {
   decodeSidebarPreferences,
   SIDEBAR_REQUEST_BYTES,
 } from "./sidebar-preferences.mjs";
 
-describe.each([
-  [
-    "star",
-    "starred",
-    assertSidebarStarIntent,
-    prepareSidebarStar,
-    mutateSidebarStar,
-  ],
-  [
-    "mute",
-    "muted",
-    assertSidebarMuteIntent,
-    prepareSidebarMute,
-    mutateSidebarMute,
-  ],
-])("sidebar %s", (name, field, assertIntent, prepare, mutate) => {
-  const resultKey = `${name}s`;
-  const coordinate = `channel-${resultKey}`;
+describe("sidebar mute", () => {
+  const name = "mute";
+  const field = "muted";
+  const resultKey = "mutes";
+  const coordinate = "channel-mutes";
   function harness() {
     const secret = generateSecretKey();
     const viewer = getPublicKey(secret);
@@ -74,7 +58,7 @@ describe.each([
       { channelId: "", [field]: true },
       { channelId: "a" },
       { channelId: "a", [field]: 1 },
-      { channelId: "a", [field === "starred" ? "muted" : "starred"]: true },
+      { channelId: "a", starred: true },
       { channelId: "x".repeat(257), [field]: true },
       { channelId: "a", [field]: true, extra: 1 },
     ])
@@ -140,9 +124,7 @@ describe.each([
       prepare([], { channelId: "new", [field]: false }, h.secret, 50000)[
         resultKey
       ].channels,
-    ).toEqual(
-      field === "starred" ? {} : { new: { muted: false, updatedAt: 50000 } },
-    );
+    ).toEqual({ new: { muted: false, updatedAt: 50000 } });
   });
   it("refuses untrusted, ambiguous, malformed and over-budget heads rather than seeding", () => {
     const h = harness(),
@@ -159,9 +141,7 @@ describe.each([
         h.encrypt(
           {},
           {
-            tags: [
-              ["d", field === "starred" ? "channel-mutes" : "channel-stars"],
-            ],
+            tags: [["d", "channel-stars"]],
           },
         ),
       ],

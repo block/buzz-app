@@ -53,19 +53,14 @@ test("conversation and profile details share the full workspace without losing d
   const sideBox = await dock.boundingBox();
   expect(mainBox.x + mainBox.width).toBeLessThanOrEqual(sideBox.x + 1);
   expect(sideBox.height).toBeCloseTo(mainBox.height, 0);
-  const mainAction = await main
-    .getByRole("button", { name: "Conversation actions", exact: true })
-    .boundingBox();
+  // The conversation's header floats over its history at its own inset, so
+  // only the dock's header keeps its controls on one line.
   const sideAction = await dock
     .getByRole("button", { name: "Toggle tab pane", exact: true })
     .boundingBox();
   const selectedTab = await dock
     .getByRole("tab", { name: "Beta", exact: true })
     .boundingBox();
-  expect(mainAction.y + mainAction.height / 2).toBeCloseTo(
-    sideAction.y + sideAction.height / 2,
-    0,
-  );
   expect(selectedTab.y + selectedTab.height / 2).toBeCloseTo(
     sideAction.y + sideAction.height / 2,
     0,

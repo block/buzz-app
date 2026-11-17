@@ -38,9 +38,6 @@ import {
   type SidebarSectionOrderMutator,
   type SidebarSectionRenameMutator,
   type SidebarSectionRemovalMutator,
-  type SidebarStarMutator,
-  type SidebarSortMutator,
-  type SidebarFilterMutator,
   type SidebarDecoder,
   type SidebarMuteMutator,
   type SidebarPreferences,
@@ -92,6 +89,16 @@ export interface RelayWriter {
     signal: AbortSignal,
   ): Promise<string> | Promise<void>;
 }
+export type RailLayoutHead = Readonly<{
+  payload: Record<string, unknown> | undefined;
+  createdAt: number;
+}>;
+/** Another device replaced the arrangement between this one's read and write. */
+export class RailLayoutConflict extends Error {
+  constructor() {
+    super("The sidebar changed on another device");
+  }
+}
 export interface ReadTransport {
   /** Hear the relay refuse this account for the whole community, on any
    * request after connecting: its sign-in ended, or it has no access. One
@@ -135,8 +142,6 @@ export interface ReadTransport {
   readonly readAgentLibrary?: AgentLibraryReader;
   /** Host-only decoder of the viewer's signed sidebar preference coordinates. */
   readonly decodeSidebarPreferences?: SidebarDecoder;
-  readonly writeSidebarSort?: SidebarSortMutator;
-  readonly writeSidebarFilter?: SidebarFilterMutator;
   readonly readState?: ReadStateHost;
   /** Purpose-bound NIP-ER codec; never a general NIP-44 or signing primitive. */
   readonly reminders?: ReminderHost;
@@ -175,7 +180,16 @@ export interface ReadTransport {
   readonly removeSidebarSection?: SidebarSectionRemovalMutator;
   readonly writeSidebarSectionOrder?: SidebarSectionOrderMutator;
   readonly renameSidebarSection?: SidebarSectionRenameMutator;
-  readonly writeSidebarStar?: SidebarStarMutator;
+  /** The account's saved app sidebar arrangement, private to its devices.
+   * `payload` is undefined and `createdAt` 0 when there is no record. */
+  readRailLayout?(signal: AbortSignal): Promise<RailLayoutHead>;
+  /** Replaces the record read at `base`, and returns the new record's time.
+   * Rejects with `RailLayoutConflict` when another device wrote since. */
+  writeRailLayout?(
+    payload: Record<string, unknown>,
+    base: number,
+    signal: AbortSignal,
+  ): Promise<number>;
   /** Host-only private account record of the main agent the viewer chose:
    * null when they saved none or it was cleared, undefined when there is no
    * record. */
@@ -211,10 +225,12 @@ export interface ReadTransport {
   readVerifiedProfileAuthority?(
     signal: AbortSignal,
   ): Promise<VerifiedProfileAuthority | null>;
-  /** Purpose-bound authoritative recency, verified and max 128 channel IDs. */
+  /** Purpose-bound newest event of each of at most 128 channels, verified:
+   * of any activity kind, or the newest top-level one. */
   channelActivity?(
     channelIds: readonly string[],
     signal: AbortSignal,
+    topLevel?: boolean,
   ): Promise<RelayEvent[]>;
   query(
     filters: readonly ReadFilter[],
@@ -530,10 +546,9 @@ export async function connectBrokerTransport(
     live?: boolean;
     presence?: boolean;
     sidebarPreferences?: boolean;
-    sidebarSortWrites?: boolean;
-    sidebarFilterWrites?: boolean;
     channelActivity?: boolean;
     sidebarMuteWrites?: boolean;
+    railLayout?: boolean;
     channelKit?: boolean;
     channelIdentity?: boolean;
     searchSort?: boolean;
@@ -542,7 +557,6 @@ export async function connectBrokerTransport(
     sidebarSectionRemoval?: boolean;
     sidebarSectionOrder?: boolean;
     sidebarSectionRename?: boolean;
-    sidebarStarWrites?: boolean;
     agentLibrary?: boolean;
     agentMemories?: boolean;
     agentLogProof?: boolean;
@@ -994,84 +1008,6 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
-    ...(session.sidebarSortWrites
-      ? {
-          async writeSidebarSort(group, mode, sectionIds, signal) {
-            const result = await fetch(`${endpoint}/sidebar-sort`, {
-              method: "POST",
-              credentials: "same-origin",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ group, mode, sectionIds }),
-              signal,
-            });
-            if (!result.ok) {
-              const failure = await readApiFailure(result);
-              throw new Error(failure.error);
-            }
-            const value = (await result.json()) as { groups?: unknown };
-            return (
-              projectSidebarPreferences(
-                undefined,
-                undefined,
-                undefined,
-                {
-                  version: 1,
-                  groups: value.groups,
-                },
-                sectionIds,
-              ).sort ?? {}
-            );
-          },
-        }
-      : {}),
-    ...(session.sidebarFilterWrites
-      ? {
-          async writeSidebarFilter(
-            group,
-            mode,
-            sectionIds,
-            signal,
-            activeWindowSeconds,
-          ) {
-            const result = await fetch(`${endpoint}/sidebar-filter`, {
-              method: "POST",
-              credentials: "same-origin",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                group,
-                mode,
-                sectionIds,
-                activeWindowSeconds,
-              }),
-              signal,
-            });
-            if (!result.ok) {
-              const failure = await readApiFailure(result);
-              throw new Error(failure.error);
-            }
-            const value = (await result.json()) as {
-              groups?: unknown;
-              activeWindowSeconds?: unknown;
-            };
-            const projected = projectSidebarPreferences(
-              undefined,
-              undefined,
-              undefined,
-              undefined,
-              sectionIds,
-              {
-                version: 1,
-                groups: value.groups,
-                activeWindowSeconds: value.activeWindowSeconds,
-              },
-            );
-            return {
-              filters: projected.filters ?? {},
-              activeWindowSeconds: projected.activeWindowSeconds ?? {},
-            };
-          },
-        }
-      : {}),
     ...(session.sidebarMuteWrites
       ? {
           async writeSidebarMute(intent, signal) {
@@ -1084,13 +1020,42 @@ export async function connectBrokerTransport(
             });
             if (!result.ok)
               throw new Error((await readApiFailure(result)).error);
-            return projectSidebarPreferences(
-              undefined,
-              undefined,
-              await result.json(),
-            ).muted;
+            return projectSidebarPreferences(undefined, await result.json())
+              .muted;
           },
         }
+      : {}),
+    ...(session.railLayout
+      ? (() => {
+          const request = async (intent: object, signal: AbortSignal) => {
+            const result = await fetch(`${endpoint}/rail-layout`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: publicationHeaders(),
+              body: JSON.stringify(intent),
+              signal,
+            });
+            if (!result.ok)
+              throw new Error((await readApiFailure(result)).error);
+            const value = (await result.json()) as {
+              payload?: Record<string, unknown>;
+              createdAt?: number;
+              conflict?: boolean;
+            };
+            if (value.conflict) throw new RailLayoutConflict();
+            if (typeof value.createdAt !== "number")
+              throw new Error("Invalid sidebar arrangement response");
+            return { payload: value.payload, createdAt: value.createdAt };
+          };
+          return {
+            readRailLayout: (signal: AbortSignal) => request({}, signal),
+            writeRailLayout: async (
+              payload: Record<string, unknown>,
+              base: number,
+              signal: AbortSignal,
+            ) => (await request({ payload, base }, signal)).createdAt,
+          };
+        })()
       : {}),
     ...(session.channelDetails === true
       ? { channelDetails: routeWriter("channel-details") }
@@ -1120,14 +1085,11 @@ export async function connectBrokerTransport(
             if (!response.ok)
               throw new Error((await readApiFailure(response)).error);
             const value = await response.json();
-            const { sections, assignments } = projectSidebarPreferences(
-              {
-                version: 1,
-                sections: value.sections,
-                assignments: value.assignments,
-              },
-              undefined,
-            );
+            const { sections, assignments } = projectSidebarPreferences({
+              version: 1,
+              sections: value.sections,
+              assignments: value.assignments,
+            });
             return { sections, assignments };
           },
         }
@@ -1148,14 +1110,11 @@ export async function connectBrokerTransport(
             if (!response.ok)
               throw new Error((await readApiFailure(response)).error);
             const value = await response.json();
-            const { sections, assignments } = projectSidebarPreferences(
-              {
-                version: 1,
-                sections: value.sections,
-                assignments: value.assignments,
-              },
-              undefined,
-            );
+            const { sections, assignments } = projectSidebarPreferences({
+              version: 1,
+              sections: value.sections,
+              assignments: value.assignments,
+            });
             return { sections, assignments };
           },
         }
@@ -1176,14 +1135,11 @@ export async function connectBrokerTransport(
             if (!response.ok)
               throw new Error((await readApiFailure(response)).error);
             const value = await response.json();
-            const { sections, assignments } = projectSidebarPreferences(
-              {
-                version: 1,
-                sections: value.sections,
-                assignments: value.assignments,
-              },
-              undefined,
-            );
+            const { sections, assignments } = projectSidebarPreferences({
+              version: 1,
+              sections: value.sections,
+              assignments: value.assignments,
+            });
             return { sections, assignments };
           },
         }
@@ -1203,35 +1159,15 @@ export async function connectBrokerTransport(
               throw new Error(failure.error);
             }
             const value = (await result.json()) as SidebarPreferences;
-            const groups = projectSidebarPreferences(
-              {
-                version: 1,
-                sections: value.sections,
-                assignments: value.assignments,
-              },
-              undefined,
-            );
+            const groups = projectSidebarPreferences({
+              version: 1,
+              sections: value.sections,
+              assignments: value.assignments,
+            });
             return {
               sections: groups.sections,
               assignments: groups.assignments,
             };
-          },
-        }
-      : {}),
-    ...(session.sidebarStarWrites
-      ? {
-          async writeSidebarStar(intent, signal) {
-            const result = await fetch(`${endpoint}/sidebar-star`, {
-              method: "POST",
-              credentials: "same-origin",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(intent),
-              signal,
-            });
-            if (!result.ok)
-              throw new Error((await readApiFailure(result)).error);
-            return projectSidebarPreferences(undefined, await result.json())
-              .starred;
           },
         }
       : {}),
@@ -1277,7 +1213,7 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.channelActivity
       ? {
-          async channelActivity(channelIds, signal) {
+          async channelActivity(channelIds, signal, topLevel) {
             return measureQuery(endpoint, "background", async (sized) => {
               const result = await fetch(`${endpoint}/channel-activity`, {
                 method: "POST",
@@ -1291,6 +1227,7 @@ export async function connectBrokerTransport(
                     kinds: [9, 40002, 40008, 45001, 45003],
                     "#h": [channelId],
                     limit: 1,
+                    ...(topLevel ? { top_level: true } : {}),
                   })),
                 ),
                 signal,

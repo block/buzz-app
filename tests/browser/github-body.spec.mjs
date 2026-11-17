@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { openChannel, openPage } from "./navigation.mjs";
 import { end, settle } from "./timeline.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -100,7 +100,8 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
   }
   const response = await page.goto(app.origin);
   expect(response.headers()["content-security-policy"]).toBe(mediaPolicy);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .waitFor();
@@ -377,7 +378,8 @@ test.describe("private repository media", () => {
       });
     }
     await page.goto(app.origin);
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
+    await openChannel(page, "alpha");
     await page
       .getByRole("textbox", { name: "Message #Alpha", exact: true })
       .waitFor();

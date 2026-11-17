@@ -117,8 +117,8 @@ export function PanelWorkspace({
   actions,
   leadingActions,
   identity,
-  identityPlacement = "header",
-  headerDivider = true,
+  headerDivider = false,
+  historyOverlay = false,
   main = false,
   label = "Panel tabs",
   focusOnMount = true,
@@ -142,11 +142,14 @@ export function PanelWorkspace({
   actions?: ReactNode;
   /** Navigation at the leading edge, independent of centered membership artwork. */
   leadingActions?: ReactNode;
-  /** Interactive conversation identity; a lone permanent tab needs no tab strip. */
+  /**
+   * Interactive conversation identity, presented above the permanent first
+   * tab's scrollport; a lone permanent tab needs no tab strip.
+   */
   identity?: ReactNode;
-  /** The permanent conversation may present its identity above its scrollport. */
-  identityPlacement?: "header" | "content";
   headerDivider?: boolean;
+  /** Float the tab header over a thread's scrolling history. */
+  historyOverlay?: boolean;
   /**
    * The page's main pane: a lone permanent tab reads as a title, and native
    * Close acts here only while focus is inside (the side pane is the default).
@@ -312,18 +315,11 @@ export function PanelWorkspace({
     };
     const showNext = step(1);
     const showPrevious = step(-1);
-    const closeAll = (event: Event) => {
-      if (event.defaultPrevented || !tabMenu?.closeAll || !owns(event)) return;
-      event.preventDefault();
-      flushSync(() => tabMenu.closeAll());
-    };
     window.addEventListener("buzz:close-active-tab", close);
-    window.addEventListener("buzz:close-all-tabs", closeAll);
     window.addEventListener("buzz:next-tab", showNext);
     window.addEventListener("buzz:previous-tab", showPrevious);
     return () => {
       window.removeEventListener("buzz:close-active-tab", close);
-      window.removeEventListener("buzz:close-all-tabs", closeAll);
       window.removeEventListener("buzz:next-tab", showNext);
       window.removeEventListener("buzz:previous-tab", showPrevious);
     };
@@ -388,8 +384,7 @@ export function PanelWorkspace({
       closingTab.current = undefined;
     }
   });
-  const conversationTools =
-    identityPlacement === "content" && selected === items[0]?.id && !!identity;
+  const conversationTools = !!identity && selected === items[0]?.id;
   const activeToolbar = active && "toolbar" in active ? active.toolbar : null;
   const headerTools =
     activeToolbar || actions ? (
@@ -418,14 +413,12 @@ export function PanelWorkspace({
       )}
     </div>
   ) : undefined;
-  const conversationIdentity =
-    identityPlacement === "content" && selected === items[0]?.id
-      ? heading
-      : active && "identity" in active
-        ? active.identity
-        : undefined;
-  const conversationTitle =
-    identityPlacement === "content" ? items[0]?.label : active?.label;
+  const conversationIdentity = conversationTools
+    ? heading
+    : active && "identity" in active
+      ? active.identity
+      : undefined;
+  const conversationTitle = identity ? items[0]?.label : active?.label;
   const standaloneIdentity = !!conversationIdentity && identityOnly;
   const tools = conversationTools ? (
     <ConversationHeaderTools actions={headerTools} />
@@ -486,21 +479,15 @@ export function PanelWorkspace({
     >
       {!standaloneIdentity && (
         <PanelHeader
-          divider={headerDivider}
-          navigation={
-            leadingActions ??
-            (!identityOnly && identityPlacement === "header"
-              ? heading
-              : undefined)
+          divider={headerDivider && !historyOverlay}
+          historyOverlay={
+            historyOverlay && !conversationIdentity && !selectedLocal
           }
+          navigation={leadingActions}
           actions={tools}
           title={
             identityOnly ? (
-              identityPlacement === "header" ? (
-                heading
-              ) : (
-                tabs[0]?.label
-              )
+              tabs[0]?.label
             ) : (
               <Tabs
                 label={label}

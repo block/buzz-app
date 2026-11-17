@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage, selectCommunity } from "./navigation.mjs";
+import { openPage, rail, revealRail, selectCommunity } from "./navigation.mjs";
 
 // Browser-only: reflow, the panel frame's clip and wheel scrolling need real
 // CSS layout. AppShell.test.tsx covers the action's presence and its switcher.
@@ -9,8 +9,11 @@ test("Personal space's Choose a community fits its pane and wheel-scrolls into v
 }) => {
   await page.setViewportSize({ width: 390, height: 800 });
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await selectCommunity(page, "Personal space");
+  // Without a community the rail lists pages; Team is where channels live.
+  await revealRail(page);
+  await rail(page).getByRole("button", { name: "Team", exact: true }).click();
   const pane = page.getByRole("region", { name: "Channels", exact: true });
   const heading = pane.getByRole("heading", {
     name: "Your channels, one conversation.",

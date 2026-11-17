@@ -5,7 +5,9 @@ import { loafBlocking } from "./blocking.mjs";
 
 export { expect };
 export const timeline = (id) => `section[data-channel-timeline="${id}"]`;
-export const sidebar = (id) => `button[data-channel-id="${id}"]`;
+// A channel's row in Team's list.
+export const sidebar = (id) =>
+  `[data-activity-sidebar] [data-activity-row="${id}"] [data-conversation-row]`;
 export const repeats = Number(process.env.PERF_REPEAT ?? 1);
 export const heads = (app, id) =>
   app.report.queries.filter(
@@ -233,7 +235,7 @@ export const test = base.extend({
       cdp,
       async setup(id) {
         await page.goto(app.origin);
-        await openPage(page, "Messages");
+        await openPage(page, "Team");
         await page.evaluate(async () => {
           await Promise.all([...document.fonts].map((font) => font.load()));
         });

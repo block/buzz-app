@@ -7,13 +7,9 @@ import {
   validSidebarSectionOrder,
   validSidebarSectionRemoval,
   validSidebarSectionRename,
-  editSidebarSort,
-  editSidebarFilter,
-  editSidebarToggle,
+  editSidebarMute,
   validSidebarAssignment,
   validSidebarChannelId,
-  validSidebarSort,
-  validSidebarFilter,
 } from "./sidebar-edits";
 import { invoke } from "@tauri-apps/api/core";
 import { eventDto, type RelayEvent } from "./events";
@@ -21,28 +17,24 @@ import {
   projectSidebarPreferences,
   type SidebarAssignmentIntent,
   type SidebarGroups,
-  type SidebarSortMode,
-  type SidebarFilterMode,
 } from "./sidebar-preferences";
-import type { ReadTransport } from "./transport";
+import { RailLayoutConflict, type ReadTransport } from "./transport";
 
 const coordinates = [
   "channel-sections",
-  "channel-stars",
   "channel-mutes",
-  "channel-sort",
-  "channel-filter",
   "main-agent",
+  "rail-layout",
 ] as const;
 type Coordinate = (typeof coordinates)[number];
 type Head = { payload: Record<string, unknown>; createdAt: number };
 const empty = (coordinate: Coordinate): Record<string, unknown> =>
   coordinate === "main-agent"
     ? { version: 1, agent: null }
-    : coordinate === "channel-sections"
-      ? { version: 1, sections: [], assignments: {} }
-      : coordinate === "channel-sort" || coordinate === "channel-filter"
-        ? { version: 1, groups: {} }
+    : coordinate === "rail-layout"
+      ? { version: 1 }
+      : coordinate === "channel-sections"
+        ? { version: 1, sections: [], assignments: {} }
         : { version: 1, channels: {} };
 const agentKey = /^[0-9a-f]{64}$/;
 /** The main agent the viewer chose. A null one, written by development
@@ -74,11 +66,7 @@ export function nativeSidebar(transport: ReadTransport) {
     cancelled(signal);
     return projectSidebarPreferences(
       raw["channel-sections"],
-      raw["channel-stars"],
       raw["channel-mutes"],
-      raw["channel-sort"],
-      undefined,
-      raw["channel-filter"],
     );
   }
   async function head(
@@ -110,29 +98,17 @@ export function nativeSidebar(transport: ReadTransport) {
     // The Rust decoder checks signature, author, coordinate and plaintext budget.
     const value = payload as Record<string, unknown>;
     if (coordinate === "main-agent") mainAgent(value);
-    else project(coordinate, value);
+    else if (coordinate !== "rail-layout") project(coordinate, value);
     return {
       payload:
-        coordinate === "channel-sections" ||
-        coordinate === "channel-sort" ||
-        coordinate === "channel-filter"
-          ? projectSidebarRecord(coordinate, value)
-          : value,
+        coordinate === "channel-sections" ? projectSidebarRecord(value) : value,
       createdAt: events[0]?.created_at ?? 0,
     };
   }
-  function project(
-    coordinate: Coordinate,
-    value: unknown,
-    sectionIds?: readonly string[],
-  ) {
+  function project(coordinate: Coordinate, value: unknown) {
     return projectSidebarPreferences(
       coordinate === "channel-sections" ? value : undefined,
-      coordinate === "channel-stars" ? value : undefined,
       coordinate === "channel-mutes" ? value : undefined,
-      coordinate === "channel-sort" ? value : undefined,
-      sectionIds,
-      coordinate === "channel-filter" ? value : undefined,
     );
   }
   async function mutate<T>(
@@ -184,6 +160,34 @@ export function nativeSidebar(transport: ReadTransport) {
   }
   return {
     decodeSidebarPreferences: decode,
+    async readRailLayout(signal: AbortSignal) {
+      const current = await head("rail-layout", signal);
+      return {
+        payload: current.createdAt ? current.payload : undefined,
+        createdAt: current.createdAt,
+      };
+    },
+    async writeRailLayout(
+      payload: Record<string, unknown>,
+      base: number,
+      signal: AbortSignal,
+    ) {
+      const current = await head("rail-layout", signal);
+      if (current.createdAt !== base) throw new RailLayoutConflict();
+      const event = eventDto(
+        await invoke<unknown>("relay_sign_sidebar", {
+          coordinate: "rail-layout",
+          payload,
+          createdAt: Math.max(Math.floor(Date.now() / 1000), base + 1),
+        }),
+      );
+      cancelled(signal);
+      if (!writer) throw new Error("Native relay writer is unavailable");
+      await writer.publish(event, signal);
+      const confirmed = await head("rail-layout", signal);
+      if (!same(confirmed.payload, payload)) throw new RailLayoutConflict();
+      return confirmed.createdAt;
+    },
     async readMainAgent(signal: AbortSignal) {
       const current = await head("main-agent", signal);
       // A record of none reads as null, apart from no record at all.
@@ -329,142 +333,26 @@ export function nativeSidebar(transport: ReadTransport) {
         "Sidebar groups changed on another device; reload and try again",
       );
     },
-    async writeSidebarStar(
-      intent: { channelId: string; starred: boolean },
-      signal: AbortSignal,
-    ) {
-      return writeToggle(
-        "channel-stars",
-        "starred",
-        intent,
-        signal,
-        "Sidebar stars changed on another device; reload and try again",
-      );
-    },
     async writeSidebarMute(
-      intent: { channelId: string; muted: boolean },
+      { channelId, muted }: { channelId: string; muted: boolean },
       signal: AbortSignal,
     ) {
-      return writeToggle(
+      if (!validSidebarChannelId(channelId) || typeof muted !== "boolean")
+        throw new Error("Invalid sidebar mute intent");
+      const prepare = (current: Record<string, unknown>) => {
+        const next = editSidebarMute(current, channelId, muted);
+        return { next, result: project("channel-mutes", next).muted };
+      };
+      return mutate(
         "channel-mutes",
-        "muted",
-        intent,
         signal,
+        prepare,
+        // An unmute must leave its explicit tombstone, not disappear on readback.
+        (value) =>
+          (value.channels as Record<string, Record<string, unknown>>)[channelId]
+            ?.muted === muted,
         "Sidebar mutes changed on another device; reload and try again",
       );
     },
-    async writeSidebarSort(
-      group: string,
-      mode: SidebarSortMode,
-      sectionIds: readonly string[],
-      signal: AbortSignal,
-    ) {
-      if (!validSidebarSort(group, mode, sectionIds))
-        throw new Error("Invalid sidebar sort intent");
-      const prepare = (current: Record<string, unknown>, createdAt: number) => {
-        const next = editSidebarSort(
-          current,
-          createdAt,
-          group,
-          mode,
-          Date.now(),
-        );
-        return {
-          next,
-          result: project("channel-sort", next, sectionIds).sort ?? {},
-        };
-      };
-      return mutate(
-        "channel-sort",
-        signal,
-        prepare,
-        (value) =>
-          (project("channel-sort", value, sectionIds).sort?.[group] ??
-            "alpha") === mode,
-        "Sidebar sort changed on another device; reload and try again",
-      );
-    },
-    async writeSidebarFilter(
-      group: string,
-      mode: SidebarFilterMode,
-      sectionIds: readonly string[],
-      signal: AbortSignal,
-      activeWindowSeconds?: number | null,
-    ) {
-      if (!validSidebarFilter(group, mode, sectionIds, activeWindowSeconds))
-        throw new Error("Invalid sidebar filter intent");
-      const prepare = (current: Record<string, unknown>, createdAt: number) => {
-        const next = editSidebarFilter(
-          current,
-          createdAt,
-          group,
-          mode,
-          Date.now(),
-          activeWindowSeconds,
-        );
-        const settings = project("channel-filter", next, sectionIds);
-        return {
-          next,
-          result: {
-            filters: settings.filters ?? {},
-            activeWindowSeconds: settings.activeWindowSeconds ?? {},
-          },
-        };
-      };
-      return mutate(
-        "channel-filter",
-        signal,
-        prepare,
-        (value) =>
-          editSidebarFilter(
-            value,
-            0,
-            group,
-            mode,
-            Date.now(),
-            activeWindowSeconds,
-          ) === value,
-        "Sidebar filter changed on another device; reload and try again",
-      );
-    },
   };
-  async function writeToggle(
-    coordinate: "channel-stars" | "channel-mutes",
-    field: "starred" | "muted",
-    intent: { channelId: string; starred?: boolean; muted?: boolean },
-    signal: AbortSignal,
-    conflict: string,
-  ) {
-    const { channelId } = intent;
-    const enabled = intent[field];
-    if (!validSidebarChannelId(channelId) || typeof enabled !== "boolean")
-      throw new Error(
-        `Invalid sidebar ${field === "starred" ? "star" : "mute"} intent`,
-      );
-    const prepare = (current: Record<string, unknown>) => {
-      const next = editSidebarToggle(current, channelId, field, enabled);
-      return {
-        next,
-        result: project(coordinate, next)[
-          field === "starred" ? "starred" : "muted"
-        ],
-      };
-    };
-    return mutate(
-      coordinate,
-      signal,
-      prepare,
-      (value) => {
-        const entry = (
-          value.channels as Record<string, Record<string, unknown>>
-        )[channelId];
-        // An unmute must leave its explicit tombstone, not disappear on readback.
-        return (
-          entry?.[field] === enabled ||
-          (field === "starred" && !enabled && entry === undefined)
-        );
-      },
-      conflict,
-    );
-  }
 }

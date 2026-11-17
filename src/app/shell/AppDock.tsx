@@ -7,10 +7,6 @@ import { useScrollEdges } from "../../shared/design-system/ui/useScrollEdges";
 import sectionStyles from "./RailArrangement.module.css";
 
 export function AppDock({
-  search,
-  community,
-  profile,
-  settings,
   children,
   header,
   showPrimaryNavigation = true,
@@ -19,10 +15,6 @@ export function AppDock({
   onDismiss,
   ...pages
 }: Omit<ComponentProps<typeof PageNavigation>, "placement"> & {
-  search: ReactNode;
-  community: ReactNode;
-  profile: ReactNode;
-  settings: ReactNode;
   children?: ReactNode;
   header?: ReactNode;
   showPrimaryNavigation?: boolean;
@@ -59,7 +51,6 @@ export function AppDock({
           onDismiss?.();
         }
       }}
-      data-search-external={!search || undefined}
     >
       {header && (
         <div
@@ -77,7 +68,6 @@ export function AppDock({
           {showPrimaryNavigation && (
             <div className={`${sectionStyles.group} ${styles.primary}`}>
               <NavigationSection>
-                {search}
                 <PageNavigation
                   {...pages}
                   placement={compact ? "dock" : "sidebar"}
@@ -89,13 +79,6 @@ export function AppDock({
         </SidebarNavigation>
       </div>
       <div id="rail-drop-slot" className={styles.dropSlot} />
-      {(community || profile || settings) && (
-        <div className={styles.footer}>
-          {community}
-          {profile}
-          {settings}
-        </div>
-      )}
     </nav>
   );
 }

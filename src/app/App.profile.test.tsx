@@ -197,7 +197,6 @@ async function setup(
         return Response.json({
           sections: [],
           assignments: {},
-          starred: [],
           muted: [],
         });
       if (url.endsWith("/sidebar-mute") && muteWrite)
@@ -265,7 +264,12 @@ it.each([
     const user = await setup(false, write);
     try {
       const rail = await screen.findByRole("navigation", { name: "Apps" });
-      // Pin this conversation so its recovery action stays available in the rail.
+      // A pin keeps this row in the sidebar even if Team's recent list changes.
+      const pinsCard = within(rail)
+        .getByRole("heading", { name: "Pins" })
+        .closest("section");
+      if (!pinsCard) throw new Error("Pins card not found");
+      const pins = within(pinsCard);
       const scope = { viewer, communityOrigin: origin };
       act(() => {
         writeView(`${origin}:${viewer}`, "navigation-pins:v1", [
@@ -277,13 +281,7 @@ it.each([
           },
         ]);
       });
-      const pins = rail.querySelector<HTMLElement>(
-        '[data-rail-section="pins"]',
-      );
-      if (!pins) throw new Error("Pins section is missing");
-      const row = await within(pins).findByRole("button", {
-        name: "Planning",
-      });
+      const row = await pins.findByRole("button", { name: "Planning" });
       expect(row.closest("[data-rail-row]")).toHaveAttribute(
         "data-rail-row",
         `channel:${channelId}`,
@@ -328,7 +326,7 @@ it.each([
             pageId: "channels",
           });
         });
-        const returned = await within(pins).findByRole("button", {
+        const returned = await pins.findByRole("button", {
           name: "Planning",
         });
         expect(returned).toBe(row);

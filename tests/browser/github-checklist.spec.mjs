@@ -1,5 +1,9 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import {
+  hideNarrowConversationList,
+  openChannel,
+  openPage,
+} from "./navigation.mjs";
 import { end, settle } from "./timeline.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -49,7 +53,9 @@ test("a PR opens on its checklist, with failing checks linked and wrapping in a 
   );
   await page.setViewportSize({ width: 900, height: 900 });
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
+  await hideNarrowConversationList(page);
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .waitFor();

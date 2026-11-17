@@ -17,11 +17,12 @@ export type RailEntry = {
   picture?: string | undefined;
   target: OpenTarget | { kind: "person"; pubkey: string };
 };
-const KEY = "navigation-pins:v1";
+export const PINS_KEY = "navigation-pins:v1";
+const KEY = PINS_KEY;
 const kinds = new Set(["person", "agent", "channel", "chat", "page"]);
 
 /** Pins are local view intent, scoped by account and community like drafts. */
-export function readRailPins(scope: string): RailEntry[] {
+function readRailPins(scope: string): RailEntry[] {
   return parseRailEntries(readView<unknown>(scope, KEY, []));
 }
 

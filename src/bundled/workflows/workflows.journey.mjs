@@ -792,9 +792,14 @@ test("keyboard focus follows an open detail into the narrow layout and back", as
     name: /^Open Fixture A helper:/,
     exact: true,
   });
-  const tab = page
-    .getByRole("complementary")
-    .getByRole("tab", { name: "Fixture A helper", exact: true });
+  const detail = page.getByRole("region", {
+    name: "Workflow details",
+    exact: true,
+  });
+  const tab = detail.getByRole("tab", {
+    name: "Fixture A helper",
+    exact: true,
+  });
   await open.focus();
   await page.keyboard.press("Enter");
   await expect(tab).toBeVisible();
@@ -805,7 +810,7 @@ test("keyboard focus follows an open detail into the narrow layout and back", as
     page.getByRole("region", { name: "Fixture A helper details", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("complementary")).toHaveCount(0);
+  await expect(detail).toHaveCount(0);
   await expect(open).toBeFocused();
 });
 

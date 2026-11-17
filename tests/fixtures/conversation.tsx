@@ -70,7 +70,14 @@ const owners = ["a", "b"].map((community) => {
     historic,
     reaction,
     ...Array.from({ length: 24 }, (_, index) =>
-      message(viewer, "general", `Fixture context ${index + 1}`, index + 1),
+      // History sits between rows 9 and 10, never tied with either: the panel
+      // journey then anchors on the first row, which has spacing above it.
+      message(
+        viewer,
+        "general",
+        `Fixture context ${index + 1}`,
+        index + (index < 9 ? 1 : 2),
+      ),
     ),
   ];
   const rejected = new Set<string>();

@@ -4,8 +4,14 @@ import type { PageNavigation } from "../../features/navigation/service";
 import type { RelayData } from "../../features/relay/service";
 import { useRelayConnection } from "../../features/relay/react";
 import { saveActivityView } from "../../features/conversation/ConversationList";
-import { BellIcon } from "../../shared/design-system/icons";
+import {
+  BellIcon,
+  CloudOffIcon,
+  LockIcon,
+} from "../../shared/design-system/icons";
+import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
 import { ConversationListToggle } from "../../features/conversation/ConversationListToggle";
 import { NoConversationSelected } from "../../features/conversation/NoConversationSelected";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
@@ -80,7 +86,8 @@ function ActivityAddress({
   relay: RelayData;
   navigation: PageNavigation | undefined;
 }) {
-  const { status, viewer, scope: partition } = useRelayConnection(relay);
+  const connection = useRelayConnection(relay);
+  const { status, viewer, scope: partition } = connection;
   const signedIn = !!viewer && !!partition?.endsWith(`:${viewer}`);
   // biome-ignore lint/correctness/useExhaustiveDependencies: A visit applies its address once; Back keeps what the list showed.
   useLayoutEffect(() => {
@@ -146,6 +153,29 @@ function ActivityAddress({
       <div className={styles.unselected}>
         <NoConversationSelected />
       </div>
+    </div>
+  ) : connection.status === "error" && connection.denied ? (
+    // Its notice, on every page, offers what fixes it.
+    <EmptyState
+      icon={<LockIcon />}
+      title={communityRefusalTitle(connection.refusal)}
+    />
+  ) : connection.status === "error" ? (
+    <div role="alert">
+      <EmptyState
+        icon={<CloudOffIcon />}
+        title="Can’t connect"
+        description={
+          connection.retrying
+            ? "Check your connection. We’ll keep trying."
+            : "Check your connection, then try again."
+        }
+        action={
+          <Button variant="primary" onClick={() => relay.tryAgain()}>
+            Try again
+          </Button>
+        }
+      />
     </div>
   ) : (
     <EmptyState

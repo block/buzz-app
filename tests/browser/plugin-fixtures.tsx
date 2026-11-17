@@ -206,13 +206,6 @@ export const fixturePlugins: readonly BundledPlugin[] = [
             ) : (
               Default
             ),
-          sortModes: [
-            {
-              id: "reverse",
-              label: "Reverse name",
-              compare: (a, b) => b.label.localeCompare(a.label),
-            },
-          ],
         });
       },
     },

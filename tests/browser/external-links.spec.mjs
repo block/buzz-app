@@ -2,6 +2,7 @@ import { pluginAction } from "./plugin-settings.mjs";
 import { expectTabler } from "./tabler.mjs";
 import {
   closeSettings,
+  openChannel,
   openPage,
   openSettings,
   selectSettingsSection,
@@ -26,7 +27,8 @@ const link = (page, url) =>
   page.locator(`[data-channel-timeline] a[href=${JSON.stringify(url)}]`);
 
 async function openMessages(page) {
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .waitFor();

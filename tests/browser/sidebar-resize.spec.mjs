@@ -29,7 +29,7 @@ test("resizing the app rail keeps the conversation in the first grid row", async
     page.getByRole("button", { name: "Hide sidebar", exact: true }),
   ).toBeVisible();
   await expect.poll(aligned).toBe(true);
-  await expect(rail).toHaveCSS("width", "240px");
+  await expect(rail).toHaveCSS("width", "256px");
   await handle.dblclick();
   await expect(
     page.getByRole("button", { name: "Hide sidebar", exact: true }),

@@ -1,9 +1,9 @@
-/* PROTOTYPE: ConversationRow. Every list shares one two-line anatomy:
+/* ConversationRow. Every list shares one two-line anatomy:
  *
  *   avatar | (icon) place ……… time / ✓
  *   avatar | preview …………… state
  *
- * The --conversation-row-* properties adjust row density; their fallbacks
+ * The --conversation-row-* properties adjust density and unread color; their fallbacks
  * define the default composition. */
 /* Defaults are the "comfortable" density: minimums for the narrowest
  * sidebar. A wider sidebar gives the extra width to the preview. */
@@ -188,7 +188,10 @@
   width: var(--space-2);
   height: var(--space-2);
   border-radius: var(--radius-pill);
-  background: var(--text-navigation-unread);
+  background: var(
+    --conversation-row-unread-color,
+    var(--text-navigation-unread)
+  );
 }
 .avatarState .unreadDot {
   box-shadow: 0 0 0 var(--space-half) var(--surface-rail-card);

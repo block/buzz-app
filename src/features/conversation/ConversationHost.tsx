@@ -1,6 +1,5 @@
 import type { Context } from "@deepseek-ai/cordis";
 import {
-  createContext,
   useContext,
   useCallback,
   useEffect,
@@ -16,11 +15,7 @@ import { PanelCard } from "../panels/PanelCard";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { buzzLinkTarget } from "../navigation/buzz-links";
 import { PanelView } from "../panels/PanelView";
-import {
-  panelOpening,
-  type PanelOpening,
-  type RegisteredPanel,
-} from "../panels/service";
+import { panelOpening, type PanelOpening } from "../panels/service";
 import type { ThreadPanelProps } from "../messages/ThreadPanel";
 import { useConversationPresentation } from "./ConversationPresentation";
 import { ForwardMessageProvider } from "../messages/ForwardMessage";
@@ -33,20 +28,6 @@ export type ConversationHostServices = Pick<
 export type ConversationInteractions = Required<
   Pick<ThreadPanelProps, "onOpenLink" | "canOpenLink" | "onOpenMediaReview">
 >;
-export type ConversationHostInteractions = ConversationInteractions & {
-  canOpenLink(target: string): boolean;
-  /** Explicit channel launchers may open panels without a URL matcher. */
-  openPanel(
-    panel: RegisteredPanel,
-    target: string,
-    returnFocus?: HTMLElement | null,
-  ): boolean;
-};
-/** A containing workspace owns contextual detail tabs; standalone readers retain their fallback. */
-export const ConversationTabsContext = createContext<{
-  openLink(channelId: string, url: string, rootId?: string): boolean;
-  openPanel(entry: PanelOpening, returnFocus?: HTMLElement | null): boolean;
-} | null>(null);
 
 type ConversationHostProps = Pick<
   ThreadPanelProps,
@@ -55,7 +36,7 @@ type ConversationHostProps = Pick<
   host: ConversationHostServices;
   threadId?: string | undefined;
   children(
-    interactions: ConversationHostInteractions,
+    interactions: ConversationInteractions,
     mediaReview: MediaReview | undefined,
   ): ReactNode;
 };
@@ -86,7 +67,6 @@ export function ConversationHost({
 }: ConversationHostProps) {
   const presented = useConversationPresentation();
   const detailPane = useContext(ConversationDetailPane);
-  const tabs = useContext(ConversationTabsContext);
   const presentation = useRef(presented);
   const trigger = useRef<HTMLElement | null>(null);
   useEffect(() => {
@@ -102,21 +82,27 @@ export function ConversationHost({
   const companion = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     if (presented && overlay?.panel && detailPane)
-      return detailPane.show(overlay, () => {
-        const connection = host.relay.snapshot();
-        if (
-          !mounted.current ||
-          !presentation.current ||
-          shown.current !== overlay ||
-          connection.status !== "ready" ||
-          connection.session !== session ||
-          connection.scope !== scope ||
-          !companion.current?.isConnected
-        )
-          return;
-        const focused = document.activeElement;
-        if (focused === trigger.current || focused === document.body)
-          companion.current.focus({ preventScroll: true });
+      return detailPane.show(overlay, {
+        shown() {
+          const connection = host.relay.snapshot();
+          if (
+            !mounted.current ||
+            !presentation.current ||
+            shown.current !== overlay ||
+            connection.status !== "ready" ||
+            connection.session !== session ||
+            connection.scope !== scope ||
+            !companion.current?.isConnected
+          )
+            return;
+          const focused = document.activeElement;
+          if (focused === trigger.current || focused === document.body)
+            companion.current.focus({ preventScroll: true });
+        },
+        // The pane shows one reader's detail; another reader's opening closes it.
+        displaced() {
+          setOverlay((current) => (current === overlay ? undefined : current));
+        },
       });
   }, [presented, overlay, detailPane, host.relay, session, scope]);
   // A panel never outlives its contribution.
@@ -158,7 +144,6 @@ export function ConversationHost({
   /** Replacements stay in the opening message's thread, like Channels. */
   const open = (url: string, rootId?: string) => {
     if (!active()) return false;
-    if (tabs?.openLink(channelId, url, rootId)) return true;
     const target = buzzLinkTarget(url, { viewer, communityOrigin: relayUrl });
     if (target) {
       setOverlay(undefined);
@@ -202,31 +187,6 @@ export function ConversationHost({
     >
       {children(
         {
-          openPanel: (panel, target, returnFocus) => {
-            if (!active() || !host.panels.snapshot().includes(panel))
-              return false;
-            if (
-              tabs?.openPanel(
-                {
-                  panel,
-                  target,
-                  channelId,
-                  ...(threadId && { rootId: threadId }),
-                },
-                returnFocus,
-              )
-            )
-              return true;
-            enter();
-            if (returnFocus) trigger.current = returnFocus;
-            setOverlay({
-              panel,
-              target,
-              channelId,
-              ...(threadId && { rootId: threadId }),
-            });
-            return true;
-          },
           onOpenLink: (url, origin) => open(url, origin?.rootId),
           canOpenLink: canOpen,
           onOpenMediaReview: (

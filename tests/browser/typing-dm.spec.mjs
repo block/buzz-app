@@ -2,6 +2,8 @@ import { pauseClock } from "./clock.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { hoverMessage, openThreadLink } from "./message-actions.mjs";
+import { channelRow, openChannel } from "./navigation.mjs";
+import { openInView } from "./rail-helpers.mjs";
 
 test.use({
   productionBroker: true,
@@ -15,9 +17,7 @@ test("DM composer publishes empty scoped typing through the authenticated broker
   app,
 }, testInfo) => {
   await open(page, app);
-  await page
-    .locator('[data-sidebar-section="dms"] [data-channel-id="dm-peer"]')
-    .click();
+  await openInView(page, "dms", "dm-peer");
   const composer = page.getByRole("textbox", { name: /^Message / }).last();
   await expect(composer).toBeVisible();
   await expect.poll(() => app.relay.hasRoute("primary", "dm-peer")).toBe(true);
@@ -48,10 +48,8 @@ test("DM receive lifecycle isolates participants, channels and threads and expir
   app,
 }) => {
   await open(page, app);
-  const dm = page.locator(
-    '[data-sidebar-section="dms"] [data-channel-id="dm-peer"]',
-  );
-  await dm.click();
+  const dm = channelRow(page, "dm-peer");
+  await openInView(page, "dms", "dm-peer");
   await expect.poll(() => app.relay.hasRoute("primary", "dm-peer")).toBe(true);
   const activity = page.getByRole("status", { name: "Conversation activity" });
   const pulse = app.activity({ channel: "dm-peer", participant: 0 });
@@ -62,18 +60,14 @@ test("DM receive lifecycle isolates participants, channels and threads and expir
   app.activity({ channel: "dm-peer", participant: 0, kind: 9 });
   await expect(activity).toBeEmpty();
   // Use a distinct participant in the group DM, outside the prior quiet period.
-  await page
-    .locator('[data-sidebar-section="dms"] [data-channel-id="dm-group"]')
-    .click();
+  await channelRow(page, "dm-group").click();
   await expect.poll(() => app.relay.hasRoute("primary", "dm-group")).toBe(true);
   app.activity({ channel: "dm-group", root: "a".repeat(64), participant: 0 });
   app.activity({ channel: "dm-group", participant: 1 });
   await expect(activity).toContainText("is typing");
   await dm.click();
   await expect(activity).toBeEmpty();
-  await page
-    .locator('[data-sidebar-section="dms"] [data-channel-id="dm-group"]')
-    .click();
+  await channelRow(page, "dm-group").click();
   await expect(activity).toContainText("is typing");
   // Signed-time expiry must run without another event arriving.
   await page.clock.install();
@@ -128,9 +122,7 @@ test("channel, thread and DM composers publish their own scope without publishin
     ["h", "alpha"],
     ["e", root.id, "", "reply"],
   ]);
-  await page
-    .locator('[data-sidebar-section="dms"] [data-channel-id="dm-peer"]')
-    .click();
+  await openInView(page, "dms", "dm-peer");
   await type(
     page.getByRole("textbox", { name: /^Message / }).last(),
     "private draft",
@@ -138,16 +130,11 @@ test("channel, thread and DM composers publish their own scope without publishin
   await expect.poll(() => pulses().length).toBe(3);
   expect(pulses()[2].event.tags).toEqual([["h", "dm-peer"]]);
   const dmRoot = app.append("primary", "dm-peer", "Typing barrier root");
-  await page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: "Beta", exact: true })
-    .click();
+  await openChannel(page, "beta");
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
-  await page
-    .locator('[data-sidebar-section="dms"] [data-channel-id="dm-peer"]')
-    .click();
+  await openInView(page, "dms", "dm-peer");
   await expect(
     page.getByRole("textbox", { name: /^Message / }).last(),
   ).toHaveText("private draft");

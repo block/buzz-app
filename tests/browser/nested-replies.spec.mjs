@@ -1,6 +1,7 @@
 import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { openAlpha } from "./rail-helpers.mjs";
 import { settlePanelMotion } from "./navigation.mjs";
 import { generateSecretKey, getPublicKey } from "nostr-tools";
 import { animationsSettled } from "./animations.mjs";
@@ -733,7 +734,7 @@ test.describe("touch branch controls", () => {
     page,
     app,
   }) => {
-    await open(page, app);
+    await openAlpha(page, app);
     const root = app.histories
       .get("primary/alpha")
       .find((event) => event.content === "Thread root 0");

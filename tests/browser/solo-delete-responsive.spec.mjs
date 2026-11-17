@@ -1,5 +1,10 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import {
+  conversationAction,
+  conversationActions,
+  showChannels,
+  soloRow,
+} from "./rail-helpers.mjs";
 
 const id = "11111111-1111-4111-8111-111111111111";
 test.use({
@@ -14,21 +19,13 @@ test("deleting the selected Solo chat leaves it while signing is pending", async
   app,
 }) => {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
-  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
-  const row = sidebar.getByRole("button", {
-    name: "Lifecycle channel",
-    exact: true,
-  });
+  const row = soloRow(page, id);
+  await expect(row).toHaveText(/Lifecycle channel/);
   await row.click();
-  await expect(
-    page.getByRole("button", { name: "Chat actions", exact: true }),
-  ).toBeVisible();
+  await expect(conversationActions(page)).toBeVisible();
   const original = page.url();
-  await page.getByRole("button", { name: "Chat actions", exact: true }).click();
-  await page
-    .getByRole("menuitem", { name: "Delete chat", exact: true })
-    .click();
+  await conversationActions(page).click();
+  await conversationAction(page, "Delete chat").click();
   const dialog = page.getByRole("dialog", {
     name: "Delete Lifecycle channel?",
   });
@@ -76,9 +73,7 @@ test("deleting the selected Solo chat leaves it while signing is pending", async
     page.getByRole("textbox", { name: "Message your agents" }),
   ).toHaveText("Continue while deletion finishes");
   await page.reload();
-  await expect(
-    sidebar.getByRole("button", { name: "Alpha", exact: true }),
-  ).toBeVisible();
+  await showChannels(page);
   await expect(row).toHaveCount(0);
   expect(app.report.lifecyclePublications.map((event) => event.kind)).toEqual([
     9008,

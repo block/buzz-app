@@ -13,7 +13,6 @@ const data: SidebarPreferences = {
     { id: "c", name: "C", order: 2 },
   ],
   assignments: { alpha: "a" },
-  starred: [],
   muted: [],
 };
 const ordered = (ids: readonly string[]): SidebarGroups => ({
@@ -37,7 +36,6 @@ function setup(write: SidebarSectionOrderMutator) {
     read,
     available: true,
     write: async () => data,
-    writeStar: async () => [],
     writeOrder: write,
   });
   return { store, queries: store.queries, read };

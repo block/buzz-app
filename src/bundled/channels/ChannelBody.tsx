@@ -60,9 +60,11 @@ export const ChannelBody = memo(function ChannelBody({
   );
   const newest = window.rows.at(-1)?.id;
   const settled = window.status === "ready" || window.status === "error";
+  // Rows the session holds before the first page lands are not shown yet.
+  const shown = settled && !holding;
   useEffect(() => {
-    if (newest || settled) onContentReady?.(channelId);
-  }, [channelId, newest, settled, onContentReady]);
+    if (shown) onContentReady?.(channelId);
+  }, [channelId, shown, onContentReady]);
   useLayoutEffect(() => {
     // Repeat calls for the same open are ignored; only the first rows count.
     // Any row counts as content, since a saved scroll position may keep the

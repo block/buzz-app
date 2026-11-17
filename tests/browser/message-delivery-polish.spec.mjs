@@ -29,6 +29,28 @@ test("delivery Retry explains its state on hover and focus", async ({
 // the specimen gallery does. Both engines must hit-test the whole action.
 import { test as appTest } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
+import { hideNarrowConversationList } from "./navigation.mjs";
+
+// A resize re-measures the detail frame on the next rendering update; a
+// narrow frame lays Team's list over the reader, so wait for the measure and
+// close the list before the test works in the reader.
+async function resizeTo(page, width, height) {
+  await page.setViewportSize({ width, height });
+  await expect
+    .poll(() =>
+      page
+        .locator("[data-detail-workspace]")
+        .evaluate(
+          (frame) =>
+            frame.hasAttribute("data-narrow") ===
+            frame.clientWidth <
+              48 *
+                parseFloat(getComputedStyle(document.documentElement).fontSize),
+        ),
+    )
+    .toBe(true);
+  await hideNarrowConversationList(page);
+}
 
 appTest.describe("app delivery", () => {
   appTest.use({ productionBroker: true });
@@ -65,7 +87,7 @@ appTest.describe("app delivery", () => {
       await expect(retry).toBeVisible({ timeout: 15000 });
       await page.evaluate(() => document.fonts.ready);
       for (const width of [400, 800, 1440]) {
-        await page.setViewportSize({ width, height: 950 });
+        await resizeTo(page, width, 950);
         for (const fontSize of [32, 16]) {
           await page.evaluate((size) => {
             document.documentElement.style.fontSize = `${size}px`;
@@ -98,6 +120,8 @@ appTest.describe("app delivery", () => {
           expect(geometry.left).toBeGreaterThanOrEqual(geometry.clipLeft);
           expect(geometry.right).toBeLessThanOrEqual(geometry.clipRight);
           expect(geometry.hit).toBe(true);
+          // Closing a narrow list was a pointer press; keys restore keyboard focus.
+          await page.keyboard.press("Tab");
           await retry.focus();
           await expect(retry).toBeFocused();
           await expect(
@@ -165,6 +189,8 @@ appTest.describe("app delivery removal", () => {
         const trigger = row(text).getByRole("button", {
           name: "More message actions",
         });
+        // Real keyboard navigation prepares the untouched row's controls.
+        await page.keyboard.press("Tab");
         await trigger.focus();
         await trigger.press("Enter");
         await page

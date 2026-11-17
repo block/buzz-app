@@ -1482,6 +1482,18 @@
   .buzz-tabs[data-variant="buttons"] .buzz-tabs-list {
     gap: var(--space-2);
   }
+  /* After a scroll, until the pointer moves, WebKit keeps the hover on the
+     button that scrolled out from under it. Show its resting fill instead. */
+  .buzz-tabs[data-variant="buttons"]
+    .buzz-tabs-scroll-strip[data-scrolled]
+    .buzz-button[data-variant="subtle"]:hover {
+    background: var(--interaction-fill);
+  }
+  .buzz-tabs[data-variant="buttons"]
+    .buzz-tabs-scroll-strip[data-scrolled]
+    .buzz-button[data-variant="prominent"]:hover {
+    background: var(--affordance-prominent);
+  }
 
   /* --- panel: an underline on a plain surface ---------------- */
 
@@ -1652,6 +1664,7 @@
   }
   .panel-header[data-history-overlay] {
     isolation: isolate;
+    align-items: start;
     height: 0;
     min-height: 0;
     padding-block: 0;
@@ -1660,6 +1673,17 @@
   }
   .panel-header[data-history-overlay] > * {
     margin-block-start: var(--space-4);
+  }
+  .panel-header[data-history-overlay]:where(
+    :not([data-variant="conversation"])
+  ) {
+    padding-inline: var(--space-4);
+  }
+  /* The tab strip adds 4px; align the visible pill with the header's inset. */
+  .panel-header[data-history-overlay]:where(:not([data-variant="conversation"]))
+  > .panel-header-title {
+    margin-block-start: var(--space-3);
+    margin-inline-start: calc(-1 * var(--space-1));
   }
   .panel-header[data-history-overlay] > .panel-header-material {
     --scroll-edge-surface: var(--surface-panel);
@@ -1673,6 +1697,12 @@
   .conversation-history-viewport > [data-message-scroller] {
     padding-block-start: var(--history-header-inset, 0px);
     scroll-padding-block-start: var(--history-header-inset, 0px);
+  }
+  /* Paging controls sit below a header that floats over the history. */
+  .conversation-history-viewport
+    > [data-message-scroller]
+    [data-history-space] {
+    padding-block-start: var(--history-header-inset, 0px);
   }
   .panel-header[data-variant="conversation"] > .panel-header-title {
     grid-area: 1 / 2;
@@ -1779,6 +1809,9 @@
     flex: 1 1 auto;
     min-width: 0;
     align-items: center;
+    /* A section's title is a control, not selectable document text. */
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   .navigation-section-heading-actions {
@@ -2213,11 +2246,12 @@
     }
   }
 
-  .navigation-item[data-highlighted]:not(
-    [data-selected],
-    [data-disabled],
-    :disabled
-  ) {
+  /* A row keeps its fill while its context menu is present: the modal menu
+     takes native hover away from it. */
+  :is(
+    .navigation-item[data-highlighted],
+    [data-rail-row][data-context-menu-present] .navigation-item
+  ):not([data-selected], [data-disabled], :disabled) {
     --text-subtle: var(--interaction-row-text);
     --text-metadata: var(--interaction-row-metadata);
     background: var(--interaction-row-hover);
@@ -2488,13 +2522,11 @@
     overflow: visible;
   }
   .panel-header .buzz-tabs[data-variant="navigation"] .buzz-tabs-list {
-    height: auto;
-    min-height: calc(var(--size-control-sm) + 2 * var(--space-2));
-    align-items: center;
-    /* Let glass shadows breathe inside the scrollport; cancel that space
-       outside it so the controls retain the shared header alignment. */
-    padding: var(--space-2);
-    margin: calc(-1 * var(--space-2));
+    /* A fixed height with the lower inset left as free space: WebKit's
+       scrollbar takes its track from that space, not from the header. */
+    height: calc(var(--size-control-sm) + 2 * var(--space-1));
+    /* Keep capsule edges and elevation inside the scrollport's clip. */
+    padding: var(--space-1) var(--space-1) 0;
   }
   .buzz-tabs[data-variant="navigation"] .buzz-tabs-item {
     @apply glass-secondary;
@@ -2515,6 +2547,11 @@
   }
   .buzz-tabs[data-variant="navigation"] .buzz-tabs-item:has([data-selected]) {
     background: var(--bg-glass-secondary-hover);
+  }
+  .buzz-tabs[data-variant="navigation"]
+    .navigation-item[aria-selected="false"]
+    :is(.navigation-item-label, .buzz-tabs-icon) {
+    color: var(--text-disabled);
   }
   @media (hover: hover) and (pointer: fine) {
     .buzz-tabs[data-variant="navigation"] .buzz-tabs-item:hover {

@@ -1,5 +1,5 @@
-import { openChannelDetails } from "./channel-details.mjs";
-import { openPage } from "./navigation.mjs";
+import { chooseChannelAction, openChannelDetails } from "./channel-details.mjs";
+import { openChannel, openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { fixtureRelayUrl } from "../relay-config.ts";
 
@@ -27,11 +27,8 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
     { viewer: app.viewer, relay: fixtureRelayUrl },
   );
   await page.goto(app.origin);
-  await openPage(page, "Messages");
-  await page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: "Alpha", exact: true })
-    .click();
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   await openChannelDetails(page);
   const settings = page.getByRole("complementary", {
     name: "Channel settings",
@@ -42,16 +39,7 @@ test("Canvas confirmation backdrop dismisses only the top layer and retains the 
     name: "Channel settings",
     exact: true,
   });
-  const trigger = page.getByRole("button", {
-    name: "Channel actions",
-    exact: true,
-  });
-  const openCanvas = async () => {
-    await trigger.click();
-    await page
-      .getByRole("menuitem", { name: "View canvas", exact: true })
-      .click();
-  };
+  const openCanvas = () => chooseChannelAction(page, "View canvas");
   const openEdit = async () => {
     await openCanvas();
     await expect(

@@ -1,6 +1,7 @@
 import { ActivityNavigationProvider } from "./ActivityNavigation";
 import { PageNavigation } from "./PageNavigation";
 import { AppDock } from "./AppDock";
+import { ConnectionNotices } from "./ConnectionNotices";
 import styles from "./AppShell.module.css";
 import { ResizeHandle } from "../../features/panels/ResizeHandle";
 import { RailNavigation } from "./RailNavigation";
@@ -9,6 +10,8 @@ import { ChatIcons } from "../../features/conversation/ChatIconSlot";
 import { ListColumn } from "./ListColumn";
 import { SidePanelPresence } from "../../features/panels/side-panel-presence";
 import { useListSection } from "./list-section";
+import { useRailInputs } from "./rail-model";
+import { syncRail } from "./rail-sync";
 import { routedSection, useListColumn } from "./list-column";
 import { navigationOwner, orderPages } from "./presentation";
 import {
@@ -61,6 +64,8 @@ import { PanelFrame } from "../../features/panels/PanelFrame";
 import { useRelayConnection } from "../../features/relay/react";
 import { macTitleBarDragHandlers } from "./title-bar";
 import { hasIntegratedWindowControls, WindowControls } from "./WindowControls";
+
+const RAIL_MIN_WIDTH = 256;
 
 const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
 const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
@@ -177,13 +182,21 @@ function AppShellContent({
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const listColumn = useListColumn(searchServices?.navigation);
   const askList = listColumn.ask;
+  const railScope = connection.viewer ? connection.scope : undefined;
+  useEffect(
+    () =>
+      railScope && connection.viewer
+        ? syncRail(connection.session, railScope, connection.viewer)
+        : undefined,
+    [connection.session, railScope, connection.viewer],
+  );
   const listSection = useListSection(
     connection.session,
     connection.viewer ? connection.scope : undefined,
     searchServices?.navigation,
-    searchServices?.sidebarSections,
     listColumn.list,
   );
+  useRailInputs(connection.session, pages, searchServices?.sidebarSections);
   // Open side panels report themselves; the layout does not search for them.
   const [sidePanels, setSidePanels] = useState(0);
   const sidePanelPresence = useMemo(
@@ -241,10 +254,11 @@ function AppShellContent({
         : undefined,
     [connection.viewer, connection.scope],
   );
-  const [railWidth, setRailWidth] = useState(304);
+  const [resizedRailWidth, setRailWidth] = useState(304);
+  const railWidth = Math.max(RAIL_MIN_WIDTH, resizedRailWidth);
   const railWorkspace = useRef<HTMLDivElement>(null);
   const resizeRail = (width: number) => {
-    setRailWidth(Math.min(440, Math.max(240, width)));
+    setRailWidth(Math.min(440, Math.max(RAIL_MIN_WIDTH, width)));
   };
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationToggle = useRef<HTMLButtonElement>(null);
@@ -353,7 +367,6 @@ function AppShellContent({
       showPrimaryNavigation={
         !(connection.viewer && connection.scope && searchServices?.navigation)
       }
-      search={null}
       open={visibleRail || compactRail}
       compact={compactRail}
       onDismiss={() => {
@@ -366,11 +379,12 @@ function AppShellContent({
       currentPage={selected}
       onSelect={onSelect}
       previews
-      community={null}
-      profile={null}
-      settings={null}
       header={railActions}
     >
+      <ConnectionNotices
+        communities={communities}
+        federatedIdentity={federatedIdentity}
+      />
       {shellScope && searchServices && railNavigator ? (
         <RailNavigation
           key={connection.scope}
@@ -380,8 +394,10 @@ function AppShellContent({
           sidebarSections={searchServices.sidebarSections}
           sidebarScope={searchServices.sidebarScope}
           navigator={railNavigator}
-          listNavigator={listNavigator ?? searchServices.navigation}
           openInSection={openInSection}
+          listedSection={
+            listColumn.list.open ? listSection?.section : undefined
+          }
           pages={pages}
           selected={selected}
           onSelect={onSelect}
@@ -503,7 +519,7 @@ function AppShellContent({
               <ResizeHandle
                 label="Resize app sidebar"
                 width={railWidth}
-                min={240}
+                min={RAIL_MIN_WIDTH}
                 max={440}
                 target={railWorkspace}
                 property="--shell-rail-width"
@@ -575,7 +591,6 @@ function AppShellContent({
                                               searchServices.sidebarSections
                                             }
                                             navigator={listNavigator}
-                                            listNavigator={listNavigator}
                                             openInSection={openInSection}
                                             pages={pages}
                                             selected={selected}

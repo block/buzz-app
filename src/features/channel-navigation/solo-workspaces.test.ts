@@ -14,7 +14,6 @@ it("projects the existing Solo catalog and writer, preserving uncertainty and fe
     read: async () => ({
       sections,
       assignments: { privateChat: "existing" },
-      starred: [],
       muted: [],
     }),
     write: async () => {
@@ -27,7 +26,7 @@ it("projects the existing Solo catalog and writer, preserving uncertainty and fe
         uncertain = false;
         throw new Error("Confirmation lost");
       }
-      return { sections, assignments: {}, starred: [], muted: [] };
+      return { sections, assignments: {}, muted: [] };
     },
   });
   const api = createSoloWorkspaces(

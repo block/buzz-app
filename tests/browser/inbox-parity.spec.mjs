@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { conversationList, openChannel, openPage } from "./navigation.mjs";
 
 test.use({
   productionBroker: true,
@@ -29,13 +29,12 @@ test("the same signed mention opens its profile in Inbox and Channels", async ({
     undefined,
     [["p", app.viewer]],
   );
-  const inbox = page.getByRole("region", { name: "Activity", exact: true });
   // The thread's preview follows whichever reply loaded last.
-  await inbox
-    .getByRole("list", { name: "Activity", exact: true })
-    .getByRole("button", { name: "Open Alice Fixture in #Alpha", exact: true })
+  await conversationList(page)
+    .locator("[data-activity-event] [data-conversation-row]")
+    .filter({ hasText: "in #Alpha" })
     .click();
-  const detail = inbox.getByRole("region", {
+  const detail = page.getByRole("region", {
     name: "Conversation in Alpha",
     exact: true,
   });
@@ -60,7 +59,7 @@ test("the same signed mention opens its profile in Inbox and Channels", async ({
   });
   await composer.fill("Preserved Inbox reply");
   // Inbox hosts the profile as a tab beside the thread, as Channels' tabs do.
-  const side = inbox.getByRole("tablist", { name: "Panel tabs" });
+  const side = page.getByRole("tablist", { name: "Panel tabs" });
   const profileTab = side.getByRole("tab", {
     name: "Fixture Reader",
     exact: true,
@@ -69,7 +68,7 @@ test("the same signed mention opens its profile in Inbox and Channels", async ({
     name: "Thread root 0",
     exact: true,
   });
-  const profile = inbox.getByRole("complementary", {
+  const profile = page.getByRole("complementary", {
     name: "Profile",
     exact: true,
   });
@@ -94,10 +93,11 @@ test("the same signed mention opens its profile in Inbox and Channels", async ({
   await expect(composer).toHaveJSProperty("value", "Preserved Inbox reply");
   // Channels shows the same signed reply in its own thread.
   await page.setViewportSize({ width: 1280, height: 900 });
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
+  // The thread stays open beside the channel; reopen it from the channel.
   await page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: /^Alpha/ })
+    .getByRole("button", { name: "Close Thread root 0 tab", exact: true })
     .click();
   await page
     .locator(`[data-message-id="${root.id}"]`)

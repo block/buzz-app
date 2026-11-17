@@ -31,7 +31,6 @@ import {
 import { ChannelDurationField } from "./ChannelDurationField";
 import { ChannelTextField } from "./ChannelTextField";
 import { SidebarGroupIcon } from "./SidebarGroupIcon";
-import { SidebarStarIcon } from "./SidebarStarIcon";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -56,7 +55,6 @@ type Props = {
     icon?: string;
   }>[];
   initialGroup: string;
-  initialStarred?: boolean;
   groupsReady: boolean;
 };
 export function CreateChannelDialog(props: Props) {
@@ -86,7 +84,6 @@ function OpenCreateChannelDialog({
   agents,
   destinations,
   initialGroup,
-  initialStarred = false,
   groupsReady,
 }: Props) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -121,7 +118,6 @@ function OpenCreateChannelDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [groupId, setGroupId] = useState("");
-  const [starred, setStarred] = useState(false);
   const templates = useChannelTemplates();
   const teams = useTeams(agents);
   const [chosenTemplate, setTemplateId] = useState("");
@@ -215,9 +211,8 @@ function OpenCreateChannelDialog({
     setConfirmDiscard(false);
     setError("");
     setGroupId(initialGroup);
-    setStarred(initialStarred);
     setTemplateId("");
-  }, [open, initialGroup, initialStarred]);
+  }, [open, initialGroup]);
 
   const normalizedName = canonicalDetailsName(name);
   const errors = detailsDraftErrors({
@@ -263,13 +258,12 @@ function OpenCreateChannelDialog({
         ...(description.trim() ? { description: description.trim() } : {}),
         // The selected template stays part of the request even when it
         // currently resolves to nothing, so a retry still matches it.
-        ...(groupId || starred || templateId
+        ...(groupId || templateId
           ? {
               setup: {
                 agents: templateSetup?.agents ?? [],
                 canvas: templateSetup?.canvas ?? "",
                 groupId,
-                ...(starred ? { starred: true } : {}),
                 templateId,
               },
             }
@@ -317,14 +311,10 @@ function OpenCreateChannelDialog({
         ) : (
           <span className={styles.title}>
             Create a channel
-            {(groupId || starred) && (
+            {groupId && (
               <>
                 {" in "}
-                {starred ? (
-                  <>
-                    <SidebarStarIcon />{" "}
-                  </>
-                ) : destination?.icon ? (
+                {destination?.icon ? (
                   <>
                     <SidebarGroupIcon
                       icon={destination.icon}
@@ -332,7 +322,7 @@ function OpenCreateChannelDialog({
                     />{" "}
                   </>
                 ) : null}
-                {starred ? "Starred" : (destination?.name ?? "saved group")}
+                {destination?.name ?? "saved group"}
               </>
             )}
           </span>

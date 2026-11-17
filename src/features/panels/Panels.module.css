@@ -229,14 +229,36 @@ html[data-keyboard-input] :is(.subviewBase, .subview) {
   min-height: 0;
   height: 100%;
 }
+/* A thread's compact tab strip needs less history clearance than avatars. */
+.workspace:has(
+  > header[data-history-overlay]:not([data-variant="conversation"])
+) {
+  --history-header-inset: calc(var(--size-control-sm) + var(--space-8));
+  --history-leading-space: 0px;
+}
 .workspace > header {
   flex-wrap: nowrap;
   flex-shrink: 0;
+}
+/* Workspace tab headers share the same visible 16px edge insets. */
+.workspace > header:where(:not([data-variant="conversation"])) {
+  padding-inline: var(--space-4);
+}
+.workspace
+  > header:where(:not([data-variant="conversation"], [data-history-overlay])) {
+  padding-block: var(--space-3);
 }
 .workspace
   > header:not([data-variant="conversation"])
   [class="panel-header-title"]:not(:has(> [data-variant="navigation"])) {
   overflow: hidden;
+}
+.workspace
+  > header
+  [class~="panel-header-title"]:has(
+    > [class~="buzz-tabs"][data-variant="navigation"]
+  ) {
+  margin-inline-start: calc(-1 * var(--space-1));
 }
 .workspace > header [class="panel-header-actions"] {
   flex-shrink: 0;

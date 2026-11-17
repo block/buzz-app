@@ -1,6 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { openPage } from "./navigation.mjs";
+import { conversationList, openPage } from "./navigation.mjs";
 
 test.use({
   productionBroker: true,
@@ -21,15 +21,11 @@ test("reveals an exact thread target after effect cleanup and setup replay", asy
 }) => {
   await open(page, app);
   await openPage(page, "Activity");
-  const inbox = page.getByRole("region", { name: "Activity", exact: true });
-  await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
-  const opener = inbox
-    .getByRole("list", { name: "Activity", exact: true })
-    .getByRole("listitem")
-    .filter({ hasText: "Unread reply 1" })
-    .getByRole("button", { name: /^Open / });
+  const opener = conversationList(page)
+    .locator("[data-activity-event] [data-conversation-row]")
+    .filter({ hasText: "Unread reply 1" });
   await opener.click();
-  const target = inbox
+  const target = page
     .getByRole("region", { name: "Conversation in Alpha", exact: true })
     .locator("[data-message-id]")
     .filter({ hasText: "Unread reply 1" });

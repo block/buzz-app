@@ -1,4 +1,9 @@
-import { openPage, pageChoices, pageChoice } from "./navigation.mjs";
+import {
+  channelRow,
+  openPage,
+  pageChoices,
+  pageChoice,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 test.use({
@@ -150,7 +155,7 @@ test("native Settings traversal retains a dirty Profile behind an unavailable pr
   ).toBe(true);
 });
 
-test("Messages default resolution returns opened to cold and warm callers without an extra visit", async ({
+test("Team's default list returns opened to cold and warm callers without an extra visit", async ({
   page,
   app,
 }) => {
@@ -170,7 +175,7 @@ test("Messages default resolution returns opened to cold and warm callers withou
       exact: true,
     }),
   ).toBeVisible();
-  await expectPageChoice(page, "Messages", 1);
+  await expectPageChoice(page, "Team", 1);
   for (const mode of ["cold", "warm"]) {
     const result = await page.evaluate(async () => {
       const nav = window.fixtureNavigation;
@@ -185,9 +190,17 @@ test("Messages default resolution returns opened to cold and warm callers withou
     });
     expect(result.result, mode).toEqual({ status: "opened" });
     expect(result.resolved.id, mode).toBe(result.visit);
-    expect(result.resolved.target.channelId, mode).toBe("alpha");
+    // Team opens its list with nothing selected, rather than a channel.
+    expect(result.resolved.target, mode).toMatchObject({
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
+    });
     await expect(
-      page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+      page.getByRole("heading", {
+        name: "No conversation selected",
+        exact: true,
+      }),
     ).toBeVisible();
     await page.getByRole("button", { name: "Go back", exact: true }).click();
     await expect(
@@ -211,7 +224,9 @@ test("native Alt arrows preserve composer editing; deliberate history shortcuts 
       exact: true,
     }),
   ).toBeVisible();
-  await openPage(page, "Messages");
+  // Team opens its list with nothing selected; the list's row reopens Alpha.
+  await openPage(page, "Team");
+  await channelRow(page, "alpha").click();
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,

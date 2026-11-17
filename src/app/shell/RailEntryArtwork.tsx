@@ -1,4 +1,6 @@
+import { useMemo, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
+import { selectProfiles } from "../../features/relay/profile-selection";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RailEntry } from "./rail-pins";
 import type { useIdentityNames } from "../../features/identity-names/react";
@@ -21,7 +23,6 @@ export function RailEntryArtwork({
   selected,
   session,
   channelsById,
-  profiles,
   resolveName,
   identities,
   agentEntries,
@@ -32,7 +33,6 @@ export function RailEntryArtwork({
   selected: boolean;
   session: RelaySession;
   channelsById: ReadonlyMap<string, ChannelSummary>;
-  profiles: ReturnType<RelaySession["profiles"]["snapshot"]>;
   resolveName: ReturnType<typeof useIdentityNames>;
   identities: ReturnType<
     RelaySession["agentChoices"]["snapshot"]
@@ -59,6 +59,34 @@ export function RailEntryArtwork({
     person,
   );
   const statusBadge = presence === "unknown" ? undefined : presence;
+  const agent =
+    entry.kind === "chat"
+      ? identities.find((agent) => channel?.members?.includes(agent.pubkey))
+      : undefined;
+  // A row follows only the people it draws: someone else's profile arriving
+  // renders nothing here.
+  const own = [
+    ...participants.slice(0, 3),
+    ...(person ? [person] : []),
+    ...(agent ? [agent.pubkey] : []),
+  ].join(":");
+  const selection = useMemo(
+    () => selectProfiles(session.profiles, own ? own.split(":") : []),
+    [session.profiles, own],
+  );
+  const profiles = useSyncExternalStore(
+    selection.subscribe,
+    selection.snapshot,
+    selection.snapshot,
+  );
+  const isAgent =
+    entry.kind === "agent" ||
+    entry.kind === "chat" ||
+    !!(
+      person &&
+      (profiles.get(person)?.isAgent ||
+        identities.some((agent) => agent.pubkey === person))
+    );
   const avatarArtwork = () => {
     if (avatarOnly && participants.length > 1)
       return (
@@ -76,7 +104,7 @@ export function RailEntryArtwork({
       return (
         <Avatar
           size={avatarOnly ? "fill" : size}
-          shape={entry.kind === "agent" ? "squircle" : "circle"}
+          shape={isAgent ? "squircle" : "circle"}
           src={avatarMedia(entry.picture, session.media)}
           alt=""
           fallback={entry.label}
@@ -85,9 +113,6 @@ export function RailEntryArtwork({
         />
       );
     if (entry.kind === "chat" && !avatarOnly) {
-      const agent = identities.find((agent) =>
-        channel?.members?.includes(agent.pubkey),
-      );
       return (
         <Avatar
           size={size}
@@ -107,6 +132,7 @@ export function RailEntryArtwork({
     ) : avatarOnly || size === "fill" ? (
       <Avatar
         size="fill"
+        shape={isAgent ? "squircle" : "circle"}
         alt=""
         fallback={entry.label}
         src={avatarMedia(
@@ -137,7 +163,7 @@ export function RailEntryArtwork({
         <span
           className={styles.pinSelection}
           data-channel={entry.kind === "channel" || undefined}
-          data-agent={entry.kind === "agent" || undefined}
+          data-agent={isAgent || undefined}
           aria-hidden="true"
         >
           <span className={styles.pinSelectionArtwork}>{avatar}</span>

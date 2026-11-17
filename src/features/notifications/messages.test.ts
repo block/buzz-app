@@ -818,7 +818,6 @@ it.each(["direct", "thread"] as const)(
       decode: async () => ({
         sections: [],
         assignments: {},
-        starred: [],
         muted: [],
       }),
       write,
@@ -870,7 +869,6 @@ it("a confirmed mute cancels an alert waiting on permission, even after unmute",
     decode: async () => ({
       sections: [],
       assignments: {},
-      starred: [],
       muted: [],
     }),
     write: async ({ muted }) => (muted ? ["room"] : []),
@@ -913,7 +911,6 @@ it.each([true, false])(
       .mockResolvedValue({
         sections: [],
         assignments: {},
-        starred: [],
         muted: muted ? ["room"] : [],
       });
     const h = await setup(Promise.resolve(), undefined, undefined, { decode });

@@ -1,5 +1,4 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { sidebarSections } from "../../bundled/channels/sidebar-sections";
 import { subscribeRelayTraffic, type LiveCallbacks } from "./live";
 import { createRelaySession } from "./session";
 import {
@@ -81,12 +80,11 @@ async function setup(singletons = false) {
     ],
   });
   const rows = () =>
-    sidebarSections(owner.session.channels.list().channels, {
-      starred: ["a"],
-      muted: [],
-      sections: [],
-      assignments: {},
-    }).flatMap((section) => section.rows.map((channel) => channel.id));
+    owner.session.channels
+      .list()
+      .channels.filter((channel) => !channel.archived)
+      .map((channel) => channel.id)
+      .sort();
   try {
     await socket.receive(["AUTH", "challenge"]);
     const auth = socket.sent.find(([type]) => type === "AUTH")?.[1] as {

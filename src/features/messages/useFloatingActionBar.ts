@@ -425,7 +425,18 @@ export function useFloatingActionBar(
       const rtl = getComputedStyle(row).direction === "rtl";
       const viewport = scroller?.getBoundingClientRect();
       const rowBounds = row.getBoundingClientRect();
-      if (viewport && (threadRoot ? whole.bottom : whole.top) <= viewport.top) {
+      // A header floating over the thread covers the scroller's top inset.
+      const headerEdge =
+        threadRoot && scroller && viewport
+          ? viewport.top +
+            (Number.parseFloat(
+              getComputedStyle(scroller).scrollPaddingBlockStart,
+            ) || 0)
+          : 0;
+      if (
+        viewport &&
+        (threadRoot ? whole.bottom <= headerEdge : whole.top <= viewport.top)
+      ) {
         hide();
         return;
       }
@@ -458,9 +469,9 @@ export function useFloatingActionBar(
       const nested =
         threadRoot &&
         !!viewport &&
-        abovePaintedTop < viewport.top + height + overlap;
+        abovePaintedTop < headerEdge + height + overlap;
       const paintedTop = nested
-        ? Math.max(rowBounds.top + overlap, viewport.top + overlap)
+        ? Math.max(rowBounds.top + overlap, headerEdge + overlap)
         : abovePaintedTop;
       const top = paintedTop + height;
       if (viewport && paintedTop >= viewport.bottom) {

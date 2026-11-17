@@ -10,21 +10,10 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function Filters({
-  scope,
-  layout = "sidebar",
-}: {
-  scope: string;
-  layout?: "sidebar" | "collection";
-}) {
+function Filters({ scope }: { scope: string }) {
   const [view, setView] = useActivityView(scope);
   return (
-    <ActivityFilters
-      view={view}
-      onChange={setView}
-      layout={layout}
-      agentViews
-    />
+    <ActivityFilters title="Solo" view={view} onChange={setView} agentViews />
   );
 }
 
@@ -36,7 +25,7 @@ test("Messages controls in the card and page share live filters within their acc
         <Filters scope="viewer-a:community-a" />
       </section>
       <section aria-label="Page">
-        <Filters scope="viewer-a:community-a" layout="collection" />
+        <Filters scope="viewer-a:community-a" />
       </section>
       <section aria-label="Other account">
         <Filters scope="viewer-b:community-a" />
@@ -62,10 +51,11 @@ test("Messages controls in the card and page share live filters within their acc
   await user.click(
     await screen.findByRole("menuitemradio", { name: "Unread only" }),
   );
-  expect(card.getByRole("button", { name: "Showing unread" })).toBeVisible();
   await user.click(menu);
   await user.click(await screen.findByRole("menuitemradio", { name: "A–Z" }));
-  await user.click(menu);
+  await user.click(
+    card.getByRole("button", { name: "Filter and sort conversations" }),
+  );
   expect(
     await screen.findByRole("menuitemradio", { name: "Unread only" }),
   ).toHaveAttribute("aria-checked", "true");

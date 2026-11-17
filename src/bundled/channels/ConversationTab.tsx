@@ -159,6 +159,7 @@ export function ConversationTab({
       mediaReview={media.review}
     >
       <section
+        ref={inlineReply.surface}
         data-attachment-drop-zone=""
         className={styles.conversation}
         aria-label={`Conversation in ${channel.name}`}

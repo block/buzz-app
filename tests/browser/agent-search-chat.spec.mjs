@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { rail } from "./navigation.mjs";
 
 const earlier = "33333333-3333-4333-8333-333333333333";
 // A chat with the agent whose name does not match the search.
@@ -24,11 +25,11 @@ test("search opens a new Solo chat with one of the viewer's agents", async ({
   // The same unproven ordering mitigation for the WebKit lost-fill failure as
   // the public search destination test in global-search.spec.mjs, which waits
   // for a rendered conversation. This page opens none, so wait for the
-  // sidebar's Solo chats instead.
+  // rail's Solo chats instead.
   await expect(
-    page
-      .getByRole("navigation", { name: "Solo conversations" })
-      .getByRole("button", { name: "Earlier with Honey", exact: true }),
+    rail(page)
+      .locator('[data-rail-section="solo"]')
+      .getByText("Earlier with Honey", { exact: true }),
   ).toBeVisible();
   // Navigation load can finish before React mounts the shell shortcut owner.
   const search = page.getByRole("button", { name: "Search Buzz", exact: true });

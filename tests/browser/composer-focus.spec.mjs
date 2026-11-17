@@ -1,6 +1,6 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { openChannel, openDm, openPage, rail } from "./navigation.mjs";
 import { open } from "./timeline.mjs";
 import { createHash } from "node:crypto";
 
@@ -72,14 +72,13 @@ test("a successful picker image upload returns focus with the existing caret", a
   }
 });
 
-// Browser boundary: real sidebar navigation must hand focus to the mounted
+// Browser boundary: real list navigation must hand focus to the mounted
 // ProseMirror editor, including after a warm return; typing must need no click.
 test("selecting a channel or DM focuses its composer and retains drafts", async ({
   page,
   app,
 }) => {
   await open(page, app);
-  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const conversation = page.getByRole("article", { name: "Conversation" });
   const input = conversation.getByRole("textbox");
   for (const [index, name] of [
@@ -88,7 +87,8 @@ test("selecting a channel or DM focuses its composer and retains drafts", async 
     "Beta",
     "Alice Fixture",
   ].entries()) {
-    await sidebar.getByRole("button", { name, exact: true }).click();
+    if (name === "Beta") await openChannel(page, "beta");
+    else await openDm(page, name);
     await expect(input).toBeFocused();
     if (index < 2) {
       await page.keyboard.type(`Draft for ${name}`);
@@ -186,9 +186,6 @@ test.describe("retained agent focus", () => {
     app,
   }) => {
     await open(page, app);
-    const sidebar = page.getByRole("navigation", {
-      name: "Subscribed channels",
-    });
     const input = page
       .getByRole("article", { name: "Conversation" })
       .getByRole("textbox");
@@ -218,8 +215,8 @@ test.describe("retained agent focus", () => {
     await expect(page.locator(`[data-message-id="${first.id}"]`)).toBeVisible();
     const retained = "@Bob Fixture @Carol Fixture ";
     await expect(input).toHaveJSProperty("value", retained);
-    await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
-    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+    await openChannel(page, "beta");
+    await openChannel(page, "alpha");
     // No editor click/fill/focus/selection setter or sleep after navigation.
     // Inspect native caret without giving ProseMirror a chance to repair it.
     const caret = await input.evaluate((element) => {
@@ -328,10 +325,14 @@ test.describe("text field focus appearance", () => {
       await page.setViewportSize({ width: 1440, height: 950 });
 
       // The same shared recipe must reach ordinary fields, not just composers.
-      await page
-        .getByRole("button", { name: "Create channel", exact: true })
+      await rail(page)
+        .getByRole("button", { name: "Create", exact: true })
         .click();
-      const dialog = page.getByRole("dialog");
+      await page
+        .getByRole("menu", { name: "New", exact: true })
+        .getByRole("menuitem", { name: /^New channel/ })
+        .click();
+      const dialog = page.getByRole("dialog", { name: "Create a channel" });
       const name = dialog.getByRole("textbox", { name: "Name", exact: true });
       const description = dialog.getByRole("textbox", {
         name: "Description",

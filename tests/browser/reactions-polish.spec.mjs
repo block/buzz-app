@@ -626,9 +626,12 @@ test("reaction previews center above each emoji bubble", async ({ page }) => {
         .poll(async () => {
           const anchor = await glyph.boundingBox();
           const popup = await preview.boundingBox();
-          return Math.abs(
-            popup.x + popup.width / 2 - (anchor.x + anchor.width / 2),
-          );
+          const center = anchor.x + anchor.width / 2;
+          // A bubble too near the window's edge for a centered card holds the
+          // card against that edge instead.
+          if (center - popup.width / 2 < 8)
+            return popup.x >= 0 && popup.x <= 8 ? 0 : popup.x;
+          return Math.abs(popup.x + popup.width / 2 - center);
         })
         .toBeLessThan(1);
       const anchor = await glyph.boundingBox();

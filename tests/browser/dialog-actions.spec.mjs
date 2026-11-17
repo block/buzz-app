@@ -1,4 +1,4 @@
-import { openCommunityPicker } from "./navigation.mjs";
+import { openCommunityPicker, revealRail } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 // Real font metrics, footer overflow and native focus scrolling require browsers.
@@ -16,6 +16,7 @@ test("community dialog keeps oversized actions intact, reachable and keyboard op
     route.fulfill({ json: { name: "Secondary", policy: null } }),
   );
   await page.goto(app.origin);
+  await revealRail(page);
   await (await openCommunityPicker(page))
     .getByRole("button", { name: "Join a community", exact: true })
     .click();
@@ -179,6 +180,7 @@ test("community dialog keeps oversized actions intact, reachable and keyboard op
   await page.keyboard.press("Enter");
   expect((await published).ok()).toBe(true);
   await expect(dialog).toBeHidden();
+  await revealRail(page);
   await expect(
     page.getByRole("button", {
       name: "Community switcher: Secondary",
@@ -199,6 +201,7 @@ test.describe("touch entry", () => {
       route.fulfill({ json: { name: "Secondary", policy: null } }),
     );
     await page.goto(app.origin);
+    await revealRail(page);
     await (await openCommunityPicker(page))
       .getByRole("button", { name: "Join a community", exact: true })
       .tap();

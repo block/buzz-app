@@ -73,7 +73,11 @@ import { createTyping } from "./typing";
 import { validTypingTemplate } from "./typing-protocol";
 import { workflowOwner } from "./workflow-attribution";
 import { createUnread } from "./unread";
-import { createChannelPreviews, loadedPreview } from "./channel-previews";
+import {
+  createChannelHeads,
+  type LatestMessage,
+  loadedPreview,
+} from "./channel-heads";
 import type { SnapshotRead } from "../agents/agent-config-artifacts";
 
 import { createInboxFeed } from "./inbox-feed";
@@ -89,12 +93,11 @@ import type {
   ChannelReadOptions,
   ChannelSummary,
 } from "./contracts";
-import { createChannelActivity } from "./channel-activity";
 import {
   readSidebarPreferences,
+  RAIL_LAYOUT_COORDINATE,
   SIDEBAR_COORDINATES,
 } from "./sidebar-preferences";
-import { sidebarSortNeedsActivity } from "./sidebar-sort";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createUserStatuses } from "./user-status";
 import { createEmojiDirectory } from "./emoji-directory";
@@ -510,8 +513,7 @@ export function createRelaySession(
       activity.accessChanged();
       memories.clear();
       presence.clear();
-      channelActivity.retain(canReadRemote);
-      activityRosterKey = undefined;
+      channelHeads.retain(canReadRemote);
       archives.clear();
       workflows.clear();
       for (const purge of views.values()) purge();
@@ -964,7 +966,7 @@ export function createRelaySession(
   function acceptOwnActivity(event: RelayEvent) {
     const channelId = event.tags.find(([name]) => name === "h")?.[1];
     if (!cacheClearing && channelId && canReadRemote(channelId))
-      channelActivity.accept([event]);
+      channelHeads.accept([event]);
   }
   function confirm(event: RelayEvent, attempt = 0) {
     if (closed || (attempt === 0 && pendingConfirmation.has(event.id))) return;
@@ -1109,19 +1111,39 @@ export function createRelaySession(
       ? { source: options.localAgents, scope: transportPartition(transport) }
       : undefined,
   );
-  const channelActivity = createChannelActivity(
-    transport?.channelActivity
-      ? // A transient failure retries quietly before Recent shows its notice.
-        (ids, signal) =>
-          retryRead(
-            (retrySignal) =>
-              transport.channelActivity?.(ids, retrySignal) ??
-              Promise.resolve([]),
-            signal,
-          )
-      : undefined,
+  const channelHeads = createChannelHeads({
+    read:
+      transport?.channelActivity && !options.cachedOnly
+        ? async (ids, topLevel, signal) => {
+            const epoch = accessEpoch;
+            // A transient failure retries quietly before recovery shows it.
+            const events = await retryRead(
+              (retrySignal) =>
+                transport.channelActivity?.(ids, retrySignal, topLevel) ??
+                Promise.resolve([]),
+              signal,
+            );
+            if (closed || epoch !== accessEpoch)
+              throw new DOMException("Stale head read", "AbortError");
+            // Heads enter the same projections as any verified read.
+            return accept(events);
+          }
+        : undefined,
+    readable: (id) =>
+      !closed && !revoking && !cacheClearing && canReadRemote(id),
     notify,
-  );
+  });
+  observations.add((events) => {
+    channelHeads.observed(events);
+    // A deleted head leaves its channel without a preview until it is read
+    // again; any other deletion costs no read.
+    for (const event of events) {
+      if (event.kind !== 5 && event.kind !== 9005) continue;
+      const id = event.tags.find(([name]) => name === "h")?.[1];
+      if (id && channelHeads.last(id) !== undefined && !latestTopLevel(id))
+        channelHeads.reread(id);
+    }
+  });
   /** When the last full channel-list read completed, whatever started it. */
   let rosterReadAt = 0;
   const channels = createChannelStore(
@@ -1218,9 +1240,9 @@ export function createRelaySession(
   let sourceChannelList = channels.queries.list();
   let activityChannelList: ChannelList = Object.freeze({
     ...sourceChannelList,
-    activityStatus: channelActivity.status(),
+    activityStatus: channelHeads.status(),
   });
-  let channelActivityRevision = channelActivity.revision();
+  let channelHeadsRevision = channelHeads.revision();
   const projectedChannels = new WeakMap<ChannelSummary, ChannelSummary>();
   const channelQueries = Object.freeze({
     ...channels.queries,
@@ -1234,17 +1256,17 @@ export function createRelaySession(
     }),
     list() {
       const snapshot = channels.queries.list();
-      const activityRevision = channelActivity.revision();
+      const activityRevision = channelHeads.revision();
       if (
         snapshot === sourceChannelList &&
-        activityRevision === channelActivityRevision
+        activityRevision === channelHeadsRevision
       )
         return activityChannelList;
       sourceChannelList = snapshot;
-      channelActivityRevision = activityRevision;
+      channelHeadsRevision = activityRevision;
       const projected = snapshot.channels.map((channel) => {
-        const lastActivityAt = channelActivity.last(channel.id);
-        if (!channelActivity.known(channel.id)) return channel;
+        const lastActivityAt = channelHeads.last(channel.id);
+        if (!channelHeads.known(channel.id)) return channel;
         const previous = projectedChannels.get(channel);
         if (previous && previous.lastActivityAt === lastActivityAt)
           return previous;
@@ -1258,7 +1280,7 @@ export function createRelaySession(
       });
       activityChannelList = Object.freeze({
         ...snapshot,
-        activityStatus: channelActivity.status(),
+        activityStatus: channelHeads.status(),
         channels: projected.every(
           (channel, index) => channel === snapshot.channels[index],
         )
@@ -1269,7 +1291,12 @@ export function createRelaySession(
     },
     subscribeList(listener: () => void) {
       const offChannels = channels.queries.subscribeList(listener);
-      const offActivity = channelActivity.subscribe(listener);
+      let seen = channelHeads.revision();
+      const offActivity = channelHeads.subscribe(() => {
+        if (seen === channelHeads.revision()) return;
+        seen = channelHeads.revision();
+        listener();
+      });
       return () => {
         offChannels();
         offActivity();
@@ -1309,24 +1336,15 @@ export function createRelaySession(
     notify,
     follows: browserThreadFollows(readScope),
   });
-  const channelPreviews = createChannelPreviews({
-    read: transport && !options.cachedOnly ? verified.read : undefined,
-    loaded: (id) => loadedPreview(channelQueries.window(id)),
-    latest: (id) => {
-      const head = loadedPreview(channelQueries.window(id));
-      return head !== undefined
-        ? head
-        : unread.capability.snapshot({ kind: "channel", channelId: id })
-            .latestTopLevel;
-    },
-    readable: (id) =>
-      !closed && !revoking && !cacheClearing && canReadRemote(id),
-    notify,
-  });
-  observations.add(channelPreviews.changed);
-  const stopPreviewList = channels.queries.subscribeList(
-    channelPreviews.changed,
-  );
+  /** A channel's newest top-level message: its verified window's, or what
+   * the roster head read and live traffic have admitted. */
+  const latestTopLevel = (id: string): LatestMessage | undefined => {
+    const head = loadedPreview(channelQueries.window(id));
+    return head !== undefined
+      ? (head ?? undefined)
+      : unread.capability.snapshot({ kind: "channel", channelId: id })
+          .latestTopLevel;
+  };
   const inboxFeed = createInboxFeed({
     reactionReader: {
       read: (filters, settings) =>
@@ -1948,6 +1966,29 @@ export function createRelaySession(
         })
       : undefined;
   })();
+  const railLayoutChanged = new Set<(createdAt?: number) => void>();
+  /** The account's app sidebar arrangement, shared by its devices. */
+  const railLayout = (() => {
+    const read = transport?.readRailLayout;
+    const write = transport?.writeRailLayout;
+    const bounded = (ms: number) =>
+      AbortSignal.any([lifetime.signal, AbortSignal.timeout(ms)]);
+    return read && write
+      ? Object.freeze({
+          read: () => read(bounded(10_000)),
+          write: (payload: Record<string, unknown>, base: number) =>
+            write(payload, base, bounded(20_000)),
+          /** A record at least as new as `createdAt` exists, or with none
+           * given, one may: read again unless this device already holds it. */
+          changed(listener: (createdAt?: number) => void) {
+            railLayoutChanged.add(listener);
+            return () => {
+              railLayoutChanged.delete(listener);
+            };
+          },
+        })
+      : undefined;
+  })();
   const readPreferences = async (
     signal?: AbortSignal,
     consistency?: "strong",
@@ -1986,20 +2027,6 @@ export function createRelaySession(
             )
         : undefined;
     })(),
-    writeStar: (() => {
-      const write = transport?.writeSidebarStar;
-      return write
-        ? (intent, signal) =>
-            write(
-              intent,
-              AbortSignal.any([
-                lifetime.signal,
-                AbortSignal.timeout(20_000),
-                signal,
-              ]),
-            )
-        : undefined;
-    })(),
     notify,
     writeMute: (() => {
       const write = transport?.writeSidebarMute;
@@ -2007,22 +2034,6 @@ export function createRelaySession(
         ? (intent, signal) =>
             write(
               intent,
-              AbortSignal.any([
-                lifetime.signal,
-                AbortSignal.timeout(20_000),
-                signal,
-              ]),
-            )
-        : undefined;
-    })(),
-    writeSort: (() => {
-      const write = transport?.writeSidebarSort;
-      return write
-        ? (group, mode, sectionIds, signal) =>
-            write(
-              group,
-              mode,
-              sectionIds,
               AbortSignal.any([
                 lifetime.signal,
                 AbortSignal.timeout(20_000),
@@ -2071,23 +2082,6 @@ export function createRelaySession(
                 AbortSignal.timeout(20_000),
                 signal,
               ]),
-            )
-        : undefined;
-    })(),
-    writeFilter: (() => {
-      const write = transport?.writeSidebarFilter;
-      return write
-        ? (group, mode, sectionIds, signal, activeWindowSeconds) =>
-            write(
-              group,
-              mode,
-              sectionIds,
-              AbortSignal.any([
-                lifetime.signal,
-                AbortSignal.timeout(20_000),
-                signal,
-              ]),
-              activeWindowSeconds,
             )
         : undefined;
     })(),
@@ -2177,9 +2171,6 @@ export function createRelaySession(
             if (!setup) return;
             parseLineup({ ...setup, teamIds: [] });
             if (
-              (setup.starred !== undefined &&
-                typeof setup.starred !== "boolean") ||
-              (setup.starred && !!setup.groupId) ||
               typeof setup.groupId !== "string" ||
               setup.groupId.length > 256 ||
               (setup.groupId !== "" && !setup.groupId.trim()) ||
@@ -2198,9 +2189,7 @@ export function createRelaySession(
               ...(setup.agents.length
                 ? [agentChoices.refresh("templates")]
                 : []),
-              ...(setup.groupId || setup.starred
-                ? [sidebarPreferences.queries.refresh()]
-                : []),
+              ...(setup.groupId ? [sidebarPreferences.queries.refresh()] : []),
             ]);
             lifetime.signal.throwIfAborted();
             if (setup.agents.length) {
@@ -2228,10 +2217,6 @@ export function createRelaySession(
                   `Selected agents are unavailable in this community: ${unavailable.map(npubEncode).join(", ")}. Refresh agents or remove them before creating the channel.`,
                 );
             }
-            if (setup.starred && !sidebarPreferences.queries.starWritable)
-              throw new Error(
-                "Starred placement is unavailable; refresh your sidebar before creating the channel",
-              );
             if (setup.groupId) {
               const state = sidebarPreferences.queries.snapshot();
               if (
@@ -2242,18 +2227,6 @@ export function createRelaySession(
                   "The destination group is unavailable; refresh your sidebar before creating the channel",
                 );
             }
-          },
-          async star(id) {
-            await settledPreferences();
-            if (!sidebarPreferences.queries.starWritable)
-              throw new Error(
-                "Starred placement is unavailable; keep the partial channel and star it separately",
-              );
-            if (
-              sidebarPreferences.queries.snapshot().data?.starred.includes(id)
-            )
-              return;
-            await sidebarPreferences.queries.setStar(id, true);
           },
           async place(id, groupId) {
             await settledPreferences();
@@ -2443,7 +2416,7 @@ export function createRelaySession(
   const recovery = transport
     ? createRecovery([
         liveRecovery,
-        channelPreviews.recovery,
+        channelHeads.recovery,
         recoverable(
           channelKit.capability.subscribe,
           () => loadState(channelKit.capability.snapshot()),
@@ -2487,7 +2460,12 @@ export function createRelaySession(
     relayAuthor: transport?.relayAuthor,
     /** Visible-row demand only: one finite batch per four missing heads, shared
      * across hosts. No polling or independent reconnect reader. */
-    channelPreviews: channelPreviews.capability,
+    channelHeads: {
+      latest: latestTopLevel,
+      settled: channelHeads.settled,
+      status: channelHeads.status,
+      subscribe: channelHeads.subscribe,
+    },
     /** NIP-AP config artifacts: the relay's own verified answer, never merged
      * with live or local outgoing events or fed to any projection, and a
      * kind-45010 writer when the host has one. Each read starts fresh. */
@@ -2686,6 +2664,7 @@ export function createRelaySession(
     sidebarPreferences: sidebarPreferences.queries,
     /** The account's saved main agent, shared by every install. */
     mainAgent,
+    railLayout,
     soloPreferences: soloPreferences.queries,
     reminders: reminders?.capability,
     live,
@@ -3494,27 +3473,31 @@ export function createRelaySession(
     publishLive();
     warmRoster();
   };
-  /** Warm every channel's head before it is opened: starred first, then the
-   * rest by recency. The account preferences own the starred set, so warming
-   * waits for them to settle; a slow read delays warmth, never demand loading. */
+  /** Warm every channel's head before it is opened, by recency. Warming waits
+   * for the account preferences to settle; a slow read delays warmth, never
+   * demand loading. */
   const warmRoster = () => {
     if (closed || !options.warm) return;
     const prefs = sidebarPreferences.queries.snapshot();
     if (prefs.status === "idle" || prefs.status === "loading") return;
-    channels.queries.warm?.(prefs.data?.starred ?? []);
+    channels.queries.warm?.([]);
   };
-  // Only five replaceable heads; live payloads are hints, never decoded authority.
+  // A few replaceable heads; live payloads are hints, never decoded authority.
   const sidebarHeads = new Map<string, Pick<RelayEvent, "id" | "created_at">>();
   const receiveSidebar = (events: readonly RelayEvent[]) => {
-    if (!transport?.decodeSidebarPreferences || cacheClearing) return;
+    if (!transport || cacheClearing) return;
     for (const event of events) {
       if (event.kind !== 30078 || event.pubkey !== transport.viewer) continue;
       const coordinates = event.tags.filter(([name]) => name === "d");
       const coordinate = coordinates[0]?.[1];
+      const rail = coordinate === RAIL_LAYOUT_COORDINATE;
       if (
         coordinates.length !== 1 ||
         !coordinate ||
-        !SIDEBAR_COORDINATES.some((value) => value === coordinate)
+        !(rail
+          ? railLayout
+          : transport.decodeSidebarPreferences &&
+            SIDEBAR_COORDINATES.some((value) => value === coordinate))
       )
         continue;
       const head = sidebarHeads.get(coordinate);
@@ -3528,12 +3511,15 @@ export function createRelaySession(
         id: event.id,
         created_at: event.created_at,
       });
-      sidebarPreferences.invalidate();
+      if (rail)
+        for (const listener of [...railLayoutChanged])
+          listener(event.created_at);
+      else sidebarPreferences.invalidate();
     }
   };
   const stopWarmPreferences = sidebarPreferences.queries.subscribe(warmRoster);
-  // Starred-first warming needs the account preferences without waiting for
-  // the sidebar page to mount and observe them.
+  // Warming needs the account preferences without waiting for the sidebar
+  // page to mount and observe them.
   if (options.warm) void sidebarPreferences.queries.ensure();
   let refreshedGeneration = -1;
   /** When unread was last asked for a full repair: a connection's first
@@ -3622,6 +3608,9 @@ export function createRelaySession(
         return;
       }
       sidebarPreferences.reconnect(continuous);
+      // A replay that may have gaps can have missed another device's write.
+      if (!continuous)
+        for (const listener of [...railLayoutChanged]) listener();
       repairUnread(continuous);
       // Only while this same connection is still up.
       if (generation === liveGeneration && memoryConnected)
@@ -3807,7 +3796,7 @@ export function createRelaySession(
         generation === liveGeneration &&
         liveSnapshot.status === "connected"
       )
-        channelActivity.accept(visible);
+        channelHeads.accept(visible);
       if (!closed && epoch === accessEpoch && generation === liveGeneration)
         inboxFeed.reactions.receive(events, provenance?.phase);
       const replay = provenance?.phase === "replay";
@@ -3888,8 +3877,6 @@ export function createRelaySession(
         // Reminder catch-up waits for the recovery read after re-establishment.
         reminders?.stale();
         retryAttended();
-        channelActivity.cancel();
-        activityRosterKey = undefined;
         catchups.clear();
         catchupQueue.clear();
         dropHintConfirmations();
@@ -3970,8 +3957,6 @@ export function createRelaySession(
             timers.delete(timer);
             if (!closed) {
               agentLibrary.reconnect();
-              activityRosterKey = undefined;
-              refreshChannelActivity();
               inboxFeed.reconnect();
               for (const refresh of refreshers) void refresh();
             }
@@ -4024,18 +4009,10 @@ export function createRelaySession(
       if (!closed) channels.denyChannel(channelId, new Error(reason));
     },
   });
-  let activityRosterKey: string | undefined;
-  const refreshChannelActivity = () => {
-    if (closed || !transport?.channelActivity) return;
-    const preferences = sidebarPreferences.queries.snapshot().data;
-    if (
-      !Object.values(preferences?.sort ?? {}).some(sidebarSortNeedsActivity) &&
-      !Object.values(preferences?.filters ?? {}).includes("active")
-    ) {
-      channelActivity.cancel();
-      activityRosterKey = undefined;
-      return;
-    }
+  let headRoster: string | undefined;
+  const coverChannelHeads = () => {
+    // A cache clear covers the roster again once it ends.
+    if (closed || cacheClearing) return;
     const roster = channels.queries.list();
     if (roster.status !== "ready") return;
     const ids = roster.channels
@@ -4043,21 +4020,14 @@ export function createRelaySession(
       .map((channel) => channel.id)
       .sort();
     const key = ids.join("\0");
-    if (key === activityRosterKey) return;
-    activityRosterKey = key;
-    void channelActivity.refresh(ids).catch(() => {
-      if (activityRosterKey === key) activityRosterKey = undefined;
-    });
+    if (key === headRoster) return;
+    headRoster = key;
+    channelHeads.cover(ids);
   };
-  const stopActivityRoster = channels.queries.subscribeList(
-    refreshChannelActivity,
-  );
-  const stopActivityPreferences = sidebarPreferences.queries.subscribe(
-    refreshChannelActivity,
-  );
+  const stopHeadRoster = channels.queries.subscribeList(coverChannelHeads);
   const stopInterests = channels.queries.subscribeList(updateInterests);
   updateInterests();
-  refreshChannelActivity();
+  coverChannelHeads();
 
   return {
     session,
@@ -4075,8 +4045,8 @@ export function createRelaySession(
         activity.clear();
         memories.clear();
         presence.clear();
-        channelActivity.clear();
-        activityRosterKey = undefined;
+        channelHeads.clear();
+        headRoster = undefined;
         typing.clear();
         sidebarHeads.clear();
         sidebarPreferences.clear();
@@ -4091,7 +4061,6 @@ export function createRelaySession(
         for (const clear of views.values()) clear(true);
         for (const view of artifactSyncs) view.restart();
         recent.clear();
-        channelPreviews.clear();
         resumes.clear();
         unread.clear();
         inboxFeed.clear();
@@ -4110,14 +4079,12 @@ export function createRelaySession(
         if (failed?.status === "rejected") throw failed.reason;
       } finally {
         cacheClearing--;
-        channelPreviews.changed();
+        coverChannelHeads();
       }
     },
     dispose() {
       stopSoloGroups();
       closed = true;
-      stopPreviewList();
-      channelPreviews.dispose();
       resumes.clear();
       stopLiveRecovery();
       recovery?.dispose();
@@ -4127,9 +4094,8 @@ export function createRelaySession(
       activity.dispose();
       memories.dispose();
       presence.dispose();
-      channelActivity.dispose();
-      stopActivityRoster();
-      stopActivityPreferences();
+      channelHeads.dispose();
+      stopHeadRoster();
       sidebarHeads.clear();
       sidebarPreferences.dispose();
       soloPreferences.dispose();

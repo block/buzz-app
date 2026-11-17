@@ -55,8 +55,11 @@ test("Messages receives scoped typing through authenticated live traffic and exp
   await expect(indicator).toHaveCount(0);
   await expect(announcement).toBeEmpty();
   // Typing completion precedes the appended messages' virtual-list layout.
+  // Team's row previews the latest one too; count the timeline's.
   await expect(
-    page.getByText("Fixture completion", { exact: true }),
+    page
+      .locator("[data-channel-timeline]")
+      .getByText("Fixture completion", { exact: true }),
   ).toHaveCount(2);
   await end(page);
   const root = app.histories

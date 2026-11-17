@@ -1,5 +1,10 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { openPage } from "./navigation.mjs";
+import {
+  channelRow,
+  conversationList,
+  openChannel,
+  openPage,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 const channelId = "11111111-1111-4111-8111-111111111111";
@@ -12,9 +17,9 @@ const dialogFor = (page) =>
   });
 async function openSettings(page, app) {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
-  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
-  await sidebar.locator(`[data-channel-id="${channelId}"]`).click();
+  await openPage(page, "Team");
+  const sidebar = conversationList(page);
+  await openChannel(page, channelId);
   await expect(
     page.getByRole("textbox", {
       name: "Message #Lifecycle channel",
@@ -126,9 +131,7 @@ test("management Leave restores focus on cancel, holds pending, and completes th
       await expect(pending).not.toHaveAttribute("aria-modal", "true");
       await page.keyboard.press("Escape");
       await expect(pending).toBeVisible();
-      await expect(
-        page.locator(`[data-channel-id="${channelId}"]`),
-      ).toBeVisible();
+      await expect(channelRow(page, channelId)).toBeVisible();
       expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
     } finally {
       release();
@@ -137,7 +140,7 @@ test("management Leave restores focus on cancel, holds pending, and completes th
     // response is still withheld. Content cleanup must not fail the dialog.
     await published;
     await expect(
-      sidebar.locator(`[data-channel-id="${channelId}"]`),
+      sidebar.locator(`[data-activity-row="${channelId}"]`),
     ).toHaveCount(0);
     await expect(pending).toBeVisible();
     // The dropped row is the barrier: own Leave is not reported as removal.
@@ -159,13 +162,14 @@ test("management Leave restores focus on cancel, holds pending, and completes th
   ).toBeVisible();
   await expect(dialog).toHaveCount(0);
   await expect(panel).toHaveCount(0);
-  await expect(sidebar.locator(`[data-channel-id="${channelId}"]`)).toHaveCount(
-    0,
-  );
-  // Its sidebar neighbor opens as it does from its row.
   await expect(
-    sidebar.getByRole("button", { name: "Beta", exact: true }),
-  ).toHaveAttribute("aria-current", "page");
+    sidebar.locator(`[data-activity-row="${channelId}"]`),
+  ).toHaveCount(0);
+  // Its sidebar neighbor opens as it does from its row.
+  await expect(channelRow(page, "beta")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeFocused();
@@ -176,9 +180,9 @@ test("management Leave restores focus on cancel, holds pending, and completes th
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
-  await expect(sidebar.locator(`[data-channel-id="${channelId}"]`)).toHaveCount(
-    0,
-  );
+  await expect(
+    sidebar.locator(`[data-activity-row="${channelId}"]`),
+  ).toHaveCount(0);
   expect(app.report.lifecyclePublications.map((event) => event.kind)).toEqual([
     9022,
   ]);
@@ -201,7 +205,7 @@ const focusOrigins = {
   },
   "header's Channel actions": async (page) => {
     const actions = page.getByRole("button", {
-      name: "Channel actions",
+      name: "Conversation actions",
       exact: true,
     });
     await actions.focus();
@@ -226,11 +230,8 @@ for (const [origin, focusIn] of Object.entries(focusOrigins))
       ["private"],
     ]);
     await page.goto(app.origin);
-    await openPage(page, "Messages");
-    const sidebar = page.getByRole("navigation", {
-      name: "Subscribed channels",
-    });
-    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+    await openPage(page, "Team");
+    await openChannel(page, "alpha");
     await expect(
       page.getByRole("textbox", { name: "Message Alpha", exact: true }),
     ).toBeVisible();
@@ -250,9 +251,7 @@ for (const [origin, focusIn] of Object.entries(focusOrigins))
     await expect(
       alphaLost.getByRole("button", { name: "Back to channels", exact: true }),
     ).toBeFocused();
-    await expect(
-      sidebar.getByRole("button", { name: "Alpha", exact: true }),
-    ).toHaveCount(0);
+    await expect(channelRow(page, "alpha")).toHaveCount(0);
     await expect(
       page.getByRole("textbox", { name: "Message Alpha", exact: true }),
     ).toHaveCount(0);
@@ -260,7 +259,7 @@ for (const [origin, focusIn] of Object.entries(focusOrigins))
       page.getByText("Select a channel to read it.", { exact: true }),
     ).toHaveCount(0);
 
-    await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
+    await channelRow(page, "beta").click();
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
@@ -293,7 +292,7 @@ for (const [origin, focusIn] of Object.entries(focusOrigins))
       .toBe(true);
     // The status follows the header in the keyboard order.
     await page
-      .getByRole("button", { name: "Channel actions", exact: true })
+      .getByRole("button", { name: "Conversation actions", exact: true })
       .focus();
     await page.keyboard.press("Tab");
     await expect(
@@ -301,9 +300,10 @@ for (const [origin, focusIn] of Object.entries(focusOrigins))
     ).toBeFocused();
     await page.keyboard.press("Enter");
     // Beta's nearest remaining row, as Leave would choose.
-    await expect(
-      sidebar.locator(`[data-channel-id="${channelId}"]`),
-    ).toHaveAttribute("aria-current", "page");
+    await expect(channelRow(page, channelId)).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     await expect(
       page.getByRole("textbox", {
         name: "Message #Lifecycle channel",
@@ -338,28 +338,19 @@ test.describe("last visible channel", () => {
     await expect(
       page.getByText("Select a channel to read it.", { exact: true }),
     ).toBeVisible();
-    await expect(sidebar.locator("button[data-channel-id]")).toHaveCount(0);
+    await expect(sidebar.locator("[data-activity-row]")).toHaveCount(0);
     await expect(page.getByRole("textbox", { name: /^Message #/ })).toHaveCount(
       0,
     );
     // Roster revocation can render the empty page before Leave is confirmed.
-    // Its completion hands focus back through the sidebar owner.
     await expect(
       page.getByText("Channel left: Lifecycle channel", { exact: true }),
     ).toBeVisible();
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () =>
-            document.activeElement?.closest('[aria-label="Sidebar"]') !== null,
-        ),
-      )
-      .toBe(true);
     await page.reload();
     await expect(
       page.getByText("Select a channel to read it.", { exact: true }),
     ).toBeVisible();
-    await expect(sidebar.locator("button[data-channel-id]")).toHaveCount(0);
+    await expect(sidebar.locator("[data-activity-row]")).toHaveCount(0);
     expect(app.report.lifecyclePublications.map((event) => event.kind)).toEqual(
       [9022],
     );

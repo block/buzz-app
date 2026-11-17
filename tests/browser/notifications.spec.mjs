@@ -2,6 +2,7 @@ import { pauseClock } from "./clock.mjs";
 import { pluginAction } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { end, open, settle } from "./timeline.mjs";
+import { hideNarrowConversationList } from "./navigation.mjs";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 
 test.use({
@@ -511,6 +512,13 @@ for (const kind of ["mention", "thread reply"]) {
       // including when the sidebar disappears at the narrow breakpoint.
       for (const width of [1440, 640]) {
         await page.setViewportSize({ width, height: 650 });
+        // The narrow window lays Team's list over the reader.
+        if (width === 640) {
+          await expect(
+            page.locator("[data-detail-workspace][data-narrow]"),
+          ).toHaveCount(1);
+          await hideNarrowConversationList(page);
+        }
         await expect
           .poll(() =>
             surface.evaluate(

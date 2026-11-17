@@ -1,4 +1,9 @@
-import { closeSettings, openPage, settingsDialog } from "./navigation.mjs";
+import {
+  closeSettings,
+  openChannel,
+  openPage,
+  settingsDialog,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -7,7 +12,8 @@ test("completion menu stays reachable in the production channel layout", async (
   app,
 }, testInfo) => {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   const input = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -46,7 +52,8 @@ test("host shortcuts coexist with an open completion menu and preserve its draft
   app,
 }) => {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   const input = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,

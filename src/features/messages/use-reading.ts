@@ -91,6 +91,12 @@ export function useReading({
           ?.closest("[data-panel-workspace]")
           ?.closest("[data-reading-thread]")
           ?.contains(node) ||
+        // The list beside the reader: the open conversation's row keeps
+        // focus while it is read. Another row's focus reads nothing.
+        !!element
+          .closest("[data-detail-workspace]")
+          ?.querySelector('[data-activity-sidebar] [aria-current="page"]')
+          ?.contains(node) ||
         !!composer?.current?.contains(node));
     // Everything but geometry, so an event can check it without a layout.
     const ready = () =>

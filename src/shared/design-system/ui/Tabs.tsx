@@ -13,6 +13,8 @@ import {
 import { XIcon } from "../icons";
 import { useScrollEdges } from "./useScrollEdges";
 import {
+  useCallback,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -320,9 +322,9 @@ export function Tabs<Value extends string>({
   );
   const strip =
     variant === "buttons" ? (
-      <div ref={list} className="buzz-tabs-scroll-strip">
+      <ButtonStrip value={value} edges={list}>
         {tabStrip}
-      </div>
+      </ButtonStrip>
     ) : (
       tabStrip
     );
@@ -572,6 +574,66 @@ function TabRename({
         }}
       />
     </span>
+  );
+}
+
+/**
+ * A button strip keeps its selected button in view, and drops a hover the
+ * pointer no longer makes: WebKit keeps `:hover` on the button that scrolled
+ * away until the pointer moves again.
+ */
+function ButtonStrip({
+  value,
+  edges,
+  children,
+}: {
+  value: string | null;
+  edges: (element: HTMLElement | null) => void;
+  children: ReactNode;
+}) {
+  const [strip, setStrip] = useState<HTMLDivElement | null>(null);
+  const ref = useCallback(
+    (element: HTMLDivElement | null) => {
+      edges(element);
+      setStrip(element);
+    },
+    [edges],
+  );
+  useLayoutEffect(() => {
+    if (!strip || value === null) return;
+    const tab = strip.querySelector<HTMLElement>(
+      `[data-tab-value="${CSS.escape(value)}"]`,
+    );
+    if (!tab) return;
+    // Scroll only the strip, never the page or list around it.
+    const style = getComputedStyle(strip);
+    const start = parseFloat(style.scrollPaddingInlineStart) || 0;
+    const end = parseFloat(style.scrollPaddingInlineEnd) || 0;
+    const bounds = strip.getBoundingClientRect();
+    const box = tab.getBoundingClientRect();
+    if (box.left < bounds.left + start)
+      strip.scrollLeft -= bounds.left + start - box.left;
+    else if (box.right > bounds.right - end)
+      strip.scrollLeft += box.right - (bounds.right - end);
+  }, [strip, value]);
+  useEffect(() => {
+    if (!strip) return;
+    const scrolled = () => strip.toggleAttribute("data-scrolled", true);
+    const moved = () => strip.toggleAttribute("data-scrolled", false);
+    strip.addEventListener("scroll", scrolled, { passive: true });
+    strip.addEventListener("pointermove", moved, { passive: true });
+    strip.addEventListener("pointerleave", moved, { passive: true });
+    return () => {
+      strip.removeEventListener("scroll", scrolled);
+      strip.removeEventListener("pointermove", moved);
+      strip.removeEventListener("pointerleave", moved);
+      strip.removeAttribute("data-scrolled");
+    };
+  }, [strip]);
+  return (
+    <div ref={ref} className="buzz-tabs-scroll-strip">
+      {children}
+    </div>
   );
 }
 

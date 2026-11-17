@@ -108,6 +108,21 @@ describe("open target boundary", () => {
     expect(target).toEqual({ ...parseOpenTarget(thread), context: "channel" });
     expect(targetKey(target)).not.toBe(targetKey(thread));
   });
+  it("keeps a message's timeline-only context as its own visit", () => {
+    const target = parseOpenTarget({ ...conversation, context: "timeline" });
+    expect(target).toEqual({
+      ...parseOpenTarget(conversation),
+      context: "timeline",
+    });
+    expect(targetKey(target)).not.toBe(targetKey(conversation));
+    expect(() =>
+      parseOpenTarget({
+        ...conversation,
+        messageId: undefined,
+        context: "timeline",
+      }),
+    ).toThrow();
+  });
   it("opens a saved Shared sessions target as its conversation", () => {
     const target = parseOpenTarget({
       ...conversation,

@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, expect, test } from "vitest";
 import type { Navigation } from "../../features/navigation/controller";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { sidebarSectionTarget } from "../../features/channel-navigation/sidebar-section-route";
-import { useListColumn } from "./list-column";
+import { routedSection, useListColumn } from "./list-column";
 
 afterEach(cleanup);
 
@@ -15,7 +16,7 @@ const conversation = (channelId: string): OpenTarget => ({
   channelId,
   scope,
 });
-const team = sidebarSectionTarget(scope, "messages");
+const team = sidebarSectionTarget(scope, "team");
 
 /** Visits by id; `traversal` marks one navigation returned to, as Back does. */
 function harness() {
@@ -42,7 +43,10 @@ function harness() {
     },
     snapshot: () => snapshot,
   } as unknown as Navigation;
-  const view = renderHook(() => useListColumn(navigator));
+  // Strict Mode renders twice: rendering must not spend what an open asked.
+  const view = renderHook(() => useListColumn(navigator), {
+    wrapper: StrictMode,
+  });
   return {
     list: () => view.result.current.list,
     column: () => view.result.current,
@@ -59,13 +63,22 @@ test("a section address opens its list, and other visits leave it as it is", () 
   const t = harness();
   expect(t.list()).toMatchObject({ open: false });
   t.go("team", team);
-  expect(t.list()).toMatchObject({ open: true, section: "messages" });
+  expect(t.list()).toMatchObject({ open: true, section: "team" });
   t.go("alpha", conversation("alpha"));
-  expect(t.list()).toMatchObject({ open: true, section: "messages" });
+  expect(t.list()).toMatchObject({ open: true, section: "team" });
   act(() => t.column().setOpen(false, true));
   expect(t.list()).toMatchObject({ open: false, animate: true });
   t.go("beta", conversation("beta"));
   expect(t.list()).toMatchObject({ open: false, animate: false });
+});
+
+test("a list closed while an open from it is in flight stays closed", () => {
+  const t = harness();
+  t.go("team", team);
+  act(() => t.column().ask("keep"));
+  act(() => t.column().setOpen(false));
+  t.go("alpha", conversation("alpha"));
+  expect(t.list()).toMatchObject({ open: false, section: "team" });
 });
 
 test("Back and Forward restore what each visit last showed", () => {
@@ -76,9 +89,9 @@ test("Back and Forward restore what each visit last showed", () => {
   t.go("start", conversation("start"), true);
   expect(t.list()).toMatchObject({ open: false });
   t.go("alpha", conversation("alpha"), true);
-  expect(t.list()).toMatchObject({ open: false, section: "messages" });
+  expect(t.list()).toMatchObject({ open: false, section: "team" });
   t.go("team", team, true);
-  expect(t.list()).toMatchObject({ open: true, section: "messages" });
+  expect(t.list()).toMatchObject({ open: true, section: "team" });
 });
 
 test("an open from the list keeps it, even when navigation returns to a held visit", () => {
@@ -88,7 +101,7 @@ test("an open from the list keeps it, even when navigation returns to a held vis
   t.go("team", team);
   act(() => t.column().ask("keep"));
   t.go("alpha", conversation("alpha"), true);
-  expect(t.list()).toMatchObject({ open: true, section: "messages" });
+  expect(t.list()).toMatchObject({ open: true, section: "team" });
   // The request was spent: a later Back is an ordinary traversal.
   act(() => t.column().setOpen(false));
   t.go("team", team, true);
@@ -128,4 +141,8 @@ test("a section opened on one of its conversations lists that section", () => {
   act(() => t.column().ask({ section: "saved" }));
   t.go("alpha", conversation("alpha"));
   expect(t.list()).toMatchObject({ open: true, section: "saved" });
+});
+
+test("an address saved under Team's earlier section id still lists Team", () => {
+  expect(routedSection(sidebarSectionTarget(scope, "messages"))).toBe("team");
 });

@@ -1,9 +1,9 @@
 import { test, expect } from "./fixture.mjs";
-import { closeSettings, openSettings } from "./navigation.mjs";
+import { channelRow, closeSettings, openSettings } from "./navigation.mjs";
+import { showChannels } from "./rail-helpers.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
 
-const button = (page, name) => page.getByRole("button", { name, exact: true });
 const composer = (page) =>
   page.getByRole("textbox", { name: "Message #Alpha", exact: true });
 
@@ -23,7 +23,8 @@ test("Settings → Close releases the unmounted Settings DOM", async ({
     "Post-GC DOM node counts need CDP, which only Chromium exposes.",
   );
   await page.goto(app.origin);
-  await button(page, "Alpha").click();
+  await showChannels(page);
+  await channelRow(page, "alpha").click();
   await expect(composer(page)).toBeVisible();
 
   const cdp = await page.context().newCDPSession(page);

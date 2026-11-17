@@ -3,6 +3,8 @@ import {
   openSettings,
   selectSettingsSection,
   settingsDialog,
+  channelRow,
+  revealRail,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { npubEncode } from "nostr-tools/nip19";
@@ -255,11 +257,9 @@ test.describe("settings empty collections", () => {
     app,
   }, info) => {
     await page.goto(app.origin);
-    // This layout journey starts after the initial reader's focus handoff, not
-    // while channel startup can still dismiss the profile menu.
-    await expect(
-      page.getByRole("textbox", { name: /^Message #/ }),
-    ).toBeFocused();
+    // This layout journey starts once startup has shown Team's list, not
+    // while it can still dismiss the profile menu.
+    await expect(channelRow(page, "alpha")).toBeVisible();
     await page
       .getByRole("button", { name: "Your profile", exact: true })
       .click();
@@ -426,6 +426,8 @@ fiBuild(
     for (const state of ["setup", "empty"]) {
       signedIn = state === "empty";
       await page.goto(app.origin);
+      // A narrow window keeps the profile button in the rail's drawer.
+      await revealRail(page);
       await page
         .getByRole("button", { name: "Your profile", exact: true })
         .click();

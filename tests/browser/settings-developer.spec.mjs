@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import {
+  channelRow,
   chooseColorMode,
   openSettings,
   selectSettingsSection,
@@ -64,7 +65,7 @@ test.describe("client performance", () => {
     });
     await open(page, app);
     try {
-      await page.locator('[data-channel-id="beta"]').focus();
+      await channelRow(page, "beta").focus();
       await page.keyboard.press("Enter");
       await expect(
         page.getByRole("status").filter({ hasText: "Loading messages…" }),
@@ -76,7 +77,7 @@ test.describe("client performance", () => {
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
     await expect(page.locator("[data-message-id]").first()).toBeVisible();
-    await page.locator('[data-channel-id="alpha"]').click();
+    await channelRow(page, "alpha").click();
     await expect(
       page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
     ).toBeVisible();

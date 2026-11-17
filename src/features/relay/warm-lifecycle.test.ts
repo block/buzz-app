@@ -35,7 +35,6 @@ async function setup(
 ) {
   const h = scriptedTransport(viewer.pubkey, relay.pubkey);
   let live!: LiveCallbacks;
-  let starred: readonly string[] = [];
   const transport = {
     ...h.transport,
     subscribe(callbacks: LiveCallbacks) {
@@ -45,7 +44,6 @@ async function setup(
     decodeSidebarPreferences: async () => ({
       sections: [],
       assignments: {},
-      starred,
       muted: [],
     }),
     query: vi.fn((...args: Parameters<typeof h.transport.query>) =>
@@ -72,10 +70,6 @@ async function setup(
     queries,
     transport,
     live,
-    async setStars(ids: readonly string[]) {
-      starred = ids;
-      await store.session.sidebarPreferences.refresh();
-    },
   };
 }
 
@@ -133,18 +127,13 @@ it("finishes a 65-channel populated roster with the production cache limits", as
   expect(h.pending).toHaveLength(0);
 });
 
-it("warms newly eligible channels and updates queued starred-first ordering without restarting completed work", async () => {
+it("warms newly eligible channels without restarting completed work", async () => {
   const h = await setup(["a", "b", "c"], { maxHeads: 1 });
-  const first = h.next();
-  await h.setStars(["c"]);
-  first.respond(head("a"));
-  await flush();
-  expect(h.pending[0]?.filters[0]?.["#h"]).toEqual(["c"]);
-  h.next().respond(head("c"));
-  await flush();
-  expect(h.pending[0]?.filters[0]?.["#h"]).toEqual(["b"]);
-  h.next().respond(head("b"));
-  await flush();
+  for (const id of ["a", "b", "c"]) {
+    expect(h.pending[0]?.filters[0]?.["#h"]).toEqual([id]);
+    h.next().respond(head(id));
+    await flush();
+  }
   expect(h.pending).toHaveLength(0);
   h.queries.refreshList?.();
   h.next().respond(discovery(["a", "b", "c", "d"]));
@@ -224,30 +213,6 @@ it.each(["a", "b"])(
     expect(h.pending).toHaveLength(0);
   },
 );
-
-it("warms an archived channel only after it becomes starred", async () => {
-  const h = await setup([]);
-  h.queries.refreshList?.();
-  h.next().respond([
-    roster(relay, "a", [viewer.pubkey]),
-    signed(relay, {
-      kind: 39000,
-      content: JSON.stringify({ name: "a", archived: true }),
-      tags: [
-        ["d", "a"],
-        ["name", "a"],
-        ["archived", "true"],
-      ],
-    }),
-  ]);
-  await flush();
-  expect(h.pending).toHaveLength(0);
-  await h.setStars(["a"]);
-  expect(h.pending[0]?.filters[0]?.["#h"]).toEqual(["a"]);
-  h.next().respond(head("a"));
-  await flush();
-  expect(h.pending).toHaveLength(0);
-});
 
 it("forgets warming eligibility after authoritative roster denial, then permits regrant", async () => {
   const h = await setup(["a", "b"]);

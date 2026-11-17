@@ -12,7 +12,7 @@
  * which would turn `built-in:react` or `https://x.com/in:foo` into operators.
  */
 
-export type ParsedSearchOperators = {
+type ParsedSearchOperators = {
   /** FTS / prefix query with operators removed. */
   text: string;
   /** Raw `from:` value (pubkey hex, npub, @name, `me`, …), if present. */

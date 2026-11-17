@@ -246,7 +246,9 @@ test("a triple-clicked heading message pastes into the current line", async ({
   const heading = page
     .locator(`[data-channel-timeline] [data-message-id="${event.id}"]`)
     .getByRole("heading", { name: "Title" });
-  await expect(page.getByText("next", { exact: true })).toBeVisible();
+  await expect(
+    page.locator("[data-channel-timeline]").getByText("next", { exact: true }),
+  ).toBeVisible();
   await heading.click({ clickCount: 3 });
   await expect
     .poll(() => page.evaluate(() => window.getSelection()?.toString()))

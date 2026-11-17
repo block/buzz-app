@@ -89,7 +89,6 @@ function setup(
     data: {
       sections: [{ id: "g", name: "Project", order: 0 }],
       assignments,
-      starred: [],
       muted: [],
     },
   });
@@ -98,7 +97,7 @@ function setup(
   let filed = true;
   const unfile = vi.fn(async (_id: string, _sectionId?: string) => {
     filed = false;
-    return { sections: [], assignments: {}, starred: [], muted: [] };
+    return { sections: [], assignments: {}, muted: [] };
   });
   const projectsRefresh = vi.fn(async () => {});
   const session = {
@@ -599,7 +598,7 @@ it.each(["visit", "unmount"])(
     });
     h.unfile.mockImplementationOnce(async () => {
       await held;
-      return { sections: [], assignments: {}, starred: [], muted: [] };
+      return { sections: [], assignments: {}, muted: [] };
     });
     await ready();
     fireEvent.click(confirm());
@@ -655,7 +654,7 @@ it("serializes conversion completion across two mounted forms", async () => {
   });
   h.unfile.mockImplementationOnce(async () => {
     await held;
-    return { sections: [], assignments: {}, starred: [], muted: [] };
+    return { sections: [], assignments: {}, muted: [] };
   });
   fireEvent.click(confirm());
   try {

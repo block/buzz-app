@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { newChat } from "./navigation.mjs";
+import { soloRow } from "./rail-helpers.mjs";
 
 const channelId = "33333333-3333-4333-8333-333333333333";
 test.use({
@@ -18,10 +19,7 @@ test("Solo choices preserve composer geometry while settled and refreshing", asy
 }) => {
   await page.goto(app.origin);
   await newChat(page);
-  await page
-    .getByRole("navigation", { name: "Solo conversations" })
-    .locator(`[data-solo-channel-id="${channelId}"]`)
-    .click();
+  await soloRow(page, channelId).click();
   const input = page.getByRole("textbox", {
     name: "Message your agents",
     exact: true,

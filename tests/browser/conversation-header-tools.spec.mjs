@@ -1,5 +1,10 @@
 import { test, expect } from "./fixture.mjs";
 import { animationsSettled } from "./animations.mjs";
+import {
+  hideNarrowConversationList,
+  openChannel,
+  openPage,
+} from "./navigation.mjs";
 test.use({
   productionBroker: true,
   readState: true,
@@ -12,11 +17,8 @@ test("conversation header opens its tools without moving history", async ({
   app,
 }, testInfo) => {
   await page.goto(app.origin);
-  await page
-    .getByRole("navigation", { name: "Apps", exact: true })
-    .getByRole("button", { name: "Alpha", exact: true })
-    .first()
-    .click();
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   const pane = page.getByRole("article", { name: "Conversation", exact: true });
   const identity = pane.getByRole("button", {
     name: "Manage members of Alpha",
@@ -58,7 +60,10 @@ test("conversation header opens its tools without moving history", async ({
     paneBox.x + paneBox.width / 2,
     0,
   );
-  expect(titleBox.y).toBeGreaterThanOrEqual(identityBox.y + identityBox.height);
+  // The name capsule tucks up to 4px under the artwork's lower edge.
+  expect(titleBox.y).toBeGreaterThanOrEqual(
+    identityBox.y + identityBox.height - 4,
+  );
   const triggerBox = await trigger.boundingBox();
   expect(identityBox.y).toBeCloseTo(triggerBox.y, 0);
   expect(titleBox.y - (identityBox.y + identityBox.height)).toBeLessThanOrEqual(
@@ -97,6 +102,8 @@ test("conversation header opens its tools without moving history", async ({
     path: testInfo.outputPath("header-tools-narrow.png"),
   });
   await page.keyboard.press("Escape");
+  // A narrow window keeps the opened row's list over the reader.
+  await hideNarrowConversationList(page);
   await pane
     .getByRole("button", { name: "Show Team list", exact: true })
     .click();

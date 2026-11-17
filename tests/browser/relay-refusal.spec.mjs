@@ -1,4 +1,4 @@
-import { openPage } from "./navigation.mjs";
+import { channelRow, openChannel, openPage, rail } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ productionBroker: true, historyCounts: { alpha: 1, beta: 1 } });
@@ -54,10 +54,9 @@ test("a community that refuses this key says so once, with no raw status", async
   // Once an admin adds the key, Check again opens the community.
   app.relay.refuseSigned();
   await notice.getByRole("button", { name: "Check again" }).click();
-  await openPage(page, "Messages");
-  await expect(
-    page.getByRole("button", { name: "Beta", exact: true }),
-  ).toBeVisible();
+  await openPage(page, "Team");
+  await rail(page).locator('[data-rail-team-view="channels"]').click();
+  await expect(channelRow(page, "beta")).toBeVisible();
   await expect(notice).toHaveCount(0);
 });
 
@@ -70,12 +69,17 @@ test("a sign-in that ends mid-session is reported once", async ({
 }, testInfo) => {
   expectRefusals(page, app);
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
   app.relay.refuseSigned(403, "evidence rejected\n");
-  await page.getByRole("button", { name: "Beta", exact: true }).click();
+  // Opening Beta reads. A background read may meet the refusal first and
+  // take the row away before the click lands; either way it is one notice.
+  void channelRow(page, "beta")
+    .click()
+    .catch(() => {});
   await expect(
     page.getByRole("dialog", {
       name: "This community needs a sign-in Buzz doesn’t support yet",
@@ -99,7 +103,8 @@ test("an upload is the first request the community refuses", async ({
 }) => {
   expectRefusals(page, app);
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   const form = page.locator("form").filter({
     has: page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   });

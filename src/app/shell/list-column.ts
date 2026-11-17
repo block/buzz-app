@@ -33,9 +33,13 @@ export function listsConversations(target: OpenTarget) {
  */
 export function routedSection(target: OpenTarget) {
   if (target.kind !== "page" || !listsConversations(target)) return;
-  if (!target.route || activityAddress(target)) return "messages";
+  if (!target.route || activityAddress(target)) return "team";
   const params = target.route.params;
-  return isSidebarSectionRoute(params) ? params.section : undefined;
+  // Nothing is open to offer the list from: the empty page shows Team's.
+  if (params === "empty") return "team";
+  if (!isSidebarSectionRoute(params)) return;
+  // Team's section was once named for its page; saved addresses still say so.
+  return params.section === "messages" ? "team" : params.section;
 }
 
 /** A draft's own section, so its list opens on the collection it adds to. */
@@ -43,7 +47,7 @@ function draftSection(target: OpenTarget) {
   if (target.kind !== "page" || !listsConversations(target)) return;
   const params = target.route?.params;
   return params === "new-message" || params === "compose"
-    ? "messages"
+    ? "team"
     : soloDraft(params)
       ? "solo"
       : undefined;
@@ -74,6 +78,7 @@ export function useListColumn(navigator: Navigation | undefined) {
     () => navigator?.snapshot(),
   );
   const entryId = visit?.entry.id;
+  const attemptId = visit?.attempt.id;
   const saved = useRef(new Map<string, Saved>());
   const [state, setState] = useState<{
     entryId: string | undefined;
@@ -81,18 +86,11 @@ export function useListColumn(navigator: Navigation | undefined) {
   }>({ entryId: undefined, list: closed });
   // What an open in flight asked of the visit it lands on. Navigation may
   // return to a visit it already holds, which would otherwise look like Back.
+  // Rendering only reads it and `saved`; commits update them.
   const asked = useRef<
     | { from: string | undefined; attempt: string | undefined; list: Saved }
     | undefined
   >(undefined);
-  // An open that stayed on its visit starts a new attempt there: it asked
-  // nothing of any later visit.
-  if (
-    asked.current &&
-    asked.current.from === entryId &&
-    asked.current.attempt !== visit?.attempt.id
-  )
-    asked.current = undefined;
   let list = state.list;
   if (state.entryId !== entryId) {
     const target = visit?.entry.target;
@@ -101,7 +99,6 @@ export function useListColumn(navigator: Navigation | undefined) {
     const request = asked.current;
     const intent =
       request && request.from === state.entryId ? request.list : undefined;
-    asked.current = undefined;
     list = section
       ? { open: true, section, animate: false }
       : intent
@@ -115,18 +112,28 @@ export function useListColumn(navigator: Navigation | undefined) {
             };
     setState({ entryId, list });
   }
-  if (entryId) remember(saved.current, entryId, list);
-  const setOpen = useCallback(
-    (open: boolean, animate = false) =>
-      setState((current) => ({
-        ...current,
-        list: { ...current.list, open, animate },
-      })),
-    [],
-  );
+  // A request holds only on the visit and attempt that made it. The visit it
+  // landed on spent it; an open that stayed on its visit started a new
+  // attempt there and asked nothing of any later visit.
+  useLayoutEffect(() => {
+    const request = asked.current;
+    if (request && (request.from !== entryId || request.attempt !== attemptId))
+      asked.current = undefined;
+  }, [entryId, attemptId]);
+  const setOpen = useCallback((open: boolean, animate = false) => {
+    // A toggle while an open is in flight is the later choice.
+    const request = asked.current;
+    if (request)
+      asked.current = { ...request, list: { ...request.list, open } };
+    setState((current) => ({
+      ...current,
+      list: { ...current.list, open, animate },
+    }));
+  }, []);
   const latest = useRef({ entryId, list });
   useLayoutEffect(() => {
     latest.current = { entryId, list };
+    if (entryId) remember(saved.current, entryId, list);
   });
   /**
    * Call before opening: the visit that open lands on shows the list as it is

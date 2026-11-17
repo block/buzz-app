@@ -559,9 +559,9 @@ participant-set policy, and sidebar intent rules with their existing
 `src/features/relay` owners. The broker still executes those checks host-side and
 retains its stricter untrusted-envelope checks; native Rust enforcement is
 unchanged. Status reads still validate raw text before trimming, while local edits
-trim first. Star and mute commands share one broker implementation in
-`sidebar-toggle.mjs`; their distinct absent-unstar/unmute behavior stays in the
-shared edit owner. This does not make broker and native signing policies identical.
+trim first. The mute command lives in `sidebar-toggle.mjs`; its explicit unmute
+tombstone stays in the shared edit owner. This does not make broker and native
+signing policies identical.
 
 There is no follow-up retirement queue. Further consolidation needs a demonstrated
 duplicate responsibility, a current shared owner or justified replacement, and

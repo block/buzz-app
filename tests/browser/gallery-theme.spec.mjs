@@ -193,7 +193,7 @@ test("an open image gallery follows host appearance while retaining its dark sta
     }
     await expect(
       dialog.getByRole("heading", { name: "photo.png", exact: true }),
-    ).toHaveCSS("font-size", "28px");
+    ).toHaveCSS("font-size", "32px");
     await page.bringToFront();
     await expect(composer).toBeVisible();
     await dialog.screenshot({
@@ -215,7 +215,7 @@ test("an open image gallery follows host appearance while retaining its dark sta
     await expect(composer).toBeVisible();
     await expect(
       dialog.getByRole("heading", { name: "photo.png", exact: true }),
-    ).toHaveCSS("font-size", "28px");
+    ).toHaveCSS("font-size", "32px");
     await page.bringToFront();
     await dialog.screenshot({
       path: testInfo.outputPath("gallery-light-narrow-enlarged.png"),

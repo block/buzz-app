@@ -16,7 +16,6 @@ function fixture() {
     data: {
       sections: [{ id: "buzz", name: "Buzz App", order: 0 }],
       assignments: { chat: "buzz" },
-      starred: [],
       muted: [],
     },
   };

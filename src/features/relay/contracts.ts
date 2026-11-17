@@ -407,7 +407,7 @@ export interface ChannelQueries {
   /** Intent warming is optional for fixture-only query implementations. */
   prepare?(channelId: string): void;
   /** Roster warming is optional for fixture-only query implementations. The
-   * caller supplies preferred (e.g. starred) ids; the store orders the rest. */
+   * caller supplies preferred ids; the store orders the rest. */
   warm?(preferred: readonly string[]): void;
   refreshList?(options?: Pick<ChannelReadOptions, "consistency">): void;
 }

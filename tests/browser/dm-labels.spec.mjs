@@ -1,5 +1,7 @@
+import { npubEncode } from "nostr-tools/nip19";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
+import { activityRow, channelRow, conversationRow } from "./navigation.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({
@@ -8,69 +10,17 @@ test.use({
   historyCounts: { alpha: 1, beta: 1 },
 });
 
-test("keyboard removal of the final DM moves focus to a surviving section", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
-  await page.locator(".shell-sidebar").evaluate((element) => {
-    element.style.width = "220px";
-  });
-  const identity = sidebar
-    .getByRole("button", { name: "Alice Fixture", exact: true })
-    .locator("[data-dm-identity]");
-  await expect(identity).toBeVisible();
-  const participants = sidebar.locator("[data-dm-participant-count]").first();
-  await expect(participants).toHaveText("3");
-  for (const cue of [identity, participants]) {
-    await expect(cue).toBeVisible();
-    await expect
-      .poll(() =>
-        cue.evaluate((element) => {
-          const bounds = element.getBoundingClientRect();
-          // Both outer edges must actually be painted and reachable, not merely
-          // intersect the viewport while an ancestor clips the identity cue.
-          return [bounds.left + 1, bounds.right - 1].every((x) =>
-            element.contains(
-              document.elementFromPoint(x, bounds.top + bounds.height / 2),
-            ),
-          );
-        }),
-      )
-      .toBe(true);
-  }
-  const dms = sidebar.locator('button[data-channel-id^="dm-"]');
-  for (let remaining = await dms.count(); remaining > 0; remaining -= 1) {
-    const dm = dms.last();
-    await dm.focus();
-    await dm.press("Shift+F10");
-    await page
-      .getByRole("menuitem", { name: "Close conversation", exact: true })
-      .click();
-    await expect(dms).toHaveCount(remaining - 1);
-  }
-  await expect(
-    sidebar.locator("[data-sidebar-section] details > summary").first(),
-  ).toBeFocused();
-});
-
 for (const cold of [false, true]) {
   test(`DM names survive ${cold ? "hidden channel deletion during a cold fetch" : "channel deletion with loaded profiles"}`, async ({
     page,
     app,
   }) => {
-    const sidebar = page.getByRole("navigation", {
-      name: "Subscribed channels",
-    });
-    const dm = sidebar.getByRole("button", {
-      name: "Alice Fixture",
-      exact: true,
-    });
-    const fallback = sidebar.getByRole("button", {
-      name: app.participants[0].slice(0, 10),
-      exact: true,
-    });
+    const dm = conversationRow(page, "Alice Fixture");
+    const fallback = conversationRow(
+      page,
+      `npub…${npubEncode(app.participants[0]).slice(-3)}`,
+    );
+    const beta = channelRow(page, "beta");
     const labelReads = () =>
       app.report.queries.filter(
         ({ filter }) =>
@@ -83,24 +33,23 @@ for (const cold of [false, true]) {
     }
     try {
       await open(page, app);
+      // Activity lists channels and DMs together.
+      await activityRow(page).click();
       if (cold) {
         await expect(fallback).toBeVisible();
         await expect.poll(() => labelReads().length).toBe(1);
         expect(app.report.profileHolds.some((held) => held.pending)).toBe(true);
-        await expect(
-          sidebar.getByRole("button", { name: "Beta", exact: true }),
-        ).toHaveCount(0);
+        await expect(beta).toHaveCount(0);
       } else {
         await expect(dm).toBeVisible();
-        await expect(
-          sidebar.getByRole("button", { name: "Beta", exact: true }),
-        ).toBeVisible();
+        await expect(beta).toBeVisible();
         app.relay.holdProfiles(app.participants);
       }
       await expect((cold ? fallback : dm).locator(".buzz-avatar")).toHaveText(
-        cold ? app.participants[0][0].toUpperCase() : "A",
+        cold ? "N" : "A",
       );
       const before = labelReads().length;
+      await channelRow(page, "alpha").click();
       app.omitChannel("beta");
       // The deployed deletion trigger is not under test. Exercise the real
       // refresh -> roster omission -> session purge -> page/hook recovery path.
@@ -130,14 +79,14 @@ for (const cold of [false, true]) {
         })
         .click();
       await dm.click();
-      await expect(
-        page
-          .getByRole("article", { name: "Conversation" })
-          .getByRole("button", {
-            name: "Manage members of Alice Fixture",
-            exact: true,
-          }),
-      ).toContainText("Alice Fixture");
+      // The header names the people; the members dialog reads their presence.
+      await page
+        .getByRole("article", { name: "Conversation" })
+        .getByRole("button", {
+          name: "Manage members of Alice Fixture",
+          exact: true,
+        })
+        .click();
       expect(labelReads()).toHaveLength(before);
       await expect(dm.locator(".buzz-avatar")).toHaveText("A");
       await expect

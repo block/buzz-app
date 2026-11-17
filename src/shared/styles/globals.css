@@ -216,7 +216,10 @@
     --interaction-pressed: var(--affordance-backdrop-pressed);
     --interaction-selected: var(--affordance-backdrop-pressed);
     @apply relative grid shrink-0 items-center;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 15rem) minmax(0, 1fr);
+    /* Equal wings centre search; a wing never shrinks under its controls. */
+    grid-template-columns:
+      minmax(max-content, 1fr) minmax(0, 15rem)
+      minmax(max-content, 1fr);
     min-height: calc(var(--size-control-sm) + var(--space-3));
     padding-block: var(--space-1);
     padding-inline: var(--space-2);
@@ -455,12 +458,15 @@
   .notice {
     @apply my-5 rounded-2xl border border-warning-border bg-warning-surface p-5 text-body-sm text-warning;
   }
-  /* A page-sized status, such as a page that could not open, centered in its pane. */
+  /* A page-sized status, such as a page that could not open, centered in its
+     pane. A pane shorter than the status scrolls it, so its action stays in
+     reach. */
   .page-status {
     display: grid;
     flex: 1;
-    place-items: center;
-    min-block-size: 100%;
+    place-items: safe center;
+    block-size: 100%;
+    overflow-y: auto;
     padding: var(--space-6);
   }
   .page-status > * {

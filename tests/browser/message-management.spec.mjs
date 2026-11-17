@@ -1,8 +1,30 @@
 import { hoverMessage, openThreadLink } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
+import { hideNarrowConversationList, openDm } from "./navigation.mjs";
 import { open } from "./timeline.mjs";
 import { readJournal } from "./reading.mjs";
 import { npubEncode } from "nostr-tools/nip19";
+
+// A resize re-measures the detail frame on the next rendering update; a
+// narrow frame lays Team's list over the reader, so wait for the measure and
+// close the list before the test works in the reader.
+async function resizeTo(page, width, height) {
+  await page.setViewportSize({ width, height });
+  await expect
+    .poll(() =>
+      page
+        .locator("[data-detail-workspace]")
+        .evaluate(
+          (frame) =>
+            frame.hasAttribute("data-narrow") ===
+            frame.clientWidth <
+              48 *
+                parseFloat(getComputedStyle(document.documentElement).fontSize),
+        ),
+    )
+    .toBe(true);
+  await hideNarrowConversationList(page);
+}
 
 test.use({
   productionBroker: true,
@@ -152,7 +174,7 @@ test("manage a channel message, peer unread state, and its thread", async ({
     )
     .click();
   for (const width of [900, 390]) {
-    await page.setViewportSize({ width, height: 850 });
+    await resizeTo(page, width, 850);
     await row.scrollIntoViewIfNeeded();
     await hoverMessage(row);
     await trigger.click();
@@ -262,10 +284,7 @@ test("DM menus edit own messages but never expose destructive actions for peers"
   app,
 }) => {
   await open(page, app);
-  await page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: "Alice Fixture", exact: true })
-    .click();
+  await openDm(page, "Alice Fixture");
   const timeline = page.locator("[data-channel-timeline]");
   const channel = await timeline.getAttribute("data-channel-timeline");
   const own = app.append("primary", channel, "Own DM message");

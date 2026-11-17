@@ -1,6 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 import {
   closeSettings,
+  revealRail,
   selectSettingsSection,
   settingsDialog,
 } from "./navigation.mjs";
@@ -25,6 +26,9 @@ test("profile Settings opens after a failed connection", async ({
   await page.goto(app.origin);
   // Messages waits out its opening deadline while the connection retries.
   await page.clock.runFor(15_000);
+  await expect
+    .poll(() => app.report.startupFailures?.length ?? 0)
+    .toBeGreaterThan(0);
   await expect(
     page.getByRole("heading", { name: "Can’t connect", exact: true }),
   ).toBeVisible();
@@ -74,6 +78,7 @@ test("account menu choices remain reachable across themes, widths and enlarged t
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
     for (const width of [1280, 800, 390]) {
       await page.setViewportSize({ width, height: 950 });
+      await revealRail(page);
       await trigger.click();
       await expect(menu).toBeInViewport({ ratio: 1 });
       await appearance.hover();
@@ -116,6 +121,7 @@ test("account menu choices remain reachable across themes, widths and enlarged t
     localStorage.setItem("buzz-font-scale.v1", "2");
   });
   await page.reload();
+  await revealRail(page);
   await trigger.focus();
   await trigger.press("Enter");
   await expect(menu).toBeInViewport({ ratio: 1 });
@@ -144,6 +150,7 @@ test("account menu choices remain reachable across themes, widths and enlarged t
     page.getByRole("region", { name: "Manage plugins", exact: true }),
   ).toBeVisible();
   await closeSettings(page);
+  await revealRail(page);
   await trigger.click();
   await menu.getByRole("menuitem", { name: /, edit profile$/ }).click();
   await expect(

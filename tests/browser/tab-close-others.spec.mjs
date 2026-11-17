@@ -13,20 +13,14 @@ test("a tab's Close other tabs keeps only that tab", async ({
   page,
   app,
 }, testInfo) => {
-  await page.addInitScript(() =>
-    localStorage.setItem("buzz-thread-placement.v1", "main"),
-  );
   await open(page, app);
   const roots = app.histories
     .get("primary/alpha")
     .filter((row) => row.content.startsWith("Thread root"));
-  const main = page.locator("[data-main-workspace]");
-  const threadTabs = main.locator('[role="tab"][data-tab-value^="thread:"]');
+  const side = page.locator("[data-panel-workspace]");
+  const threadTabs = side.locator('[role="tab"][data-tab-value^="thread:"]');
   expect(roots).toHaveLength(2);
-  const conversation = main.getByRole("tab", { name: "Alpha", exact: true });
   for (const [index, root] of roots.entries()) {
-    // A main-pane thread covers the channel; return to it for the next one.
-    if (index) await conversation.click();
     await clickRow(
       page,
       page
@@ -61,6 +55,8 @@ test("a tab's Close other tabs keeps only that tab", async ({
   await expect(threadTabs).toHaveAttribute("data-tab-value", keptValue);
   await expect(threadTabs).toHaveAttribute("aria-selected", "true");
   await expect(threadTabs).toBeFocused();
-  // The channel's own conversation tab is permanent.
-  await expect(conversation).toBeVisible();
+  // The channel stays open beside the kept thread.
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
 });

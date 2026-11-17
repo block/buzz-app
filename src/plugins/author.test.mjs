@@ -196,7 +196,6 @@ export function apply(ctx: Context) {
   const decoration: SidebarRowContribution = {
     version: 1, id: "details",
     render: (row, Default) => row.kind === "dm" ? createElement("div", { title: row.label }, Default) : Default,
-    sortModes: [{ id: "reverse", label: "Reverse", compare: (a, b) => b.label.localeCompare(a.label) }],
   };
   hostRows?.register(decoration);
   // @ts-expect-error Host row contribution versions are explicit.

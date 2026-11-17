@@ -2,6 +2,7 @@ import { setPluginEnabled } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import {
+  channelRow,
   openPage,
   openSettings,
   settingsDialog,
@@ -22,7 +23,7 @@ providerTest(
   async ({ page, app }) => {
     await open(page, app);
     const alpha = await entry(page);
-    await button(page, "Beta").click();
+    await channelRow(page, "beta").click();
     await expect(composer(page, "Beta")).toBeVisible();
     const beta = await entry(page);
     await openSettings(page);
@@ -140,7 +141,7 @@ test("Settings Back is reversible; explicit Close retires every section visit", 
 }) => {
   await open(page, app);
   const alpha = await entry(page);
-  await button(page, "Beta").click();
+  await channelRow(page, "beta").click();
   await expect(composer(page, "Beta")).toBeVisible();
   const beta = await entry(page);
   await openSettings(page);
@@ -176,26 +177,40 @@ test("Settings Back is reversible; explicit Close retires every section visit", 
   await expect(button(page, "Go forward")).toBeDisabled();
 });
 
-test("a collapsible sidebar yields to narrow drawer styles during resize", async ({
+test("a compact rail yields to narrow drawer styles during resize", async ({
   page,
   app,
 }) => {
   await open(page, app);
-  const navigation = page.locator("#shell-navigation");
-  await expect(navigation).toHaveAttribute("data-sidebar-collapsible", "true");
+  const rail = page.locator("#shell-rail");
+  const workspace = page.locator(".shell-workspace");
+  await button(page, "Hide sidebar").click();
+  await expect(rail).toHaveAttribute("data-compact", "true");
+  await expect(workspace).toHaveAttribute("data-rail-compact", "true");
 
   await page.setViewportSize({ width: 390, height: 900 });
-  // Model the desktop marker remaining for a frame until React observes the
+  // Model the desktop markers remaining for a frame until React observes the
   // media-query change; narrow drawer CSS must still win during that interval.
-  await navigation.evaluate((element) => {
-    element.setAttribute("data-sidebar-collapsible", "true");
+  await rail.evaluate((element) => {
+    element.setAttribute("data-compact", "true");
   });
-  await expect(navigation).toHaveCSS("display", "none");
+  await workspace.evaluate((element) => {
+    element.setAttribute("data-rail-compact", "true");
+  });
+  await expect(rail).toHaveCSS("position", "absolute");
+  await expect
+    .poll(() =>
+      workspace.evaluate(
+        (element) =>
+          getComputedStyle(element).gridTemplateColumns.split(" ").length,
+      ),
+    )
+    .toBe(1);
 
   await button(page, "Show navigation").click();
-  await expect(navigation).toHaveAttribute("data-expanded", "true");
-  await expect(navigation).toHaveCSS("display", "flex");
-  await expect(navigation).toBeVisible();
+  await expect(rail).toHaveAttribute("data-open", "true");
+  await expect(rail).toHaveCSS("position", "absolute");
+  await expect(rail).toBeVisible();
 });
 
 test("a retired contributed Settings destination promptly reports the plugin turned off on Back", async ({
@@ -245,7 +260,7 @@ test("channel visits, toolbar, browser traversal and Settings sections share one
   await open(page, app);
   const alpha = await entry(page);
   expect(alpha.target.channelId).toBe("alpha");
-  await button(page, "Beta").click();
+  await channelRow(page, "beta").click();
   await expect(composer(page, "Beta")).toBeVisible();
   const beta = await entry(page);
   expect(beta.id).not.toBe(alpha.id);
@@ -253,7 +268,7 @@ test("channel visits, toolbar, browser traversal and Settings sections share one
   await expect(composer(page, "Alpha")).toBeVisible();
   expect((await entry(page)).id).toBe(alpha.id);
   // Reclick is retry, not a new visit or forward-stack truncation.
-  await button(page, "Alpha").click();
+  await channelRow(page, "alpha").click();
   expect((await entry(page)).id).toBe(alpha.id);
   await expect(button(page, "Go forward")).toBeEnabled();
   await button(page, "Go forward").click();

@@ -687,59 +687,6 @@ test("owner profile keeps its pane and caret stable during inline name editing",
   });
   const agents = page.getByRole("region", { name: "Agents", exact: true });
   expect((await profile.boundingBox()).y).toBe((await agents.boundingBox()).y);
-  const divider = page.getByRole("separator", {
-    name: "Resize main and secondary panels",
-  });
-  const originalWidth = (await profile.boundingBox()).width;
-  const originalListWidth = (await agents.boundingBox()).width;
-  const handle = await divider.boundingBox();
-  await page.mouse.move(
-    handle.x + handle.width / 2,
-    handle.y + handle.height / 2,
-  );
-  await page.mouse.down();
-  await page.mouse.move(handle.x - 100, handle.y + handle.height / 2);
-  await page.mouse.up();
-  await expect
-    .poll(async () => (await profile.boundingBox()).width)
-    .toBeGreaterThan(originalWidth + 80);
-  expect((await agents.boundingBox()).width).toBeLessThan(
-    originalListWidth - 80,
-  );
-  await divider.focus();
-  const draggedWidth = (await profile.boundingBox()).width;
-  await divider.press("ArrowRight");
-  await expect
-    .poll(async () => (await profile.boundingBox()).width)
-    .toBeLessThan(draggedWidth);
-  const adaCard = agents.getByRole("gridcell", { name: "Ada", exact: true });
-  await divider.press("End");
-  const agentGrid = agents.getByRole("grid", { name: "Agents", exact: true });
-  await expect
-    .poll(() =>
-      agentGrid.evaluate(
-        (element) =>
-          getComputedStyle(element.parentElement).gridTemplateColumns.split(" ")
-            .length,
-      ),
-    )
-    .toBe(1);
-  expect(
-    await agentGrid.evaluate(
-      (element) =>
-        element.parentElement.scrollWidth <= element.parentElement.clientWidth,
-    ),
-  ).toBe(true);
-  await adaCard.focus();
-  await adaCard.press("ArrowDown");
-  await expect(
-    agents.getByRole("gridcell", { name: "Bo", exact: true }),
-  ).toBeFocused();
-  await page.keyboard.press("ArrowUp");
-  await divider.dblclick();
-  await expect
-    .poll(async () => (await profile.boundingBox()).width)
-    .toBe(originalWidth);
 
   const settings = page.getByRole("tab", { name: "Settings", exact: true });
   await settings.click();

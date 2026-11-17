@@ -1,4 +1,11 @@
-import { openPage, openSettings, settingsDialog } from "./navigation.mjs";
+import {
+  channelRow,
+  conversationRow,
+  openPage,
+  openSettings,
+  settingsDialog,
+  showConversationList,
+} from "./navigation.mjs";
 import { hoverMessage } from "./message-actions.mjs";
 import { upper, settle } from "./timeline.mjs";
 import { test as base, expect } from "./playwright-test.mjs";
@@ -65,6 +72,7 @@ const test = base.extend({
     ];
     const commands = [],
       reads = [];
+    let visibilityTime = 0;
     let failOpen = false,
       hold = false,
       release = () => {};
@@ -76,7 +84,31 @@ const test = base.extend({
     let historyReady = Promise.resolve(),
       releaseHistory = () => {},
       failHistory = false;
+    // Hiding a DM is the relay's record; opening it again clears it.
+    const visible = (hidden) => {
+      const old = events.findIndex((event) => event.kind === 30622);
+      if (old >= 0) events.splice(old, 1);
+      events.push(
+        finalizeEvent(
+          {
+            kind: 30622,
+            tags: [
+              ["d", viewer],
+              ["p", viewer],
+              ...(hidden ? [["h", channel]] : []),
+            ],
+            content: "",
+            created_at: Math.floor(Date.now() / 1000) + ++visibilityTime,
+          },
+          relay,
+        ),
+      );
+    };
     const publish = async (event) => {
+      if (event.kind === 41012) {
+        visible(true);
+        return "saved";
+      }
       // Only hold messages: presence/read-state writes must not replace the gate.
       if (hold && event.kind === 9)
         await new Promise((resolve) => {
@@ -102,6 +134,7 @@ const test = base.extend({
             failOpen = false;
             return new Response("offline", { status: 503 });
           }
+          visible(false);
           const members = [
             viewer,
             ...body.tags
@@ -119,7 +152,9 @@ const test = base.extend({
               JSON.stringify({ name: "Avery Chen", channel_type: "dm" }),
             ),
           );
+          // A relay publishes all three channel records; hiding verifies them.
           events.push(
+            sign(relay, 39001, [["d", channel]]),
             sign(relay, 39002, [
               ["d", channel],
               ...members.map((pubkey) => ["p", pubkey]),
@@ -319,15 +354,13 @@ const test = base.extend({
     }
   },
 });
+// Team's list header starts a new message beside the list.
 async function startNewMessage(page) {
-  await openPage(page, "Messages");
-  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
-  const messages = sidebar.locator('[data-sidebar-section="dms"] summary');
-  await messages.hover();
-  await sidebar
-    .getByRole("button", { name: "New message", exact: true })
-    .click();
-  await expect(messages.locator("..")).toHaveAttribute("open", "");
+  await openPage(page, "Team");
+  await page.getByRole("button", { name: "New message", exact: true }).click();
+  await expect(
+    page.getByRole("region", { name: "New message", exact: true }),
+  ).toBeVisible();
 }
 
 async function open(page, app) {
@@ -413,7 +446,12 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await expect(
     page.getByRole("group", { name: "Recipients" }).getByRole("listbox"),
   ).toHaveCount(0);
-  await page.locator("[data-new-message-body]").click();
+  // The picker lies over the top of the body; click the body below it.
+  const body = page.locator("[data-new-message-body]");
+  const bodyBox = await body.boundingBox();
+  await body.click({
+    position: { x: bodyBox.width / 2, y: bodyBox.height - 8 },
+  });
   await expect(picker).toHaveCount(0);
   await input.click();
   await expect(picker).toBeVisible();
@@ -457,7 +495,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     ).length;
   const beforeReopen = directoryReads();
   await openPage(page, "Workflows");
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await startNewMessage(page);
   await expect(page.getByRole("option").first()).toHaveAttribute(
     "aria-setsize",
@@ -692,23 +730,19 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await expect
     .poll(() => app.publications.filter((event) => event.kind === 9).length)
     .toBe(1);
-  await expect(input).toBeDisabled();
+  // Send opens the new DM before its first message is delivered; the message
+  // waits in the DM's own outbox rather than holding the compose surface.
   await expect(
     page.getByRole("region", { name: "New message", exact: true }),
-  ).toBeVisible();
-  const sidebarDm = page
-    .getByRole("complementary", { name: "Sidebar", exact: true })
-    .getByRole("button", { name: "Avery Chen", exact: true });
-  await expect(sidebarDm).toHaveCount(0);
+  ).toHaveCount(0);
+  await showConversationList(page);
+  const sidebarDm = conversationRow(page, "Avery Chen");
+  await expect(sidebarDm).toBeVisible();
   const firstSend = app.publications.find((event) => event.kind === 9);
   expect(firstSend.tags.filter(([name]) => name === "p")).toEqual(
     app.commands[0].tags.filter(([name]) => name === "p"),
   );
   app.confirm();
-  await expect(sidebarDm).toBeVisible();
-  await expect(
-    page.getByRole("region", { name: "New message", exact: true }),
-  ).toHaveCount(0);
   const message = page.locator("[data-message-id]", {
     hasText: "Our first direct message",
   });
@@ -799,18 +833,9 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
 }) => {
   app.seedChannel("22222222-2222-4222-8222-222222222222", "Hello from Avery");
   await page.goto(app.origin);
-  await openPage(page, "Messages");
-  const sidebar = page.getByRole("complementary", {
-    name: "Sidebar",
-    exact: true,
-  });
-  const general = sidebar.locator(
-    '[data-channel-id="22222222-2222-4222-8222-222222222222"]',
-  );
-  const sidebarDm = sidebar.getByRole("button", {
-    name: "Avery Chen",
-    exact: true,
-  });
+  await openPage(page, "Team");
+  const general = channelRow(page, "22222222-2222-4222-8222-222222222222");
+  const sidebarDm = conversationRow(page, "Avery Chen");
   const openProfileMessage = async () => {
     await general.click();
     await page
@@ -834,8 +859,11 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
   // A locally hidden DM reappears when the profile opens it again.
   await sidebarDm.click({ button: "right" });
   await page
-    .getByRole("menu", { name: "Actions for Avery Chen" })
-    .getByRole("menuitem", { name: "Close conversation", exact: true })
+    .getByRole("menuitem", { name: "Hide conversation", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Hide conversation: Avery Chen" })
+    .getByRole("button", { name: "Hide conversation", exact: true })
     .click();
   await expect(sidebarDm).toHaveCount(0);
   await page.reload();
@@ -846,6 +874,11 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
     page.getByRole("textbox", { name: "Message #Avery Chen" }),
   ).toBeVisible();
   await page.reload();
+  // A reload on the DM's own address starts with its list tucked away.
+  await expect(
+    page.getByRole("textbox", { name: "Message #Avery Chen" }),
+  ).toBeVisible();
+  await showConversationList(page);
   await expect(sidebarDm).toBeVisible();
   expect(app.commands).toHaveLength(2);
   expect(app.errors.unexplained()).toEqual([]);
@@ -872,12 +905,6 @@ test("a send finishing behind Settings keeps Settings and its unsaved edit", asy
   });
   await name.fill("Unsaved name");
   app.confirm();
-  // The new DM joins the retained sidebar behind the modal without leaving it.
-  await expect(
-    page.locator('[aria-label="Sidebar"] button', {
-      hasText: "Avery Chen",
-    }),
-  ).toHaveCount(1);
   // The send has finished once its status clears behind the modal.
   await expect(page.getByText("Sending message…")).toHaveCount(0);
   expect(decodeURIComponent(new URL(page.url()).hash)).toContain(
@@ -894,11 +921,9 @@ test("a send finishing behind Settings keeps Settings and its unsaved edit", asy
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
   await expect(settingsDialog(page)).toHaveCount(0);
-  await expect(
-    page
-      .getByRole("complementary", { name: "Sidebar", exact: true })
-      .getByRole("button", { name: "Avery Chen", exact: true }),
-  ).toBeVisible();
+  // A new message composes without Team's list; the DM is in it once shown.
+  await showConversationList(page);
+  await expect(conversationRow(page, "Avery Chen")).toBeVisible();
   expect(app.errors.unexplained()).toEqual([]);
 });
 
@@ -915,7 +940,9 @@ test("existing DM previews inline and opens its exact thread", async ({
   await open(page, app);
   await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
   const body = page.locator("[data-new-message-body]");
-  const retry = body.getByRole("button", { name: "Retry messages" });
+  // The list beside New message already holds this DM's latest message, so
+  // the preview shows it and offers the failed history above it.
+  const retry = body.getByRole("button", { name: "Retry older messages" });
   await expect(retry).toBeVisible();
   await page
     .getByRole("combobox", { name: "Message recipients" })
@@ -936,21 +963,26 @@ test("existing DM previews inline and opens its exact thread", async ({
     await retry.focus();
     await retry.press("Enter");
     await expect.poll(historyReads).toBeGreaterThan(beforeRetry);
-    await expect(retry).toHaveAttribute("aria-busy", "true");
-    await expect(retry).toBeFocused();
   } finally {
     app.showHistory();
   }
+  await expect(body.getByRole("button", { name: /older/ })).toHaveCount(0);
   await expect(
     body.getByText("Existing DM history", { exact: true }),
   ).toBeVisible();
-  await expect(composer).toBeFocused();
   const messageId = await row.getAttribute("data-message-id");
   const author = row.getByRole("button", { name: "View Avery Chen profile" });
   await author.click();
-  const profile = page.getByRole("dialog", { name: "Profile", exact: true });
+  // The profile opens as a tab beside New message, not over it.
+  const profile = page.getByRole("complementary", {
+    name: "Profile",
+    exact: true,
+  });
   await expect(profile).toBeVisible();
-  await profile.getByRole("button", { name: "Close", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Close Profile panel", exact: true })
+    .click();
+  await expect(profile).toHaveCount(0);
   await expect(author).toBeFocused();
   await expect(composer).toHaveText("Keep this draft");
   await hoverMessage(row);

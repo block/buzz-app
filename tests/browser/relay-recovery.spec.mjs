@@ -1,4 +1,4 @@
-import { openPage } from "./navigation.mjs";
+import { channelRow, openChannel, openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ productionBroker: true, historyCounts: { alpha: 1, beta: 1 } });
@@ -16,6 +16,8 @@ test("relay reads recover automatically after the network returns", async ({
   // refused by the broker (503), so saves stay behind the edge page from the
   // outage on.
   let slept = false;
+  // The open channel's own read was refused.
+  let caughtUp = false;
   app.report.relayFailures = [];
   await page.route("**/api/relay/**", async (route) => {
     const url = route.request().url();
@@ -24,6 +26,12 @@ test("relay reads recover automatically after the network returns", async ({
       offline || (slept && pathname.endsWith("/read-state-publish"));
     if (!refused || pathname.endsWith("/session")) return route.fallback();
     app.report.relayFailures.push(url);
+    caughtUp ||=
+      pathname.endsWith("/query") &&
+      route
+        .request()
+        .postDataJSON()
+        .some((filter) => filter.top_level && filter["#h"]?.includes("alpha"));
     await route.fulfill({
       status: 403,
       contentType: "text/html",
@@ -33,12 +41,17 @@ test("relay reads recover automatically after the network returns", async ({
   // The quiet delay is 30 s; a controlled clock jumps it.
   await page.clock.install();
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
   });
   await expect(composer).toBeVisible();
+  // The list's row previews repeat the latest message; read the timeline.
+  const history = page.getByRole("region", {
+    name: "Channel message history",
+  });
 
   offline = true;
   slept = true;
@@ -56,12 +69,10 @@ test("relay reads recover automatically after the network returns", async ({
     exact: true,
   });
   // Wait for the channel's catch-up read to meet the outage. An earlier
-  // failure, such as presence, can recover once the broker's own relay
-  // socket returns, and jumping the clock on it would leave the notice to
+  // failure, such as presence or another read, can recover once the
+  // broker's own relay socket returns, and jumping the clock on it would leave the notice to
   // clear while the network is still down.
-  await expect
-    .poll(() => app.report.relayFailures.some((url) => url.endsWith("/query")))
-    .toBe(true);
+  await expect.poll(() => caughtUp).toBe(true);
   // A short outage, like waking from sleep, says nothing.
   await expect(notice).toHaveCount(0);
   await page.clock.fastForward(30_000);
@@ -75,10 +86,8 @@ test("relay reads recover automatically after the network returns", async ({
   ).toHaveCount(0);
   await expect(page.getByText(/Relay request failed/)).toHaveCount(0);
   // Loaded messages and channels stay on screen.
-  await expect(page.getByText("primary alpha message 0")).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Beta", exact: true }),
-  ).toBeVisible();
+  await expect(history.getByText("primary alpha message 0")).toBeVisible();
+  await expect(channelRow(page, "beta")).toBeVisible();
   // Fully on screen, after its entrance.
   await expect(notice).toBeInViewport({ ratio: 1 });
   await page.screenshot({ path: testInfo.outputPath("offline.png") });
@@ -96,11 +105,11 @@ test("relay reads recover automatically after the network returns", async ({
   await expect(page.getByRole("button", { name: /Retry/ })).toHaveCount(0);
   // Every failed panel clears, including the open timeline.
   await expect(page.getByText(/Relay request failed/)).toHaveCount(0);
-  await expect(page.getByText("primary alpha message 0")).toBeVisible();
-  await page.getByRole("button", { name: "Beta", exact: true }).click();
+  await expect(history.getByText("primary alpha message 0")).toBeVisible();
+  await channelRow(page, "beta").click();
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("primary beta message 0")).toBeVisible();
+  await expect(history.getByText("primary beta message 0")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("recovered.png") });
 });

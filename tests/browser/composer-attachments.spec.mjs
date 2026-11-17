@@ -17,6 +17,15 @@ async function openPreparationDocument(page, server) {
   await page.goto(url);
 }
 
+// The fixture has no rail, so channels switch through the page's address.
+const showChannel = (page, channelId) =>
+  page.evaluate((channelId) => {
+    const target = JSON.parse(
+      decodeURIComponent(location.hash.slice("#buzz=".length)),
+    );
+    location.hash = `buzz=${encodeURIComponent(JSON.stringify({ ...target, channelId }))}`;
+  }, channelId);
+
 // Browser-only boundary: actual File/DataTransfer delivery, editor capture and page wiring.
 test("picker, pane drop and clipboard files use the same attachment draft and existing Send", async ({
   page,
@@ -276,7 +285,7 @@ test("a sent attachment keeps uploading after navigation and publishes to its or
     await expect(general.getByRole("textbox")).toHaveText("");
     await expect(general.getByText("held.txt")).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Random", exact: true }).click();
+    await showChannel(page, "random");
     const random = page.getByRole("form", {
       name: "Send a message to Random",
       exact: true,
@@ -308,7 +317,7 @@ test("a sent attachment keeps uploading after navigation and publishes to its or
     await expect(random.getByRole("textbox")).toHaveText("still composing");
     await expect(page.getByText("background caption")).toHaveCount(0);
 
-    await page.getByRole("button", { name: "General", exact: true }).click();
+    await showChannel(page, "general");
     await expect(page.getByText("background caption")).toBeVisible();
     await expect(page.getByRole("link", { name: /held.txt/ })).toBeVisible();
     expect(uploadRequests).toHaveLength(1);

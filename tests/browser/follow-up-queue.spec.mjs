@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { openPage, selectSettingsSection, sendOnlyTo } from "./navigation.mjs";
+import { soloRow } from "./rail-helpers.mjs";
 
 const chat = "33333333-3333-4333-8333-333333333333";
 const agent =
@@ -189,7 +190,7 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
 
 async function startWorkingAgent(page, app) {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await selectSettingsSection(page, "Appearance", "Appearance");
@@ -203,11 +204,8 @@ async function startWorkingAgent(page, app) {
   await expect(
     page.getByRole("dialog", { name: "Settings", exact: true }),
   ).toBeHidden();
-  await openPage(page, "Messages");
-  await page
-    .getByRole("navigation", { name: "Solo conversations" })
-    .locator(`[data-solo-channel-id="${chat}"]`)
-    .click();
+  await openPage(page, "Team");
+  await soloRow(page, chat).click();
   await expect
     .poll(() => page.evaluate(() => !!window.localAgentFixture))
     .toBe(true);
@@ -363,11 +361,8 @@ test("Solo queued rows survive reload and Send or Remove stays durable", async (
         .click();
       await expect(notice).toBeHidden();
     }
-    await openPage(page, "Messages");
-    await page
-      .getByRole("navigation", { name: "Solo conversations" })
-      .locator(`[data-solo-channel-id="${chat}"]`)
-      .click();
+    await openPage(page, "Team");
+    await soloRow(page, chat).click();
     await expect(
       page.getByRole("textbox", { name: "Message your agents", exact: true }),
     ).toBeVisible();
@@ -471,11 +466,8 @@ test.describe("resuming saved Solo work", () => {
           })
           .click();
         await expect(notice).toBeHidden();
-        await openPage(page, "Messages");
-        await page
-          .getByRole("navigation", { name: "Solo conversations" })
-          .locator(`[data-solo-channel-id="${chat}"]`)
-          .click();
+        await openPage(page, "Team");
+        await soloRow(page, chat).click();
         await expect(queue.getByRole("listitem")).toHaveCount(2);
         if (!resume) {
           await expect(queue).toContainText(

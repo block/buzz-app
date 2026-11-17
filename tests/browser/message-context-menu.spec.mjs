@@ -91,7 +91,10 @@ test("right-clicking a message timestamp offers its ⋯ actions and copies its l
     ),
   );
   const box = await menu.boundingBox();
-  expect(Math.abs(box.x - point.x)).toBeLessThan(16);
+  // Near the window's right edge the menu opens leftward from the pointer.
+  expect(
+    Math.min(Math.abs(box.x - point.x), Math.abs(box.x + box.width - point.x)),
+  ).toBeLessThan(16);
   expect(Math.abs(box.y - point.y)).toBeLessThan(16);
   await menu.getByRole("menuitem", { name: "Copy link", exact: true }).click();
   await expect(menu).toHaveCount(0);

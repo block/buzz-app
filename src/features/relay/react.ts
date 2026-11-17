@@ -45,7 +45,8 @@ export function useChannelRoster(queries: ChannelQueries) {
   return useSyncExternalStore(queries.subscribeList, snapshot, snapshot);
 }
 const activityFields = new Set(["preview", "lastActivityAt", "activityKnown"]);
-function sameRoster(a: ChannelList, b: ChannelList) {
+/** Whether two rosters differ only in live activity. */
+export function sameRoster(a: ChannelList, b: ChannelList) {
   return (
     a.status === "ready" &&
     b.status === "ready" &&

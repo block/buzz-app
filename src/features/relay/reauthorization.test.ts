@@ -69,7 +69,6 @@ it("reads again under new credentials when sign-in lands during a read begun bef
         (): SidebarPreferences => ({
           sections: [],
           assignments: {},
-          starred: [],
           muted: [],
         }),
       ),
@@ -203,7 +202,7 @@ it.each([
       read: async (): Promise<SidebarPreferences> => {
         preferenceReads++;
         if (unavailable) throw new Error(code);
-        return { sections: [], assignments: {}, starred: [], muted: [] };
+        return { sections: [], assignments: {}, muted: [] };
       },
       available: true,
     });

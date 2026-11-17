@@ -153,8 +153,6 @@ export type MessageRowProps = {
   onReply?:
     | ((messageId: string, deferFocus?: boolean) => ReplyHold | undefined)
     | undefined;
-  /** False: existing threads open, but the row offers none to start or reply in. */
-  startsThreads?: boolean;
   quickControls?: ReactNode;
   overflowItems?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
@@ -248,7 +246,6 @@ function MessageRowContent({
   keepMounted,
   onOpenThread,
   onReply,
-  startsThreads = true,
   quickControls,
   overflowItems,
   participantProfiles,
@@ -282,7 +279,7 @@ function MessageRowContent({
     row.threadRootId ?? row.id,
   );
   const { agents: threadAgents, waiting: threadWaiting } = useThreadAgents(
-    onOpenThread && (row.replyCount > 0 || (startsThreads && !row.threadRootId))
+    onOpenThread && (row.replyCount > 0 || !row.threadRootId)
       ? session
       : undefined,
     row.channelId,
@@ -292,7 +289,7 @@ function MessageRowContent({
   );
   const rootId = row.threadRootId ?? row.id;
   const threadDraft = useThreadDraft(
-    onOpenThread && (row.replyCount > 0 || (startsThreads && !row.threadRootId))
+    onOpenThread && (row.replyCount > 0 || !row.threadRootId)
       ? session
       : undefined,
     row.channelId,
@@ -809,7 +806,7 @@ function MessageRowContent({
       // The Reply button opens the thread; holding the message is the quick
       // reply. A reader with no thread view falls back to the quick reply.
       onReply={
-        onOpenThread && startsThreads
+        onOpenThread
           ? () =>
               onOpenThread(
                 row.threadRootId ?? row.id,
@@ -949,9 +946,6 @@ function MessageRowContent({
       )}
     </>
   );
-  // Accessories may only point at a thread the row could open or start.
-  const summaryThread =
-    startsThreads || row.replyCount > 0 ? onOpenThread : undefined;
   const renderMessageSummary = (activity?: MessageSummaryActivity) => {
     const remainingThreadAgents = threadAgents.filter(
       (agent) => !activity?.participants.includes(agent.pubkey),
@@ -961,9 +955,7 @@ function MessageRowContent({
       : undefined;
     return (
       ((row.replyCount > 0 ||
-        (startsThreads &&
-          !row.threadRootId &&
-          (threadAgents.length > 0 || threadDraft)) ||
+        (!row.threadRootId && (threadAgents.length > 0 || threadDraft)) ||
         activity) &&
         onOpenThread && (
           <Button
@@ -1641,7 +1633,7 @@ function MessageRowContent({
             <ComposerAccessories
               registry={extensions.accessories}
               renderMessageSummary={
-                summaryThread ? renderMessageSummary : undefined
+                onOpenThread ? renderMessageSummary : undefined
               }
               session={session}
               scope={scope}
@@ -1652,9 +1644,9 @@ function MessageRowContent({
                 menuTrigger.current?.focus({ preventScroll: true })
               }
               openThread={
-                summaryThread
+                onOpenThread
                   ? () => {
-                      summaryThread(row.id, row.threadRootId ?? row.id);
+                      onOpenThread(row.id, row.threadRootId ?? row.id);
                       return true;
                     }
                   : undefined
@@ -1684,9 +1676,9 @@ function MessageRowContent({
             menuTrigger.current?.focus({ preventScroll: true })
           }
           openThread={
-            summaryThread
+            onOpenThread
               ? () => {
-                  summaryThread(row.id, row.threadRootId ?? row.id);
+                  onOpenThread(row.id, row.threadRootId ?? row.id);
                   return true;
                 }
               : undefined

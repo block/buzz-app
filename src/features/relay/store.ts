@@ -3737,7 +3737,7 @@ export function createChannelStore(
       if (!persistence?.readStartup) void discover(true, strong);
       else void restore().then(() => discover(true, strong));
     },
-    /** Background roster warm. The caller supplies preferred ids (e.g. starred);
+    /** Background roster warm. The caller supplies preferred ids;
      * the rest follow by recency of their retained head, never-fetched last. */
     warm(preferred: readonly string[]) {
       if (disposed || !transport || list.status !== "ready") return;
@@ -3877,6 +3877,18 @@ export function createChannelStore(
         return;
       }
       const state = windows.get(channelId);
+      // Rows shown from a list preview have no page below them until their
+      // head is read; a failed head read is what there is to retry.
+      if (
+        state?.snapshot.status === "ready" &&
+        state.snapshot.error &&
+        !state.cursor &&
+        !state.controller
+      ) {
+        setWindow(state, { error: undefined });
+        void loadPage(state, null);
+        return;
+      }
       if (
         state?.snapshot.status !== "ready" ||
         !state.snapshot.hasMore ||

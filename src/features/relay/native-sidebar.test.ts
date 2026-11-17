@@ -2,7 +2,6 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { finalizeEvent, nip44 } from "nostr-tools";
 import { connectNativeTransport } from "./native";
-import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { keypair, nativeSignatureChecks } from "./testing";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -152,10 +151,10 @@ it("decodes four self-encrypted coordinates through the narrow IPC command", asy
   );
   expect(result).toMatchObject({
     sections: [],
-    starred: [],
     muted: [],
-    sort: {},
   });
+  expect(result).not.toHaveProperty("sort");
+  expect(result).not.toHaveProperty("starred");
   expect(invoke).toHaveBeenCalledWith("relay_decode_sidebar", {
     events: [...records.values()],
   });
@@ -279,7 +278,7 @@ it("prepends a drag-created section through native encrypted readback", async ()
   expect(groups?.assignments).toEqual({ c1: id });
 });
 
-it("creates a section, moves a channel, stars, mutes and sorts with encrypted readback", async () => {
+it("creates a section, moves a channel and mutes it with encrypted readback", async () => {
   const transport = await connectNativeTransport(community);
   const id = "12345678-1234-1234-1234-123456789abc";
   const groups = await transport.writeSidebarAssignment?.(
@@ -289,50 +288,32 @@ it("creates a section, moves a channel, stars, mutes and sorts with encrypted re
   expect(groups?.assignments).toEqual({ c1: id });
   expect(groups?.sections).toEqual([{ id, name: "Work", order: 0 }]);
   expect(
-    await transport.writeSidebarStar?.(
-      { channelId: "c1", starred: true },
-      signal,
-    ),
-  ).toEqual(["c1"]);
-  expect(
     await transport.writeSidebarMute?.(
       { channelId: "c1", muted: true },
       signal,
     ),
   ).toEqual(["c1"]);
   expect(
-    await transport.writeSidebarSort?.(`section:${id}`, "recent", [id], signal),
-  ).toEqual({ [`section:${id}`]: "recent" });
-  expect(
-    await transport.writeSidebarStar?.(
-      { channelId: "c1", starred: false },
-      signal,
-    ),
-  ).toEqual([]);
-  expect(
     await transport.writeSidebarMute?.(
       { channelId: "c1", muted: false },
       signal,
     ),
   ).toEqual([]);
-  const starRecord = records.get("channel-stars");
-  expect(starRecord).toBeDefined();
-  const star = decode(starRecord ? [starRecord] : [])["channel-stars"] as {
-    channels: Record<string, { starred: boolean }>;
+  const muteRecord = records.get("channel-mutes");
+  expect(muteRecord).toBeDefined();
+  const mute = decode(muteRecord ? [muteRecord] : [])["channel-mutes"] as {
+    channels: Record<string, { muted: boolean }>;
   };
-  expect(star.channels.c1?.starred).toBe(false); // tombstone retained
-  expect(
-    await transport.writeSidebarSort?.(`section:${id}`, "alpha", [id], signal),
-  ).toEqual({});
+  expect(mute.channels.c1?.muted).toBe(false); // tombstone retained
   expect(
     await transport.writeSidebarAssignment?.({ channelId: "c1" }, signal),
   ).toMatchObject({ assignments: {} });
-  expect(records.size).toBe(4);
+  expect(records.size).toBe(2);
   expect(
     vi
       .mocked(invoke)
       .mock.calls.filter(([command]) => command === "relay_sign_sidebar"),
-  ).toHaveLength(8);
+  ).toHaveLength(4);
 });
 
 it("does not report a competing write as saved", async () => {
@@ -347,9 +328,9 @@ it("does not report a competing write as saved", async () => {
       ++queryCount === 2
     )
       records.set(
-        "channel-stars",
+        "channel-mutes",
         signedRecord(
-          "channel-stars",
+          "channel-mutes",
           { version: 1, channels: {} },
           1_700_000_011,
         ),
@@ -357,37 +338,44 @@ it("does not report a competing write as saved", async () => {
     return original?.(command, args);
   });
   await expect(
-    transport.writeSidebarStar?.({ channelId: "c1", starred: true }, signal),
-  ).rejects.toThrow("Sidebar stars changed on another device");
+    transport.writeSidebarMute?.({ channelId: "c1", muted: true }, signal),
+  ).rejects.toThrow("Sidebar mutes changed on another device");
 });
 
 it("fails closed on unreadable heads and never signs or publishes them", async () => {
   records.set(
-    "channel-stars",
-    signedRecord("channel-stars", { version: 2, channels: {} }),
+    "channel-mutes",
+    signedRecord("channel-mutes", { version: 2, channels: {} }),
   );
   const transport = await connectNativeTransport(community);
   await expect(
-    transport.writeSidebarStar?.({ channelId: "c1", starred: true }, signal),
-  ).rejects.toThrow("Unsupported sidebar stars");
+    transport.writeSidebarMute?.({ channelId: "c1", muted: true }, signal),
+  ).rejects.toThrow("Unsupported channel mutes");
   expect(
     vi
       .mocked(invoke)
       .mock.calls.some(([command]) => command === "relay_sign_sidebar"),
   ).toBe(false);
   expect(
-    records.get("channel-stars") &&
+    records.get("channel-mutes") &&
       decode([
-        records.get("channel-stars") as ReturnType<typeof finalizeEvent>,
-      ])["channel-stars"],
+        records.get("channel-mutes") as ReturnType<typeof finalizeEvent>,
+      ])["channel-mutes"],
   ).toMatchObject({ version: 2 });
 });
 
 it("does not sign a redundant intent or continue after cancellation", async () => {
+  records.set(
+    "channel-mutes",
+    signedRecord("channel-mutes", {
+      version: 1,
+      channels: { c1: { muted: false, updatedAt: 1 } },
+    }),
+  );
   const transport = await connectNativeTransport(community);
   expect(
-    await transport.writeSidebarStar?.(
-      { channelId: "c1", starred: false },
+    await transport.writeSidebarMute?.(
+      { channelId: "c1", muted: false },
       signal,
     ),
   ).toEqual([]);
@@ -399,8 +387,8 @@ it("does not sign a redundant intent or continue after cancellation", async () =
   const controller = new AbortController();
   controller.abort();
   await expect(
-    transport.writeSidebarStar?.(
-      { channelId: "c1", starred: true },
+    transport.writeSidebarMute?.(
+      { channelId: "c1", muted: true },
       controller.signal,
     ),
   ).rejects.toMatchObject({ name: "AbortError" });
@@ -425,14 +413,12 @@ it("native writers update authoritative registers and preserve unrelated tombsto
       meta,
     }),
   );
-  records.set(
-    "channel-sort",
-    signedRecord("channel-sort", {
-      version: 1,
-      groups: {},
-      meta: { v: 1, g: { channels: stamp("recent"), forums: stamp(null) } },
-    }),
-  );
+  const sort = signedRecord("channel-sort", {
+    version: 1,
+    groups: {},
+    meta: { v: 1, g: { channels: stamp("recent"), forums: stamp(null) } },
+  });
+  records.set("channel-sort", sort);
   const transport = await connectNativeTransport(community);
   expect(
     await transport.writeSidebarAssignment?.(
@@ -458,25 +444,7 @@ it("native writers update authoritative registers and preserve unrelated tombsto
     },
     sections: [{ id: "work", name: "Work", order: 0 }],
   });
-  expect(
-    await transport.writeSidebarSort?.("channels", "alpha", [], signal),
-  ).toEqual({});
-  const sort = decode([...records.values()])["channel-sort"];
-  expect(sort).toEqual({
-    version: 1,
-    groups: {},
-    meta: {
-      v: 1,
-      g: {
-        channels: [
-          2_000_000_000_001,
-          expect.stringMatching(/^[0-9a-f]{16}$/),
-          null,
-        ],
-        forums: stamp(null),
-      },
-    },
-  });
+  expect(records.get("channel-sort")).toBe(sort);
 });
 
 it("reads all coordinates with oversized deleted-section text but refuses to rewrite it", async () => {
@@ -516,9 +484,7 @@ it("reads all coordinates with oversized deleted-section text but refuses to rew
   expect(await transport.decodeSidebarPreferences?.(before, signal)).toEqual({
     sections: [{ id: "work", name: "Work", order: 0 }],
     assignments: { c1: "work" },
-    starred: ["c1"],
     muted: ["c2"],
-    sort: { channels: "recent" },
   });
   await expect(
     transport.writeSidebarAssignment?.(
@@ -587,104 +553,6 @@ it.each([false, true])(
   },
 );
 
-it.each([
-  { assignment: undefined, oversized: false },
-  { assignment: null, oversized: false },
-  { assignment: "dead", oversized: false },
-  { assignment: undefined, oversized: true },
-  { assignment: null, oversized: true },
-  { assignment: "dead", oversized: true },
-])(
-  "Unstar clears only stars when assignment is already clear: %j",
-  async ({ assignment, oversized }) => {
-    const reg = (value: unknown) => [100, "1111111111111111", value];
-    const sections = signedRecord("channel-sections", {
-      version: 1,
-      sections: [{ id: "stale", name: "Stale", order: 0 }],
-      assignments: { c1: "stale" },
-      meta: {
-        v: 1,
-        s: {
-          work: { name: reg("Work"), live: reg(true), order: reg(0) },
-          dead: {
-            name: reg(oversized ? "x".repeat(257) : "Deleted"),
-            live: reg(false),
-          },
-        },
-        a: {
-          ...(assignment === undefined ? {} : { c1: reg(assignment) }),
-          c2: reg("work"),
-        },
-      },
-    });
-    records.set("channel-sections", sections);
-    records.set(
-      "channel-stars",
-      signedRecord("channel-stars", {
-        version: 1,
-        channels: {
-          c1: { starred: true, updatedAt: 1 },
-          c2: { starred: true, updatedAt: 1 },
-        },
-      }),
-    );
-    const transport = await connectNativeTransport(community);
-    const owner = createSidebarPreferencesStore({
-      read: async () => {
-        const data = await transport.decodeSidebarPreferences?.(
-          [...records.values()],
-          signal,
-        );
-        if (!data) throw new Error("Sidebar decode unavailable");
-        return data;
-      },
-      available: true,
-      write: transport.writeSidebarAssignment,
-      writeStar: transport.writeSidebarStar,
-    });
-    try {
-      const preferences = owner.queries;
-      await preferences.ensure();
-      expect(preferences.snapshot().data?.starred).toEqual(["c1", "c2"]);
-      await expect(preferences.setStar("c1", false)).resolves.toEqual(["c2"]);
-      expect(preferences.snapshot().data).toMatchObject({
-        starred: ["c2"],
-        sections: [{ id: "work", name: "Work", order: 0 }],
-        assignments: { c2: "work" },
-      });
-      expect(records.get("channel-sections")).toBe(sections);
-      expect(decode([...records.values()])["channel-stars"]).toMatchObject({
-        channels: { c1: { starred: false }, c2: { starred: true } },
-      });
-      const signing = vi
-        .mocked(invoke)
-        .mock.calls.filter(([command]) => command === "relay_sign_sidebar");
-      expect(signing).toEqual([
-        [
-          "relay_sign_sidebar",
-          expect.objectContaining({ coordinate: "channel-stars" }),
-        ],
-      ]);
-      const queries = vi
-        .mocked(invoke)
-        .mock.calls.filter(
-          ([command, args]) =>
-            command === "relay_http" &&
-            (args as { path: string }).path === "/query",
-        )
-        .flatMap(([, args]) => JSON.parse((args as { body: string }).body));
-      expect(queries).toContainEqual(
-        expect.objectContaining({
-          "#d": ["channel-sections"],
-          consistency: "strong",
-        }),
-      );
-    } finally {
-      owner.dispose();
-    }
-  },
-);
-
 it("removes only the section register and preserves unrelated sections and channel records", async () => {
   const transport = await connectNativeTransport(community);
   const id = "12345678-1234-1234-1234-123456789abc";
@@ -713,9 +581,6 @@ it("rejects invalid sidebar intents before native reads or signing", async () =>
   vi.mocked(invoke).mockClear();
   for (const channelId of [" ", "x".repeat(257)]) {
     await expect(
-      transport.writeSidebarStar?.({ channelId, starred: true }, signal),
-    ).rejects.toThrow("Invalid sidebar star intent");
-    await expect(
       transport.writeSidebarMute?.({ channelId, muted: true }, signal),
     ).rejects.toThrow("Invalid sidebar mute intent");
     await expect(
@@ -728,9 +593,6 @@ it("rejects invalid sidebar intents before native reads or signing", async () =>
       signal,
     ),
   ).rejects.toThrow("Invalid sidebar assignment intent");
-  await expect(
-    transport.writeSidebarSort?.("section:missing", "recent", [], signal),
-  ).rejects.toThrow("Invalid sidebar sort intent");
   expect(invoke).not.toHaveBeenCalled();
 });
 
@@ -955,120 +817,7 @@ it.each([
   },
 );
 
-it.each(["channels", "section:work"])(
-  "confirms native plugin sort choices for %s through encrypted readback",
-  async (group) => {
-    const transport = await connectNativeTransport(community);
-    await transport.writeSidebarSort?.("forums", "recent", [], signal);
-    for (const mode of [
-      "plugin:example.plugin/rows/reverse",
-      "plugin:example.plugin/rows/other",
-      "recent",
-      "alpha",
-    ] as const) {
-      await expect(
-        transport.writeSidebarSort?.(group, mode, ["work"], signal),
-      ).resolves.toEqual(
-        mode === "alpha"
-          ? { forums: "recent" }
-          : { forums: "recent", [group]: mode },
-      );
-    }
-  },
-);
-
-it("uses the native filter signer and confirmed writer without changing sort", async () => {
-  const transport = await connectNativeTransport(community);
-  await transport.writeSidebarSort?.("channels", "recent", [], signal);
-  const sort = records.get("channel-sort");
-  expect(
-    await transport.writeSidebarFilter?.(
-      "section:work",
-      "unreads",
-      ["work"],
-      signal,
-    ),
-  ).toEqual({
-    filters: { "section:work": "unreads" },
-    activeWindowSeconds: {},
-  });
-  expect(
-    await transport.writeSidebarFilter?.(
-      "channels",
-      "active",
-      ["work"],
-      signal,
-      7 * 86400,
-    ),
-  ).toEqual({
-    filters: { "section:work": "unreads", channels: "active" },
-    activeWindowSeconds: { channels: 7 * 86400 },
-  });
-  expect(
-    await transport.writeSidebarFilter?.(
-      "section:work",
-      "all",
-      ["work"],
-      signal,
-    ),
-  ).toEqual({
-    filters: { channels: "active" },
-    activeWindowSeconds: { channels: 7 * 86400 },
-  });
-  expect(records.get("channel-sort")).toEqual(sort);
-  const record = records.get("channel-filter");
-  expect(record).toBeDefined();
-  expect(decode(record ? [record] : [])["channel-filter"]).toMatchObject({
-    meta: {
-      g: { "section:work": [expect.any(Number), expect.any(String), null] },
-    },
-  });
-  await expect(
-    transport.writeSidebarFilter?.("section:missing", "active", [], signal),
-  ).rejects.toThrow("Invalid sidebar filter intent");
-});
-
-it("rejects a same-mode native readback with a conflicting duration", async () => {
-  const transport = await connectNativeTransport(community);
-  records.set(
-    "channel-filter",
-    signedRecord("channel-filter", {
-      version: 1,
-      groups: { channels: "active" },
-    }),
-  );
-  const original = vi.mocked(invoke).getMockImplementation();
-  vi.mocked(invoke).mockImplementation(async (command, args) => {
-    const result = await original?.(command, args);
-    if (
-      command === "relay_http" &&
-      (args as { path: string }).path === "/events"
-    )
-      records.set(
-        "channel-filter",
-        signedRecord(
-          "channel-filter",
-          {
-            version: 1,
-            groups: { channels: "active" },
-            activeWindowSeconds: { channels: 90 * 86400 },
-          },
-          2_000_000_000,
-        ),
-      );
-    return result;
-  });
-  await expect(
-    transport.writeSidebarFilter?.("channels", "active", [], signal, 7 * 86400),
-  ).rejects.toThrow("changed on another device");
-  const before = vi.mocked(invoke).mock.calls.length;
-  await expect(
-    transport.writeSidebarFilter?.("channels", "active", [], signal, 86401),
-  ).rejects.toThrow("Invalid sidebar filter intent");
-  expect(vi.mocked(invoke).mock.calls).toHaveLength(before);
-});
-
-it("creates an empty Team section and confirms retry without touching placements or stars", async () => {
+it("creates an empty Team section and confirms retry without touching placements or other records", async () => {
   records.set(
     "channel-sections",
     signedRecord("channel-sections", {

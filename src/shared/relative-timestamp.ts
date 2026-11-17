@@ -12,3 +12,16 @@ export function relativeTimestamp(
   if (age < 604800) return ago(Math.floor(age / 86400), "day");
   return `on ${new Date(unixSeconds * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
 }
+
+/** Sidebar-width recency, as the Activity card abbreviates it. */
+export function shortTime(unixSeconds: number, nowSeconds = Date.now() / 1000) {
+  const age = Math.max(0, nowSeconds - unixSeconds);
+  if (age < 60) return "now";
+  if (age < 3600) return `${Math.floor(age / 60)}m`;
+  if (age < 86400) return `${Math.floor(age / 3600)}h`;
+  if (age < 604800) return `${Math.floor(age / 86400)}d`;
+  return new Date(unixSeconds * 1000).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+}

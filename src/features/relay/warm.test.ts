@@ -30,21 +30,8 @@ function memoryDisk(records: SavedHead[]): HeadPersistence {
     close: vi.fn(),
   };
 }
-function setup(
-  options: Parameters<typeof createRelaySession>[1] = {},
-  starred?: readonly string[],
-) {
+function setup(options: Parameters<typeof createRelaySession>[1] = {}) {
   const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
-  if (starred)
-    scripted.transport = {
-      ...scripted.transport,
-      decodeSidebarPreferences: async () => ({
-        sections: [],
-        assignments: {},
-        muted: [],
-        starred: Object.freeze([...starred]),
-      }),
-    };
   const store = createRelaySession(scripted.transport, {
     prepared: true,
     warm: true,
@@ -78,7 +65,7 @@ describe("roster warming", () => {
     expect(pending).toHaveLength(0);
   });
 
-  it("orders warm reads starred first, then by head recency, never-fetched last", async () => {
+  it("orders warm reads preferred first, then by head recency, never-fetched last", async () => {
     const disk = memoryDisk([
       {
         channelId: "b",

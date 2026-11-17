@@ -70,8 +70,10 @@ export type OpenTarget =
       threadRootId?: string;
       /** With threadRootId: the thread opens beside that root, revealed in the
        * channel timeline even beyond its newest page, as Open in channel asks.
-       * "thread" opens the thread on its own, in place of that timeline. */
-      context?: "channel" | "thread";
+       * "thread" opens the thread on its own, in place of that timeline.
+       * Without threadRootId, "timeline" shows messageId in the channel
+       * timeline only, even a root with replies, as a mention list asks. */
+      context?: "channel" | "thread" | "timeline";
       /** Presentation within this conversation; never mutation or confirmation state. */
       panel?: "members";
       /** Message selected for the forwarding dialog; never submission state. */
@@ -409,8 +411,10 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           throw invalid();
         if (
           value.context !== undefined &&
-          ((value.context !== "channel" && value.context !== "thread") ||
-            value.threadRootId === undefined)
+          (value.context === "timeline"
+            ? value.messageId === undefined || value.threadRootId !== undefined
+            : (value.context !== "channel" && value.context !== "thread") ||
+              value.threadRootId === undefined)
         )
           throw invalid();
         if (
@@ -445,7 +449,9 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           ...(value.threadRootId !== undefined
             ? { threadRootId: text(value.threadRootId, hex).toLowerCase() }
             : {}),
-          ...(value.context === "channel" || value.context === "thread"
+          ...(value.context === "channel" ||
+          value.context === "thread" ||
+          value.context === "timeline"
             ? { context: value.context }
             : {}),
           ...(value.panel === "members" ? { panel: value.panel } : {}),

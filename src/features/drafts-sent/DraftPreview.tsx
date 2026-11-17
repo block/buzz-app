@@ -297,7 +297,6 @@ function DraftChannel({
   onSend,
 }: {
   title: string;
-  avatar?: ReactNode;
   target?: Entry | undefined;
   channel: ChannelSummary;
   writable: boolean;

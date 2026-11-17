@@ -1,6 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 import { activate, open } from "./timeline.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
+import { channelRow } from "./navigation.mjs";
 
 test.use({
   productionBroker: true,
@@ -13,7 +14,7 @@ test.use({
 async function start(page, app) {
   await open(page, app);
   for (const channel of ["beta", "alpha"]) {
-    await page.locator(`button[data-channel-id="${channel}"]`).click();
+    await channelRow(page, channel).click();
     await expect(
       page.getByRole("textbox", {
         name: `Message #${channel === "alpha" ? "Alpha" : "Beta"}`,

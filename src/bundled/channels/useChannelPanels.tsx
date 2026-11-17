@@ -21,6 +21,7 @@ import { XIcon } from "../../shared/design-system/icons";
 import { PanelView } from "../../features/panels/PanelView";
 import styles from "./Channels.module.css";
 import { focusDock } from "./useCoveredByDock";
+import { useHeaderToolsMenu } from "../../features/conversation/ConversationHeaderTools";
 
 const launcherOrder = (key: string) =>
   key === "buzz.huddles/huddles" ? 2 : key === "buzz.github/object" ? 1 : 0;
@@ -148,6 +149,8 @@ export function useChannelPanels(
     open: (target) =>
       activeOpening.current === opening && !!opener?.open(target),
   });
+  // Launchers sit in the header's actions menu, which a side panel replaces.
+  const overflow = useRef<HeaderMenu>(null);
   const bound = (binding: ChannelPanelContext, panel: RegisteredPanel) =>
     mounted.current === binding && panels.snapshot().includes(panel);
   return {
@@ -155,6 +158,7 @@ export function useChannelPanels(
     close: () => setOpened(undefined),
     launchers: context && (
       <div className={styles.channelLaunchers}>
+        <OverflowMenu into={overflow} />
         {available
           .filter((panel) => panel.channelLauncher)
           // Keep the PR shortcut beside the call control after plugin re-enable.
@@ -191,17 +195,22 @@ export function useChannelPanels(
                 toggle={(target) => {
                   if (!bound(context, panel)) return;
                   if (tabbed) tabs?.toggle(panel, context, target);
-                  else if (shown?.panel === panel) hide(shown);
-                  else {
+                  else if (shown?.panel === panel) {
+                    overflow.current?.close();
+                    hide(shown);
+                  } else {
+                    const menu = overflow.current;
+                    menu?.close();
                     onOpen?.();
                     setOpened({
                       panel,
                       context,
                       target,
                       trigger:
-                        document.activeElement instanceof HTMLElement
+                        menu?.trigger.current ??
+                        (document.activeElement instanceof HTMLElement
                           ? document.activeElement
-                          : null,
+                          : null),
                     });
                   }
                 }}
@@ -245,7 +254,18 @@ export function useChannelPanels(
         </div>
       </Panel>
     ),
-    // Legacy bottom launchers now share the full-height companion pane.
-    content: null,
   };
+}
+
+type HeaderMenu = ReturnType<typeof useHeaderToolsMenu>;
+
+function OverflowMenu({ into }: { into: RefObject<HeaderMenu> }) {
+  const menu = useHeaderToolsMenu();
+  useLayoutEffect(() => {
+    into.current = menu;
+    return () => {
+      into.current = null;
+    };
+  });
+  return null;
 }

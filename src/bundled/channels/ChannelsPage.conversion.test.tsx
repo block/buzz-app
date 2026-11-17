@@ -121,7 +121,6 @@ function fixture() {
     data: {
       sections: [{ id: "g", name: "Project", order: 0 }],
       assignments,
-      starred: [],
       muted: [],
     },
   });
@@ -130,7 +129,7 @@ function fixture() {
   let filed = true;
   const unfile = vi.fn(async () => {
     filed = false;
-    return { sections: [], assignments: {}, starred: [], muted: [] };
+    return { sections: [], assignments: {}, muted: [] };
   });
   const session = {
     ...owner.session,

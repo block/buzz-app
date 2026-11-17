@@ -128,7 +128,6 @@ export function createSoloPreferences(
   const store = createSidebarPreferencesStore({
     read: async (signal) => ({
       ...project((await current(signal, false)).value),
-      starred: [],
       muted: [],
     }),
     available: kit.available,

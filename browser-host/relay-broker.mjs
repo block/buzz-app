@@ -13,12 +13,6 @@ import { validTypingTemplate } from "../src/features/relay/typing-protocol.ts";
 import { memoryFilter, decodeAgentMemory } from "./agent-memory.mjs";
 import { memoryResponseText } from "../src/features/agents/memory.ts";
 import { prepareMedia } from "./media-preparation.mjs";
-import {
-  assertSidebarSortIntent,
-  mutateSidebarSort,
-  assertSidebarFilterIntent,
-  mutateSidebarFilter,
-} from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import {
   communityGitRepository,
@@ -59,11 +53,10 @@ import {
   artifactSyncFilter,
 } from "../src/features/relay/artifact-sync-filter.ts";
 import {
-  assertSidebarStarIntent,
-  mutateSidebarStar,
   assertSidebarMuteIntent,
   mutateSidebarMute,
 } from "./sidebar-toggle.mjs";
+import { assertRailLayoutIntent, mutateRailLayout } from "./rail-layout.mjs";
 import {
   validateWorkflowEvent,
   WORKFLOW_KINDS,
@@ -747,8 +740,9 @@ export function validChannelActivityFilters(filters) {
         filter["#h"].length === 1 &&
         typeof filter["#h"][0] === "string" &&
         /^[a-zA-Z0-9_-]{1,128}$/.test(filter["#h"][0]) &&
+        (filter.top_level === undefined || filter.top_level === true) &&
         Object.keys(filter).every((key) =>
-          ["kinds", "#h", "limit"].includes(key),
+          ["kinds", "#h", "limit", "top_level"].includes(key),
         ),
     )
   );
@@ -1391,10 +1385,8 @@ export function relayBrokerPlugin({
               "/api/relay/sidebar-section-removal",
               "/api/relay/sidebar-section-order",
               "/api/relay/sidebar-section-rename",
-              "/api/relay/sidebar-star",
-              "/api/relay/sidebar-sort",
-              "/api/relay/sidebar-filter",
               "/api/relay/sidebar-mute",
+              "/api/relay/rail-layout",
             ].includes(route) &&
             req.method === "POST"
           ) {
@@ -1419,38 +1411,29 @@ export function relayBrokerPlugin({
                 assertSidebarAssignmentIntent,
                 mutateSidebarAssignment,
               ],
-              "/api/relay/sidebar-star": [
-                "channel-stars",
-                assertSidebarStarIntent,
-                mutateSidebarStar,
-              ],
-              "/api/relay/sidebar-filter": [
-                "channel-filter",
-                assertSidebarFilterIntent,
-                mutateSidebarFilter,
-              ],
-              "/api/relay/sidebar-sort": [
-                "channel-sort",
-                assertSidebarSortIntent,
-                mutateSidebarSort,
-              ],
               "/api/relay/sidebar-mute": [
                 "channel-mutes",
                 assertSidebarMuteIntent,
                 mutateSidebarMute,
               ],
+              "/api/relay/rail-layout": [
+                "rail-layout",
+                assertRailLayoutIntent,
+                mutateRailLayout,
+              ],
             }[route];
-            const sorting =
-              coordinate === "channel-sort" || coordinate === "channel-filter";
             const muting = coordinate === "channel-mutes";
-            // Sort and order intents carry up to 100 section IDs.
-            const listing =
-              sorting || route === "/api/relay/sidebar-section-order";
+            // Order intents carry up to 100 section IDs.
+            const listing = route === "/api/relay/sidebar-section-order";
+            const arranging = coordinate === "rail-layout";
             const chunks = [];
             let bytes = 0;
             for await (const part of req) {
               bytes += part.length;
-              if (bytes > (listing ? 32 * 1024 : 2048))
+              if (
+                bytes >
+                (arranging ? SIDEBAR_HEAD_BYTES : listing ? 32 * 1024 : 2048)
+              )
                 return json(res, 413, {
                   error: `Sidebar preference intent is too large`,
                 });
@@ -1539,8 +1522,15 @@ export function relayBrokerPlugin({
                 const readHead = async () => {
                   const response = await dispatch("/query", filter);
                   if (!response.ok)
-                    throw new Error(
-                      `Sidebar preference query failed (${response.status})`,
+                    throw Object.assign(
+                      new Error(
+                        `Sidebar preference query failed (${response.status})`,
+                      ),
+                      // A community's refusal keeps its status, as on every
+                      // other read.
+                      [401, 403].includes(response.status)
+                        ? { refused: response.status }
+                        : {},
                     );
                   return readSidebarHead(response);
                 };
@@ -1564,20 +1554,7 @@ export function relayBrokerPlugin({
                       "Sidebar preference publication was not accepted",
                     );
                 };
-                const result = await mutate(
-                  intent,
-                  key,
-                  readHead,
-                  publishEvent,
-                );
-                return coordinate === "channel-filter"
-                  ? {
-                      groups: result.filters,
-                      activeWindowSeconds: result.activeWindowSeconds,
-                    }
-                  : sorting
-                    ? { groups: result }
-                    : result;
+                return mutate(intent, key, readHead, publishEvent);
               });
             sidebarMutations.set(relay, mutation);
             try {
@@ -1590,7 +1567,7 @@ export function relayBrokerPlugin({
                   paused: true,
                   retryAfterMs: error.retryAfterMs,
                 });
-              return json(res, 502, {
+              return json(res, error?.refused ?? 502, {
                 error:
                   error instanceof Error
                     ? error.message
@@ -1692,10 +1669,9 @@ export function relayBrokerPlugin({
               projectGit: true,
               attachmentUploads: true,
               sidebarPreferences: true,
-              sidebarSortWrites: true,
-              sidebarFilterWrites: true,
               channelActivity: true,
               sidebarMuteWrites: true,
+              railLayout: true,
               channelKit: true,
               channelIdentity: (await getAuthority(relay)).channelIdentity,
               readState: true,
@@ -1703,7 +1679,6 @@ export function relayBrokerPlugin({
               sidebarSectionRemoval: true,
               sidebarSectionOrder: true,
               sidebarSectionRename: true,
-              sidebarStarWrites: true,
               agentLibrary: true,
               agentLogProof: true,
               gitAuthorization: true,

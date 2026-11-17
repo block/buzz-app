@@ -1,27 +1,35 @@
 import type { RailLayout } from "./rail-layout";
 import type { RailEntry } from "./rail-pins";
 
-export type RailSection = { id: string; title: string };
+type RailSection = { id: string; title: string };
 const builtins: readonly RailSection[] = [
   { id: "navigation", title: "Plugins" },
   { id: "pins", title: "Pins" },
-  { id: "messages", title: "Team" },
+  { id: "team", title: "Team" },
   { id: "solo", title: "Solo" },
-  { id: "agents", title: "Agents" },
 ];
 
 /** A conversation's own list, and where apps live: nothing is copied here. */
-const homes = new Set(["navigation", "messages", "solo", "agents"]);
+const homes = new Set(["navigation", "team", "solo"]);
 /**
  * Whether a section holds its own copy of this entry. A conversation always
- * stays in Team or Solo, so a section a person made, like Pins, lists it as
- * well. An app's row has no such home: it moves.
+ * stays in Team or Solo, so a section a person made lists it as well. An
+ * app's row has no such home: it moves.
  */
 export const holdsCopy = (entry: RailEntry, section: string) =>
   entry.kind !== "page" && !homes.has(section);
 /** Whether a row there can be taken out again, or moved on to another. */
 export const ownSection = (section: string) =>
   !homes.has(section) && section !== "pins";
+
+/** Team's own pages. */
+const teamPages = new Set([
+  "buzz.inbox/inbox",
+  "buzz.drafts-and-sent/drafts-sent",
+]);
+/** Whether a row can be put there: Team keeps to its views and own pages. */
+export const accepts = (entry: RailEntry, section: string) =>
+  section !== "team" || teamPages.has(entry.id);
 
 /** Cards, expanded lists and conversation routing share the same membership. */
 export function railSections(
@@ -38,6 +46,7 @@ export function railSections(
   const placements = layout.placements.filter(
     (item) =>
       sections.has(item.section) &&
+      accepts(item.entry, item.section) &&
       (item.entry.kind === "page" || holdsCopy(item.entry, item.section)),
   );
   /** Where each moved app row is; copies leave their own list alone. */
@@ -64,7 +73,7 @@ export function railSections(
         defaults
           .filter(
             (entry) =>
-              id === "agents" ||
+              id === "pins" ||
               !assigned.has(entry.id) ||
               assigned.get(entry.id) === id,
           )

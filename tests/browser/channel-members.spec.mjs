@@ -1,5 +1,5 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { openPage } from "./navigation.mjs";
+import { channelRow, openChannel, openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { animationsSettled } from "./animations.mjs";
 
@@ -12,7 +12,8 @@ test("channel members opens from the header, fits each viewport, and returns key
   app,
 }, testInfo) => {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   const conversation = page.getByRole("article", { name: "Conversation" });
   await expect(
     conversation.getByRole("button", {
@@ -118,13 +119,11 @@ test("channel members opens from the header, fits each viewport, and returns key
     page.getByRole("dialog", { name: "Manage members" }),
   ).toBeVisible();
   // Model navigation arriving while the modal is open, not a pointer through its backdrop.
-  await page
-    .locator('button[data-channel-id="beta"]')
-    .evaluate((node) => node.click());
+  await channelRow(page, "beta").evaluate((node) => node.click());
   await expect(
     page.getByRole("dialog", { name: "Manage members" }),
   ).toHaveCount(0);
-  await page.locator('button[data-channel-id="alpha"]').click();
+  await channelRow(page, "alpha").click();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(
     page.getByRole("dialog", { name: "Manage members" }),
@@ -138,7 +137,8 @@ test("Members closes passively on Back, restores on Forward, and retires on expl
   app,
 }) => {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   const conversation = page.getByRole("article", {
     name: "Conversation",
     exact: true,
@@ -160,9 +160,9 @@ test("Members closes passively on Back, restores on Forward, and retires on expl
     page.evaluate(() => window.fixtureNavigation.snapshot().canGoForward);
   const length = () => page.evaluate(() => history.length);
   // Give the channel a known predecessor so "Back leaves the channel" is observable.
-  await page.locator('button[data-channel-id="beta"]').click();
+  await channelRow(page, "beta").click();
   await expect(beta).toBeVisible();
-  await page.locator('button[data-channel-id="alpha"]').click();
+  await channelRow(page, "alpha").click();
   await expect(composer).toBeVisible();
   await composer.fill("Keep this draft");
   await openChannelDetails(page);
@@ -245,7 +245,7 @@ test.describe("scoped Members history", () => {
     app,
   }) => {
     await page.goto(app.origin);
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
     const target = {
       version: 1,
       kind: "conversation",
@@ -284,7 +284,7 @@ test.describe("scoped Members history", () => {
     app,
   }) => {
     await page.goto(app.origin);
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
     const origin = await page.evaluate(
       () => history.state.buzzNavigationV1.entry,
     );
@@ -369,7 +369,7 @@ test.describe("Members on an unsupported Solo chat destination", () => {
     app,
   }) => {
     await page.goto(app.origin);
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
     const target = {
       version: 1,
       kind: "conversation",

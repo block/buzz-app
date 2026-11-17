@@ -213,8 +213,6 @@ export type ChannelTimelineProps = {
   historyControl?: "button" | "scroll";
   /** Personal chats keep their compact initial history spacing. */
   chatPresentation?: boolean | undefined;
-  /** False: rows open existing threads but offer none to start; see MessageRow. */
-  startsThreads?: boolean | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -285,7 +283,6 @@ function Timeline({
   onReply,
   onOpenMediaReview,
   chatPresentation = false,
-  startsThreads = true,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
   const shownIntro =
@@ -1185,11 +1182,10 @@ function Timeline({
       );
     // Only a reveal clamped at the scroll limit follows. A near-bottom reveal
     // keeps its row where it placed it instead of re-aligning to the end.
-    if (
-      element &&
-      element.scrollHeight - element.clientHeight - element.scrollTop > 1
-    )
-      follow.current = false;
+    // One that moved nothing emits no scroll event to say so.
+    if (element)
+      follow.current =
+        element.scrollHeight - element.clientHeight - element.scrollTop <= 1;
     // The reveal's placement is the reader's place even when it moved nothing
     // and so no scroll event records it. Its visit keeps the follow state, so
     // Back doesn't re-align the row; the channel's place keeps the 80 px rule.
@@ -1687,6 +1683,8 @@ function Timeline({
       (!targetId || revealedSignal === targetSignal)
     ) {
       setNewMessageCount((count) => count + arrivals);
+      // A reader held near the bottom gets no scroll event to reveal the count.
+      setShowJumpToLatest(true);
     }
     if (
       (targetId && targetSignal && revealedSignal !== targetSignal) ||
@@ -2328,7 +2326,6 @@ function Timeline({
                   onOpenLink={onOpenLink}
                   canOpenLink={canOpenLink}
                   onOpenThread={onOpenThread}
-                  startsThreads={startsThreads}
                   {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
                   retry={queries.outbox?.retry}
                   keepMounted={keepRowMounted}

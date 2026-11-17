@@ -98,6 +98,7 @@ export function ConversationHeaderTools({
             variant="glass"
             aria-label={label}
             title={label}
+            data-header-tools=""
             icon={<DotsThreeIcon size="1rem" />}
           />
         }

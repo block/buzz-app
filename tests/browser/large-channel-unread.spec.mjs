@@ -1,5 +1,10 @@
 import { test, expect } from "./fixture.mjs";
-import { open, settle } from "./timeline.mjs";
+import {
+  channelRow,
+  openChannel,
+  showConversationList,
+} from "./navigation.mjs";
+import { settle } from "./timeline.mjs";
 import { readJournal } from "./reading.mjs";
 
 const channelId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -35,9 +40,11 @@ for (const entry of ["sidebar", "search"]) {
       created_at: 1699999900,
     });
     app.histories.set(`primary/${id}`, [post]);
-    await open(page, app);
-    const channel = page.getByRole("button", { name: /^Lifecycle channel/ });
-    await expect(channel.locator("[data-channel-unread]")).toHaveCount(1);
+    await page.goto(app.origin);
+    await openChannel(page, channelId);
+    // Team's Channels list stays beside the open channel.
+    const channel = channelRow(page, id);
+    await expect(channel).toHaveAttribute("data-state", "unread");
     let release;
     const gate = new Promise((resolve) => {
       release = resolve;
@@ -82,15 +89,19 @@ for (const entry of ["sidebar", "search"]) {
       page.getByRole("region", { name: "Read-only channel" }),
     ).toBeVisible();
     await settle(page);
-    await expect(
-      page.getByRole("region", { name: "Channel message history" }),
-    ).toBeFocused();
+    // A list open leaves focus on its row, so only a search open focuses the
+    // history.
+    if (entry === "search")
+      await expect(
+        page.getByRole("region", { name: "Channel message history" }),
+      ).toBeFocused();
     await expect
       .poll(
         async () =>
           (await readJournal(page))?.state.frontiers[`activity:${id}`],
       )
       .toBe(post.created_at);
-    await expect(channel.locator("[data-channel-unread]")).toHaveCount(0);
+    await showConversationList(page);
+    await expect(channel).toHaveAttribute("data-state", "read");
   });
 }

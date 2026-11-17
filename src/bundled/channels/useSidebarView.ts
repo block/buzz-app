@@ -68,7 +68,7 @@ function revealCurrent(viewport: HTMLElement): number | false {
   if (!rect) return false;
   const top = viewport.getBoundingClientRect().top;
   const bottom = top + viewport.clientHeight;
-  // A visible copy (for example, a starred channel) already shows it.
+  // A visible copy already shows it.
   if (rects.some((rect) => rect.top >= top && rect.bottom <= bottom))
     return viewport.scrollTop;
   // Center an offscreen entry clear of the unread edge cues; nudge a clipped

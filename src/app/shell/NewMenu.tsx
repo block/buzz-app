@@ -4,7 +4,6 @@ import type { Agents } from "../../features/agents/service";
 import { CreateSidebarSection } from "../../bundled/channels/CreateSidebarSection";
 import { CreateChannelDialog } from "../../bundled/channels/CreateChannelDialog";
 import { revealCreatedChannel } from "../../features/channel-navigation/created-channel";
-import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
 import type { Navigation } from "../../features/navigation/controller";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
@@ -31,6 +30,7 @@ import {
   MenuTrailing,
 } from "../../shared/design-system/ui/Menu";
 import styles from "./NewMenu.module.css";
+import { useRailLayout } from "./rail-layout";
 import { KeyboardShortcut } from "../../shared/design-system/ui/KeyboardShortcut";
 import { PlusIcon } from "../../shared/design-system/icons";
 
@@ -73,7 +73,8 @@ function ReadyNewMenu({
     session.soloPreferences.subscribe,
     session.soloPreferences.snapshot,
   );
-  const preferences = useSidebarPreferences(session.sidebarPreferences);
+  // Sections are the rail's own, saved on this device.
+  const { create: createSection } = useRailLayout(session.scope);
   // Solo navigation publishes on every channel-list change; the menu only
   // needs to know whether a region source composes workspaces.
   const navigation = soloNavigationFor(session);
@@ -259,7 +260,6 @@ function ReadyNewMenu({
               {shortcut(composing ? 3 : 4)}
             </MenuItem>
             <MenuItem
-              disabled={!preferences.sectionCreationWritable}
               onClick={() => {
                 if (current()) setCreatingSection(true);
               }}
@@ -276,9 +276,9 @@ function ReadyNewMenu({
         session={session}
         agents={agents}
         finalFocus={menuAnchor}
-        destinations={preferences.data?.sections ?? []}
+        destinations={[]}
         initialGroup=""
-        groupsReady={preferences.writable}
+        groupsReady
         onCreate={async (input) => {
           const channelId = await session.channelCreation.create(input);
           revealCreatedChannel(relay, session, navigator, input, channelId);
@@ -286,19 +286,16 @@ function ReadyNewMenu({
       />
       {creatingSection && (
         <CreateSidebarSection
-          writable={preferences.sectionCreationWritable}
-          refreshing={preferences.status === "loading"}
-          retry={preferences.reload}
+          writable
+          refreshing={false}
+          retry={async () => {}}
           finalFocus={menuAnchor}
           close={() => setCreatingSection(false)}
-          create={async (section) => {
-            if (
-              !current() ||
-              !session.sidebarPreferences.sectionCreationWritable
-            )
-              return false;
-            await preferences.createSection(section);
-            if (current()) setCreatingSection(false);
+          create={({ id, name }) => {
+            if (!current()) return false;
+            if (!createSection(id, name))
+              throw new Error("Couldn’t save this section. Try again.");
+            setCreatingSection(false);
             return true;
           }}
         />

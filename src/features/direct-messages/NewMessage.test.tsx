@@ -45,7 +45,6 @@ import {
 } from "../../shared/identity/public-key";
 import type { RelaySession } from "../relay/session";
 import { NewMessage } from "./NewMessage";
-import type { ComposerInputElement } from "../messages/composer-dom";
 import { createAgentChoices } from "../agents/choices";
 import type { LocalAgentsSnapshot } from "../agents/local";
 import type { ComponentProps } from "react";
@@ -263,7 +262,6 @@ function setup({ archived = [] as string[] } = {}) {
   });
   const mount = (
     visit?: PageNavigation,
-    layout: "page" | "composer" = "page",
     options: Pick<
       ComponentProps<typeof NewMessage>,
       "solo" | "allowChannels" | "extensions"
@@ -272,7 +270,6 @@ function setup({ archived = [] as string[] } = {}) {
     render(
       <NewMessage
         {...options}
-        layout={layout}
         channels={channels.channels}
         host={
           {
@@ -357,7 +354,7 @@ it("channel-addressed composition offers its existing members as mentions", asyn
   ];
   const emptyExtensions: readonly never[] = [];
   const none = { snapshot: () => emptyExtensions, subscribe: () => () => {} };
-  t.mount(undefined, "page", {
+  t.mount(undefined, {
     allowChannels: true,
     extensions: {
       tools: none,
@@ -410,39 +407,6 @@ it("restores recipient hero artwork from current profiles and agent choices", as
       "https://example.org/agent.png",
     );
   });
-});
-
-it("the Activity composer starts without stealing focus and keeps delivery with NewMessage", async () => {
-  const t = setup();
-  t.profiles.set(people[0]?.pubkey, people[0]);
-  t.mount(undefined, "composer");
-  expect(
-    screen.queryByRole("combobox", { name: "Message recipients" }),
-  ).toBeNull();
-  expect(screen.queryByRole("tablist", { name: "Conversation" })).toBeNull();
-  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
-  await waitFor(() =>
-    expect(screen.getByRole("textbox")).toHaveAttribute(
-      "contenteditable",
-      "true",
-    ),
-  );
-  await t.user.type(screen.getByRole("textbox"), "From Activity");
-  expect(screen.getByRole("textbox")).toHaveTextContent("From Activity");
-  expect(send()).toBeDisabled();
-  act(() =>
-    (screen.getByRole("textbox") as ComposerInputElement).insertText(
-      " @Person 1 ",
-      { pubkey: people[0]?.pubkey ?? "", name: "Person 1" },
-    ),
-  );
-  await t.user.click(send());
-  await waitFor(() =>
-    expect(t.onStarted).toHaveBeenCalledWith(channel, "d".repeat(64)),
-  );
-  expect(t.directMessages.open).toHaveBeenCalledOnce();
-  expect(t.messages.send).toHaveBeenCalledOnce();
-  expect(screen.getByRole("textbox")).toHaveTextContent("");
 });
 
 it("finds a hosted agent by its owned name and sends without local custody", async () => {

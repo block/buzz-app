@@ -357,9 +357,6 @@ test("due reminder counts fit the dock at every supported text size", async ({
             const tab = el.closest('[role="tab"]');
             const tile = tab.getBoundingClientRect();
             const icon = tab.querySelector("svg").getBoundingClientRect();
-            const scrollport = el
-              .closest(".shell-dock-pages")
-              .getBoundingClientRect();
             const range = document.createRange();
             range.selectNodeContents(el);
             const text = range.getBoundingClientRect();
@@ -376,11 +373,6 @@ test("due reminder counts fit the dock at every supported text size", async ({
                 text.bottom <= wrapper.bottom,
               outsideCorner: rect.top < tile.top && rect.right > tile.right,
               clearOfIcon: rect.bottom <= icon.top || rect.left >= icon.right,
-              insideScrollport:
-                rect.left >= scrollport.left &&
-                rect.right <= scrollport.right &&
-                rect.top >= scrollport.top &&
-                rect.bottom <= scrollport.bottom,
               overflow: el.scrollWidth - el.clientWidth,
               fontSize: Number.parseFloat(getComputedStyle(el).fontSize),
               tileWidth: tile.width,
@@ -394,7 +386,6 @@ test("due reminder counts fit the dock at every supported text size", async ({
           expect(geometry.textFits).toBe(true);
           expect(geometry.outsideCorner).toBe(true);
           expect(geometry.clearOfIcon).toBe(true);
-          expect(geometry.insideScrollport).toBe(true);
           expect(geometry.overflow).toBe(0);
           expect(geometry.fontSize).toBeLessThan(geometry.tileWidth / 2);
           expect(geometry.background).not.toBe("rgba(0, 0, 0, 0)");

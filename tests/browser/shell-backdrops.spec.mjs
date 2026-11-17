@@ -34,14 +34,18 @@ async function paint(page, points) {
 const near = (actual, expected) =>
   actual.every((value, index) => Math.abs(value - expected[index]) <= 2);
 
-/** Solid `bg-app` resolved to rgb, as the engine paints it. */
+/** The solid window underlay resolved to rgb, as the engine paints it. */
 const appColor = (page) =>
   page.evaluate(() => {
     const probe = document.createElement("div");
-    probe.style.background = "var(--bg-app)";
+    probe.style.background = "var(--surface-window-underlay)";
     document.body.append(probe);
     const color = getComputedStyle(probe).backgroundColor;
     probe.remove();
+    // color-mix() resolves to `color(srgb r g b)` with 0–1 channels.
+    const srgb = color.match(/^color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/);
+    if (srgb)
+      return srgb.slice(1, 4).map((value) => Math.round(Number(value) * 255));
     return color.match(/\d+/g).slice(0, 3).map(Number);
   });
 
@@ -65,9 +69,9 @@ test("registered backdrops paint in order between the shell and its controls, an
     const main = document
       .getElementById("main-content")
       .getBoundingClientRect();
-    const dock = document
-      .querySelector(".shell-side-dock")
-      .getBoundingClientRect();
+    const cards = [
+      ...document.querySelectorAll("#shell-rail [data-rail-section]"),
+    ].map((card) => card.getBoundingClientRect());
     return {
       // Below the header row, beside the bottom of the window: a bare gutter.
       gutter: [2, window.innerHeight - 2],
@@ -76,8 +80,11 @@ test("registered backdrops paint in order between the shell and its controls, an
       group: [history.left + history.width / 2, history.top + 3],
       floor: [toggle.left - 3, header.top + header.height / 2],
       pane: [main.left + main.width / 2, main.top + main.height / 2],
-      // The app dock's column, below its last tile: its own floor.
-      dock: [dock.left + dock.width / 2, dock.bottom - 3],
+      // The rail's column, between its first two cards: the workspace card.
+      dock: [
+        cards[0].left + cards[0].width / 2,
+        (cards[0].bottom + cards[1].top) / 2,
+      ],
     };
   });
   for (const mode of ["light", "dark"]) {
@@ -94,7 +101,10 @@ test("registered backdrops paint in order between the shell and its controls, an
     const app = await appColor(page);
     expect(near(group, app), `${mode} header group ${group}`).toBe(true);
     expect(near(floor, app), `${mode} header floor ${floor}`).toBe(true);
-    expect(near(dock, app), `${mode} dock floor ${dock}`).toBe(true);
+    // The rail sits inside the workspace card, on the pane's own surface.
+    expect(near(dock, pane), `${mode} rail column ${dock} vs ${pane}`).toBe(
+      true,
+    );
     expect(near(pane, blue) || near(pane, red), `${mode} pane ${pane}`).toBe(
       false,
     );

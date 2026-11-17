@@ -29,10 +29,19 @@ export function TeamViewMenu({
   children: ReactElement;
 }) {
   const [open, setOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement>();
   const [pending, setPending] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
   const running = useRef(false);
   const notify = useToastNotification();
+  const changeOpen = (next: boolean) => {
+    if (next)
+      setHasUnread(
+        conversationIndex(session).keys({ filter, unread: true, home: "team" })
+          .length > 0,
+      );
+    setOpen(next);
+  };
   const run = async (unread: boolean) => {
     if (running.current) return;
     running.current = true;
@@ -115,22 +124,23 @@ export function TeamViewMenu({
     }
   };
   return (
-    <ContextMenuRoot
-      open={open}
-      onOpenChange={(next) => {
-        if (next)
-          setHasUnread(
-            conversationIndex(session).keys({
-              filter,
-              unread: true,
-              home: "team",
-            }).length > 0,
-          );
-        setOpen(next);
-      }}
-    >
-      <ContextMenuTrigger render={children} />
-      <MenuPopup>
+    <ContextMenuRoot open={open} onOpenChange={changeOpen}>
+      <ContextMenuTrigger
+        render={children}
+        onContextMenu={() => setMenuAnchor(undefined)}
+        onTouchStart={() => setMenuAnchor(undefined)}
+        onKeyDown={(event) => {
+          if (
+            event.key === "ContextMenu" ||
+            (event.shiftKey && event.key === "F10")
+          ) {
+            event.preventDefault();
+            setMenuAnchor(event.currentTarget);
+            changeOpen(true);
+          }
+        }}
+      />
+      <MenuPopup anchor={menuAnchor}>
         <MenuItem
           disabled={
             pending ||

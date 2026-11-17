@@ -403,23 +403,6 @@ fn development_and_release_items_are_separate() {
 fn sidebar_registers_bind_legacy_projection_and_preserve_tombstones() {
     use serde_json::json;
     let reg = |value| json!([100, "1234567890abcdef", value]);
-    let tombstones: serde_json::Map<_, _> = (0..105)
-        .map(|i| (format!("section:{i}"), reg(serde_json::Value::Null)))
-        .collect();
-    let sort = json!({"version": 1, "groups": {}, "meta": {"v": 1, "g": tombstones}});
-    assert!(super::validate_sidebar_payload("channel-sort", &sort).is_ok());
-    let mut mismatch = sort.clone();
-    mismatch["meta"]["g"]["channels"] = reg(json!("recent"));
-    assert!(super::validate_sidebar_payload("channel-sort", &mismatch).is_err());
-    mismatch["groups"]["channels"] = json!("recent");
-    assert!(super::validate_sidebar_payload("channel-sort", &mismatch).is_ok());
-    let mut live = sort;
-    for i in 0..105 {
-        let key = format!("section:{i}");
-        live["meta"]["g"][&key] = reg(json!("recent"));
-        live["groups"][&key] = json!("recent");
-    }
-    assert!(super::validate_sidebar_payload("channel-sort", &live).is_err());
     let sections = json!({"version":1, "sections":[{"id":"work","name":"Work","order":0}], "assignments":{"c":"work"},
         "meta":{"v":1,"s":{"work":{"name":reg(json!("Work")),"order":reg(json!(40)),"live":reg(json!(true))},
             "dead":{"live":reg(json!(false))}},"a":{"c":reg(json!("work")),"old":reg(serde_json::Value::Null)}}});
@@ -430,13 +413,14 @@ fn sidebar_registers_bind_legacy_projection_and_preserve_tombstones() {
     for invalid in [
         json!(null),
         json!({"v":2}),
-        json!({"v":1,"g":null}),
-        json!({"v":1,"g":{"channels":[1,"bad","recent"]}}),
-        json!({"v":1,"g":{"channels":[9007199254740992_u64,"1234567890abcdef","recent"]}}),
+        json!({"v":1,"a":null}),
+        json!({"v":1,"g":{}}),
+        json!({"v":1,"a":{"c":[1,"bad","work"]}}),
+        json!({"v":1,"a":{"c":[9007199254740992_u64,"1234567890abcdef","work"]}}),
     ] {
         assert!(super::validate_sidebar_payload(
-            "channel-sort",
-            &json!({"version":1,"groups":{},"meta":invalid})
+            "channel-sections",
+            &json!({"version":1,"sections":[],"assignments":{},"meta":invalid})
         )
         .is_err());
     }
@@ -466,8 +450,7 @@ fn sidebar_section_caps_apply_to_live_projection_not_retained_registers() {
     }
     // An under-cap legacy projection must not hide an over-cap live register tree.
     assert!(super::validate_sidebar_payload("channel-sections", &record).is_err());
-    record["sections"] =
-        super::project_sidebar_meta("channel-sections", &record["meta"])["sections"].clone();
+    record["sections"] = super::project_sidebar_meta(&record["meta"])["sections"].clone();
     assert!(super::validate_sidebar_payload("channel-sections", &record).is_err());
     for i in 1..101 {
         record["meta"]["s"][format!("s{i}")]["live"] = reg(json!(false));
@@ -478,8 +461,7 @@ fn sidebar_section_caps_apply_to_live_projection_not_retained_registers() {
         record["meta"]["a"][format!("c{i}")] = reg(json!("s0"));
     }
     assert!(super::validate_sidebar_payload("channel-sections", &record).is_err());
-    record["assignments"] =
-        super::project_sidebar_meta("channel-sections", &record["meta"])["assignments"].clone();
+    record["assignments"] = super::project_sidebar_meta(&record["meta"])["assignments"].clone();
     assert!(super::validate_sidebar_payload("channel-sections", &record).is_err());
 }
 
@@ -487,15 +469,16 @@ fn sidebar_section_caps_apply_to_live_projection_not_retained_registers() {
 async fn sidebar_signer_refuses_inconsistent_metadata() {
     use serde_json::json;
     let host = super::IdentityHost::fixture();
-    let mut payload = json!({"version":1, "groups":{},
-        "meta":{"v":1,"g":{"channels":[100,"1234567890abcdef","recent"]}}});
+    let reg = |value| json!([100, "1234567890abcdef", value]);
+    let mut payload = json!({"version":1, "sections":[], "assignments":{},
+        "meta":{"v":1,"s":{"work":{"name":reg(json!("Work")),"order":reg(json!(0)),"live":reg(json!(true))}}}});
     assert!(host
-        .sign_sidebar("channel-sort".into(), payload.clone(), 100)
+        .sign_sidebar("channel-sections".into(), payload.clone(), 100)
         .await
         .is_err());
-    payload["groups"]["channels"] = json!("recent");
+    payload["sections"] = json!([{"id":"work","name":"Work","order":0}]);
     let event = host
-        .sign_sidebar("channel-sort".into(), payload, 100)
+        .sign_sidebar("channel-sections".into(), payload, 100)
         .await
         .unwrap();
     assert!(host.admit_sidebar(event).await.is_ok());
@@ -740,56 +723,37 @@ async fn closing_refuses_every_key_operation_including_a_sign_started_before_it(
 }
 
 #[tokio::test]
-async fn sidebar_filter_signer_checks_projection_modes_and_coordinate() {
+async fn sidebar_signer_reads_but_never_writes_stars_sort_or_filter() {
     use serde_json::json;
     let host = super::IdentityHost::fixture();
-    let payload = json!({"version":1,"groups":{"channels":"unreads"}, "activeWindowSeconds":{"channels":604800},
-        "meta":{"v":1,"g":{"channels":[100,"1234567890abcdef","unreads"]}}});
-    let event = host
-        .sign_sidebar("channel-filter".into(), payload.clone(), 100)
-        .await
-        .unwrap();
-    host.admit_sidebar(event.clone()).await.unwrap();
-    assert_eq!(
-        host.decode_sidebar(vec![event]).await.unwrap()["channel-filter"],
-        payload
-    );
-    let reset = json!({"version":1,"groups":{},
-        "meta":{"v":1,"g":{"channels":[101,"1234567890abcdef",null]}}});
-    assert!(host
-        .sign_sidebar("channel-filter".into(), reset, 101)
-        .await
-        .is_ok());
-    for seconds in [
-        json!(0),
-        json!(-86400),
-        json!(86401),
-        json!(86400.5),
-        json!(31622400),
-        json!("604800"),
-        json!(null),
-    ] {
-        let mut invalid = payload.clone();
-        invalid["activeWindowSeconds"]["channels"] = seconds;
-        assert!(host
-            .sign_sidebar("channel-filter".into(), invalid, 100)
-            .await
-            .is_err());
-    }
-    for invalid in [
-        json!({"version":1,"groups":{"channels":"recent"}}),
-        json!({"version":1,"groups":{},"meta":payload["meta"]}),
-        json!({"version":1,"groups":{},"meta":{"v":1,"g":{"channels":[1,"1234567890abcdef","recent"]}}}),
+    for (coordinate, payload) in [
+        (
+            "channel-stars",
+            json!({"version":1,"channels":{"channel":{"starred":true,"updatedAt":1}}}),
+        ),
+        (
+            "channel-sort",
+            json!({"version":1,"groups":{"channels":"recent"}}),
+        ),
+        (
+            "channel-filter",
+            json!({"version":1,"groups":{"channels":"unreads"}}),
+        ),
     ] {
         assert!(host
-            .sign_sidebar("channel-filter".into(), invalid, 100)
+            .sign_sidebar(coordinate.into(), payload.clone(), 100)
             .await
             .is_err());
+        let earlier = host
+            .sign_earlier_sidebar(coordinate, payload.clone(), 100)
+            .await
+            .unwrap();
+        assert_eq!(
+            host.decode_sidebar(vec![earlier.clone()]).await.unwrap()[coordinate],
+            payload
+        );
+        assert!(host.admit_sidebar(earlier).await.is_err());
     }
-    assert!(host
-        .sign_sidebar("channel-sort".into(), payload, 100)
-        .await
-        .is_err());
 }
 
 #[test]
@@ -874,6 +838,53 @@ pub(crate) fn write_denied_fixture() -> (IdentityHost, impl Fn()) {
 }
 
 #[tokio::test]
+async fn rail_layout_signer_admits_only_the_bounded_arrangement() {
+    use serde_json::json;
+    let host = super::IdentityHost::fixture();
+    let payload = json!({
+        "version": 1,
+        "order": ["pins", "custom:a"],
+        "sections": [{"id": "custom:a", "title": "Projects"}],
+        "placements": [{"section": "custom:a", "entry": {"id": "channel:x"}}],
+        "pins": [{"id": "channel:y"}],
+        "teamExpanded": true,
+    });
+    let event = host
+        .sign_sidebar("rail-layout".into(), payload.clone(), 100)
+        .await
+        .unwrap();
+    host.admit_sidebar(event.clone()).await.unwrap();
+    assert_eq!(
+        host.decode_sidebar(vec![event]).await.unwrap()["rail-layout"],
+        payload
+    );
+    let without = |key: &str| {
+        let mut value = payload.clone();
+        value.as_object_mut().unwrap().remove(key);
+        value
+    };
+    let with = |key: &str, field: serde_json::Value| {
+        let mut value = payload.clone();
+        value[key] = field;
+        value
+    };
+    for invalid in [
+        without("pins"),
+        with("extra", json!(true)),
+        with("teamExpanded", json!("yes")),
+        with("order", json!([7])),
+        with("sections", json!([{"id": "custom:a", "title": " "}])),
+        with("placements", json!([{"section": "custom:a", "entry": "x"}])),
+        with("pins", json!(["channel:y"])),
+    ] {
+        assert!(host
+            .sign_sidebar("rail-layout".into(), invalid, 100)
+            .await
+            .is_err());
+    }
+}
+
+#[tokio::test]
 async fn main_agent_signer_admits_one_agent_or_a_cleared_choice() {
     use serde_json::json;
     let host = super::IdentityHost::fixture();
@@ -909,39 +920,5 @@ async fn main_agent_signer_admits_one_agent_or_a_cleared_choice() {
             .sign_sidebar("main-agent".into(), invalid, 100)
             .await
             .is_err());
-    }
-}
-
-#[test]
-fn sidebar_plugin_sort_registers_are_bounded_and_namespaced() {
-    use serde_json::json;
-    for mode in [
-        "plugin:example.plugin/rows/reverse",
-        &format!("plugin:a/b/{}", "x".repeat(501)),
-    ] {
-        let record = json!({"version":1,"groups":{"dms":"recent"},"meta":{"v":1,"g":{"channels":[100,"1234567890abcdef",null],"dms":[99,"1234567890abcdef","recent"]}},"pluginSort":{"v":1,"g":{"channels":[100,"1234567890abcdef",mode]}}});
-        assert!(super::validate_sidebar_payload("channel-sort", &record).is_ok());
-    }
-    for mode in [
-        "plugin:x",
-        "alpha",
-        "recent",
-        "plugin:a/b/",
-        "plugin:a/b/c/d",
-        "plugin:A/b/c",
-        &format!("plugin:a/b/{}", "x".repeat(502)),
-    ] {
-        let record = json!({"version":1,"groups":{},"meta":{"v":1,"g":{"channels":[100,"1234567890abcdef",null]}},"pluginSort":{"v":1,"g":{"channels":[100,"1234567890abcdef",mode]}}});
-        assert!(super::validate_sidebar_payload("channel-sort", &record).is_err());
-    }
-    for choices in [
-        json!({"v":2,"g":{}}),
-        json!({"v":1}),
-        json!({"v":1,"g":{"channels":[100,"bad-device","plugin:a/b/c"]}}),
-        json!({"v":1,"g":{"channels":[-1,"1234567890abcdef","plugin:a/b/c"]}}),
-        json!({"v":1,"g":{"channels":[100,"1234567890abcdef",null]}}),
-    ] {
-        let record = json!({"version":1,"groups":{},"pluginSort":choices});
-        assert!(super::validate_sidebar_payload("channel-sort", &record).is_err());
     }
 }

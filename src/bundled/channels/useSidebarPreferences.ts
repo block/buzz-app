@@ -1,7 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
 
-/** The session retains groups/stars across page unmounts; React only observes. */
+/** The session retains groups across page unmounts; React only observes. */
 export function useSidebarPreferences(
   queries: RelaySession["sidebarPreferences"],
 ) {
@@ -30,14 +30,6 @@ export function useSidebarPreferences(
     sectionCreationWritable: queries.sectionCreationWritable,
     retryMove: queries.retryMove,
     dismissMoveError: queries.dismissMoveError,
-    starWritable: queries.starWritable,
-    setStar: queries.setStar,
     reload: queries.refresh,
-    sortWritable: queries.sortWritable,
-    setSort: queries.setSort,
-    dismissSortError: queries.dismissSortError,
-    filterWritable: queries.filterWritable,
-    setFilter: queries.setFilter,
-    dismissFilterError: queries.dismissFilterError,
   };
 }

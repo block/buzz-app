@@ -70,6 +70,24 @@ function Fixture() {
         )}
       </section>
       <section
+        aria-label="Pinned avatar presence"
+        style={{ display: "flex", gap: 16, marginBlock: 24 }}
+      >
+        {(["circle", "squircle"] as const).map((shape) => (
+          <div key={shape} style={{ width: 52, height: 52 }}>
+            <Avatar
+              size="fill"
+              shape={shape}
+              src={insetArtwork}
+              alt={`Pinned ${shape}`}
+              fallback="Avatar"
+              statusBadge="online"
+              statusBadgeSize="small"
+            />
+          </div>
+        ))}
+      </section>
+      <section
         aria-label="Legacy avatars"
         style={{ display: "flex", flexWrap: "wrap", gap: 16, marginBlock: 24 }}
       >

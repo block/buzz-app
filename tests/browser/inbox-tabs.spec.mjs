@@ -1,15 +1,7 @@
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import {
-  activityRow,
-  openPage,
-  openSettings,
-  selectSettingsSection,
-  chooseColorMode,
-  closeSettings,
-} from "./navigation.mjs";
-import { animationsSettled } from "./animations.mjs";
+import { conversationList, openPage, rail } from "./navigation.mjs";
 
 test.use({
   productionBroker: true,
@@ -20,32 +12,27 @@ test.use({
   historyCounts: { alpha: 2, beta: 1 },
 });
 
-// Browser-only: the bundled page hosts the shared tab workspace. Its list stays
-// the main tab while one side tab follows the rows the reader opens.
-test("Inbox rows open their conversation in one side tab beside the list", async ({
+// Browser-only: the list opens its rows in the reader beside it. Each thread
+// opened from it gets its own side tab; a DM opens as its whole conversation.
+test("Inbox rows open their conversation beside the list, a tab per thread", async ({
   page,
   app,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await open(page, app);
   await openPage(page, "Activity");
-  const inbox = page.getByRole("region", { name: "Activity", exact: true });
-  await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
-  const main = inbox.getByRole("tablist", { name: "Activity tabs" });
-  const side = inbox.getByRole("tablist", { name: "Panel tabs" });
-  const list = inbox.getByRole("list", { name: "Activity", exact: true });
-  const rows = list.getByRole("listitem");
+  const list = conversationList(page);
+  const side = page.getByRole("tablist", { name: "Panel tabs" });
+  const events = list.locator("[data-activity-event]");
+  const dmRow = list.locator('[data-activity-row="dm-peer"]');
   const expectList = async () => {
-    await expect(main.getByRole("tab")).toHaveText(["Activity"]);
-    await expect(
-      main.getByRole("tab", { name: "Activity", exact: true }),
-    ).toHaveAttribute("aria-selected", "true");
     await expect(list).toBeVisible();
-    await expect(rows).toHaveCount(3);
+    await expect(events).toHaveCount(2);
+    await expect(dmRow).toHaveCount(1);
   };
   await expectList();
   await expect(side).toHaveCount(0);
-  const alpha = inbox.getByRole("region", {
+  const alpha = page.getByRole("region", {
     name: "Conversation in Alpha",
     exact: true,
   });
@@ -60,38 +47,42 @@ test("Inbox rows open their conversation in one side tab beside the list", async
   const roots = app.histories.get("primary/alpha");
   const root = (content) => roots.find((event) => event.content === content);
 
-  await rows
+  await events
     .filter({ hasText: "Unread reply 1" })
-    .getByRole("button", { name: /^Open / })
+    .locator("[data-conversation-row]")
     .click();
   await expect(side.getByRole("tab")).toHaveText(["Thread root 1"]);
   await expect(
     side.getByRole("tab", { name: "Thread root 1", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(
-    thread.locator(`[data-message-id="${root("Thread root 1").id}"]`),
+    thread.locator(`[data-message-id="${root("Thread root 1").id}"]`).last(),
   ).toBeVisible();
   await expect(
     thread.locator("[data-message-id]").filter({ hasText: "Unread reply 1" }),
   ).toBeInViewport();
   await expect(reply).toBeVisible();
   await expectList();
-  // A tab does not visit the channel; the Inbox page stays in view.
-  await expect(page.getByRole("region", { name: "Channels" })).toHaveCount(0);
 
   await reply.fill("Thread root 1 draft");
   // Thread root 0's row shows whichever of its replies loaded as newest.
-  const other = rows
+  const other = events
     .filter({ hasText: "#Alpha" })
     .filter({ hasNotText: "Unread reply 1" });
   const shown = (await other.textContent()).includes("Broadcast reply")
     ? "Broadcast reply"
     : "Unread reply 0";
-  await other.getByRole("button", { name: /^Open / }).click();
-  // A plain open replaces the previous tab, so one tab follows the clicks.
-  await expect(side.getByRole("tab")).toHaveText(["Thread root 0"]);
+  await other.locator("[data-conversation-row]").click();
+  // Each thread opens its own tab; the new one is selected.
+  await expect(side.getByRole("tab")).toHaveText([
+    "Thread root 1",
+    "Thread root 0",
+  ]);
   await expect(
-    thread.locator(`[data-message-id="${root("Thread root 0").id}"]`),
+    side.getByRole("tab", { name: "Thread root 0", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    thread.locator(`[data-message-id="${root("Thread root 0").id}"]`).last(),
   ).toBeVisible();
   await expect(
     thread.locator("[data-message-id]").filter({ hasText: shown }),
@@ -103,17 +94,14 @@ test("Inbox rows open their conversation in one side tab beside the list", async
   await expect(reply).not.toHaveText("Thread root 1 draft");
   await expectList();
 
-  await rows
-    .filter({ hasText: "Inbox DM fixture reply" })
-    .getByRole("button", { name: /^Open / })
-    .click();
-  // A DM opens its whole conversation, not a thread.
-  await expect(side.getByRole("tab")).toHaveText(["Alice Fixture"]);
-  const dm = inbox.getByRole("region", {
-    name: "Conversation in Alice Fixture",
-    exact: true,
-  });
+  await dmRow.locator("[data-conversation-row]").click();
+  // A DM opens its whole conversation in place of the channel, not a thread.
+  const dm = page.getByRole("article", { name: "Conversation", exact: true });
+  await expect(
+    dm.getByRole("heading", { name: "Alice Fixture", exact: true }),
+  ).toBeVisible();
   await expect(alpha).toHaveCount(0);
+  await expect(side).toHaveCount(0);
   await expect(
     dm
       .getByRole("region", { name: "Channel message history" })
@@ -125,37 +113,38 @@ test("Inbox rows open their conversation in one side tab beside the list", async
   await expect(dm.getByRole("textbox", { name: /^Message / })).toBeVisible();
   await expectList();
 
-  // Reopening the first thread restores its retained draft in a fresh tab.
-  await rows
+  // Reopening the first thread selects its tab, with its draft kept.
+  await events
     .filter({ hasText: "Unread reply 1" })
-    .getByRole("button", { name: /^Open / })
+    .locator("[data-conversation-row]")
     .click();
-  await expect(side.getByRole("tab")).toHaveText(["Thread root 1"]);
+  await expect(
+    side.getByRole("tab", { name: "Thread root 1", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await expect(reply).toHaveText("Thread root 1 draft");
 });
 
-// Browser-only: the tab's menu takes its conversation to Channels, as the
-// former Inbox detail pane's Open in channel did. Real layout decides that
-// the channel's root row is in view and painted beside the focused thread.
+// Browser-only: the thread's header takes its conversation to its channel.
+// Real layout decides that the channel's root row is in view and painted beside
+// the focused thread.
 test.describe("with the thread's root beyond the channel's newest page", () => {
   test.use({ threadUnreadNewerRows: 30 });
-  test("an Inbox tab's menu opens its thread in its channel beside its root", async ({
+  test("a thread's header opens its channel beside its root", async ({
     page,
     app,
   }) => {
-    await page.setViewportSize({ width: 1280, height: 900 });
+    // Wide enough that the thread docks beside the channel rather than
+    // covering it, which would leave the channel inert and unmarked.
+    await page.setViewportSize({ width: 1680, height: 900 });
     await open(page, app);
     await openPage(page, "Activity");
-    const inbox = page.getByRole("region", { name: "Activity", exact: true });
-    await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
     const root = app.histories
       .get("primary/alpha")
       .find((event) => event.content === "Thread root 1");
-    await inbox
-      .getByRole("list", { name: "Activity", exact: true })
-      .getByRole("listitem")
+    await conversationList(page)
+      .locator("[data-activity-event]")
       .filter({ hasText: "Unread reply 1" })
-      .getByRole("button", { name: /^Open / })
+      .locator("[data-conversation-row]")
       .click();
     // The arrival cue is transient: observe it before the channel opens.
     await page.evaluate((id) => {
@@ -177,30 +166,27 @@ test.describe("with the thread's root beyond the channel's newest page", () => {
         attributeFilter: ["class"],
       });
     }, root.id);
-    // Off the channel's newest page, the tab cannot name its thread by root.
-    await inbox
-      .getByRole("tablist", { name: "Panel tabs" })
-      .getByRole("tab", { name: /^Thread/ })
-      .click({ button: "right" });
-    await page.getByRole("menuitem", { name: "Open in channel" }).click();
-    await expect(inbox).toHaveCount(0);
+    // The thread's header shows its channel beside it.
+    await page
+      .getByRole("button", { name: "Show #Alpha", exact: true })
+      .click();
     const target = await page.evaluate(
       () => history.state.buzzNavigationV1.entry.target,
     );
     expect(target.threadRootId).toBe(root.id);
-    expect(target.messageId).toMatch(/^[a-f0-9]{64}$/);
-    // The thread still opens at the same message, which keeps focus.
+    // The channel lands on the thread's root.
+    expect(target.messageId).toBe(root.id);
+    // The thread stays open beside it.
     const reply = page
       .getByRole("region", { name: "Thread messages", exact: true })
-      .locator(`[data-message-id="${target.messageId}"]`);
-    await expect(reply).toContainText("Unread reply 1");
-    await expect(reply).toBeFocused();
+      .locator(`[data-message-id="${root.id}"]`)
+      .last();
+    await expect(reply).toContainText("Thread root 1");
     // Beside it, the channel shows its newest messages while it reads the
     // older page the fixture holds, then moves to the thread's root.
     await expect.poll(() => app.pending.length).toBe(1);
     expect(app.pending[0].channel).toBe("alpha");
     await expect(page.locator('[data-channel-timeline="alpha"]')).toBeVisible();
-    await expect(reply).toBeFocused();
     app.pending.shift().release();
     const head = app.report.queries.find(
       ({ community, filter }) =>
@@ -219,190 +205,13 @@ test.describe("with the thread's root beyond the channel's newest page", () => {
         .locator(`[data-message-id="${root.id}"]`),
     ).toBeInViewport();
     await expect.poll(() => page.evaluate(() => window.rootMarked)).toBe(true);
-    await expect(reply).toBeFocused();
+    await expect(reply).toBeVisible();
   });
 });
 
-// Browser-only: the list's offset needs real layout. Leaving Inbox through a
-// thread tab's channel name unmounts the page; Back returns to the offset the
-// user chose, even away from the selected row and after rows shifted, unless
-// a fresh reply moved a selected row they could see out of view while away.
-// A tab moved to the main pane covers the list, which is placed once it shows.
-const titles = {
-  kept: "",
-  moved: " around a row that moved",
-  covered: " around a row that moved under a main-pane tab",
-  away: " away from the selected row",
-  shifted: " away from the selected row as rows shift",
-  drifted: " after rows pushed the selected row out of view",
-};
-for (const variant of Object.keys(titles))
-  test(`returning to Inbox keeps the list's place${titles[variant]}`, async ({
-    page,
-    app,
-  }) => {
-    // Mentioned threads, enough to overflow the list; later ones land live.
-    const seed = (from, count, deliver) =>
-      Array.from({ length: count }, (_, offset) => {
-        const index = from + offset;
-        const root = app.append(
-          "primary",
-          "beta",
-          `Beta root ${index}`,
-          deliver,
-          false,
-        );
-        app.append(
-          "primary",
-          "beta",
-          `Beta mention ${index}`,
-          deliver,
-          false,
-          root.id,
-          undefined,
-          [["p", app.viewer]],
-        );
-        return root;
-      });
-    const roots = seed(0, 25, false);
-    await page.setViewportSize({ width: 1280, height: 900 });
-    await open(page, app);
-    await openPage(page, "Activity");
-    const inbox = page.getByRole("region", { name: "Activity", exact: true });
-    await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
-    const list = inbox.getByRole("list", { name: "Activity", exact: true });
-    const scroller = list.locator("xpath=..");
-    const rows = list.getByRole("listitem");
-    // Scrolling past the selected row before leaving, or rows pushing it out
-    // of view while the list shows, leaves it off-screen on return.
-    const away = variant === "away" || variant === "shifted";
-    const offscreen = away || variant === "drifted";
-    const moved = variant === "moved" || variant === "covered";
-    // A row near the top is in view at once; a low one needs scrolling.
-    const row = rows.filter({
-      hasText: offscreen ? "Beta mention 24" : "Beta mention 3",
-    });
-    await expect(rows).toHaveCount(28);
-    if (!offscreen) {
-      await expect(row).not.toBeInViewport();
-      await row.scrollIntoViewIfNeeded();
-    }
-    await row.getByRole("button", { name: /^Open / }).click();
-    const channel = inbox.getByRole("button", { name: "#Beta", exact: true });
-    await expect(channel).toBeVisible();
-    await expect(row).toBeInViewport();
-    if (away) {
-      await scroller.evaluate((element) => {
-        element.scrollTop = element.scrollHeight;
-      });
-      await expect(row).not.toBeInViewport();
-    }
-    if (variant === "drifted") {
-      seed(25, 20, true);
-      await expect(rows).toHaveCount(48);
-      await expect(row).not.toBeInViewport();
-    }
-    const top = () => scroller.evaluate((element) => element.scrollTop);
-    const offset = await top();
-    if (variant === "drifted") expect(offset).toBe(0);
-    else expect(offset).toBeGreaterThan(0);
-
-    const main = inbox.getByRole("tablist", { name: "Activity tabs" });
-    const listTab = main.getByRole("tab", { name: "Activity", exact: true });
-    if (variant === "covered") {
-      // Opening the thread reveals its message and focuses the row once the
-      // thread has loaded. Move the tab after that, or the late reveal takes
-      // focus from it.
-      await expect(
-        inbox
-          .getByRole("region", { name: "Thread messages", exact: true })
-          .locator("[data-message-id]", { hasText: "Beta mention 3" }),
-      ).toBeFocused();
-      await inbox
-        .getByRole("tablist", { name: "Panel tabs" })
-        .getByRole("tab")
-        .focus();
-      await page.keyboard.press("Alt+Shift+ArrowLeft");
-      await expect(main.getByRole("tab")).toHaveText([
-        "Activity",
-        "Thread · Beta",
-      ]);
-      await expect(
-        main.getByRole("tab", { name: "Thread · Beta", exact: true }),
-      ).toBeFocused();
-      await expect(listTab).toHaveAttribute("aria-selected", "false");
-      await expect(channel).toBeVisible();
-    }
-
-    await channel.click();
-    await expect(inbox).toHaveCount(0);
-    if (moved) {
-      app.append(
-        "primary",
-        "beta",
-        "Fresh Beta mention 3",
-        true,
-        false,
-        roots[3].id,
-        undefined,
-        [["p", app.viewer]],
-      );
-      // Delivered to the open thread, so the session has the row's move.
-      await expect(
-        page.getByText("Fresh Beta mention 3", { exact: true }),
-      ).toBeVisible();
-    }
-    if (variant === "shifted") {
-      // A new mentioned thread adds a row above, shifting the rest down.
-      const root = app.append("primary", "beta", "Beta root 25", true, false);
-      app.append(
-        "primary",
-        "beta",
-        "Beta mention 25",
-        true,
-        false,
-        root.id,
-        undefined,
-        [["p", app.viewer]],
-      );
-      // Delivered to the open channel, so the session has the new row.
-      await expect(
-        page.getByText("Beta root 25", { exact: true }),
-      ).toBeVisible();
-    }
-    await page.getByRole("button", { name: "Go back", exact: true }).click();
-    if (variant === "covered") {
-      // Inbox returns under the moved tab, which renders the moved row unseen.
-      await expect(listTab).toHaveAttribute("aria-selected", "false");
-      await expect(
-        inbox
-          .getByRole("list", {
-            name: "Activity",
-            exact: true,
-            includeHidden: true,
-          })
-          .getByRole("listitem", { includeHidden: true })
-          .nth(1),
-      ).toContainText("Fresh Beta mention 3");
-      await listTab.click();
-    }
-    await expect(row).toHaveAttribute("data-selected", "true");
-    if (moved) {
-      // The newer DM fixture row stays first; the thread moved above its page.
-      await expect(rows.nth(1)).toContainText("Fresh Beta mention 3");
-      await expect(row).toBeInViewport();
-      return;
-    }
-    if (variant === "shifted") await expect(rows).toHaveCount(29);
-    await expect.poll(top).toBeGreaterThanOrEqual(offset - 1);
-    expect(await top()).toBeLessThanOrEqual(offset + 1);
-    if (offscreen) await expect(row).not.toBeInViewport();
-    else await expect(row).toBeInViewport();
-  });
-
-// Browser-only: grouped reaction navigation uses the real tab workspace and exact
-// message seek, with responsive toolbar geometry in both rendering engines.
-test("Reaction activity turns Unread off and opens the exact message", async ({
+// Browser-only: grouped reaction rows render real emoji glyphs, including a
+// fetched custom emoji, and open the exact message in the real reader.
+test("Reaction activity ignores Unread and opens the exact message", async ({
   page,
   app,
 }, testInfo) => {
@@ -427,19 +236,25 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
   );
   history.push(reaction);
   app.relay.publish("primary", reaction, { requireSubscriber: false });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await open(page, app);
   await openPage(page, "Activity");
-  const inbox = page.getByRole("region", { name: "Activity", exact: true });
-  const unread = inbox.getByRole("switch", { name: "Unread", exact: true });
-  await unread.check();
-  await inbox.getByRole("tab", { name: "Reactions", exact: true }).click();
-  await expect(unread).not.toBeChecked();
-  const row = inbox
-    .getByRole("list", { name: "Activity", exact: true })
+  const team = page.getByRole("region", { name: "Team list", exact: true });
+  // Unread only hides read conversations; reactions are never unread, so
+  // their view still lists them.
+  await team
+    .getByRole("button", { name: "Filter and sort conversations", exact: true })
+    .click();
+  await page
+    .getByRole("menuitemradio", { name: "Unread only", exact: true })
+    .click();
+  await team.getByRole("tab", { name: "Reactions", exact: true }).click();
+  const row = team
+    .getByRole("list", { name: "Reactions", exact: true })
     .getByRole("listitem");
   await expect(row).toHaveCount(1);
-  await expect(row).not.toHaveAttribute("data-unread", "true");
-  // Rendered integration: real sidebar slot, full-colour glyph and both themes.
+  await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
+  // A live reaction from the same person joins its row.
   const liveReaction = finalizeEvent(
     {
       kind: 7,
@@ -455,11 +270,8 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
   );
   history.push(liveReaction);
   app.relay.publish("primary", liveReaction);
-  const icon = activityRow(page).locator("[data-active]");
-  await expect(icon).toHaveText("✅");
-  await expect(icon).toHaveAttribute("aria-hidden", "true");
-  await page.screenshot({ path: testInfo.outputPath("reaction-bell.png") });
-  await expect(icon).toHaveCount(0);
+  const tail = row.getByText(/reacted/);
+  await expect(tail).toHaveText(/reacted ❤️ ✅/);
   await page.route("**/reaction-custom.svg", (route) =>
     route.fulfill({
       contentType: "image/svg+xml",
@@ -482,98 +294,15 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
   );
   history.push(custom);
   app.relay.publish("primary", custom);
-  await expect(icon.locator("img")).toBeVisible();
-  // The emoji fills the sidebar row's 16px icon slot.
-  await expect(icon.locator("img")).toHaveCSS("width", "16px");
-  await expect(icon.locator("img").locator("..")).toHaveCSS("opacity", "1");
-  await page.screenshot({ path: testInfo.outputPath("reaction-custom.png") });
-  await expect(icon).toHaveCount(0);
-  for (const theme of ["light", "dark"]) {
-    await openSettings(page);
-    await selectSettingsSection(page, "Appearance");
-    await chooseColorMode(page, theme === "dark" ? "Dark" : "Light");
-    await closeSettings(page);
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-color-mode",
-      theme,
-    );
-    await expect(page.locator("html")).not.toHaveAttribute(
-      "data-palette-changing",
-    );
-    await page.evaluate(() =>
-      Promise.allSettled(
-        document
-          .getAnimations()
-          .filter(
-            (animation) =>
-              animation.effect?.getComputedTiming().endTime !== Infinity,
-          )
-          .map((animation) => animation.finished),
-      ),
-    );
-    await page.screenshot({
-      path: testInfo.outputPath(`reaction-${theme}.png`),
-    });
-  }
-
-  // Each window width leaves the dock's 66px beside the list: a 540px list at
-  // 606, then 522px and 402px lists, where Unread and then From wrap.
-  for (const width of [1280, 606, 588, 468]) {
-    await page.setViewportSize({ width, height: 900 });
-    await expect(
-      inbox.getByRole("tab", { name: "Reactions", exact: true }),
-    ).toBeVisible();
-    await expect
-      .poll(() =>
-        page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
-      )
-      .toBe(true);
-    const tail = row.locator('[class*="reactionTail"]');
-    await expect(tail).toHaveText(/reacted ❤️ ✅/);
-    await expect(tail.locator("img")).toBeVisible();
-    expect(
-      await tail.evaluate((element) => {
-        const box = element.getBoundingClientRect();
-        const row = element.closest("li").getBoundingClientRect();
-        return box.left >= row.left && box.right <= row.right;
-      }),
-    ).toBe(true);
-    const geometry = await inbox.evaluate((element) => {
-      const centerY = (selector) => {
-        const box = element.querySelector(selector).getBoundingClientRect();
-        return box.y + box.height / 2;
-      };
-      return {
-        width: element.getBoundingClientRect().width,
-        tabsY: centerY(
-          '[role="tablist"][aria-label="Activity type"] [role="tab"]',
-        ),
-        fromY: centerY('button[aria-label="From anyone"]'),
-        unreadY: centerY('[role="switch"][aria-label="Unread"]'),
-      };
-    });
-    if (width === 606) {
-      expect(geometry.width).toBe(540);
-      expect(Math.abs(geometry.tabsY - geometry.unreadY)).toBeLessThan(3);
-    } else if (width === 588) {
-      expect(geometry.unreadY).toBeGreaterThan(geometry.tabsY + 20);
-      expect(Math.abs(geometry.tabsY - geometry.fromY)).toBeLessThan(3);
-    } else if (width === 468) {
-      expect(geometry.fromY).toBeGreaterThan(geometry.tabsY + 20);
-      expect(Math.abs(geometry.fromY - geometry.unreadY)).toBeLessThan(3);
-    }
-    await page.screenshot({
-      path: testInfo.outputPath(`reaction-width-${width}.png`),
-    });
-  }
-  await page.evaluate(() =>
-    document.documentElement.style.setProperty("--buzz-text-scale", "1.5"),
-  );
-  await expect(
-    inbox.getByRole("tab", { name: "Reactions", exact: true }),
-  ).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath("reaction-enlarged.png") });
-  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(tail.locator("img")).toBeVisible();
+  expect(
+    await tail.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const item = element.closest("li").getBoundingClientRect();
+      return box.left >= item.left && box.right <= item.right;
+    }),
+  ).toBe(true);
+  // Another person's matching heart groups under both names.
   const sharedHeart = finalizeEvent(
     {
       kind: 7,
@@ -591,36 +320,21 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
   app.relay.publish("primary", sharedHeart);
   await expect(row).toHaveCount(2);
   await expect(row.filter({ hasText: "reacted ❤️" })).toContainText(" and ");
-  const typeTabs = inbox.getByRole("tablist", { name: "Activity type" });
-  await animationsSettled(typeTabs, { subtree: true });
-  await expect
-    .poll(() =>
-      typeTabs.evaluate((element) => {
-        const selected = element
-          .querySelector('[aria-selected="true"]')
-          .getBoundingClientRect();
-        const indicator = element
-          .querySelector(".buzz-tabs-indicator")
-          .getBoundingClientRect();
-        return (
-          Math.abs(selected.left - indicator.left) < 2 &&
-          Math.abs(selected.width - indicator.width) < 2
-        );
-      }),
-    )
-    .toBe(true);
   await page.screenshot({
     path: testInfo.outputPath("reaction-shared-and-solo.png"),
   });
   await row.getByRole("button", { name: /reacted with heart/ }).click();
   await expect(
-    inbox.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab"),
-  ).toHaveCount(1);
-  await expect(inbox.locator(`[data-message-id="${target.id}"]`)).toBeVisible();
+    page
+      .getByRole("region", { name: "Conversation detail", exact: true })
+      .locator(
+        `[data-channel-timeline="alpha"] [data-message-id="${target.id}"]`,
+      ),
+  ).toBeInViewport();
 });
 
 // Browser-only: the real virtualized timeline must reveal the exact reaction
-// target inside Solo/DM conversation tabs, rather than opening isolated threads.
+// target inside the Solo chat or DM itself, rather than opening isolated threads.
 test.describe("reaction conversation targets", () => {
   test.use({ soloChannels: ["beta"] });
   test("Solo and DM reactions reveal their message in the existing conversation", async ({
@@ -654,17 +368,30 @@ test.describe("reaction conversation targets", () => {
     });
     await open(page, app);
     await openPage(page, "Activity");
-    const inbox = page.getByRole("region", { name: "Activity", exact: true });
-    await inbox.getByRole("tab", { name: "Reactions", exact: true }).click();
+    const detail = page.getByRole("region", {
+      name: "Conversation detail",
+      exact: true,
+    });
+    // Solo's list holds the Solo chat's reactions; Team's holds the DM's.
     for (const { channelId, message } of targets) {
-      await inbox
+      const section = channelId === "beta" ? "Solo" : "Team";
+      await rail(page)
+        .getByRole("heading", { name: section, exact: true })
+        .getByRole("button")
+        .click();
+      const list = page.getByRole("region", {
+        name: `${section} list`,
+        exact: true,
+      });
+      await list.getByRole("tab", { name: "Reactions", exact: true }).click();
+      await list
         .getByRole("button", {
           name: new RegExp(
             `reacted with heart to your message: Acknowledged ${channelId}$`,
           ),
         })
         .click();
-      const history = inbox.getByRole("region", {
+      const history = detail.getByRole("region", {
         name: "Channel message history",
       });
       await expect(history).toHaveAttribute("data-channel-timeline", channelId);
@@ -672,7 +399,7 @@ test.describe("reaction conversation targets", () => {
         history.locator(`[data-message-id="${message.id}"]`),
       ).toBeInViewport();
       await expect(
-        inbox.getByRole("region", { name: "Thread messages" }),
+        detail.getByRole("region", { name: "Thread messages" }),
       ).toHaveCount(0);
     }
   });

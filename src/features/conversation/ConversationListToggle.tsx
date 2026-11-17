@@ -35,7 +35,7 @@ export function ConversationListToggle({
           if (inList && list.open) {
             const panel = document
               .getElementById(list.controls)
-              ?.closest("[data-list-controlled]");
+              ?.closest("[data-detail-workspace]");
             const reader = panel?.querySelector(
               '[aria-label="Conversation detail"]',
             );

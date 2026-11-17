@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { conversationList, openChannel, openPage } from "./navigation.mjs";
 
 // Exercise generic panel motion independently of the bundled Bestie content.
 test.use({ enabledPlugins: ["buzz.workflows"], companionFixture: true });
@@ -60,7 +60,8 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
 }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 832 });
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
@@ -79,7 +80,13 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
   await launch.click();
   await expect(close).toBeVisible();
   await expect(dock).toHaveCSS("transition-duration", "0.18s, 0.18s");
-  for (const header of await page.locator(".shell-body .panel-header").all()) {
+  // A conversation header floating over its history has no border box; every
+  // toolbar header keeps one, transparent where its divider is hidden.
+  const toolbarHeaders = await page
+    .locator(".shell-body .panel-header:not([data-history-overlay])")
+    .all();
+  expect(toolbarHeaders.length).toBeGreaterThan(0);
+  for (const header of toolbarHeaders) {
     // The shared header owns a full-width border, including in joined panes.
     await expect(header).toHaveCSS("border-bottom-width", "1px");
     await expect(header).toHaveCSS("border-bottom-style", "solid");
@@ -94,42 +101,26 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
   await close.click();
   await expect(dock).toHaveCount(0);
 
-  // The hit target starts at the seam; the painted capsule stays centered on it.
-  // This keeps the scrollbar and sidebar actions clear of the resize target.
-  const navigation = page.getByRole("navigation", {
-    name: "Subscribed channels",
-  });
-  const scrollBounds = await navigation.boundingBox();
+  // The hit target starts at the seam between Team's list and its reader; the
+  // painted capsule stays centered on it.
+  const list = page.locator("[data-list-open] > :first-child");
+  const scrollBounds = await conversationList(page).boundingBox();
   const resizeBounds = await resize.boundingBox();
-  const sidebarBounds = await page
-    .getByRole("complementary", { name: "Sidebar", exact: true })
-    .boundingBox();
-  const mainBounds = await page.locator("#main-content > .panel").boundingBox();
+  const sidebarBounds = await list.boundingBox();
+  const mainBounds = await page.locator("[data-list-page]").boundingBox();
   expect(mainBounds.x).toBeCloseTo(sidebarBounds.x + sidebarBounds.width);
   const railCenter = resizeBounds.x;
   expect(railCenter).toBeCloseTo(
     (sidebarBounds.x + sidebarBounds.width + mainBounds.x) / 2,
   );
-  // The scrollbar remains 2px inside the borderless joined pane's edge.
-  expect(railCenter - (scrollBounds.x + scrollBounds.width)).toBeCloseTo(2);
+  // The list's rows stay inside its column, clear of the seam.
+  expect(scrollBounds.x + scrollBounds.width).toBeLessThanOrEqual(railCenter);
   const capsuleCenter = await resize.evaluate(
     (el) =>
       el.getBoundingClientRect().left +
       Number.parseFloat(getComputedStyle(el, "::after").left),
   );
   expect(capsuleCenter).toBeCloseTo(railCenter);
-  expect(
-    await navigation.evaluate((el) => {
-      const frame = el.parentElement;
-      return {
-        clipped:
-          el.getBoundingClientRect().right >
-          frame.getBoundingClientRect().right,
-        cap: getComputedStyle(frame, "::before").content,
-        mask: getComputedStyle(frame, "::after").content,
-      };
-    }),
-  ).toEqual({ clipped: false, cap: "none", mask: "none" });
 
   const grip = () =>
     resize.evaluate((el) => {
@@ -229,14 +220,18 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
 });
 
 // Actual grid geometry and resize input need a browser, including the host fallback.
-for (const destination of ["Messages", "Workflows"]) {
+// Team's reader with a conversation open succeeds the Messages page.
+for (const destination of ["Team", "Workflows"]) {
   test(`${destination} main and secondary panels resize without resetting content`, async ({
     page,
     app,
   }) => {
-    await page.setViewportSize({ width: 1440, height: 900 });
+    // Team's list sits beside the reader; widen so the split has the same room.
+    const wide = destination === "Team" ? 1800 : 1440;
+    await page.setViewportSize({ width: wide, height: 900 });
     await page.goto(app.origin);
     await openPage(page, destination);
+    if (destination === "Team") await openChannel(page, "alpha");
     const launch = page
       .getByRole("button", { name: "Companion fixture", exact: true })
       .and(page.locator("button[aria-expanded]"));
@@ -292,6 +287,13 @@ for (const destination of ["Messages", "Workflows"]) {
     await expect
       .poll(async () => (await dock.boundingBox()).width)
       .toBeCloseTo(adjusted, 0);
+    // Opening also releases the shell's balance gutter on a transition; the
+    // keyboard limits below measure the settled workspace.
+    await page
+      .locator(".shell-workspace")
+      .evaluate((el) =>
+        Promise.allSettled(el.getAnimations().map((item) => item.finished)),
+      );
     // The companion keeps one minimum on every host.
     await handle.press("Home");
     await expect
@@ -311,7 +313,7 @@ for (const destination of ["Messages", "Workflows"]) {
     await expect(handle).toBeHidden();
     await expect(dock).toHaveCSS("position", "absolute");
     await expect(dock).toHaveCSS("width", "420px");
-    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.setViewportSize({ width: wide, height: 900 });
     await expect(handle).toBeVisible();
     const finalGrip = await handle.boundingBox();
     await page.mouse.move(finalGrip.x + 8, finalGrip.y + finalGrip.height / 2);
@@ -333,7 +335,7 @@ for (const destination of ["Messages", "Workflows"]) {
   });
 }
 
-for (const destination of ["Messages", "Workflows"]) {
+for (const destination of ["Team", "Workflows"]) {
   test(`${destination} split opens and closes continuously and reverses without losing content`, async ({
     page,
     app,
@@ -341,6 +343,7 @@ for (const destination of ["Messages", "Workflows"]) {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(app.origin);
     await openPage(page, destination);
+    if (destination === "Team") await openChannel(page, "alpha");
     const launch = page
       .getByRole("button", { name: "Companion fixture", exact: true })
       .and(page.locator("button[aria-expanded]"));
@@ -353,6 +356,12 @@ for (const destination of ["Messages", "Workflows"]) {
     // Control the browser's real layout transition: no timing assumptions or sleeps.
     const sample = (fraction) =>
       dock.evaluate(async (element, fraction) => {
+        // A side panel also releases the shell's balance gutter on its own
+        // transition. Settle it so only the split's motion is sampled.
+        for (const item of element
+          .closest(".shell-workspace")
+          ?.getAnimations() ?? [])
+          item.finish();
         const animation = element.parentElement
           .getAnimations()
           .find((item) => item.transitionProperty === "grid-template-columns");

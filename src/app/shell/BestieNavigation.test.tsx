@@ -464,7 +464,6 @@ it("honors the promoted DM's mute and unread state through reads and Bestie repl
     read: async () => ({
       sections: [],
       assignments: {},
-      starred: [],
       muted: muted ? [first] : [],
     }),
   });

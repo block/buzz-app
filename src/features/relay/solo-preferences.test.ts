@@ -42,7 +42,6 @@ function fixture(lane?: ReturnType<typeof createApiAdmission>) {
   let legacy: SidebarPreferences = {
     sections: [{ id: "work", name: "OG work", icon: "★", order: 0 }],
     assignments: { [channel]: "work" },
-    starred: [],
     muted: [],
   };
   const install = (value: KitValue, deleted = false) => {
@@ -81,11 +80,6 @@ function fixture(lane?: ReturnType<typeof createApiAdmission>) {
     };
     return legacy;
   });
-  const star = vi.fn(async ({ channelId, starred }) => {
-    legacy = { ...legacy, starred: starred ? [channelId] : [] };
-    return legacy.starred;
-  });
-  const sort = vi.fn(async () => ({}));
   const publish = vi.fn(async (event: RelayEvent) => {
     events.push(event);
   });
@@ -107,8 +101,6 @@ function fixture(lane?: ReturnType<typeof createApiAdmission>) {
       decodeSidebarPreferences: async () => legacy,
       writeSidebarAssignment: assignment,
       removeSidebarSection: removal,
-      writeSidebarStar: star,
-      writeSidebarSort: sort,
       channelKit: {
         decode: async (rows) =>
           rows.map((event) => ({
@@ -131,8 +123,6 @@ function fixture(lane?: ReturnType<typeof createApiAdmission>) {
     admitted,
     assignment,
     removal,
-    sort,
-    star,
     publish,
     prepare,
     install,
@@ -284,7 +274,6 @@ it("starts Solo preferences empty and changes only the distinct Solo catalog coo
     expect(solo.queries.snapshot().data?.assignments).toEqual({
       [channel]: "work",
     });
-    expect(solo.queries.starWritable).toBe(false);
     const writes = f.publish.mock.calls.map(([event]) => event);
     expect(writes).toHaveLength(1);
     expect(writes[0]?.tags).toContainEqual(["t", ME_KIT_TAG]);
@@ -299,7 +288,6 @@ it("starts Solo preferences empty and changes only the distinct Solo catalog coo
     expect(f.preferences.snapshot().data?.sections[0]?.name).toBe("OG work");
     await solo.queries.removeSection("work");
     expect(solo.queries.snapshot().data?.sections).toEqual([]);
-    expect(f.star).not.toHaveBeenCalled();
     expect(f.assignment).not.toHaveBeenCalled();
   } finally {
     controller.abort();

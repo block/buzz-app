@@ -1,6 +1,6 @@
 import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { conversationList, openPage } from "./navigation.mjs";
 import { frames } from "./timeline.mjs";
 
 // Browser boundary: Inbox plugin routing and portalled message-menu dismissal
@@ -20,17 +20,14 @@ test("Inbox edits an owned reply in place and restores the reply draft", async (
 }, testInfo) => {
   await page.goto(app.origin);
   await openPage(page, "Activity");
-  const inbox = page.getByRole("region", { name: "Activity", exact: true });
-  await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+  const list = conversationList(page);
   // The preview can settle on either reply as thread inputs arrive; the
-  // conversation's accessible identity is the stable target for this test.
-  await inbox
-    .getByRole("button", {
-      name: "Open Alice Fixture in #Alpha",
-      exact: true,
-    })
+  // conversation's place is the stable target for this test.
+  await list
+    .locator("[data-activity-event] [data-conversation-row]")
+    .filter({ hasText: "in #Alpha" })
     .click();
-  const detail = inbox.getByRole("region", {
+  const detail = page.getByRole("region", {
     name: "Conversation in Alpha",
     exact: true,
   });

@@ -63,7 +63,7 @@ test("representative avatars preserve identity, inset artwork and profile contro
   const avatars = page.locator(
     "[data-avatar-shape]:not([data-avatar-shape] [data-avatar-shape])",
   );
-  await expect(avatars).toHaveCount(15);
+  await expect(avatars).toHaveCount(17);
   for (const image of await avatars.locator("img").all()) {
     await expect
       .poll(() => image.evaluate((el) => el.complete && el.naturalWidth > 0))
@@ -130,6 +130,30 @@ test("representative avatars preserve identity, inset artwork and profile contro
     // The same scalable mask owns all sizes. Keep photo + fallback in the
     // shared component and the legacy adapter, not size × viewport recipes.
     await expectInsetArtwork();
+    // A small presence cutout must retain the identity contour as well.
+    // Attributes alone miss a cutout mask replacing the squircle mask.
+    const pins = page.getByRole("region", { name: "Pinned avatar presence" });
+    for (const avatar of await pins.locator(".buzz-avatar").all()) {
+      const shape = await avatar.getAttribute("data-avatar-shape");
+      const paint = await pixels(page, avatar);
+      expect(
+        paint.center,
+        `${mode}/${shape}: pinned artwork is painted`,
+      ).toEqual([255, 0, 255, 255]);
+      expect(
+        paint.corner,
+        `${mode}/${shape}: pinned picture corners are clipped`,
+      ).not.toEqual(paint.center);
+      if (shape === "squircle")
+        expect(
+          paint.shoulder,
+          "pinned agent retains its squircle shoulder",
+        ).not.toEqual(paint.corner);
+      else
+        expect(paint.shoulder, "pinned human stays circular").toEqual(
+          paint.corner,
+        );
+    }
     const representatives = system
       .locator(
         '.buzz-avatar[data-size="default"], .buzz-avatar[data-size="small"]',

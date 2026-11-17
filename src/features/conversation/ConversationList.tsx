@@ -8,7 +8,6 @@ import {
   useContext,
   useCallback,
   type ReactNode,
-  type RefCallback,
   memo,
   useEffect,
   useLayoutEffect,
@@ -17,6 +16,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { selectProfiles } from "../relay/profile-selection";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { Navigation } from "../../features/navigation/controller";
@@ -76,30 +76,20 @@ import {
 } from "../../shared/view-state";
 import styles from "./ConversationList.module.css";
 import feedStyles from "./FeedList.module.css";
-import { useVisibleChannelPreviews } from "./latest-previews";
 import { useIdentityNames } from "../../features/identity-names/react";
 import type { ReadTarget } from "../relay/read-state-model";
+import { shortTime } from "../../shared/relative-timestamp";
 import { ReactionRow } from "./ReactionRow";
+import { clientMetrics } from "../developer/client-metrics";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 
-export type ActivityView = {
-  filter:
-    | "all"
-    | "threads"
-    | "dms"
-    | "mentions"
-    | "channels"
-    | "working"
-    | "waiting"
-    | "reactions";
-  unread: boolean;
-  sort?: "recent" | "alpha";
-  /** Only what people, or only what agents, sent. */
-  sender?: "humans" | "agents";
-};
-type View = ActivityView;
+/** A list's saved choices: the query fields a person picks. */
+export type ActivityView = Pick<
+  ConversationQuery,
+  "filter" | "unread" | "sort" | "sender"
+>;
 
-export const conversationViews = [
+const conversationViews = [
   {
     value: "all",
     label: "All",
@@ -143,10 +133,10 @@ export const conversationViews = [
   },
 ] as const;
 /** Working and Waiting describe agents' chats, so only Solo offers them. */
-const agentView = (filter: View["filter"]) =>
+const agentView = (filter: ActivityView["filter"]) =>
   filter === "working" || filter === "waiting";
 /** DMs, Mentions and Channels describe Team's conversations; Solo has none. */
-const teamView = (filter: View["filter"]) =>
+const teamView = (filter: ActivityView["filter"]) =>
   filter === "dms" || filter === "mentions" || filter === "channels";
 const viewsFor = (agentViews: boolean) =>
   conversationViews.filter(
@@ -160,32 +150,26 @@ export const withoutTeamViews = (view: ActivityView): ActivityView =>
   teamView(view.filter) ? { ...view, filter: "all" } : view;
 const viewKey = "activity-sidebar:view:v5";
 
-function readSavedView(scope: string): View {
-  const saved = readView<Partial<View> | null>(scope, viewKey, null);
+function readSavedView(scope: string): ActivityView {
+  const saved = readView<Partial<ActivityView> | null>(scope, viewKey, null);
   return {
     ...(saved?.sort === "alpha" && { sort: "alpha" as const }),
     ...((saved?.sender === "humans" || saved?.sender === "agents") && {
       sender: saved.sender,
     }),
     filter:
-      saved?.filter === "threads" ||
-      saved?.filter === "dms" ||
-      saved?.filter === "mentions" ||
-      saved?.filter === "channels" ||
-      saved?.filter === "working" ||
-      saved?.filter === "waiting" ||
-      saved?.filter === "reactions"
-        ? saved.filter
-        : // Direct was DMs and mentions together.
-          (saved?.filter as string | undefined) === "direct"
-          ? "dms"
-          : "all",
+      conversationViews.find((item) => item.value === saved?.filter)?.value ??
+      // Direct was DMs and mentions together.
+      ((saved?.filter as string | undefined) === "direct" ? "dms" : "all"),
     unread: saved?.unread === true,
   };
 }
 
 /** Sets a list's saved view from outside it: an address that names one. */
-export function saveActivityView(scope: string, change: (view: View) => View) {
+export function saveActivityView(
+  scope: string,
+  change: (view: ActivityView) => ActivityView,
+) {
   writeView(scope, viewKey, change(readSavedView(scope)));
 }
 
@@ -222,7 +206,7 @@ export function useActivityView(scope: string) {
     setSaved({ scope, revision, view });
   }
   const setView = useCallback(
-    (view: View) => {
+    (view: ActivityView) => {
       writeView(scope, viewKey, view);
       // A failed save still leaves this control usable in memory.
       setSaved({ scope, revision: viewRevision(scope, viewKey), view });
@@ -235,74 +219,64 @@ export function useActivityView(scope: string) {
 /** The collection host supplies its existing draft action to the list heading. */
 export const CollectionCreationAction = createContext<ReactNode>(null);
 
-/** Collection controls share one menu; compact sidebar controls keep Show only. */
-export function ConversationFiltersMenu({
+/** A list's view strip under its heading; one menu holds the rest. */
+export function ActivityFilters({
   view,
   onChange,
-  sort = false,
-  views = false,
-  agentViews = false,
-  from = false,
-  label,
-  variant = "glass",
+  title,
+  agentViews,
 }: {
-  view: View;
-  onChange(view: View): void;
-  sort?: boolean;
-  views?: boolean;
-  agentViews?: boolean;
-  /** Offers people or agents only: for lists other people write in. */
-  from?: boolean;
-  label?: string;
-  variant?: "glass" | "ghost";
+  view: ActivityView;
+  onChange(view: ActivityView): void;
+  title: string;
+  agentViews: boolean;
 }) {
-  const showLabel =
-    label ??
-    (sort
-      ? "Filter and sort conversations"
-      : view.unread
-        ? "Showing unread"
-        : "Showing all");
+  return (
+    <CollectionFilters title={title}>
+      <Tabs
+        label="Conversation view"
+        variant="buttons"
+        leadingAction={
+          <ConversationFiltersMenu
+            view={view}
+            onChange={onChange}
+            from={!agentViews}
+          />
+        }
+        value={view.filter}
+        items={viewsFor(agentViews)}
+        onValueChange={(filter) => onChange({ ...view, filter })}
+      />
+    </CollectionFilters>
+  );
+}
+
+function ConversationFiltersMenu({
+  view,
+  onChange,
+  from,
+}: {
+  view: ActivityView;
+  onChange(view: ActivityView): void;
+  /** Offers people or agents only: for lists other people write in. */
+  from: boolean;
+}) {
+  const label = "Filter and sort conversations";
   return (
     <MenuRoot>
       <MenuTrigger
         render={
           <IconButton
             size="sm"
-            variant={variant}
+            variant="glass"
             shape="round"
-            aria-label={showLabel}
-            title={showLabel}
+            aria-label={label}
+            title={label}
             icon={<Filter2Icon aria-hidden="true" size={16} />}
           />
         }
       />
-      <MenuPopup
-        aria-label={sort ? "Filter and sort conversations" : "Show"}
-        size="compact"
-      >
-        {views && (
-          <>
-            <MenuRadioGroup
-              aria-label="Conversation view"
-              value={view.filter}
-              onValueChange={(filter) => {
-                const choice = conversationViews.find(
-                  (item) => item.value === filter,
-                );
-                if (choice) onChange({ ...view, filter: choice.value });
-              }}
-            >
-              <MenuGroupLabel>View</MenuGroupLabel>
-              {viewsFor(agentViews).map(({ value, label }) => (
-                <MenuRadioItem key={value} value={value} closeOnClick>
-                  {label}
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-            <MenuSeparator />
-          </>
-        )}
+      <MenuPopup aria-label={label} size="compact">
         {from && (
           <>
             <MenuRadioGroup
@@ -338,7 +312,7 @@ export function ConversationFiltersMenu({
             onChange({ ...view, unread: value === "unread" })
           }
         >
-          {sort && <MenuGroupLabel>Show</MenuGroupLabel>}
+          <MenuGroupLabel>Show</MenuGroupLabel>
           <MenuRadioItem value="all" closeOnClick>
             All conversations
           </MenuRadioItem>
@@ -346,91 +320,25 @@ export function ConversationFiltersMenu({
             Unread only
           </MenuRadioItem>
         </MenuRadioGroup>
-        {sort && (
-          <>
-            <MenuSeparator />
-            <MenuRadioGroup
-              aria-label="Conversation sort order"
-              value={view.sort ?? "recent"}
-              onValueChange={(value) => {
-                if (value === "recent" || value === "alpha")
-                  onChange({ ...view, sort: value });
-              }}
-            >
-              <MenuGroupLabel>Sort</MenuGroupLabel>
-              <MenuRadioItem value="recent" closeOnClick>
-                Recent activity
-              </MenuRadioItem>
-              <MenuRadioItem value="alpha" closeOnClick>
-                A–Z
-              </MenuRadioItem>
-            </MenuRadioGroup>
-          </>
-        )}
+        <MenuSeparator />
+        <MenuRadioGroup
+          aria-label="Conversation sort order"
+          value={view.sort ?? "recent"}
+          onValueChange={(value) => {
+            if (value === "recent" || value === "alpha")
+              onChange({ ...view, sort: value });
+          }}
+        >
+          <MenuGroupLabel>Sort</MenuGroupLabel>
+          <MenuRadioItem value="recent" closeOnClick>
+            Recent activity
+          </MenuRadioItem>
+          <MenuRadioItem value="alpha" closeOnClick>
+            A–Z
+          </MenuRadioItem>
+        </MenuRadioGroup>
       </MenuPopup>
     </MenuRoot>
-  );
-}
-
-/** Small-button views of one combined conversation inventory. */
-export function ActivityFilters({
-  view,
-  onChange,
-  creationAction,
-  layout = "sidebar",
-  title,
-  agentViews = false,
-}: {
-  view: View;
-  onChange(view: View): void;
-  creationAction?: ReactNode;
-  layout?: "sidebar" | "collection";
-  title?: string;
-  agentViews?: boolean;
-}) {
-  const tabs = (
-    <Tabs
-      label="Conversation view"
-      variant="buttons"
-      leadingAction={
-        layout === "sidebar" ? (
-          creationAction
-        ) : (
-          <ConversationFiltersMenu
-            view={view}
-            onChange={onChange}
-            sort
-            from={!agentViews}
-          />
-        )
-      }
-      trailingAction={
-        layout === "sidebar" ? (
-          <ConversationFiltersMenu view={view} onChange={onChange} />
-        ) : undefined
-      }
-      value={view.filter}
-      items={viewsFor(agentViews)}
-      onValueChange={(filter) => onChange({ ...view, filter })}
-    />
-  );
-  return layout === "collection" ? (
-    <CollectionFilters
-      title={
-        title ??
-        (view.filter === "all"
-          ? "Team"
-          : (conversationViews.find((item) => item.value === view.filter)
-              ?.label ?? "Team"))
-      }
-      actions={creationAction}
-    >
-      {tabs}
-    </CollectionFilters>
-  ) : (
-    <div className={styles.filters} data-layout={layout}>
-      {tabs}
-    </div>
   );
 }
 
@@ -467,22 +375,15 @@ export type ConversationListEntry = {
   target: Extract<OpenTarget, { kind: "conversation" }>;
 };
 
-type Layout = "sidebar" | "feed" | "navigation";
 type Open = (
   channelId: string,
-  options?: { messageId?: string; threadRootId?: string },
+  options?: { messageId?: string; threadRootId?: string; timeline?: boolean },
 ) => void;
 type WrapRow =
   | ((entry: ConversationListEntry, row: ReactNode) => ReactNode)
   | undefined;
 /** Rows tell the list whose names and faces they show. */
 type Need = (row: string, people: string) => void;
-const noRows: ConversationQuery = {
-  filter: "all",
-  unread: false,
-  within: new Set(),
-};
-
 export function ConversationList({
   session,
   navigator,
@@ -491,7 +392,6 @@ export function ConversationList({
   view,
   home,
   within,
-  layout = "sidebar",
   wrapRow,
 }: {
   session: RelaySession;
@@ -499,12 +399,11 @@ export function ConversationList({
   /** Navigation scope of this community. */
   scope: NavigationScope;
   target: OpenTarget;
-  view: View;
+  view: ActivityView;
   /** Team's conversations or Solo's; Team's All is the interleaved feed. */
   home?: ConversationQuery["home"];
   /** Only these conversations: a section's own. Keep it while they are equal. */
   within?: ReadonlySet<string> | undefined;
-  layout?: Layout;
   /** Keep host-owned row context actions around the shared feed renderer. */
   wrapRow?: WrapRow;
 }) {
@@ -513,18 +412,16 @@ export function ConversationList({
     session.channels.subscribeList,
     () => session.channels.list().status === "ready",
   );
-  const profiles = useSyncExternalStore(
-    session.profiles.subscribe,
-    session.profiles.snapshot,
-    session.profiles.snapshot,
-  );
   const resolveName = useIdentityNames(session.names);
   const selected = target.kind === "conversation" ? target : undefined;
 
   // Rows keep one handler for as long as they are mounted.
   const opener = useRef<Open>(() => {});
   useLayoutEffect(() => {
-    opener.current = (channelId, options = {}) =>
+    opener.current = (channelId, options = {}) => {
+      // The open's timing starts at the press that asked for it.
+      if (!options.threadRootId)
+        clientMetrics.channelIntent(channelId, window.event);
       void navigator.open({
         version: 1,
         kind: "conversation",
@@ -534,8 +431,11 @@ export function ConversationList({
         // A thread opens on its own; its header offers the channel beside it.
         ...(options.threadRootId
           ? { threadRootId: options.threadRootId, context: "thread" as const }
-          : {}),
+          : options.messageId && options.timeline
+            ? { context: "timeline" as const }
+            : {}),
       });
+    };
   });
   const open = useCallback<Open>(
     (channelId, options) => opener.current(channelId, options),
@@ -554,22 +454,25 @@ export function ConversationList({
     keep:
       unreadOnly && !selected?.threadRootId ? selected?.channelId : undefined,
   });
-  const order = useFrozenOrder(keys);
-  // Waiting and a sender filter judge the latest author of every candidate,
-  // shown or not, so each needs its preview.
-  const candidates = useConversationKeys(
-    session,
-    filter === "waiting"
-      ? { filter: "all", unread: false, home: "solo", within }
-      : sender
-        ? { ...place, filter, unread: false }
-        : noRows,
+  const hiddenDms = useHiddenDms(session, ready);
+  const shownKeys = useMemo(
+    () =>
+      hiddenDms.length
+        ? keys.filter(
+            (key) => !key.startsWith("c:") || !hiddenDms.includes(key.slice(2)),
+          )
+        : keys,
+    [keys, hiddenDms],
   );
-  const { observe: previewRef } = useVisibleChannelPreviews(
-    session,
-    candidates.flatMap((key) => (key.startsWith("c:") ? [key.slice(2)] : [])),
-  );
-  const need = useProfiles(session, ready);
+  const order = useFrozenOrder(shownKeys);
+  // Waiting and a sender filter judge each conversation's latest author, so
+  // an empty answer means nothing until every head has been read.
+  const headsRead = useSyncExternalStore(session.channelHeads.subscribe, () => {
+    const status = session.channelHeads.status();
+    return status !== "loading" && status !== "idle";
+  });
+  const settled = ready && (headsRead || !(sender || filter === "waiting"));
+  const { need, profiles } = useProfiles(session, ready);
   const nameOf = useCallback(
     (id: string) =>
       resolveName(
@@ -582,7 +485,7 @@ export function ConversationList({
   return (
     <div className={styles.activity} data-activity-sidebar="">
       <ul
-        className={layout === "feed" ? feedStyles.list : styles.rows}
+        className={feedStyles.list}
         aria-label={filter === "reactions" ? "Reactions" : "Conversations"}
       >
         {order.map((key) => {
@@ -593,12 +496,12 @@ export function ConversationList({
               id={id}
               session={session}
               scope={scope}
-              layout={layout}
               profiles={profiles}
               nameOf={nameOf}
               unreadOnly={unreadOnly}
               selected={selected}
               onOpen={open}
+              readOnOpen={filter === "mentions"}
               need={need}
               wrapRow={wrapRow}
             />
@@ -608,7 +511,6 @@ export function ConversationList({
               id={id}
               sender={sender}
               session={session}
-              layout={layout}
               profiles={profiles}
               resolveName={resolveName}
               selected={selected}
@@ -619,10 +521,8 @@ export function ConversationList({
             <IndexedRow
               key={key}
               id={id}
-              previewRef={previewRef}
               wrapRow={wrapRow}
               scope={scope}
-              layout={layout}
               session={session}
               profiles={profiles}
               nameOf={nameOf}
@@ -634,7 +534,7 @@ export function ConversationList({
           );
         })}
       </ul>
-      {ready && !keys.length && (
+      {settled && !keys.length && (
         <EmptyState
           frame="none"
           icon={conversationViews.find((item) => item.value === filter)?.icon}
@@ -663,11 +563,12 @@ export function ConversationList({
 }
 
 /**
- * Loads the profiles the mounted rows show, in one request for all of them.
- * Each row reports its own people, so a message asks again only when it brings
- * someone new.
+ * Loads the profiles the mounted rows show, in one request for all of them,
+ * and follows only those. Each row reports its own people, so a message asks
+ * again only when it brings someone new, and someone else's profile arriving
+ * renders nothing here.
  */
-function useProfiles(session: RelaySession, ready: boolean): Need {
+function useProfiles(session: RelaySession, ready: boolean) {
   const rows = useRef(new Map<string, string>());
   const [people, setPeople] = useState("");
   const queued = useRef(false);
@@ -698,7 +599,27 @@ function useProfiles(session: RelaySession, ready: boolean): Need {
       )
       .catch(() => {});
   }, [session, people, ready]);
-  return need;
+  const last = useRef<ReadonlyMap<string, Profile>>(undefined);
+  const selection = useMemo(
+    () =>
+      selectProfiles(
+        session.profiles,
+        people ? people.split(":") : [],
+        last.current,
+      ),
+    [session, people],
+  );
+  const profiles = useSyncExternalStore(
+    selection.subscribe,
+    selection.snapshot,
+    selection.snapshot,
+  );
+  last.current = profiles;
+  // Rows mount before they report their people, so they read every loaded
+  // profile; the selection only decides when that reading is taken again.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: profiles is the signal
+  const shown = useMemo(() => session.profiles.snapshot(), [session, profiles]);
+  return { need, profiles: shown };
 }
 /** Reports a row's people while it is mounted. */
 function useNeed(need: Need, row: string, people: string) {
@@ -731,7 +652,6 @@ const IndexedRow = memo(function IndexedRow({
               ? []
               : conversationPeople(record.channel, row.session.viewer)),
             ...(record.latest?.authorId ? [record.latest.authorId] : []),
-            ...(record.thread ? [record.thread.authorId] : []),
           ]),
         ].join(":")
       : "",
@@ -744,24 +664,25 @@ const EventRow = memo(function EventRow({
   id,
   session,
   scope,
-  layout,
   profiles,
   nameOf,
   unreadOnly,
   selected,
   onOpen,
+  readOnOpen,
   need,
   wrapRow,
 }: {
   id: string;
   session: RelaySession;
   scope: NavigationScope;
-  layout: Layout;
   profiles: ReadonlyMap<string, Profile>;
   nameOf(id: string): string;
   unreadOnly: boolean;
   selected: Extract<OpenTarget, { kind: "conversation" }> | undefined;
   onOpen: Open;
+  /** Mentions: opening one reads it at once, as its Mark read would. */
+  readOnOpen: boolean;
   need: Need;
   wrapRow?: WrapRow;
 }) {
@@ -777,18 +698,22 @@ const EventRow = memo(function EventRow({
   const profile = profiles.get(event.authorId);
   const content = (
     <ConversationRow
-      layout={layout}
+      layout="feed"
       selected={
         !!event.rootId &&
         selected?.channelId === event.channelId &&
         selected.threadRootId === event.rootId
       }
-      onClick={() =>
+      onClick={() => {
+        // A top-level mention shows in its channel, never in a thread.
         onOpen(event.channelId, {
           messageId: event.messageId,
-          ...(event.rootId ? { threadRootId: event.rootId } : {}),
-        })
-      }
+          ...(event.rootId
+            ? { threadRootId: event.rootId }
+            : { timeline: true }),
+        });
+        if (readOnOpen && event.unread) void markEventRead(session, event);
+      }}
       onPointerEnter={() => session.channels.prepare?.(event.channelId)}
       onFocus={() => session.channels.prepare?.(event.channelId)}
       avatar={
@@ -808,11 +733,7 @@ const EventRow = memo(function EventRow({
         )
       }
       place={
-        layout === "navigation"
-          ? `${channel ? `${channelText(channel)} · ` : ""}${messagePreview(event.preview)}`
-          : channel
-            ? `${event.rootId ? "in " : ""}${channelText(channel)}`
-            : ""
+        channel ? `${event.rootId ? "in " : ""}${channelText(channel)}` : ""
       }
       time={shortTime(event.createdAt)}
       preview={messagePreview(event.preview)}
@@ -825,10 +746,7 @@ const EventRow = memo(function EventRow({
     />
   );
   return (
-    <li
-      data-activity-event={event.key}
-      className={layout === "feed" ? feedStyles.item : undefined}
-    >
+    <li data-activity-event={event.key} className={feedStyles.item}>
       {wrapRow
         ? wrapRow(
             {
@@ -854,23 +772,45 @@ const EventRow = memo(function EventRow({
   );
 });
 
-/** Sidebar-width recency, as the Activity card abbreviates it. */
-export function shortTime(unixSeconds: number, nowSeconds = Date.now() / 1000) {
-  const age = Math.max(0, nowSeconds - unixSeconds);
-  if (age < 60) return "now";
-  if (age < 3600) return `${Math.floor(age / 60)}m`;
-  if (age < 86400) return `${Math.floor(age / 3600)}h`;
-  if (age < 604800) return `${Math.floor(age / 86400)}d`;
-  return new Date(unixSeconds * 1000).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
-}
-
 /**
  * Keeps rows where they are while the pointer or keyboard is in the list, so a
  * new message doesn't move a row out from under a click. New rows go at the end.
  */
+/** The DMs this viewer hid, as the relay holds them: a new message or an
+ * open shows one again. */
+function useHiddenDms(session: RelaySession, ready: boolean) {
+  const lifecycle = session.channelLifecycle;
+  const hidden = useSyncExternalStore(
+    lifecycle.subscribe,
+    () => lifecycle.snapshot().hidden,
+  );
+  // A roster refresh also refreshes visibility; a recent read answers repeats.
+  const asOf = useSyncExternalStore(
+    session.channels.subscribeList,
+    () => session.channels.list().asOf,
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each roster commit is a trigger.
+  useEffect(() => {
+    if (!ready) return;
+    const request = new AbortController();
+    void lifecycle.refreshVisibility(request.signal, { ifStale: true });
+    return () => request.abort();
+  }, [lifecycle, ready, asOf]);
+  // A confirmed open asks the relay to unhide its DM.
+  useEffect(() => {
+    const request = new AbortController();
+    const stop = session.directMessages.subscribeOpened(
+      () =>
+        void lifecycle.refreshVisibility(request.signal, { trailing: true }),
+    );
+    return () => {
+      stop();
+      request.abort();
+    };
+  }, [session, lifecycle]);
+  return hidden;
+}
+
 function useFrozenOrder(keys: readonly string[]) {
   // Either holds the order on its own: focus moving to the reader on a click
   // must not release rows the pointer is still over.
@@ -910,11 +850,9 @@ function useFrozenOrder(keys: readonly string[]) {
 }
 
 /** Renders again only when its own conversation's record or state changes. */
-export const ChannelActivityRow = memo(function ChannelActivityRow({
-  previewRef,
+const ChannelActivityRow = memo(function ChannelActivityRow({
   wrapRow,
   scope,
-  layout,
   session,
   record,
   profiles,
@@ -923,12 +861,9 @@ export const ChannelActivityRow = memo(function ChannelActivityRow({
   selected,
   onOpen,
 }: {
-  previewRef?: RefCallback<HTMLLIElement> | undefined;
   /** A stable host wrapper; the row describes itself to it. */
   wrapRow?: WrapRow;
-  /** With wrapRow: where this row opens. */
-  scope?: NavigationScope | undefined;
-  layout: Layout;
+  scope: NavigationScope;
   session: RelaySession;
   record: ConversationRecord;
   profiles: ReadonlyMap<string, Profile>;
@@ -938,24 +873,19 @@ export const ChannelActivityRow = memo(function ChannelActivityRow({
   onOpen(channelId: string): void;
 }) {
   const notify = useToastNotification();
-  const { channel, kind, latest, thread, at, unread, working, label } = record;
+  const { channel, kind, latest, at, unread, working, label } = record;
   const dm = kind === "dm";
   const solo = kind === "solo";
   const people = dm || solo ? conversationPeople(channel, session.viewer) : [];
-  // The latest event: a thread reply you're in, when it is newer.
-  const replyIsNewest = !!thread && thread.createdAt > (latest?.createdAt ?? 0);
-  const preview = replyIsNewest
-    ? messagePreview(thread.preview)
-    : latest
-      ? messagePreview(latest.content)
-      : channel.preview
-        ? messagePreview(channel.preview)
-        : "";
-  const poster =
-    dm || solo ? undefined : replyIsNewest ? thread.authorId : latest?.authorId;
+  const preview = latest
+    ? messagePreview(latest.content)
+    : channel.preview
+      ? messagePreview(channel.preview)
+      : "";
+  const poster = dm || solo ? undefined : latest?.authorId;
   const content = (
     <ConversationRow
-      layout={layout}
+      layout="feed"
       aria-current={selected ? "page" : undefined}
       selected={selected}
       onClick={() => onOpen(channel.id)}
@@ -964,7 +894,7 @@ export const ChannelActivityRow = memo(function ChannelActivityRow({
       avatar={
         people.length ? (
           <AvatarStack
-            size={layout === "navigation" ? "compact" : "cluster"}
+            size="cluster"
             items={people.map((id) => ({
               id,
               name: nameOf(id),
@@ -1000,13 +930,7 @@ export const ChannelActivityRow = memo(function ChannelActivityRow({
           privateIcon(channel)
         )
       }
-      place={
-        dm
-          ? label
-          : solo || layout === "navigation"
-            ? channel.name
-            : channelText(channel)
-      }
+      place={dm ? label : solo ? channel.name : channelText(channel)}
       time={at ? shortTime(at) : ""}
       preview={preview}
       state={working ? "working" : unread ? "unread" : "read"}
@@ -1026,12 +950,8 @@ export const ChannelActivityRow = memo(function ChannelActivityRow({
     />
   );
   return (
-    <li
-      ref={previewRef}
-      data-activity-row={channel.id}
-      className={layout === "feed" ? feedStyles.item : undefined}
-    >
-      {wrapRow && scope
+    <li data-activity-row={channel.id} className={feedStyles.item}>
+      {wrapRow
         ? wrapRow(
             {
               key: `c:${channel.id}`,
@@ -1092,7 +1012,6 @@ const ReactionListRow = memo(function ReactionListRow({
   id,
   sender,
   session,
-  layout,
   profiles,
   resolveName,
   selected,
@@ -1102,7 +1021,6 @@ const ReactionListRow = memo(function ReactionListRow({
   id: string;
   sender: ConversationQuery["sender"];
   session: RelaySession;
-  layout: Layout;
   profiles: ReadonlyMap<string, Profile>;
   resolveName: ReturnType<typeof useIdentityNames>;
   selected: Extract<OpenTarget, { kind: "conversation" }> | undefined;
@@ -1125,10 +1043,7 @@ const ReactionListRow = memo(function ReactionListRow({
   );
   if (!item) return null;
   return (
-    <li
-      data-activity-reaction={item.id}
-      className={layout === "feed" ? feedStyles.item : undefined}
-    >
+    <li data-activity-reaction={item.id} className={feedStyles.item}>
       <ReactionRow
         item={item}
         session={session}

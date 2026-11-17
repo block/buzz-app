@@ -33,7 +33,6 @@ export type { Backdrop, Backdrops } from "../features/backdrops/service";
 export type { SubjectLift } from "../features/messages/subject-lift";
 export type {
   SidebarRow,
-  SidebarRowSortMode,
   SidebarRowContribution,
   SidebarRows,
 } from "../features/channel-navigation/sidebar-rows-service";

@@ -1,5 +1,6 @@
 import { generateSecretKey, getPublicKey } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
+import { channelRow } from "./navigation.mjs";
 import { open } from "./timeline.mjs";
 
 // Main-thread cost of a large profile cache. A 9,000-member channel grows the
@@ -102,7 +103,7 @@ test("the mention menu reads a 9,000-member roster once and leaving it stays smo
   await composer.fill("");
 
   await page.evaluate(probe);
-  await page.getByRole("button", { name: "Beta", exact: true }).click();
+  await channelRow(page, "beta").click();
   await page
     .getByRole("textbox", { name: "Message #Beta", exact: true })
     .waitFor();

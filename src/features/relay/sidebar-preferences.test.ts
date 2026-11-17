@@ -24,6 +24,7 @@ const groups = {
   sections: [{ id: "work", name: "Work", order: 0 }],
   assignments: { general: "work", orphan: "missing" },
 };
+// An earlier client's record; the app reads it but ignores it.
 const stars = {
   version: 1,
   channels: {
@@ -34,7 +35,6 @@ const stars = {
 const expected = {
   sections: groups.sections,
   assignments: { general: "work" },
-  starred: ["general"],
   muted: [],
 };
 
@@ -82,9 +82,9 @@ it("decodes four individually bounded populated preferences beyond the former ag
   ).decodeSidebarPreferences(events, viewer.secret);
   expect(projected.sections).toHaveLength(100);
   expect(Object.keys(projected.assignments)).toHaveLength(1000);
-  expect(projected.starred).toHaveLength(500);
+  expect(projected).not.toHaveProperty("starred");
   expect(projected.muted).toHaveLength(500);
-  expect(projected.sort).toEqual({ channels: "recent" });
+  expect(projected).not.toHaveProperty("sort");
   key.fill(0);
 });
 
@@ -198,7 +198,6 @@ it("reads legacy preferences through the production session, transport, and boun
     expect(await owner.session.sidebarPreferences.read()).toEqual({
       ...expected,
       muted: ["general"],
-      sort: { channels: "recent" },
     });
     const calls = upstream.mock.calls.length;
     const corrupt = { ...records[0], sig: "0".repeat(128) };
@@ -232,12 +231,12 @@ it("reads legacy preferences through the production session, transport, and boun
       ],
       [encrypted("channel-sections", { ...groups, version: 2 })],
       [
-        encrypted("channel-stars", {
+        encrypted("channel-mutes", {
           version: 1,
           channels: Object.fromEntries(
             Array.from({ length: 501 }, (_, i) => [
               String(i),
-              { starred: true, updatedAt: 1 },
+              { muted: true, updatedAt: 1 },
             ]),
           ),
         }),
@@ -301,7 +300,6 @@ it("reads legacy preferences through the production session, transport, and boun
     expect(await owner.session.sidebarPreferences.read()).toEqual({
       sections: [],
       assignments: {},
-      starred: [],
       muted: [],
     });
     upstream.mockImplementationOnce(async () =>
@@ -349,24 +347,31 @@ it("does not return a decoded result after caller cancellation or session dispos
   ).rejects.toMatchObject({ name: "AbortError" });
 });
 
-it("bounds preference shape, strips orphan assignments, and honors unstar tombstones", () => {
-  expect(projectSidebarPreferences(groups, stars)).toEqual(expected);
+it("bounds preference shape, strips orphan assignments, and honors unmute tombstones", () => {
+  const mutes = {
+    version: 1,
+    channels: {
+      general: { muted: false, updatedAt: 2 },
+      removed: { muted: false, updatedAt: 2 },
+    },
+  };
+  expect(projectSidebarPreferences(groups, mutes)).toEqual(expected);
   expect(() =>
-    projectSidebarPreferences(
-      { ...groups, sections: Array(101).fill(groups.sections[0]) },
-      stars,
-    ),
+    projectSidebarPreferences({
+      ...groups,
+      sections: Array(101).fill(groups.sections[0]),
+    }),
   ).toThrow();
   expect(() =>
-    projectSidebarPreferences(
-      { ...groups, sections: [{ id: "x", name: "n".repeat(257), order: 0 }] },
-      stars,
-    ),
+    projectSidebarPreferences({
+      ...groups,
+      sections: [{ id: "x", name: "n".repeat(257), order: 0 }],
+    }),
   ).toThrow();
   expect(() =>
     projectSidebarPreferences(groups, {
-      ...stars,
-      channels: { x: { starred: true, updatedAt: -1 } },
+      ...mutes,
+      channels: { x: { muted: true, updatedAt: -1 } },
     }),
   ).toThrow();
 });
@@ -422,7 +427,7 @@ it("labels query and decoder failures separately while preserving their causes",
 });
 
 it.each([false, true])(
-  "loads groups and stars without waiting for bulk profiles (labels=%s)",
+  "loads groups and mutes without waiting for bulk profiles (labels=%s)",
   async (labels) => {
     vi.useFakeTimers();
     const viewer = keypair(),
@@ -735,36 +740,4 @@ it("admits only the complete bounded sidebar batch beyond the normal reader limi
         ...filters.slice(1),
       ]),
     ).toBe(false);
-});
-
-it("projects bounded optional activity windows without changing legacy mode decoding", () => {
-  const project = (activeWindowSeconds?: unknown) =>
-    projectSidebarPreferences(
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      ["work"],
-      { version: 1, groups: { channels: "active" }, activeWindowSeconds },
-    );
-  expect(project().filters).toEqual({ channels: "active" });
-  expect(project().activeWindowSeconds).toEqual({});
-  expect(
-    project({
-      channels: 604800,
-      "section:work": 31536000,
-      "section:removed": 86400,
-    }).activeWindowSeconds,
-  ).toEqual({ channels: 604800, "section:work": 31536000 });
-  for (const value of [0, -86400, 86401, 1.5, "604800", null, 31622400])
-    expect(() => project({ channels: value })).toThrow(
-      "Invalid sidebar activity window",
-    );
-  expect(() =>
-    project(
-      Object.fromEntries(
-        Array.from({ length: 105 }, (_, i) => [`section:${i}`, 86400]),
-      ),
-    ),
-  ).toThrow("Invalid sidebar activity window");
 });

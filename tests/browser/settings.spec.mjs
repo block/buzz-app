@@ -1,8 +1,12 @@
 import { setPluginEnabled } from "./plugin-settings.mjs";
 import {
   closeSettings,
+  conversationList,
+  openChannel,
   openCommunityPicker,
   openSettings,
+  rail,
+  revealRail,
   selectSettingsSection,
   settingsDialog,
   settingsSections,
@@ -18,7 +22,7 @@ test("Settings opens over the retained workspace and closing restores the prior 
   app,
 }) => {
   await page.goto(app.origin);
-  await button(page, "Alpha").click();
+  await openChannel(page, "alpha");
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -26,10 +30,7 @@ test("Settings opens over the retained workspace and closing restores the prior 
   await expect(composer).toBeVisible();
   const communityRail = page.getByRole("navigation", { name: "Communities" });
   await expect(communityRail).toBeVisible();
-  const channels = page.getByRole("complementary", {
-    name: "Sidebar",
-    exact: true,
-  });
+  const channels = conversationList(page);
 
   await openSettings(page);
   const sections = settingsSections(page);
@@ -38,11 +39,12 @@ test("Settings opens over the retained workspace and closing restores the prior 
     page.getByRole("heading", { name: "Settings", level: 1, exact: true }),
   ).toHaveCount(0);
   // The workspace stays mounted behind the modal but cannot be reached.
-  for (const name of ["Sidebar", "Communities"]) {
-    const role = name === "Communities" ? "navigation" : "complementary";
-    await expect(page.getByRole(role, { name, exact: true })).toHaveCount(0);
+  for (const name of ["Apps", "Communities"]) {
     await expect(
-      page.getByRole(role, { name, exact: true, includeHidden: true }),
+      page.getByRole("navigation", { name, exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("navigation", { name, exact: true, includeHidden: true }),
     ).toHaveCount(1);
   }
   await expect(composer).toHaveCount(0);
@@ -182,16 +184,11 @@ test("short narrow Settings keeps plugin copy and controls reachable at 200% int
   await page.setViewportSize({ width: 480, height: 400 });
   await expect.poll(stacked).toBe(true);
   await closeSettings(page);
-  await expect(
-    page.getByRole("region", { name: "Channels", exact: true }),
-  ).toBeVisible();
-  const channelsSidebar = page.getByRole("complementary", {
-    name: "Sidebar",
-    exact: true,
-  });
-  await expect(channelsSidebar).toBeHidden();
+  // Team's list fills the narrow window; the rail waits behind its toggle.
+  await expect(conversationList(page)).toBeVisible();
+  await expect(rail(page)).toBeHidden();
   await showNavigation.click();
-  await expect(channelsSidebar).toBeVisible();
+  await expect(rail(page)).toBeVisible();
 });
 
 for (const action of ["Remove from this device", "Leave community"]) {
@@ -452,6 +449,8 @@ confirmedPresence(
     );
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
+      // A narrow window keeps the rail, and its avatar, in a drawer.
+      await revealRail(page);
       await avatar.click();
       await expect(account).toBeInViewport();
       await expect(avatar).toHaveAttribute("aria-expanded", "true");
@@ -479,14 +478,23 @@ confirmedPresence(
       await avatar.click();
       await expect(account).toBeHidden();
       await avatar.click();
-      // The dock account popup opens beside the bottom controls.
-      // Click exposed content above it to exercise outside dismissal.
+      // The account popup opens below the rail's header. Click exposed
+      // content beside the rail, below the popup, to exercise outside
+      // dismissal.
       const main = page.getByRole("main");
       const bounds = await main.boundingBox();
+      const popup = await account.boundingBox();
       await main.click({
-        position: { x: bounds.width / 2, y: bounds.height / 3 },
+        position: {
+          x: bounds.width - 16,
+          y: Math.max(
+            bounds.height / 3,
+            popup.y + popup.height + 16 - bounds.y,
+          ),
+        },
       });
       await expect(account).toBeHidden();
+      await revealRail(page);
       await avatar.focus();
       await page.keyboard.press("Enter");
       await expect(viewProfile).toBeFocused();
@@ -517,13 +525,7 @@ confirmedPresence(
       await expect(
         page.getByRole("button", { name: /^Community switcher:/ }),
       ).toBeFocused();
-      await tab(true);
-      await expect(
-        page
-          .getByRole("navigation", { name: "Apps dock" })
-          .getByRole("tab")
-          .and(page.locator('[tabindex="0"]')),
-      ).toBeFocused();
+      // The rail's header leads it; the titlebar comes before the rail.
       await tab(true);
       await expect(button(page, "Search Buzz")).toBeFocused();
     }
@@ -595,16 +597,6 @@ confirmedPresence(
     });
     await appearance.click();
     await expect(remember).toHaveCount(0);
-    const placement = page.getByRole("combobox", {
-      name: "Open threads in",
-      exact: true,
-    });
-    await placement.click();
-    await page.getByRole("option", { name: "Main pane", exact: true }).click();
-    await expect(placement).toHaveText("Main pane");
-    await profile.click();
-    await appearance.click();
-    await expect(placement).toHaveText("Main pane");
     await profile.click();
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
@@ -1341,7 +1333,7 @@ test("native Back warns before discarding Profile edits and Keep editing retains
   app,
 }) => {
   await page.goto(app.origin);
-  await button(page, "Alpha").click();
+  await openChannel(page, "alpha");
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();

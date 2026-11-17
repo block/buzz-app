@@ -7,7 +7,7 @@ type TitleBarActions = Readonly<{
   doubleClick: () => void;
 }>;
 
-export type TitleBarDragHandlers = Readonly<{
+type TitleBarDragHandlers = Readonly<{
   onMouseDown: MouseEventHandler<HTMLElement>;
   onMouseUp: MouseEventHandler<HTMLElement>;
 }>;

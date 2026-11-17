@@ -1,8 +1,13 @@
 import { finalizeEvent } from "nostr-tools";
 import { hoverMessage, openThreadLink } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
+import { channelRow } from "./navigation.mjs";
 import { open } from "./timeline.mjs";
 import { animationsSettled } from "./animations.mjs";
+
+// Alpha's row in Team's list while an agent works in it.
+const workingRow = (page) =>
+  channelRow(page, "alpha").and(page.locator('[data-state="working"]'));
 
 const localAgentKey =
   "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -16,7 +21,7 @@ test.use({
   historyCounts: { alpha: 2, beta: 1 },
   localAgentActivity: true,
 });
-test("local agent receipt, work and failure agree across sidebar, thread and exact message", async ({
+test("local agent receipt, work and failure agree across the list, thread and exact message", async ({
   page,
   app,
 }, testInfo) => {
@@ -71,11 +76,8 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
   await expect(
     waiting.locator('[data-state="waiting"] > span').first(),
   ).toHaveCSS("animation-duration", "2.4s");
-  const sidebar = page.locator(
-    '[data-channel-id="alpha"] [data-channel-working]',
-  );
-  // Neither request has reported a first step yet, so the sidebar breathes.
-  await expect(sidebar).toHaveAccessibleName(/Local tester waiting in Alpha/);
+  // Received work already marks the channel in the list.
+  await expect(workingRow(page)).toHaveCount(1);
   const summary = rootRow.getByRole("button", { name: /^View thread:/ });
   await expect(summary).toContainText("replies");
   await page.evaluate(
@@ -93,6 +95,7 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
   ).toHaveCount(0);
   await page.evaluate((id) => window.localAgentFixture.handover(id), second.id);
   await expect(waiting).toContainText("Reading notes.txt");
+  await expect(workingRow(page)).toHaveCount(1);
   // The message's live bubble is the only working indicator: the thread tail
   // adds no second one. Its dots stay visible without motion; jsdom cannot
   // prove CSS visibility.
@@ -123,7 +126,7 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
   await expect(waiting).toHaveAccessibleName(
     /Local tester, Fixture provider unavailable/,
   );
-  await expect(sidebar).toHaveCount(0);
+  await expect(workingRow(page)).toHaveCount(0);
   await expect(summary.locator("[data-thread-working]")).toHaveCount(0);
   for (const colorScheme of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme });
@@ -283,9 +286,7 @@ test("Stop in a message's activity ends its local work quietly", async ({
   ).toBeFocused();
   const note = row.getByText("Stopped", { exact: true });
   await expect(note).toBeVisible();
-  await expect(
-    page.locator('[data-channel-id="alpha"] [data-channel-working]'),
-  ).toHaveCount(0);
+  await expect(workingRow(page)).toHaveCount(0);
 });
 
 // The channel's thread summary is host-owned; its activity popup offers Stop.
@@ -372,7 +373,9 @@ test("Stop in a channel response activity stops its work", async ({
     }),
   );
   await expect(
-    page.getByText("Keep going while I check the result", { exact: true }),
+    page
+      .locator("[data-channel-timeline]")
+      .getByText("Keep going while I check the result", { exact: true }),
   ).toBeVisible();
   const live = page.locator(
     "[data-channel-timeline] [data-conversation-activity]",
@@ -505,7 +508,7 @@ test("opens an active message's empty thread without losing its activity preview
   const response = row.getByRole("button", { name: /^View agent activity:/ });
   await row.hover();
   await expect(response).toBeVisible();
-  await response.hover();
+  await response.locator("..").hover();
   const preview = page.getByRole("dialog", {
     name: "Agent activity",
     exact: true,
@@ -548,13 +551,8 @@ test("opens an active message's empty thread without losing its activity preview
     thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
   ).toBeVisible();
   await expect(activity).toBeVisible();
-  // Reopening schedules composer focus after the pane becomes visible.
-  // Observe that handoff before sending a key to another control.
-  await expect(
-    thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
-  ).toBeFocused();
-  // The composer takes focus before the rows finish positioning, and the
-  // rows stay inert until then, so a press on one would land in the composer.
+  // The rows stay inert until they finish positioning, so a press on one
+  // too early would not reach it.
   await expect(
     thread.getByRole("region", { name: "Thread messages", exact: true }),
   ).toHaveAttribute("aria-busy", "false");

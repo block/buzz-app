@@ -143,9 +143,8 @@ for (const kind of ["image", "video"]) {
       "rgb(0, 0, 0)",
     );
     await expect(heading).toHaveCSS("color", "rgb(15, 15, 15)");
-    await expect(heading).toHaveCSS("font-size", "14px");
+    await expect(heading).toHaveCSS("font-size", "16px");
     const header = heading.locator("xpath=ancestor::header");
-    await expect(header.locator(".panel-header-title svg")).toHaveCount(0);
     await expect(header).toHaveCSS("border-bottom-width", "1px");
     await expect(header).toHaveCSS("border-bottom-style", "solid");
     await expect(

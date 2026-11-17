@@ -20,11 +20,7 @@ export function revealCreatedChannel(
   const scope = splitPartition(session.scope);
   if (!scope || relay.snapshot().session !== session) return;
   revealSection(
-    input.setup?.starred
-      ? "starred"
-      : input.setup?.groupId
-        ? `group:${input.setup.groupId}`
-        : "channels",
+    input.setup?.groupId ? `group:${input.setup.groupId}` : "channels",
   );
   clientMetrics.channelIntent(channelId, window.event);
   writeView(session.scope, "selected-channel", channelId);

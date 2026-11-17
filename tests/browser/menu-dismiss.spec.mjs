@@ -1,4 +1,4 @@
-import { openCommunityPicker } from "./navigation.mjs";
+import { openCommunityPicker, rail } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -10,30 +10,28 @@ test("closing a menu keeps focus where the user moved it", async ({
 }) => {
   await open(page, app);
   const exit = await holdMenuExit(page);
-  const row = page
-    .getByRole("navigation", {
-      name: "Subscribed channels",
-      includeHidden: true,
-    })
-    .locator('[data-channel-id="beta"]');
-  const rowMenu = page.getByRole("menu", { name: "Actions for Beta" });
+  const trigger = rail(page).getByRole("button", {
+    name: "Create",
+    exact: true,
+  });
+  const menu = page.getByRole("menu", { name: "New", exact: true });
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
   });
 
   try {
-    await row.click({ button: "right" });
-    await opened(rowMenu);
+    await trigger.click();
+    await opened(menu);
     await page.keyboard.press("Escape");
-    await exit.held(rowMenu);
+    await exit.held(menu);
     await composer.click();
     await expect(composer).toBeFocused();
-    await expect(rowMenu).toHaveCount(1);
+    await expect(menu).toHaveCount(1);
     await exit.release();
-    // The row menu has finished closing. Its explicit final focus (the row)
+    // The menu has finished closing. Its explicit final focus (its trigger)
     // must not pull focus back out of the composer.
-    await expect(rowMenu).toHaveCount(0);
+    await expect(menu).toHaveCount(0);
     await expect(composer).toBeFocused();
 
     // A collapsed disclosure (Base UI marks it data-closed, like a closing
@@ -47,24 +45,24 @@ test("closing a menu keeps focus where the user moved it", async ({
     const collapsedControl = page.getByRole("button", {
       name: "Collapsed control",
     });
-    await row.click({ button: "right" });
-    await opened(rowMenu);
+    await trigger.click();
+    await opened(menu);
     await page.keyboard.press("Escape");
-    await exit.held(rowMenu);
+    await exit.held(menu);
     await collapsedControl.focus();
-    await expect(rowMenu).toHaveCount(1);
+    await expect(menu).toHaveCount(1);
     await exit.release();
-    await expect(rowMenu).toHaveCount(0);
+    await expect(menu).toHaveCount(0);
     await expect(collapsedControl).toBeFocused();
 
-    // With nothing else focused, Escape still returns focus to the row.
-    await row.click({ button: "right" });
-    await opened(rowMenu);
+    // With nothing else focused, Escape still returns focus to the trigger.
+    await trigger.click();
+    await opened(menu);
     await page.keyboard.press("Escape");
-    await exit.held(rowMenu);
+    await exit.held(menu);
     await exit.release();
-    await expect(rowMenu).toHaveCount(0);
-    await expect(row).toBeFocused();
+    await expect(menu).toHaveCount(0);
+    await expect(trigger).toBeFocused();
   } finally {
     await exit.release();
   }

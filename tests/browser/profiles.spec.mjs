@@ -336,20 +336,17 @@ test("profile visits survive passive traversal and X retires active and inactive
   await expect(panel).toBeVisible();
 });
 
-test("closing a profile beside a main thread preserves the thread destination", async ({
+test("closing a profile beside a thread preserves the thread destination", async ({
   page,
 }) => {
-  await page.addInitScript(() =>
-    localStorage.setItem("buzz-thread-placement.v1", "main"),
-  );
   await page.goto("/tests/fixtures/profiles.html");
   await page
     .getByRole("button", { name: "View thread: 1 reply", exact: true })
     .click();
-  const main = page.locator("[data-main-workspace]");
-  const thread = main.locator('[role="tab"][data-tab-value^="thread:"]');
+  const side = page.locator("[data-panel-workspace]");
+  const thread = side.locator('[role="tab"][data-tab-value^="thread:"]');
   await expect(thread).toHaveAttribute("aria-selected", "true");
-  await page
+  await side
     .getByRole("button", { name: "View Pinky profile", exact: true })
     .click();
   const panel = page.getByRole("complementary", {
@@ -366,7 +363,7 @@ test("closing a profile beside a main thread preserves the thread destination", 
   await expect(panel).toHaveCount(0);
   await expect(thread).toHaveAttribute("aria-selected", "true");
   await expect(
-    main.getByRole("button", { name: "View Pinky profile", exact: true }),
+    side.getByRole("button", { name: "View Pinky profile", exact: true }),
   ).toBeVisible();
   await expect
     .poll(() =>
@@ -377,6 +374,17 @@ test("closing a profile beside a main thread preserves the thread destination", 
     )
     .toBe(true);
 });
+
+// The fixture renders the Channels page without the shell's rail; open a
+// channel as a rail row does, through navigation.
+async function openFixtureChannel(page, channelId) {
+  await page.waitForFunction(() => !!window.profilesFixture);
+  await page.evaluate((channelId) => {
+    const { navigation } = window.profilesFixture;
+    const { scope } = navigation.snapshot().entry.target;
+    navigation.open({ version: 1, kind: "conversation", scope, channelId });
+  }, channelId);
+}
 
 // Close returns through native history, which lands a task or more later, and
 // the dock keeps its exit motion. Hold both so a reopen arrives before them.
@@ -886,10 +894,10 @@ test("contextual panel callbacks retire with opening, channel, contribution and 
     )
     .click();
   await capture();
-  await page.locator('[data-channel-id="two"]').click();
+  await openFixtureChannel(page, "two");
   await expect(panel).toHaveCount(0);
   expect(await invoke()).toBe(false);
-  await page.locator('[data-channel-id="one"]').click();
+  await openFixtureChannel(page, "one");
   await capture();
   await page.evaluate(() =>
     window.profilesFixture.change("disable", "context.probe"),
@@ -1386,7 +1394,7 @@ test("profile preview stays inside a Solo conversation beside another pane", asy
   page,
 }) => {
   await page.goto("/tests/fixtures/profiles.html?solo");
-  await page.getByRole("button", { name: "One", exact: true }).click();
+  await openFixtureChannel(page, "one");
   await expect(
     page.getByRole("button", { name: "Share access to One", exact: true }),
   ).toBeVisible();
@@ -1466,9 +1474,9 @@ test("profile preview fits enlarged text and stops its status with reduced motio
     exact: true,
   });
   await expect(panel).toBeVisible();
-  // At 390 px the hero column fits only the emoji. Widen it so the long status
-  // shows and ends in an ellipsis inside the hero.
-  await page.setViewportSize({ width: 600, height: 600 });
+  // The fixture has no rail, so the panel takes the window's width. Widen it
+  // part way: the long status still ends in an ellipsis inside the hero.
+  await page.setViewportSize({ width: 480, height: 600 });
   const status = panel.getByText("Working EST hours until Oct 23", {
     exact: true,
   });

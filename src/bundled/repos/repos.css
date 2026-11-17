@@ -73,6 +73,10 @@
 }
 @media (max-width: 40rem) {
   .repos-page {
-    padding: var(--space-4);
+    padding: 0 var(--space-4) var(--space-4);
+  }
+  /* The title bleeds by the page's own inset. */
+  .repo-title {
+    margin-inline: calc(-1 * var(--space-4));
   }
 }

@@ -1,5 +1,6 @@
 import { verifyEvent } from "nostr-tools";
-import { openPage } from "./navigation.mjs";
+import { chooseChannelAction } from "./channel-details.mjs";
+import { openChannel, openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({
@@ -70,13 +71,9 @@ test("Canvas history previews and restores without losing the editor draft", asy
     await route.fulfill({ json: { accepted: true, event_id: event.id } });
   });
   await page.goto(app.origin);
-  await openPage(page, "Messages");
-  await page
-    .getByRole("button", { name: "Channel actions", exact: true })
-    .click();
-  await page
-    .getByRole("menuitem", { name: "View canvas", exact: true })
-    .click();
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
+  await chooseChannelAction(page, "View canvas");
   const dialog = page.getByRole("region", {
     name: "Channel Canvas",
     exact: true,
@@ -232,14 +229,10 @@ for (const outcome of ["saved", "failed after moving focus"]) {
     });
     try {
       await page.goto(app.origin);
-      await openPage(page, "Messages");
+      await openPage(page, "Team");
+      await openChannel(page, "alpha");
       const openCanvas = async () => {
-        await page
-          .getByRole("button", { name: "Channel actions", exact: true })
-          .click();
-        await page
-          .getByRole("menuitem", { name: "View canvas", exact: true })
-          .click();
+        await chooseChannelAction(page, "View canvas");
       };
       await openCanvas();
       const canvas = page.getByRole("region", {

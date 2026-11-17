@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { channelRow } from "./navigation.mjs";
 import { open, settle } from "./timeline.mjs";
 test.use({ productionBroker: true, readState: true });
 
@@ -168,7 +169,7 @@ test("foreground send and cold channel entry remain available during a profile s
       );
     await expect.poll(() => preferencesPending).toBe(true);
     expect(betaHeads()).toHaveLength(0);
-    const visibleMs = await page.locator('[data-channel-id="beta"]').evaluate(
+    const visibleMs = await channelRow(page, "beta").evaluate(
       async (button, ids) => {
         const start = performance.now();
         button.click();

@@ -560,7 +560,7 @@ test("independent packed author consumer and native-installed contribution survi
     ).toHaveCount(0);
     await page
       .getByRole("navigation", { name: "Proof pages" })
-      .getByRole("button", { name: "Channels" })
+      .getByRole("button", { name: "Team" })
       .click();
     await expect(draft).toHaveJSProperty("value", "B draft");
     expect(errors.unexplained()).toEqual([]);

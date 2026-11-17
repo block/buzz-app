@@ -9,36 +9,17 @@ import type {
   SidebarSectionRemovalMutator,
   SidebarSectionRenameMutator,
   SidebarSectionCreationMutator,
-  SidebarStarMutator,
   SidebarMuteMutator,
   SidebarPreferences,
-  SidebarSortMode,
-  SidebarSortMutator,
-  SidebarFilterMode,
-  SidebarFilterMutator,
-  SidebarFilterSettings,
 } from "./sidebar-preferences";
 
-type MoveDestination =
-  | { starred: true }
-  | Omit<SidebarAssignmentIntent, "channelId">;
+type MoveDestination = Omit<SidebarAssignmentIntent, "channelId">;
 type MoveIntent = Readonly<{
   id: number;
   channelId: string;
   destination: MoveDestination;
 }>;
 type MoveFailure = MoveIntent & Readonly<{ error: string }>;
-type SortFailure = Readonly<{
-  group: string;
-  mode: SidebarSortMode;
-  error: string;
-}>;
-type FilterFailure = Readonly<{
-  group: string;
-  mode: SidebarFilterMode;
-  activeWindowSeconds?: number | null;
-  error: string;
-}>;
 type OrderFailure = Readonly<{
   sectionId: string;
   sectionIds: readonly string[];
@@ -51,8 +32,6 @@ type Snapshot = Readonly<{
   /** Set with an error that a later retry can fix; see isTransientFailure. */
   transient?: true;
   cached?: true;
-  sortErrors?: readonly SortFailure[];
-  filterErrors?: readonly FilterFailure[];
   moves?: readonly (MoveIntent & { pending: boolean; error?: string })[];
   orderError?: OrderFailure;
 }>;
@@ -63,17 +42,14 @@ export function createSidebarPreferencesStore({
   readAfterWrite = read,
   available,
   write,
-  writeStar,
   notify = (listener: () => void) => listener(),
   writeMute,
-  writeSort,
   persistence,
   removeSection,
   renameSection,
   groupsOnly = false,
   writeOrder,
   createSection,
-  writeFilter,
 }: Readonly<{
   read: (signal?: AbortSignal) => Promise<SidebarPreferences>;
   /** Fresh authoritative reconciliation after writes or live invalidation. */
@@ -82,18 +58,15 @@ export function createSidebarPreferencesStore({
     | undefined;
   available: boolean;
   write?: SidebarAssignmentMutator | undefined;
-  writeStar?: SidebarStarMutator | undefined;
   notify?: ((listener: () => void) => void) | undefined;
   writeMute?: SidebarMuteMutator | undefined;
-  writeSort?: SidebarSortMutator | undefined;
   persistence?: HeadPersistence | undefined;
   removeSection?: SidebarSectionRemovalMutator | undefined;
   renameSection?: SidebarSectionRenameMutator | undefined;
-  /** Solo groups have no Star coordinate; do not write Messages stars on moves. */
+  /** Solo workspaces: removing a section is a plain groups write. */
   groupsOnly?: boolean | undefined;
   writeOrder?: SidebarSectionOrderMutator | undefined;
   createSection?: SidebarSectionCreationMutator | undefined;
-  writeFilter?: SidebarFilterMutator | undefined;
 }>) {
   const listeners = new Set<() => void>();
   const empty = (): Snapshot =>
@@ -131,11 +104,7 @@ export function createSidebarPreferencesStore({
   // Retain writer routing through failed reads and cache clears until reconciled.
   let creationUncertain = false;
   const writable = () =>
-    !closed &&
-    !!confirmed &&
-    readFailure === undefined &&
-    !!write &&
-    (groupsOnly || !!writeStar);
+    !closed && !!confirmed && readFailure === undefined && !!write;
   let nextMove = 0;
   const pendingMoves = new Map<number, MoveIntent>();
   const failedMoves = new Map<string, MoveFailure>();
@@ -160,30 +129,25 @@ export function createSidebarPreferencesStore({
   const withPendingMoves = (data: SidebarPreferences): SidebarPreferences => {
     let sections = data.sections;
     const assignments = { ...data.assignments };
-    const starred = new Set(data.starred);
     for (const { channelId, destination } of pendingMoves.values()) {
-      if ("starred" in destination) starred.add(channelId);
-      else {
-        starred.delete(channelId);
-        const created = destination.createSection;
-        if (created && !sections.some(({ id }) => id === created.id)) {
-          const section = {
-            id: created.id,
-            name: created.name.trim(),
-            order:
-              created.position === "first"
-                ? Math.min(0, ...sections.map(({ order }) => order)) - 1
-                : Math.max(-1, ...sections.map(({ order }) => order)) + 1,
-          };
-          sections =
+      const created = destination.createSection;
+      if (created && !sections.some(({ id }) => id === created.id)) {
+        const section = {
+          id: created.id,
+          name: created.name.trim(),
+          order:
             created.position === "first"
-              ? [section, ...sections]
-              : [...sections, section];
-        }
-        const target = created?.id ?? destination.sectionId;
-        if (target) assignments[channelId] = target;
-        else delete assignments[channelId];
+              ? Math.min(0, ...sections.map(({ order }) => order)) - 1
+              : Math.max(-1, ...sections.map(({ order }) => order)) + 1,
+        };
+        sections =
+          created.position === "first"
+            ? [section, ...sections]
+            : [...sections, section];
       }
+      const target = created?.id ?? destination.sectionId;
+      if (target) assignments[channelId] = target;
+      else delete assignments[channelId];
     }
     if (pendingOrder) {
       const ids = pendingOrder.sectionIds;
@@ -193,99 +157,19 @@ export function createSidebarPreferencesStore({
         .sort((a, b) => rank(a.id) - rank(b.id))
         .map((section, order) => ({ ...section, order }));
     }
-    return { ...data, sections, assignments, starred: [...starred] };
+    return { ...data, sections, assignments };
   };
   let generation = 0;
-  let nextSortMutation = 0;
-  const latestSort = new Map<string, number>();
-  const failedSorts = new Map<string, SortFailure>();
-  const pendingSorts = new Map<
-    number,
-    { group: string; mode: SidebarSortMode }
-  >();
-  const withSort = (
-    sort: Readonly<Record<string, SidebarSortMode>>,
-    group: string,
-    mode: SidebarSortMode,
-  ) => {
-    const next = { ...sort };
-    if (mode === "alpha") delete next[group];
-    else next[group] = mode;
-    return next;
-  };
-  const withPendingSorts = (
-    sort: Readonly<Record<string, SidebarSortMode>>,
-  ) => {
-    let next = sort;
-    for (const pending of pendingSorts.values())
-      next = withSort(next, pending.group, pending.mode);
-    return next;
-  };
-
-  let nextFilterMutation = 0;
-  const latestFilter = new Map<string, number>();
-  const failedFilters = new Map<string, FilterFailure>();
-  const pendingFilters = new Map<
-    number,
-    {
-      group: string;
-      mode: SidebarFilterMode;
-      activeWindowSeconds?: number | null;
-    }
-  >();
-  const withFilter = (
-    filters: Readonly<Record<string, SidebarFilterMode>>,
-    group: string,
-    mode: SidebarFilterMode,
-  ) => {
-    const next = { ...filters };
-    if (mode === "all") delete next[group];
-    else next[group] = mode;
-    return next;
-  };
-  const withPendingFilters = (
-    filters: Readonly<Record<string, SidebarFilterMode>>,
-  ) => {
-    let next = filters;
-    for (const pending of pendingFilters.values())
-      next = withFilter(next, pending.group, pending.mode);
-    return next;
-  };
-
-  const withPendingWindows = () => {
-    const windows = { ...confirmed?.activeWindowSeconds };
-    for (const pending of pendingFilters.values()) {
-      if (pending.activeWindowSeconds === null) delete windows[pending.group];
-      else if (pending.activeWindowSeconds !== undefined)
-        windows[pending.group] = pending.activeWindowSeconds;
-    }
-    return windows;
-  };
-
   const retained = (data: SidebarPreferences): SidebarPreferences =>
     Object.freeze({
       sections: Object.freeze(
         data.sections.map((section) => Object.freeze({ ...section })),
       ),
       assignments: Object.freeze({ ...data.assignments }),
-      starred: Object.freeze([...data.starred]),
       muted: Object.freeze([...data.muted]),
-      ...(data.sort ? { sort: Object.freeze({ ...data.sort }) } : {}),
-      ...(data.filters ? { filters: Object.freeze({ ...data.filters }) } : {}),
-      ...(data.activeWindowSeconds
-        ? {
-            activeWindowSeconds: Object.freeze({ ...data.activeWindowSeconds }),
-          }
-        : {}),
     });
   const publish = (next: Snapshot) => {
-    const {
-      moves: _moves,
-      sortErrors: _errors,
-      filterErrors: _filterErrors,
-      orderError: _order,
-      ...state
-    } = next;
+    const { moves: _moves, orderError: _order, ...state } = next;
     const moves = [
       ...Array.from(pendingMoves.values(), (intent) => ({
         ...intent,
@@ -298,12 +182,6 @@ export function createSidebarPreferencesStore({
     ];
     snapshot = Object.freeze({
       ...state,
-      ...(failedSorts.size
-        ? { sortErrors: Object.freeze([...failedSorts.values()]) }
-        : {}),
-      ...(failedFilters.size
-        ? { filterErrors: Object.freeze([...failedFilters.values()]) }
-        : {}),
       ...(moves.length ? { moves: Object.freeze(moves) } : {}),
       ...(failedOrder ? { orderError: failedOrder } : {}),
     });
@@ -328,20 +206,7 @@ export function createSidebarPreferencesStore({
             error: readFailure,
             ...(readTransient ? { transient: true as const } : {}),
           }),
-      data: retained(
-        withPendingMoves({
-          ...confirmed,
-          ...(pendingSorts.size
-            ? { sort: withPendingSorts(confirmed.sort ?? {}) }
-            : {}),
-          ...(pendingFilters.size
-            ? {
-                filters: withPendingFilters(confirmed.filters ?? {}),
-                activeWindowSeconds: withPendingWindows(),
-              }
-            : {}),
-        }),
-      ),
+      data: retained(withPendingMoves(confirmed)),
     });
   };
   function refresh(quiet = false): Promise<void> {
@@ -436,9 +301,8 @@ export function createSidebarPreferencesStore({
     }
     return Promise.reject(new Error(message));
   }
-  // Optimistic placement is a projection over confirmed data. Persistence keeps
-  // assignment/create before Star removal. A failed
-  // older intent cannot undo a later move or replace its retry state.
+  // Optimistic placement is a projection over confirmed data. A failed older
+  // intent cannot undo a later move or replace its retry state.
   function move(
     channelId: string,
     destination: MoveDestination,
@@ -449,9 +313,7 @@ export function createSidebarPreferencesStore({
       (creationUncertain && "createSection" in destination) ||
       !snapshot.data ||
       !confirmed ||
-      !write ||
-      (!writeStar && !groupsOnly) ||
-      (groupsOnly && "starred" in destination)
+      !write
     )
       return rejectMove(
         channelId,
@@ -480,26 +342,19 @@ export function createSidebarPreferencesStore({
           check();
           if (creationUncertain && "createSection" in destination)
             throw new Error("Section creation is unavailable");
-          const starring = "starred" in destination;
           // Always check the fresh assignment head on removal, even if cached
           // placement has no assignment. Another device may have changed it.
-          const groups = starring
-            ? undefined
-            : await write({ channelId, ...destination }, writeSignal);
-          check();
-          const stars =
-            !groupsOnly && writeStar
-              ? await writeStar({ channelId, starred: starring }, writeSignal)
-              : [];
+          const groups = await write(
+            { channelId, ...destination },
+            writeSignal,
+          );
           check();
           if (!confirmed)
             throw new Error("Sidebar group moves are unavailable");
           confirmed = {
             ...confirmed,
-            ...(groups
-              ? { sections: groups.sections, assignments: groups.assignments }
-              : {}),
-            starred: stars,
+            sections: groups.sections,
+            assignments: groups.assignments,
           };
           return retained(confirmed);
         } catch (error) {
@@ -538,8 +393,7 @@ export function createSidebarPreferencesStore({
       !confirmed ||
       readFailure !== undefined ||
       snapshot.cached ||
-      !removeSection ||
-      !writeSort
+      !removeSection
     )
       throw new Error("Sidebar section removal is unavailable");
     const writeGeneration = generation;
@@ -557,37 +411,6 @@ export function createSidebarPreferencesStore({
         writeSignal.throwIfAborted();
         if (!confirmed?.sections.some(({ id }) => id === sectionId))
           throw new Error("Sidebar section no longer exists");
-        const group = `section:${sectionId}`;
-        // Local Alpha can be stale while another device has saved an override.
-        // Reset while the section is live, so a failed write leaves removal
-        // retryable and cannot strand a live override beyond the decoder cap.
-        const sort = await writeSort(
-          group,
-          "alpha",
-          confirmed.sections.map(({ id }) => id),
-          writeSignal,
-        );
-        if (closed || generation !== writeGeneration)
-          throw new Error("Sidebar section removal is unavailable");
-        writeSignal.throwIfAborted();
-        if (!confirmed)
-          throw new Error("Sidebar section removal is unavailable");
-        confirmed = { ...confirmed, sort };
-        if (writeFilter) {
-          const settings = await writeFilter(
-            group,
-            "all",
-            confirmed.sections.map(({ id }) => id),
-            writeSignal,
-            null,
-          );
-          if (closed || generation !== writeGeneration || !confirmed)
-            throw new Error("Sidebar section removal is unavailable");
-          writeSignal.throwIfAborted();
-          confirmed = { ...confirmed, ...settings };
-        }
-        mutation++;
-        project();
         const next = await removeSection(sectionId, writeSignal);
         if (closed || generation !== writeGeneration || !confirmed)
           throw new Error("Sidebar section removal is unavailable");
@@ -598,7 +421,6 @@ export function createSidebarPreferencesStore({
           sections: next.sections,
           assignments: next.assignments,
         };
-        failedFilters.delete(group);
         project();
         return retained(confirmed);
       })
@@ -643,17 +465,7 @@ export function createSidebarPreferencesStore({
       });
       const parsed = projectSidebarPreferences(
         { version: 1, sections: data.sections, assignments: data.assignments },
-        rows(data.starred, "starred"),
         rows(data.muted, "muted"),
-        { version: 1, groups: data.sort ?? {} },
-        undefined,
-        data.filters === undefined && data.activeWindowSeconds === undefined
-          ? undefined
-          : {
-              version: 1,
-              groups: data.filters ?? {},
-              activeWindowSeconds: data.activeWindowSeconds,
-            },
       );
       // Display-only: do not initialize the confirmed mutation base from disk.
       publish({
@@ -820,183 +632,6 @@ export function createSidebarPreferencesStore({
         failedOrder = undefined;
         publish(snapshot);
       },
-      dismissSortError(group: string) {
-        failedSorts.delete(group);
-        publish(snapshot);
-      },
-      get sortWritable() {
-        return !!writeSort && !snapshot.cached;
-      },
-      setSort(
-        group: string,
-        mode: SidebarSortMode,
-        sectionIds: readonly string[],
-        signal?: AbortSignal,
-      ) {
-        if (closed || !writeSort || !snapshot.data || snapshot.cached)
-          return Promise.reject(
-            new Error("Sidebar sorting is read-only in this host"),
-          );
-        const writeGeneration = generation;
-        const writeSignal = AbortSignal.any([
-          writeLifetime.signal,
-          ...(signal ? [signal] : []),
-        ]);
-        if (writeSignal.aborted) return Promise.reject(writeSignal.reason);
-        const id = ++nextSortMutation;
-        pendingSorts.set(id, { group, mode });
-        latestSort.set(group, id);
-        failedSorts.delete(group);
-        mutation++;
-        project();
-        const settle = (sort?: Readonly<Record<string, SidebarSortMode>>) => {
-          if (closed || generation !== writeGeneration || !confirmed) return;
-          confirmed = {
-            ...confirmed,
-            sort: { ...(sort ?? confirmed.sort ?? {}) },
-          };
-          pendingSorts.delete(id);
-          project();
-        };
-        const run = writeQueue
-          .catch(() => {})
-          .then(async () => {
-            if (closed || generation !== writeGeneration)
-              throw new Error("Sidebar sorting is unavailable");
-            try {
-              writeSignal.throwIfAborted();
-              const sort = await writeSort(
-                group,
-                mode,
-                sectionIds,
-                writeSignal,
-              );
-              if (closed || generation !== writeGeneration)
-                throw new Error("Sidebar sorting is unavailable");
-              writeSignal.throwIfAborted();
-              mutation++;
-              settle(sort);
-              return sort;
-            } catch (error) {
-              if (!closed && generation === writeGeneration) {
-                mutation++;
-                if (!writeSignal.aborted && latestSort.get(group) === id)
-                  failedSorts.set(group, {
-                    group,
-                    mode,
-                    error:
-                      error instanceof Error ? error.message : String(error),
-                  });
-              }
-              settle();
-              throw error;
-            }
-          });
-        writeQueue = run.then(
-          () => undefined,
-          () => undefined,
-        );
-        return run;
-      },
-      dismissFilterError(group: string) {
-        failedFilters.delete(group);
-        publish(snapshot);
-      },
-      get filterWritable() {
-        return (
-          !closed &&
-          !!writeFilter &&
-          !!confirmed &&
-          readFailure === undefined &&
-          !snapshot.cached
-        );
-      },
-      setFilter(
-        group: string,
-        mode: SidebarFilterMode,
-        sectionIds: readonly string[],
-        signal?: AbortSignal,
-        activeWindowSeconds?: number | null,
-      ) {
-        if (
-          closed ||
-          !writeFilter ||
-          !confirmed ||
-          readFailure !== undefined ||
-          snapshot.cached
-        )
-          return Promise.reject(
-            new Error("Sidebar filtering is read-only in this host"),
-          );
-        const writeGeneration = generation;
-        const writeSignal = AbortSignal.any([
-          writeLifetime.signal,
-          ...(signal ? [signal] : []),
-        ]);
-        if (writeSignal.aborted) return Promise.reject(writeSignal.reason);
-        const id = ++nextFilterMutation;
-        pendingFilters.set(id, {
-          group,
-          mode,
-          ...(activeWindowSeconds === undefined ? {} : { activeWindowSeconds }),
-        });
-        latestFilter.set(group, id);
-        failedFilters.delete(group);
-        mutation++;
-        project();
-        const settle = (settings?: SidebarFilterSettings) => {
-          if (closed || generation !== writeGeneration || !confirmed) return;
-          confirmed = {
-            ...confirmed,
-            ...(settings ?? {}),
-          };
-          pendingFilters.delete(id);
-          project();
-        };
-        const run = writeQueue
-          .catch(() => {})
-          .then(async () => {
-            if (closed || generation !== writeGeneration)
-              throw new Error("Sidebar filtering is unavailable");
-            try {
-              writeSignal.throwIfAborted();
-              const settings = await writeFilter(
-                group,
-                mode,
-                sectionIds,
-                writeSignal,
-                activeWindowSeconds,
-              );
-              if (closed || generation !== writeGeneration)
-                throw new Error("Sidebar filtering is unavailable");
-              writeSignal.throwIfAborted();
-              mutation++;
-              settle(settings);
-              return settings;
-            } catch (error) {
-              if (!closed && generation === writeGeneration) {
-                mutation++;
-                if (!writeSignal.aborted && latestFilter.get(group) === id)
-                  failedFilters.set(group, {
-                    group,
-                    mode,
-                    ...(activeWindowSeconds === undefined
-                      ? {}
-                      : { activeWindowSeconds }),
-                    error:
-                      error instanceof Error ? error.message : String(error),
-                  });
-              }
-              settle();
-              throw error;
-            }
-          });
-        writeQueue = run.then(
-          () => undefined,
-          () => undefined,
-        );
-        return run;
-      },
       get muteWritable() {
         return !!writeMute && !snapshot.cached;
       },
@@ -1063,20 +698,8 @@ export function createSidebarPreferencesStore({
           !!confirmed &&
           readFailure === undefined &&
           !snapshot.cached &&
-          !!removeSection &&
-          !!writeSort
+          !!removeSection
         );
-      },
-      get starWritable() {
-        return !groupsOnly && writable();
-      },
-      async setStar(channelId: string, starred: boolean, signal?: AbortSignal) {
-        const data = await move(
-          channelId,
-          starred ? { starred: true } : {},
-          signal,
-        );
-        return data.starred;
       },
       // Keep explicit one-shot reads compatible; views use the retained snapshot.
       read,
@@ -1100,12 +723,6 @@ export function createSidebarPreferencesStore({
       invalidation = reconciled = 0;
       scheduled = false;
       confirmed = undefined;
-      pendingSorts.clear();
-      latestSort.clear();
-      failedSorts.clear();
-      pendingFilters.clear();
-      latestFilter.clear();
-      failedFilters.clear();
       readFailure = undefined;
       pendingMoves.clear();
       failedMoves.clear();
@@ -1126,12 +743,6 @@ export function createSidebarPreferencesStore({
       invalidation = reconciled = 0;
       scheduled = false;
       confirmed = undefined;
-      pendingSorts.clear();
-      latestSort.clear();
-      failedSorts.clear();
-      pendingFilters.clear();
-      latestFilter.clear();
-      failedFilters.clear();
       readFailure = undefined;
       pendingMoves.clear();
       failedMoves.clear();

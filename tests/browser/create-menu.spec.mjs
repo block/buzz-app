@@ -22,6 +22,8 @@ test("Create menu numbers activate rows and rail controls share one card", async
     exact: true,
   });
   const controls = [community, status, search, create];
+  // The profile and community controls arrive after the session loads.
+  for (const control of controls) await expect(control).toBeVisible();
   const boxes = await Promise.all(
     controls.map((control) => control.boundingBox()),
   );
@@ -66,6 +68,9 @@ test("Create menu numbers activate rows and rail controls share one card", async
   ).toBeVisible();
   await create.click();
   await expect(menu).toBeVisible();
+  await expect
+    .poll(() => menu.evaluate((node) => node.contains(document.activeElement)))
+    .toBe(true);
   await page.keyboard.press("5");
   const section = page.getByRole("dialog", {
     name: "Create new section",

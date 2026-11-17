@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { conversationList, openPage } from "./navigation.mjs";
 
 const windowRoom = "00000000-0000-0000-0000-000000000123";
 
@@ -20,15 +20,12 @@ test("a live reply in the open Activity conversation is read while focus stays o
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Activity");
-  const inbox = page.getByRole("region", { name: "Activity", exact: true });
-  await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
-  const row = inbox
-    .getByRole("list", { name: "Activity", exact: true })
-    .getByRole("listitem")
+  const row = conversationList(page)
+    .locator("[data-activity-event]")
     .filter({ hasText: "Window room" });
-  const open = row.getByRole("button", { name: /^Open / });
+  const open = row.locator("[data-conversation-row]");
   await open.click();
-  const detail = inbox.getByRole("region", {
+  const detail = page.getByRole("region", {
     name: "Conversation in Window room",
     exact: true,
   });

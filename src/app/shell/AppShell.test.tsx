@@ -121,7 +121,7 @@ it("hides, shows and resizes the rail", async () => {
   fireEvent.keyDown(resize, { key: "Home" });
   expect(screen.getByRole("button", { name: "Hide sidebar" })).toBeVisible();
   expect(resize.closest(".shell-workspace")).toHaveStyle({
-    "--shell-rail-width": "240px",
+    "--shell-rail-width": "256px",
   });
   fireEvent.keyDown(resize, { key: "End" });
   expect(screen.getByRole("button", { name: "Hide sidebar" })).toBeVisible();

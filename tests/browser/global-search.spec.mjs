@@ -1,6 +1,14 @@
 import { test, expect } from "./fixture.mjs";
 import { animationsSettled } from "./animations.mjs";
 import { wheel } from "./timeline.mjs";
+import {
+  activityRow,
+  channelRow,
+  conversationList,
+  openChannel,
+  rail,
+  showConversationList,
+} from "./navigation.mjs";
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 // The palette scales in and its content slides in after a delay. Both hold
@@ -15,6 +23,7 @@ test("search arrows traverse the conversation action and recent activity, Enter 
   app,
 }) => {
   await page.goto(app.origin);
+  await openChannel(page, "alpha");
   const trigger = button(page, "Search Buzz");
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "Search Buzz" });
@@ -87,6 +96,7 @@ test("changing search scope returns focus to the input without clearing the quer
   app,
 }) => {
   await page.goto(app.origin);
+  await openChannel(page, "alpha");
   await button(page, "Search Buzz").click();
   const scopeAction = page
     .getByRole("dialog", { name: "Search Buzz" })
@@ -135,6 +145,7 @@ test.describe("public search destination", () => {
     // Waiting for a rendered conversation is an ordering mitigation for the
     // WebKit lost-fill failure. Its root cause is unknown, and the failing
     // schedule has not been reproduced against this change.
+    await openChannel(page, "alpha");
     await expect(page.locator("[data-message-id]").first()).toBeVisible();
     let previewSurface;
     for (const mode of ["cold", "warm"]) {
@@ -179,11 +190,8 @@ test.describe("public search destination", () => {
       await expect(
         page.getByRole("textbox", { name: "Reply to thread", exact: true }),
       ).toHaveCount(0);
-      await expect(
-        page
-          .getByRole("complementary", { name: "Sidebar", exact: true })
-          .getByRole("button", { name: "open", exact: true }),
-      ).toHaveCount(0);
+      await showConversationList(page);
+      await expect(channelRow(page, app.openChannelId)).toHaveCount(0);
     }
     const threadPanel = page.getByRole("complementary", {
       name: "Thread",
@@ -239,6 +247,8 @@ test.describe("public search destination", () => {
     app,
   }) => {
     await page.goto(app.origin);
+    // Team's Channels view lists the channels this member has joined.
+    await rail(page).locator('[data-rail-team-view="channels"]').click();
     await button(page, "Search Buzz").click();
     await page.getByRole("combobox", { name: "Search Buzz" }).fill("ope");
     const result = page
@@ -256,6 +266,14 @@ test.describe("public search destination", () => {
       exact: true,
     });
     await expect(page.getByText("Join channel to send messages")).toBeVisible();
+    // Joining adds the channel to Team's list; until then it is absent.
+    await showConversationList(page);
+    await expect(channelRow(page, app.openChannelId)).toHaveCount(0);
+    await page
+      .getByRole("button", { name: /^Hide .+ list$/ })
+      .first()
+      .click();
+    await expect(conversationList(page)).toBeHidden();
     // Real layout: the invitation overlays history without shortening its
     // viewport, and the last message can still scroll clear of the invitation.
     const history = page.getByRole("region", {
@@ -293,22 +311,15 @@ test.describe("public search destination", () => {
       })
       .toBe(true);
     await expect(composer).toHaveCount(0);
-    const sidebar = page.getByRole("complementary", {
-      name: "Sidebar",
-      exact: true,
-    });
-    await expect(
-      sidebar.getByRole("button", { name: "open", exact: true }),
-    ).toHaveCount(0);
     await button(page, "Join").click();
     await expect(composer).not.toHaveAttribute("aria-disabled", "true");
     await expect(composer).toBeFocused();
     await expect(page.getByText(/Join channel to send messages/)).toHaveCount(
       0,
     );
-    await expect(
-      sidebar.getByRole("button", { name: "open", exact: true }),
-    ).toBeVisible();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await showConversationList(page);
+    await expect(channelRow(page, app.openChannelId)).toBeVisible();
     expect(app.report.lifecyclePublications).toEqual([
       expect.objectContaining({
         kind: 9021,
@@ -375,10 +386,11 @@ test.describe("public search destination", () => {
         true,
       );
     });
-    // A short viewport makes the two-message thread scroll.
-    await page.setViewportSize({ width: 1100, height: 320 });
     await page.goto(app.origin);
+    await openChannel(page, "alpha");
     await expect(page.locator("[data-message-id]").first()).toBeVisible();
+    // A short viewport makes the two-message thread scroll.
+    await page.setViewportSize({ width: 1100, height: 280 });
     await button(page, "Search Buzz").click();
     await page
       .getByRole("combobox", { name: "Search Buzz" })
@@ -433,7 +445,11 @@ test.describe("public search destination", () => {
     const toolbarRow = history.locator("[data-message-id]").first();
     const prose = toolbarRow.locator("[data-message-action-anchor] p").first();
     const proseBox = await prose.boundingBox();
-    const point = { x: proseBox.x + 1, y: proseBox.y + 1 };
+    // The jump-to-latest button floats over the start of a short thread's text.
+    const point = {
+      x: proseBox.x + proseBox.width - 1,
+      y: proseBox.y + proseBox.height / 2,
+    };
     expect(
       await prose.evaluate(
         (el, point) => el.contains(document.elementFromPoint(point.x, point.y)),
@@ -555,7 +571,7 @@ test("keyboard selection follows its page while matching conversations arrive", 
         '[role="group"][aria-label="Pages"], [role="rowgroup"][aria-label="Pages"]',
       )
       .locator("[data-search-result]")
-      .filter({ hasText: "Messages" });
+      .filter({ hasText: "Team" });
     await expect(projects).toBeVisible();
     // The connected palette is mounted, but its channel list is still held.
     await expect(
@@ -569,21 +585,12 @@ test("keyboard selection follows its page while matching conversations arrive", 
     holding = false;
     for (const resolve of held.splice(0)) resolve();
     await expect(recent.first()).toBeVisible();
-    await expect(
-      page.getByRole("textbox", {
-        name: "Message #Alpha",
-        exact: true,
-        includeHidden: true,
-      }),
-    ).toBeAttached();
     await expect(input).toBeFocused();
     // Channel arrival must preserve the explicitly selected page.
     await expect(input).toHaveAttribute("aria-activedescendant", id);
     await input.press("Enter");
     await expect(dialog).toHaveCount(0);
-    await expect(
-      page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-    ).toBeVisible();
+    await expect(activityRow(page)).toHaveAttribute("aria-current", /.+/);
   } finally {
     holding = false;
     for (const resolve of held.splice(0)) resolve();
@@ -595,6 +602,7 @@ test("a resting pointer does not steal the typed selection when results move und
   app,
 }) => {
   await page.goto(app.origin);
+  await openChannel(page, "alpha");
   await button(page, "Search Buzz").click();
   const dialog = page.getByRole("dialog", { name: "Search Buzz" });
   const input = dialog.getByRole("combobox", { name: "Search Buzz" });
@@ -659,6 +667,7 @@ test.describe("message search operators", () => {
     await page.goto(app.origin);
     // The same unproven ordering mitigation for the WebKit lost-fill failure
     // as the public search destination test above.
+    await openChannel(page, "alpha");
     await expect(page.locator("[data-message-id]").first()).toBeVisible();
     await button(page, "Search Buzz").click();
     const input = page.getByRole("combobox", { name: "Search Buzz" });

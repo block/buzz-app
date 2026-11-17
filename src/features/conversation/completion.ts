@@ -24,7 +24,7 @@ export type HostCompletionEdit =
       mentions?: never;
       pending?: never;
     }>;
-export type HostCompletionSuggestion = Omit<CompletionSuggestion, "edit"> &
+type HostCompletionSuggestion = Omit<CompletionSuggestion, "edit"> &
   Readonly<{
     edit: HostCompletionEdit;
     /** The heading the host shows above a run of rows; bundled providers only. */

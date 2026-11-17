@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { animationsSettled } from "./animations.mjs";
+import { activityRow } from "./navigation.mjs";
 test.use({
   productionBroker: true,
   readState: true,
@@ -14,10 +15,8 @@ test("Messages keeps its list beside conversations and preserves drafts and hist
   app,
 }, testInfo) => {
   await page.setViewportSize({ width: 1920, height: 950 });
-  app.append("primary", "dm-peer", "[Open Beta](buzz://channel/beta)", false);
   await page.goto(app.origin);
-  const rail = page.getByRole("navigation", { name: "Apps", exact: true });
-  await rail.getByRole("button", { name: "Team", exact: true }).click();
+  await activityRow(page).click();
   const index = page.getByRole("region", { name: "Team", exact: true });
   const detail = index.getByRole("region", {
     name: "Conversation detail",
@@ -74,7 +73,7 @@ test("Messages keeps its list beside conversations and preserves drafts and hist
   );
   expect((await composer.boundingBox()).width).toBeLessThan(headerBox.width);
 
-  // Heading, filters and avatar content share one leading edge in the list.
+  // Filters and avatar content share one leading edge in the list.
   const contentLeft = await alpha.evaluate(
     (element) =>
       element.getBoundingClientRect().left +
@@ -86,7 +85,6 @@ test("Messages keeps its list beside conversations and preserves drafts and hist
   const filterBox = await index
     .getByRole("button", { name: "Filter and sort conversations", exact: true })
     .boundingBox();
-  expect(headingBox.x).toBeCloseTo(contentLeft, 0);
   expect(filterBox.x).toBeCloseTo(contentLeft, 0);
   const allBox = await index
     .getByRole("tab", { name: "All", exact: true })
@@ -187,8 +185,9 @@ test("Messages keeps its list beside conversations and preserves drafts and hist
   ).toBeFocused();
   await expect(editor).toHaveText("Keep the list conversation draft");
   await page.setViewportSize({ width: 1440, height: 950 });
-  await rail.getByRole("button", { name: "Team", exact: true }).click();
+  await activityRow(page).click();
   await expect(alpha).toBeVisible();
+  app.append("primary", "alpha", "[Open Beta](buzz://channel/beta)");
   await index.getByRole("button", { name: "New message", exact: true }).click();
   const newMessage = index.getByRole("region", {
     name: "New message",
@@ -201,24 +200,13 @@ test("Messages keeps its list beside conversations and preserves drafts and hist
   await expect(
     newMessage.getByRole("tab", { name: "Team", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await recipients.fill(app.participants[0]);
-  await page.getByRole("option", { name: /Alice Fixture/ }).click();
+  // The fixture serves no people directory; a channel's existing discussion
+  // shows the same way a DM's does. (Opening its link as a main-pane tab
+  // beside the draft went with the main-pane tabs.)
+  await page.getByRole("option", { name: /^Alpha/ }).click();
   await expect(
-    newMessage.getByText("Inbox DM fixture reply", { exact: true }),
+    newMessage.getByRole("link", { name: "Open Beta", exact: true }),
   ).toBeVisible();
-  await newMessage
-    .getByRole("link", { name: "Open Beta", exact: true })
-    .click();
-  await expect(page.locator('[data-channel-timeline="beta"]')).toBeVisible();
-  await expect(index).toBeVisible();
-  await detail
-    .getByRole("button", { name: "Show Team list", exact: true })
-    .click();
-  await expect(alpha).toBeVisible();
-  await detail
-    .getByRole("button", { name: "Close Beta tab", exact: true })
-    .click();
-  await expect(detail.locator('[data-channel-timeline="beta"]')).toHaveCount(0);
   await expect(newMessage.getByRole("textbox")).toBeVisible();
   await detail
     .getByRole("button", { name: "Hide Team list", exact: true })
@@ -238,7 +226,6 @@ test("conversation lists default closed for direct opens and open for View more"
 }) => {
   await page.goto(app.origin);
   const rail = page.getByRole("navigation", { name: "Apps", exact: true });
-  await rail.getByRole("button", { name: "Alpha", exact: true }).click();
   const messages = page.getByRole("region", { name: "Team", exact: true });
   const detail = messages.getByRole("region", {
     name: "Conversation detail",
@@ -247,21 +234,27 @@ test("conversation lists default closed for direct opens and open for View more"
   const row = messages.locator(
     '[data-activity-row="alpha"] [data-conversation-row]',
   );
-  await expect(row).toBeHidden();
-  await expect(
-    detail.getByRole("button", { name: "Show Team list", exact: true }),
-  ).toHaveAttribute("aria-expanded", "false");
-  await detail
-    .getByRole("button", { name: "Show Team list", exact: true })
-    .click();
+  // Opening from the list keeps it beside the reader.
+  await expect(row).toBeVisible();
+  await row.click();
+  await expect(detail.locator('[data-channel-timeline="alpha"]')).toBeVisible();
   await expect(row).toBeVisible();
   await row.click({ button: "right" });
   await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
+  // A pin opens its conversation directly, without the list.
   await rail
     .locator('[data-rail-section="pins"]')
     .getByRole("button", { name: "Alpha", exact: true })
     .click();
+  const reader = page.getByRole("region", {
+    name: "Conversation detail",
+    exact: true,
+  });
+  await expect(reader.locator('[data-channel-timeline="alpha"]')).toBeVisible();
   await expect(row).toBeHidden();
+  await expect(
+    reader.getByRole("button", { name: "Show Pins list", exact: true }),
+  ).toHaveAttribute("aria-expanded", "false");
   await rail.getByRole("button", { name: "Team", exact: true }).click();
   await expect(row).toBeVisible();
   await row.click();
@@ -291,10 +284,8 @@ test("conversation lists default closed for direct opens and open for View more"
   await expect(
     page.getByRole("tab", { name: "Team", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await page
-    .getByRole("combobox", { name: "Message recipients" })
-    .fill(app.participants[0]);
-  await page.getByRole("option", { name: /Alice Fixture/ }).click();
+  // The fixture serves no people directory; a channel is a destination too.
+  await page.getByRole("option", { name: /^Beta/ }).click();
   await expect(
     detail.getByRole("textbox", { name: /^Message/ }),
   ).toBeEditable();
@@ -318,7 +309,7 @@ test("a conversation opens the list of its sidebar section and retains it throug
     ({ viewer }) => {
       const scope = { viewer, communityOrigin: "https://primary.example" };
       localStorage.setItem(
-        `buzz-view.v1:${JSON.stringify([`${scope.communityOrigin}:${viewer}`, "navigation-layout:v1"])}`,
+        `buzz-view.v1:${JSON.stringify([`${scope.communityOrigin}:${viewer}`, "navigation-layout:v2"])}`,
         JSON.stringify({
           sections: [{ id: "custom:project", title: "Project chats" }],
           placements: ["alpha", "beta"].map((channelId) => ({
@@ -397,20 +388,24 @@ test("a conversation opens the list of its sidebar section and retains it throug
     list.locator('[data-activity-row="beta"] [data-conversation-row]'),
   ).toBeVisible();
   await expect(list.locator('[data-activity-row="dm-peer"]')).toHaveCount(0);
-  await list
-    .locator('[data-activity-row="beta"] [data-conversation-row]')
+  // A pin keeps its place in the section that already lists it, so pin a
+  // conversation no section holds: Pins is then the list it opens from.
+  await rail.locator('[data-rail-team-view="dms"]').click();
+  await page
+    .locator('[data-activity-row="dm-peer"] [data-conversation-row]')
     .click({ button: "right" });
   await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
   await rail
-    .locator('[data-rail-section="pins"]')
-    .getByRole("button", { name: "Beta", exact: true })
+    .locator('[data-rail-section="pins"] [data-pins-grid]')
+    .getByRole("button")
+    .first()
     .click();
   await reader
     .getByRole("button", { name: "Show Pins list", exact: true })
     .click();
   const pins = page.getByRole("region", { name: "Pins", exact: true });
   await expect(
-    pins.getByText(/^Section preview stays on a single line\./),
+    pins.locator('[data-activity-row="dm-peer"] [data-conversation-row]'),
   ).toBeVisible();
   await expect(pins.locator('[data-activity-row="alpha"]')).toHaveCount(0);
   await animationsSettled(
@@ -430,12 +425,19 @@ test("hamburger motion reverses smoothly and skips keyboard and reduced motion",
 }) => {
   await page.goto(app.origin);
   const rail = page.getByRole("navigation", { name: "Apps", exact: true });
-  await rail.getByRole("button", { name: "Alpha", exact: true }).click();
+  await rail.locator('[data-rail-team-view="channels"]').click();
   const messages = page.getByRole("region", { name: "Team", exact: true });
   const reader = messages.getByRole("region", {
     name: "Conversation detail",
     exact: true,
   });
+  await messages
+    .locator('[data-activity-row="alpha"] [data-conversation-row]')
+    .click();
+  // The motion starts from a closed list; the keyboard closes it unanimated.
+  await reader
+    .getByRole("button", { name: "Hide Team list", exact: true })
+    .press("Enter");
   const show = reader.getByRole("button", {
     name: "Show Team list",
     exact: true,

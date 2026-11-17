@@ -1,11 +1,11 @@
 import { TeamViewMenu } from "./TeamViewMenu";
 import { RailPinPicker } from "./RailPinPicker";
 import { RailEntryArtwork } from "./RailEntryArtwork";
-import { railSections } from "./rail-sections";
 import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -24,19 +24,18 @@ import type { NavigationOpenOptions } from "../../features/navigation/controller
 import { targetKey } from "../../features/navigation/targets";
 import type { Navigation } from "../../features/navigation/controller";
 import type { RegisteredPage } from "../../features/pages/service";
-import { useAgentChoices } from "../../features/agents/use-choices";
 import { canMessageAgent } from "../../features/agents/choices";
-import { archiveHides } from "../../features/relay/identity-archives";
-import { dmLabel } from "../../features/conversation/dm-label";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { useSavedHiddenDmIds } from "../../bundled/channels/useHiddenDms";
 import { resumeSoloDraftTarget } from "../../features/channel-navigation/routes";
-import { useSoloNavigation } from "../../features/channel-navigation/solo-navigation-react";
-import { hiddenSoloChats } from "../../features/channel-navigation/solo-navigation-model";
 import { soloDraftInput } from "../../features/solo/SoloDraft";
-import { soloNeighbors } from "../../features/channel-navigation/solo-successor";
+import {
+  soloNeighbors,
+  soloSuccessor,
+} from "../../features/channel-navigation/solo-successor";
 import { routedSection } from "./list-column";
 import type { OpenTarget } from "../../features/navigation/targets";
+import type { ChannelSummary } from "../../features/relay/contracts";
 import {
   sidebarSectionTarget,
   isSidebarSectionRoute,
@@ -55,20 +54,24 @@ import {
   PinIcon,
   PlusIcon,
   StorefrontIcon,
-  SendIcon,
   UserIcon,
   UsersIcon,
 } from "../../shared/design-system/icons";
-import { useRailLayout } from "./rail-layout";
 import { RailArrangement, RailGroup } from "./RailArrangement";
 import { ContributedRailSections } from "../../features/channel-navigation/ContributedRailSections";
 import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
 import type { SidebarScope } from "../../features/channel-navigation/sidebar-scope-service";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
 import { PageNavigation } from "./PageNavigation";
+import { PageIcon } from "./PageIcon";
+import { pagePresentation } from "./presentation";
 import { RailConversationList } from "./RailConversationList";
 import { useRailPins, type RailEntry } from "./rail-pins";
-import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
+import { personEntries, soloView, useRailModel } from "./rail-model";
+import {
+  useChannelNavigation,
+  type ChannelMenuSurface,
+} from "../../features/channel-navigation/ChannelNavigationState";
 import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
 import { ChannelCopyLinkMenuItem } from "../../bundled/channels/ChannelCopyLinkMenuItem";
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
@@ -77,10 +80,10 @@ import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem"
 import styles from "./RailNavigation.module.css";
 import {
   useConversationCount,
-  useConversationKeys,
+  conversationIndex,
+  type ConversationFilter,
   type ConversationQuery,
 } from "../../features/conversation/conversation-index";
-import { useChannelRoster } from "../../features/relay/react";
 import {
   CollectionCreationAction,
   CollectionFilters,
@@ -92,7 +95,7 @@ import {
 export function RailNavigation({
   session,
   scope,
-  navigator: directNavigator,
+  navigator,
   pages,
   selected,
   onSelect,
@@ -100,8 +103,8 @@ export function RailNavigation({
   sidebarSections,
   sidebarScope,
   section: pageSection,
-  listNavigator = directNavigator,
   openInSection,
+  listedSection,
   compact = false,
 }: {
   session: RelaySession;
@@ -120,10 +123,10 @@ export function RailNavigation({
   /** Shows this section's full list instead of the cards: the shell's list
    * column renders one beside the cards, under the same `RailDrag`. */
   section?: string | undefined;
-  /** Opens from the list column, which keep that column as it is. */
-  listNavigator?: Navigation;
   /** Opens a conversation with the list showing the section it was opened from. */
   openInSection?: ((section: string, target: OpenTarget) => void) | undefined;
+  /** The section whose list is showing beside the cards. */
+  listedSection?: string | undefined;
   compact?: boolean;
 }) {
   const partition = `${scope.communityOrigin}:${scope.viewer}`;
@@ -163,34 +166,31 @@ export function RailNavigation({
     session.sidebarPreferences.snapshot,
   );
   const resolveName = useIdentityNames(session.names);
-  const { layout: railLayout, reset: resetPlacement } =
-    useRailLayout(partition);
   const [savedMessageView, setMessageView] = useActivityView(partition);
   // Team offers no agent views; a saved one shows All.
   const messageView = useMemo(
     () => withoutAgentViews(savedMessageView),
     [savedMessageView],
   );
-  const { pins, setPinned } = useRailPins(partition);
-  // The roster: a message replaces the list, but not who is in it.
-  const list = useChannelRoster(session.channels);
-  // Solo's chats, most recent first: the index keeps them in order.
-  const soloOrder = useConversationKeys(session, soloView);
-  const recentOrder = useConversationKeys(session, recentView);
-  const profiles = useSyncExternalStore(
-    session.profiles.subscribe,
-    session.profiles.snapshot,
-  );
-  const agents = useAgentChoices(session, true, true);
-  const archives = useSyncExternalStore(
-    session.archives.subscribe,
-    session.archives.snapshot,
-  );
+  const { setPinned } = useRailPins(partition);
+  // What the rail shows is built once for the session; this only draws it.
+  const {
+    channels,
+    channelsById,
+    agents,
+    agentEntries,
+    entries: modelEntries,
+    byId: modelById,
+    pins,
+    sections: membership,
+    soloChats,
+    teamChats,
+  } = useRailModel(session);
   // Only the shown entry draws the rail. An opening visit's other steps,
   // its start and its settling, change nothing here and render nothing.
   const shownEntry = useSyncExternalStore(
-    directNavigator.subscribe,
-    useCallback(() => directNavigator.snapshot().entry, [directNavigator]),
+    navigator.subscribe,
+    useCallback(() => navigator.snapshot().entry, [navigator]),
   );
   const navigation = { entry: shownEntry };
   const sectionRoute =
@@ -209,143 +209,57 @@ export function RailNavigation({
   const hidden = useSavedHiddenDmIds(partition);
   // A new visit cancels a previous person-open attempt.
   useEffect(() => {
-    let attempt = directNavigator.snapshot().attempt.id;
-    return directNavigator.subscribe(() => {
-      const next = directNavigator.snapshot().attempt.id;
+    let attempt = navigator.snapshot().attempt.id;
+    return navigator.subscribe(() => {
+      const next = navigator.snapshot().attempt.id;
       if (next === attempt) return;
       attempt = next;
       pending.current?.abort();
       pending.current = undefined;
       setOpening(undefined);
     });
-  }, [directNavigator]);
+  }, [navigator]);
   useEffect(() => () => pending.current?.abort(), []);
 
-  const channels = useMemo(
-    () =>
-      list.channels.filter(
-        (channel) =>
-          !channel.archived && !channel.huddle && !channel.metadataPending,
+  // The open picker lists everyone known, not only the people the rail names.
+  const everyone = useSyncExternalStore(
+    picker ? session.profiles.subscribe : noSubscription,
+    () => (picker ? session.profiles.snapshot() : undefined),
+  );
+  const { entries, byId } = useMemo(() => {
+    if (!everyone) return { entries: modelEntries, byId: modelById };
+    const entries = [
+      ...modelEntries.filter((entry) => !entry.id.startsWith("person:")),
+      ...personEntries(
+        session,
+        scope.viewer,
+        everyone,
+        new Set(agents.identities.map((agent) => agent.pubkey)),
+        resolveName,
       ),
-    [list.channels],
-  );
-  const channelsById = useMemo(
-    () => new Map(channels.map((channel) => [channel.id, channel])),
-    [channels],
-  );
-  const channelEntries = useMemo(
-    (): RailEntry[] =>
-      channels.map((channel) => {
-        const dm = channel.channelType === "dm";
-        const other = dm ? channel.participants?.[0] : undefined;
-        return {
-          id: `channel:${channel.id}`,
-          label: dm
-            ? dmLabel(channel.participants, profiles, resolveName, channel.name)
-            : channel.name,
-          kind: dm
-            ? "person"
-            : channel.channelType === "solo"
-              ? "chat"
-              : "channel",
-          picture: other ? profiles.get(other)?.picture : undefined,
-          target: {
-            version: 1,
-            kind: "conversation",
-            scope,
-            channelId: channel.id,
-          },
-        };
-      }),
-    [channels, profiles, resolveName, scope],
-  );
-  const agentEntries = useMemo(
-    (): RailEntry[] =>
-      agents.selectable.filter(canMessageAgent).map((agent) => ({
-        id: `agent:${agent.pubkey}`,
-        label: agent.managedName ?? agent.name,
-        picture: agent.avatar,
-        kind: "agent",
-        target: { kind: "person", pubkey: agent.pubkey },
-      })),
-    [agents.selectable],
-  );
-  const people = useMemo((): RailEntry[] => {
-    void archives;
-    // Only pinned people need labels while the picker is closed.
-    const pinnedPeople = new Set(pins.map((pin) => pin.id));
-    const knownAgents = new Set(agents.identities.map((agent) => agent.pubkey));
-    return (
-      picker
-        ? [...profiles]
-        : pins.flatMap((pin) => {
-            if (pin.target.kind !== "person") return [];
-            const profile = profiles.get(pin.target.pubkey);
-            return profile ? [[pin.target.pubkey, profile] as const] : [];
-          })
-    )
-      .filter(
-        ([key, profile]) =>
-          (picker || pinnedPeople.has(`person:${key}`)) &&
-          key !== scope.viewer &&
-          !profile.isAgent &&
-          !profile.nameIsFallback &&
-          !knownAgents.has(key) &&
-          !archiveHides(session.archives, key, scope.viewer),
-      )
-      .map(([pubkey, profile]) => ({
-        id: `person:${pubkey}`,
-        label: resolveName(pubkey, profile.name),
-        kind: "person",
-        picture: profile.picture,
-        target: { kind: "person", pubkey },
-      }));
+    ];
+    return {
+      entries,
+      byId: new Map(entries.map((entry) => [entry.id, entry])),
+    };
   }, [
-    picker,
-    pins,
-    profiles,
-    agents.identities,
-    session.archives,
-    archives,
+    everyone,
+    modelEntries,
+    modelById,
+    session,
     scope.viewer,
+    agents.identities,
     resolveName,
   ]);
-  const pageEntries = useMemo(
-    (): RailEntry[] =>
-      pages.map((page) => ({
-        id: page.key,
-        label: page.title === "Channels" ? "Team" : page.title,
-        kind: "page",
-        target: {
-          version: 1,
-          kind: "page",
-          pluginId: page.pluginId,
-          pageId: page.id,
-          scope,
-        },
-      })),
-    [pages, scope],
-  );
-  const entries = useMemo(
-    () => [...channelEntries, ...agentEntries, ...people, ...pageEntries],
-    [channelEntries, agentEntries, people, pageEntries],
-  );
-  const byId = useMemo(
-    () => new Map(entries.map((entry) => [entry.id, entry])),
-    [entries],
-  );
   const pinned = new Set(pins.map((pin) => pin.id));
   const togglePin = (entry: RailEntry, nextPinned = !pinned.has(entry.id)) => {
-    // A conversation's copies in other sections outlive its pin.
-    const saved =
-      resetPlacement(entry.id, entry.kind === "page" ? undefined : "pins") &&
-      setPinned(entry, nextPinned);
+    const saved = setPinned(entry, nextPinned);
     setError(
       saved ? undefined : "Couldn’t save pins on this device. Try again.",
     );
     return saved;
   };
-  const open = async (entry: RailEntry, navigator: Navigation) => {
+  const open = async (entry: RailEntry) => {
     setError(undefined);
     if (entry.target.kind !== "person") {
       void navigator.open(entry.target);
@@ -444,29 +358,19 @@ export function RailNavigation({
       selected={isSelected(entry)}
       session={session}
       channelsById={channelsById}
-      profiles={profiles}
       resolveName={resolveName}
       identities={agents.identities}
       agentEntries={agentEntries}
     />
   );
-  // A plugin that hides its Solo region lists its chats in its own UI.
-  const soloRegions = useSoloNavigation(session).regions;
-  const soloChats = useMemo(() => {
-    const hidden = hiddenSoloChats(soloRegions);
-    return soloOrder.flatMap((key) => {
-      const channel = channelsById.get(key.slice(2));
-      return channel && !hidden.has(channel.id) ? [channel] : [];
-    });
-  }, [soloOrder, channelsById, soloRegions]);
   // New returns to an ordinary draft that is already open rather than
   // replacing its editor.
-  const newSoloChat = (to: Navigation) => {
+  const newSoloChat = () => {
     const target = navigation.entry.target;
     const destination = resumeSoloDraftTarget(session.scope, target);
     const input = destination === target ? soloDraftInput() : null;
     if (input) input.focus();
-    else void to.open(destination);
+    else void navigator.open(destination);
   };
   // Leaving a Solo chat opens the row that takes its place.
   const neighborsRef = channelNavigation?.soloNeighbors;
@@ -480,13 +384,199 @@ export function RailNavigation({
       if (neighborsRef.current === neighbors) neighborsRef.current = undefined;
     };
   }, [neighborsRef, soloChats, pageSection]);
+  // Mute, read state and the link: the rail's row menus show them, and so
+  // does the open conversation's header through the published actions.
+  const channelActions = (
+    channel: ChannelSummary,
+    whole: boolean,
+    close: () => void,
+    focus: () => void,
+    surface?: ChannelMenuSurface,
+  ) => {
+    if (!channelNavigation) return [];
+    const intent = channelNavigation.mute.intents.get(channel.id);
+    const muted = intent?.pending
+      ? intent.muted
+      : !!preferences.data?.muted.includes(channel.id);
+    return [
+      session.sidebarPreferences.muteWritable && preferences.data && (
+        <MenuItem
+          key="mute"
+          onClick={() => {
+            closeMuteMenu.current = close;
+            channelNavigation.mute.change(channel.id, channel.name, !muted);
+            close();
+            focus();
+          }}
+        >
+          <MenuIcon>
+            {muted ? <BellIcon size={14} /> : <BellSlashIcon size={14} />}
+          </MenuIcon>
+          {muted ? "Unmute" : "Mute"}
+        </MenuItem>
+      ),
+      whole && session.unread.sync().capability === "frontier-sync" && (
+        <ChannelReadMenuItem
+          key="read"
+          unread={session.unread}
+          channelId={channel.id}
+          pending={surface?.pending ?? false}
+          closeOnClick={!surface}
+          run={
+            surface?.runRead ??
+            ((action) =>
+              action().then(
+                () => {},
+                () => setError("Read state couldn’t be saved. Try again."),
+              ))
+          }
+        />
+      ),
+      whole && (
+        <ChannelCopyLinkMenuItem key="copy-link" channelId={channel.id} />
+      ),
+    ];
+  };
+  const publishActions = useRef(channelActions);
+  publishActions.current = channelActions;
+  const menuActions =
+    channelNavigation?.session === session
+      ? channelNavigation.menuActions
+      : undefined;
+  const intents = channelNavigation?.mute.intents;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mute and read changes republish the header's items.
+  useLayoutEffect(() => {
+    if (!menuActions || pageSection) return;
+    menuActions.publish((channel, surface) =>
+      channel.cached
+        ? []
+        : publishActions.current(
+            channel,
+            true,
+            () => surface.close(),
+            () => surface.focus(),
+            surface,
+          ),
+    );
+    return () => menuActions.publish(undefined);
+  }, [menuActions, pageSection, preferences, intents]);
+  // What follows a channel's confirmation: Cancel returns to the control that
+  // opened it, and leaving or deleting the open conversation opens the row
+  // that takes its place.
+  const lifecycleDialog =
+    channelNavigation?.session === session
+      ? channelNavigation.lifecycleDialog
+      : undefined;
+  const lifecycleCallbacks = channelNavigation?.lifecycleCallbacks;
+  const listed = useRef(channels);
+  const lifecycleNeighbors = useRef<{ id: string; ids: string[] }>(undefined);
+  listed.current = channels;
+  useLayoutEffect(() => {
+    if (!lifecycleCallbacks || pageSection || !lifecycleDialog) return;
+    const { channel, action, trigger, focusFallback } = lifecycleDialog;
+    const solo = channel.channelType === "solo";
+    // Captured while it is still listed: completion can arrive after the
+    // roster has dropped it.
+    const rows = rowsLike(session, channel);
+    const at = rows.indexOf(channel.id);
+    if (at >= 0)
+      lifecycleNeighbors.current = {
+        id: channel.id,
+        ids: [...rows.slice(at + 1), ...rows.slice(0, at).reverse()],
+      };
+    const neighbors =
+      lifecycleNeighbors.current?.id === channel.id
+        ? lifecycleNeighbors.current.ids
+        : rows;
+    const focus = () =>
+      (trigger?.isConnected
+        ? trigger
+        : focusFallback?.isConnected
+          ? focusFallback
+          : document.querySelector<HTMLElement>(
+              `#shell-rail [data-rail-channel="${CSS.escape(channel.id)}"]`,
+            )
+      )?.focus({ preventScroll: true });
+    const callbacks = {
+      close: focus,
+      depart: () => {
+        // Archive changes visibility, not access or the current destination.
+        if (action === "archive" || action === "unarchive") return focus();
+        const target = navigator.snapshot().entry.target;
+        if (target.kind !== "conversation" || target.channelId !== channel.id)
+          return;
+        if (solo)
+          return void navigator.open(
+            soloSuccessor(session.scope, listed.current, neighbors, channel.id),
+          );
+        const next = neighbors.find(
+          (id) =>
+            id !== channel.id && listed.current.some((row) => row.id === id),
+        );
+        void navigator.open(
+          next
+            ? { version: 1, kind: "conversation", scope, channelId: next }
+            : emptyChannels,
+        );
+      },
+    };
+    lifecycleCallbacks.current = callbacks;
+    return () => {
+      if (lifecycleCallbacks.current === callbacks)
+        lifecycleCallbacks.current = undefined;
+    };
+  }, [
+    lifecycleCallbacks,
+    lifecycleDialog,
+    pageSection,
+    session,
+    scope,
+    navigator,
+  ]);
   const visited = navigation.entry.target;
   const currentChannel =
     visited.kind === "conversation"
       ? channels.find((channel) => channel.id === visited.channelId)
       : undefined;
+  // Where losing the open conversation lands: the row that takes its place,
+  // captured while it is still listed, as removal drops it first.
+  const openSuccessor = channelNavigation?.openSuccessor;
+  const openNeighbors = useRef<{ id: string; ids: string[] }>(undefined);
+  useLayoutEffect(() => {
+    if (!openSuccessor || pageSection) return;
+    if (currentChannel) {
+      const rows = rowsLike(session, currentChannel);
+      const at = rows.indexOf(currentChannel.id);
+      if (at >= 0)
+        openNeighbors.current = {
+          id: currentChannel.id,
+          ids: [...rows.slice(at + 1), ...rows.slice(0, at).reverse()],
+        };
+    }
+    const open = (id: string) => {
+      const next = (
+        openNeighbors.current?.id === id ? openNeighbors.current.ids : []
+      ).find(
+        (neighbor) =>
+          neighbor !== id && listed.current.some((row) => row.id === neighbor),
+      );
+      void navigator.open(
+        next
+          ? { version: 1, kind: "conversation", scope, channelId: next }
+          : emptyChannels,
+      );
+    };
+    openSuccessor.current = open;
+    return () => {
+      if (openSuccessor.current === open) openSuccessor.current = undefined;
+    };
+  }, [openSuccessor, pageSection, currentChannel, session, scope, navigator]);
   const activeDockSection =
     selectedSection ??
+    // A section a person made has no address: its open list marks it.
+    (listedSection && listedSection !== "team" && listedSection !== "solo"
+      ? listedSection
+      : undefined) ??
     (currentChannel?.channelType === "solo" ||
     (sectionRoute &&
       typeof sectionRoute === "object" &&
@@ -498,7 +588,7 @@ export function RailNavigation({
             "buzz.inbox/inbox",
             "buzz.drafts-and-sent/drafts-sent",
           ].includes(selected)
-        ? "messages"
+        ? "team"
         : "navigation");
   const current = entries.find(
     (entry) =>
@@ -520,7 +610,6 @@ export function RailNavigation({
 
   /** The cards, or one section's full list for the shell's list column. */
   const view = () => {
-    const navigator = pageSection ? listNavigator : directNavigator;
     // A list shows one section: the others' rows are not built for it.
     const shown = (id: string, content: () => ReactNode) =>
       pageSection && pageSection !== id ? null : content();
@@ -547,7 +636,7 @@ export function RailNavigation({
         "aria-label": entry.label,
         selected: isSelected(entry),
         disabled: opening === entry.id,
-        onClick: () => void open(entry, navigator),
+        onClick: () => void open(entry),
       };
       const control = feed ? (
         <RailConversationItem
@@ -606,10 +695,7 @@ export function RailNavigation({
 
     const sourceRow = (entry: RailEntry, section: string) => ({
       entry,
-      content: row(
-        entry,
-        (section === "pins" || section === "agents") && pageSection !== section,
-      ),
+      content: row(entry, section === "pins" && pageSection !== section),
     });
     const pageRow = (page: RegisteredPage) => {
       const entry = byId.get(page.key);
@@ -647,14 +733,7 @@ export function RailNavigation({
       pages.filter((page) => page.key === key),
     );
     let sectionPage: ReactNode;
-    if (pageSection === "messages" || pageSection === "solo") {
-      const membership = railSections(
-        railLayout,
-        contributed.map((section) => ({
-          id: section.key,
-          title: section.title,
-        })),
-      );
+    if (pageSection === "team" || pageSection === "solo") {
       const defaults = (pageSection === "solo" ? soloChats : channels).flatMap(
         (channel) => {
           const entry = byId.get(`channel:${channel.id}`);
@@ -674,14 +753,14 @@ export function RailNavigation({
         />
       );
     }
-    const teamCount = (filter: ActivityView["filter"]) => (
+    const teamCount = (filter: ConversationFilter) => (
       <TeamCount session={session} filter={filter} />
     );
     const activityPage = teamPages.find(
       (page) => page.key === "buzz.inbox/inbox",
     );
     const teamViews: {
-      filter: ActivityView["filter"];
+      filter: ConversationFilter;
       label: string;
       icon: ReactElement;
     }[] = [
@@ -695,32 +774,30 @@ export function RailNavigation({
       { filter: "dms", label: "DMs", icon: <UsersIcon size={18} /> },
       { filter: "mentions", label: "Mentions", icon: <AtIcon size={18} /> },
     ];
-    const teamOpen = routedSection(navigation.entry.target) === "messages";
-    const draftsPage = teamPages.find((page) => page !== activityPage);
-    const messageCard = shown("messages", () => (
+    const teamOpen = routedSection(navigation.entry.target) === "team";
+    const openTeamView = (filter: ActivityView["filter"]) => {
+      setMessageView({ ...messageView, filter });
+      void navigator.open(sidebarSectionTarget(scope, "team"));
+    };
+    const messageCard = shown("team", () => (
       <RailGroup
-        id="messages"
+        id="team"
         title="Team"
-        rows={recentOrder.flatMap((key) => {
-          const channel = channelsById.get(key.slice(2));
-          if (
-            !channel ||
-            channel.channelType === "solo" ||
-            hidden.has(channel.id)
-          )
-            return [];
+        rows={teamChats.flatMap((channel) => {
+          if (hidden.has(channel.id)) return [];
           const entry = byId.get(`channel:${channel.id}`);
-          return entry ? [sourceRow(entry, "messages")] : [];
+          return entry ? [sourceRow(entry, "team")] : [];
         })}
+        rowsLabel="Recent conversations"
         views={
-          <div className={styles.teamViews}>
+          <div className={styles.teamViews} data-rail-team-icons="">
             {teamViews.map((item) => (
               <TeamViewMenu
                 key={item.filter}
                 session={session}
                 filter={item.filter}
               >
-                <div className={styles.teamView}>
+                <span className={styles.teamView}>
                   <Tooltip content={item.label}>
                     <IconButton
                       variant="ghost"
@@ -728,34 +805,41 @@ export function RailNavigation({
                       aria-label={item.label}
                       icon={item.icon}
                       data-rail-team-view={item.filter}
+                      aria-current={
+                        teamOpen && messageView.filter === item.filter
+                          ? "page"
+                          : undefined
+                      }
                       aria-pressed={
                         teamOpen && messageView.filter === item.filter
                       }
-                      onClick={() => {
-                        setMessageView({ ...messageView, filter: item.filter });
-                        void directNavigator.open(
-                          sidebarSectionTarget(scope, "messages"),
-                        );
-                      }}
+                      onClick={() => openTeamView(item.filter)}
                     />
                   </Tooltip>
                   <span className={styles.teamCount}>
                     {teamCount(item.filter)}
                   </span>
-                </div>
+                </span>
               </TeamViewMenu>
             ))}
-            {draftsPage && (
-              <Tooltip content={draftsPage.title}>
-                <IconButton
-                  variant="ghost"
-                  shape="round"
-                  aria-label={draftsPage.title}
-                  icon={<SendIcon size={18} />}
-                  onClick={() => onSelect(draftsPage.key)}
-                />
-              </Tooltip>
-            )}
+            {teamPages
+              .filter((page) => page !== activityPage)
+              .map((page) => {
+                const { icon, image, label } = pagePresentation(page);
+                return (
+                  <Tooltip key={page.key} content={label}>
+                    <IconButton
+                      variant="ghost"
+                      shape="round"
+                      aria-label={label}
+                      icon={<PageIcon icon={icon} image={image} size={18} />}
+                      data-rail-team-view={page.key}
+                      aria-current={selected === page.key ? "page" : undefined}
+                      onClick={() => onSelect(page.key)}
+                    />
+                  </Tooltip>
+                );
+              })}
           </div>
         }
         pageContent={sectionPage}
@@ -775,6 +859,7 @@ export function RailNavigation({
       <RailArrangement
         key={partition}
         partition={partition}
+        current={byId}
         renderSectionList={(id, title, entries, action) => (
           <RailConversationList
             section={id}
@@ -815,15 +900,9 @@ export function RailNavigation({
           // A section a person made has no page of its own: open its first
           // conversation beside its list.
           const first =
-            id === "messages" || id === "solo"
+            id === "team" || id === "solo"
               ? undefined
-              : railSections(
-                  railLayout,
-                  contributed.map((section) => ({
-                    id: section.key,
-                    title: section.title,
-                  })),
-                )
+              : membership
                   .entries(id, [], byId)
                   .find((entry) => entry.target.kind === "conversation");
           if (first?.target.kind === "conversation" && openInSection)
@@ -843,7 +922,7 @@ export function RailNavigation({
             )?.focus();
         }}
         renderEntry={(entry, section) => {
-          if (section === "pins" || section === "agents")
+          if (section === "pins")
             return row(byId.get(entry.id) ?? entry, pageSection !== section);
           const contribution = contributed.find((section) =>
             entry.id.startsWith(`contributed:${section.key}:`),
@@ -887,53 +966,9 @@ export function RailNavigation({
             destination.kind === "conversation" &&
             !destination.threadRootId &&
             !destination.messageId;
-          const intent = channelNavigation.mute.intents.get(channel.id);
-          const muted = intent?.pending
-            ? intent.muted
-            : !!preferences.data?.muted.includes(channel.id);
           return (
             <>
-              {session.sidebarPreferences.muteWritable && preferences.data && (
-                <MenuItem
-                  disabled={intent?.pending}
-                  onClick={() => {
-                    closeMuteMenu.current = close;
-                    channelNavigation.mute.change(
-                      channel.id,
-                      channel.name,
-                      !muted,
-                    );
-                    close();
-                    focus();
-                  }}
-                >
-                  <MenuIcon>
-                    {muted ? (
-                      <BellIcon size={14} />
-                    ) : (
-                      <BellSlashIcon size={14} />
-                    )}
-                  </MenuIcon>
-                  {muted ? "Unmute" : "Mute"}
-                </MenuItem>
-              )}
-              {whole &&
-                session.unread.sync().capability === "frontier-sync" && (
-                  <ChannelReadMenuItem
-                    unread={session.unread}
-                    channelId={channel.id}
-                    pending={false}
-                    closeOnClick
-                    run={(action) =>
-                      action().then(
-                        () => {},
-                        () =>
-                          setError("Read state couldn’t be saved. Try again."),
-                      )
-                    }
-                  />
-                )}
-              {whole && <ChannelCopyLinkMenuItem channelId={channel.id} />}
+              {channelActions(channel, whole, close, focus)}
               {whole &&
                 (!channel.readOnly || channel.viewerRole === "guest") &&
                 !channel.cached &&
@@ -1008,24 +1043,21 @@ export function RailNavigation({
                   />
                 }
               >
-                {!pins.length &&
-                  !railLayout.placements.some(
-                    (item) => item.section === "pins",
-                  ) && (
-                    <NavigationItem
-                      label="Pin a chat, person, or channel"
-                      icon={<PinIcon size={18} />}
-                      onClick={() => {
-                        setQuery("");
-                        setPicker(true);
-                      }}
-                    />
-                  )}
+                {!pins.length && (
+                  <NavigationItem
+                    label="Pin a chat, person, or channel"
+                    icon={<PinIcon size={18} />}
+                    onClick={() => {
+                      setQuery("");
+                      setPicker(true);
+                    }}
+                  />
+                )}
               </RailGroup>
             )),
           },
           {
-            id: "messages",
+            id: "team",
             title: "Team",
             icon: <ChatCircleIcon size={22} />,
             content: messageCard,
@@ -1058,7 +1090,7 @@ export function RailNavigation({
                     variant={pageSection ? "glass" : "ghost"}
                     aria-label="New Solo chat"
                     icon={<PlusIcon size={16} strokeWidth={2} />}
-                    onClick={() => newSoloChat(navigator)}
+                    onClick={() => newSoloChat()}
                   />
                 }
               >
@@ -1115,8 +1147,8 @@ export function RailNavigation({
               icon={<PlusIcon size={20} aria-hidden="true" />}
               onClick={() =>
                 pageSection === "solo"
-                  ? newSoloChat(listNavigator)
-                  : void listNavigator.open({
+                  ? newSoloChat()
+                  : void navigator.open({
                       version: 1,
                       kind: "page",
                       pluginId: "buzz.channels",
@@ -1164,7 +1196,7 @@ const TeamCount = memo(function TeamCount({
   filter,
 }: {
   session: RelaySession;
-  filter: ActivityView["filter"];
+  filter: ConversationFilter;
 }) {
   const count = useConversationCount(session, unreadIn[filter]);
   return count ? (
@@ -1181,19 +1213,33 @@ const unreadIn = Object.fromEntries(
     // Team's views: All keeps Solo in its own collection.
     { filter, unread: true, home: "team" },
   ]),
-) as Record<ActivityView["filter"], ConversationQuery>;
-const recentView: ConversationQuery = {
-  filter: "all",
-  unread: false,
-  sort: "recent",
-};
-const soloView: ConversationQuery = {
-  filter: "all",
-  unread: false,
-  home: "solo",
-};
+) as Record<ConversationFilter, ConversationQuery>;
 /** Entries and visits keep their targets, so each is serialized once. */
 const targetKeys = new WeakMap<object, string>();
+const emptyChannels = {
+  version: 1,
+  kind: "page",
+  pluginId: "buzz.channels",
+  pageId: "channels",
+  route: { version: 1, params: "empty" },
+} as const;
+
+/** The rows of a channel's own kind, in order: every list showing it also
+ * shows them. */
+function rowsLike(session: RelaySession, channel: ChannelSummary) {
+  return conversationIndex(session)
+    .keys(
+      channel.channelType === "solo"
+        ? soloView
+        : {
+            filter: channel.channelType === "dm" ? "dms" : "channels",
+            unread: false,
+            home: "team",
+          },
+    )
+    .flatMap((key) => (key.startsWith("c:") ? [key.slice(2)] : []));
+}
+
 function keyOf(target: Exclude<RailEntry["target"], { kind: "person" }>) {
   let key = targetKeys.get(target);
   if (key === undefined) {

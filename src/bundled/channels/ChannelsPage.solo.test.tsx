@@ -11,7 +11,10 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { createRelaySession, type RelaySession } from "../../features/relay/session";
+import {
+  createRelaySession,
+  type RelaySession,
+} from "../../features/relay/session";
 import { ChatNotStarted } from "../../features/relay/channel-writes";
 import { ApiPaused } from "../../features/relay/http-admission";
 import { ChannelLifecycleUnconfirmed } from "../../features/relay/channel-lifecycle";
@@ -232,7 +235,6 @@ function fixture({
     data: {
       sections: [{ id: "work", name: "Work", order: 0 }],
       assignments: {},
-      starred: [],
       muted: [],
     },
   };
@@ -2003,7 +2005,9 @@ it("leaves focus that left the conversation before it lost membership", async ()
   const elsewhere = document.createElement("button");
   document.body.append(elsewhere);
   try {
-    act(() => screen.getByRole("button", { name: "Conversation actions" }).focus());
+    act(() =>
+      screen.getByRole("button", { name: "Conversation actions" }).focus(),
+    );
     act(() => elsewhere.focus());
     act(() => {
       elsewhere.remove();
@@ -2208,7 +2212,9 @@ it("never shows lost membership for the viewer's own Leave, even before it navig
   try {
     const user = userEvent.setup();
     await screen.findByRole("textbox", { name: "Message Planning" });
-    await user.click(screen.getByRole("button", { name: "Conversation actions" }));
+    await user.click(
+      screen.getByRole("button", { name: "Conversation actions" }),
+    );
     await user.click(
       await screen.findByRole("button", { name: "Leave channel" }),
     );
@@ -2238,7 +2244,9 @@ it.each(["Archive channel", "Leave channel"])(
     f.mountWithToasts();
     const user = userEvent.setup();
     await screen.findByRole("textbox", { name: "Message Planning" });
-    await user.click(screen.getByRole("button", { name: "Conversation actions" }));
+    await user.click(
+      screen.getByRole("button", { name: "Conversation actions" }),
+    );
     await user.click(await screen.findByRole("button", { name: item }));
     const dialog = await screen.findByRole("dialog", {
       name: `${item}: Planning`,
@@ -2261,7 +2269,9 @@ it("shows a removal during the viewer's Leave that fails before publishing", asy
   f.mountWithToasts();
   const user = userEvent.setup();
   await screen.findByRole("textbox", { name: "Message Planning" });
-  await user.click(screen.getByRole("button", { name: "Conversation actions" }));
+  await user.click(
+    screen.getByRole("button", { name: "Conversation actions" }),
+  );
   await user.click(
     await screen.findByRole("button", { name: "Leave channel" }),
   );
@@ -2289,7 +2299,9 @@ it("shows a removal during the viewer's Leave that fails before publishing", asy
 async function failLeave(f: ReturnType<typeof fixture>) {
   const user = userEvent.setup();
   await screen.findByRole("textbox", { name: "Message Planning" });
-  await user.click(screen.getByRole("button", { name: "Conversation actions" }));
+  await user.click(
+    screen.getByRole("button", { name: "Conversation actions" }),
+  );
   await user.click(
     await screen.findByRole("button", { name: "Leave channel" }),
   );

@@ -13,13 +13,15 @@ export type RailLayout = {
   sections: { id: string; title: string }[];
   placements: Placement[];
 };
-const KEY = "navigation-layout:v2";
+export const LAYOUT_KEY = "navigation-layout:v2";
+const KEY = LAYOUT_KEY;
 
-function readLayout(scope: string): RailLayout {
-  const saved = readView<Partial<RailLayout> | null>(scope, KEY, null);
-  const raw =
-    saved ??
-    readView<Partial<RailLayout> | null>(scope, "navigation-layout:v1", null);
+const readLayout = (scope: string) =>
+  parseRailLayout(readView<unknown>(scope, KEY, null));
+/** Team's section was once named for its page; saved arrangements still say so. */
+const sectionId = (id: string) => (id === "messages" ? "team" : id);
+export function parseRailLayout(value: unknown): RailLayout {
+  const raw = value as Partial<RailLayout> | null;
   const sections = Array.isArray(raw?.sections)
     ? raw.sections.filter(
         (section) =>
@@ -30,21 +32,11 @@ function readLayout(scope: string): RailLayout {
       )
     : [];
   const placements: Placement[] = [];
-  // Upgrade old Plugins assignments to the Team defaults. Subsequent moves
-  // save under v2, so the person can still place these shortcuts elsewhere.
   if (Array.isArray(raw?.placements))
     for (const item of raw.placements) {
       const entry = parseRailEntries([item?.entry])[0];
-      if (!entry || typeof item.section !== "string") continue;
-      const section =
-        !saved &&
-        (item.section === "plugins" || item.section === "navigation") &&
-        (entry.id === "buzz.inbox/inbox" ||
-          entry.id === "buzz.drafts-and-sent/drafts-sent")
-          ? "messages"
-          : item.section === "plugins"
-            ? "navigation"
-            : item.section;
+      if (!entry || typeof item?.section !== "string") continue;
+      const section = sectionId(item.section);
       // An app row has one place; a conversation has one copy per section.
       if (
         !placements.some(
@@ -56,20 +48,17 @@ function readLayout(scope: string): RailLayout {
         placements.push({ section, entry });
     }
   const order = Array.isArray(raw?.order)
-    ? [...new Set(raw.order.filter((id) => typeof id === "string"))]
+    ? [
+        ...new Set(
+          raw.order.filter((id) => typeof id === "string").map(sectionId),
+        ),
+      ]
     : [];
-  // The former plugin bucket lived in the fixed first card. Keep that card
-  // first on upgrade, preserving the relative order of all movable sections.
-  if (order.includes("plugins") && !order.includes("navigation"))
-    order.unshift("navigation");
-  return {
-    order: order.filter((id) => id !== "plugins"),
-    sections,
-    placements,
-  };
+  return { order, sections, placements };
 }
 
-/** The rail's local arrangement never writes to a conversation or plugin's data. */
+/** The rail's arrangement never writes to a conversation or plugin's data.
+ * This device's copy answers at once; `syncRail` shares it with the account. */
 export function useRailLayout(scope: string) {
   const subscribe = useCallback(
     (listener: () => void) => subscribeView(scope, listener),
@@ -112,11 +101,14 @@ export function useRailLayout(scope: string) {
         { section, entry },
       ],
     }));
-  const reorder = (id: string, over: string, available: string[]) =>
+  /** Moves a section to another's place. `shown` are the sections in the
+   * order the rail shows them. A saved section that isn't shown now, like a
+   * plugin's that is starting or disabled, keeps its place. */
+  const reorder = (id: string, over: string, shown: string[]) =>
     save((current) => {
       const order = [
-        ...current.order.filter((key) => available.includes(key)),
-        ...available.filter((key) => !current.order.includes(key)),
+        ...current.order,
+        ...shown.filter((key) => !current.order.includes(key)),
       ];
       const from = order.indexOf(id);
       const to = order.indexOf(over);
@@ -125,21 +117,16 @@ export function useRailLayout(scope: string) {
       order.splice(to, 0, id);
       return { ...current, order };
     });
+  /** A new section follows every placed one: it has no saved position yet. */
   const create = (
     id: string,
     title: string,
-    entry: RailEntry | undefined,
-    available: string[],
+    entry?: RailEntry,
     from?: string,
   ) =>
     save((current) => ({
       ...current,
       sections: [...current.sections, { id: `custom:${id}`, title }],
-      order: [
-        ...current.order,
-        ...available.filter((key) => !current.order.includes(key)),
-        `custom:${id}`,
-      ],
       placements: entry
         ? [
             ...others(current, entry, `custom:${id}`, from),

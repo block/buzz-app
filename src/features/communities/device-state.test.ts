@@ -211,7 +211,7 @@ it("leave purges retained tab visit addresses before same-window rejoin and reje
   const otherCommunity = mount(`${kept}:${viewer}`);
   for (const hook of [old, otherAccount, otherCommunity])
     act(() => {
-      hook.result.current.enterVisit("profile:detail", undefined, true, {
+      hook.result.current.enterVisit("profile:detail", undefined, {
         channelId: "alpha",
         target: "nostr:profile",
       });
@@ -223,7 +223,7 @@ it("leave purges retained tab visit addresses before same-window rejoin and reje
     });
   expect(await purgeCommunityDeviceState(left, viewer)).toEqual([]);
   act(() =>
-    old.result.current.enterVisit("late:detail", undefined, true, {
+    old.result.current.enterVisit("late:detail", undefined, {
       channelId: "alpha",
       target: "nostr:profile",
     }),

@@ -4,6 +4,11 @@ import {
   expectMessageActionsHidden,
   hoverMessage,
 } from "./message-actions.mjs";
+import {
+  conversationAction,
+  conversationActions,
+  soloRow,
+} from "./rail-helpers.mjs";
 
 const own = "33333333-3333-4333-8333-333333333333";
 const shared = "11111111-1111-4111-8111-111111111111";
@@ -71,10 +76,8 @@ function accessControls(page) {
     }),
     async openAccess() {
       // Cached startup renders Share access too. Its local dialog is replaced
-      // with the live session; Chat actions exists only on the live header.
-      await expect(
-        page.getByRole("button", { name: "Chat actions", exact: true }),
-      ).toBeVisible();
+      // with the live session; its actions exist only on the live header.
+      await expect(conversationActions(page)).toBeVisible();
       await page
         .getByRole("button", { name: /^Share access to /, exact: true })
         .last()
@@ -98,7 +101,7 @@ test.describe("owner", () => {
     app,
   }, info) => {
     await openChat(page, app, own);
-    const row = page.locator(`[data-solo-channel-id="${own}"]`);
+    const row = soloRow(page, own);
     const { dialog, audience, openAccess, confirm } = accessControls(page);
     let saves = 0;
     for (const presentation of presentations) {
@@ -376,9 +379,7 @@ test.describe("visitor", () => {
       await expect(
         page.getByRole("button", { name: "Join", exact: true }),
       ).toBeVisible();
-      await expect(
-        page.locator(`[data-solo-channel-id="${shared}"]`),
-      ).toHaveCount(0);
+      await expect(soloRow(page, shared)).toHaveCount(0);
       await hoverMessage(message);
       await message
         .getByRole("button", { name: "More message actions", exact: true })
@@ -490,7 +491,7 @@ test.describe("visitor", () => {
       name: "Conversation",
       exact: true,
     });
-    const row = page.locator(`[data-solo-channel-id="${shared}"]`);
+    const row = soloRow(page, shared);
     await expect(row).toHaveCount(0);
     const join = page.getByRole("button", { name: "Join", exact: true });
     await present(page, presentations[0]);
@@ -524,14 +525,11 @@ test.describe("visitor", () => {
       );
     }
     await present(page, presentations[0]);
-    const actions = page.getByRole("button", {
-      name: "Chat actions",
-      exact: true,
-    });
+    const actions = conversationActions(page);
     await page.reload();
     await expect(row).toBeVisible();
     // Cached startup renders Share access too. Its local dialog is replaced
-    // with the live session; Chat actions exists only on the live header.
+    // with the live session; its actions exist only on the live header.
     await expect(actions).toBeVisible();
     await page
       .getByRole("button", { name: /^Chat access for / })
@@ -552,12 +550,8 @@ test.describe("visitor", () => {
     await expect(row).toBeVisible();
     await expect(page.locator('[contenteditable="true"]')).toHaveCount(0);
     await actions.click();
-    await expect(
-      page.getByRole("menuitem", { name: "Archive chat", exact: true }),
-    ).toHaveCount(0);
-    await page
-      .getByRole("menuitem", { name: "Leave chat", exact: true })
-      .click();
+    await expect(conversationAction(page, "Archive chat")).toHaveCount(0);
+    await conversationAction(page, "Leave chat").click();
     const leave = page.getByRole("dialog", {
       name: "Leave chat: Release planning",
       exact: true,
@@ -568,9 +562,7 @@ test.describe("visitor", () => {
     await page.keyboard.press("Escape");
     await expect(actions).toBeFocused();
     await actions.click();
-    await page
-      .getByRole("menuitem", { name: "Leave chat", exact: true })
-      .click();
+    await conversationAction(page, "Leave chat").click();
     await leave
       .getByRole("button", { name: "Leave chat", exact: true })
       .click();

@@ -213,7 +213,6 @@ it("leads an empty search with other unmuted unread channels and DMs, selecting 
       decodeSidebarPreferences: async () => ({
         sections: [],
         assignments: {},
-        starred: [],
         muted: ["muted"],
       }),
     },

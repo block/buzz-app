@@ -1,7 +1,11 @@
 import { pluginAction } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, wheel, virtuaIdle } from "./timeline.mjs";
-import { closeSettings } from "./navigation.mjs";
+import {
+  channelRow,
+  closeSettings,
+  hideNarrowConversationList,
+} from "./navigation.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { animationsSettled } from "./animations.mjs";
@@ -27,12 +31,7 @@ const workingNow = (page) =>
   page.getByRole("dialog", { name: "Working now", exact: true });
 // Hover is the pointer path; keyboard opening is exercised explicitly below.
 const openWorkingNow = async (page, scope) => {
-  // Leave the sidebar preview before crossing into the conversation. Its
-  // open surface can cover the conversation trigger after channel navigation.
   await page.mouse.move(0, 0);
-  await expect(
-    page.locator('[role="dialog"][data-channel-activity]'),
-  ).toHaveCount(0);
   await activityTrigger(scope).hover();
   const popup = workingNow(page);
   await expect(popup).toBeVisible();
@@ -79,29 +78,6 @@ const activity = (kind, channelId, turnId, payload) => ({
   sessionId: "S",
   turnId,
   ...(payload === undefined ? {} : { payload }),
-});
-
-test("sidebar activity opens the working agent's profile", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
-  const key = generateSecretKey();
-  const agent = getPublicKey(key);
-  app.observer(activity("turn_liveness", "alpha", "sidebar"), key);
-  const row = page.locator('[data-channel-id="alpha"]');
-  await expect(
-    row.getByRole("img", { name: /working in Alpha$/ }),
-  ).toBeVisible();
-  await row.hover();
-  const popup = page.getByRole("dialog", { name: "Activity in Alpha" });
-  await expect(popup).toBeVisible();
-  await popup.getByRole("button", { name: /Open conversation for/ }).hover();
-  const action = popup.getByRole("button", { name: /View .+ activity/ });
-  await expect(action).toBeVisible();
-  await action.click();
-  await expectProfile(page, agent);
 });
 
 test("mention picker demands the relay's protected archive snapshot", async ({
@@ -291,7 +267,7 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
     .toBe(false);
   expect(app.relay.sockets).toHaveLength(sockets);
   await closeSettings(page);
-  await page.locator('[data-channel-id="alpha"]').click();
+  await channelRow(page, "alpha").click();
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
@@ -314,7 +290,7 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   app.observer(activity("turn_liveness", "alpha", "after-reset"), firstKey);
   await closeSettings(page);
-  await page.locator('[data-channel-id="alpha"]').click();
+  await channelRow(page, "alpha").click();
   // Only the fresh agent returns; the disabled generation's evidence is gone.
   await expect(trigger).toHaveAccessibleName(onlyFirst);
   await viewAgentActivity(page, composer, first);
@@ -390,6 +366,7 @@ for (const mode of ["light", "dark"]) {
           "aria-label",
           width <= 650 ? "Show navigation" : "Hide sidebar",
         );
+        await hideNarrowConversationList(page);
         await expect(trigger).toBeVisible();
         // Real scrolling and floating-control geometry cannot be proven in jsdom.
         // The recovery wrapper must preserve the activity lane for channel history.
@@ -510,9 +487,10 @@ test.describe("thread activity", () => {
     const threadTrigger = activityTrigger(thread);
     const threadStatus = thread.locator("[data-agent-working-status]");
     const popup = workingNow(page);
-    const marker = page
-      .locator('[data-channel-id="alpha"]')
-      .getByRole("img", { name: /working in Alpha$/ });
+    // An agent working in the channel animates its row in the list.
+    const marker = channelRow(page, "alpha").and(
+      page.locator('[data-state="working"]'),
+    );
     const sendEvent = (kind, threadId, signingKey = key, content = "") => {
       const event = finalizeEvent(
         {
@@ -567,7 +545,8 @@ test.describe("thread activity", () => {
     const typing = sendTyping(root.id);
     await expect(threadTrigger).toHaveAccessibleName(onlyAgent);
     await expect(threadStatus).toHaveText(/ is working$/);
-    await expect(marker).toHaveCount(0); // Thread-only fallback must not light channel scope.
+    // The list row shows work anywhere in its channel, threads included.
+    await expect(marker).toHaveCount(1);
     await expect(page.locator(`[data-message-id="${typing.id}"]`)).toHaveCount(
       0,
     );
@@ -683,12 +662,9 @@ test.describe("thread activity", () => {
     // seconds, so channel work shows from its first pulse after that.
     await expect(async () => {
       sendTyping();
-      await expect(marker).toBeVisible({ timeout: 1000 });
+      await expect(channelTrigger).toBeVisible({ timeout: 1000 });
     }).toPass({ timeout: 10_000 });
-    const workingBox = await marker.boundingBox();
-    expect(workingBox).toEqual(
-      expect.objectContaining({ width: 26, height: 15 }),
-    );
+    await expect(marker.locator('[data-size="small"]')).toBeVisible();
     // Channel-level work is in the conversation already shown, never an
     // inferred thread, so its row opens the agent's activity.
     await openWorkingNow(page, composer);
@@ -941,7 +917,7 @@ test.describe("thread activity", () => {
     );
     publish(keys[1], undefined, 9);
     await expect(channelTrigger).toHaveCount(0);
-    await page.locator('[data-channel-id="beta"]').click();
+    await channelRow(page, "beta").click();
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();

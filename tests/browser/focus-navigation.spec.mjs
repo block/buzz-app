@@ -1,13 +1,15 @@
 import { test, expect } from "./fixture.mjs";
 import {
   closeSettings,
+  hideNarrowConversationList,
+  openChannel,
   openPage,
   settlePanelMotion,
   settleShellToggle,
 } from "./navigation.mjs";
 import { clickRow, open } from "./timeline.mjs";
 import { readJournal } from "./reading.mjs";
-import { openChannelDetails } from "./channel-details.mjs";
+import { chooseChannelAction, openChannelDetails } from "./channel-details.mjs";
 
 test.use({
   productionBroker: true,
@@ -131,7 +133,8 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   await expect(side).toBeHidden();
   await page.keyboard.press(keys.main);
   await expect(alpha).toBeFocused();
-  await toggle.click();
+  // The collapsed pane's toggle moves into the header's actions.
+  await chooseChannelAction(page, "Toggle tab pane");
   await expect(sideBeta).toHaveText("Beta draft");
 
   // Existing shortcut journeys cover storage/reload/reset. Here the real
@@ -471,7 +474,7 @@ test("covered panes and notifications preserve focus and F6 recovery", async ({
 test.extend({ readState: true, threadUnread: true })(
   "a thread covering the conversation keeps typing out of it",
   async ({ page, app }) => {
-    await page.setViewportSize({ width: 1100, height: 900 });
+    await page.setViewportSize({ width: 1440, height: 900 });
     await open(page, app);
     const conversation = page.locator('article[aria-label="Conversation"]');
     const composer = conversation.getByRole("textbox", {
@@ -541,6 +544,7 @@ test.extend({ readState: true, threadUnread: true })(
       .click();
     await expect(conversation).not.toHaveAttribute("inert");
     await expect(chip).toBeFocused();
+    await hideNarrowConversationList(page);
     await composer.click();
     await page.keyboard.press("End");
     await page.keyboard.type("!");
@@ -560,7 +564,7 @@ test.extend({ readState: true, threadUnread: true })(
     const read = (frontier, event, catchUp) =>
       Object.hasOwn(frontier, `msg:${event.id}`) ||
       (frontier[catchUp] ?? 0) >= event.created_at;
-    await page.setViewportSize({ width: 1100, height: 900 });
+    await page.setViewportSize({ width: 1440, height: 900 });
     await open(page, app);
     const history = app.histories.get("primary/alpha");
     const root = history.find((event) => event.content === "Thread root 1");
@@ -686,8 +690,9 @@ test.extend({ companionFixture: true })(
   },
 );
 
-// A side panel's launcher sits in the conversation the panel covers at narrow
-// widths, so Escape returns focus to it once the close uncovers it.
+// A side panel's launcher lives in the header's actions menu, in the
+// conversation the panel covers at narrow widths, so Escape returns focus to
+// the menu's button once the close uncovers it.
 test("escaping a side panel over the conversation returns focus to its launcher", async ({
   page,
   app,
@@ -701,11 +706,11 @@ test("escaping a side panel over the conversation returns focus to its launcher"
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, app);
   const conversation = page.locator('article[aria-label="Conversation"]');
-  const launcher = page.getByRole("button", {
-    name: "Toggle channel todos",
+  const actions = page.getByRole("button", {
+    name: "Conversation actions",
     exact: true,
   });
-  await launcher.click();
+  await chooseChannelAction(page, "Toggle channel todos");
   const todos = page.getByRole("region", { name: "Todos panel", exact: true });
   await expect(todos).toBeVisible();
   await page
@@ -717,7 +722,7 @@ test("escaping a side panel over the conversation returns focus to its launcher"
   await page.keyboard.press("Escape");
   await expect(todos).toHaveCount(0);
   await expect(conversation).not.toHaveAttribute("inert");
-  await expect(launcher).toBeFocused();
+  await expect(actions).toBeFocused();
 });
 
 // A side panel restored by a page remount has no launcher element to return
@@ -735,14 +740,13 @@ test("escaping a restored side panel over the conversation returns focus to the 
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, app);
   const conversation = page.locator('article[aria-label="Conversation"]');
-  await page
-    .getByRole("button", { name: "Toggle channel todos", exact: true })
-    .click();
+  await chooseChannelAction(page, "Toggle channel todos");
   const todos = page.getByRole("region", { name: "Todos panel", exact: true });
   await expect(todos).toBeVisible();
   await openPage(page, "Agents");
   await expect(todos).toHaveCount(0);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   await expect(todos).toBeVisible();
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
@@ -754,7 +758,7 @@ test("escaping a restored side panel over the conversation returns focus to the 
   await expect(todos).toHaveCount(0);
   await expect(conversation).not.toHaveAttribute("inert");
   await expect(
-    page.getByRole("button", { name: "Channel actions", exact: true }),
+    page.getByRole("button", { name: "Conversation actions", exact: true }),
   ).toBeFocused();
 });
 
@@ -772,9 +776,7 @@ test.extend({ readState: true, threadUnread: true })(
     await page.setViewportSize({ width: 1440, height: 900 });
     await open(page, app);
     const conversation = page.locator('article[aria-label="Conversation"]');
-    await page
-      .getByRole("button", { name: "Toggle channel todos", exact: true })
-      .click();
+    await chooseChannelAction(page, "Toggle channel todos");
     const todos = page.getByRole("region", {
       name: "Todos panel",
       exact: true,
@@ -832,9 +834,7 @@ test.extend({ companionFixture: true, readState: true, threadUnread: true })(
       name: "Message #Alpha",
       exact: true,
     });
-    await page
-      .getByRole("button", { name: "Toggle channel todos", exact: true })
-      .click();
+    await chooseChannelAction(page, "Toggle channel todos");
     const todos = page.getByRole("region", {
       name: "Todos panel",
       exact: true,

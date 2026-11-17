@@ -1,12 +1,155 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot } from "../relay/threads";
 import type { MessageComposerProps } from "./MessageComposer";
 import { ReplyContext } from "./ReplyContext";
+import type { ReplyHold } from "./use-message-reply-hold";
 import { usePendingRequest } from "./use-pending-request";
 import { Button } from "../../shared/design-system/ui/Button";
 import styles from "./Messages.module.css";
+
+/** The rows a reader has loaded, with edits and deletions already folded. */
+export type LoadedRows = {
+  subscribe(listener: () => void): () => void;
+  row(id: string): ChannelMessage | undefined;
+};
+type Target = {
+  session: RelaySession;
+  channelId: string;
+  id: string;
+  rootId: string;
+  /** The row as selected, shown until the reader or an exact read has it. */
+  selected: ChannelMessage;
+};
+const noSubscribe = () => () => {};
+
+/**
+ * The message a composer replies to. A row in the reader's loaded window is
+ * its own evidence: it shows, follows edits and sends at once. Only a target
+ * that has left that window is read exactly, and Send waits for that read.
+ * Choosing the current target again clears it.
+ */
+export function useReplyTarget(
+  session: RelaySession,
+  channelId: string | undefined,
+  loaded: LoadedRows,
+  requestFocus: () => void,
+) {
+  const [chosen, setChosen] = useState<Target>();
+  const current = useRef(chosen);
+  current.current = chosen;
+  const target =
+    chosen?.session === session && chosen.channelId === channelId
+      ? chosen
+      : undefined;
+  if (chosen && !target) setChosen(undefined);
+  const select = useCallback(
+    (row: ChannelMessage, deferFocus = false): ReplyHold => {
+      const previous = current.current;
+      const next =
+        previous?.id === row.id
+          ? undefined
+          : {
+              session,
+              channelId: row.channelId,
+              id: row.id,
+              rootId: row.threadRootId ?? row.id,
+              selected: row,
+            };
+      current.current = next;
+      setChosen(next);
+      if (!deferFocus) requestFocus();
+      return {
+        commit() {
+          if (current.current === next) requestFocus();
+        },
+        cancel() {
+          setChosen((chosen) => (chosen === next ? previous : chosen));
+        },
+      };
+    },
+    [session, requestFocus],
+  );
+  const cancel = useCallback(() => {
+    setChosen(undefined);
+    requestFocus();
+  }, [requestFocus]);
+  /** A send clears the target it was sent to, not one chosen since. */
+  const sent = useCallback((to: Target | undefined) => {
+    if (to) setChosen((chosen) => (chosen === to ? undefined : chosen));
+  }, []);
+  const readLoaded = () => (target ? loaded.row(target.id) : undefined);
+  const row = useSyncExternalStore(
+    target ? loaded.subscribe : noSubscribe,
+    readLoaded,
+    readLoaded,
+  );
+  const last = useRef<ChannelMessage>(undefined);
+  if (row) last.current = row;
+  const absent = !!target && !row;
+  const [evidence, setEvidence] = useState<{
+    target: Target;
+    snapshot?: ThreadSnapshot;
+    failed?: true;
+  }>();
+  useEffect(() => {
+    if (!target || !absent) return;
+    try {
+      // Folds live edits and deletions with the same authority as the reader.
+      const view = session.thread(target.channelId, target.id, { exact: true });
+      const update = () => setEvidence({ target, snapshot: view.snapshot() });
+      const unsubscribe = view.subscribe(update);
+      update();
+      void view.refresh();
+      return () => {
+        unsubscribe();
+        view.dispose();
+      };
+    } catch {
+      setEvidence({ target, failed: true });
+    }
+  }, [session, target, absent]);
+  const read = absent && evidence?.target === target ? evidence : undefined;
+  const status = read?.snapshot?.targetStatus;
+  const verified = row ?? read?.snapshot?.target;
+  const pending = absent && !read?.failed && (!status || status === "loading");
+  const known =
+    last.current?.id === target?.id ? last.current : target?.selected;
+  const shown = verified ?? (pending ? known : undefined);
+  const context: ReactNode = !target ? undefined : shown ? (
+    <ReplyContext row={shown} session={session} onCancel={cancel} />
+  ) : (
+    <div className={styles.replyContext}>
+      <span>
+        {status === "unavailable"
+          ? "Reply target is no longer available."
+          : "Reply target could not be loaded. Cancel and select it again."}
+      </span>
+      <Button size="sm" onClick={cancel}>
+        Cancel reply target
+      </Button>
+    </div>
+  );
+  return {
+    target,
+    /** The target's current row, once it is evidence enough to send. */
+    row: verified,
+    sendDisabled: !!target && !verified,
+    context,
+    select,
+    cancel,
+    sent,
+  };
+}
 
 type ReplyComposer = Pick<
   MessageComposerProps,
@@ -15,39 +158,28 @@ type ReplyComposer = Pick<
   | "threadRootId"
   | "replyParentId"
   | "onCancelReply"
+  | "replyScope"
   | "replyContext"
   | "sendDisabled"
   | "onSend"
 >;
-type Selection = {
-  session: RelaySession;
-  channelId: string;
-  id: string;
-  rootId: string;
-  /** Immediate presentation only; the exact reader decides send eligibility. */
-  preview: ChannelMessage;
-};
 
-/** One transient target and owned live reader per channel composer. */
+/**
+ * A channel composer's reply target, chosen from its channel's timeline.
+ * The reader attaches `surface` to the element holding that timeline and the
+ * composer; Escape from there cancels the target.
+ */
 export function useInlineReply(
   session: RelaySession,
   channelId: string | undefined,
   onSend: MessageComposerProps["onSend"],
   focusRequest = 0,
 ) {
-  const [selected, setSelected] = useState<Selection>();
-  const currentSelection = useRef(selected);
-  currentSelection.current = selected;
   const [localFocus, setLocalFocus] = useState({
     external: focusRequest,
     sequence: 0,
     request: focusRequest,
   });
-  const target =
-    selected?.session === session && selected.channelId === channelId
-      ? selected
-      : undefined;
-  if (selected && !target) setSelected(undefined);
   // Local requests have their own identity. Expiring an external request must
   // never turn an already-consumed local request into a new focus request.
   if (localFocus.external !== focusRequest) {
@@ -65,65 +197,24 @@ export function useInlineReply(
       request: -(previous.sequence + 1),
     }));
   }, [focusRequest]);
-  const select = useCallback(
-    (row: ChannelMessage, deferFocus = false) => {
-      const previous = currentSelection.current;
-      const selection: Selection = {
-        session,
-        channelId: row.channelId,
-        id: row.id,
-        rootId: row.threadRootId ?? row.id,
-        preview: row,
-      };
-      currentSelection.current = selection;
-      setSelected(selection);
-      if (!deferFocus) requestFocus();
-      return {
-        commit() {
-          if (currentSelection.current === selection) requestFocus();
-        },
-        cancel() {
-          setSelected((current) =>
-            current === selection ? previous : current,
-          );
-        },
-      };
-    },
-    [session, requestFocus],
+  const channels = session.channels;
+  const loaded = useMemo<LoadedRows>(
+    () => ({
+      subscribe: (listener) =>
+        channelId ? channels.subscribeWindow(channelId, listener) : () => {},
+      row: (id) =>
+        channelId
+          ? channels.window(channelId).rows.find((row) => row.id === id)
+          : undefined,
+    }),
+    [channels, channelId],
   );
-  const cancel = useCallback(() => {
-    setSelected(undefined);
-    requestFocus();
-  }, [requestFocus]);
-  const [evidence, setEvidence] = useState<{
-    target: Selection;
-    snapshot?: ThreadSnapshot;
-    failed?: boolean;
-  }>();
-  useEffect(() => {
-    if (!target) return;
-    try {
-      // The exact reader retains verified target evidence independently of the
-      // bounded timeline and folds live edits/deletions with the same authority.
-      const view = session.thread(target.channelId, target.id, { exact: true });
-      const update = () => setEvidence({ target, snapshot: view.snapshot() });
-      const unsubscribe = view.subscribe(update);
-      update();
-      void view.refresh();
-      return () => {
-        unsubscribe();
-        view.dispose();
-      };
-    } catch {
-      setEvidence({ target, failed: true });
-    }
-  }, [session, target]);
-  const current = evidence?.target === target ? evidence : undefined;
-  const verified = current?.snapshot?.target;
-  const status = current?.snapshot?.targetStatus;
-  const pending = !current?.failed && (!status || status === "loading");
-  const reply = verified ?? (pending ? target?.preview : undefined);
-  const unavailable = current?.snapshot?.targetStatus === "unavailable";
+  const reply = useReplyTarget(session, channelId, loaded, requestFocus);
+  const { target } = reply;
+  const scope = useRef<Element | null>(null);
+  const surface = useCallback((element: HTMLElement | null) => {
+    scope.current = element;
+  }, []);
   const composer: ReplyComposer = {
     retainChannelDraft: true,
     ...(focus ? { focusRequest: focus } : {}),
@@ -131,29 +222,16 @@ export function useInlineReply(
       ? {
           threadRootId: target.rootId,
           replyParentId: target.id,
-          sendDisabled: !verified,
-          onCancelReply: cancel,
-          replyContext: reply ? (
-            <ReplyContext row={reply} session={session} onCancel={cancel} />
-          ) : (
-            <div className={styles.replyContext}>
-              <span>
-                {unavailable
-                  ? "Reply target is no longer available."
-                  : "Reply target could not be loaded. Cancel and select it again."}
-              </span>
-              <Button size="sm" onClick={cancel}>
-                Cancel reply target
-              </Button>
-            </div>
-          ),
+          sendDisabled: reply.sendDisabled,
+          onCancelReply: reply.cancel,
+          replyScope: scope,
+          replyContext: reply.context,
         }
       : {}),
     onSend: (id) => {
-      if (target)
-        setSelected((current) => (current === target ? undefined : current));
+      if (target) reply.sent(target);
       else onSend?.(id);
     },
   };
-  return { select, composer };
+  return { select: reply.select, composer, surface };
 }

@@ -135,8 +135,8 @@ behavior on the label, so a rename touches copy only.
   menu does not select the row.
   A chat can also be dragged with a pointer onto another workspace or **Chats**;
   the drop is the same Move to intent, with the same gate, optimistic placement,
-  rollback notice and Retry. Like Messages' empty Starred, a hidden empty
-  **Chats** section is not revealed during a drag.
+  rollback notice and Retry. A hidden empty **Chats** section is not revealed
+  during a drag.
 - **Archive chat** (⌃⌘A on Apple platforms, Ctrl+Shift+E elsewhere; rebindable in
   Settings → Shortcuts) opens the Chat actions Archive confirmation for the open
   chat, including from the composer, after a fresh permission read; it does

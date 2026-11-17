@@ -4,7 +4,6 @@ import type {
   SidebarAssignmentIntent,
   SidebarMuteMutator,
   SidebarPreferences,
-  SidebarSortMutator,
 } from "./sidebar-preferences";
 import { flush } from "./testing";
 
@@ -24,7 +23,6 @@ async function setup() {
       { id: "later", name: "Later", order: 1 },
     ],
     assignments: { alpha: "work", beta: "work" },
-    starred: ["alpha"],
     muted: [],
   };
   const read = vi.fn(async () => data);
@@ -53,15 +51,6 @@ async function setup() {
     data = { ...data, sections, assignments };
     return { sections, assignments };
   });
-  const star = vi.fn(
-    async (intent: { channelId: string; starred: boolean }) => {
-      const stars = new Set(data.starred);
-      if (intent.starred) stars.add(intent.channelId);
-      else stars.delete(intent.channelId);
-      data = { ...data, starred: [...stars] };
-      return data.starred;
-    },
-  );
   const mute = vi.fn<SidebarMuteMutator>(async ({ channelId, muted }) => {
     const mutes = new Set(data.muted);
     if (muted) mutes.add(channelId);
@@ -69,76 +58,58 @@ async function setup() {
     data = { ...data, muted: [...mutes] };
     return data.muted;
   });
-  const sort = vi.fn<SidebarSortMutator>(async (group, mode) => {
-    const next = { ...data.sort };
-    if (mode === "alpha") delete next[group];
-    else next[group] = mode;
-    data = { ...data, sort: next };
-    return next;
-  });
   const owner = createSidebarPreferencesStore({
     read,
     readAfterWrite,
     available: true,
     write: assignment,
-    writeStar: star,
     writeMute: mute,
-    writeSort: sort,
   });
   await owner.queries.ensure();
   return {
     owner,
     prefs: owner.queries,
     assignment,
-    star,
     read,
     readAfterWrite,
     mute,
-    sort,
   };
 }
 
-it("moves immediately, keeps later intent through older failure, and serializes both records", async () => {
+it("moves immediately and keeps a later intent through an older failure", async () => {
   const h = await setup();
-  const gate = deferred<readonly string[]>();
-  h.star.mockImplementationOnce(() => gate.promise);
+  const gate = deferred<Awaited<ReturnType<typeof h.assignment>>>();
+  h.assignment.mockImplementationOnce(() => gate.promise);
   try {
     const first = h.prefs.assign("alpha", "later");
     const failed = expect(first).rejects.toThrow("offline");
     expect(h.prefs.snapshot().data?.assignments.alpha).toBe("later");
-    expect(h.prefs.snapshot().data?.starred).toEqual([]);
-    await flush(); // assignment confirmed, Star clear held
+    await flush(); // the first write is held
     expect(h.assignment).toHaveBeenCalledOnce();
-    const second = h.prefs.setStar("alpha", true);
+    const second = h.prefs.assign("alpha");
     const other = h.prefs.assign("beta", "later");
-    expect(h.prefs.snapshot().data).toMatchObject({
-      assignments: { alpha: "later", beta: "later" },
-      starred: ["alpha"],
-    });
+    expect(h.prefs.snapshot().data?.assignments).toEqual({ beta: "later" });
     gate.reject(new Error("offline"));
     await failed;
     await Promise.all([second, other]);
     expect(h.prefs.snapshot().moves).toBeUndefined(); // stale failure offers no stale retry
-    expect(h.prefs.snapshot().data).toMatchObject({
-      assignments: { beta: "later" },
-      starred: ["alpha"],
-    });
+    expect(h.prefs.snapshot().data?.assignments).toEqual({ beta: "later" });
   } finally {
-    gate.resolve([]);
+    gate.resolve({ sections: [], assignments: {} });
     h.owner.dispose();
   }
 });
 
 it("failure rolls back just its channel, persists a retry across refresh, and clears retry after success", async () => {
   const h = await setup();
-  h.star.mockRejectedValueOnce(new Error("offline"));
+  h.assignment.mockRejectedValueOnce(new Error("offline"));
   try {
     const first = h.prefs.assign("alpha", "later");
     const failed = expect(first).rejects.toThrow("offline");
     const other = h.prefs.assign("beta", "later");
     await failed;
     await other;
-    expect(h.prefs.snapshot().data?.starred).toEqual(["alpha"]);
+    expect(h.prefs.snapshot().data?.assignments.alpha).toBe("work");
     expect(h.prefs.snapshot().data?.assignments.beta).toBe("later");
     expect(h.prefs.snapshot().moves).toEqual([
       expect.objectContaining({
@@ -150,7 +121,7 @@ it("failure rolls back just its channel, persists a retry across refresh, and cl
     await h.prefs.refresh();
     expect(h.prefs.snapshot().moves).toHaveLength(1);
     const retry = h.prefs.retryMove("alpha");
-    expect(h.prefs.snapshot().data?.starred).toEqual([]);
+    expect(h.prefs.snapshot().data?.assignments.alpha).toBe("later");
     expect(h.prefs.snapshot().moves?.[0]?.pending).toBe(true);
     await retry;
     expect(h.prefs.snapshot().moves).toBeUndefined();
@@ -184,12 +155,11 @@ it.each([undefined, "first"] as const)(
         section.id,
       );
       expect(h.prefs.snapshot().data?.assignments.alpha).toBe(section.id);
-      expect(h.prefs.snapshot().data?.starred).toEqual([]);
       await flush();
       gate.reject(new Error("offline"));
       await failed;
       expect(h.prefs.snapshot().data?.sections).toHaveLength(2);
-      expect(h.prefs.snapshot().data?.starred).toEqual(["alpha"]);
+      expect(h.prefs.snapshot().data?.assignments.alpha).toBe("work");
       await h.prefs.retryMove("alpha");
       expect(
         h.assignment.mock.calls.map(([intent]) => intent.createSection?.id),
@@ -208,13 +178,13 @@ it.each(["clear", "dispose"] as const)(
   "%s clears optimistic placement/errors and rejects late repopulation",
   async (action) => {
     const h = await setup();
-    const gate = deferred<readonly string[]>();
-    h.star.mockImplementationOnce(() => gate.promise);
+    const gate = deferred<Awaited<ReturnType<typeof h.assignment>>>();
+    h.assignment.mockImplementationOnce(() => gate.promise);
     const moving = h.prefs.assign("alpha", "later");
     const failed = expect(moving).rejects.toThrow("unavailable");
     await flush();
     h.owner[action]();
-    gate.resolve([]);
+    gate.resolve({ sections: [], assignments: {} });
     await failed;
     expect(h.prefs.snapshot().data).toBeUndefined();
     expect(h.prefs.snapshot().moves).toBeUndefined();
@@ -248,7 +218,6 @@ it.each(["success", "failure"])(
       expect(h.assignment).not.toHaveBeenCalled();
       expect(h.prefs.snapshot().data).toMatchObject({
         assignments: { alpha: "later" },
-        starred: [],
         muted: [],
       });
       muteGate.resolve(["alpha"]);
@@ -256,7 +225,6 @@ it.each(["success", "failure"])(
       await moveStarted.promise;
       expect(h.prefs.snapshot().data).toMatchObject({
         assignments: { alpha: "later" },
-        starred: [],
         muted: ["alpha"],
       });
       expect(Object.isFrozen(h.prefs.snapshot().data?.muted)).toBe(true);
@@ -275,7 +243,6 @@ it.each(["success", "failure"])(
           outcome === "success"
             ? { ...before.assignments, alpha: "later" }
             : before.assignments,
-        starred: outcome === "success" ? [] : before.starred,
         muted: ["alpha"],
       });
     } finally {
@@ -293,9 +260,9 @@ it.each(["success", "failure"])(
   "Move %s cannot overwrite a later confirmed Mute",
   async (outcome) => {
     const h = await setup();
-    const gate = deferred<readonly string[]>();
+    const gate = deferred<Awaited<ReturnType<typeof h.assignment>>>();
     const started = deferred<void>();
-    h.star.mockImplementationOnce(async () => {
+    h.assignment.mockImplementationOnce(async () => {
       started.resolve();
       return gate.promise;
     });
@@ -307,8 +274,12 @@ it.each(["success", "failure"])(
       await started.promise;
       const muting = h.prefs.setMute("beta", true);
       expect(h.mute).not.toHaveBeenCalled();
-      if (outcome === "success") gate.resolve([]);
-      else gate.reject(new Error("star clear rejected"));
+      if (outcome === "success")
+        gate.resolve({
+          sections: before.sections,
+          assignments: { ...before.assignments, alpha: "later" },
+        });
+      else gate.reject(new Error("move rejected"));
       await result;
       await muting;
       expect(h.prefs.snapshot().data).toEqual({
@@ -317,11 +288,13 @@ it.each(["success", "failure"])(
           outcome === "success"
             ? { ...before.assignments, alpha: "later" }
             : before.assignments,
-        starred: outcome === "success" ? [] : before.starred,
         muted: ["beta"],
       });
     } finally {
-      gate.resolve([]);
+      gate.resolve({
+        sections: before.sections,
+        assignments: before.assignments,
+      });
       h.owner.dispose();
     }
   },
@@ -353,7 +326,6 @@ it.each(["clear", "dispose", "cancel"] as const)(
         "rejected",
       ]);
       expect(h.assignment).not.toHaveBeenCalled();
-      expect(h.star).not.toHaveBeenCalled();
       expect(h.prefs.snapshot().data).toEqual(
         action === "cancel" ? before : undefined,
       );
@@ -416,182 +388,7 @@ it.each([false, true])(
   },
 );
 
-// Exercise the shared owner, not separate mock projections: both optimistic
-// families must survive each other's confirmation and rollback in either order.
-it.each([
-  ["move-first", "success"],
-  ["move-first", "move-fails"],
-  ["move-first", "sort-fails"],
-  ["sort-first", "success"],
-  ["sort-first", "move-fails"],
-  ["sort-first", "sort-fails"],
-] as const)(
-  "%s preserves unrelated intent through %s",
-  async (order, outcome) => {
-    const h = await setup();
-    const moveGate = deferred<readonly string[]>();
-    const sortGate = deferred<Awaited<ReturnType<SidebarSortMutator>>>();
-    const moveStarted = deferred<void>();
-    const sortStarted = deferred<void>();
-    h.star.mockImplementationOnce(() => {
-      moveStarted.resolve();
-      return moveGate.promise;
-    });
-    h.sort.mockImplementationOnce(() => {
-      sortStarted.resolve();
-      return sortGate.promise;
-    });
-    try {
-      const move = () => h.prefs.assign("alpha", "later");
-      const sort = () =>
-        h.prefs.setSort("channels", "recent", ["work", "later"]);
-      const first = order === "move-first" ? move() : sort();
-      const firstResult = Promise.allSettled([first]);
-      await (order === "move-first" ? moveStarted : sortStarted).promise;
-      const second = order === "move-first" ? sort() : move();
-      const secondResult = Promise.allSettled([second]);
-      expect(
-        order === "move-first" ? h.sort : h.assignment,
-      ).not.toHaveBeenCalled();
-      expect(h.prefs.snapshot().data).toMatchObject({
-        assignments: { alpha: "later" },
-        starred: [],
-        sort: { channels: "recent" },
-        muted: [],
-      });
-      const finishMove = () =>
-        outcome === "move-fails"
-          ? moveGate.reject(new Error("move failed"))
-          : moveGate.resolve([]);
-      const finishSort = () =>
-        outcome === "sort-fails"
-          ? sortGate.reject(new Error("sort failed"))
-          : sortGate.resolve({ channels: "recent" });
-      if (order === "move-first") {
-        finishMove();
-        await firstResult;
-        await sortStarted.promise;
-        expect(h.prefs.snapshot().data?.sort).toEqual({ channels: "recent" });
-        finishSort();
-      } else {
-        finishSort();
-        await firstResult;
-        await moveStarted.promise;
-        expect(h.prefs.snapshot().data?.assignments.alpha).toBe("later");
-        expect(h.prefs.snapshot().data?.starred).toEqual([]);
-        finishMove();
-      }
-      const results = [...(await firstResult), ...(await secondResult)];
-      expect(
-        results.filter(({ status }) => status === "rejected"),
-      ).toHaveLength(outcome === "success" ? 0 : 1);
-      await h.prefs.setMute("beta", true);
-      expect(h.prefs.snapshot().data).toMatchObject({
-        assignments: { alpha: outcome === "move-fails" ? "work" : "later" },
-        starred: outcome === "move-fails" ? ["alpha"] : [],
-        sort: outcome === "sort-fails" ? {} : { channels: "recent" },
-        muted: ["beta"],
-      });
-      expect(h.prefs.snapshot().moves?.[0]?.error).toBe(
-        outcome === "move-fails" ? "move failed" : undefined,
-      );
-      expect(h.prefs.snapshot().sortErrors?.[0]?.error).toBe(
-        outcome === "sort-fails" ? "sort failed" : undefined,
-      );
-    } finally {
-      moveGate.resolve([]);
-      sortGate.resolve({});
-      h.owner.dispose();
-    }
-  },
-);
-
-it.each(["clear", "dispose", "cancel"] as const)(
-  "%s fences an active sort, queued move and deferred catalog refresh",
-  async (action) => {
-    const h = await setup();
-    const gate = deferred<Awaited<ReturnType<SidebarSortMutator>>>();
-    const started = deferred<AbortSignal>();
-    const caller = new AbortController();
-    h.sort.mockImplementationOnce((_group, _mode, _ids, signal) => {
-      started.resolve(signal);
-      return gate.promise;
-    });
-    const before = h.prefs.snapshot().data;
-    try {
-      const sorting = h.prefs.setSort("channels", "recent", [], caller.signal);
-      const signal = await started.promise;
-      const moving = h.prefs.assign("alpha", "later", caller.signal);
-      const results = Promise.allSettled([sorting, moving]);
-      const refresh = h.prefs.refresh();
-      if (action === "cancel") caller.abort();
-      else h.owner[action]();
-      expect(signal.aborted).toBe(true);
-      gate.resolve({ channels: "recent" });
-      expect((await results).map(({ status }) => status)).toEqual([
-        "rejected",
-        "rejected",
-      ]);
-      await refresh;
-      expect(h.assignment).not.toHaveBeenCalled();
-      expect(h.star).not.toHaveBeenCalled();
-      expect(h.read).toHaveBeenCalledTimes(action === "cancel" ? 2 : 1);
-      expect(h.prefs.snapshot().data).toEqual(
-        action === "cancel" ? before : undefined,
-      );
-      expect(h.prefs.snapshot().moves).toBeUndefined();
-      expect(h.prefs.snapshot().sortErrors).toBeUndefined();
-    } finally {
-      gate.resolve({});
-      h.owner.dispose();
-    }
-  },
-);
-
-it.each([false, true])(
-  "Sort preserves failed full-read recovery (retry pending: %s)",
-  async (retryPending) => {
-    const h = await setup();
-    const gate = deferred<SidebarPreferences>();
-    const started = deferred<void>();
-    const before = h.prefs.snapshot().data;
-    if (!before) throw new Error("Initial preferences missing");
-    try {
-      h.read.mockRejectedValueOnce(new Error("preferences unavailable"));
-      await h.prefs.refresh();
-      let retry: Promise<void> | undefined;
-      if (retryPending) {
-        h.read.mockImplementationOnce(() => {
-          started.resolve();
-          return gate.promise;
-        });
-        retry = h.prefs.refresh();
-        await started.promise;
-      }
-      await h.prefs.setSort("channels", "recent", []);
-      gate.resolve(before);
-      await retry;
-      expect(h.prefs.snapshot()).toMatchObject({
-        status: "error",
-        error: "preferences unavailable",
-        data: { sort: { channels: "recent" } },
-      });
-      expect(h.prefs.writable).toBe(false);
-      await expect(h.prefs.assign("alpha", "later")).rejects.toThrow(
-        "unavailable",
-      );
-      await h.prefs.refresh();
-      expect(h.prefs.snapshot().status).toBe("ready");
-      expect(h.prefs.writable).toBe(true);
-      expect(h.prefs.snapshot().data?.sort).toEqual({ channels: "recent" });
-    } finally {
-      gate.resolve(before);
-      h.owner.dispose();
-    }
-  },
-);
-
-it("creates an empty section through the queued writer without altering stars or assignments", async () => {
+it("creates an empty section through the queued writer without altering assignments", async () => {
   const h = await setup();
   const section = {
     id: "12345678-1234-1234-1234-123456789abc",
@@ -604,12 +401,11 @@ it("creates an empty section through the queued writer without altering stars or
       { createSection: section },
       expect.any(AbortSignal),
     );
-    expect(h.prefs.snapshot().data).toMatchObject({
-      assignments: { alpha: "work", beta: "work" },
-      starred: ["alpha"],
+    expect(h.prefs.snapshot().data?.assignments).toEqual({
+      alpha: "work",
+      beta: "work",
     });
     expect(h.prefs.snapshot().data?.sections.at(-1)).toMatchObject(section);
-    expect(h.star).not.toHaveBeenCalled();
   } finally {
     h.owner.dispose();
   }
@@ -702,13 +498,12 @@ it.each(["clear", "dispose"] as const)(
       read.resolve({
         sections: [{ id: "accepted", name: "Launch", order: 2 }],
         assignments: {},
-        starred: [],
         muted: [],
       });
       await result;
       expect(h.prefs.snapshot().data).toBeUndefined();
     } finally {
-      read.resolve({ sections: [], assignments: {}, starred: [], muted: [] });
+      read.resolve({ sections: [], assignments: {}, muted: [] });
       h.owner.dispose();
     }
   },
@@ -790,7 +585,7 @@ it("waits for a queued non-move write before reconciling an uncertain creation",
   }
 });
 
-it.each(["mute", "sort", "writer-failure"] as const)(
+it.each(["mute", "writer-failure"] as const)(
   "reconciles again when %s invalidates an in-flight writer read",
   async (kind) => {
     const h = await setup();
@@ -818,9 +613,7 @@ it.each(["mute", "sort", "writer-failure"] as const)(
     );
     try {
       await entered.promise;
-      if (kind === "sort")
-        await h.prefs.setSort("channels", "recent", ["work", "later"]);
-      else await h.prefs.setMute("alpha", true);
+      await h.prefs.setMute("alpha", true);
       read.resolve(first);
       await creating;
       expect(h.readAfterWrite).toHaveBeenCalledTimes(2);
@@ -833,11 +626,7 @@ it.each(["mute", "sort", "writer-failure"] as const)(
         await h.prefs.refresh();
       }
       expect(h.prefs.snapshot().data?.sections.at(-1)).toMatchObject(section);
-      expect(h.prefs.snapshot().data).toMatchObject(
-        kind === "sort"
-          ? { sort: { channels: "recent" } }
-          : { muted: ["alpha"] },
-      );
+      expect(h.prefs.snapshot().data).toMatchObject({ muted: ["alpha"] });
       expect(h.prefs.sectionCreationWritable).toBe(true);
       expect(h.assignment).toHaveBeenCalledOnce();
     } finally {

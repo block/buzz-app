@@ -4,7 +4,6 @@ export type ChannelSetup = {
   canvas: string;
   agents: string[];
   groupId: string;
-  starred?: boolean;
   templateId: string;
 };
 export type ChannelCreationInput = Readonly<{
@@ -21,8 +20,7 @@ export type ChannelCreationInput = Readonly<{
 /** Whether a request asks for anything beyond the channel itself. A template
  * that currently resolves to nothing still names itself in `setup`. */
 export const setupWork = (setup: ChannelSetup | undefined) =>
-  !!setup &&
-  !!(setup.canvas || setup.agents.length || setup.groupId || setup.starred);
+  !!setup && !!(setup.canvas || setup.agents.length || setup.groupId);
 /** What the person chose. The agents and Canvas follow live inventory and the
  * template's contents, so they cannot make an unchanged form look new. */
 const requested = ({ setup, ...input }: ChannelCreationInput) =>
@@ -31,7 +29,6 @@ const requested = ({ setup, ...input }: ChannelCreationInput) =>
     setup: setup && {
       templateId: setup.templateId,
       groupId: setup.groupId,
-      starred: setup.starred,
     },
   });
 type Progress = {
@@ -71,7 +68,6 @@ export function createChannelSetup({
   refresh,
   canvasHead,
   place,
-  star,
   preflight,
   signal,
   changed,
@@ -96,7 +92,6 @@ export function createChannelSetup({
   ): Promise<void>;
   canvasHead(id: string): Promise<string | undefined>;
   place(id: string, group: string): Promise<void>;
-  star(id: string): Promise<void>;
   preflight(input: ChannelCreationInput): Promise<void>;
   signal: AbortSignal;
   changed(): void;
@@ -307,11 +302,9 @@ export function createChannelSetup({
           // Place before the row first lists, so it renders in its destination
           // and the creation reveal targets that entry.
           const setup = p.input.setup;
-          const placement = setup?.starred
-            ? star(p.id)
-            : setup?.groupId
-              ? place(p.id, setup.groupId)
-              : undefined;
+          const placement = setup?.groupId
+            ? place(p.id, setup.groupId)
+            : undefined;
           // Observed after admission. If admission fails its result is dropped,
           // but the delivered channel still lists in its destination.
           placement?.catch(() => {});

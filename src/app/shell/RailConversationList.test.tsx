@@ -97,7 +97,7 @@ test("moved exact destinations retain distinct targets and follow Mentions and l
   }));
   render(
     <RailConversationList
-      section="messages"
+      section="team"
       entries={entries}
       session={session}
       scope={scope}

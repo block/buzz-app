@@ -457,7 +457,7 @@ it("discards the unsaved privacy step and draft when creation closes and reopens
   expect(props.onCreate).not.toHaveBeenCalled();
 });
 
-it.each(["work", "", "starred"])(
+it.each(["work", ""])(
   "derives the title and fixed destination from the opening group %j",
   async (initialGroup) => {
     const user = userEvent.setup();
@@ -468,28 +468,18 @@ it.each(["work", "", "starred"])(
         open
         onOpenChange={() => {}}
         onCreate={onCreate}
-        initialGroup={initialGroup === "starred" ? "" : initialGroup}
-        initialStarred={initialGroup === "starred"}
+        initialGroup={initialGroup}
         destinations={[{ id: "work", name: "Work", icon: "📚" }]}
       />,
     );
-    const title =
-      initialGroup === "starred"
-        ? "Create a channel in Starred"
-        : initialGroup
-          ? "Create a channel in Work"
-          : "Create a channel";
+    const title = initialGroup
+      ? "Create a channel in Work"
+      : "Create a channel";
     expect(screen.getByRole("dialog")).toHaveAccessibleName(title);
     expect(
       screen.queryByRole("combobox", { name: "Destination group" }),
     ).not.toBeInTheDocument();
-    if (initialGroup === "starred")
-      expect(
-        screen
-          .getByRole("dialog")
-          .querySelector("[data-sidebar-group-icon] svg"),
-      ).toBeInTheDocument();
-    else if (initialGroup)
+    if (initialGroup)
       expect(
         screen
           .getByRole("dialog")
@@ -509,8 +499,7 @@ it.each(["work", "", "starred"])(
               agents: [],
               canvas: "",
               templateId: "",
-              groupId: initialGroup === "starred" ? "" : initialGroup,
-              ...(initialGroup === "starred" ? { starred: true } : {}),
+              groupId: initialGroup,
             },
           }
         : {}),

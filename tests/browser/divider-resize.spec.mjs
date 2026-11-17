@@ -166,7 +166,7 @@ for (const name of ["Resize sidebar", "Resize main and secondary panels"]) {
       }, anchor),
     ).toBeLessThan(4);
     if (name === "Resize sidebar") {
-      await page.reload();
+      await open(page, app);
       await expect(
         page.getByRole("separator", { name, exact: true }),
       ).toHaveAttribute("aria-valuenow", String(Math.round(results.final)));
@@ -179,7 +179,7 @@ test("clicking the thread divider preserves automatic sizing", async ({
   page,
   app,
 }) => {
-  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.setViewportSize({ width: 1600, height: 800 });
   await open(page, app);
   const channel = page.getByRole("region", { name: "Channel message history" });
   const root = app.histories
@@ -196,12 +196,12 @@ test("clicking the thread divider preserves automatic sizing", async ({
   const width = () =>
     handle.evaluate((el) => el.parentElement.getBoundingClientRect().width);
   const initial = await width();
-  await page.setViewportSize({ width: 1380, height: 800 });
+  await page.setViewportSize({ width: 1700, height: 800 });
   await expect.poll(width).toBeGreaterThan(initial + 30);
-  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.setViewportSize({ width: 1600, height: 800 });
   await expect.poll(width).toBeLessThan(initial + 2);
   const box = await handle.boundingBox();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await page.setViewportSize({ width: 1380, height: 800 });
+  await page.setViewportSize({ width: 1700, height: 800 });
   await expect.poll(width).toBeGreaterThan(initial + 30);
 });

@@ -3,8 +3,30 @@ import {
   expectMessageActionsHidden as hidden,
   hoverMessage,
 } from "./message-actions.mjs";
-import { open, settle, virtuaIdle, wheel } from "./timeline.mjs";
+import { hoverRow, open, settle, virtuaIdle, wheel } from "./timeline.mjs";
 import { animationsSettled } from "./animations.mjs";
+import { hideNarrowConversationList, revealRail } from "./navigation.mjs";
+
+// A resize re-measures the detail frame on the next rendering update; a
+// narrow frame lays Team's list over the reader, so wait for the measure and
+// close the list before the test works in the reader.
+async function resizeTo(page, width, height) {
+  await page.setViewportSize({ width, height });
+  await expect
+    .poll(() =>
+      page
+        .locator("[data-detail-workspace]")
+        .evaluate(
+          (frame) =>
+            frame.hasAttribute("data-narrow") ===
+            frame.clientWidth <
+              48 *
+                parseFloat(getComputedStyle(document.documentElement).fontSize),
+        ),
+    )
+    .toBe(true);
+  await hideNarrowConversationList(page);
+}
 
 test.use({
   productionBroker: true,
@@ -184,7 +206,7 @@ for (const own of [true, false]) {
     await row.evaluate((node) => {
       node.dir = "ltr";
     });
-    await page.setViewportSize({ width: 390, height: 950 });
+    await resizeTo(page, 390, 950);
     await settle(page);
     await row.getByText("Hi", { exact: true }).hover();
     await above(actions);
@@ -351,7 +373,7 @@ for (const own of [false, true]) {
     await shown(actions);
     await above(actions);
     await page.mouse.move(0, 0);
-    await page.setViewportSize({ width: 390, height: 950 });
+    await resizeTo(page, 390, 950);
     await settle(page);
     await attachment.hover();
     await shown(actions);
@@ -730,7 +752,18 @@ test("compact timeline actions slide under the top edge, track scrolling and pre
   const bubbleBounds = await row
     .locator("[data-message-action-anchor]")
     .boundingBox();
-  await page.mouse.move(bubbleBounds.x + bubbleBounds.width / 2, bounds.y + 35);
+  // The conversation header floats over the top of the history, so hover the
+  // bubble at its first point below anything laid over it.
+  const x = bubbleBounds.x + bubbleBounds.width / 2;
+  const y = await row.evaluate(
+    (node, [x, from, to]) => {
+      for (let y = from; y < to; y += 4)
+        if (node.contains(document.elementFromPoint(x, y))) return y + 4;
+      throw new Error("The bubble is covered");
+    },
+    [x, bounds.y + 35, bubbleBounds.y + bubbleBounds.height - 4],
+  );
+  await page.mouse.move(x, y);
   await shown(actions);
   await expect
     .poll(() =>
@@ -759,14 +792,17 @@ test("compact timeline actions slide under the top edge, track scrolling and pre
   await expect(actions).toHaveCSS("opacity", "0");
   await scroller.hover();
   await wheel(page, -300, scroller);
-  await row.getByText("Floating timeline target", { exact: true }).hover();
+  // The bubble's first line is back under the floating header: hover its
+  // last. A retried locator hover scrolls, and each scroll holds the list's
+  // pointer events again.
+  await hoverRow(page, row.getByText("Last paragraph"), scroller);
   await shown(actions);
   // RTL follows the bubble's leading edge while retaining the pane gutter.
   await row.evaluate((node) => {
     node.dir = "rtl";
   });
   await page.setViewportSize({ width: 1000, height: 850 });
-  await row.getByText("Floating timeline target", { exact: true }).hover();
+  await hoverRow(page, row.getByText("Last paragraph"), scroller);
   await expect
     .poll(() =>
       actions.evaluate((bar) => {
@@ -841,9 +877,10 @@ test("keyboard search covers a toolbar under the pointer and restores its action
   }
   await reply.click();
   await expect(
-    page.getByRole("button", { name: "Cancel reply target" }),
-  ).toBeVisible();
-  await expect(composer).toBeFocused();
+    page
+      .getByRole("complementary", { name: "Thread", exact: true })
+      .getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toBeFocused();
 });
 
 test("menus keep their actions showing; pickers and dialogs cover them", async ({
@@ -1006,11 +1043,12 @@ test("profile menus and composer pickers keep message hover actions out of the w
     [900, "dark"],
     [1440, "light"],
   ]) {
-    await page.setViewportSize({ width, height: 950 });
+    await resizeTo(page, width, 950);
     await page.emulateMedia({ colorScheme: mode });
     await settle(page);
     await hoverMessage(row);
     await shown(actions);
+    await revealRail(page);
     await profile.focus();
     await profile.press("Enter");
     const menu = page.locator("[data-profile-menu]");
@@ -1037,6 +1075,12 @@ test("profile menus and composer pickers keep message hover actions out of the w
     await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
+    // A narrow window keeps the rail over the reader until it is hidden.
+    const hideRail = page.getByRole("button", {
+      name: "Hide navigation",
+      exact: true,
+    });
+    if (await hideRail.isVisible()) await hideRail.click();
     await hoverMessage(row);
     await shown(actions);
     await expect(actions).toHaveCSS("pointer-events", "auto");
@@ -1089,8 +1133,9 @@ test("long bubbles expand to 32px before the opposite avatar", async ({
     page.locator(
       `[data-channel-timeline] [data-message-id="${event.id}"] [data-message-action-anchor]`,
     );
-  for (const width of [1200, 390]) {
-    await page.setViewportSize({ width, height: 1200 });
+  const wide = 2000;
+  for (const width of [wide, 1200, 390]) {
+    await resizeTo(page, width, 1200);
     await expect(bubble(sent)).toBeVisible();
     await expect(bubble(received)).toBeVisible();
     await settle(page);
@@ -1106,14 +1151,22 @@ test("long bubbles expand to 32px before the opposite avatar", async ({
         const sentAvatar = await page
           .locator(`[data-message-id="${sent.id}"] [class*="messageAvatar"]`)
           .boundingBox();
-        return (
-          left !== null &&
-          right !== null &&
-          receivedAvatar !== null &&
-          sentAvatar !== null &&
-          Math.abs(sentAvatar.x - (left.x + left.width) - 32) < 1 &&
-          Math.abs(right.x - (receivedAvatar.x + receivedAvatar.width) - 32) < 1
-        );
+        if (
+          left === null ||
+          right === null ||
+          receivedAvatar === null ||
+          sentAvatar === null
+        )
+          return false;
+        // A reading area wider than 50rem keeps the clearance; a narrower one
+        // gives the opposite avatar's column back to long bubbles.
+        return width === wide
+          ? Math.abs(sentAvatar.x - (left.x + left.width) - 32) < 1 &&
+              Math.abs(
+                right.x - (receivedAvatar.x + receivedAvatar.width) - 32,
+              ) < 1
+          : left.x + left.width > sentAvatar.x &&
+              right.x < receivedAvatar.x + receivedAvatar.width;
       })
       .toBe(true);
     await page.screenshot({

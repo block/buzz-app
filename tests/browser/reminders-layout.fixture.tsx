@@ -1,5 +1,5 @@
 import { apply as applyReminders } from "../../src/bundled/reminders";
-import { PageNavigation } from "../../src/app/shell/PageNavigation";
+import { AppDock } from "../../src/app/shell/AppDock";
 import type { Page, RegisteredPage } from "../../src/features/pages/service";
 import { useState } from "react";
 import { RemindDialog } from "../../src/bundled/reminders/RemindDialog";
@@ -216,16 +216,7 @@ function DockPreview() {
   );
   return (
     <div className="shell-background flex h-screen pt-2">
-      <nav aria-label="Apps dock" className="shell-side-dock">
-        <div className="shell-dock-pages">
-          <PageNavigation
-            pages={pages}
-            selected={selected}
-            onSelect={select}
-            placement="dock"
-          />
-        </div>
-      </nav>
+      <AppDock pages={pages} selected={selected} onSelect={select} compact />
       <main className="flex-1 bg-panel" />
     </div>
   );

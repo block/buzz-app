@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { INVENTORY_KINDS } from "../../src/features/agents/relay-library.ts";
+import { soloRow } from "./rail-helpers.mjs";
 
 const chat = "33333333-3333-4333-8333-333333333333";
 const team = "44444444-4444-4444-8444-444444444444";
@@ -67,10 +68,8 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
     await route.continue();
   });
   const [agent] = app.soloAgents;
-  // The gap leaves the chat's row carrying an unread badge in its name.
-  const row = page
-    .getByRole("navigation", { name: "Solo conversations" })
-    .locator(`[data-solo-channel-id="${chat}"]`);
+  // The chat's row in the rail's Solo card.
+  const row = soloRow(page, chat);
   const pill = page.getByRole("button", {
     name: `Sending to ${agent.name}. Change agents`,
     exact: true,

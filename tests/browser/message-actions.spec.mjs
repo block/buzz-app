@@ -1,6 +1,44 @@
 import { hoverMessage, openThreadLink } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
+import { hideNarrowConversationList, openDm } from "./navigation.mjs";
 import { open, settle } from "./timeline.mjs";
+
+// Holding a message's text previews the quick reply in the channel's own
+// editor; releasing keeps it. Choosing the same message again clears it. The
+// press must outlast the hold delay, which the preview shows.
+async function holdMessage(page, row, content, { replying = true } = {}) {
+  // History still scrolling to an arrival would withdraw the hold.
+  await settle(page);
+  await row.getByText(content, { exact: true }).hover();
+  await page.mouse.down();
+  const cancel = page
+    .getByRole("article", { name: "Conversation", exact: true })
+    .getByRole("button", { name: "Cancel reply target" });
+  if (replying) await expect(cancel.locator("..")).toContainText(content);
+  else await expect(cancel).toBeHidden();
+  await page.mouse.up();
+}
+
+// A resize re-measures the detail frame on the next rendering update; a
+// narrow frame lays Team's list over the reader, so wait for the measure and
+// close the list before the test works in the reader.
+async function resizeTo(page, width, height) {
+  await page.setViewportSize({ width, height });
+  await expect
+    .poll(() =>
+      page
+        .locator("[data-detail-workspace]")
+        .evaluate(
+          (frame) =>
+            frame.hasAttribute("data-narrow") ===
+            frame.clientWidth <
+              48 *
+                parseFloat(getComputedStyle(document.documentElement).fontSize),
+        ),
+    )
+    .toBe(true);
+  await hideNarrowConversationList(page);
+}
 
 test.use({
   productionBroker: true,
@@ -394,12 +432,17 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   });
   await expect(replyBox).toBeFocused();
   await replyBox.fill("Keep this reply draft");
-  await hoverMessage(row);
-  await hoverMessage(row);
-  await row.getByRole("button", { name: "Reply", exact: true }).click();
   const channelEditor = page
     .getByRole("article", { name: "Conversation", exact: true })
     .getByRole("textbox");
+  // A message whose thread is open takes its quick reply in that thread, so
+  // hold another message.
+  const other = app.append("primary", "alpha", "Quick reply check");
+  await holdMessage(
+    page,
+    page.locator(`[data-channel-timeline] [data-message-id="${other.id}"]`),
+    other.content,
+  );
   await expect(channelEditor).toBeFocused();
   await channelEditor.fill("Keep this inline draft");
   await expect(replyBox).toHaveText("Keep this reply draft");
@@ -427,9 +470,7 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   // final row geometry before placing the pointer over the next message.
   await expect(page.locator("[data-panel-dock][data-closing]")).toHaveCount(0);
   await hoverMessage(broadcastRow);
-  await broadcastRow
-    .getByRole("button", { name: "Reply", exact: true })
-    .click();
+  await holdMessage(page, broadcastRow, "Broadcast reply");
   await expect(channelEditor).toBeFocused();
   await expect(channelEditor).toHaveText("Keep this inline draft");
   await channelEditor.press("Escape");
@@ -443,7 +484,7 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     )
     .click();
   for (const width of [900, 603, 390]) {
-    await page.setViewportSize({ width, height: 850 });
+    await resizeTo(page, width, 850);
     await row.scrollIntoViewIfNeeded();
     await page.mouse.move(0, 0);
     await page.mouse.click(0, 0);
@@ -500,10 +541,9 @@ test("copied Buzz links and the desktop alias reveal their destination from a co
   ).toBeVisible();
   const copiedLink = await page.evaluate(() => window.copiedMessageLink);
   expect(copiedLink).toBe(`buzz://message?channel=alpha&id=${event.id}`);
-  const sharedConversation = page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: "Alice Fixture", exact: true });
-  await sharedConversation.click();
+  // The DM opens from Team's DMs list; a link it holds opens directly.
+  const sharedConversation = () => openDm(page, "Alice Fixture");
+  await sharedConversation();
   const sharedChannel = await page
     .locator("[data-channel-timeline]")
     .getAttribute("data-channel-timeline");
@@ -512,20 +552,21 @@ test("copied Buzz links and the desktop alias reveal their destination from a co
     sharedChannel,
     `${copiedLink}\n\n[Desktop alias](buzz://channel/alpha/${event.id})`,
   );
+  // A message in another conversation opens in the thread pane beside the DM.
+  const destination = page
+    .getByRole("complementary", { name: "Thread", exact: true })
+    .locator(`[data-message-id="${event.id}"]`);
   for (const href of [copiedLink, `buzz://channel/alpha/${event.id}`]) {
-    await sharedConversation.click();
+    await sharedConversation();
     await page.locator(`[data-channel-timeline] a[href="${href}"]`).click();
-    await expect(row).toBeVisible();
-    await expect(row).toBeFocused();
+    await expect(destination).toBeVisible();
+    await expect(destination).toBeFocused();
   }
 });
 
 test("DM actions select the correct inline reply", async ({ page, app }) => {
   await open(page, app);
-  await page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: "Alice Fixture", exact: true })
-    .click();
+  await openDm(page, "Alice Fixture");
   const timeline = page.locator("[data-channel-timeline]");
   const channel = await timeline.getAttribute("data-channel-timeline");
   const event = app.append("primary", channel, "DM menu check");
@@ -571,15 +612,16 @@ test("DM actions select the correct inline reply", async ({ page, app }) => {
   await hoverMessage(row);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Cancel reply target" }),
-  ).toBeVisible();
+    page
+      .getByRole("complementary", { name: "Thread", exact: true })
+      .getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toBeFocused();
+  await holdMessage(page, row, "DM menu check");
   const replyBox = page
     .getByRole("article", { name: "Conversation", exact: true })
     .getByRole("textbox");
   await expect(replyBox).toBeFocused();
-  await hoverMessage(row);
-  await hoverMessage(row);
-  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  await holdMessage(page, row, "DM menu check", { replying: false });
   await expect(replyBox).toBeFocused();
 });
 
@@ -745,7 +787,7 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .focus();
   await page.mouse.move(0, 0);
-  await page.setViewportSize({ width: 900, height: 950 });
+  await resizeTo(page, 900, 950);
   await settle(page);
   await page.evaluate(() =>
     document.documentElement.style.setProperty("--buzz-text-scale", "2"),
@@ -763,10 +805,7 @@ test("historical single-day DMs and their threads expose dates without hover", a
   app,
 }) => {
   await open(page, app);
-  await page
-    .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: "Alice Fixture", exact: true })
-    .click();
+  await openDm(page, "Alice Fixture");
   const timeline = page.locator("[data-channel-timeline]");
   const channel = await timeline.getAttribute("data-channel-timeline");
   const event = app.append("primary", channel, "Historical message");
@@ -789,9 +828,10 @@ test("historical single-day DMs and their threads expose dates without hover", a
   await reply.focus();
   await reply.press("Enter");
   await expect(
-    page.getByRole("button", { name: "Cancel reply target" }),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
+    page
+      .getByRole("complementary", { name: "Thread", exact: true })
+      .getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toBeFocused();
   await openThreadLink(page, app, event.id, channel);
   const thread = page.getByRole("complementary", {
     name: "Thread",

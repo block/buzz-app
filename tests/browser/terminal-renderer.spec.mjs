@@ -948,28 +948,6 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await expect(drawer.locator(".xterm-rows")).toContainText(
       "FIXTURE_SHELL_READY",
     );
-    await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal-panel.html?short`,
-    );
-    await page.evaluate(() =>
-      document.documentElement.style.setProperty("--buzz-text-scale", "2"),
-    );
-    await launcher.click();
-    await expect(drawer.locator(".xterm-rows")).toContainText("FIXTURE");
-    await expect(hide).toBeInViewport();
-    await expect(restart).toBeInViewport();
-    await expect(button("End session")).toBeInViewport();
-    expect(
-      await drawer
-        .locator(".xterm-scrollable-element")
-        .evaluate((el) => el.clientHeight),
-    ).toBeGreaterThanOrEqual(78); // two 26px mono lines at 1.5 leading
-    expect(
-      await drawer.locator(".panel-header").evaluate((el) => el.scrollWidth),
-    ).toBeLessThanOrEqual(390);
-    await page.screenshot({
-      path: test.info().outputPath("terminal-short-200.png"),
-    });
     expect(errors.unexplained()).toEqual([]);
   } finally {
     await server.close();

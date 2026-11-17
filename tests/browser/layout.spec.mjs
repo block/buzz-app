@@ -1,6 +1,16 @@
 import { pluginAction } from "./plugin-settings.mjs";
-import { selectCommunity, openCommunityPicker } from "./navigation.mjs";
-import { openChannelDetails } from "./channel-details.mjs";
+import {
+  channelRow,
+  conversationList,
+  hideNarrowConversationList,
+  openChannel,
+  openCommunityPicker,
+  rail,
+  revealRail,
+  selectCommunity,
+  showConversationList,
+} from "./navigation.mjs";
+import { chooseChannelAction, openChannelDetails } from "./channel-details.mjs";
 import {
   closeSettings,
   openPage,
@@ -11,7 +21,6 @@ import {
   settingsDialog,
   settingsSections,
   settleDialogMotion,
-  settleShellToggle,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
@@ -54,12 +63,12 @@ async function expectNonPaging(page, app) {
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const companionLauncher = (page, name) =>
   button(page, name).and(page.locator("button[aria-expanded]"));
-// Global destinations live in the dock independently of the Messages sidebar.
+// Global destinations live in the rail's Plugins card, independently of Team.
 const destinationTitles = ["Create an agent", "Workflows"];
 const dockDestinations = (page, options = {}) =>
   page
-    .getByRole("navigation", { name: "Apps dock", ...options })
-    .getByRole("tab", {
+    .getByRole("navigation", { name: "Apps", exact: true, ...options })
+    .getByRole("button", {
       name: /^(Create an agent|Bestie|Workflows)$/,
       ...options,
     });
@@ -70,23 +79,13 @@ const box = async (locator) => {
   return bounds;
 };
 const near = (a, b) => expect(Math.abs(a - b)).toBeLessThan(2);
-// Read the shared spacing decision independently of measured panel geometry.
-const panelGap = (page) =>
-  page
-    .locator(".shell-content")
-    .evaluate(
-      (element) =>
-        Number.parseFloat(
-          getComputedStyle(element).getPropertyValue("--space-panel-gap"),
-        ) *
-        Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
-    );
 const panel = (page) =>
   page.getByRole("complementary", { name: "GitHub", exact: true });
 
 async function open(page, app) {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .waitFor();
@@ -111,6 +110,8 @@ async function link(page, app, target) {
       },
     }),
   );
+  // A list opened from the rail stays over a narrow reader.
+  await hideNarrowConversationList(page);
   // A return from a compose route can still be restoring the timeline.
   await settle(page);
   app.append("primary", "alpha", `Please review ${target}`);
@@ -141,17 +142,14 @@ async function link(page, app, target) {
   });
 }
 async function shellFits(page, width, bestieLabel = "Create an agent") {
-  // The Workflows page renders no toggle at wide widths, so settle only when
-  // the drawer is in play.
-  if (width <= 650) await settleShellToggle(page);
-  const disclosure = button(page, "Show navigation");
-  const collapsed = await disclosure.isVisible();
-  if (collapsed) await disclosure.click();
-  // Settings is a modal with its own navigation; the shell is measured with
-  // Settings closed.
+  // The rail is a drawer behind its toggle at narrow widths.
+  await revealRail(page);
+  const collapsed = width <= 650;
   const destinations = dockDestinations(page);
   await expect(destinations).toHaveText([bestieLabel, "Workflows"]);
-  const dock = await box(page.getByRole("navigation", { name: "Apps dock" }));
+  // A drawer rail slides in; measure it once it rests.
+  await expect.poll(async () => (await box(rail(page))).x).toBe(0);
+  const dock = await box(rail(page));
   for (const destination of [destinations.first(), destinations.last()]) {
     await destination.scrollIntoViewIfNeeded();
     await expect(destination).toBeInViewport();
@@ -159,27 +157,20 @@ async function shellFits(page, width, bestieLabel = "Create an agent") {
     expect(bounds.x).toBeGreaterThanOrEqual(dock.x);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(dock.x + dock.width);
   }
-  // Sidebar pages, such as the bundled Drafts & sent, stay in the Messages
-  // sidebar instead of the dock. Its draft count may follow the label.
-  const sidebar = page.getByRole("complementary", {
-    name: "Sidebar",
-    exact: true,
-  });
-  const drafts = sidebar
-    .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: /^Drafts & sent/ });
-  await expect(drafts).toHaveText(/^Drafts & sent(?:\d+)?$/);
+  // Pages that sit with Team, such as the bundled Drafts & sent, stay in its
+  // card instead of Plugins, as a row or as one of its icons.
+  const drafts = rail(page).getByRole("button", { name: /^Drafts & sent/ });
+  await expect(drafts).toBeVisible();
   await drafts.scrollIntoViewIfNeeded();
-  const sidebarBounds = await box(sidebar);
   const draftsBounds = await box(drafts);
-  expect(draftsBounds.x).toBeGreaterThanOrEqual(sidebarBounds.x);
+  expect(draftsBounds.x).toBeGreaterThanOrEqual(dock.x);
   expect(draftsBounds.x + draftsBounds.width).toBeLessThanOrEqual(
-    sidebarBounds.x + sidebarBounds.width,
+    dock.x + dock.width,
   );
   await expect(
-    page
-      .getByRole("navigation", { name: "Apps dock" })
-      .getByRole("tab", { name: /Drafts & sent/ }),
+    rail(page)
+      .locator('[data-rail-section="navigation"]')
+      .getByRole("button", { name: /Drafts & sent/ }),
   ).toHaveCount(0);
   const actions = await box(page.locator(".shell-actions"));
   const communities = await box(
@@ -187,7 +178,7 @@ async function shellFits(page, width, bestieLabel = "Create an agent") {
   );
   expect(actions.x + actions.width).toBeLessThanOrEqual(width);
   const profile = await box(button(page, "Your profile"));
-  // Account controls remain reachable below the independently scrolling apps.
+  // Account controls sit in the rail's header, side by side.
   for (const control of [communities, profile]) {
     expect(control.x).toBeGreaterThanOrEqual(dock.x);
     expect(control.x + control.width).toBeLessThanOrEqual(dock.x + dock.width);
@@ -196,7 +187,7 @@ async function shellFits(page, width, bestieLabel = "Create an agent") {
       dock.y + dock.height,
     );
   }
-  expect(communities.y + communities.height).toBeLessThanOrEqual(profile.y);
+  expect(communities.x + communities.width).toBeLessThanOrEqual(profile.x);
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
     .toBe(width);
@@ -248,12 +239,12 @@ test("joined sidebar and workspace surface, real link panel and compact communit
   page,
   app,
 }, testInfo) => {
-  await page.setViewportSize({ width: 1280, height: 832 });
+  // Wide enough for the rail, list and reader to leave a panel its own column.
+  await page.setViewportSize({ width: 1440, height: 832 });
   await open(page, app);
-  await shellFits(page, 1280);
-  const sidebar = await box(
-    page.getByRole("complementary", { name: "Sidebar", exact: true }),
-  );
+  await shellFits(page, 1440);
+  const sidebar = await box(rail(page));
+  const list = await box(conversationList(page));
   // A narrow link panel covers the conversation, removing it from the
   // accessibility tree; its geometry still applies.
   const conversation = page.getByRole("article", {
@@ -261,30 +252,15 @@ test("joined sidebar and workspace surface, real link panel and compact communit
     exact: true,
     includeHidden: true,
   });
-  // The sidebar and main are flush regions inside one outer panel.
-  const mainPanel = page.locator("#main-content > [data-joined]");
-  const gap = await panelGap(page);
-  near((await box(mainPanel)).x, sidebar.x + sidebar.width);
-  const seam = page.locator("#shell-navigation");
-  await expect
-    .poll(() =>
-      seam.evaluate((element) => {
-        const style = getComputedStyle(element, "::after");
-        return (
-          style.content !== "none" &&
-          Number.parseFloat(style.width) > 0 &&
-          style.backgroundColor !== "rgba(0, 0, 0, 0)"
-        );
-      }),
-    )
-    .toBe(true);
+  // The rail, list and main are flush regions inside one outer panel.
+  near(list.x, sidebar.x + sidebar.width);
   const sidebarHandle = page.getByRole("separator", {
     name: "Resize sidebar",
   });
   const gripTarget = await box(sidebarHandle);
   near(gripTarget.width, 8);
-  // The hit target starts at the seam so it cannot block sidebar controls.
-  near(gripTarget.x, sidebar.x + sidebar.width);
+  // The hit target starts at the seam so it cannot block list controls.
+  near(gripTarget.x, list.x + list.width);
   await sidebarHandle.hover();
   await expect
     .poll(() =>
@@ -305,30 +281,17 @@ test("joined sidebar and workspace surface, real link panel and compact communit
   await expect(conversation).toHaveCSS("border-top-width", "0px");
   await expect(conversation).toHaveCSS("box-shadow", "none");
   const before = await box(conversation);
-  const rail = await box(
-    page.getByRole("navigation", { name: "Communities", exact: true }),
-  );
-  const appDock = await box(
-    page.getByRole("navigation", { name: "Apps dock" }),
-  );
-  near(sidebar.x, appDock.x + appDock.width + 1);
-  const profile = await box(button(page, "Your profile"));
-  near(rail.x + rail.width / 2, profile.x + profile.width / 2);
-  near(before.x, sidebar.x + sidebar.width);
+  near(before.x, list.x + list.width + 1);
   near(
     before.y,
     (await box(page.locator(".shell-header"))).y +
       (await box(page.locator(".shell-header"))).height +
       1,
   );
-  const background = await page
-    .locator(".shell-background")
-    .evaluate((el) => getComputedStyle(el).backgroundImage);
-  expect(background).toContain("radial-gradient");
-  // The opaque shell color and the decorative dot texture are separate.
+  // The shell paints the opaque window underlay color.
   const shellColor = await page.locator(".shell-background").evaluate((el) => {
     const probe = document.createElement("span");
-    probe.style.backgroundColor = "var(--bg-app)";
+    probe.style.backgroundColor = "var(--surface-window-underlay)";
     el.append(probe);
     const value = getComputedStyle(probe).backgroundColor;
     probe.remove();
@@ -352,7 +315,7 @@ test("joined sidebar and workspace surface, real link panel and compact communit
   near(dock.y, main.y);
   near(dock.height, main.height);
   near(dock.x - main.x - main.width, 1);
-  near(dock.x + dock.width, page.viewportSize().width - gap - 1);
+  near(dock.x + dock.width, page.viewportSize().width);
   await expect(composer).toHaveJSProperty("value", "Layout draft");
   await expect(composer).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath("joined-one-panel.png") });
@@ -390,9 +353,9 @@ test("joined sidebar and workspace surface, real link panel and compact communit
   await expect(page.locator("[data-panel-dock]")).toHaveCount(0);
   near((await box(conversation)).width, before.width);
   await link(page, app, "https://github.com/block/buzz/pull/2");
-  await button(page, "Beta").click();
+  await channelRow(page, "beta").click();
   await expect(panel(page)).toHaveCount(0);
-  await button(page, "Alpha").click();
+  await channelRow(page, "alpha").click();
   await expect(composer).toHaveJSProperty("value", "Layout draft");
   const picker = await openCommunityPicker(page);
   await expect(
@@ -413,8 +376,11 @@ test("joined sidebar and workspace surface, real link panel and compact communit
     }),
   ).toBeFocused();
   await selectCommunity(page, "Secondary");
+  await openChannel(page, "alpha");
   await expect(composer).toHaveJSProperty("value", "");
   await selectCommunity(page, "Primary");
+  await showConversationList(page);
+  await channelRow(page, "alpha").click();
   await expect(composer).toHaveJSProperty("value", "Layout draft");
   for (const [width, height] of [
     [1200, 800],
@@ -467,17 +433,8 @@ test("joined sidebar and workspace surface, real link panel and compact communit
   const hiddenDestinations = dockDestinations(page, { includeHidden: true });
   await expect(hiddenDestinations).toHaveText(destinationTitles);
   await expect(
-    hiddenDestinations.and(page.locator("[aria-current]")),
-  ).toHaveCount(0);
-  await expect(
-    page
-      .getByRole("navigation", { name: "Apps dock", includeHidden: true })
-      .getByRole("tab", {
-        name: "Workflows",
-        exact: true,
-        includeHidden: true,
-      }),
-  ).toHaveAttribute("aria-selected", "true");
+    hiddenDestinations.and(page.locator('[aria-current="page"]')),
+  ).toHaveText(["Workflows"]);
   await openSettings(page);
   await expect(
     page.getByRole("textbox", { name: "Display name", exact: true }),
@@ -491,9 +448,9 @@ test("joined sidebar and workspace surface, real link panel and compact communit
   // Header search is inert behind Settings; close it to read the palette.
   const expectWorkflowsChoice = async (count) => {
     await closeSettings(page);
-    const choices = await pageChoices(page, "Messages");
-    // Messages proves the Pages group rendered before counting Workflows.
-    await expect(pageChoice(choices, "Messages")).toBeVisible();
+    const choices = await pageChoices(page, "Team");
+    // Team proves the Pages group rendered before counting Workflows.
+    await expect(pageChoice(choices, "Team")).toBeVisible();
     await page
       .getByRole("combobox", { name: "Search Buzz", exact: true })
       .fill("Workflows");
@@ -517,13 +474,17 @@ test("narrow link panels begin after the rendered sidebar", async ({
 }) => {
   await page.setViewportSize({ width: 1280, height: 832 });
   await open(page, app);
-  await page.getByRole("separator", { name: "Resize sidebar" }).press("End");
+  await page
+    .getByRole("separator", { name: "Resize app sidebar" })
+    .press("End");
   await page.setViewportSize({ width: 800, height: 600 });
+  // The narrowed reader takes the list over it before the link is reached.
+  await expect(
+    page.locator("[data-detail-workspace][data-narrow]"),
+  ).toBeAttached();
   await link(page, app, "https://github.com/block/buzz/pull/7");
 
-  const sidebar = await box(
-    page.getByRole("complementary", { name: "Sidebar", exact: true }),
-  );
+  const sidebar = await box(rail(page));
   // The card covers the conversation, removing it from the accessibility tree.
   const conversation = await box(
     page.getByRole("article", {
@@ -570,7 +531,7 @@ test("composer stays docked while a cold channel loads", async ({
   try {
     await open(page, app);
     docked = await box(composer("Alpha"));
-    await button(page, "Beta").click();
+    await channelRow(page, "beta").click();
     await expect(
       page.getByRole("status").filter({ hasText: "Loading messages…" }),
     ).toBeVisible();
@@ -707,7 +668,7 @@ readingTest(
     // Keep the offscreen opener within the virtualizer's mounted buffer after
     // focus moves to the panel; this tests restoration to a mounted trigger.
     await history.hover();
-    await wheel(page, -200);
+    await wheel(page, -80);
     const saved = await anchor(page);
     await expectNonPaging(page, app);
     await opener(page, target).evaluate((el) =>
@@ -808,7 +769,8 @@ readingTest(
 companionTest(
   "A plugin owns the launcher and the reusable companion card across pages and disable",
   async ({ page, app }, testInfo) => {
-    await page.setViewportSize({ width: 1280, height: 832 });
+    // Wide enough that the open panel leaves the conversation its own column.
+    await page.setViewportSize({ width: 1440, height: 832 });
     await page.goto(app.origin);
     const companion = page.getByRole("complementary", {
       name: "Companion fixture",
@@ -879,7 +841,8 @@ companionTest(
       exact: true,
     });
     const visitMessages = async () => {
-      await openPage(page, "Messages");
+      await openPage(page, "Team");
+      await openChannel(page, "alpha");
       await expect(composer).toBeVisible();
     };
     await visitMessages();
@@ -957,13 +920,15 @@ companionTest(
       )
       .click();
     near((await box(companion)).height, (await box(conversation)).height);
-    await button(page, "Beta").click();
+    await channelRow(page, "beta").click();
     await expect(companion).toHaveCount(1);
-    await button(page, "Alpha").click();
+    await channelRow(page, "alpha").click();
     await expect(composer).toHaveJSProperty("value", "Companion draft");
     await selectCommunity(page, "Personal space");
     await expect(
-      page.getByRole("heading", { name: "Your channels, one conversation." }),
+      page.getByText("Choose a community to see your activity", {
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(companion).toHaveCount(1);
     await button(page, "Close Companion fixture panel").click();
@@ -1065,12 +1030,13 @@ todosOverlapTest(
     await selectSettingsSection(page, "Manage plugins");
     await pluginAction(page, "Todos").click();
     await closeSettings(page);
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
+    await openChannel(page, "alpha");
     const todos = page.getByRole("region", {
       name: "Todos panel",
       exact: true,
     });
-    const toggle = button(page, "Toggle channel todos");
+    const toggleTodos = () => chooseChannelAction(page, "Toggle channel todos");
     const thread = page.getByRole("complementary", {
       name: "Thread",
       exact: true,
@@ -1087,7 +1053,6 @@ todosOverlapTest(
     const stacked = async (primary) => {
       await expect(primary).toBeVisible();
       await expect(todos).toBeVisible();
-      near((await box(todos.locator("header.panel-header"))).height, 40);
       const top = await box(primary);
       const bottom = await box(todos);
       near(top.x, bottom.x);
@@ -1121,11 +1086,11 @@ todosOverlapTest(
           .getByRole("article", { name: "Conversation", exact: true })
           .locator("header.panel-header"),
       );
-      expect(threadHeader.height).toBeCloseTo(channelHeader.height, 1);
+      // The channel header overlays the history, so only its top aligns.
       near(threadHeader.y, channelHeader.y);
     };
 
-    await toggle.click();
+    await toggleTodos();
     await openThread();
     await stacked(thread);
     await page
@@ -1135,7 +1100,7 @@ todosOverlapTest(
       .click();
     await button(page, "Hide todos").click();
     await openThread();
-    await toggle.click();
+    await toggleTodos();
     await stacked(thread);
     await page
       .locator(
@@ -1152,7 +1117,7 @@ todosOverlapTest(
       .click();
     await button(page, "Hide todos").click();
     await link(page, app, "https://github.com/block/buzz/pull/7");
-    await toggle.click();
+    await toggleTodos();
     await stacked(linked);
     await openChannelDetails(page);
     await expect(settings).toBeVisible();
@@ -1266,22 +1231,20 @@ companionReadingTest(
       gesture < 6 && reading.id === original.id;
       gesture++
     ) {
-      const before = await history.evaluate((el) => el.scrollTop);
       // Keep the old anchor intersecting under the narrower message measure.
-      const room = await history
-        .locator(`[data-message-id="${original.id}"]`)
-        .evaluate((row) => {
-          const feed = row.closest("section");
-          return (
-            feed.getBoundingClientRect().bottom -
-            row.getBoundingClientRect().top
-          );
-        });
+      const row = history.locator(`[data-message-id="${original.id}"]`);
+      const top = () => row.evaluate((row) => row.getBoundingClientRect().top);
+      const before = await top();
+      const room = await row.evaluate(
+        (row) =>
+          row.closest("section").getBoundingClientRect().bottom -
+          row.getBoundingClientRect().top,
+      );
       expect(room).toBeGreaterThan(1);
       await wheel(page, -Math.min(300, room / 2));
-      await expect
-        .poll(() => history.evaluate((el) => el.scrollTop))
-        .toBeLessThan(before);
+      // Rows measured above the reader grow the scroll offset while it moves
+      // up, so progress is the anchor row's own travel down the viewport.
+      await expect.poll(top).toBeGreaterThan(before);
       await settle(page);
       reading = await anchor(page);
     }
@@ -1318,29 +1281,26 @@ sidebarActions(
     });
     await companionLauncher(page, "Companion fixture").click();
     await expect(companion).toBeVisible();
-    const alpha = page.locator('button[data-channel-id="alpha"]');
     for (const [index, action] of ["activity", "message"].entries()) {
       await link(page, app, `https://github.com/block/buzz/pull/${20 + index}`);
       if (action === "activity") {
-        await alpha.hover();
+        // The list's Threads filter keeps the open conversation and lists
+        // the unread thread; its row opens it.
+        await showConversationList(page);
         await page
-          .getByRole("dialog", { name: "Activity in Alpha" })
-          .getByRole("button", { name: /Open unread thread from/ })
-          // Unlike the broadcast row, this reply cannot be marked read by the
-          // visible main timeline while Playwright is moving the pointer.
+          .getByRole("tablist", { name: "Conversation view", exact: true })
+          .getByRole("tab", { name: "Threads", exact: true })
+          .click();
+        await conversationList(page)
+          .locator("[data-conversation-row]")
           .filter({ hasText: "Unread reply 1" })
+          .first()
           .click();
         await expect(
           page.getByRole("complementary", { name: "Thread", exact: true }),
         ).toBeVisible();
       } else if (action === "message") {
-        const sidebar = page.getByRole("navigation", {
-          name: "Subscribed channels",
-        });
-        await sidebar
-          .locator("summary", { hasText: /^Direct messages$/ })
-          .hover();
-        await sidebar
+        await page
           .getByRole("button", { name: "New message", exact: true })
           .click();
         await expect(

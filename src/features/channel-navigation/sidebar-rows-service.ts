@@ -6,7 +6,6 @@ import {
   createContributions,
   type Contribution,
 } from "../../plugins/contributions";
-import { isSidebarSortMode, type SidebarSortMode } from "../relay/sidebar-sort";
 
 export type SidebarRow = Readonly<{
   id: string;
@@ -17,11 +16,6 @@ export type SidebarRow = Readonly<{
   channel: ChannelSummary;
   unread: UnreadSnapshot;
 }>;
-export type SidebarRowSortMode = Readonly<{
-  id: string;
-  label: string;
-  compare: (a: SidebarRow, b: SidebarRow) => number;
-}>;
 export type SidebarRowContribution = Readonly<{
   version: 1;
   id: string;
@@ -29,7 +23,6 @@ export type SidebarRowContribution = Readonly<{
     row: SidebarRow,
     Default: ReactElement | null,
   ) => ReactElement | null;
-  sortModes?: readonly SidebarRowSortMode[];
 }>;
 export type RegisteredSidebarRows = Contribution<SidebarRowContribution>;
 export type SidebarRows = Readonly<{
@@ -91,30 +84,9 @@ export class SidebarRowsService extends Service implements SidebarRows {
     if (
       typeof value.id !== "string" ||
       !idPattern.test(value.id) ||
-      (value.render !== undefined && typeof value.render !== "function") ||
-      (value.sortModes !== undefined &&
-        (!Array.isArray(value.sortModes) ||
-          new Set(value.sortModes.map((mode) => mode?.id)).size !==
-            value.sortModes.length ||
-          value.sortModes.some(
-            (mode) =>
-              !mode ||
-              typeof mode.id !== "string" ||
-              !idPattern.test(mode.id) ||
-              typeof mode.label !== "string" ||
-              !mode.label.trim() ||
-              typeof mode.compare !== "function",
-          )))
+      (value.render !== undefined && typeof value.render !== "function")
     )
       throw new Error("Invalid sidebar row contribution");
-    for (const mode of value.sortModes ?? []) {
-      if (
-        !isSidebarSortMode(
-          `plugin:${this.ctx.pluginOwner?.id}/${value.id}/${mode.id}`,
-        )
-      )
-        throw new Error("Invalid sidebar row sort id");
-    }
     this.contributions.register(this.ctx, value);
   }
 }
@@ -137,31 +109,4 @@ export function sidebarRow(
     channel,
     unread,
   };
-}
-
-export function sidebarRowSortModes(entries: readonly RegisteredSidebarRows[]) {
-  return entries.flatMap((entry) =>
-    (entry.sortModes ?? []).map((mode) => ({
-      ...mode,
-      id: `plugin:${entry.key}/${mode.id}` as SidebarSortMode,
-    })),
-  );
-}
-
-export function sortSidebarRows<T>(
-  rows: readonly T[],
-  mode: SidebarRowSortMode | undefined,
-  data: (row: T) => SidebarRow,
-): readonly T[] {
-  if (!mode) return rows;
-  try {
-    return [...rows].sort((a, b) => {
-      const order = mode.compare(data(a), data(b));
-      if (!Number.isFinite(order))
-        throw new Error("Invalid sidebar row comparison");
-      return order;
-    });
-  } catch {
-    return rows;
-  }
 }

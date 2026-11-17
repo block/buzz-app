@@ -1,6 +1,8 @@
 import { pluginAction } from "./plugin-settings.mjs";
 import {
   closeSettings,
+  conversationList,
+  openChannel,
   openPage,
   pageChoice,
   pageChoices,
@@ -15,10 +17,12 @@ const address = (origin, target) =>
   `${origin}/#buzz=${encodeURIComponent(JSON.stringify(target))}`;
 const messages = (page) =>
   page.getByRole("textbox", { name: "Message #Alpha", exact: true });
+// Launch lands on Activity, which opens no conversation.
+const landing = (page) => page.getByText("No conversation selected");
 
 // Browser-only contract: startup/hash/history share production composition and
 // legacy Home links resolve without flashing the retired page or adding a visit.
-test("launch opens Messages without exposing Home across responsive navigation, search and history", async ({
+test("launch opens Activity without exposing Home across responsive navigation, search and history", async ({
   page,
   app,
 }, testInfo) => {
@@ -52,11 +56,12 @@ test("launch opens Messages without exposing Home across responsive navigation, 
   });
   await page.goto(app.origin);
   await expect.poll(() => metadataHeld).toBe(true);
+  // Activity names no conversation, so the held metadata read does not delay it.
   expect(
     await page.evaluate(() => window.fixtureNavigation.snapshot().status),
-  ).toBe("opening");
+  ).toBe("opened");
+  await expect(landing(page)).toBeVisible();
   releaseMetadata();
-  await expect(messages(page)).toBeVisible();
   for (const width of [390, 820, 1440]) {
     await page.setViewportSize({ width, height: 950 });
     await expect
@@ -64,19 +69,16 @@ test("launch opens Messages without exposing Home across responsive navigation, 
         page.evaluate(() => window.fixtureNavigation.snapshot().entry.target),
       )
       .toMatchObject({
-        // Local bootstrap now defers mounting ChannelsPage; the old initial
-        // disconnected mount could complete this visit before default resolution.
-        // The existing resolver keeps the conversation in that same visit.
-        kind: "conversation",
-        channelId: "alpha",
-        scope: {
-          viewer: app.viewer,
-          communityOrigin: "https://primary.example",
-        },
+        kind: "page",
+        pluginId: "buzz.inbox",
+        pageId: "inbox",
       });
-    await expect(messages(page)).toBeVisible();
-    const choices = await pageChoices(page, "Messages");
-    await expect(pageChoice(choices, "Messages")).toBeVisible();
+    // A narrow window lays the list over the unselected reader.
+    await expect(
+      width < 1000 ? conversationList(page) : landing(page),
+    ).toBeVisible();
+    const choices = await pageChoices(page, "Team");
+    await expect(pageChoice(choices, "Team")).toBeVisible();
     await page
       .getByRole("combobox", { name: "Search Buzz", exact: true })
       .fill("Home");
@@ -88,6 +90,8 @@ test("launch opens Messages without exposing Home across responsive navigation, 
       )
       .toBe(true);
   }
+  await openChannel(page, "alpha");
+  await expect(messages(page)).toBeVisible();
   await page
     .getByRole("button", { name: /^Manage members of /, exact: true })
     .click();
@@ -103,8 +107,8 @@ test("launch opens Messages without exposing Home across responsive navigation, 
   ).toBeVisible();
   await dialog
     .getByRole("combobox", { name: "Search Buzz", exact: true })
-    .fill("Messages");
-  await expect(pageChoice(dialog, "Messages")).toBeVisible();
+    .fill("Team");
+  await expect(pageChoice(dialog, "Team")).toBeVisible();
   await dialog
     .getByRole("combobox", { name: "Search Buzz", exact: true })
     .fill("Home");
@@ -123,82 +127,20 @@ test("launch opens Messages without exposing Home across responsive navigation, 
   }, home);
   expect(result.result).toEqual({ status: "opened" });
   expect(result.resolved).toBe(result.visit);
-  await expect(messages(page)).toBeVisible();
+  await expect(landing(page)).toBeVisible();
   await page.goBack();
   await expect(
     page.getByRole("heading", { name: "Workflows", exact: true }),
   ).toBeVisible();
   await page.goForward();
-  await expect(messages(page)).toBeVisible();
+  await expect(landing(page)).toBeVisible();
   expect(await page.evaluate(() => window.homeFrames)).toEqual([]);
 
   await page.goto(address(app.origin, home));
-  await expect(messages(page)).toBeVisible();
+  await expect(landing(page)).toBeVisible();
   await page.reload();
-  await expect(messages(page)).toBeVisible();
+  await expect(landing(page)).toBeVisible();
   expect(await page.evaluate(() => window.homeFrames)).toEqual([]);
-});
-
-test("default navigation retries failed metadata and accepts a completed empty lookup", async ({
-  page,
-  app,
-}) => {
-  let releaseMetadata;
-  const gate = new Promise((resolve) => {
-    releaseMetadata = resolve;
-  });
-  let held = false;
-  let failMetadata = true;
-  await page.route("**/api/relay/**/query", async (route) => {
-    if (
-      route
-        .request()
-        .postDataJSON()
-        .some((filter) => filter.kinds?.includes(39000))
-    ) {
-      held = true;
-      await gate;
-      await route.fulfill(
-        failMetadata
-          ? { json: { error: "Invalid metadata response" } }
-          : { json: [] },
-      );
-    } else await route.continue();
-  });
-  await page.goto(app.origin);
-  await expect.poll(() => held).toBe(true);
-  expect(
-    await page.evaluate(() => window.fixtureNavigation.snapshot().status),
-  ).toBe("opening");
-  releaseMetadata();
-  await expect(
-    page.getByRole("button", { name: "Try again", exact: true }),
-  ).toBeVisible();
-  failMetadata = false;
-  await page.getByRole("button", { name: "Try again", exact: true }).click();
-  await expect
-    .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
-    .toBe("opened");
-  await expect
-    .poll(() =>
-      page.evaluate(() => window.fixtureNavigation.snapshot().entry.target),
-    )
-    .toMatchObject({ kind: "conversation" });
-  await expect(page.getByRole("textbox", { name: /^Message #/ })).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "alpha", exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: /^Manage members of /, exact: true })
-    .click();
-  await expect(
-    page.getByRole("dialog", { name: "Manage members", exact: true }),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Search Buzz" }).click();
-  await expect(
-    page.getByRole("group", { name: "This conversation" }),
-  ).toBeVisible();
 });
 
 test("Channels stays enabled despite saved disabled settings and has no disable action", async ({
@@ -229,6 +171,8 @@ test("Channels stays enabled despite saved disabled settings and has no disable 
     localStorage.setItem(key, JSON.stringify(saved));
   });
   await page.goto(address(app.origin, home));
+  await expect(landing(page)).toBeVisible();
+  await openChannel(page, "alpha");
   await expect(messages(page)).toBeVisible();
   await page.reload();
   await expect(messages(page)).toBeVisible();
@@ -246,7 +190,8 @@ test("Channels stays enabled despite saved disabled settings and has no disable 
   await expect(pluginAction(page, "Channels")).toHaveCount(0);
   // The workspace behind Settings is inert; close it before opening a page.
   await closeSettings(page);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
+  await openChannel(page, "alpha");
   await expect(messages(page)).toBeVisible();
 });
 
@@ -273,11 +218,11 @@ test("launch retains plugin-configuration recovery without Home", async ({
   await page
     .getByRole("button", { name: "Back up & reset settings", exact: true })
     .click();
-  const recoveredChoices = await pageChoices(page, "Messages");
-  await expect(pageChoice(recoveredChoices, "Messages")).toBeVisible();
+  const recoveredChoices = await pageChoices(page, "Team");
+  await expect(pageChoice(recoveredChoices, "Team")).toBeVisible();
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Try again", exact: true }).click();
-  await expect(messages(page)).toBeVisible();
+  await expect(landing(page)).toBeVisible();
 });
 
 for (const huddle of [false, true]) {

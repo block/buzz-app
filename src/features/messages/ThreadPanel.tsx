@@ -1,5 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
-import { ReplyContext } from "./ReplyContext";
+import { useReplyTarget, type LoadedRows } from "./use-inline-reply";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
@@ -27,8 +27,11 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  createContext,
   type ReactNode,
+  type RefObject,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -126,12 +129,18 @@ export type ThreadPanelProps = {
 // Read errors are diagnostics, not copy; the notice says what happened.
 const THREAD_FAILED = "This thread didn’t load.";
 
+/** The thread's region, which owns its reply target's Escape. */
+const ThreadSurface = createContext<RefObject<HTMLElement | null> | undefined>(
+  undefined,
+);
+
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
   useMessageSelectionCopy();
   const host = !!usePanelTabHost();
   const tabbed = props.tabbed ?? host;
   const { close } = props;
+  const surface = useRef<HTMLElement>(null);
   const viewKey = messageViewKey(
     props.session,
     props.scope,
@@ -140,6 +149,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
   );
   return (
     <aside
+      ref={surface}
       className={
         close ? styles.thread : `${styles.thread} ${styles.embeddedThread}`
       }
@@ -176,11 +186,13 @@ export function ThreadPanel(props: ThreadPanelProps) {
           </Button>
         </p>
       )}
-      {props.retainThread ? (
-        <RetainedThreadPanel key={viewKey} {...props} />
-      ) : (
-        <OwnedThreadPanel key={viewKey} {...props} />
-      )}
+      <ThreadSurface value={surface}>
+        {props.retainThread ? (
+          <RetainedThreadPanel key={viewKey} {...props} />
+        ) : (
+          <OwnedThreadPanel key={viewKey} {...props} />
+        )}
+      </ThreadSurface>
     </aside>
   );
 }
@@ -513,6 +525,8 @@ function OwnedThreadPanel({
     <ThreadLoading />
   );
 }
+const EDITABLE =
+  '[role="textbox"], [role="combobox"], input, textarea, select, [contenteditable="true"]';
 function ThreadMessages({
   intro,
   session,
@@ -680,9 +694,6 @@ function ThreadMessages({
     if (first) setExpandedActivity((current) => new Set([...current, first]));
   }, [messageId, navigation?.signal, revealRequest, snapshot.replies, tree]);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const [replyParent, setReplyParent] = useState<string>();
-  const currentReplyParent = useRef(replyParent);
-  currentReplyParent.current = replyParent;
   const resolveName = useChannelIdentityNames(session, channelId);
   const senderName = (row: ChannelMessage) => {
     const id = row.workflowOwnerId ?? row.authorId;
@@ -723,6 +734,7 @@ function ThreadMessages({
   const profiles = useRowProfiles(session.profiles, rows);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
+  const surface = useContext(ThreadSurface);
   const positioned = useRef(false);
   const shown = useRef(active);
   const readingSettled = useRef(false);
@@ -837,25 +849,26 @@ function ThreadMessages({
       };
     };
   }, [messageId, navigation?.signal]);
-  const selectedOffset = useCallback(() => {
+  // Where the selected row sits in the viewport. A browser can clamp the
+  // scroll offset while a late ancestor reparents the row, so the row's place
+  // on screen is what a correction restores, never an offset from the old one.
+  const selectedTop = useCallback(() => {
     const row = selectedRow();
     const container = scroller.current;
     return row && container
-      ? row.getBoundingClientRect().top -
-          container.getBoundingClientRect().top +
-          container.scrollTop
+      ? row.getBoundingClientRect().top - container.getBoundingClientRect().top
       : undefined;
   }, [selectedRow]);
   const completeTarget = useCallback(() => {
     // Exact lookup can finish before context. Preserve this row's reading
     // position through prepended history without refocusing it after opening.
-    targetAnchor.current = selectedOffset();
+    targetAnchor.current = selectedTop();
     setInitialPositioned(true);
     captureResizePosition();
     readingSettled.current = true;
     readingPositioned(scroller.current);
     navigation?.complete({ status: "opened" });
-  }, [captureResizePosition, navigation, selectedOffset]);
+  }, [captureResizePosition, navigation, selectedTop]);
   const prepareTarget = useCallback(() => {
     readingIntent.current++;
     follow.current = false;
@@ -951,11 +964,45 @@ function ThreadMessages({
   }, [revealSelected, revealRequest]);
   const revealSignal =
     inlineReveal ?? (positionedVisit ? undefined : navigation?.signal);
+  // The opening's own focus request, until the reader acts on it.
+  const openingFocus = useRef(false);
+  // Where focus was when this reveal was asked for.
+  const revealOrigin = useRef<{
+    signal: AbortSignal | undefined;
+    focused: Element | null;
+  }>({ signal: undefined, focused: null });
+  if (revealOrigin.current.signal !== revealSignal)
+    revealOrigin.current = {
+      signal: revealSignal,
+      focused: revealSignal ? document.activeElement : null,
+    };
+  // The editor the reader last clicked or typed in: theirs, whenever a reveal
+  // that was asked for before they got there arrives.
+  const editing = useRef<Element | null>(null);
+  useEffect(() => {
+    const editor = (node: EventTarget | null) =>
+      node instanceof Element ? node.closest(EDITABLE) : null;
+    const act = (event: Event) => {
+      editing.current = editor(event.target);
+    };
+    document.addEventListener("pointerdown", act, true);
+    document.addEventListener("beforeinput", act, true);
+    return () => {
+      document.removeEventListener("pointerdown", act, true);
+      document.removeEventListener("beforeinput", act, true);
+    };
+  }, []);
   const canFocusTarget = useCallback(() => {
-    // Exact-target composers do not autofocus. Editing begun while its row is
-    // loading supersedes the reveal's eventual focus, not its position or cue.
-    return !scroller.current?.ownerDocument.activeElement?.closest(
-      '[role="textbox"], [role="combobox"], input, textarea, select, [contenteditable="true"]',
+    // Editing begun while its row is loading supersedes the reveal's eventual
+    // focus, not its position or cue. An editor the reader opened from, or one
+    // the opening itself focused, is not that until the reader clicks or types
+    // in it.
+    const focused = scroller.current?.ownerDocument.activeElement;
+    const editor = focused?.closest(EDITABLE);
+    return (
+      !editor ||
+      (editor !== editing.current &&
+        (openingFocus.current || focused === revealOrigin.current.focused))
     );
   }, []);
   const revealed = useMessageReveal({
@@ -1040,13 +1087,37 @@ function ThreadMessages({
       else setReplyFocus((value) => value + 1);
     }
   }, [joining, channelAccess, active]);
+  const replyRows = useMemo<LoadedRows>(
+    () => ({
+      subscribe: view.subscribe,
+      row(id) {
+        const { root, replies } = view.snapshot();
+        return root?.id === id ? root : replies.find((row) => row.id === id);
+      },
+    }),
+    [view],
+  );
+  const requestReplyFocus = useCallback(
+    () => setReplyFocus((value) => value + 1),
+    [],
+  );
+  const reply = useReplyTarget(
+    session,
+    channelId,
+    replyRows,
+    requestReplyFocus,
+  );
+  const { select: selectReply, cancel: cancelReply } = reply;
+  const replyParent = reply.target?.id;
+  const selectedParent = reply.row;
   const focusReply = useCallback(() => {
     readingIntent.current++;
-    setReplyParent(undefined);
-    setReplyFocus((value) => value + 1);
-  }, []);
+    cancelReply();
+  }, [cancelReply]);
   const targetReply = useCallback(
     (id: string, deferFocus = false) => {
+      const row = replyRows.row(id);
+      if (!row) return;
       captureResizePosition();
       const previousFollow = follow.current;
       const previousPosition = resizePosition.current;
@@ -1055,16 +1126,9 @@ function ThreadMessages({
         view.snapshot().replies.map((reply) => reply.id),
       );
       follow.current = false;
-      const previous = currentReplyParent.current;
-      const next = previous === id ? undefined : id;
-      currentReplyParent.current = next;
-      setReplyParent(next);
-      if (!deferFocus) setReplyFocus((value) => value + 1);
+      const hold = selectReply(row, deferFocus);
       return {
-        commit() {
-          if (currentReplyParent.current === next)
-            setReplyFocus((value) => value + 1);
-        },
+        commit: () => hold.commit(),
         cancel() {
           // Keep the selected prose anchored if this loaded window gained rows.
           // This also covers strict threads whose older pages remain unloaded.
@@ -1080,11 +1144,11 @@ function ThreadMessages({
             // Capture-phase cancellation runs before the native scroll handler.
             captureResizePosition();
           }
-          setReplyParent((current) => (current === next ? previous : current));
+          hold.cancel();
         },
       };
     },
-    [captureResizePosition, view],
+    [captureResizePosition, view, replyRows, selectReply],
   );
   useEffect(() => {
     if (replyRequest) focusReply();
@@ -1093,6 +1157,7 @@ function ThreadMessages({
     if (focusRequest) setReplyFocus((value) => value + 1);
   }, [focusRequest]);
   const pendingReplyFocus = usePendingRequest(replyFocus);
+  openingFocus.current = !!pendingReplyFocus;
   const [mediaSeek, setMediaSeek] = useState<{
     seconds: number;
     request: number;
@@ -1352,10 +1417,11 @@ function ThreadMessages({
       }
     }
     if (targetAnchor.current !== undefined) {
-      const offset = selectedOffset();
-      if (offset !== undefined) {
-        correctScrollTop(element, offset - targetAnchor.current);
-        targetAnchor.current = offset;
+      const top = selectedTop();
+      if (top !== undefined) {
+        correctScrollTop(element, top - targetAnchor.current);
+        // The scroll range may not reach that place; hold where it landed.
+        targetAnchor.current = selectedTop();
         follow.current = false;
       }
       if (snapshot.status !== "loading" && !snapshot.canLoadMore)
@@ -1399,7 +1465,7 @@ function ThreadMessages({
     rootTarget,
     returning,
     revealed,
-    selectedOffset,
+    selectedTop,
     tree,
     expanded,
   ]);
@@ -1491,7 +1557,7 @@ function ThreadMessages({
       // Exact-history restoration must start from this corrected geometry,
       // rather than applying the same child-only height delta a second time.
       if (targetAnchor.current !== undefined)
-        targetAnchor.current = selectedOffset();
+        targetAnchor.current = selectedTop();
       if (olderAnchor.current) {
         const row = element.querySelector<HTMLElement>(
           `[data-message-id="${olderAnchor.current.id}"]`,
@@ -1504,7 +1570,7 @@ function ThreadMessages({
     observer.observe(content);
     observer.observe(end);
     return () => observer.disconnect();
-  }, [active, initialPositioned, captureResizePosition, selectedOffset]);
+  }, [active, initialPositioned, captureResizePosition, selectedTop]);
   const jumpToLatest = () => {
     readingIntent.current++;
     const element = scroller.current;
@@ -1768,10 +1834,6 @@ function ThreadMessages({
       );
     });
   }
-  const selectedParent =
-    snapshot.root?.id === replyParent
-      ? snapshot.root
-      : snapshot.replies.find((row) => row.id === replyParent);
   const captureOlderAnchor = (element: HTMLElement) => {
     follow.current = false;
     const row = [
@@ -2139,30 +2201,14 @@ function ThreadMessages({
           threadSeed={threadSeed}
           replyParentId={replyParent}
           onCancelReply={replyParent ? focusReply : undefined}
+          replyScope={surface}
           disabled={
             disabled ||
-            (requireReadyRoot &&
-              (snapshot.status !== "ready" || !!snapshot.error)) ||
-            (!!replyParent && !selectedParent)
+            (!!requireReadyRoot &&
+              (snapshot.status !== "ready" || !!snapshot.error))
           }
-          replyContext={
-            replyParent && !selectedParent ? (
-              <div className={styles.replyContext}>
-                <span>Reply target is no longer available.</span>
-                <Button size="sm" onClick={focusReply}>
-                  Cancel reply target
-                </Button>
-              </div>
-            ) : (
-              selectedParent && (
-                <ReplyContext
-                  row={selectedParent}
-                  session={session}
-                  onCancel={focusReply}
-                />
-              )
-            )
-          }
+          sendDisabled={reply.sendDisabled}
+          replyContext={reply.context}
           editMessages={rows}
           focusRequest={pendingReplyFocus ?? 0}
           autoFocus={autoFocus ?? false}
@@ -2185,9 +2231,7 @@ function ThreadMessages({
                   ]),
               );
             // A background send may publish after the user picked a new target.
-            setReplyParent((current) =>
-              current === replyParent ? undefined : current,
-            );
+            reply.sent(reply.target);
             setSent(id);
           }}
         />

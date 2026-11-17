@@ -252,7 +252,6 @@ it("removes muted channel activity from the Dock indicator without marking it re
     decode: async () => ({
       sections: [],
       assignments: {},
-      starred: [],
       muted: [],
     }),
     write: async ({ muted }) => (muted ? ["room"] : []),

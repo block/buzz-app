@@ -1,7 +1,12 @@
 import { pauseClock } from "./clock.mjs";
 import { test, expect } from "./fixture.mjs";
 import { generateSecretKey, verifyEvent } from "nostr-tools";
-import { newChat, openPage, sendOnlyTo } from "./navigation.mjs";
+import { newChat, openChannel, rail, sendOnlyTo } from "./navigation.mjs";
+import {
+  conversationAction,
+  conversationActions,
+  soloRow,
+} from "./rail-helpers.mjs";
 
 const id = "33333333-3333-4333-8333-333333333333";
 const destination = "55555555-5555-4555-8555-555555555555";
@@ -47,14 +52,10 @@ test("chat row menus open Share with the chat's people and restore focus", async
   });
   await page.goto(app.origin);
   await newChat(page);
-  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
-  const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
+  const row = soloRow(page, id);
   await expect(row).toBeVisible();
   await row.click({ button: "right" });
-  const menu = page.getByRole("menu", {
-    name: "Actions for Alpha",
-    exact: true,
-  });
+  const menu = page.getByRole("menu");
   // Lifecycle items come from the live roster when the menu opens.
   const lifecycleReady = menu.getByRole("menuitem", {
     name: "Delete chat",
@@ -62,24 +63,20 @@ test("chat row menus open Share with the chat's people and restore focus", async
   });
   await expect(lifecycleReady).toBeVisible();
   const actions = await menu.getByRole("menuitem").allTextContents();
-  expect(actions).toContain("Share access");
   await page.keyboard.press("Escape");
   await expect(
-    page.getByRole("heading", { name: "New chat", exact: true }),
+    page.getByRole("region", { name: "New chat", exact: true }),
   ).toBeVisible();
   await expect(row).toBeFocused();
-  await sidebar
-    .getByRole("button", { name: "Actions for Alpha", exact: true })
-    .click();
+  await row.press("Shift+F10");
   await expect(lifecycleReady).toBeVisible();
   expect(await menu.getByRole("menuitem").allTextContents()).toEqual(actions);
   await page.keyboard.press("Escape");
-  await row.focus();
-  await row.press("Shift+F10");
-  await expect(menu).toBeVisible();
-  await menu
-    .getByRole("menuitem", { name: "Share access", exact: true })
-    .click();
+  await expect(row).toBeFocused();
+  // Share access lives in the open chat's header actions.
+  await row.click();
+  await conversationActions(page).click();
+  await conversationAction(page, "Share access").click();
   const dialog = page.getByRole("dialog", {
     name: "Share access",
     exact: true,
@@ -98,7 +95,7 @@ test("chat row menus open Share with the chat's people and restore focus", async
     dialog.getByRole("button", { name: "Done", exact: true }),
   ).toBeEnabled();
   await page.keyboard.press("Escape");
-  await expect(row).toBeFocused();
+  await expect(conversationActions(page)).toBeFocused();
 });
 
 test.describe("Berd-style Solo project organization", () => {
@@ -113,66 +110,57 @@ test.describe("Berd-style Solo project organization", () => {
     const editor = page.locator('#new-chat-prompt [role="textbox"]');
     await editor.fill("Keep this unsent idea");
     const original = await editor.elementHandle();
-    await page.getByRole("button", { name: "New", exact: true }).click();
-    await page.getByRole("menuitem", { name: "New chat", exact: true }).click();
+    await newChat(page);
     await expect(editor).toBeFocused();
     expect(
       await editor.evaluate((node, before) => node === before, original),
     ).toBe(true);
     await expect(editor).toHaveText("Keep this unsent idea");
-    const sidebar = page.getByRole("navigation", {
-      name: "Solo conversations",
-    });
-    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
-    const saved = sidebar.getByRole("button", {
-      name: "New chat",
-      exact: true,
-    });
-    await expect(saved).toBeVisible();
-    await expect(saved).not.toHaveAttribute("aria-current");
-    await saved.click();
+    // The rail lists no draft row; New resumes the saved draft after leaving.
+    const alpha = soloRow(page, id);
+    await alpha.click();
+    await expect(editor).toHaveCount(0);
+    await newChat(page);
     await expect(editor).toHaveText("Keep this unsent idea");
     await expect(editor).toBeFocused();
-    await expect(saved).toHaveAttribute("aria-current", "page");
     await editor.fill("");
-    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+    await alpha.click();
     await expect(editor).toHaveCount(0);
-    await expect(
-      sidebar.getByRole("button", { name: "Alpha", exact: true }),
-    ).toHaveAttribute("aria-current", "page");
-    await expect(saved).toHaveCount(0);
+    await expect(alpha).toHaveAttribute("aria-current", "page");
+    await newChat(page);
+    await expect(editor).toHaveText("");
     await original.dispose();
   });
 
-  test("a project retains two chats and their exact tagged drafts", async ({
+  // The rail has no workspace folders; the chat header files a chat, and the
+  // composer's workspace control shows where it lives.
+  test("a workspace retains two chats and their exact tagged drafts", async ({
     page,
     app,
   }) => {
     await page.goto(app.origin);
     await newChat(page);
-    const sidebar = page.getByRole("navigation", {
-      name: "Solo conversations",
-    });
     // Stable identity: after reload an unread count joins the accessible label.
-    const row = sidebar.locator(`[data-solo-channel-id="${id}"]`);
-    await row.click({ button: "right" });
-    await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
-    await page.getByRole("menuitem", { name: "New workspace" }).click();
-    const dialog = page.getByRole("dialog");
-    // Wait until the exiting menus are gone and the dialog's initial focus has
-    // settled on the field. The modal hides the menus from role queries.
-    await expect(page.locator('[role="menu"]')).toHaveCount(0);
+    const row = soloRow(page, id);
+    const beta = soloRow(page, other);
+    await row.click();
+    await conversationActions(page).click();
+    await conversationAction(page, "New workspace").click();
+    const dialog = page.getByRole("dialog", {
+      name: "Create new workspace",
+      exact: true,
+    });
     const field = dialog.getByRole("textbox", { name: "Workspace name" });
     await expect(field).toBeFocused();
     await field.fill("Work");
     await expect(field).toHaveValue("Work");
     await dialog.getByRole("button", { name: "Create and move" }).click();
     await expect(dialog).not.toBeVisible();
-    await expect(sidebar.getByText("Saving workspace…")).not.toBeVisible();
-    await expect(sidebar.getByRole("alert")).toHaveCount(0);
-    const project = sidebar.getByRole("button", { name: "Work", exact: true });
-    await expect(project).toBeVisible();
-    await expect(project).toHaveAttribute("aria-expanded", "true");
+    const filed = page.getByRole("button", {
+      name: "Workspace: Work",
+      exact: true,
+    });
+    await expect(filed).toBeVisible();
     await expect
       .poll(() => app.report.sidebarPublications?.length ?? 0)
       .toBe(1);
@@ -207,27 +195,18 @@ test.describe("Berd-style Solo project organization", () => {
         .toBeFocused();
     }
 
-    const beta = sidebar.getByRole("button", { name: "Beta", exact: true });
-    await beta.click({ button: "right" });
-    await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
-    await page.getByRole("menuitem", { name: "Work", exact: true }).click();
+    await beta.click();
+    await conversationActions(page).click();
+    await conversationAction(page, "Work").click();
     await expect
       .poll(() => app.report.sidebarPublications?.length ?? 0)
       .toBe(2);
-    await expect(row).toBeVisible();
-    await expect(beta).toBeVisible();
-    // Filing is demonstrated by disclosure behavior, not child indentation.
-    await project.click();
-    await expect(row).not.toBeVisible();
-    await expect(beta).not.toBeVisible();
-    await project.click();
+    await expect(filed).toBeVisible();
     await expect(row).toBeVisible();
     await expect(beta).toBeVisible();
 
-    await sidebar.getByText("Alpha", { exact: true }).click();
-    await expect(
-      page.getByRole("button", { name: "Workspace: Work", exact: true }),
-    ).toBeVisible();
+    await row.click();
+    await expect(filed).toBeVisible();
     app.soloAgentMessage(id, "Agent follow-up fixture");
     const [agent] = app.soloAgents;
     const composer = page.getByRole("textbox", {
@@ -248,9 +227,9 @@ test.describe("Berd-style Solo project organization", () => {
       exact: true,
     });
     await expect(tag).toBeVisible();
-    const agentMessage = page.getByText("Agent follow-up fixture", {
-      exact: true,
-    });
+    const agentMessage = page
+      .getByRole("region", { name: "Chat Alpha", exact: true })
+      .getByText("Agent follow-up fixture", { exact: true });
     await expect(agentMessage).toBeVisible();
     await composer.press("End");
     await page.keyboard.insertText("Remember the launch checklist");
@@ -271,91 +250,17 @@ test.describe("Berd-style Solo project organization", () => {
     await page.keyboard.insertText("Keep this follow-up draft");
     await beta.click();
     await expect(composer).not.toContainText("Keep this follow-up draft");
-    await sidebar.getByText("Alpha", { exact: true }).click();
+    await row.click();
     await expect(composer).toContainText("Keep this follow-up draft");
     await expect(tag).toBeVisible();
     await page.reload();
     await expect(composer).toContainText("Keep this follow-up draft");
     await expect(tag).toBeVisible();
-    await expect(project).toHaveAttribute("aria-expanded", "true");
+    await expect(filed).toBeVisible();
     await expect(row).toBeVisible();
     await expect(beta).toBeVisible();
     await expect(agentMessage).toBeVisible();
   });
-});
-
-// A real pointer owns the activation distance and hit testing; the saved move
-// itself is the row menu's.
-test("dragging a chat between a project and Chats saves and reloads like Move to", async ({
-  page,
-  app,
-}) => {
-  await page.goto(app.origin);
-  await newChat(page);
-  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
-  const chat = (name) => sidebar.getByRole("button", { name, exact: true });
-  const inProject = (name) =>
-    sidebar
-      .locator("[data-project]")
-      .getByRole("button", { name, exact: true });
-  const published = async (count) => {
-    await expect
-      .poll(() => app.report.sidebarPublications?.length ?? 0)
-      .toBe(count);
-    // Each replaceable preference write needs a later second.
-    await page.clock.runFor(1_100);
-    return app.report.sidebarPublications.at(-1).blob.value.assignments;
-  };
-  // Hold a real pointer drag over a section header, then release it.
-  async function drag(name, section, target = true) {
-    const from = await chat(name).boundingBox();
-    const to = await chat(section).boundingBox();
-    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, {
-      steps: 8,
-    });
-    await expect(sidebar.locator("[data-channel-dragging]")).toBeVisible();
-    await expect(sidebar.locator("[data-drop-target]")).toHaveCount(
-      target ? 1 : 0,
-    );
-    await page.mouse.up();
-    await expect(sidebar.locator("[data-channel-dragging]")).toHaveCount(0);
-  }
-  await page.clock.install();
-  await chat("Alpha").click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
-  await page.getByRole("menuitem", { name: "New workspace" }).click();
-  const dialog = page.getByRole("dialog");
-  // Wait until the exiting menus are gone and the dialog's initial focus has
-  // settled on the field. The modal hides the menus from role queries.
-  await expect(page.locator('[role="menu"]')).toHaveCount(0);
-  const field = dialog.getByRole("textbox", { name: "Workspace name" });
-  await expect(field).toBeFocused();
-  await field.fill("Work");
-  await expect(field).toHaveValue("Work");
-  await dialog.getByRole("button", { name: "Create and move" }).click();
-  await expect(inProject("Alpha")).toBeVisible();
-  const work = (await published(1))[id];
-
-  await drag("Alpha", "Chats");
-  await expect(chat("Alpha")).toBeFocused();
-  await expect(inProject("Alpha")).toHaveCount(0);
-  expect(await published(2)).toEqual({});
-
-  await drag("Beta", "Work");
-  await expect(inProject("Beta")).toBeFocused();
-  expect(await published(3)).toEqual({ [other]: work });
-
-  // Dropping back on the chat's own section is not a move.
-  await drag("Beta", "Work", false);
-  await expect(inProject("Beta")).toBeVisible();
-  expect(app.report.sidebarPublications).toHaveLength(3);
-
-  await page.reload();
-  await expect(inProject("Beta")).toBeVisible();
-  await expect(chat("Alpha")).toBeVisible();
-  await expect(inProject("Alpha")).toHaveCount(0);
 });
 
 // App wiring proof: access readback precedes link publication while Solo
@@ -405,14 +310,12 @@ test("Share opens View only and posts a link without promoting or moving the Sol
   });
   await page.goto(app.origin);
   await newChat(page);
-  const row = page.locator(`[data-solo-channel-id="${id}"]`);
+  const row = soloRow(page, id);
   await row.click();
   const history = page.getByText(`primary ${id} message 0`, { exact: false });
   await expect(history).toBeVisible();
-  await row.click({ button: "right" });
-  await page
-    .getByRole("menuitem", { name: "Share access", exact: true })
-    .click();
+  await conversationActions(page).click();
+  await conversationAction(page, "Share access").click();
   const dialog = page.getByRole("dialog", {
     name: "Share access",
     exact: true,
@@ -454,22 +357,17 @@ test("Share opens View only and posts a link without promoting or moving the Sol
   await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(390);
   await expect(page.locator("html")).toHaveCSS("font-size", "32px");
   // Let the resized, enlarged-text layout finish before testing focus reveal.
-  // At this size the shell header wraps Search onto its own row. That shortens
-  // the chat behind the dialog, and Virtua scrolls the chat back to its newest
-  // message with scrollTo, again on each size update for 150 ms. WebKit
-  // reveals a newly focused element on a 0 ms timer, and a scrollTo or
-  // scrollBy on any element before that timer fires cancels the reveal, even
-  // one that does not move, so Share would stay hidden. On loaded Linux WebKit
-  // this chain can end hundreds of milliseconds after the text change. Wait
-  // for the header to wrap and the chat to rest at its newest message, with no
-  // scrollTo or scrollBy for longer than Virtua's 150 ms. page.clock fakes
+  // The resize shortens the chat behind the dialog, and Virtua scrolls the
+  // chat back to its newest message with scrollTo, again on each size update
+  // for 150 ms. WebKit reveals a newly focused element on a 0 ms timer, and a
+  // scrollTo or scrollBy on any element before that timer fires cancels the
+  // reveal, even one that does not move, so Share would stay hidden. On loaded
+  // Linux WebKit this chain can end hundreds of milliseconds after the text
+  // change. Wait for the chat to rest at its newest message, with no scrollTo
+  // or scrollBy for longer than Virtua's 150 ms. page.clock fakes
   // requestAnimationFrame, so each reading first waits for two real rendering
   // updates: a new ResizeObserver reports only in one, after the app's own
   // observers have received the layout before it.
-  await expect(page.locator(".shell-header")).toHaveAttribute(
-    "data-search-wrapped",
-    "true",
-  );
   const timeline = page.locator(
     "section[aria-label='Channel message history']",
   );
@@ -597,10 +495,8 @@ test("Share opens View only and posts a link without promoting or moving the Sol
   expect(links[0].event.content).toBe(`[Chat: Alpha](buzz://channel/${id})`);
   // Reopen the same app surface immediately after sharing, without reloading
   // the page. The new access edit must use the confirmed View only snapshot.
-  await row.click({ button: "right" });
-  await page
-    .getByRole("menuitem", { name: "Share access", exact: true })
-    .click();
+  await conversationActions(page).click();
+  await conversationAction(page, "Share access").click();
   const access = dialog.getByRole("combobox", { name: "General access" });
   await expect(access).toBeEnabled();
   await expect(access).toHaveText("View only");
@@ -628,19 +524,13 @@ test("explicit conversion moves the same conversation from Solo to Messages and 
 }, testInfo) => {
   await page.goto(app.origin);
   await newChat(page);
-  const sidebar = page.getByRole("navigation", {
-    name: "Solo conversations",
-  });
-  const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
+  const row = soloRow(page, id);
   await row.click();
   await expect(
     page.getByText(`primary ${id} message 0`, { exact: false }),
   ).toBeVisible();
-  await row.focus();
-  await row.press("Shift+F10");
-  await page
-    .getByRole("menuitem", { name: "Convert to channel", exact: true })
-    .click();
+  await conversationActions(page).click();
+  await conversationAction(page, "Convert to channel").click();
   const dialog = page.getByRole("dialog", {
     name: "Convert to channel",
     exact: true,
@@ -666,7 +556,7 @@ test("explicit conversion moves the same conversation from Solo to Messages and 
     "Everyone in this community will be able to read this chat’s full history and Canvas, including its workspace folders and agent instructions.";
   await expect(dialog).toHaveAccessibleDescription(disclosure);
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(row).toBeFocused();
+  await expect(conversationActions(page)).toBeFocused();
   for (const { mode, width, scale } of [
     { mode: "dark", width: 1440, scale: 1 },
     { mode: "light", width: 1440, scale: 1 },
@@ -688,12 +578,8 @@ test("explicit conversion moves the same conversation from Solo to Messages and 
       "--buzz-text-scale",
       String(scale),
     );
-    await page
-      .getByRole("button", { name: "Chat actions", exact: true })
-      .click();
-    await page
-      .getByRole("menuitem", { name: "Convert to channel", exact: true })
-      .click();
+    await conversationActions(page).click();
+    await conversationAction(page, "Convert to channel").click();
     await expect(access).toBeEnabled();
     await expect(access).toHaveText("Private");
     await access.click();
@@ -732,17 +618,13 @@ test("explicit conversion moves the same conversation from Solo to Messages and 
         ),
       });
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(
-      page.getByRole("button", { name: "Chat actions", exact: true }),
-    ).toBeFocused();
+    await expect(conversationActions(page)).toBeFocused();
   }
   await page.setViewportSize({ width: 1440, height: 950 });
   await page.evaluate(() => localStorage.setItem("buzz-font-scale.v1", "1"));
   await page.reload();
-  await page.getByRole("button", { name: "Chat actions", exact: true }).click();
-  await page
-    .getByRole("menuitem", { name: "Convert to channel", exact: true })
-    .click();
+  await conversationActions(page).click();
+  await conversationAction(page, "Convert to channel").click();
   await expect(access).toBeEnabled();
   await access.click();
   await publicChoice.click();
@@ -753,16 +635,18 @@ test("explicit conversion moves the same conversation from Solo to Messages and 
   await expect(
     page.getByText("Converted to channel.", { exact: true }),
   ).toBeVisible();
+  // The channel header replaces the chat's: members, not Share access.
   await expect(
-    page.getByRole("button", { name: "Channel actions" }),
+    page.getByRole("button", { name: "Manage members of Alpha", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Share access to Alpha", exact: true }),
+  ).toHaveCount(0);
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeFocused();
-  await expect(sidebar).toBeVisible();
-  await expect(sidebar.locator(`[data-solo-channel-id="${id}"]`)).toHaveCount(
-    0,
-  );
+  await expect(rail(page)).toBeVisible();
+  await expect(row).toHaveCount(0);
   await expect(
     page.getByText(`primary ${id} message 0`, { exact: false }),
   ).toBeVisible();
@@ -788,18 +672,13 @@ test("explicit conversion moves the same conversation from Solo to Messages and 
       [9, 9000, 9007, 30315].includes(event.kind),
     ),
   ).toHaveLength(0);
-  await openPage(page, "Messages");
-  const messages = page.getByRole("button", { name: "Alpha", exact: true });
-  await expect(messages).toBeVisible();
-  await messages.click();
+  await openChannel(page, id);
   await expect(
     page.getByText(`primary ${id} message 0`, { exact: false }),
   ).toBeVisible();
   await newChat(page);
   await expect(row).toHaveCount(0);
-  await expect(
-    sidebar.getByRole("button", { name: "Beta", exact: true }),
-  ).toBeVisible();
+  await expect(soloRow(page, other)).toBeVisible();
 });
 
 // Browser-only: native modal focus handoff to a replacement Messages header.
@@ -830,12 +709,9 @@ test("View-only Solo conversion preserves access and restores focus after its ch
       scope: { viewer: app.viewer, communityOrigin: "https://primary.example" },
     }),
   ).toEqual({ status: "opened" });
-  // Conversion lives in the chat's actions menu, not the access dialog.
-  const trigger = page.getByRole("button", {
-    name: "Chat actions",
-    exact: true,
-  });
-  const convert = page.getByRole("menuitem", { name: "Convert to channel" });
+  // Conversion lives in the chat's actions, not the access dialog.
+  const trigger = conversationActions(page);
+  const convert = conversationAction(page, "Convert to channel");
   const dialog = page.getByRole("dialog", { name: "Convert to channel" });
   for (const { mode, width, scale } of [
     { mode: "dark", width: 1440, scale: 1 },
@@ -971,7 +847,13 @@ test("View-only Solo conversion preserves access and restores focus after its ch
   await expect(
     page.getByText(`primary ${id} message 0`, { exact: false }),
   ).toBeVisible();
-  await expect(trigger).toHaveCount(0);
+  // The channel header replaces the chat's: members, not Share access.
+  await expect(
+    page.getByRole("button", { name: "Manage members of Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Share access to Alpha", exact: true }),
+  ).toHaveCount(0);
   expect(app.report.detailsPublications).toHaveLength(1);
   expect(app.report.detailsPublications[0].tags).toEqual([
     ["h", id],
@@ -988,20 +870,15 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   await page.goto(app.origin);
   await newChat(page);
   // A New chat draft keeps its own Chat settings button; a created chat
-  // reaches settings through its Chat actions menu. Each keeps return focus.
+  // reaches settings through its Conversation actions. Each keeps return focus.
   const draftActions = page.getByRole("button", {
     name: "Chat settings",
     exact: true,
   });
-  const actions = page.getByRole("button", {
-    name: "Chat actions",
-    exact: true,
-  });
+  const actions = conversationActions(page);
   const openSettings = async () => {
     await actions.click();
-    await page
-      .getByRole("menuitem", { name: "Chat settings", exact: true })
-      .click();
+    await conversationAction(page, "Chat settings").click();
   };
   await draftActions.click();
   const settings = page.getByRole("dialog", {
@@ -1089,8 +966,7 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   await page.keyboard.press("Escape");
   await expect(settings).not.toBeVisible();
 
-  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
-  const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
+  const row = soloRow(page, id);
   await row.click();
   await expect(
     page.getByText(`primary ${id} message 0`, { exact: false }),
@@ -1123,11 +999,7 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   await expect(lifetime).not.toBeVisible();
   await expect(actions).toBeFocused();
   expect(app.report.detailsPublications ?? []).toHaveLength(0);
-  await row.focus();
-  await row.press("Shift+F10");
-  await page
-    .getByRole("menuitem", { name: "Chat settings", exact: true })
-    .click();
+  await openSettings();
   await expect(save).toBeEnabled();
   await expect(ongoing).toBeChecked();
   await lifetime
@@ -1165,12 +1037,11 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
     save.click(),
   ]);
   await expect(lifetime).not.toBeVisible();
-  const renamedRow = sidebar.getByRole("button", {
-    name: "Make contrast meet accessibility standards",
-    exact: true,
-  });
-  await expect(renamedRow).toBeFocused();
-  await expect(renamedRow).toBeVisible();
+  await expect(actions).toBeFocused();
+  await expect(row).toHaveAccessibleName(
+    "Make contrast meet accessibility standards",
+  );
+  await expect(row).toBeVisible();
   expect(app.report.detailsPublications).toHaveLength(1);
   const event = app.report.detailsPublications[0];
   expect(verifyEvent(event)).toBe(true);
@@ -1208,56 +1079,14 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
       [9, 9000, 9007, 30315, 40100].includes(event.kind),
     ),
   ).toHaveLength(0);
-  await renamedRow.focus();
-  await renamedRow.press("Shift+F10");
-  await page
-    .getByRole("menuitem", { name: "Chat settings", exact: true })
-    .click();
+  await openSettings();
   await expect(save).toBeEnabled();
   await expect(temporary).toHaveAccessibleDescription(
     "Archives after 2 weeks without activity.",
   );
   await page.keyboard.press("Escape");
-
-  await expect(renamedRow).toBeFocused();
-  // Inline renaming exercises native text selection and the actual sidebar host.
-  await renamedRow.dblclick();
-  await expect(lifetime).not.toBeVisible();
-  const inlineName = sidebar.getByRole("textbox", {
-    name: "Chat name",
-    exact: true,
-  });
-  await expect(inlineName).toBeFocused();
-  await expect
-    .poll(() =>
-      inlineName.evaluate((input) => [
-        input.selectionStart,
-        input.selectionEnd,
-        input.value.length,
-      ]),
-    )
-    .toEqual([0, 42, 42]);
-  await page.keyboard.type("Inline plan");
-  await inlineName.press("Enter");
-  await expect(inlineName).toHaveCount(0);
-  const inlineRow = sidebar.getByRole("button", {
-    name: "Inline plan",
-    exact: true,
-  });
-  await expect(inlineRow).toBeVisible();
-  await expect(inlineRow).toBeFocused();
-  expect(app.report.detailsPublications).toHaveLength(2);
-  const rename = app.report.detailsPublications[1];
-  expect(verifyEvent(rename)).toBe(true);
-  expect(rename.tags).toContainEqual(["name", "Inline plan"]);
-  expect(rename.tags.some(([key]) => key === "ttl")).toBe(false);
-  await inlineRow.dblclick();
-  await expect(inlineName).toBeFocused();
-  await page.keyboard.type("Discard this");
-  await inlineName.press("Escape");
-  await expect(inlineName).toHaveCount(0);
-  await expect(inlineRow).toBeFocused();
-  expect(app.report.detailsPublications).toHaveLength(2);
+  await expect(actions).toBeFocused();
+  expect(app.report.detailsPublications).toHaveLength(1);
 });
 
 // Native caret placement after focus handoffs and popup picks needs a browser.
@@ -1291,10 +1120,7 @@ test.describe("Solo composer caret", () => {
     );
     await expect(composer).toHaveText("");
     await page.keyboard.insertText("first");
-    const sidebar = page.getByRole("navigation", {
-      name: "Solo conversations",
-    });
-    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+    await soloRow(page, id).click();
     await expect(composer).toHaveText("");
     await composer.click();
     await page.keyboard.insertText("alpha draft");
@@ -1311,7 +1137,7 @@ test.describe("Solo composer caret", () => {
     await expect(composer).toHaveText("first again");
 
     // A blurred composer's prose is left alone too.
-    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+    await soloRow(page, id).click();
     await expect(composer).toHaveText("alpha draft");
     await composer.blur();
     await pick(honey);
@@ -1396,10 +1222,7 @@ test.describe("Solo send focus", () => {
       await route.continue().catch(() => {});
     });
     await page.goto(app.origin);
-    await page
-      .getByRole("navigation", { name: "Solo conversations" })
-      .getByRole("button", { name: "Alpha", exact: true })
-      .click();
+    await soloRow(page, id).click();
     const [agent] = app.soloAgents;
     await sendOnlyTo(
       page,

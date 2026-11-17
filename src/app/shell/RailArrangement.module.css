@@ -77,6 +77,9 @@
   border-radius: var(--radius-container);
   background: var(--surface-rail-card);
 }
+.group[data-rail-section="team"] {
+  --conversation-row-unread-color: var(--affordance-accent-prominent);
+}
 .group[data-drop-target]:not([data-section-drag]) {
   background: color-mix(
     in srgb,

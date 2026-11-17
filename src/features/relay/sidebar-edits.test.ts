@@ -9,7 +9,6 @@ import {
   validSidebarSectionRename,
   validSidebarAssignment,
   validSidebarChannelId,
-  validSidebarSort,
 } from "./sidebar-edits";
 
 it("validates sidebar removal identifiers without normalizing their wire value", () => {
@@ -38,7 +37,7 @@ it("tombstones one legacy section and clears only its channel assignments", () =
       beta: [1_700_000_000_000, "0000000000000000", "later"],
     },
   });
-  expect(projectSidebarRecord("channel-sections", next)).toMatchObject({
+  expect(projectSidebarRecord(next)).toMatchObject({
     sections: [{ id: "later", name: "Later", order: 0 }],
     assignments: { beta: "later" },
   });
@@ -62,7 +61,7 @@ it("reorders live sections as one whole-list write and keeps unlisted ones after
     ["work", "gone", "home"],
     42,
   );
-  expect(projectSidebarRecord("channel-sections", next)).toMatchObject({
+  expect(projectSidebarRecord(next)).toMatchObject({
     sections: [
       { id: "work", order: 0 },
       { id: "home", order: 1 },
@@ -123,27 +122,6 @@ it("validates create-section policy separately from the host envelope", () => {
     expect(validSidebarAssignment(intent)).toBe(false);
 });
 
-it("retains built-in and known-section sorting limits", () => {
-  for (const group of ["starred", "channels", "forums", "dms"])
-    for (const mode of ["alpha", "recent"] as const)
-      expect(validSidebarSort(group, mode, [])).toBe(true);
-  const section = "x".repeat(256);
-  expect(validSidebarSort(`section:${section}`, "recent", [section])).toBe(
-    true,
-  );
-  expect(validSidebarSort("section:unknown", "recent", [])).toBe(false);
-  expect(
-    validSidebarSort(`section:${section}x`, "recent", [`${section}x`]),
-  ).toBe(false);
-  expect(validSidebarSort("channels", "alpha", Array(100).fill("s"))).toBe(
-    true,
-  );
-  expect(validSidebarSort("channels", "alpha", Array(101).fill("s"))).toBe(
-    false,
-  );
-  expect(validSidebarSort("channels", "recent", [" "])).toBe(false);
-});
-
 it("renames one live section by rewriting only its name register", () => {
   const current = {
     version: 1,
@@ -160,7 +138,7 @@ it("renames one live section by rewriting only its name register", () => {
     " Projects ",
     42,
   );
-  expect(projectSidebarRecord("channel-sections", next)).toMatchObject({
+  expect(projectSidebarRecord(next)).toMatchObject({
     sections: [
       { id: "work", name: "Projects", order: 0 },
       { id: "later", name: "Later", order: 1 },

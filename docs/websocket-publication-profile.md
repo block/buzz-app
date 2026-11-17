@@ -221,7 +221,7 @@ session logs, real account data or local configuration are included in this PR.
 ## Separate demand-driven startup comparison
 
 The app now passes `warm: false` while keeping `prepared: true`. This disables
-only automatic roster-wide head fetching (including the starred-first sweep).
+only automatic roster-wide head fetching.
 The warmer implementation, saved heads, hover/focus preparation, bounded avatar
 preparation, membership/unread owners and retained-window live catch-up remain.
 There is no new scheduler, settings toggle or environment flag. Restoring the

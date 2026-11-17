@@ -2491,7 +2491,6 @@ it("reconciles own sidebar hints with full fresh reads and bounded reconnect rep
   const data = {
     sections: [{ id: "work", name: "Work", order: 0 }],
     assignments: { alpha: "work" },
-    starred: ["beta"],
     muted: ["gamma"],
   };
   const decode = vi.fn(async (): Promise<SidebarPreferences> => data);
@@ -2579,7 +2578,7 @@ it("retries transient sidebar hint failures through existing preference recovery
   const viewer = keypair(),
     relay = keypair();
   let live!: LiveCallbacks;
-  const data = { sections: [], assignments: {}, starred: [], muted: [] };
+  const data = { sections: [], assignments: {}, muted: [] };
   const read = vi.fn(async () => []);
   const decode = vi.fn(async () => data);
   const owner = createRelaySession({

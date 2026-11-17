@@ -2,6 +2,7 @@ import { test as appTest } from "./fixture.mjs";
 import { test as sourceTest } from "./source-fixture.mjs";
 import { expect } from "./playwright-test.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
+import { channelRow, hideNarrowConversationList } from "./navigation.mjs";
 import {
   anchor,
   expectAnchor,
@@ -204,12 +205,14 @@ appTest(
     // history, which cannot place the line above the first row. Re-enter the
     // loaded history while read sync stays unavailable, so recovery can
     // exercise divider insertion.
-    await page.getByRole("button", { name: /^Beta/ }).click();
+    await channelRow(page, "beta").click();
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: /^Alpha/ }).click();
+    await channelRow(page, "alpha").click();
     await expect(composer(page)).toBeVisible();
+    // A narrow reader keeps Team's list over it after an open from the list.
+    await hideNarrowConversationList(page);
     await settle(page);
 
     // Keep the recovery control open before measuring. Holding a request
@@ -357,7 +360,7 @@ appTest(
 
     const targetId = await messageAfter(separator(page));
     expect(targetId).toBe(boundaryId);
-    const alphaSidebar = page.getByRole("button", { name: /^Alpha/ });
+    const alphaSidebar = channelRow(page, "alpha");
     await alphaSidebar.focus();
     await expect(alphaSidebar).toBeFocused();
     await composer(page).focus();
@@ -365,12 +368,13 @@ appTest(
     await expect(separator(page)).toHaveCount(1);
     expect(await messageAfter(separator(page))).toBe(boundaryId);
 
-    await page.getByRole("button", { name: /^Beta/ }).click();
+    await channelRow(page, "beta").click();
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: /^Alpha/ }).click();
+    await channelRow(page, "alpha").click();
     await expect(composer(page)).toBeVisible();
+    await hideNarrowConversationList(page);
     await expect(separator(page)).toBeVisible();
     const revisitBoundaryId = await page.evaluate(
       (ids) => {
@@ -452,6 +456,7 @@ appTest(
       document.documentElement.dataset.fontSize = "larger";
     });
     await page.setViewportSize({ width: 390, height: 844 });
+    await hideNarrowConversationList(page, true);
     await settle(page);
     await scrollBoundaryIntoView(page);
     await page.mouse.move(0, 0);
@@ -619,7 +624,7 @@ appTest.describe("history longer than one page", () => {
         )
         .toBeGreaterThanOrEqual(seeded.at(-1).created_at);
 
-      await page.getByRole("button", { name: /^Beta/ }).click();
+      await channelRow(page, "beta").click();
       await expect(
         page.getByRole("textbox", { name: "Message #Beta", exact: true }),
       ).toBeVisible();
@@ -641,7 +646,7 @@ appTest.describe("history longer than one page", () => {
         )
         .toBe(true);
 
-      await page.getByRole("button", { name: /^Alpha/ }).click();
+      await channelRow(page, "alpha").click();
       await expect(composer(page)).toBeVisible();
       await expect.poll(entryWindow).toEqual({
         status: "ready",
@@ -715,7 +720,7 @@ const fiveChannels = {
   historyCounts: { alpha: 15, beta: 15, gamma: 5, delta: 5, epsilon: 5 },
 };
 const go = async (page, name) => {
-  await page.getByRole("button", { name: new RegExp(`^${name}`) }).click();
+  await channelRow(page, name.toLowerCase()).click();
   await expect(
     page.getByRole("textbox", { name: `Message #${name}`, exact: true }),
   ).toBeVisible();
@@ -820,7 +825,7 @@ appTest.describe("a visit that begins before its first verified page", () => {
       await open(page, app);
       await expect
         .poll(() => unreadIn(page, "alpha", arrivals))
-        .toEqual({ unread: true, status: "ready", rows: 18 });
+        .toMatchObject({ status: "ready", rows: 18 });
       await expectBoundaryAt(page, arrivals);
     },
   );

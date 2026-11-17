@@ -141,6 +141,10 @@ drafts, and per-visit list visibility; toggling does not create a history visit.
 `ConversationDetailPane` supplies the companion destination to nested readers,
 so profiles and tools split beside the same mounted conversation. Closing a tool
 keeps the reader and its draft intact.
+Workspace tab headers are borderless and use matching 16px visible insets,
+including settings and contributed detail tabs. Thread tabs reuse
+`PanelHeader historyOverlay` so history scrolls behind the same blur-fade material
+as the main conversation.
 Retained tabs, guarded closers, history and plugin lifetimes stay with their
 existing owners. Transient menus and task/confirmation dialogs keep their own
 shared presentation.
@@ -1383,9 +1387,8 @@ shared header.
 - **Conversation membership identity:** channels, DMs and Solo chats show the
   other members in a centered `SurfaceButton`; human previews exclude the viewer
   and Solo previews retain participating agents. The control opens the existing
-  membership manager. `PanelWorkspace identityPlacement="content"` presents the
-  avatar/name stack only for its permanent conversation; conversation tabs supply
-  their own membership identity. Other selected tabs keep compact pane chrome.
+  membership manager. Conversation tabs supply their own membership identity;
+  other selected tabs keep compact pane chrome.
   Anchored conversation dialogs use the same centered avatar/name stack, with
   Close at the leading edge and tools at the trailing edge.
 - **Trailing actions:** use `IconButton size="sm" variant="ghost"` with 1rem

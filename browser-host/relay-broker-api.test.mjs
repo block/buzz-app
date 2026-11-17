@@ -1475,10 +1475,12 @@ test("a queued request's community refusal marks its own response", async () => 
     for (const release of releases.values()) release();
   };
   try {
-    const sidebar = h.post("sidebar-sort", {
-      group: "forums",
-      mode: "recent",
-      sectionIds: [],
+    const sidebar = h.post("sidebar-assignment", {
+      channelId: "general",
+      createSection: {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "Work",
+      },
     });
     await vi.waitFor(() => expect(releases.has("sidebar")).toBe(true));
     const held = [1, 2, 3, 4, 5].map((limit) =>

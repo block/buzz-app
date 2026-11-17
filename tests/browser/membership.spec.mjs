@@ -1,4 +1,8 @@
-import { openPage } from "./navigation.mjs";
+import {
+  channelRow,
+  hideNarrowConversationList,
+  openPage,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { anchor, expectAnchor, keyScroll, settle } from "./timeline.mjs";
 
@@ -23,9 +27,9 @@ test.afterEach(async ({ app }) => {
 
 async function openMessages(page, app) {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  await openPage(page, "Team");
   // Unread evidence can extend the row's name; its channel id is stable.
-  await expect(page.locator('button[data-channel-id="alpha"]')).toBeVisible();
+  await expect(channelRow(page, "alpha")).toBeVisible();
   // A loop error is reported in the frame that delivers the observations.
   await page.evaluate(
     () =>
@@ -41,7 +45,7 @@ test("Channels renders grouped history and live membership without turning activ
   app,
 }, testInfo) => {
   await openMessages(page, app);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await channelRow(page, "alpha").click();
   const feed = page.getByRole("region", { name: "Channel message history" });
   const groups = feed.locator("[data-membership-row]");
   await expect(groups).toHaveCount(1);
@@ -147,8 +151,8 @@ test("Channels renders grouped history and live membership without turning activ
       feed.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop),
     )
     .toBeLessThan(2);
-  await page.getByRole("button", { name: "Beta", exact: true }).click();
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await channelRow(page, "beta").click();
+  await channelRow(page, "alpha").click();
   await expect(groups).toHaveCount(2);
   await expect(groups.last()).toBeVisible();
 });
@@ -161,10 +165,10 @@ keyboardTest(
   async ({ page, app }) => {
     await openMessages(page, app);
     // The open channel's row is quiet, and its identity locates it.
-    const alpha = page.locator('button[data-channel-id="alpha"]');
+    const alpha = channelRow(page, "alpha");
+    await alpha.click();
     await expect(alpha).toHaveAttribute("aria-current", "page");
     await expect(alpha.getByRole("img")).toHaveCount(0);
-    await alpha.click();
     const feed = page.getByRole("region", { name: "Channel message history" });
     const distance = () =>
       feed.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);
@@ -222,10 +226,10 @@ test("a restored membership anchor follows delayed group growth through resize a
     );
   history.splice(history.indexOf(delayed), 1);
   await openMessages(page, app);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await channelRow(page, "alpha").click();
   const feed = page.getByRole("region", { name: "Channel message history" });
   await settle(page);
-  await page.getByRole("button", { name: "Beta", exact: true }).click();
+  await channelRow(page, "beta").click();
   // Seed only a persisted reading preference, not relay evidence or client rows.
   await page.evaluate((id) => {
     const key = Object.keys(localStorage).find(
@@ -239,7 +243,7 @@ test("a restored membership anchor follows delayed group growth through resize a
       JSON.stringify({ offset: 0, bottom: false, anchor: { id, y: 90 } }),
     );
   }, members[0].id);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await channelRow(page, "alpha").click();
   const group = feed.locator("[data-membership-row]");
   const y = () =>
     group.evaluate(
@@ -278,7 +282,7 @@ test("a restored membership anchor follows delayed group growth through resize a
   await expect
     .poll(async () => Math.abs((await y()) - beforeResize))
     .toBeLessThan(2);
-  await page.getByRole("button", { name: "Beta", exact: true }).click();
+  await channelRow(page, "beta").click();
   const saved = await page.evaluate(() => {
     const key = Object.keys(localStorage).find(
       (key) =>
@@ -288,7 +292,7 @@ test("a restored membership anchor follows delayed group growth through resize a
     return JSON.parse(localStorage.getItem(key));
   });
   expect(saved.anchor.id).toBe(delayed.id);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await channelRow(page, "alpha").click();
   await settle(page);
   await expect
     .poll(async () => Math.abs((await y()) - beforeResize))
@@ -302,7 +306,7 @@ burstTest(
   "a join burst longer than a page shows the newest messages first, then its joins",
   async ({ page, app }, testInfo) => {
     await openMessages(page, app);
-    await page.getByRole("button", { name: "Alpha", exact: true }).click();
+    await channelRow(page, "alpha").click();
     const feed = page.getByRole("region", { name: "Channel message history" });
     const groups = feed.locator("[data-membership-row]");
     await expect(
@@ -360,6 +364,11 @@ burstTest(
     await expect(popup).toHaveCount(0);
     await expect(others).toBeFocused();
     await page.setViewportSize({ width: 390, height: 900 });
+    // The narrow reader keeps the list laid over it until it is dismissed.
+    await expect(
+      page.locator("[data-detail-workspace][data-narrow]"),
+    ).toHaveCount(1);
+    await hideNarrowConversationList(page);
     await page.locator("html").evaluate((root) => {
       root.dataset.colorMode = "dark";
       root.style.setProperty("--buzz-text-scale", "1.5");

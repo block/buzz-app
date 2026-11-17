@@ -76,35 +76,11 @@ it("orders active scopes by contribution key and removes registrations on disabl
 });
 
 it.each([
-  [
-    "duplicate mode ids",
-    "example.plugin",
-    {
-      sortModes: [
-        { id: "one", label: "One", compare: (): number => 0 },
-        { id: "one", label: "Two", compare: (): number => 0 },
-      ],
-    },
-  ],
-  [
-    "blank label",
-    "example.plugin",
-    { sortModes: [{ id: "one", label: "  ", compare: (): number => 0 }] },
-  ],
-  [
-    "non-function comparator",
-    "example.plugin",
-    { sortModes: [{ id: "one", label: "One", compare: null }] },
-  ],
-  ["non-function renderer", "example.plugin", { render: false }],
-  [
-    "incompatible owner id",
-    "MixedCase",
-    { sortModes: [{ id: "one", label: "One", compare: (): number => 0 }] },
-  ],
+  ["non-function renderer", "rows", { render: false }],
+  ["invalid contribution id", "Rows", {}],
 ] as const)(
   "rejects %s without publishing a partial contribution",
-  async (_, owner, fields) => {
+  async (_, id, fields) => {
     const root = new Context();
     root.provide("pluginStatus", {
       isActive: () => true,
@@ -113,12 +89,12 @@ it.each([
     const registry = new SidebarRowsService(root);
     let register = () => {};
     const fiber = root
-      .extend({ pluginOwner: { id: owner, revision: "one" } })
+      .extend({ pluginOwner: { id: "example.plugin", revision: "one" } })
       .plugin((ctx) => {
         register = () =>
           ctx.reflect.get("sidebarRows")?.register({
             version: 1,
-            id: "rows",
+            id,
             render: (_, Default) => Default,
             ...fields,
           } as SidebarRowContribution);

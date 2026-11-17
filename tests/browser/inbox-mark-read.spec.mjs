@@ -1,18 +1,17 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { conversationList, openPage } from "./navigation.mjs";
 import { readJournal } from "./reading.mjs";
 
 const channel = "f12918e7-88d0-4ddd-aa6b-d4888ff6d3bd";
-const conversations = (inbox) =>
-  inbox.getByRole("region", { name: /^Conversation in / });
-const sideTabs = (inbox) =>
-  inbox.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab");
+const conversations = (page) =>
+  page.getByRole("region", { name: /^Conversation in / });
+const sideTabs = (page) =>
+  page.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab");
 test.use({
   productionBroker: true,
   readState: true,
   inboxThreadWindow: true,
   agentPeers: true,
-  inboxSoloAgent: true,
   pluginFixtures: true,
   channelIds: ["alpha", channel],
   channelNames: { [channel]: "Review room" },
@@ -20,40 +19,42 @@ test.use({
   screenshot: "off",
 });
 
-async function choose(page, inbox, control, option) {
-  if (control === "Activity type") {
-    const tab = inbox
-      .getByRole("tablist", { name: "Activity type" })
-      .getByRole("tab", {
-        name: option === "All activity" ? "All" : option,
-        exact: true,
-      });
-    await tab.click();
-    await expect(tab).toHaveAttribute("aria-selected", "true");
-    return;
-  }
-  // Sender: the From menu's single choice.
-  await inbox.getByRole("button", { name: /^From / }).click();
-  const menu = page.getByRole("menu", { name: "From" });
+const filter = (page) =>
+  page.getByRole("button", {
+    name: "Filter and sort conversations",
+    exact: true,
+  });
+const filterMenu = (page) =>
+  page.getByRole("menu", { name: "Filter and sort conversations" });
+// A conversation view tab: All, Threads, Mentions...
+async function chooseView(page, name) {
+  const tab = page
+    .getByRole("tablist", { name: "Conversation view" })
+    .getByRole("tab", { name, exact: true });
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+}
+// A choice in the filter menu: From, Show or Sort.
+async function choose(page, option) {
+  await filter(page).click();
+  const menu = filterMenu(page);
   await expect(menu).toBeVisible();
-  await menu
-    .getByRole("menuitemradio", {
-      name:
-        option === "Humans"
-          ? "People"
-          : option === "Everyone"
-            ? "Anyone"
-            : option,
-      exact: true,
-    })
-    .click();
+  await menu.getByRole("menuitemradio", { name: option, exact: true }).click();
+  await expect(menu).toHaveCount(0);
+}
+// The filter menu marks the current choice; it closes again untouched.
+async function expectChosen(page, option, chosen = true) {
+  await filter(page).click();
+  const menu = filterMenu(page);
+  await expect(
+    menu.getByRole("menuitemradio", { name: option, exact: true }),
+  ).toHaveAttribute("aria-checked", String(chosen));
+  await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
 }
 
 const markedNotice = (page) =>
   page.getByRole("dialog", { name: "Marked as read", exact: true });
-const unreadSwitch = (inbox) =>
-  inbox.getByRole("switch", { name: "Unread", exact: true });
 // Typing in a just-mounted composer's first instant can be dropped on the
 // unchanged base too, which these tests do not cover: retype until it lands.
 const typeDraft = (editor, text) =>
@@ -61,6 +62,11 @@ const typeDraft = (editor, text) =>
     await editor.fill(text);
     await expect(editor).toHaveText(text, { timeout: 1000 });
   }).toPass();
+const eventRows = (page) =>
+  conversationList(page).locator("[data-activity-event]");
+const unreadDots = (row) => row.getByRole("img", { name: "Unread" });
+// The row's check button waits for hover; the row's date shares its place.
+const markRead = (row) => row.getByRole("button", { name: "Mark as read" });
 
 test("Activity filter choices combine, persist, and hold menu focus through row updates", async ({
   page,
@@ -69,69 +75,60 @@ test("Activity filter choices combine, persist, and hold menu focus through row 
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto(app.origin);
   await openPage(page, "Activity");
-  const inbox = page.getByRole("region", { name: "Activity", exact: true });
-  const rows = inbox
-    .getByRole("list", { name: "Activity", exact: true })
-    .getByRole("listitem");
-  const trigger = inbox.getByRole("button", {
-    name: /^From /,
-  });
-
-  await expect(trigger).toHaveAccessibleName("From anyone");
+  await chooseView(page, "Mentions");
+  const rows = eventRows(page);
   await expect(rows).toHaveCount(1);
   // The unread row's ✓ waits for hover, where it takes the date's place.
-  const check = rows.getByRole("button", { name: /^Mark as read / });
+  const check = markRead(rows);
   await page.mouse.move(0, 0);
   await expect(check.locator("xpath=..")).toHaveCSS("opacity", "0");
   await rows.hover();
   await expect(check.locator("xpath=..")).toHaveCSS("opacity", "1");
 
-  await choose(page, inbox, "Activity type", "Mentions");
-  await choose(page, inbox, "Sender", "Agents");
-  await unreadSwitch(inbox).click();
-  await rows.getByRole("button", { name: /^Open / }).focus();
-  await page.keyboard.press("Shift+F10");
-  // An unread row offers only Mark as read.
-  await expect(page.getByRole("menuitem")).toHaveText(["Mark as read"]);
-  await page
-    .getByRole("menuitem", { name: "Mark as read", exact: true })
-    .click();
-  // Under Unread the read row leaves; a narrowed view offers Clear filters.
+  // The thread's author is a person, so Agents leaves it out.
+  await choose(page, "Agents");
+  await expect(rows).toHaveCount(0);
+  await choose(page, "People");
+  await expect(rows).toHaveCount(1);
+  await choose(page, "Unread only");
+  await expect(rows).toHaveCount(1);
+  await check.focus();
+  await page.keyboard.press("Enter");
+  // Under Unread the read row leaves.
   await expect(rows).toHaveCount(0);
   await expect(markedNotice(page)).toBeVisible();
   await expect(
-    inbox.getByText("No unread activity in this view", { exact: true }),
+    conversationList(page).getByText("All caught up", { exact: true }),
   ).toBeVisible();
   await expect(
-    inbox.getByRole("button", { name: "Clear filters", exact: true }),
+    conversationList(page).getByText("Nothing unread in this view.", {
+      exact: true,
+    }),
   ).toBeVisible();
-  await unreadSwitch(inbox).click();
+  await choose(page, "All conversations");
   await expect(rows).toHaveCount(1);
-  await expect(rows.getByRole("img", { name: "Unread" })).toHaveCount(0);
+  await expect(unreadDots(rows)).toHaveCount(0);
   // A read row shows its date and no ✓.
-  await expect(
-    rows.getByRole("button", { name: /^Mark as read / }),
-  ).toHaveCount(0);
-  await expect(trigger).toHaveAccessibleName("From agents");
+  await expect(markRead(rows)).toHaveCount(0);
+  await expectChosen(page, "People");
   await page.reload();
-  await openPage(page, "Activity");
+  await expect(rows.first()).toBeVisible();
+  await expectChosen(page, "People");
+  await expectChosen(page, "All conversations");
+  await chooseView(page, "Mentions");
   await expect(rows).toHaveCount(1);
-  await expect(trigger).toHaveAccessibleName("From agents");
-  await expect(
-    inbox
-      .getByRole("tablist", { name: "Activity type" })
-      .getByRole("tab", { name: "Mentions", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(unreadSwitch(inbox)).toHaveAttribute("aria-checked", "false");
-  await expect(conversations(inbox)).toHaveCount(0);
   // Keep the focused From choice while relay activity updates rows.
-  await trigger.focus();
+  await filter(page).focus();
   await page.keyboard.press("Enter");
-  const menu = page.getByRole("menu", { name: "From" });
+  const menu = filterMenu(page);
   await expect(menu.getByRole("menuitemradio")).toHaveText([
     "Anyone",
     "People",
     "Agents",
+    "All conversations",
+    "Unread only",
+    "Recent activity",
+    "A–Z",
   ]);
   const people = menu.getByRole("menuitemradio", {
     name: "People",
@@ -143,8 +140,8 @@ test("Activity filter choices combine, persist, and hold menu focus through row 
       page.evaluate(() => !!document.activeElement?.closest('[role="menu"]')),
     )
     .toBe(true);
-  await page.keyboard.press("End");
-  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowDown");
   await expect(people).toBeFocused();
   app.append(
     "primary",
@@ -156,203 +153,102 @@ test("Activity filter choices combine, persist, and hold menu focus through row 
     undefined,
     [["p", app.viewer]],
   );
-  await expect(rows.getByRole("img", { name: "Unread" })).toHaveCount(1);
+  await expect(unreadDots(conversationList(page))).toHaveCount(1);
   await expect(people).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(menu).toHaveCount(0);
-  await expect(trigger).toHaveAccessibleName("From people");
-  await expect(trigger).toBeFocused();
+  await expect(filter(page)).toBeFocused();
+  await expectChosen(page, "People");
 });
 
-test("the toolbar keeps tabs, From and Unread on one row in a 540px list and wraps Unread first, under All", async ({
+test("the view tabs and filter button stay inside the list header as the window narrows", async ({
   page,
   app,
 }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto(app.origin);
   await openPage(page, "Activity");
-  const inbox = page.getByRole("region", { name: "Activity", exact: true });
-  const types = inbox.getByRole("tablist", { name: "Activity type" });
-  const trigger = inbox.getByRole("button", { name: /^From / });
-  await expect(
-    inbox
-      .getByRole("list", { name: "Activity", exact: true })
-      .getByRole("listitem"),
-  ).toHaveCount(1);
-  // Drafts left Activity: the four activity types and Reactions remain.
-  await expect(types.getByRole("tab")).toHaveText([
+  const list = conversationList(page);
+  await expect(list.getByRole("listitem").first()).toBeVisible();
+  const tabs = page.getByRole("tablist", { name: "Conversation view" });
+  await expect(tabs.getByRole("tab")).toHaveText([
     "All",
     "Threads",
-    "Mentions",
     "DMs",
+    "Mentions",
+    "Channels",
     "Reactions",
   ]);
-  // From's label stays short; its name says the choice, and a fill shows a
-  // narrowing choice.
-  await expect(trigger).toHaveText("From");
-  await expect(trigger).toHaveAccessibleName("From anyone");
-  await expect(trigger).toHaveAttribute("data-variant", "ghost");
-  const layout = () =>
-    inbox.evaluate((root) => {
-      const toolbar = root.querySelector(
-        'header:has([role="tablist"][aria-label="Activity type"])',
-      );
-      const box = (element) => element.getBoundingClientRect().toJSON();
-      const textBox = (element) => {
-        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-        let node = walker.nextNode();
-        while (node && !node.textContent.trim()) node = walker.nextNode();
-        const range = document.createRange();
-        range.selectNodeContents(node);
-        return range.getBoundingClientRect().toJSON();
-      };
-      const tab = (name) =>
-        [...toolbar.querySelectorAll('[role="tab"]')].find(
-          (element) => element.textContent === name,
-        );
-      const style = getComputedStyle(toolbar);
-      return {
-        pane: toolbar.parentElement.getBoundingClientRect().width,
-        toolbar: box(toolbar),
-        inset: parseFloat(style.paddingInlineEnd),
-        tabText: textBox(tab("All")).left,
-        bell: root.querySelector(".panel-header svg").getBoundingClientRect()
-          .left,
-        tabGap: textBox(tab("Mentions")).left - textBox(tab("Threads")).right,
-        fromGap:
-          textBox(toolbar.querySelector('button[aria-haspopup="menu"]')).left -
-          textBox(tab("Reactions")).right,
-        unreadText: textBox(toolbar.querySelector(".buzz-switch")).left,
-        controls: [
-          '[role="tablist"][aria-label="Activity type"]',
-          'button[aria-haspopup="menu"]',
-          '.buzz-switch:has([role="switch"])',
-        ].map((selector) => box(toolbar.querySelector(selector))),
-      };
-    });
-  // The first tab's text starts on the title bar's bell.
-  const wide = await layout();
-  expect(Math.abs(wide.tabText - wide.bell)).toBeLessThan(1);
-  // Size the list pane to 540px: the sidebar keeps its width as the window narrows.
-  await page.setViewportSize({
-    width: Math.round(1280 - (wide.pane - 540)),
-    height: 720,
-  });
-  await expect.poll(async () => Math.round((await layout()).pane)).toBe(540);
-  const mid = await layout();
-  const [tabs, from, unread] = mid.controls;
-  const middle = (box) => box.top + box.height / 2;
-  // One row, left-aligned: tabs, then From, then Unread right after it.
-  expect(Math.abs(middle(tabs) - middle(from))).toBeLessThan(2);
-  expect(Math.abs(middle(tabs) - middle(unread))).toBeLessThan(2);
-  // From reads as part of the tab group: about one tab gap after the last tab, Reactions.
-  expect(from.left).toBeGreaterThan(tabs.right);
-  expect(mid.fromGap - mid.tabGap).toBeLessThanOrEqual(8);
-  // Unread follows From at the row's control gap, not pushed to the far edge.
-  expect(unread.left).toBeGreaterThan(from.right);
-  expect(unread.left - from.right).toBeLessThanOrEqual(mid.fromGap + 8);
-  // With the Reactions tab, a 540px list still fits the row inside its inset,
-  // with little room to spare; the gap check above keeps it left-aligned.
-  expect(mid.toolbar.right - mid.inset - unread.right).toBeGreaterThanOrEqual(
-    0,
+  // The strip scrolls its tabs inside the header, with the filter button first.
+  const header = tabs.locator(
+    'xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " buzz-tabs ")][1]',
   );
-  for (const width of [420, 390, 280]) {
+  for (const width of [1280, 760, 420, 390]) {
     await page.setViewportSize({ width, height: 720 });
-    await expect(trigger).toBeVisible();
-    const narrow = await layout();
-    const [tabs, from, unread] = narrow.controls;
-    // Unread wraps first, to the start of the next line under "All"; once From
-    // wraps too, it starts that line instead and Unread follows it. Beside the
-    // dock, a 280px window is too narrow for both, so Unread takes a third line.
-    expect(unread.top).toBeGreaterThanOrEqual(tabs.bottom - 1);
-    if (from.top < tabs.bottom)
-      expect(Math.abs(narrow.unreadText - narrow.tabText)).toBeLessThan(1);
-    else {
-      expect(Math.abs(from.left - narrow.tabText)).toBeLessThan(1);
-      if (unread.top < from.bottom)
-        expect(Math.abs(middle(from) - middle(unread))).toBeLessThan(2);
-      else expect(Math.abs(narrow.unreadText - narrow.tabText)).toBeLessThan(1);
-    }
-    expect(from.left).toBeGreaterThanOrEqual(narrow.toolbar.left);
-    narrow.controls.forEach((control, index) => {
-      expect(control.left).toBeGreaterThanOrEqual(narrow.toolbar.left);
-      expect(control.right).toBeLessThanOrEqual(narrow.toolbar.right);
-      expect(control.bottom).toBeLessThanOrEqual(narrow.toolbar.bottom);
-      for (const other of narrow.controls.slice(index + 1))
-        expect(
-          control.right <= other.left ||
-            other.right <= control.left ||
-            control.bottom <= other.top ||
-            other.bottom <= control.top,
-        ).toBe(true);
-    });
+    await expect(filter(page)).toBeInViewport({ ratio: 1 });
+    expect(
+      await header.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBe(true);
+    const bounds = await header.boundingBox();
+    const box = await filter(page).boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(bounds.x);
+    expect(box.x + box.width).toBeLessThanOrEqual(bounds.x + bounds.width);
   }
 });
 
-test("All caught up: Undo returns the row unread, and Show all turns Unread off", async ({
+test("All caught up: Undo returns the row unread, and All conversations shows it again", async ({
   page,
   app,
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Activity");
-  const inbox = page.getByRole("region", { name: "Activity", exact: true });
-  const list = inbox.getByRole("list", { name: "Activity", exact: true });
-  const rows = list.getByRole("listitem");
+  await chooseView(page, "Mentions");
+  const rows = eventRows(page);
   await expect(rows).toHaveCount(1);
-  await unreadSwitch(inbox).click();
+  await choose(page, "Unread only");
   await expect(rows).toHaveCount(1);
   await rows.hover();
-  await rows.getByRole("button", { name: /^Mark as read / }).click();
+  await markRead(rows).click();
   await expect(rows).toHaveCount(0);
-  await expect(inbox.getByText("All caught up", { exact: true })).toBeVisible();
+  const list = conversationList(page);
+  await expect(list.getByText("All caught up", { exact: true })).toBeVisible();
   await expect(
-    inbox.getByText("New replies, mentions and DMs show up here.", {
-      exact: true,
-    }),
+    list.getByText("Nothing unread in this view.", { exact: true }),
   ).toBeVisible();
   await markedNotice(page)
     .getByRole("button", { name: "Undo", exact: true })
     .click();
   // Undo returns it unread on this device, so Unread shows it again.
   await expect(rows).toHaveCount(1);
-  await expect(rows.getByRole("img", { name: "Unread" })).toBeVisible();
-  await expect(list).toHaveAttribute("aria-busy", "false");
+  await expect(unreadDots(rows)).toBeVisible();
   await rows.hover();
-  await rows.getByRole("button", { name: /^Mark as read / }).click();
+  await markRead(rows).click();
   await expect(rows).toHaveCount(0);
-  await inbox.getByRole("button", { name: "Show all", exact: true }).click();
-  await expect(unreadSwitch(inbox)).toHaveAttribute("aria-checked", "false");
+  await choose(page, "All conversations");
+  await expectChosen(page, "All conversations");
   await expect(rows).toHaveCount(1);
-  await expect(rows.getByRole("img", { name: "Unread" })).toHaveCount(0);
-  await expect(inbox.getByRole("button", { name: /^From / })).toBeFocused();
+  await expect(unreadDots(rows)).toHaveCount(0);
 });
 
-// Browser coverage proves Activity/thread/composer wiring: sending leaves both open.
+// Browser coverage proves list/thread/composer wiring: sending leaves both open.
 test("Activity sending keeps the conversation and its row open", async ({
   page,
   app,
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Activity");
-  const inbox = page.getByRole("region", { name: "Activity", exact: true });
-  const rows = inbox
-    .getByRole("list", { name: "Activity", exact: true })
-    .getByRole("listitem");
-  await expect(
-    inbox.getByText("Checking recent activity…", { exact: true }),
-  ).toHaveCount(0);
+  const rows = eventRows(page);
   await expect(rows).toHaveCount(1);
-  await rows.getByRole("button", { name: /^Open / }).click();
-  const detail = conversations(inbox);
+  await rows.locator("[data-conversation-row]").click();
+  const detail = conversations(page);
   const editor = detail.getByRole("textbox");
   // Let the reader settle first: typing in the composer's first instant can be
   // dropped on the unchanged base too, which this test does not cover.
   await expect(
-    detail.locator(`[data-message-id="${app.inboxWindow.root.id}"]`),
+    detail.locator(`[data-message-id="${app.inboxWindow.root.id}"]`).last(),
   ).toBeVisible();
-  await expect(
-    inbox.getByRole("list", { name: "Activity", exact: true }),
-  ).toHaveAttribute("aria-busy", "false");
   await typeDraft(editor, "Keep this conversation");
   await detail.getByRole("button", { name: "Send message" }).click();
   await expect(editor).toHaveText("");
@@ -361,12 +257,12 @@ test("Activity sending keeps the conversation and its row open", async ({
   ).toBeVisible();
   await expect(rows).toHaveCount(1);
   await expect(editor).toBeVisible();
-  await expect(sideTabs(inbox)).toHaveCount(1);
+  await expect(sideTabs(page)).toHaveCount(1);
 });
 
-// Browser-only: a row menu beside a live rich editor must not replace it, and
-// Undo must restore the row's unread mark. Focus matrices live in InboxPage.test.tsx.
-test("under Unread, a neighbor's menu Mark as read keeps the open draft and Undo restores it", async ({
+// Browser-only: marking a neighbor read beside a live rich editor must not
+// replace it, and Undo must restore the row's unread mark.
+test("under Unread, a neighbor's ✓ keeps the open draft and Undo restores it", async ({
   page,
   app,
 }) => {
@@ -382,46 +278,38 @@ test("under Unread, a neighbor's menu Mark as read keeps the open draft and Undo
   );
   await page.goto(app.origin);
   await openPage(page, "Activity");
-  const inbox = page.getByRole("region", { name: "Activity", exact: true });
-  const list = inbox.getByRole("list", { name: "Activity", exact: true });
-  const rows = list.getByRole("listitem");
+  const rows = eventRows(page);
   const thread = rows.filter({ hasText: "Inbox strict reply" });
   const next = rows.filter({ hasText: "Unread neighbor" });
-  await expect(rows).toHaveCount(2);
-  await thread.getByRole("button", { name: /^Open / }).click();
-  const editor = conversations(inbox).getByRole("textbox");
+  await expect(thread).toHaveCount(1);
+  await thread.locator("[data-conversation-row]").click();
+  const editor = conversations(page).getByRole("textbox");
   // Let the reader settle first: typing in the composer's first instant can be
   // dropped on the unchanged base too, which this test does not cover.
   await expect(
-    conversations(inbox).locator(
-      `[data-message-id="${app.inboxWindow.root.id}"]`,
-    ),
+    conversations(page)
+      .locator(`[data-message-id="${app.inboxWindow.root.id}"]`)
+      .last(),
   ).toBeVisible();
-  await expect(list).toHaveAttribute("aria-busy", "false");
   await typeDraft(editor, "Keep the open draft");
   await editor.evaluate((el) => {
     el.dataset.retentionMarker = "original-editor";
   });
-  // The open conversation is read now, but stays listed under Unread.
-  await unreadSwitch(inbox).click();
-  await expect(rows).toHaveCount(2);
-  await expect(thread).toHaveAttribute("data-selected", "true");
-  await expect(next.getByRole("img", { name: "Unread" })).toBeVisible();
-  await next.getByRole("button", { name: /^Open / }).focus();
-  await page.keyboard.press("Shift+F10");
-  await page
-    .getByRole("menuitem", { name: "Mark as read", exact: true })
-    .click();
-  await expect(rows).toHaveCount(1);
+  // The neighbor is a mention: Mentions lists it beside the open thread.
+  await chooseView(page, "Mentions");
+  await choose(page, "Unread only");
+  await expect(unreadDots(next)).toBeVisible();
+  await expect(next).toHaveCount(1);
+  await next.hover();
+  await markRead(next).click();
+  await expect(next).toHaveCount(0);
   await expect
     .poll(
       async () =>
         (await readJournal(page)).state.frontiers[`msg:${neighbor.id}`],
     )
     .toBe(neighbor.created_at);
-  // Focus the menu held moves to the remaining row; the open tab stays.
-  await expect(thread.getByRole("button", { name: /^Open / })).toBeFocused();
-  await expect(sideTabs(inbox)).toHaveCount(1);
+  await expect(sideTabs(page)).toHaveCount(1);
   await expect(editor).toHaveText("Keep the open draft");
   await expect(editor).toHaveAttribute(
     "data-retention-marker",
@@ -430,9 +318,8 @@ test("under Unread, a neighbor's menu Mark as read keeps the open draft and Undo
   await markedNotice(page)
     .getByRole("button", { name: "Undo", exact: true })
     .click();
-  await expect(rows).toHaveCount(2);
-  await expect(next.getByRole("img", { name: "Unread" })).toBeVisible();
-  await expect(next).not.toHaveAttribute("data-selected", "true");
+  await expect(next).toHaveCount(1);
+  await expect(unreadDots(next)).toBeVisible();
   await expect(editor).toHaveText("Keep the open draft");
   await expect(editor).toHaveAttribute(
     "data-retention-marker",
@@ -457,36 +344,33 @@ test("with Unread off, an unselected row's ✓ reads it in place and preserves t
   );
   await page.goto(app.origin);
   await openPage(page, "Activity");
-  const inbox = page.getByRole("region", { name: "Activity", exact: true });
-  const list = inbox.getByRole("list", { name: "Activity", exact: true });
-  const rows = list.getByRole("listitem");
+  const rows = eventRows(page);
   const thread = rows.filter({ hasText: "Inbox strict reply" });
   const next = rows.filter({ hasText: "Unread neighbor" });
-  await expect(rows).toHaveCount(2);
-  await thread.getByRole("button", { name: /^Open / }).click();
-  const target = conversations(inbox).locator(
+  await expect(thread).toHaveCount(1);
+  await thread.locator("[data-conversation-row]").click();
+  const target = conversations(page).locator(
     `[data-message-id="${app.inboxWindow.replies[0].id}"]`,
   );
   await expect(target).toBeInViewport();
   // Finish entry reveal and its next-frame acknowledgement before taking the
-  // editor/row-focus baseline; list aria-busy does not cover reader positioning.
+  // editor/row-focus baseline; the reader positions after the list settles.
   await page.evaluate(
     () =>
       new Promise((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(resolve)),
       ),
   );
-  const editor = conversations(inbox).getByRole("textbox");
+  const editor = conversations(page).getByRole("textbox");
   await typeDraft(editor, "Keep the unselected draft");
   await editor.evaluate((el) => {
     el.dataset.retentionMarker = "original-editor";
   });
-  await expect(list).toHaveAttribute("aria-busy", "false");
   // The open conversation is read, so only the neighbor offers a ✓.
-  await expect(
-    thread.getByRole("button", { name: /^Mark as read / }),
-  ).toHaveCount(0);
-  await next.getByRole("button", { name: /^Mark as read / }).focus();
+  await expect(markRead(thread)).toHaveCount(0);
+  // The neighbor is a mention: Mentions lists it beside the open thread.
+  await chooseView(page, "Mentions");
+  await markRead(next).focus();
   await page.keyboard.press("Enter");
   await expect
     .poll(
@@ -494,17 +378,14 @@ test("with Unread off, an unselected row's ✓ reads it in place and preserves t
         (await readJournal(page)).state.frontiers[`msg:${neighbor.id}`],
     )
     .toBe(neighbor.created_at);
-  await expect(rows).toHaveCount(2);
-  await expect(list).toHaveAttribute("aria-busy", "false");
-  await expect(next.getByRole("img", { name: "Unread" })).toHaveCount(0);
-  await expect(
-    next.getByRole("button", { name: /^Mark as read / }),
-  ).toHaveCount(0);
-  // The ✓ goes with the unread mark; its focus stays on the row.
-  await expect(next.getByRole("button", { name: /^Open / })).toBeFocused();
-  await expect(next).not.toHaveAttribute("data-selected", "true");
-  await expect(thread).toHaveAttribute("data-selected", "true");
-  await expect(sideTabs(inbox)).toHaveCount(1);
+  await expect(next).toHaveCount(1);
+  await expect(unreadDots(next)).toHaveCount(0);
+  await expect(markRead(next)).toHaveCount(0);
+  await expect(next.locator("[data-conversation-row]")).not.toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(sideTabs(page)).toHaveCount(1);
   await expect(markedNotice(page)).toHaveCount(0);
   await expect(editor).toHaveText("Keep the unselected draft");
   await expect(editor).toHaveAttribute(
@@ -519,22 +400,16 @@ test("incoming replies and mentions update the open conversation without replaci
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Activity");
-  const inbox = page.getByRole("region", { name: "Activity", exact: true });
-  const rows = inbox
-    .getByRole("list", { name: "Activity", exact: true })
-    .getByRole("listitem");
+  const rows = eventRows(page);
   await expect(rows).toHaveCount(1);
-  await rows.getByRole("button", { name: /^Open / }).click();
-  const detail = conversations(inbox);
+  await rows.locator("[data-conversation-row]").click();
+  const detail = conversations(page);
   const editor = detail.getByRole("textbox");
   // Let the reader settle first: typing in the composer's first instant can be
   // dropped on the unchanged base too, which this test does not cover.
   await expect(
-    detail.locator(`[data-message-id="${app.inboxWindow.root.id}"]`),
+    detail.locator(`[data-message-id="${app.inboxWindow.root.id}"]`).last(),
   ).toBeVisible();
-  await expect(
-    inbox.getByRole("list", { name: "Activity", exact: true }),
-  ).toHaveAttribute("aria-busy", "false");
   await typeDraft(editor, "Unsent mention retention draft");
   await editor.evaluate((el) => {
     el.dataset.retentionMarker = "original-composer";
@@ -565,9 +440,9 @@ test("incoming replies and mentions update the open conversation without replaci
     "data-retention-marker",
     "original-composer",
   );
-  // The conversation stays open while the type tabs change.
-  await choose(page, inbox, "Activity type", "Threads");
-  await choose(page, inbox, "Activity type", "Mentions");
+  // The conversation stays open while the view tabs change.
+  await chooseView(page, "Threads");
+  await chooseView(page, "Mentions");
   await expect(detail).toHaveCount(1);
   await expect(editor).toHaveText("Unsent mention retention draft");
   app.append(
@@ -602,37 +477,24 @@ test("same-account windows reconcile filters without reload", async ({
   try {
     await other.goto(app.origin);
     await openPage(other, "Activity");
-    const inbox = page.getByRole("region", { name: "Activity", exact: true });
-    const sibling = other.getByRole("region", {
-      name: "Activity",
-      exact: true,
-    });
-    const rows = inbox
-      .getByRole("list", { name: "Activity", exact: true })
-      .getByRole("listitem");
-    const siblingRows = sibling
-      .getByRole("list", { name: "Activity", exact: true })
-      .getByRole("listitem");
+    const rows = eventRows(page);
+    const siblingRows = eventRows(other);
     await expect(rows).toHaveCount(1);
     await expect(siblingRows).toHaveCount(1);
-    await choose(page, inbox, "Activity type", "Mentions");
-    await choose(page, inbox, "Sender", "Agents");
-    await unreadSwitch(inbox).click();
+    await chooseView(page, "Mentions");
+    await choose(page, "People");
+    await choose(page, "Unread only");
+    await expectChosen(other, "People");
+    await expectChosen(other, "Unread only");
     await expect(
-      sibling
-        .getByRole("tablist", { name: "Activity type" })
+      other
+        .getByRole("tablist", { name: "Conversation view" })
         .getByRole("tab", { name: "Mentions", exact: true }),
     ).toHaveAttribute("aria-selected", "true");
-    await expect(
-      sibling.getByRole("button", { name: /^From / }),
-    ).toHaveAccessibleName("From agents");
-    await expect(unreadSwitch(sibling)).toHaveAttribute("aria-checked", "true");
-    await unreadSwitch(sibling).click();
-    await expect(unreadSwitch(inbox)).toHaveAttribute("aria-checked", "false");
-    await choose(other, sibling, "Sender", "Everyone");
-    await expect(
-      inbox.getByRole("button", { name: /^From / }),
-    ).toHaveAccessibleName("From anyone");
+    await choose(other, "All conversations");
+    await expectChosen(page, "All conversations");
+    await choose(other, "Anyone");
+    await expectChosen(page, "Anyone");
     await expect(rows).toHaveCount(1);
     await expect(siblingRows).toHaveCount(1);
   } finally {

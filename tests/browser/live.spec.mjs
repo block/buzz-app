@@ -1,5 +1,5 @@
 import { pauseClock } from "./clock.mjs";
-import { openPage } from "./navigation.mjs";
+import { channelRow, openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import {
   open,
@@ -311,7 +311,7 @@ test("automatic recovery restores an empty paused roster without restarting heal
   await page.clock.install();
   await page.goto(app.origin);
   try {
-    await openPage(page, "Messages");
+    await openPage(page, "Team");
     await expect.poll(() => rosterHeld).toBe(true);
     await pauseClock(page, 1000);
   } finally {
@@ -322,9 +322,7 @@ test("automatic recovery restores an empty paused roster without restarting heal
   // only partway: the 6 s cooldown still holds for the checks below.
   await page.clock.runFor(3_000);
   await expect(notice(page)).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Alpha", exact: true }),
-  ).toHaveCount(0);
+  await expect(channelRow(page, "alpha")).toHaveCount(0);
   const globals = () =>
     app.relay.requests.filter(({ filters }) =>
       filters.some(
@@ -367,7 +365,7 @@ test("automatic recovery restores an empty paused roster without restarting heal
     })
     .toBe(calls + 1);
   await expect(
-    page.getByText("No channels yet.", { exact: true }),
+    page.getByText("Nothing here yet", { exact: true }),
   ).toBeVisible();
   await expect(notice(page)).toHaveCount(0);
   expect(rosters()).toHaveLength(calls + 1);

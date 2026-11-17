@@ -1,4 +1,4 @@
-import { openPage } from "./navigation.mjs";
+import { openChannel, openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 const members = Array.from({ length: 2525 }, (_, i) =>
@@ -18,8 +18,8 @@ test("large channel members stays usable while browsing and searching the roster
   app,
 }, testInfo) => {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
-  await page.locator(`button[data-channel-id="${channelId}"]`).click();
+  await openPage(page, "Team");
+  await openChannel(page, channelId);
   const trigger = page
     .getByRole("article", { name: "Conversation" })
     .getByRole("button", { name: /^Manage members of /, exact: true });

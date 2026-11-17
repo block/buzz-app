@@ -1,9 +1,6 @@
-import { isSidebarSortMode, type SidebarSortMode } from "./sidebar-sort.ts";
-
-/** Section and section-choice registers. No persistence or publication owner. */
+/** Section registers. No persistence or publication owner. */
 export type SidebarRegister = [number, string, unknown];
 type Tree = { [key: string]: Tree | SidebarRegister };
-type Coordinate = "channel-sections" | "channel-sort" | "channel-filter";
 const legacyDevice = "0".repeat(16);
 let device: string | undefined;
 const object = (value: unknown): Record<string, unknown> => {
@@ -51,11 +48,7 @@ function map(
     }),
   );
 }
-function metadata(
-  coordinate: Coordinate,
-  value: unknown,
-  reading = false,
-): Tree {
+function metadata(value: unknown, reading = false): Tree {
   const data = object(value);
   // Desktop retains unrestricted text on deleted sections. Read its wire shape;
   // UI text limits apply to the live projection, not nonprojecting tombstones.
@@ -68,26 +61,14 @@ function metadata(
       }
     : sectionFields;
   // Tombstones outlive live projection caps. Bound all retained nodes by bytes,
-  // not the number of currently visible sections/sort overrides.
+  // not the number of currently visible sections.
   if (new TextEncoder().encode(JSON.stringify(data)).length > 128 * 1024)
     throw new Error("Sidebar metadata budget exceeded");
-  const allowed =
-    coordinate === "channel-sections" ? ["v", "s", "a"] : ["v", "g"];
-  if (data.v !== 1 || Object.keys(data).some((key) => !allowed.includes(key)))
+  if (
+    data.v !== 1 ||
+    Object.keys(data).some((key) => !["v", "s", "a"].includes(key))
+  )
     throw new Error("Unsupported sidebar metadata");
-  if (coordinate !== "channel-sections")
-    return {
-      g: map(data.g === undefined ? {} : data.g, 264, (v) =>
-        register(
-          v,
-          (v) =>
-            v === null ||
-            (coordinate === "channel-filter"
-              ? v === "unreads" || v === "active"
-              : v === "alpha" || v === "recent"),
-        ),
-      ),
-    };
   return {
     s: map(data.s === undefined ? {} : data.s, 256, (value) => {
       const fields = object(value);
@@ -111,15 +92,7 @@ const val = (node: Tree, key: string) => {
   const entry = own(node, key);
   return Array.isArray(entry) ? entry[2] : undefined;
 };
-function projection(coordinate: Coordinate, tree: Tree) {
-  if (coordinate !== "channel-sections")
-    return {
-      groups: Object.fromEntries(
-        Object.entries(tree.g ?? {}).flatMap(([key, reg]) =>
-          Array.isArray(reg) && reg[2] !== null ? [[key, reg[2]]] : [],
-        ),
-      ),
-    };
+function projection(tree: Tree) {
   const sections = Object.entries(tree.s ?? {})
     .filter(
       ([, node]) =>
@@ -154,37 +127,20 @@ function projection(coordinate: Coordinate, tree: Tree) {
 }
 /** Metadata is authoritative; never trust a conflicting legacy projection. */
 export function projectSidebarRecord(
-  coordinate: Coordinate,
   value: Record<string, unknown>,
 ): Record<string, unknown> {
   if (value.meta === undefined) return value;
   return {
     ...value,
-    ...projection(coordinate, metadata(coordinate, value.meta, true)),
+    ...projection(metadata(value.meta, true)),
   };
 }
-function importLegacy(
-  coordinate: Coordinate,
-  value: Record<string, unknown>,
-  createdAt: number,
-): Tree {
+function importLegacy(value: Record<string, unknown>, createdAt: number): Tree {
   const stamp = (v: unknown): SidebarRegister => [
     createdAt * 1000,
     legacyDevice,
     v,
   ];
-  if (coordinate !== "channel-sections")
-    return {
-      g: Object.fromEntries(
-        Object.entries(object(value.groups))
-          .filter(([, v]) =>
-            coordinate === "channel-filter"
-              ? v === "unreads" || v === "active"
-              : v === "alpha" || v === "recent",
-          )
-          .map(([key, v]) => [key, stamp(v)]),
-      ),
-    };
   const sections = value.sections as {
     id: string;
     name: string;
@@ -222,7 +178,6 @@ function maxVersion(tree: Tree): number {
  * With `all`, any change restamps every requested leaf (a whole-list reorder).
  */
 export function editSidebarRecord(
-  coordinate: Coordinate,
   current: Record<string, unknown>,
   createdAt: number,
   writes: readonly (readonly [readonly string[], unknown])[],
@@ -231,8 +186,8 @@ export function editSidebarRecord(
 ): Record<string, unknown> {
   const tree =
     current.meta === undefined
-      ? importLegacy(coordinate, current, createdAt)
-      : metadata(coordinate, current.meta, true);
+      ? importLegacy(current, createdAt)
+      : metadata(current.meta, true);
   const changed = writes.filter(([path, value]) => {
     let node: Tree | SidebarRegister | undefined = tree;
     for (const key of path)
@@ -241,11 +196,10 @@ export function editSidebarRecord(
     // including a retained reference to a deleted section. Do not rewrite it.
     if (
       value === null &&
-      coordinate === "channel-sections" &&
       path.length === 2 &&
       path[0] === "a" &&
       path[1] !== undefined &&
-      !Object.hasOwn(projection(coordinate, tree).assignments ?? {}, path[1])
+      !Object.hasOwn(projection(tree).assignments, path[1])
     )
       return false;
     return !Array.isArray(node) || node[2] !== value;
@@ -283,133 +237,8 @@ export function editSidebarRecord(
   }
   // Validate edited metadata too; callers enforce live projection and payload caps.
   const meta = { v: 1, ...tree };
-  const projected = projection(coordinate, metadata(coordinate, meta));
+  const projected = projection(metadata(meta));
   return { ...current, ...projected, meta };
-}
-
-function pluginSortRegisters(value: unknown): Tree {
-  if (value === undefined) return {};
-  const data = object(value);
-  if (
-    data.v !== 1 ||
-    Object.keys(data).some((key) => !["v", "g"].includes(key))
-  )
-    throw new Error("Unsupported plugin sidebar sort");
-  const groups = map(data.g, 264, (value) =>
-    register(
-      value,
-      (mode) =>
-        typeof mode === "string" &&
-        mode.startsWith("plugin:") &&
-        isSidebarSortMode(mode),
-    ),
-  );
-  if (Object.keys(groups).length > 104)
-    throw new Error("Plugin sidebar sort budget exceeded");
-  return groups;
-}
-
-/** Plugin choices stay outside the strict metadata understood by older hosts. */
-export function projectSidebarSort(
-  value: Record<string, unknown>,
-): Record<string, unknown> {
-  const projected = projectSidebarRecord("channel-sort", value);
-  const groups = { ...object(projected.groups) };
-  if (Object.keys(groups).length > 104)
-    throw new Error("Sidebar sort budget exceeded");
-  const base =
-    value.meta === undefined
-      ? {}
-      : (metadata("channel-sort", value.meta, true).g as Tree);
-  for (const [key, choice] of Object.entries(
-    pluginSortRegisters(value.pluginSort),
-  )) {
-    const bound = own(base, key);
-    if (
-      Array.isArray(choice) &&
-      Array.isArray(bound) &&
-      (bound[2] === "alpha" || bound[2] === null) &&
-      choice[0] === bound[0] &&
-      choice[1] === bound[1]
-    )
-      Object.defineProperty(groups, key, {
-        value: choice[2],
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
-  }
-  return groups;
-}
-
-export function editSidebarSortRecord(
-  current: Record<string, unknown>,
-  createdAt: number,
-  group: string,
-  mode: SidebarSortMode,
-  now: number,
-): Record<string, unknown> {
-  const choices = pluginSortRegisters(current.pluginSort);
-  const previousCount = Object.keys(choices).length;
-  const plugin = mode.startsWith("plugin:");
-  const source =
-    plugin && current.meta === undefined
-      ? {
-          ...current,
-          meta: { v: 1, ...importLegacy("channel-sort", current, createdAt) },
-        }
-      : current;
-  // Older A–Z writers tombstone with null and skip equal values. A distinct
-  // alpha anchor lets their explicit choice supersede the plugin binding.
-  const next = editSidebarRecord(
-    "channel-sort",
-    source,
-    createdAt,
-    [[["g", group], plugin ? "alpha" : mode === "recent" ? "recent" : null]],
-    now,
-  );
-  const base =
-    next.meta === undefined
-      ? {}
-      : (metadata("channel-sort", next.meta, true).g as Tree);
-  // Section presence is a separate record; a caller snapshot cannot prove deletion.
-  for (const [key, choice] of Object.entries(choices)) {
-    const bound = own(base, key);
-    if (
-      !Array.isArray(choice) ||
-      !Array.isArray(bound) ||
-      (bound[2] !== "alpha" && bound[2] !== null) ||
-      choice[0] !== bound[0] ||
-      choice[1] !== bound[1]
-    )
-      delete choices[key];
-  }
-  const pruned = Object.keys(choices).length !== previousCount;
-  if (plugin) {
-    const bound = own(base, group) as SidebarRegister;
-    const previous = own(choices, group);
-    if (
-      next === current &&
-      !pruned &&
-      Array.isArray(previous) &&
-      previous[0] === bound[0] &&
-      previous[1] === bound[1] &&
-      previous[2] === mode
-    )
-      return current;
-    Object.defineProperty(choices, group, {
-      value: [bound[0], bound[1], mode],
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-  } else {
-    if (!Object.hasOwn(choices, group) && !pruned) return next;
-    delete choices[group];
-  }
-  const pluginSort = { v: 1, g: choices };
-  pluginSortRegisters(pluginSort);
-  return { ...next, pluginSort };
 }
 
 /** Insertion uses canonical orders, not the densely numbered legacy projection. */
@@ -422,7 +251,7 @@ export function nextSidebarSectionOrder(
       ? (current.sections as { order: number }[]).map(({ order }) =>
           Math.round(order),
         )
-      : Object.values(metadata("channel-sections", current.meta).s as Tree)
+      : Object.values(metadata(current.meta).s as Tree)
           .filter((node) => val(node as Tree, "live") === true)
           .map((node) => Number(val(node as Tree, "order") ?? 0));
   return position === "first"

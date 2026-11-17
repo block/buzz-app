@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { channelRow } from "./navigation.mjs";
 import { open } from "./timeline.mjs";
 
 // Real scroll geometry and the first painted frame cannot be proven in jsdom.
@@ -12,7 +13,7 @@ test("ordinary thread reveals its first content already positioned at the bottom
   app,
 }) => {
   await open(page, app);
-  await page.locator('button[data-channel-id="beta"]').click();
+  await channelRow(page, "beta").click();
   let release, intercepted;
   const held = new Promise((resolve) => {
     release = resolve;

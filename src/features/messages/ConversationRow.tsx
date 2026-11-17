@@ -5,7 +5,7 @@ import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import styles from "./ConversationRow.module.css";
 
-/** PROTOTYPE: one row for every conversation list (Solo, Team, Threads,
+/** One row for every conversation list (Solo, Team, Threads,
  * Mentions, DMs). The place always leads; the avatar always says who.
  *
  *   [who]  (icon) place        time | ✓ on hover

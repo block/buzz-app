@@ -66,14 +66,11 @@ test("Profiles keeps controls contained and keyboard reachable across text size 
     await page.setViewportSize({ width, height: 800 });
     // matchMedia updates React navigation after the viewport changes. Measure
     // containment only after the shell has applied that responsive layout.
-    const navigation = page.locator(".shell-navigation");
-    if (width <= 650)
-      await expect(navigation).not.toHaveAttribute("data-sidebar-collapsible");
-    else
-      await expect(navigation).toHaveAttribute(
-        "data-sidebar-collapsible",
-        "true",
-      );
+    // The titlebar toggle names the drawer when narrow, the sidebar when wide.
+    const toggle = page.locator("[data-shell-sidebar-toggle]");
+    await expect(toggle).toHaveAccessibleName(
+      width <= 650 ? /^(Show|Hide) navigation$/ : /^(Show|Hide) sidebar$/,
+    );
     await expect(key).toBeVisible();
     await expect
       .poll(async () => {

@@ -1,6 +1,14 @@
 import { test, expect } from "./source-fixture.mjs";
 import { hoverMessage } from "./message-actions.mjs";
 import { clickRow } from "./timeline.mjs";
+import { chooseChannelAction } from "./channel-details.mjs";
+
+// The pane's own header holds the toggle while it is open; collapsed, the
+// conversation header's actions popover does.
+const togglePane = (page, expanded) =>
+  expanded
+    ? page.getByRole("button", { name: "Toggle tab pane", exact: true }).click()
+    : chooseChannelAction(page, "Toggle tab pane");
 
 // Browser-only integration: native layout, split geometry, retained DOM while
 // dragging a thread between panes, focus, and responsive/theme/text-size treatment.
@@ -72,22 +80,13 @@ test("Bestie uses the conversation split workspace and retains both drafts", asy
     document.documentElement.style.fontSize = "20px";
   });
   await expect(thread).toBeVisible();
-  await page.getByRole("button", { name: "Toggle tab pane" }).click();
+  await togglePane(page, true);
   await expect(thread).not.toBeVisible();
   await expect(composer).toHaveText("Main draft");
-  await page.getByRole("button", { name: "Toggle tab pane" }).click();
+  await togglePane(page, false);
   await expect(reply).toHaveText("Reply draft");
   expect(await replyHandle.evaluate((el) => el.isConnected)).toBe(true);
   expect(await handle.evaluate((el) => el.isConnected)).toBe(true);
-  const tab = page.getByRole("tab", { name: "Planning the day", exact: true });
-  await tab.focus();
-  await page.keyboard.press("Alt+Shift+ArrowLeft");
-  await expect(
-    page
-      .locator("[data-main-workspace]")
-      .getByRole("tab", { name: "Planning the day", exact: true }),
-  ).toBeVisible();
-  await expect(reply).toHaveText("Reply draft");
   await page
     .getByRole("button", { name: "Close Planning the day tab" })
     .click();
@@ -227,7 +226,7 @@ test("the agent tabs API and Bestie operate on the same workspace", async ({
     f.tabs.open(f.channelId, f.rootIds[0]);
     f.tabs.rename(f.channelId, f.rootIds[0], "Agent-opened thread");
   });
-  await page.getByRole("button", { name: "Toggle tab pane" }).click();
+  await togglePane(page, false);
   const tab = page.getByRole("tab", {
     name: "Agent-opened thread",
     exact: true,
@@ -241,7 +240,7 @@ test("the agent tabs API and Bestie operate on the same workspace", async ({
       }),
     )
     .toContain("Agent-opened thread");
-  await page.getByRole("button", { name: "Toggle tab pane" }).click();
+  await togglePane(page, true);
   await page.evaluate(() => {
     const f = window.bestieFixture;
     f.tabs.close(f.channelId, f.rootIds[0]);
@@ -259,11 +258,11 @@ test("collapsing the pane preserves inline panel state", async ({ page }) => {
   const note = page.getByRole("textbox", { name: "Profile note" });
   await note.fill("Keep this panel state");
   const handle = await note.elementHandle();
-  await page.getByRole("button", { name: "Toggle tab pane" }).click();
+  await togglePane(page, true);
   await expect(note).not.toBeVisible();
   await expect(page.locator("[data-panel-dock]:not([hidden])")).toHaveCount(0);
   expect(await handle.evaluate((el) => el.isConnected)).toBe(true);
-  await page.getByRole("button", { name: "Toggle tab pane" }).click();
+  await togglePane(page, false);
   await expect(note).toHaveValue("Keep this panel state");
   expect(await handle.evaluate((el) => el.isConnected)).toBe(true);
 });
@@ -343,44 +342,6 @@ test("application Close All closes Bestie tabs but leaves modal ownership intact
   });
   await expect(composer).toBeFocused();
   await expect(composer).toHaveText("Keep typing");
-});
-
-test("pointer pane moves show the shared drag preview and drop indicator", async ({
-  page,
-}, testInfo) => {
-  await page.goto("/tests/fixtures/bestie-conversation.html");
-  await page
-    .getByRole("button", { name: "View thread: 1 reply" })
-    .first()
-    .click();
-  const tab = page.getByRole("tab", { name: "Planning the day", exact: true });
-  // The entering pane moves the tab; begin the gesture only at its settled geometry.
-  await expect
-    .poll(async () => {
-      const dock = await page.locator("[data-panel-dock]").boundingBox();
-      return Math.round(dock.x + dock.width);
-    })
-    .toBe(page.viewportSize().width);
-  const start = await tab.boundingBox();
-  const main = await page.locator("[data-main-workspace]").boundingBox();
-  await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
-  await page.mouse.down();
-  try {
-    await page.mouse.move(main.x + 200, main.y + 20, { steps: 10 });
-    await expect(page.locator(".buzz-tab-drag-title")).toBeVisible();
-    await expect(page.locator(".buzz-tab-drag-insertion")).toBeVisible();
-    if (process.env.BESTIE_SHOTS && testInfo.project.name === "chromium")
-      await page.screenshot({
-        path: `${process.env.BESTIE_SHOTS}/p2-tab-drag-feedback.png`,
-      });
-  } finally {
-    await page.mouse.up();
-  }
-  await expect(
-    page
-      .locator("[data-main-workspace]")
-      .getByRole("tab", { name: "Planning the day", exact: true }),
-  ).toBeVisible();
 });
 
 // Browser integration: the floating action/menu must route from Bestie to the

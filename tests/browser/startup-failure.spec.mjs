@@ -1,4 +1,6 @@
 import { test, expect } from "./fixture.mjs";
+import { channelRow, conversationList } from "./navigation.mjs";
+import { showChannels } from "./rail-helpers.mjs";
 
 // A startup that can't finish shows "Buzz couldn’t open" from launch-init.js,
 // which needs nothing from the app bundle; a slow one offers Reload; an app
@@ -14,6 +16,14 @@ const failurePage = (page) =>
   page.getByRole("main", { name: "Buzz couldn’t open" });
 /** The page says what happened, offers Reload, and keeps the error behind a
  * collapsed Details that contains `detail`. */
+// Buzz opened as usual: Team's list, its conversations loaded, landing with
+// nothing selected.
+async function expectOpened(page) {
+  await expect(
+    conversationList(page).locator("[data-activity-row]").first(),
+  ).toBeVisible();
+  await expect(page.getByText("No conversation selected")).toBeVisible();
+}
 async function expectFailure(page, detail) {
   const failure = failurePage(page);
   await expect(failure).toBeVisible();
@@ -51,9 +61,7 @@ test.describe("when the app bundle doesn’t load", () => {
 
     await page.unroute(MAIN);
     await failure.getByRole("button", { name: "Reload" }).click();
-    await expect(
-      page.getByRole("region", { name: "Channel message history" }),
-    ).toContainText("primary alpha message 0");
+    await expectOpened(page);
     await expect(failurePage(page)).toHaveCount(0);
   });
 
@@ -114,19 +122,17 @@ test.describe("when the app throws after it opened", () => {
     const history = page.getByRole("region", {
       name: "Channel message history",
     });
-    await expect(history).toContainText("primary alpha message 0");
+    await expectOpened(page);
     await expect(
       page.getByRole("status", { name: "Opening Buzz" }),
     ).toHaveCount(0);
 
-    // Opening another channel renders the app's content again, which throws.
+    // Opening a channel renders the app's content again, which throws.
+    await showChannels(page);
     await page.evaluate(() => {
       window.__buzzFixtureStartupFailure = "running";
     });
-    await page
-      .getByRole("navigation", { name: "Subscribed channels" })
-      .getByRole("button", { name: "Beta", exact: true })
-      .click();
+    await channelRow(page, "beta").click();
     const failure = page.getByRole("main", { name: "Buzz stopped working" });
     await expect(failure).toBeVisible();
     await expect(failure.getByRole("alert")).toHaveText(
@@ -180,9 +186,7 @@ test("a slow launch says so after 20 seconds and offers Reload, then opens as us
     await expect(failurePage(page)).toHaveCount(0);
 
     release();
-    await expect(
-      page.getByRole("region", { name: "Channel message history" }),
-    ).toContainText("primary alpha message 0");
+    await expectOpened(page);
     await expect(launch).toHaveCount(0);
     await expect(failurePage(page)).toHaveCount(0);
   } finally {

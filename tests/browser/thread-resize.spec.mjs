@@ -72,6 +72,23 @@ test("thread stays beside the channel whenever both panes fit", async ({
         return bounds.x + bounds.width - pane.x;
       })
       .toBeLessThanOrEqual(0);
+    // Floating header controls must stay inside the pane's clipping boundary.
+    const toggle = page.locator("[data-panel-dock]").getByRole("button", {
+      name: "Toggle tab pane",
+      exact: true,
+    });
+    await expect
+      .poll(() =>
+        toggle.evaluate((element) => {
+          const pane = element.closest("[data-panel-workspace]");
+          return (
+            element.getBoundingClientRect().top -
+            pane.getBoundingClientRect().top
+          );
+        }),
+      )
+      .toBeGreaterThanOrEqual(0);
+    await toggle.click({ trial: true });
     await expect(input).toHaveText(draft.trimEnd());
     await channel
       .getByRole("button", { name: "Send message", exact: true })

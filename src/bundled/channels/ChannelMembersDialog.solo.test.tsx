@@ -156,7 +156,6 @@ function fixture(
     data: {
       sections: [{ id: "g", name: "Project", order: 0 }],
       assignments,
-      starred: [],
       muted: [],
     },
   });
@@ -165,7 +164,7 @@ function fixture(
   let filed = direct;
   const placement = vi.fn(async (_id: string, _sectionId?: string) => {
     filed = false;
-    return { sections: [], assignments: {}, starred: [], muted: [] };
+    return { sections: [], assignments: {}, muted: [] };
   });
   let records: readonly import("../../features/relay/outbox").OutgoingEvent[] =
     [];

@@ -288,13 +288,11 @@ export function ConversationTimeline(
     ownSoloConversation: _,
     ...shared
   } = useConversation();
-  // All conversation types allow explicit thread replies.
   return (
     <div className="conversation-history-viewport">
       <ChannelTimeline
         queries={session}
         viewer={session.viewer}
-        startsThreads
         {...shared}
         {...props}
       />

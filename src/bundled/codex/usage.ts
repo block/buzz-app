@@ -9,7 +9,7 @@ import type {
 } from "../../features/agents/service";
 import { limited, withRevision } from "../../features/agents/session-usage";
 import type { Host } from "../../features/host/service";
-import type { AppServer, Spawn } from "./rpc";
+import { type AppServer, Refused, type Spawn } from "./rpc";
 import { withServer } from "./transcript";
 
 type Json = Record<string, unknown>;
@@ -27,6 +27,8 @@ type Read = Readonly<{ stamp: string; session?: SessionUsage | undefined }>;
 /** Per host and agent, by thread id; a plugin that reloads starts over. */
 const cache = new WeakMap<Spawn, Map<string, Map<string, Read>>>();
 const reader = limited(READERS);
+/** Recorded threads looked up at once, by every agent's read together. */
+const lookup = limited(8);
 
 const object = (value: unknown): Json | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value)
@@ -142,17 +144,24 @@ function read(file: string, agent: string, observations: UsageObservation[]) {
 
 /** A thread's usage, with the subagent threads it spawned (undefined when
  * one's rollout is gone), when Buzz started it for `agent` in this
- * community: its threads in the agent's other communities are theirs. */
+ * community: its threads in the agent's other communities are theirs. A
+ * `standalone` thread, one a watch's or timer's turn started for this
+ * membership, joins no conversation, so its prompt names none; the record
+ * that listed it says whose it is. */
 export function rolloutUsage(
   id: string,
   file: string,
   subagents: readonly (string | undefined)[],
   agent: Readonly<{ key: string; pubkey: string }>,
+  standalone = false,
 ): Omit<SessionUsage, "revision"> | undefined {
   const observations: UsageObservation[] = [];
   const thread = read(file, agent.pubkey, observations);
-  if (!thread.mine || !thread.start || !thread.last) return undefined;
-  if ((thread.start.agent ?? agent.pubkey) !== agent.key) return undefined;
+  if (!thread.mine || !thread.last) return undefined;
+  if (!standalone) {
+    if (!thread.start) return undefined;
+    if ((thread.start.agent ?? agent.pubkey) !== agent.key) return undefined;
+  }
   let { first, last, unreadable } = thread;
   const gaps: string[] = [];
   for (const subagent of subagents) {
@@ -171,7 +180,7 @@ export function rolloutUsage(
     );
   return {
     id,
-    ...thread.start.place,
+    ...(standalone ? {} : thread.start?.place),
     startedAt: first,
     lastAt: last,
     gaps,
@@ -216,19 +225,48 @@ export type UsageHost = Readonly<{
 }>;
 
 /** The agent's Codex threads in use since `since`, found by the agent's name
- * in their thread names and kept when their rollout names its pubkey and
- * was started for this membership. */
+ * in their thread names, and the threads in `standalone` by their ids, and
+ * kept when their rollout names its pubkey and was started for this
+ * membership: by a conversation or, for the threads in `standalone`, by a
+ * watch's or timer's turn. */
 export async function readUsage(
   host: UsageHost,
   agent: Readonly<{ key: string; pubkey: string; name: string }>,
   since: number,
   signal: AbortSignal,
+  standalone: ReadonlySet<string> = new Set(),
 ): Promise<SessionUsage[]> {
   const { spawn } = host;
   const queue = await withServer(spawn, signal, async (rpc) => {
     const named = await list(rpc, { searchTerm: `· ${agent.name}` });
+    // A one-off thread is named for the agent as it was then; the record
+    // still lists it after a rename.
+    const seen = new Set(named.map(({ id }) => id));
+    const recorded = await Promise.all(
+      [...standalone]
+        .filter((id) => !seen.has(id))
+        .map((threadId) =>
+          lookup(() =>
+            rpc
+              .request<{ thread: Thread }>("thread/read", { threadId })
+              .then(({ thread }) => [thread])
+              .catch((error: unknown) => {
+                // Codex's answer for a thread it has no rollout of, as
+                // one deleted or never kept; a thread it keeps reads even
+                // when not loaded. Any other refusal fails the read.
+                if (
+                  error instanceof Refused &&
+                  error.message === `thread not loaded: ${threadId}`
+                )
+                  return [];
+                throw error;
+              }),
+          ),
+        ),
+    );
+    signal.throwIfAborted();
     return Promise.all(
-      named
+      [...named, ...recorded.flat()]
         .filter((thread) => thread.updatedAt * 1000 >= since)
         .map(async (thread) => ({
           thread,
@@ -261,15 +299,23 @@ export async function readUsage(
   const worker = async () => {
     for (let next = queue.shift(); next; next = queue.shift()) {
       const threads = [next.thread, ...next.subagents];
-      const stamp = JSON.stringify(
+      const once = standalone.has(next.thread.id);
+      const stamp = JSON.stringify([
+        once,
         threads.map(({ id, path, updatedAt }) => [id, path, updatedAt]),
-      );
+      ]);
       let read = earlier.get(next.thread.id);
       if (read?.stamp !== stamp) {
         const file = await rollout(next.thread);
         if (file === undefined) continue;
         const subagents = await Promise.all(next.subagents.map(rollout));
-        const session = rolloutUsage(next.thread.id, file, subagents, agent);
+        const session = rolloutUsage(
+          next.thread.id,
+          file,
+          subagents,
+          agent,
+          once,
+        );
         read = { stamp, session: session && (await withRevision(session)) };
       }
       // A thread updated within the last moments is read again next time.

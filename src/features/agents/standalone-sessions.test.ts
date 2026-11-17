@@ -84,6 +84,35 @@ it("keeps a session for as long as Usage reads back, then drops its day", async 
   expect(sessions.list().map(({ id }) => id)).toEqual(["late", "new"]);
 });
 
+it("removes a past day only once its drop has removed what its sessions left", async () => {
+  const storage = memory();
+  let now = 0;
+  const sessions = standaloneSessions(storage, "pi", AGENT, () => now);
+  await sessions.add("old", "timer/daily");
+  await sessions.add("older");
+  now = (STANDALONE_DAYS + 1) * DAY;
+  const dropped: string[][] = [];
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  // A failed drop keeps the day, unlisted, for the next add.
+  await sessions.add("new", undefined, async (ids) => {
+    dropped.push(ids);
+    throw new Error("busy");
+  });
+  expect(error).toHaveBeenCalledTimes(1);
+  error.mockRestore();
+  expect(storage.get(`${STANDALONE_PREFIX}pi:${AGENT}:0`)).not.toBeNull();
+  expect(sessions.list().map(({ id }) => id)).toEqual(["new"]);
+  await sessions.add("newer", undefined, async (ids) => {
+    dropped.push(ids);
+  });
+  expect(dropped).toEqual([
+    ["old", "older"],
+    ["old", "older"],
+  ]);
+  expect(storage.get(`${STANDALONE_PREFIX}pi:${AGENT}:0`)).toBeNull();
+  expect(sessions.list().map(({ id }) => id)).toEqual(["new", "newer"]);
+});
+
 it("keeps every session in the window, however often turns run", async () => {
   // One timer at its shortest interval, a minute, for 30 days: far past any
   // fixed count, and its oldest start must still be counted.
@@ -201,6 +230,36 @@ it("removes a membership's sessions of every agent type, and only its", async ()
       .list()
       .map(({ id }) => id),
   ).toEqual(["o"]);
+});
+
+it("keeps a removed agent's Codex days until another Codex agent removes them past keeping", async () => {
+  const storage = memory();
+  let now = 0;
+  const removed = standaloneSessions(storage, "codex", AGENT, () => now);
+  await removed.add("theirs");
+  await standaloneSessions(storage, "pi", AGENT, () => now).add("pi");
+  await standaloneSessions(storage, "pi", OTHER, () => now).add("other pi");
+  await removeStandaloneSessions(storage, AGENT);
+  // Codex deletes what the sessions left, so their record stays for it; the
+  // same agent's Pi day goes at once.
+  expect(removed.list().map(({ id }) => id)).toEqual(["theirs"]);
+  expect(storage.get(`${STANDALONE_PREFIX}pi:${AGENT}:0`)).toBeNull();
+  now = (STANDALONE_DAYS + 1) * DAY;
+  const dropped: string[][] = [];
+  await standaloneSessions(storage, "codex", OTHER, () => now).add(
+    "mine",
+    undefined,
+    async (ids) => void dropped.push(ids),
+  );
+  // Only the type's days past keeping go, every agent's.
+  expect(dropped).toEqual([["theirs"]]);
+  expect(storage.get(`${STANDALONE_PREFIX}codex:${AGENT}:0`)).toBeNull();
+  expect(storage.get(`${STANDALONE_PREFIX}pi:${OTHER}:0`)).not.toBeNull();
+  expect(
+    standaloneSessions(storage, "codex", OTHER, () => now)
+      .list()
+      .map(({ id }) => id),
+  ).toEqual(["mine"]);
 });
 
 it("keeps the key of the turn that started a session, alongside ones without", async () => {

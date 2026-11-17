@@ -8,7 +8,10 @@
 // Nothing inside that window is dropped, however often the agent's turns run.
 //
 // Each day's starts are a value of their own, so a turn rewrites only its
-// day's value, and whole days past keeping are removed. Agent storage takes
+// day's value, and whole days past keeping are removed, every agent's of the
+// turn's type. Removing an agent removes its days, except of a type whose
+// harness deletes what its sessions left: those stay until past keeping, so
+// it still can. Agent storage takes
 // 4 MiB a value: about 70,000 starts in one day, far more than one timer's
 // 1,440 at its shortest interval. A save past that fails and is logged.
 import { validTime } from "../agent-harness/acp/agent-sessions";
@@ -56,12 +59,19 @@ export function standaloneSessions(
   now: () => number = Date.now,
 ) {
   const prefix = dayKey(type, agent, 0).slice(0, -1);
-  /** The stored days, each with its key. */
-  const days = () =>
+  const typePrefix = `${STANDALONE_PREFIX}${type}:`;
+  /** The stored days, each with its key: the agent's, or with `every`, those
+   * of every agent of the type, removed ones too. */
+  const days = (every = false) =>
     storage.keys().flatMap((key) => {
-      if (!key.startsWith(prefix)) return [];
-      const day = key.slice(prefix.length);
-      return /^\d{1,9}$/.test(day) ? [{ key, day: Number(day) }] : [];
+      const day = every
+        ? /^[^:]+:(\d{1,9})$/.exec(key.slice(typePrefix.length))?.[1]
+        : key.slice(prefix.length);
+      return key.startsWith(every ? typePrefix : prefix) &&
+        day &&
+        /^\d{1,9}$/.test(day)
+        ? [{ key, day: Number(day) }]
+        : [];
     });
   const cutoff = () => now() - STANDALONE_DAYS * DAY;
   const kept = () => {
@@ -79,9 +89,17 @@ export function standaloneSessions(
     list: () =>
       kept().map(([id, at, wake]) => (wake ? { id, at, wake } : { id, at })),
     /** Records a one-off turn's new session, and the turn's key when given,
-     * then removes the days past keeping. A failed save is logged, never
-     * thrown, so the agent keeps working. */
-    async add(id: string, wake?: string) {
+     * then removes the days past keeping, of every agent of the type. With
+     * `drop`, a day is removed only
+     * once `drop` has removed what its sessions left behind, such as their
+     * transcripts; a day `drop` fails for stays, unlisted, for the next add
+     * to try again. A failed save or drop is logged, never thrown, so the
+     * agent keeps working. */
+    async add(
+      id: string,
+      wake?: string,
+      drop?: (ids: string[]) => Promise<void>,
+    ) {
       try {
         // Read, changed and written with no wait between, so adds never
         // drop each other's sessions.
@@ -91,12 +109,25 @@ export function standaloneSessions(
         const sessions = read(storage.get(key));
         sessions.push(short(wake) ? [id, at, wake] : [id, at]);
         const after = cutoff();
-        const past = days().filter(({ day }) => (day + 1) * DAY <= after);
+        // Every agent's of the type: a removed agent's record stays until
+        // its days pass, so what they left can still be dropped.
+        const past = days(true).filter(({ day }) => (day + 1) * DAY <= after);
         await storage.set(
           key,
           JSON.stringify({ version: 1, sessions } satisfies Stored),
         );
-        for (const { key } of past) await storage.set(key, null);
+        for (const { key } of past) {
+          if (drop) {
+            const ids = read(storage.get(key)).map(([found]) => found);
+            try {
+              if (ids.length) await drop(ids);
+            } catch (error) {
+              console.error("A past day's one-off sessions were kept", error);
+              continue;
+            }
+          }
+          await storage.set(key, null);
+        }
       } catch (error) {
         console.error("A one-off turn's session was not recorded", error);
       }
@@ -104,15 +135,18 @@ export function standaloneSessions(
   };
 }
 
-/** Removes a membership's one-off turn sessions, of every agent type. */
+/** Removes a membership's one-off turn sessions, of every agent type but
+ * those in `keep`: a type whose harness deletes what its sessions left, as
+ * Codex deletes their threads, keeps a removed agent's days, which the next
+ * one-off turn of any agent of the type removes once past keeping. */
 export async function removeStandaloneSessions(
   storage: AgentStore,
   agent: AgentKey,
+  keep: readonly string[] = ["codex"],
 ) {
-  for (const key of storage.keys())
-    if (
-      key.startsWith(STANDALONE_PREFIX) &&
-      key.slice(STANDALONE_PREFIX.length).split(":")[1] === agent
-    )
-      await storage.set(key, null);
+  for (const key of storage.keys()) {
+    if (!key.startsWith(STANDALONE_PREFIX)) continue;
+    const [type = "", owner] = key.slice(STANDALONE_PREFIX.length).split(":");
+    if (owner === agent && !keep.includes(type)) await storage.set(key, null);
+  }
 }

@@ -1603,6 +1603,29 @@ export const test = base.extend({
               ),
             ),
         ];
+      // A local agent's mention catch-up: chat events naming it anywhere.
+      if (filter["#p"] && !filter["#h"] && !filter["#p"].includes(viewer))
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.tags.some(
+                ([key, value]) => key === "p" && filter["#p"].includes(value),
+              ) &&
+              (filter.since === undefined ||
+                event.created_at >= filter.since) &&
+              (filter.until === undefined ||
+                event.created_at < filter.until ||
+                (event.created_at === filter.until &&
+                  (filter.before_id === undefined ||
+                    event.id > filter.before_id))),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
       if (
         filter["#p"] &&
         !filter["#h"] &&
@@ -1844,6 +1867,25 @@ export const test = base.extend({
               event.created_at < filter.until ||
               (event.created_at === filter.until &&
                 event.id > filter.before_id),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
+      // Search's person preview: their latest messages in any conversation.
+      if (
+        filter.authors?.length &&
+        !filter["#h"] &&
+        filter.search === undefined &&
+        filter.kinds?.includes(9)
+      )
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              filter.authors.includes(event.pubkey),
           )
           .toSorted(
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
@@ -2202,7 +2244,24 @@ export const test = base.extend({
           }),
         })
       : undefined;
+    // Browser-managed downloads can bypass Playwright's page routes. Serve
+    // opted-in attachment bytes over HTTP, shared with ordinary media reads.
+    const mediaFiles = new Map();
     const middleware = async (request, response, next) => {
+      const requested = new URL(request.url, "http://fixture.local");
+      const mediaFile = mediaFiles.get(requested.searchParams.get("url"));
+      if (
+        request.method === "GET" &&
+        /^\/api\/relay\/[^/]+\/media$/.test(requested.pathname) &&
+        mediaFile
+      ) {
+        response.writeHead(200, {
+          "Content-Type": mediaFile.contentType,
+          "Content-Length": mediaFile.bytes.length,
+        });
+        response.end(mediaFile.bytes);
+        return;
+      }
       // Development-React journeys restore the shared login at startup too.
       // This synthetic host has no Builderlab account; keep its stream open
       // until the page disconnects, just like the real broker's signed-out state.
@@ -2654,6 +2713,7 @@ export const test = base.extend({
         },
       );
       await use({
+        mediaFiles,
         sign: (template) => finalizeEvent(template, userKey),
         channelMetadata: (id, tags) => sign(39000, [["d", id], ...tags]),
         // Model an owner changing visibility; production discovery consumes the

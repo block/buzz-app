@@ -575,6 +575,7 @@ function ReviewShell({
       ) : attachment.kind === "video" && source ? (
         <VideoPlayer
           key={source}
+          attachmentUrl={attachment.url}
           downloadName={attachment.name ?? ""}
           videoRef={video}
           source={source}

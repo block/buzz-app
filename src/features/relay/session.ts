@@ -1214,6 +1214,8 @@ export function createRelaySession(
     canAccess: (channelId) => channels.canParticipate(channelId),
     notify,
   });
+  /** Callers holding `demandActivity`, beyond the sidebar's own needs. */
+  let activityDemand = 0;
   let sourceChannelList = channels.queries.list();
   let activityChannelList: ChannelList = Object.freeze({
     ...sourceChannelList,
@@ -1266,6 +1268,19 @@ export function createRelaySession(
       });
       return activityChannelList;
     },
+    ...(transport?.channelActivity && {
+      demandActivity() {
+        activityDemand++;
+        refreshChannelActivity();
+        let released = false;
+        return () => {
+          if (released) return;
+          released = true;
+          activityDemand--;
+          refreshChannelActivity();
+        };
+      },
+    }),
     subscribeList(listener: () => void) {
       const offChannels = channels.queries.subscribeList(listener);
       const offActivity = channelActivity.subscribe(listener);
@@ -4019,6 +4034,7 @@ export function createRelaySession(
     if (closed || !transport?.channelActivity) return;
     const preferences = sidebarPreferences.queries.snapshot().data;
     if (
+      !activityDemand &&
       !Object.values(preferences?.sort ?? {}).some(sidebarSortNeedsActivity) &&
       !Object.values(preferences?.filters ?? {}).includes("active")
     ) {

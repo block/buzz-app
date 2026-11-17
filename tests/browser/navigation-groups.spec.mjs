@@ -1,5 +1,5 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { openPage } from "./navigation.mjs";
+import { openPage, selectCommunity } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { holdReadingFocus } from "./reading.mjs";
@@ -1001,21 +1001,16 @@ const scrollTest = test.extend({
 scrollTest(
   "Workflows → Messages keeps saved groups, selected channel, and a visible entry's scroll on every frame without re-decoding",
   async ({ page, app }) => {
-    // Both communities must finish their cold read before counting warm reads.
-    // Secondary startup can otherwise arrive after the page-return trap is set.
-    const secondaryPreferences = page.waitForResponse(
-      (response) =>
-        response.url().endsWith("/api/relay/secondary/sidebar-preferences") &&
-        response.ok(),
-    );
     await open(page, app);
-    await (await secondaryPreferences).finished();
     const sidebar = page.getByRole("navigation", {
       name: "Subscribed channels",
     });
-    await expect(
-      sidebar.locator("summary", { hasText: /^Work$/ }),
-    ).toBeVisible();
+    const workGroup = sidebar.locator("summary", { hasText: /^Work$/ });
+    // Open Secondary explicitly so its deferred startup cannot race the trap.
+    await selectCommunity(page, "Secondary");
+    await expect(workGroup).toBeVisible();
+    await selectCommunity(page, "Primary");
+    await expect(workGroup).toBeVisible();
     await expect(
       sidebar.locator("summary", { hasText: /Starred$/ }),
     ).toBeVisible();

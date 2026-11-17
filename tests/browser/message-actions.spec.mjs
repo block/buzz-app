@@ -454,6 +454,13 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     await expect(actions).toHaveCSS("opacity", "0");
     await hoverMessage(row);
     await expect(actions).toHaveCSS("opacity", "1");
+    // The click left keyboard navigation, so this is a pointer reveal and its
+    // entry keeps its time. Only keyboard reveal, in the journey below, is
+    // immediate.
+    await expect(page.locator("html")).not.toHaveAttribute(
+      "data-keyboard-navigation",
+    );
+    await expect(actions).not.toHaveCSS("animation-duration", "0s");
     await expect(
       row.getByRole("button", { name: "Copy link", exact: true }),
     ).toBeVisible();
@@ -501,6 +508,11 @@ test("a pointer press on More after keyboard input leaves the open toolbar in pl
   const actions = row.getByRole("group", { name: "Message actions" });
   await hoverMessage(row);
   await expect(actions).toHaveCSS("opacity", "1");
+  // Keyboard reveal gives the entry no time rather than removing it. Were the
+  // entry absent, nothing could restart and the check after the press would
+  // pass without proving anything.
+  await expect(actions).not.toHaveCSS("animation-name", "none");
+  await expect(actions).toHaveCSS("animation-duration", "0s");
   // Keyboard reveal skips the entry, but the entry still spans its pointer
   // duration (at most --duration-state) from the moment the bar opened, and a
   // press inside that span resumes its last frames. A person presses later,

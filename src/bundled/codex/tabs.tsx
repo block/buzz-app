@@ -91,6 +91,7 @@ type ProviderDefaults = Readonly<{ model: string; effort: string }>;
 type ProviderState = AgentProviderSnapshot &
   Readonly<{
     checking: boolean;
+    previewChecking?: boolean;
     data: Catalog | undefined;
     error: string;
     defaults: ProviderDefaults;
@@ -230,12 +231,13 @@ export class CodexProvider {
         this.set({
           readiness: "ready",
           checking: false,
+          previewChecking: !!previews,
           data,
           error: "",
         });
         void previews?.then((previews) => {
           if (this.abort === abort && !abort.signal.aborted)
-            this.set({ data: { ...data, previews } });
+            this.set({ data: { ...data, previews }, previewChecking: false });
         });
       }
     } catch (error) {
@@ -1485,6 +1487,7 @@ export function createTabs(
                 defaultVoice={data?.defaultVoice}
                 disabled={saving || checking}
                 previewDisabled={!!bound}
+                previewLoading={provider.snapshot().previewChecking ?? false}
                 onChange={(voice) => setDraft(readConfig({ ...draft, voice }))}
                 onShown={() => {
                   if (local) provider.check();

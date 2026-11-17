@@ -27,6 +27,7 @@ export function VoicePreview({
   defaultVoice,
   disabled,
   previewDisabled = false,
+  previewLoading = false,
   onChange,
   onShown,
 }: {
@@ -37,6 +38,7 @@ export function VoicePreview({
   defaultVoice?: string | undefined;
   disabled: boolean;
   previewDisabled?: boolean;
+  previewLoading?: boolean;
   onChange(voice: string): void;
   onShown?(): void;
 }) {
@@ -49,7 +51,7 @@ export function VoicePreview({
   }>();
   const [error, setError] = useState("");
   useEffect(() => {
-    if (disabled || previewDisabled) return;
+    if (disabled || previewDisabled || previewLoading) return;
     const selected = previews?.[voice || defaultVoice || ""];
     if (selected) void preloadPreview(host, selected).catch(() => {});
     if (open)
@@ -66,13 +68,14 @@ export function VoicePreview({
     open,
     disabled,
     previewDisabled,
+    previewLoading,
   ]);
   useEffect(() => {
-    if (disabled || previewDisabled) {
+    if (disabled || previewDisabled || previewLoading) {
       playing?.abort.abort();
       setPlaying(undefined);
     }
-  }, [playing, disabled, previewDisabled]);
+  }, [playing, disabled, previewDisabled, previewLoading]);
   const playback = playing?.abort;
   useEffect(() => () => playback?.abort(), [playback]);
   const visibilityChanged = useEffectEvent((visible: boolean) => {
@@ -175,9 +178,13 @@ export function VoicePreview({
           ? `${playing.loading ? "Cancel loading" : "Stop"} preview of ${label(value)}`
           : `Preview ${label(value)}`
       }
-      aria-busy={playing?.voice === value && playing.loading}
+      aria-busy={
+        previewLoading || (playing?.voice === value && playing.loading)
+      }
       icon={
-        playing?.voice === value ? (
+        previewLoading ? (
+          <CircleNotchIcon className="motion-safe:animate-spin" />
+        ) : playing?.voice === value ? (
           playing.loading ? (
             <CircleNotchIcon className="motion-safe:animate-spin" />
           ) : (
@@ -187,7 +194,9 @@ export function VoicePreview({
           <PlayIcon />
         )
       }
-      disabled={disabled || previewDisabled || !available(value)}
+      disabled={
+        disabled || previewDisabled || previewLoading || !available(value)
+      }
       onClick={() => void play(value)}
     />
   );
@@ -217,9 +226,11 @@ export function VoicePreview({
                     : "Stop preview"
                   : "Preview voice"
               }
-              aria-busy={playing?.loading}
+              aria-busy={previewLoading || playing?.loading}
               icon={
-                playing ? (
+                previewLoading ? (
+                  <CircleNotchIcon className="motion-safe:animate-spin" />
+                ) : playing ? (
                   playing.loading ? (
                     <CircleNotchIcon className="motion-safe:animate-spin" />
                   ) : (
@@ -229,7 +240,12 @@ export function VoicePreview({
                   <PlayIcon />
                 )
               }
-              disabled={disabled || previewDisabled || !available(voice)}
+              disabled={
+                disabled ||
+                previewDisabled ||
+                previewLoading ||
+                !available(voice)
+              }
               onClick={() => void play(voice)}
             />
           </div>

@@ -2984,12 +2984,16 @@ it("publishes Codex readiness while optional recording discovery is held", async
   }>();
   const host: PreviewHost = { request: vi.fn(() => gate.promise) };
   const f = fixture({ previewHost: host });
+  render(<f.tabs.SettingsTab {...f.props()} settingsSection="identity" />);
   const checking = f.provider.check();
   try {
     await waitFor(() => expect(host.request).toHaveBeenCalledOnce());
     await waitFor(() => expect(f.provider.snapshot().readiness).toBe("ready"));
     await checking;
     expect(f.provider.snapshot().data?.models.length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("button", { name: "Preview voice" }),
+    ).toBeDisabled();
   } finally {
     gate.resolve({
       status: 200,

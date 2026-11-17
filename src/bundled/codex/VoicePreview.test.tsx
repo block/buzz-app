@@ -567,3 +567,47 @@ it.each([
     ).toHaveAccessibleDescription(expect.stringContaining(expected));
   },
 );
+
+it("reports missing recordings as neutral status after saving", async () => {
+  const onChange = vi.fn();
+  render(
+    <VoicePreview
+      voices={["cove", "maple"]}
+      voice="cove"
+      disabled={false}
+      onChange={onChange}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await user.click(screen.getByRole("radio", { name: "Maple" }));
+  expect(onChange).toHaveBeenCalledWith("maple");
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "No recording is available for this voice.",
+    ),
+  );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("keeps preview download failures as errors", async () => {
+  vi.mocked(previewVoice).mockRejectedValueOnce(
+    new Error("Recording could not be decoded"),
+  );
+  render(
+    <VoicePreview
+      host={host}
+      previews={previews}
+      voices={["cove", "maple"]}
+      voice="cove"
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await user.click(screen.getByRole("radio", { name: "Maple" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Recording could not be decoded",
+  );
+});

@@ -49,7 +49,7 @@ export function VoicePreview({
     abort: AbortController;
     loading: boolean;
   }>();
-  const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState<{ text: string; error: boolean }>();
   const waiting = useRef<
     | { voice: string; abort: AbortController; resolve(url: string): void }
     | undefined
@@ -159,15 +159,21 @@ export function VoicePreview({
     value
       ? `${name(value)}${available(value) ? "" : " (unavailable)"}`
       : defaultLabel;
-  const failure = error && (
-    <p role="alert" className="buzz-field-error">
-      {error}
+  const failure = feedback && (
+    <p
+      role={feedback.error ? "alert" : "status"}
+      className={
+        feedback.error ? "buzz-field-error" : "m-0 text-body-sm text-subtle"
+      }
+    >
+      {feedback.text}
     </p>
   );
   const select = async (value: string) => {
     stop();
     const abort = new AbortController();
-    setError("");
+    setFeedback(undefined);
+    const unavailable = new Error("No recording is available for this voice.");
     try {
       const saved = onChange(value);
       if (previewDisabled) {
@@ -179,7 +185,10 @@ export function VoicePreview({
             waiting.current = { voice: value, abort, resolve };
           })
         : Promise.resolve(previews?.[value || defaultVoice || ""] ?? "");
-      const ready = Promise.all([saved, recording]).then(([, url]) => url);
+      const ready = Promise.all([saved, recording]).then(([, url]) => {
+        if (!url) throw unavailable;
+        return url;
+      });
       // Readiness still settles if the device cannot initialize audio.
       void ready.catch(() => {});
       setPlaying({ voice: value, abort, loading: true });
@@ -191,11 +200,13 @@ export function VoicePreview({
       );
     } catch (reason) {
       if (!abort.signal.aborted)
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "Could not save or preview voice. Try again.",
-        );
+        setFeedback({
+          text:
+            reason instanceof Error
+              ? reason.message
+              : "Could not save or preview voice. Try again.",
+          error: reason !== unavailable,
+        });
     } finally {
       if (waiting.current?.abort === abort) waiting.current = undefined;
       setPlaying((current) => (current?.abort === abort ? undefined : current));

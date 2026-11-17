@@ -169,3 +169,29 @@ test("pans and zooms an emoji over its background", async ({ page }) => {
   expect(painted.left).toBe(0);
   expect(painted.right).toBeGreaterThan(0);
 });
+
+// The image point under the frame's centre, as fractions of the image.
+const centred = (frame) =>
+  frame.evaluate((element) => {
+    const f = element.getBoundingClientRect();
+    const i = element.querySelector("img").getBoundingClientRect();
+    return [
+      (f.x + f.width / 2 - i.x) / i.width,
+      (f.y + f.height / 2 - i.y) / i.height,
+    ];
+  });
+
+test("zooming keeps the framed subject under the frame's centre", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/agent-avatar-picker.html");
+  await splitImage(page);
+  const frame = page.getByRole("application", { name: "Image position" });
+  await expect(frame).toBeVisible();
+  await drag(page, frame, 0.25, 0);
+  const [x, y] = await centred(frame);
+  await page.getByRole("slider", { name: "Zoom" }).fill("3");
+  const [zoomedX, zoomedY] = await centred(frame);
+  expect(zoomedX).toBeCloseTo(x, 3);
+  expect(zoomedY).toBeCloseTo(y, 3);
+});

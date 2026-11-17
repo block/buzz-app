@@ -663,7 +663,19 @@ export function AgentAvatarPicker({
                   className={`${styles.avatarZoom} glass-secondary`}
                   crop={crop}
                   disabled={locked}
-                  onChange={setCrop}
+                  onChange={(value) =>
+                    setCrop(
+                      selection.kind === "emoji"
+                        ? value
+                        : // An image zooms about the frame's centre, so the
+                          // framed subject stays in place.
+                          {
+                            ...value,
+                            x: (crop.x * value.zoom) / crop.zoom,
+                            y: (crop.y * value.zoom) / crop.zoom,
+                          },
+                    )
+                  }
                 />
               )}
             </div>

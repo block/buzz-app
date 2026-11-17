@@ -1590,6 +1590,13 @@ export class CodexRuntime {
       throw new Error("This conversation already has a voice seat");
     entry.lanes.set(key, lane);
     lane.voiceOpening = true;
+    try {
+      const active = lane.active;
+      if (active) await this.interrupt(entry, key, active.reply);
+    } catch (error) {
+      delete lane.voiceOpening;
+      throw error;
+    }
     const abort = new AbortController();
     const signal = AbortSignal.any([
       seat.signal,

@@ -32,6 +32,7 @@ and speaks to everyone. The current audio protocol can briefly misattribute dela
 audio when a connection slot is reused; this is not a strict privacy guarantee.
 Other people or speakers near your microphones can also be heard. Simultaneous
 audio from your devices is mixed together.
+When Codex attaches to a Huddle, it interrupts any running turn in the same session before connecting audio. Your next spoken request starts a new turn with the session's existing context.
 Voice work uses the same permissions as your text requests. Joining your Codex agent’s DM huddle from mobile can activate that agent on
 this desktop. Keep Buzz and the Codex agent running here; the desktop microphone
 does not turn on. Other calls on another device do not seat an agent here.

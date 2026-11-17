@@ -8965,6 +8965,97 @@ it("retains a deferred remote community handoff until admission finishes", async
   }
 });
 
+it.each(["channel", "community"] as const)(
+  "interrupts active %s work before attaching voice to the same session",
+  async (scope) => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const f = fixture();
+    const d = f.delivery("typed work");
+    const config = { ...(d.config as object), scope };
+    const agent = { ...d.agent, config } as unknown as Agent;
+    const accepted = deferred<void>();
+    f.held.set("turn/interrupt", accepted.promise);
+    const opened = vi.mocked(openVoice).mock.calls.length;
+    let opening: ReturnType<typeof f.runtime.voice> | undefined;
+    try {
+      await f.runtime.run({ ...d, config });
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      const channelId = scope === "community" ? "room" : "channel";
+      f.huddleChannels.add(channelId);
+      opening = f.runtime.voice(
+        {
+          config,
+          agent,
+          conversation: { channelId },
+          signal: new AbortController().signal,
+          async output() {},
+          async transcript() {},
+          ended() {},
+        },
+        d.agent,
+      );
+      await vi.waitFor(() =>
+        expect(
+          f.sent.find((w) => w.method === "turn/interrupt")?.params,
+        ).toEqual({
+          threadId: "thread-1",
+          turnId: "turn-1",
+        }),
+      );
+      expect(openVoice).toHaveBeenCalledTimes(opened);
+      accepted.resolve();
+      await opening;
+      expect(vi.mocked(openVoice).mock.calls.at(-1)?.[1]).toBe("thread-1");
+      expect(f.starts()).toHaveLength(1);
+    } finally {
+      accepted.resolve();
+      f.complete(0);
+      await (await opening)?.close();
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("reports an interrupt failure without attaching voice or replacing the session", async () => {
+  vi.stubGlobal("RTCPeerConnection", class {});
+  const f = fixture();
+  const d = f.delivery("typed work");
+  f.huddleChannels.add("channel");
+  f.failing.add("turn/interrupt");
+  await f.runtime.run(d);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const opened = vi.mocked(openVoice).mock.calls.length;
+  await expect(
+    f.runtime.voice(
+      {
+        config: d.config,
+        agent: { ...d.agent, config: d.config } as unknown as Agent,
+        conversation: { channelId: "channel" },
+        signal: new AbortController().signal,
+        async output() {},
+        async transcript() {},
+        ended() {},
+      },
+      d.agent,
+    ),
+  ).rejects.toThrow("turn/interrupt failed");
+  expect(openVoice).toHaveBeenCalledTimes(opened);
+  f.failing.delete("turn/interrupt");
+  f.complete(0);
+  await vi.waitFor(() =>
+    expect(
+      f.runtime.sessionState(
+        { ...d.agent, config: d.config } as unknown as Agent,
+        { channelId: "channel" },
+      ),
+    ).toBe("idle"),
+  );
+  await f.runtime.run(f.delivery("next request"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
+  f.complete(1);
+});
+
 it("waits for community compaction before opening voice", async () => {
   vi.stubGlobal("RTCPeerConnection", class {});
   const f = fixture();

@@ -581,8 +581,9 @@ and are asked to sign in again in Buzz.
   reply's branch, whose count shows what is new. Buzz loads older replies until
   it finds where unread replies begin. Opening the thread again, even in a tab
   that is still open, finds the first unread reply again; switching tabs keeps
-  the divider. A thread with nothing unread opens at its latest reply. Opening
-  a specific reply, such as a mention, opens at that reply.
+  the divider. A thread with nothing unread opens at its latest reply, as
+  does one whose unread replies this device has not seen yet. Opening a
+  specific reply, such as a mention, opens at that reply.
 - **Marking a channel read** keeps the cut from your click when retried. If a newer
   manual unread choice was saved in another window while it waited, the read fails
   rather than clearing that choice. Mark the channel read again to clear it.

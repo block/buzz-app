@@ -106,7 +106,7 @@ export async function preloadPreview(
 /** A recording only: no conversation, generation, or microphone. */
 export async function previewVoice(
   host: PreviewHost | undefined,
-  url: string,
+  url: string | Promise<string>,
   signal: AbortSignal,
   started?: () => void,
 ) {
@@ -132,7 +132,10 @@ export async function previewVoice(
   source.onended = finish;
   try {
     const [recording] = await wait(
-      Promise.all([preloadPreview(host, url), context.resume()]),
+      Promise.all([
+        Promise.resolve(url).then((value) => preloadPreview(host, value)),
+        context.resume(),
+      ]),
     );
     source.buffer = await wait(
       context.decodeAudioData(recording.slice().buffer as ArrayBuffer),

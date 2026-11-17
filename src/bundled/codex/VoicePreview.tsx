@@ -49,6 +49,17 @@ export function VoicePreview({
     loading: boolean;
   }>();
   const [error, setError] = useState("");
+  const waiting = useRef<
+    | { voice: string; abort: AbortController; resolve(url: string): void }
+    | undefined
+  >(undefined);
+  useEffect(() => {
+    const request = waiting.current;
+    if (request && !previewLoading) {
+      waiting.current = undefined;
+      request.resolve(previews?.[request.voice || defaultVoice || ""] ?? "");
+    }
+  }, [previewLoading, previews, defaultVoice]);
   useEffect(() => {
     if (disabled || previewDisabled || previewLoading) return;
     const selected = previews?.[voice || defaultVoice || ""];
@@ -70,17 +81,18 @@ export function VoicePreview({
     previewLoading,
   ]);
   useEffect(() => {
-    if (disabled || previewDisabled || previewLoading) {
+    if (previewDisabled) {
       playing?.abort.abort();
       setPlaying(undefined);
     }
-  }, [playing, disabled, previewDisabled, previewLoading]);
+  }, [playing, previewDisabled]);
   const playback = playing?.abort;
   useEffect(() => () => playback?.abort(), [playback]);
   const visibilityChanged = useEffectEvent((visible: boolean) => {
     if (visible) onShown?.();
     else {
       playback?.abort();
+      waiting.current = undefined;
       setPlaying(undefined);
       setOpen(false);
     }
@@ -127,34 +139,8 @@ export function VoicePreview({
   }, []);
   const stop = () => {
     playing?.abort.abort();
+    waiting.current = undefined;
     setPlaying(undefined);
-  };
-  const play = async (sample: string) => {
-    stop();
-    if (previewDisabled || previewLoading) return;
-    const abort = new AbortController();
-    setPlaying({ voice: sample, abort, loading: true });
-    setError("");
-    try {
-      await previewVoice(
-        host,
-        previews?.[sample || defaultVoice || ""] ?? "",
-        abort.signal,
-        () =>
-          setPlaying((current) =>
-            current?.abort === abort ? { ...current, loading: false } : current,
-          ),
-      );
-    } catch (reason) {
-      if (!abort.signal.aborted)
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "Voice preview failed. Try again.",
-        );
-    } finally {
-      setPlaying((current) => (current?.abort === abort ? undefined : current));
-    }
   };
   const available = (value: string) =>
     !value || !voices || voices.includes(value);
@@ -172,17 +158,37 @@ export function VoicePreview({
   );
   const select = async (value: string) => {
     stop();
+    const abort = new AbortController();
     setError("");
     try {
-      await onChange(value);
-      if (trigger.current?.getAttribute("aria-expanded") === "true")
-        void play(value);
-    } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : "Could not save voice. Try again.",
+      const saved = onChange(value);
+      if (previewDisabled) {
+        await saved;
+        return;
+      }
+      const recording = previewLoading
+        ? new Promise<string>((resolve) => {
+            waiting.current = { voice: value, abort, resolve };
+          })
+        : Promise.resolve(previews?.[value || defaultVoice || ""] ?? "");
+      const ready = Promise.all([saved, recording]).then(([, url]) => url);
+      setPlaying({ voice: value, abort, loading: true });
+      // Enter the audio owner during activation; sound waits for save and discovery.
+      await previewVoice(host, ready, abort.signal, () =>
+        setPlaying((current) =>
+          current?.abort === abort ? { ...current, loading: false } : current,
+        ),
       );
+    } catch (reason) {
+      if (!abort.signal.aborted)
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "Could not save or preview voice. Try again.",
+        );
+    } finally {
+      if (waiting.current?.abort === abort) waiting.current = undefined;
+      setPlaying((current) => (current?.abort === abort ? undefined : current));
     }
   };
   const row = (value: string) => (
@@ -231,6 +237,7 @@ export function VoicePreview({
             size="sm"
             variant="outline"
             disabled={disabled}
+            focusableWhenDisabled
             aria-haspopup="dialog"
             aria-expanded={open}
             onClick={() => {

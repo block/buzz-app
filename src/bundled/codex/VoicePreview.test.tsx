@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { VoicePreview } from "./VoicePreview";
 import { previewVoice, preloadPreview } from "./voice-preview";
 import type { PreviewHost } from "./voice-preview";
@@ -22,6 +22,11 @@ const previews = {
   cove: "https://persistent.oaistatic.com/voice/previews/cove.test.m4a",
   maple: "https://persistent.oaistatic.com/voice/previews/maple.test.m4a",
 };
+beforeEach(() => {
+  vi.mocked(previewVoice).mockImplementation(async (_host, url) => {
+    await url;
+  });
+});
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -51,7 +56,7 @@ it("previews the unsaved choice, stops immediately, and ignores a late failure",
   await user.click(screen.getByRole("radio", { name: voiceName() }));
   expect(previewVoice).toHaveBeenCalledWith(
     host,
-    previews.maple,
+    expect.any(Promise),
     expect.any(AbortSignal),
     expect.any(Function),
   );
@@ -129,7 +134,7 @@ it("shows errors and lets the user retry the default voice", async () => {
   );
   expect(previewVoice).toHaveBeenLastCalledWith(
     host,
-    "",
+    expect.any(Promise),
     expect.any(AbortSignal),
     expect.any(Function),
   );
@@ -186,7 +191,7 @@ it("chooses and previews a row without closing the picker", async () => {
   expect(onChange).toHaveBeenCalledWith("maple");
   expect(previewVoice).toHaveBeenCalledWith(
     host,
-    previews.maple,
+    expect.any(Promise),
     expect.any(AbortSignal),
     expect.any(Function),
   );
@@ -413,9 +418,11 @@ it("reports a failed save without previewing it and allows a retry", async () =>
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not save voice",
   );
-  expect(previewVoice).not.toHaveBeenCalled();
+  await expect(vi.mocked(previewVoice).mock.calls[0]?.[1]).rejects.toThrow(
+    "Could not save voice",
+  );
   await user.click(screen.getByRole("radio", { name: "Maple" }));
-  expect(previewVoice).toHaveBeenCalledOnce();
+  expect(previewVoice).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByRole("button", { name: /preview/i })).toBeNull();
 });
@@ -443,5 +450,58 @@ it("does not start audio when a save finishes after closing the picker", async (
   await user.click(screen.getByRole("radio", { name: "Maple" }));
   await user.click(screen.getByRole("button", { name: "Close" }));
   await act(async () => finish());
-  expect(previewVoice).not.toHaveBeenCalled();
+  expect(vi.mocked(previewVoice).mock.calls[0]?.[2].aborted).toBe(true);
+});
+
+it("starts preparing audio in the click gesture while persistence is pending", async () => {
+  let finish!: () => void;
+  const user = userEvent.setup();
+  render(
+    <VoicePreview
+      voice="cove"
+      voices={["cove", "maple"]}
+      previews={previews}
+      disabled={false}
+      onChange={() =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        })
+      }
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(screen.getByRole("radio", { name: "Maple" }));
+  try {
+    expect(previewVoice).toHaveBeenCalledOnce();
+  } finally {
+    await act(async () => finish());
+  }
+});
+it("retains a selected preview through recording discovery and uses its new URL", async () => {
+  const user = userEvent.setup();
+  const props = {
+    voice: "cove",
+    voices: ["cove", "maple"],
+    disabled: false,
+    onChange: vi.fn(),
+  };
+  const view = render(<VoicePreview {...props} previewLoading />);
+  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(screen.getByRole("radio", { name: "Maple" }));
+  view.rerender(<VoicePreview {...props} previews={previews} />);
+  await waitFor(() => expect(previewVoice).toHaveBeenCalledOnce());
+  expect(await vi.mocked(previewVoice).mock.calls[0]?.[1]).toBe(previews.maple);
+});
+it("returns focus to Voice when the picker closes during persistence", async () => {
+  const user = userEvent.setup();
+  const props = { voice: "cove", disabled: false, onChange: vi.fn() };
+  const view = render(<VoicePreview {...props} />);
+  const trigger = screen.getByRole("button", { name: "Voice" });
+  await user.click(trigger);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
+  );
+  view.rerender(<VoicePreview {...props} disabled />);
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(trigger).toHaveFocus());
 });

@@ -198,3 +198,20 @@ it("cancels while loading without starting audio, then reuses the completed down
   await preloadPreview(f.host, url("cove"));
   expect(f.host.requestBytes).toHaveBeenCalledOnce();
 });
+
+it("unlocks audio synchronously but waits for the saved recording before playback", async () => {
+  const { previewVoice } = await import("./voice-preview");
+  const f = fixture();
+  const a = audio();
+  let release!: (url: string) => void;
+  const ready = new Promise<string>((resolve) => {
+    release = resolve;
+  });
+  const done = previewVoice(f.host, ready, new AbortController().signal);
+  expect(a.context.resume).toHaveBeenCalledOnce();
+  expect(a.source.start).not.toHaveBeenCalled();
+  release(url("cove"));
+  await a.playing;
+  a.source.onended?.();
+  await done;
+});

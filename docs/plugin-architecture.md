@@ -1532,7 +1532,13 @@ the open pane, not merely selected: while the pane is hidden the panel stays sel
 reads unpressed, and `toggle` shows it again. With `channelPlacement: "tab"` the launcher instead
 opens one tab per channel in the side pane, grouped with thread and other panel tabs;
 a new target replaces that tab, and a link tab already open for the target becomes it.
-The tab receives `PanelProps.context` too, so it can open or push further tabs. A launcher
+The tab receives `PanelProps.context` too, so it can open or push further tabs.
+Channel tabs also supply optional `context.openMedia(messageId, attachment)` for
+images and videos. This uses the channel's media review viewer, with the same
+session-backed source, zoom, gallery and comments. It returns false after the
+opening is hidden or retired, or for unsupported attachment kinds; file panels
+continue to use target opening. A decorative `tabIcon: ComponentType` overrides
+the default information icon for a channel tab. Older hosts may omit both features. A launcher
 selects its **exact active contribution**, not target matching. `available()` and
 `toggle()` are revoked when the mounted context or contribution is retired. Optional
 `PanelProps.channelContext` carries the current displayed public context to a channel

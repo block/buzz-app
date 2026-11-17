@@ -1045,6 +1045,39 @@ it("stops waiting on a live conversation that doesn't answer, and keeps its proc
   pool.dispose();
 });
 
+it("stops an older lookup a live conversation's caller waits on when it gives up, and keeps the conversation", async () => {
+  let release!: () => void;
+  const initialized = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, claudes } = sessions({ initialized });
+  const picker = pool.metadata().catch(() => undefined);
+  try {
+    await flush();
+    const [lookup] = claudes();
+    if (!lookup) throw new Error("no lookup");
+    lookup.emit = () => {};
+    const delivered = pool.deliver("c/root", "hi", 1);
+    await flush();
+    release();
+    await delivered;
+    const conversation = claudes()[1];
+    const deadline = new AbortController();
+    const turn = pool.metadata(deadline.signal);
+    await flush();
+    const stopped = expect(turn).rejects.toThrow("deadline");
+    deadline.abort(new Error("The turn ran past its deadline"));
+    await flush();
+    await stopped;
+    expect(lookup.killed).toBe(true);
+    expect(conversation?.killed).toBe(false);
+  } finally {
+    pool.dispose();
+    release();
+    await picker;
+  }
+});
+
 it("does not start metadata discovery after its agent is disposed during launch", async () => {
   let release!: () => void;
   const launched = new Promise<void>((resolve) => {

@@ -129,7 +129,14 @@ export function VoicePreview({
     for (const element of ancestors)
       observer.observe(element, {
         attributes: true,
-        attributeFilter: ["hidden", "class", "style", "inert"],
+        attributeFilter: [
+          "hidden",
+          "class",
+          "style",
+          "inert",
+          "data-covered",
+          "data-leaving",
+        ],
       });
     document.addEventListener("visibilitychange", check);
     return () => {

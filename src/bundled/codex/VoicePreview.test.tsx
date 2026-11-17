@@ -507,3 +507,41 @@ it("returns focus to Voice when the picker closes during persistence", async () 
   await user.click(screen.getByRole("button", { name: "Close" }));
   await waitFor(() => expect(trigger).toHaveFocus());
 });
+
+it("refreshes after a retained pane finishes leaving and returns", async () => {
+  const previous = HTMLElement.prototype.checkVisibility;
+  HTMLElement.prototype.checkVisibility = function () {
+    const pane = this.closest("[data-testid=retained]");
+    return (
+      !pane?.hasAttribute("data-covered") || pane.hasAttribute("data-leaving")
+    );
+  };
+  const onShown = vi.fn();
+  const view = render(
+    <div data-testid="retained">
+      <VoicePreview
+        voices={["cove"]}
+        voice=""
+        disabled={false}
+        onChange={vi.fn()}
+        onShown={onShown}
+      />
+    </div>,
+  );
+  const pane = view.getByTestId("retained");
+  try {
+    await act(async () => {
+      pane.setAttribute("data-leaving", "");
+      pane.setAttribute("data-covered", "");
+      pane.setAttribute("inert", "");
+    });
+    await act(async () => pane.removeAttribute("data-leaving"));
+    await act(async () => {
+      pane.removeAttribute("data-covered");
+      pane.removeAttribute("inert");
+    });
+    expect(onShown).toHaveBeenCalledOnce();
+  } finally {
+    HTMLElement.prototype.checkVisibility = previous;
+  }
+});

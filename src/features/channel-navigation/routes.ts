@@ -119,12 +119,33 @@ export function newMessage(
     return { intent: { to, at } };
 }
 
+const intentOrder = "buzz-message-intent.v1";
+let issued = 0;
+/** The order of a new choice: after every earlier one, in every window,
+ * even when the clock moves back. */
+export function nextMessageIntent() {
+  let last = issued;
+  try {
+    last = Math.max(last, Number(localStorage.getItem(intentOrder)) || 0);
+  } catch {
+    /* Without storage, this window still orders its own choices. */
+  }
+  issued = Math.max(Date.now(), last + 1);
+  try {
+    localStorage.setItem(intentOrder, String(issued));
+  } catch {
+    /* As above. */
+  }
+  return issued;
+}
+
 /** A New message draft addressed to `to`. Each choice is its own visit,
- * stamped when chosen, so choosing the same person again addresses it anew. */
+ * ordered after every earlier one, so choosing the same person again
+ * addresses it anew. */
 export const newMessageTarget = (
   scope: NavigationScope,
   to: string,
-  at = Date.now(),
+  at = nextMessageIntent(),
 ): OpenTarget => ({
   version: 1,
   kind: "page",

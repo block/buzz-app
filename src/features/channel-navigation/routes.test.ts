@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { JsonValue, OpenTarget } from "../navigation/targets";
 import {
   conversationTarget,
@@ -6,6 +6,7 @@ import {
   matchesConversation,
   newMessage,
   newMessageTarget,
+  nextMessageIntent,
   soloDraft,
   soloDraftTarget,
   resumeSoloDraftTarget,
@@ -92,6 +93,18 @@ it("addresses a New message draft to one person by key", () => {
     expect(newMessage(invalid), JSON.stringify(invalid)).toBeUndefined();
     expect(isChannelRoute(invalid)).toBe(false);
   }
+});
+
+it("orders each new choice after the last, even when the clock moves back", () => {
+  const now = vi.spyOn(Date, "now").mockReturnValue(5_000);
+  const first = nextMessageIntent();
+  now.mockReturnValue(1_000);
+  const second = nextMessageIntent();
+  const third = nextMessageIntent();
+  expect(first).toBeGreaterThanOrEqual(5_000);
+  expect(second).toBe(first + 1);
+  expect(third).toBe(second + 1);
+  now.mockRestore();
 });
 
 it("rejects foreign route kinds and draft payloads", () => {

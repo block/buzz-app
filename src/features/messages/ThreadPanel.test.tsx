@@ -1153,6 +1153,32 @@ it("opens a read thread at its latest reply, and an explicit target at itself, w
   expect(exact.view.loadMore).not.toHaveBeenCalled();
   expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
 });
+it("pages past a read frontier for a reply marked unread older than the loaded replies", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread, read } = unreadReplies(h);
+  // The store knows of one unread reply in the thread, which no loaded row is.
+  const known = { observedCount: 1 };
+  Object.assign(h.session.unread, { snapshot: () => known });
+  const marked = reply("marked unread", 1);
+  unread.add(marked.id);
+  read.through = 4;
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [reply("read", 3), reply("also read", 4)];
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(h.element).toHaveAttribute("data-positioning");
+
+  h.snapshot.canLoadMore = false;
+  h.snapshot.replies = [marked, ...h.snapshot.replies];
+  h.render();
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(
+    line.compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${marked.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+});
 it("places a requested read time's line above the first branch unread as of that time, after the opener's read, and again for each request", () => {
   // Page tabs open without navigation.
   const h = messagesHarness();
@@ -1185,6 +1211,10 @@ it("places a requested read time's line above the first branch unread as of that
   h.snapshot.replies = [top, nested, own, later];
   h.render();
   expect(above(top)).toBeTruthy();
+  // The opener read the nested reply too, so its branch opens to show it.
+  expect(
+    h.element.querySelector(`[data-message-id="${nested.id}"]`),
+  ).not.toBeNull();
   expect(h.element.scrollTop).toBe(300);
 
   // The same mounted panel decides again for a new request.

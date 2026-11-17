@@ -1054,6 +1054,17 @@ function ThreadMessages({
       );
     };
     const first = (tree.children.get(undefined) ?? []).find(unread);
+    // A requested read time follows a read of the whole thread, so a nested
+    // unread reply shows no new count: reveal it, as a reply target is.
+    const nested = (row: ChannelMessage): ChannelMessage | undefined => {
+      for (const child of tree.children.get(row.id) ?? []) {
+        const attention = session.unread.attention(channelId, child.id, since);
+        if (attention.unread || attention.forced) return child;
+        const found = nested(child);
+        if (found) return found;
+      }
+    };
+    const revealed = since !== undefined && first && nested(first);
     const known =
       since !== undefined || !!first || (threadUnread?.observedCount ?? 0) > 0;
     // Resumed rows show at once; with unread known, the line waits for this
@@ -1064,18 +1075,33 @@ function ThreadMessages({
     // or the viewer's own, does not. A legacy walk reads forward from the
     // oldest reply.
     const oldest = snapshot.replies[0];
+    // A reply marked unread is unread whatever the frontier says; one the
+    // store knows of outside the loaded rows is older than them.
+    const loadedUnread = [snapshot.root, ...snapshot.replies].filter(
+      (row) => row && session.unread.attention(channelId, row.id).unread,
+    ).length;
+    const unreadOlder = (threadUnread?.observedCount ?? 0) > loadedUnread;
     if (
       known &&
       snapshot.direction === "older" &&
       (snapshot.canLoadMore || snapshot.limited) &&
       oldest &&
-      oldest.createdAt >
-        (since ?? session.unread.threadReadThrough(channelId, messageId))
+      (unreadOlder ||
+        oldest.createdAt >
+          (since ?? session.unread.threadReadThrough(channelId, messageId)))
     ) {
       if (snapshot.canLoadMore) void view.loadMore();
       // Past the page limit the first unread reply stays unknown.
       else setBoundary({ ...boundary, id: null });
       return;
+    }
+    if (revealed) {
+      const ancestors = tree.ancestors(revealed.id);
+      setExpanded((current) =>
+        ancestors.every((id) => current.has(id))
+          ? current
+          : new Set([...current, ...ancestors]),
+      );
     }
     setBoundary({ ...boundary, id: first?.id ?? null });
   }, [
@@ -1745,7 +1771,12 @@ function ThreadMessages({
       previousParent = parent;
       const descendants = branchReplies.get(row.id) ?? [];
       const unreadCount = descendants.filter(
-        (reply) => session.unread.attention(channelId, reply.id).unread,
+        (reply) =>
+          session.unread.attention(
+            channelId,
+            reply.id,
+            unreadRequest?.readThrough,
+          ).unread,
       ).length;
       const unreadLabel = unreadCount
         ? `${unreadCount} new in available replies`

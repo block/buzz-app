@@ -391,6 +391,8 @@ export function TypingIndicator({
     const roots = (
       workRoot ? [workRoot] : (details.get(pubkey)?.roots ?? [])
     ).filter((root): root is string | null => root === null || !!root);
+    // The channel alone is the conversation already shown.
+    if (!roots.some(Boolean)) return undefined;
     const labels = roots.slice(0, 2).map((root) => {
       if (root === null) return "Channel conversation";
       const text = rows
@@ -463,10 +465,7 @@ export function TypingIndicator({
         : detail.detailAvailability === "no-current-step"
           ? (remoteDetail ?? "No current step details received.")
           : "Only typing updates are reaching this app.";
-    const scope =
-      detail.roots.length === 1 && detail.roots[0] === null
-        ? undefined
-        : scopeLabel(pubkey, workRoot);
+    const scope = scopeLabel(pubkey, workRoot);
     // The row is the way into an agent's transcript for this work.
     if (canOpen && target)
       return (

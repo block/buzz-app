@@ -473,6 +473,14 @@ it.each([null, undefined])(
     await user.click(
       screen.getByRole("button", { name: "Activity: Agent working" }),
     );
+    // Neither the channel already shown nor an unknown conversation is named.
+    const status = screen.getByText(
+      threadRootId === null
+        ? "Only typing updates are reaching this app."
+        : "No current step details received.",
+    );
+    expect(status.parentElement?.textContent).toBe(status.textContent);
+    expect(status.parentElement).not.toHaveAttribute("title");
     await user.click(
       screen.getByRole("button", { name: "View Agent activity" }),
     );
@@ -488,6 +496,48 @@ it.each([null, undefined])(
     ).toBeNull();
   },
 );
+
+it("names no scope for channel work beside work in an unknown conversation", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  f.update([], {
+    typing: [
+      {
+        agent,
+        channelId: "channel",
+        threadRootId: undefined,
+        working: true,
+        startedAt: 1,
+      },
+    ],
+    turns: [
+      {
+        agent,
+        channelId: "channel",
+        turnId: "unknown",
+        state: "working",
+        timestamp: 1,
+      },
+    ],
+  });
+  // The channel timeline's props: there, remote work has only these two roots.
+  render(
+    <TypingIndicator
+      inFlow
+      audience="agents"
+      session={f.session}
+      channelId="channel"
+      openActivity={() => true}
+      canOpenActivity={() => true}
+    />,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Activity: Agent working" }),
+  );
+  const status = screen.getByText("No current step details received.");
+  expect(status.parentElement?.textContent).toBe(status.textContent);
+  expect(status.parentElement).not.toHaveAttribute("title");
+});
 
 it.each([
   {
@@ -558,6 +608,8 @@ it.each([
     expect(step.parentElement?.textContent).toBe(
       `${status} · Thread · First task`,
     );
+    // The hint holds that scope alone, for when the line cuts it off.
+    expect(step.parentElement).toHaveAttribute("title", "Thread · First task");
     await user.click(
       screen.getByRole("button", { name: "View Agent activity" }),
     );

@@ -32,28 +32,82 @@ test.describe("touch selection menus", () => {
     // Trusted long-press synthesis needs CDP; both engines exercise the ⋯ tap.
     if (browserName === "chromium") {
       const box = await prose.boundingBox();
+      const nativeMenu = () =>
+        expect
+          .poll(() =>
+            page.evaluate(() =>
+              window.contextMenus.map((event) => ({
+                trusted: event.isTrusted,
+                pointerType: event.pointerType,
+                prevented: event.defaultPrevented,
+              })),
+            ),
+          )
+          .toEqual([{ trusted: true, pointerType: "touch", prevented: false }]);
       const cdp = await page.context().newCDPSession(page);
       try {
-        await cdp.send("Input.synthesizeTapGesture", {
-          x: box.x + box.width / 2,
-          y: box.y + box.height / 2,
-          duration: 1000,
-          gestureSourceType: "touch",
-        });
+        if (process.platform === "linux") {
+          // Aura's synthesizeTapGesture route bypasses long-press recognition.
+          // Mouse-to-touch emulation still generates real trusted touch input.
+          const point = {
+            x: Math.round(box.x + box.width / 2),
+            y: Math.round(box.y + box.height / 2),
+            button: "left",
+            clickCount: 1,
+          };
+          const released = await page.evaluateHandle(() => {
+            const state = { ended: false };
+            window.addEventListener(
+              "touchend",
+              () => {
+                state.ended = true;
+              },
+              {
+                once: true,
+                capture: true,
+              },
+            );
+            return state;
+          });
+          await cdp.send("Emulation.setEmitTouchEventsForMouse", {
+            enabled: true,
+            configuration: "mobile",
+          });
+          try {
+            await cdp.send("Input.emulateTouchFromMouseEvent", {
+              type: "mousePressed",
+              ...point,
+            });
+            await nativeMenu();
+          } finally {
+            await cdp.send("Input.emulateTouchFromMouseEvent", {
+              type: "mouseReleased",
+              ...point,
+            });
+            try {
+              // Release is forwarded asynchronously; do not disable it early.
+              await expect
+                .poll(() => released.evaluate((state) => state.ended))
+                .toBe(true);
+            } finally {
+              await cdp.send("Emulation.setEmitTouchEventsForMouse", {
+                enabled: false,
+              });
+              await released.dispose();
+            }
+          }
+        } else {
+          await cdp.send("Input.synthesizeTapGesture", {
+            x: box.x + box.width / 2,
+            y: box.y + box.height / 2,
+            duration: 1000,
+            gestureSourceType: "touch",
+          });
+        }
       } finally {
         await cdp.detach();
       }
-      await expect
-        .poll(() =>
-          page.evaluate(() =>
-            window.contextMenus.map((event) => ({
-              trusted: event.isTrusted,
-              pointerType: event.pointerType,
-              prevented: event.defaultPrevented,
-            })),
-          ),
-        )
-        .toEqual([{ trusted: true, pointerType: "touch", prevented: false }]);
+      await nativeMenu();
       await expect(page.getByRole("menu")).toHaveCount(0);
       await page.keyboard.press("Escape");
     }

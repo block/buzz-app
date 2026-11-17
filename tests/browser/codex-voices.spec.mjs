@@ -12,6 +12,19 @@ test("Codex Voices persist separately through the settings host", async ({
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
   const pane = page.getByRole("tabpanel", { name: "Settings", exact: true });
   const voice = pane.getByRole("button", { name: "Huddle voice", exact: true });
+  expect(
+    await voice.evaluate((button) => {
+      const pane = button.closest('[role="tabpanel"]');
+      const sessions = pane?.querySelector('[aria-label="Sessions"]');
+      return (
+        sessions &&
+        !!(
+          sessions.compareDocumentPosition(button) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+        )
+      );
+    }),
+  ).toBe(true);
   await voice.click();
   await expect(
     page.getByRole("button", { name: "Close", exact: true }),

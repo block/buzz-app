@@ -1514,60 +1514,6 @@ export function createTabs(
         )}
         {settingsSection !== "identity" && (
           <>
-            <SettingsGroup>
-              <VoicePreview
-                key={agent.key}
-                host={provider.previewHost}
-                previews={data?.previews}
-                accents={data?.accents}
-                voice={draft.voice ?? ""}
-                voices={data?.voices}
-                defaultVoice={data?.defaultVoice}
-                disabled={
-                  saving || checking || !!provider.snapshot().voiceChecking
-                }
-                previewDisabled={!!bound}
-                previewLoading={provider.snapshot().previewChecking ?? false}
-                onChange={async (voice) => {
-                  if (settingsHost?.pendingSave) {
-                    setDraft(readConfig({ ...draft, voice }));
-                    return;
-                  }
-                  if (voice === (saved.voice ?? "")) return;
-                  const next = voiceConfig(saved, voice);
-                  voiceSave.current = next;
-                  setError("");
-                  setSaving(true);
-                  try {
-                    await save(next);
-                    setDraft((current) => voiceConfig(current, voice));
-                  } catch (reason) {
-                    // An unconfirmed write can still arrive through sync.
-                    setError(message(reason));
-                    throw reason;
-                  } finally {
-                    setSaving(false);
-                  }
-                }}
-                onShown={() => {
-                  if (local) provider.check();
-                }}
-              />
-              {data &&
-                !data.voices &&
-                !checking &&
-                !provider.snapshot().voiceChecking && (
-                  <div className="grid justify-items-start gap-2">
-                    <p role="status" className="m-0 text-body-sm text-subtle">
-                      Voice choices could not be checked. Try again, update
-                      Codex, or choose Codex default.
-                    </p>
-                    <Button variant="ghost" onClick={check}>
-                      Check voices again
-                    </Button>
-                  </div>
-                )}
-            </SettingsGroup>
             <Field
               label="Workspace"
               description={
@@ -1599,6 +1545,58 @@ export function createTabs(
                 })
               }
             />
+            <VoicePreview
+              key={agent.key}
+              host={provider.previewHost}
+              previews={data?.previews}
+              accents={data?.accents}
+              voice={draft.voice ?? ""}
+              voices={data?.voices}
+              defaultVoice={data?.defaultVoice}
+              disabled={
+                saving || checking || !!provider.snapshot().voiceChecking
+              }
+              previewDisabled={!!bound}
+              previewLoading={provider.snapshot().previewChecking ?? false}
+              onChange={async (voice) => {
+                if (settingsHost?.pendingSave) {
+                  setDraft(readConfig({ ...draft, voice }));
+                  return;
+                }
+                if (voice === (saved.voice ?? "")) return;
+                const next = voiceConfig(saved, voice);
+                voiceSave.current = next;
+                setError("");
+                setSaving(true);
+                try {
+                  await save(next);
+                  setDraft((current) => voiceConfig(current, voice));
+                } catch (reason) {
+                  // An unconfirmed write can still arrive through sync.
+                  setError(message(reason));
+                  throw reason;
+                } finally {
+                  setSaving(false);
+                }
+              }}
+              onShown={() => {
+                if (local) provider.check();
+              }}
+            />
+            {data &&
+              !data.voices &&
+              !checking &&
+              !provider.snapshot().voiceChecking && (
+                <div className="grid justify-items-start gap-2">
+                  <p role="status" className="m-0 text-body-sm text-subtle">
+                    Voice choices could not be checked. Try again, update Codex,
+                    or choose Codex default.
+                  </p>
+                  <Button variant="ghost" onClick={check}>
+                    Check voices again
+                  </Button>
+                </div>
+              )}
           </>
         )}
         <AgentSaveButton form={form} saving={saving} disabled={!changed} />

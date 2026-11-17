@@ -1102,6 +1102,10 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     within(screen.getByRole("listbox", { name: "Search results" }))
       .getAllByRole("option")
       .map((option) => option.textContent);
+  const order = () =>
+    screen
+      .getByRole("group", { name: "Messages" })
+      .querySelector(".navigation-section-label")?.textContent;
   const scoped = {
     session: owner.session,
     onQueryChange: () => {},
@@ -1123,7 +1127,7 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     const relevance = await request();
     expect(relevance.filters).toEqual([text]);
     await act(async () => relevance.respond(hits(20, 1700000020)));
-    expect(screen.getByRole("group", { name: "Most relevant" })).toBeVisible();
+    expect(order()).toBe("Messages · Most relevant");
 
     fireEvent.click(screen.getByRole("button", { name: "Sort messages" }));
     expect(
@@ -1143,7 +1147,7 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     assert(tie && last);
     page1.push(last);
     await act(async () => first.respond(page1));
-    expect(screen.getByRole("group", { name: "Most recent" })).toBeVisible();
+    expect(order()).toBe("Messages · Most recent");
     expect(rows().at(-1)).toMatch(/Show more messages/);
 
     fireEvent.click(screen.getByRole("option", { name: /Show more messages/ }));
@@ -1198,7 +1202,7 @@ it("sorts a conversation newest first across pages and restarts paging when the 
       },
     ]);
     await act(async () => history.respond(hits(1, 1700000001)));
-    expect(screen.getByRole("group", { name: "Most recent" })).toBeVisible();
+    expect(order()).toBe("Messages · Filters apply to messages");
     expect(screen.queryByRole("button", { name: "Sort messages" })).toBeNull();
 
     mounted.rerender(<SearchResults {...scoped} query="sortword" />);
@@ -1206,7 +1210,7 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     expect(resumed.filters).toEqual([{ ...text, search_sort: "newest" }]);
     await act(async () => resumed.respond(hits(20, 1700000100)));
 
-    // Global search has no sort control, so it keeps relevance.
+    // Search across conversations has no sort control, so it keeps relevance.
     const { scopedChannelId: _, ...unscoped } = scoped;
     mounted.rerender(<SearchResults {...unscoped} query="sortword" />);
     const global = await request();
@@ -1226,6 +1230,127 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     );
     const reset = await request();
     expect(reset.filters).toEqual([text]);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it.each([
+  { path: "the scope chip", scopedChannelId: "crew", query: "sortword" },
+  { path: "a single in: channel", query: "in:#crew sortword" },
+])(
+  "shows one conversation's messages the same way from $path, with sort",
+  async ({ scopedChannelId, query }) => {
+    const relay = keypair();
+    const viewer = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const discovery = [
+      metadata(relay, "crew", "crew"),
+      roster(relay, "crew", [viewer.pubkey]),
+    ];
+    const owner = createRelaySession({
+      ...wire.transport,
+      searchSort: true,
+      query(filters, signal) {
+        if (filters.some((filter) => filter.kinds?.includes(9)))
+          return wire.transport.query(filters, signal);
+        return Promise.resolve(
+          discovery.filter((event) =>
+            filters.some((filter) => filter.kinds?.includes(event.kind)),
+          ),
+        );
+      },
+    });
+    const request = async () => {
+      await waitFor(() => expect(wire.pending).toHaveLength(1));
+      return wire.next();
+    };
+    const group = () => screen.getByRole("group", { name: "Messages" });
+    const heading = () =>
+      group().querySelector(".navigation-section-label")?.textContent;
+    const text = {
+      kinds: [40002, 40008, 9],
+      search: "sortword",
+      search_mode: "prefix",
+      limit: 20,
+      "#h": ["crew"],
+    };
+    try {
+      render(
+        <SearchResults
+          session={owner.session}
+          query={query}
+          scopedChannelId={scopedChannelId}
+          onScopeChange={() => {}}
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          openConversation={() => {}}
+        />,
+      );
+      const relevance = await request();
+      expect(relevance.filters).toEqual([text]);
+      await act(async () =>
+        relevance.respond([
+          message(viewer, "crew", "sortword hit", 1700000001),
+        ]),
+      );
+      expect(screen.getAllByRole("group")).toEqual([group()]);
+      expect(heading()).toBe("Messages · Most relevant");
+      expect(
+        within(group()).getByRole("option", { name: /sortword hit/ }),
+      ).toBeVisible();
+
+      fireEvent.click(screen.getByRole("button", { name: "Sort messages" }));
+      fireEvent.click(
+        await screen.findByRole("menuitemradio", { name: "Most recent" }),
+      );
+      const newest = await request();
+      expect(newest.filters).toEqual([{ ...text, search_sort: "newest" }]);
+      await act(async () => newest.respond([]));
+      expect(heading()).toBe("Messages · Most recent");
+      expect(
+        within(group()).getByText(
+          "No matching messages in accessible conversations.",
+        ),
+      ).toBeVisible();
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+it("names an empty conversation search Messages, not by an order", () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    searchSort: true,
+    query: async () => [],
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query=""
+        scopedChannelId="crew"
+        onScopeChange={() => {}}
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    const group = screen.getByRole("group", { name: "Messages" });
+    expect(group.querySelector(".navigation-section-label")?.textContent).toBe(
+      "Messages",
+    );
+    expect(
+      within(group).getByText("Type to search messages in this conversation."),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Sort messages" })).toBeNull();
   } finally {
     cleanup();
     owner.dispose();
@@ -1861,8 +1986,7 @@ it.each([false, true])(
   "delays message heading feedback in scoped=%s search",
   async (scoped) => {
     vi.useFakeTimers();
-    // A conversation's results are named by their order, Top results' by kind.
-    const messages = scoped ? "Most relevant" : "Messages";
+    const messages = "Messages";
     const relay = keypair(),
       viewer = keypair();
     const owner = createRelaySession({
@@ -5108,7 +5232,7 @@ it("opens the identity picker for bare from: without an unfiltered message read"
       />,
     );
     expect(screen.getByRole("group", { name: "People" })).toBeVisible();
-    expect(screen.queryByRole("group", { name: "Most relevant" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Messages" })).toBeNull();
     expect(reads).toHaveLength(0);
   } finally {
     cleanup();

@@ -678,6 +678,8 @@ export function SearchResults({
   // Search unmounts as it closes, so each opening reads previews afresh.
   const [previews] = useState<PreviewCache>(() => new Map());
   const [sort, setSort] = useState<SearchSort>("relevance");
+  // The chip or a single resolved `in:` limits results to one conversation.
+  const effectiveChannelId = scopedChannelId ?? operatorChannelId;
   const search = useSearchMessages(
     session,
     offline || asking ? "" : query,
@@ -691,10 +693,11 @@ export function SearchResults({
         )
         .map((agent) => [agent.pubkey, agent.name]),
     ),
-    // Only scoped search offers the choice, so global search keeps relevance.
-    scopedChannelId ? sort : "relevance",
+    // Only one conversation's results offer the choice; across
+    // conversations, search keeps relevance.
+    effectiveChannelId ? sort : "relevance",
   );
-  const messageOrder = search.newestFirst ? "Most recent" : "Most relevant";
+  const sortable = !!effectiveChannelId && session.searchSort && !!parsed.text;
   const showAmbiguousPicker = !!search.ambiguousAuthor && !pickerPrompt;
   // Ambiguity is known only after a completed token. Keep its original span so
   // choosing a key does not discard free text or other operators after it.
@@ -750,7 +753,6 @@ export function SearchResults({
       agent,
     ]),
   );
-  const effectiveChannelId = scopedChannelId ?? operatorChannelId;
   // The notice is a new element each render; the lookup below reruns only
   // when search goes offline or back.
   const savedOnly = !!offline;
@@ -2034,12 +2036,16 @@ export function SearchResults({
           : scopedChannelId || hasOperator
             ? [
                 {
-                  label: scopedChannelId ? messageOrder : "Messages",
+                  label: "Messages",
                   rank: Infinity,
                   icon: ChatCircleIcon,
-                  why: scopedChannelId
-                    ? undefined
-                    : "Filters apply to messages",
+                  why: sortable
+                    ? search.newestFirst
+                      ? "Most recent"
+                      : "Most relevant"
+                    : hasOperator
+                      ? "Filters apply to messages"
+                      : undefined,
                   destinations: messageRows,
                   headingStatus: slowMessages ? "Searching…" : undefined,
                   empty: messageEmpty,
@@ -2195,8 +2201,8 @@ export function SearchResults({
         onDisplayQueryChange={updateDisplayQuery}
         input={input}
         label={scopedChannelId ? "Search this conversation" : "Search Buzz"}
-        scopeAction={
-          scopedChannelId && session.searchSort && parsed.text ? (
+        fieldAction={
+          sortable ? (
             <MenuRoot>
               <MenuTrigger
                 render={(props) => (

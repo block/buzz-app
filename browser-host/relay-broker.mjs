@@ -24,7 +24,10 @@ import {
   communityGitRepository,
   parseGitRead,
 } from "../src/features/repos/git.ts";
-import { validateMemberAdministrationTemplate } from "../src/features/channel-members/administration-protocol.ts";
+import {
+  isAdminAddition,
+  validateMemberAdministrationTemplate,
+} from "../src/features/channel-members/administration-protocol.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
 import { validateDetailsTemplate } from "../src/features/relay/channel-details-protocol.ts";
 import { validateArchiveRequestTemplate } from "../src/features/relay/identity-archive-protocol.ts";
@@ -2963,7 +2966,8 @@ export function relayBrokerPlugin({
           if (signing || publishing) {
             if (administration) {
               try {
-                validateMemberAdministrationTemplate(filters, viewer);
+                if (!isAdminAddition(filters, viewer))
+                  validateMemberAdministrationTemplate(filters, viewer);
               } catch {
                 return json(res, 400, {
                   error: "Invalid member administration command",

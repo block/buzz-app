@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -248,16 +249,13 @@ for (const [scheme, width, scale] of [
       .toBe(false);
     if (scheme === "light") {
       // Attachment sources may be app proxy URLs, never message-link actions.
-      await page.route("**/media?url=**", (route) =>
-        route.fulfill({
-          contentType: "image/png",
-          body: Buffer.from(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y79d4sAAAAASUVORK5CYII=",
-            "base64",
-          ),
-        }),
-      );
       const url = "https://primary.example/media/photo.png";
+      app.mediaFiles.set(url, {
+        bytes: await readFile(
+          new URL("../fixtures/attachment-media/still.png", import.meta.url),
+        ),
+        contentType: "image/png",
+      });
       const attachment = app.append(
         "primary",
         "alpha",
@@ -271,9 +269,13 @@ for (const [scheme, width, scale] of [
       const row = page.locator(
         `[data-channel-timeline] [data-message-id="${attachment.id}"]`,
       );
-      const image = row.locator("[data-message-attachments] img");
-      await expect(image).toBeVisible();
-      await image.scrollIntoViewIfNeeded();
+      const preview = row.locator("[data-media-preview]");
+      await expect(preview).toHaveAttribute(
+        "href",
+        `/api/relay/primary/media?url=${encodeURIComponent(url)}`,
+      );
+      await preview.scrollIntoViewIfNeeded();
+      await expect(preview).toHaveAttribute("data-image-ready");
       await row.evaluate((element) => {
         const range = document.createRange();
         range.selectNodeContents(element);
@@ -281,7 +283,7 @@ for (const [scheme, width, scale] of [
         selection.removeAllRanges();
         selection.addRange(range);
       });
-      await image.click({ button: "right" });
+      await preview.locator("img").click({ button: "right" });
       await expect(
         menu.getByRole("menuitem", { name: "Copy highlight", exact: true }),
       ).toBeVisible();

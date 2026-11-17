@@ -65,7 +65,7 @@ import { usePendingRequest } from "./use-pending-request";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
-import { JumpToLatestButton } from "./JumpToLatestButton";
+import { JumpToLatestButton, JumpToTopButton } from "./JumpToLatestButton";
 import { correctScrollTop } from "./scroll-correction";
 
 export type ThreadPanelProps = {
@@ -798,6 +798,9 @@ function ThreadMessages({
     complete: snapshot.status === "ready" && !snapshot.canLoadMore,
   });
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [showJumpToTop, setShowJumpToTop] = useState(false);
+  // Jump to top loads every available older page before it scrolls.
+  const [jumpingToTop, setJumpingToTop] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   useEffect(
     () => () => {
@@ -1547,6 +1550,7 @@ function ThreadMessages({
       setShowJumpToLatest(!bottom);
       if (bottom) setNewMessageCount(0);
     }
+    setShowJumpToTop(element.scrollTop > element.clientHeight);
     captureResizePosition();
   }, [
     captureResizePosition,
@@ -1697,6 +1701,7 @@ function ThreadMessages({
   };
   const keepReadingPosition = () => {
     jumpingToLatest.current = false;
+    setJumpingToTop(false);
     if (jumpTimer.current !== undefined) {
       clearTimeout(jumpTimer.current);
       jumpTimer.current = undefined;
@@ -1984,6 +1989,42 @@ function ThreadMessages({
     captureOlderAnchor(element);
     void view.loadMore();
   };
+  const jumpToTop = () => {
+    const element = scroller.current;
+    if (!element) return;
+    jumpingToLatest.current = false;
+    if (jumpTimer.current !== undefined) {
+      clearTimeout(jumpTimer.current);
+      jumpTimer.current = undefined;
+    }
+    targetAnchor.current = undefined;
+    positioned.current = true;
+    follow.current = false;
+    element.focus({ preventScroll: true });
+    setShowJumpToTop(false);
+    setJumpingToTop(true);
+  };
+  // Load each remaining older page in turn, holding the reader's place, then
+  // scroll to the root. A reader gesture cancels; a page limit or failed read
+  // ends at the oldest loaded reply.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each settled page continues the walk; the anchor helper only reads the scroller.
+  useEffect(() => {
+    const element = scroller.current;
+    if (!jumpingToTop || !element || snapshot.status === "loading") return;
+    if (
+      snapshot.status === "ready" &&
+      snapshot.canLoadMore &&
+      !snapshot.limited
+    ) {
+      // The legacy forward walk loads itself.
+      if (snapshot.direction !== "older") return;
+      captureOlderAnchor(element);
+      void view.loadMore();
+      return;
+    }
+    setJumpingToTop(false);
+    element.scrollTo({ top: 0, behavior: "smooth" });
+  }, [jumpingToTop, view, snapshot]);
   const selectionNotice =
     selectionFailure && !snapshot.error ? selectionFailure : undefined;
   const showOlderPageStatus =
@@ -2077,6 +2118,9 @@ function ThreadMessages({
           const bottom =
             element.scrollHeight - element.clientHeight - element.scrollTop <
             80;
+          setShowJumpToTop(
+            !jumpingToTop && element.scrollTop > element.clientHeight,
+          );
           if (jumpingToLatest.current) return;
           captureResizePosition();
           if (element.scrollTop !== lineTop.current) {
@@ -2120,6 +2164,7 @@ function ThreadMessages({
         }}
         tabIndex={0}
       >
+        <JumpToTopButton visible={showJumpToTop} onClick={jumpToTop} />
         <JumpToLatestButton
           visible={showJumpToLatest}
           newMessageCount={newMessageCount}

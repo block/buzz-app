@@ -596,6 +596,9 @@ and are asked to sign in again in Buzz.
   channel thread selected in Activity opens the same way, though selecting it
   marks it read. Opening a specific reply, such as a mention, opens at that
   reply.
+- **Jump to top** appears once you scroll a screen into a thread. It loads the
+  thread's older replies, then scrolls to the original message; scrolling
+  yourself stops it. A very long thread may stop at its oldest loaded reply.
 - **Marking a channel read** keeps the cut from your click when retried. If a newer
   manual unread choice was saved in another window while it waited, the read fails
   rather than clearing that choice. Mark the channel read again to clear it.

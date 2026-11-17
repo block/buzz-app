@@ -112,6 +112,9 @@ export function useForwardSource(
     row: readable && result?.key === key ? result.row : undefined,
     unavailable:
       reference.state === "withheld" ||
+      (reference.state === "found" &&
+        reference.readable === false &&
+        !reference.looking) ||
       (readable && result?.key === key && result.stopped),
   };
 }

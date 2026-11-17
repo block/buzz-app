@@ -2034,9 +2034,14 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
 @media (hover: hover) and (pointer: fine) and (
     prefers-reduced-motion: no-preference
   ) {
-  html:not([data-keyboard-navigation]) .messageActions[popover]:popover-open {
+  .messageActions[popover]:popover-open {
     animation: message-actions-in calc(var(--duration-state) / 2)
       var(--easing-enter);
+  }
+  /* Keyboard reveal is immediate. Only the duration differs, so a pointer
+     press that ends keyboard navigation cannot restart an open bar's entry. */
+  html[data-keyboard-navigation] .messageActions[popover]:popover-open {
+    animation-duration: 0s;
   }
 }
 @keyframes message-actions-in {

@@ -1,6 +1,6 @@
 import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
-import { open, settle } from "./timeline.mjs";
+import { frames, open, settle } from "./timeline.mjs";
 import { chooseDefaultSkinTone } from "./skin-tone.mjs";
 
 test.use({
@@ -472,6 +472,69 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   await page.screenshot({
     path: test.info().outputPath("message-actions-narrow.png"),
   });
+});
+
+// Browser-only: jsdom has neither CSS animations nor native popovers. An arrow
+// key typed in the composer turns keyboard navigation on, so the bar opens
+// without its entry animation. The pointer press on More then clears that
+// flag under the open bar; replaying the entry there resizes the bar and moves
+// the menu anchored to it.
+test("a pointer press on More after keyboard input leaves the open toolbar in place", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const event = app.append("primary", "alpha", "Steady toolbar check");
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${event.id}"]`,
+  );
+  await expect(row).toBeVisible();
+  await settle(page);
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await composer.click();
+  await composer.press("ArrowLeft");
+  const root = page.locator("html");
+  await expect(root).toHaveAttribute("data-keyboard-navigation");
+  const actions = row.getByRole("group", { name: "Message actions" });
+  await hoverMessage(row);
+  await expect(actions).toHaveCSS("opacity", "1");
+  // Keyboard reveal skips the entry, but the entry still spans its pointer
+  // duration (at most --duration-state) from the moment the bar opened, and a
+  // press inside that span resumes its last frames. A person presses later,
+  // so let the span pass on the clock that times the entry.
+  await actions.evaluate(async (bar) => {
+    const span = Number.parseFloat(
+      getComputedStyle(bar).getPropertyValue("--duration-state"),
+    );
+    const opened = document.timeline.currentTime;
+    while (document.timeline.currentTime - opened < span)
+      await new Promise(requestAnimationFrame);
+  });
+  const before = await actions.evaluate((bar) => {
+    window.messageActionAnimations = [];
+    bar.addEventListener("animationstart", (event) => {
+      if (event.target === bar)
+        window.messageActionAnimations.push(event.animationName);
+    });
+    return bar.getBoundingClientRect().toJSON();
+  });
+  await row.getByRole("button", { name: "More message actions" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Copy message", exact: true }),
+  ).toBeVisible();
+  // The test proves nothing unless the press really left keyboard navigation.
+  await expect(root).not.toHaveAttribute("data-keyboard-navigation");
+  // The rendering update after the press is the one that reports a restart.
+  await frames(page);
+  expect(
+    await actions.evaluate((bar) => ({
+      started: window.messageActionAnimations,
+      rect: bar.getBoundingClientRect().toJSON(),
+    })),
+  ).toEqual({ started: [], rect: before });
 });
 
 // Browser-only: clipboard -> rendered Markdown -> cross-conversation navigation

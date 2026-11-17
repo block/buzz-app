@@ -25,11 +25,7 @@ import {
   useSidebarSectionDrag,
 } from "../../features/channel-navigation/ChannelSidebarDnd";
 import { WorkspaceSettings } from "../../features/solo/WorkspaceSettings";
-import {
-  ArchiveInactiveChats,
-  inactiveChat,
-  type InactiveChatsRun,
-} from "./ArchiveInactiveChats";
+import { inactiveChat } from "./ArchiveInactiveChats";
 import {
   memo,
   cloneElement,
@@ -257,16 +253,7 @@ export function SoloWorkspaces({
     target?.focus({ preventScroll: true });
   }, [stepFocus]);
   const [creatingFor, setCreatingFor] = useState<ChatListItem>();
-  // One bulk archive at a time; an Undo waits behind the run holding the gate.
-  const [inactiveRuns, setInactiveRuns] = useState<readonly InactiveChatsRun[]>(
-    [],
-  );
-  const inactiveRunKey = useRef(0);
-  const queueInactiveRun = (run: Omit<InactiveChatsRun, "key">) =>
-    setInactiveRuns((current) => [
-      ...current,
-      { ...run, key: ++inactiveRunKey.current },
-    ]);
+  // The session runs bulk archives; it reads this when it checks each chat.
   // The open chat stays: archiving it would pull it out from under the viewer.
   const inactiveIn = (workspaceId: string, id: string) => {
     const channel = session.channels
@@ -286,6 +273,16 @@ export function SoloWorkspaces({
       inactiveChat(session, channel, Date.now() / 1000)
     );
   };
+  const inactiveInRef = handoff?.inactiveIn;
+  useLayoutEffect(() => {
+    if (!inactiveInRef) return;
+    const check = (workspaceId: string, id: string) =>
+      inactiveIn(workspaceId, id);
+    inactiveInRef.current = check;
+    return () => {
+      if (inactiveInRef.current === check) inactiveInRef.current = undefined;
+    };
+  });
   const [settingsFor, setSettingsFor] = useState<{
     id: string;
     name: string;
@@ -610,29 +607,30 @@ export function SoloWorkspaces({
             <MenuItem onClick={() => setSettingsFor(project)}>
               Workspace settings
             </MenuItem>
-            <MenuItem
-              disabled={
-                !session.channelLifecycle.available ||
-                inactiveRuns.length > 0 ||
-                !!handoff?.lifecycleDialog
-              }
-              onClick={() => {
-                const inactive = project.rows
-                  .filter((item) => inactiveIn(project.id, item.id))
-                  .map((item) => item.id);
-                // Let the menu restore focus before opening confirmation.
-                requestAnimationFrame(() =>
-                  queueInactiveRun({
-                    action: "archive",
-                    workspaceId: project.id,
-                    workspaceName: project.name,
-                    ids: inactive,
-                  }),
-                );
-              }}
-            >
-              Archive inactive chats
-            </MenuItem>
+            {handoff && (
+              <MenuItem
+                disabled={
+                  !session.channelLifecycle.available ||
+                  handoff.inactiveRuns.length > 0 ||
+                  !!handoff.lifecycleDialog
+                }
+                onClick={() => {
+                  const inactive = project.rows
+                    .filter((item) => inactiveIn(project.id, item.id))
+                    .map((item) => item.id);
+                  // Let the menu restore focus before opening confirmation.
+                  requestAnimationFrame(() =>
+                    handoff.archiveInactive({
+                      action: "archive",
+                      workspaceId: project.id,
+                      ids: inactive,
+                    }),
+                  );
+                }}
+              >
+                Archive inactive chats
+              </MenuItem>
+            )}
             <MenuItem
               tone="danger"
               data-delete-solo-project=""
@@ -1068,18 +1066,6 @@ export function SoloWorkspaces({
           scope={scope}
           target={{ kind: "project", ...settingsFor }}
           close={() => setSettingsFor(undefined)}
-        />
-      )}
-      {inactiveRuns[0] && (
-        <ArchiveInactiveChats
-          key={inactiveRuns[0].key}
-          session={session}
-          run={inactiveRuns[0]}
-          eligible={(id) =>
-            !!inactiveRuns[0] && inactiveIn(inactiveRuns[0].workspaceId, id)
-          }
-          undo={queueInactiveRun}
-          close={() => setInactiveRuns((current) => current.slice(1))}
         />
       )}
       {creatingFor && (

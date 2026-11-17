@@ -65,7 +65,6 @@ export type InactiveChatsRun = Readonly<{
   /** Archive asks first; unarchive is an Undo and runs at once. */
   action: "archive" | "unarchive";
   workspaceId: string;
-  workspaceName: string;
   ids: readonly string[];
 }>;
 
@@ -162,7 +161,6 @@ export function ArchiveInactiveChats({
                 callbacks.current.undo({
                   action: "unarchive",
                   workspaceId: run.workspaceId,
-                  workspaceName: run.workspaceName,
                   ids: restorable,
                 }),
             }
@@ -195,10 +193,10 @@ export function ArchiveInactiveChats({
   if (!archive) return null;
   return (
     <AlertDialog
-      title={`Archive inactive chats in ${run.workspaceName}`}
+      title="Archive inactive chats"
       description={
         total
-          ? `${total === 1 ? "1 chat has" : `${total} chats have`} been inactive for the last ${INACTIVE_DAYS} days. Archive ${total === 1 ? "it" : "them"}?`
+          ? `${total === 1 ? "1 chat has" : `${total} chats have`} been inactive for the last ${INACTIVE_DAYS} days.`
           : `No chats have been inactive for the last ${INACTIVE_DAYS} days.`
       }
       initialFocus={cancel}

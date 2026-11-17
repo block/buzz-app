@@ -9,7 +9,9 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import type { RelayData } from "../../features/relay/service";
 import {
   createRelaySession,
   type RelaySession,
@@ -183,25 +185,49 @@ async function mount(
     groupsOnly: true,
   });
   await store.queries.ensure();
-  render(
+  const solo = { ...session, soloPreferences: store.queries } as RelaySession;
+  const snapshot = {
+    status: "ready",
+    scope: "viewer:community",
+    viewer: VIEWER,
+    generation: 1,
+    session: solo,
+  };
+  const relay = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  const tree = (sidebar: boolean) => (
     <ToastProvider>
-      <SoloWorkspaces
-        session={{ ...session, soloPreferences: store.queries } as RelaySession}
-        scope="viewer:community"
-        chats={channels.map((channel) => ({
-          id: channel.id,
-          title: channel.name,
-        }))}
-        renderChat={(item) => <button type="button">{item.title}</button>}
-      />
-    </ToastProvider>,
+      <ChannelNavigationProvider relay={relay}>
+        {sidebar && (
+          <SoloWorkspaces
+            session={solo}
+            scope="viewer:community"
+            chats={channels.map((channel) => ({
+              id: channel.id,
+              title: channel.name,
+            }))}
+            renderChat={(item) => <button type="button">{item.title}</button>}
+          />
+        )}
+      </ChannelNavigationProvider>
+    </ToastProvider>
   );
+  const view = render(tree(true));
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Actions for Work" }));
   await user.click(
     await screen.findByRole("menuitem", { name: "Archive inactive chats" }),
   );
-  return { user, store, dialog: await screen.findByRole("alertdialog") };
+  return {
+    user,
+    store,
+    dialog: await screen.findByRole("alertdialog"),
+    /** Unmounts the sidebar, as switching the sidebar filter does. */
+    hideSidebar: () => view.rerender(tree(false)),
+    showSidebar: () => view.rerender(tree(true)),
+  };
 }
 
 it("confirms the count, archives each inactive chat in the workspace, and undoes it", async () => {
@@ -219,7 +245,7 @@ it("confirms the count, archives each inactive chat in the workspace, and undoes
     run,
   );
   expect(dialog).toHaveTextContent(
-    "2 chats have been inactive for the last 14 days. Archive them?",
+    "2 chats have been inactive for the last 14 days.",
   );
   await user.click(screen.getByRole("button", { name: "Archive 2 chats" }));
   expect(await screen.findByText("Archived 2 chats")).toBeVisible();
@@ -275,5 +301,38 @@ it("says so when nothing in the workspace is inactive", async () => {
   );
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(run).not.toHaveBeenCalled();
+  store.dispose();
+});
+
+it("finishes a run and offers Undo after the sidebar remounts", async () => {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const run = vi.fn<Run>(async (action, id) => {
+    if (action === "archive" && id === ids.old) await held;
+  });
+  const { user, store, hideSidebar, showSidebar } = await mount(
+    [chat(ids.old, "Old plan", 15), chat(ids.older, "Older plan", 40)],
+    [ids.old, ids.older],
+    [],
+    run,
+  );
+  await user.click(screen.getByRole("button", { name: "Archive 2 chats" }));
+  await screen.findByText("Archiving inactive chats…");
+  hideSidebar();
+  release();
+  expect(await screen.findByText("Archived 2 chats")).toBeVisible();
+  showSidebar();
+  // The removed sidebar took focus with it; start from its heading again.
+  screen.getByRole("button", { name: "Work" }).focus();
+  await user.click(screen.getByRole("button", { name: "Undo" }));
+  expect(await screen.findByText("Restored 2 chats")).toBeVisible();
+  expect(run.mock.calls.map((call) => call.slice(0, 2))).toEqual([
+    ["archive", ids.old],
+    ["archive", ids.older],
+    ["unarchive", ids.old],
+    ["unarchive", ids.older],
+  ]);
   store.dispose();
 });

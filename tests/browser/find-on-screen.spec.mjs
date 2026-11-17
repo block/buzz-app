@@ -78,6 +78,8 @@ test("the bar keeps the window's top-right corner inside a dialog", async ({
   const errors = watchPageErrors(page);
   await page.setViewportSize({ width: 1200, height: 800 });
   await page.goto(url);
+  // The shortcut registers in a React effect, after the document can load.
+  await page.waitForFunction(() => typeof window.openFind === "function");
   await page.evaluate(() => window.openFind());
   await expect(field(page)).toBeFocused();
   const outside = await box(bar(page));
@@ -105,6 +107,7 @@ test("stepping reveals each match in a long code block", async ({ page }) => {
   const errors = watchPageErrors(page);
   await page.setViewportSize({ width: 900, height: 700 });
   await page.goto(url);
+  await page.waitForFunction(() => typeof window.openFind === "function");
   await page.evaluate(() => window.openFind());
   await field(page).fill("needle");
   const status = page.locator("search [role=status]");

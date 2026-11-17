@@ -113,6 +113,8 @@ export async function previewVoice(
   signal.throwIfAborted();
   const context = new AudioContext();
   const source = context.createBufferSource();
+  const gain = context.createGain();
+  gain.gain.value = 0.8;
   let finish!: () => void;
   const stopped = new Promise<void>((resolve) => {
     finish = resolve;
@@ -141,7 +143,8 @@ export async function previewVoice(
       context.decodeAudioData(recording.slice().buffer as ArrayBuffer),
     );
     signal.throwIfAborted();
-    source.connect(context.destination);
+    source.connect(gain);
+    gain.connect(context.destination);
     source.start();
     started?.();
     await stopped;
@@ -149,6 +152,7 @@ export async function previewVoice(
     signal.removeEventListener("abort", stop);
     source.onended = null;
     source.disconnect();
+    gain.disconnect();
     await context.close().catch(() => {});
   }
 }

@@ -142,8 +142,10 @@ function audio() {
     start: vi.fn(began),
     onended: null as (() => void) | null,
   };
+  const gain = { gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() };
   const context = {
     destination: {},
+    createGain: () => gain,
     createBufferSource: () => source,
     resume: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
@@ -155,7 +157,7 @@ function audio() {
       return context;
     }),
   );
-  return { source, context, playing };
+  return { source, context, gain, playing };
 }
 it("plays decoded recording bytes and ends on the source event", async () => {
   const { previewVoice } = await import("./voice-preview");
@@ -170,10 +172,14 @@ it("plays decoded recording bytes and ends on the source event", async () => {
   );
   await a.playing;
   expect(started).toHaveBeenCalledOnce();
+  expect(a.gain.gain.value).toBe(0.8);
+  expect(a.source.connect).toHaveBeenCalledWith(a.gain);
+  expect(a.gain.connect).toHaveBeenCalledWith(a.context.destination);
   expect(a.context.decodeAudioData).toHaveBeenCalledOnce();
   a.source.onended?.();
   await done;
   expect(a.context.close).toHaveBeenCalled();
+  expect(a.gain.disconnect).toHaveBeenCalledOnce();
 });
 it("cancels while loading without starting audio, then reuses the completed download", async () => {
   const { previewVoice, preloadPreview } = await import("./voice-preview");

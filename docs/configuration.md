@@ -244,8 +244,11 @@ With it set:
   ready here, checked as for a new agent. When that candidate's harness isn't
   the agent's, up or down the list, the agent moves to it by the usual
   harness change and stays on Automatic: its instructions and workspace carry
-  over, and it starts new sessions on the new harness; old sessions stay with
-  the old harness. It moves at most once per launch, and only on definite
+  over, and its old sessions are retired, so new conversations start fresh on
+  the new harness. So if the harness an Automatic agent uses is signed out or
+  out of date on this computer, the agent moves to the next recommended
+  harness that is ready at the next launch. A check that times out or fails
+  never moves it. It moves at most once per launch, and only on definite
   answers: when a check ahead of that candidate fails or takes longer than
   8 seconds, or Codex or Claude Code can't tell (a check that failed other
   than for not being installed or signed in, or a model list that came back

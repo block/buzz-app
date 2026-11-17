@@ -410,6 +410,8 @@ export type EditableInputProps = Omit<
   onEditLink?(edit: ComposerLinkEdit): void;
   /** A paste would exceed the serialized message budget; nothing was inserted. */
   onPasteTooLong?(): void;
+  /** Handle semantic clipboard content only when prose paste permits it. */
+  onSemanticPaste?(data: DataTransfer): boolean;
   /** Vet a pasted identity link as a notification recipient: the recipient under
    * its current name, or null to keep the display-only chip. */
   acceptRecipient?(pubkey: string): MentionRecipient | null;
@@ -431,6 +433,7 @@ export function EditableInput({
   onFormatsChange,
   onEditLink,
   onPasteTooLong,
+  onSemanticPaste,
   acceptRecipient,
   onAnnotationMenu,
   ...events
@@ -449,6 +452,7 @@ export function EditableInput({
     onFormatsChange,
     onEditLink,
     onPasteTooLong,
+    onSemanticPaste,
     acceptRecipient,
     onAnnotationMenu,
     disabled,
@@ -463,6 +467,7 @@ export function EditableInput({
     onFormatsChange,
     onEditLink,
     onPasteTooLong,
+    onSemanticPaste,
     acceptRecipient,
     onAnnotationMenu,
     disabled,
@@ -2357,6 +2362,12 @@ export function EditableInput({
               return true;
             }
             const code = editor.state.selection.$from.parent.type.spec.code;
+            if (
+              !code &&
+              event.clipboardData &&
+              current.current.onSemanticPaste?.(event.clipboardData)
+            )
+              return true;
             // Code takes visible text verbatim; prose preserves copied web links.
             const html = event.clipboardData?.getData("text/html") ?? "";
             const hasPlain =

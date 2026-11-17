@@ -17480,3 +17480,30 @@ it.each([
     }
   },
 );
+
+it("pastes a copied forward literally inside a code block", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "```");
+  expect(h.input().querySelector("pre")).not.toBeNull();
+  const { forwardClipboard } = await import("./forward-clipboard");
+  const payload = forwardClipboard(
+    {
+      version: 1,
+      origin: "https://relay.example.test",
+      channelId: "source",
+      id: "ab".repeat(32),
+    },
+    "Literal copied text",
+  );
+  fireEvent.paste(h.input(), {
+    clipboardData: {
+      items: [],
+      getData: (type: string) =>
+        type === "text/html" ? payload.html : payload.text,
+    },
+  });
+  expect(h.input().querySelector("pre code")).toHaveTextContent(payload.text);
+  expect(
+    screen.queryByRole("button", { name: "Remove forwarded message" }),
+  ).not.toBeInTheDocument();
+});

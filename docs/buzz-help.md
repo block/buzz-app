@@ -421,7 +421,9 @@ and are asked to sign in again in Buzz.
   Pasting a forward from a DM, private channel or Solo chat into a different
   conversation shows a quiet reminder that its recipients can read the copy.
   Pasting back into the source conversation shows no reminder.
-  Ordinary pasted links stay links; pasting outside Buzz provides quoted text.
+  Pasting inside a code block or using plain-text paste inserts the copied text
+  without attaching a forward. Ordinary pasted links stay links; pasting outside
+  Buzz provides quoted text.
   Messages exceeding the forwarding size limit, or containing a local file
   without sharable attachment metadata (including custom emoji), show an
   explanation before sending. Forward and Copy as forward are disabled; **Copy link** is available

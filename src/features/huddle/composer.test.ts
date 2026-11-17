@@ -836,24 +836,23 @@ it.each(["private", "dm", "solo", "public"] as const)(
         disconnect() {}
       },
     );
-    const view = render(
-      createElement(MessageComposer, {
-        session: remote,
-        scope: h.scope,
-        channelId: "room",
-        channelName: "Huddle",
-        label: "Detached draft",
-      }),
-    );
+    function Companion() {
+      return useHuddleComposer(h.owner.token);
+    }
+    const view = render(createElement(Companion));
+    await screen.findByRole("textbox", { name: "Message this Huddle" });
     const { forwardClipboard } = await import("../messages/forward-clipboard");
     const payload = forwardClipboard(reference, "Untrusted clipboard text");
-    fireEvent.paste(screen.getByRole("textbox", { name: "Detached draft" }), {
-      clipboardData: {
-        getData: (type: string) =>
-          type === "text/html" ? payload.html : payload.text,
-        items: [],
+    fireEvent.paste(
+      screen.getByRole("textbox", { name: "Message this Huddle" }),
+      {
+        clipboardData: {
+          getData: (type: string) =>
+            type === "text/html" ? payload.html : payload.text,
+          items: [],
+        },
       },
-    });
+    );
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Send message" }),
@@ -866,6 +865,12 @@ it.each(["private", "dm", "solo", "public"] as const)(
         ),
       ),
     ).toBe(privacy !== "public");
+    if (privacy !== "public")
+      expect(
+        within(screen.getByRole("form")).getByText(
+          /will be able to read this message/,
+        ),
+      ).toHaveTextContent("Everyone in this Huddle");
     view.unmount();
     content = "Current authorized source @Local Agent";
     expect(

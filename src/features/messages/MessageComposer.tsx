@@ -318,6 +318,7 @@ export type MessageComposerProps = {
   session: ComposerSession | RelaySession;
   channelId: string;
   channelName: string;
+  forwardAudience?: string;
   label?: string | undefined;
   placeholder?: string | undefined;
   soloConversation?: boolean | undefined;
@@ -530,6 +531,7 @@ function Composer({
   scope,
   channelId,
   channelName,
+  forwardAudience,
   label: customLabel,
   placeholder,
   onSend,
@@ -3495,9 +3497,10 @@ function Composer({
     !editing.target && forwarded.disclosure ? (
       <ForwardDisclosure
         audience={
-          channelType === "dm" || channelType === "solo" || solo
+          forwardAudience ??
+          (channelType === "dm" || channelType === "solo" || solo
             ? "The recipients"
-            : `Everyone in #${channelName}`
+            : `Everyone in #${channelName}`)
         }
       />
     ) : null;
@@ -3558,25 +3561,6 @@ function Composer({
           }
         }}
         onPasteCapture={(event) => {
-          const reference = pastedForward(event.clipboardData);
-          if (reference) {
-            event.preventDefault();
-            event.stopPropagation();
-            if (editing.target || submission) {
-              setError("Finish this edit before pasting a forwarded message.");
-              return;
-            }
-            if (valueRef.current.forward) {
-              setError(
-                "Only one forwarded message can be attached. Remove it before pasting another.",
-              );
-              return;
-            }
-            const { note, ...source } = reference;
-            if (note && !insert(note)) return;
-            saveDraft({ ...valueRef.current, forward: source });
-            return;
-          }
           const files = pastedFiles(event.clipboardData);
           if (!files.length) return;
           event.preventDefault();
@@ -3766,6 +3750,28 @@ function Composer({
               channelId={channelId}
               extensions={extensions}
               emoji={emojiCatalog.entries}
+              onSemanticPaste={(data) => {
+                const reference = pastedForward(data);
+                if (reference) {
+                  if (editing.target || submission) {
+                    setError(
+                      "Finish this edit before pasting a forwarded message.",
+                    );
+                    return true;
+                  }
+                  if (valueRef.current.forward) {
+                    setError(
+                      "Only one forwarded message can be attached. Remove it before pasting another.",
+                    );
+                    return true;
+                  }
+                  const { note, ...source } = reference;
+                  if (note && !insert(note)) return true;
+                  saveDraft({ ...valueRef.current, forward: source });
+                  return true;
+                }
+                return false;
+              }}
               onPasteTooLong={() => setPasteTooLong(true)}
               aria-describedby={
                 pasteTooLong ? `${inputId}-paste-error` : undefined

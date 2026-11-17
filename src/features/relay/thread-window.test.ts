@@ -225,6 +225,79 @@ it("pages 303 tied replies newest-first, deduplicates live rows and repairs reta
     h.view.snapshot().replies.find((r) => r.id === oldest.id)?.content,
   ).toBe(oldest.content);
 });
+function newestFirst(rows: readonly RelayEvent[]) {
+  const newest = [...rows].sort(
+    (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+  );
+  return (f: ReadFilter) => {
+    if (f.ids) return [root];
+    const eligible = newest.filter(
+      (e) =>
+        f.until === undefined ||
+        e.created_at < f.until ||
+        (e.created_at === f.until && e.id > (f.before_id ?? "")),
+    );
+    const page = eligible.slice(0, f.limit);
+    const last = page.at(-1);
+    assert.exists(last);
+    return [
+      ...page,
+      bounds(
+        f,
+        eligible.length > page.length
+          ? { created_at: last.created_at, id: last.id }
+          : null,
+      ),
+    ];
+  };
+}
+const ordered = (rows: readonly RelayEvent[]) =>
+  [...rows]
+    .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
+    .map((e) => e.id);
+it("scrolls back past ten pages to the start of a 763-reply thread and repairs every retained page", async () => {
+  const rows = Array.from({ length: 763 }, (_, n) => reply(n));
+  const h = await setup(newestFirst(rows));
+  await h.view.refresh();
+  while (h.view.snapshot().canLoadMore) await h.view.loadMore();
+  expect(h.view.snapshot()).toMatchObject({ status: "ready", limited: false });
+  expect(h.view.snapshot().replies.map((e) => e.id)).toEqual(ordered(rows));
+  expect(h.requests.filter(([f]) => f?.thread_window)).toHaveLength(17);
+
+  const beforeRepair = h.requests.length;
+  await h.view.refresh();
+  expect(
+    h.requests.slice(beforeRepair).filter(([f]) => f?.thread_window),
+  ).toHaveLength(17);
+  expect(h.view.snapshot().replies.map((e) => e.id)).toEqual(ordered(rows));
+});
+it("stops scrollback at half the thread budget, keeping the loaded replies and room for live traffic", async () => {
+  const rows = Array.from({ length: 1100 }, (_, n) => reply(n));
+  const h = await setup(newestFirst(rows));
+  await h.view.refresh();
+  while (h.view.snapshot().canLoadMore) await h.view.loadMore();
+  const loaded = ordered(rows).slice(-1010);
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    error: undefined,
+    limited: true,
+    canLoadMore: false,
+  });
+  expect(h.view.snapshot().replies.map((e) => e.id)).toEqual(loaded);
+  const windows = h.requests.length;
+  await h.view.loadMore();
+  expect(h.requests).toHaveLength(windows);
+
+  const late = message(author, channel, "live", 999, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.traffic.receive([late]);
+  expect(h.view.snapshot().status).toBe("ready");
+  expect(h.view.snapshot().replies.map((e) => e.id)).toEqual([
+    ...loaded,
+    late.id,
+  ]);
+});
 it("uses raw scan progress across empty pages without deriving cursors from rows", async () => {
   let pages = 0;
   const h = await setup((f) =>

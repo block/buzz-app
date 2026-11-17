@@ -1517,8 +1517,10 @@ bottom placement. New replies arrive through the existing session and the panel
 follows near the bottom, preserving reading position above it. Sending a reply is
 explicit navigation intent and reveals the new local row.
 
-**Bounded history:** strict mode retains at most ten pages (10 initial replies
-plus nine pages of 50); legacy mode retains at most ten pages of 50. A limit notice is
+**Bounded history:** strict mode keeps loading older pages on scrollback until the
+thread's start or until the view holds half its event budget (1,000 events or
+2 MiB), leaving the rest for live traffic and repair; legacy mode retains at most
+ten pages of 50. A limit notice is
 not a completeness claim. An older relay returning verified replies without thread
 bounds on the initial probe triggers a clean legacy restart: automatic oldest-first
 traversal, whose bottom may not be the newest reply in a long thread. An empty
@@ -1598,8 +1600,7 @@ beyond those bounds belongs to the relay's thread retention, not to scrolling.
 
 #### Targets
 
-These targets are measured on a fixed mock thread of 460 replies (the strict
-window's full history) in the macOS app, with every reply loaded and a 60 Hz
+These targets are measured on a fixed mock thread of 460 replies in the macOS app, with every reply loaded and a 60 Hz
 display. A measured run is two upward trackpad flings with a reversal, then Jump to
 latest.
 They are advisory: the [performance suite](performance.md) reports them and does

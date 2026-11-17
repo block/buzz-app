@@ -24,6 +24,12 @@ const INITIAL_WINDOW_SIZE = 10;
 const MAX_PAGES = 10;
 const MAX_EVENTS = 2000;
 const MAX_BYTES = 4 * 1024 * 1024;
+/** Scrollback stops at this share of the budget, so live traffic and a repair
+ * after reconnect do not push a fully scrolled view over it and clear it. */
+const SCROLLBACK_SHARE = 0.5;
+const overBudget = (events: readonly RelayEvent[], share = 1) =>
+  events.length > MAX_EVENTS * share ||
+  listByteSize(events) > MAX_BYTES * share;
 /** The relay's `thread_window` row allowlist excludes legacy diffs (kind 40008). */
 const STRICT_WINDOW_KINDS = [9, 40002];
 const contentKind = (event: EventData) =>
@@ -422,7 +428,7 @@ export function createThreadView({
     });
   }
   function retain(events: readonly RelayEvent[], commit = true) {
-    if (events.length > MAX_EVENTS || listByteSize(events) > MAX_BYTES) {
+    if (overBudget(events)) {
       // Never silently evict a deletion/ancestor then display resurrected content.
       controller?.abort();
       selectionController?.abort();
@@ -904,7 +910,7 @@ export function createThreadView({
           : (replies.at(-1) ?? nextCursor);
         nextPages++;
         fetched = union(fetched, related(events));
-        if (fetched.length > MAX_EVENTS || listByteSize(fetched) > MAX_BYTES) {
+        if (overBudget(fetched)) {
           retain(fetched);
           return;
         }
@@ -945,13 +951,19 @@ export function createThreadView({
       if (replace && !dropped) held = undefined;
       else if (replace && (unreached || !held?.size)) held = unverified();
       if (replace) shown = undefined;
+      // The legacy oldest-first walk loads pages unasked, so it stays bounded
+      // by page count; newest-first scrollback is bounded by the event budget.
+      const stop =
+        mode === "older"
+          ? overBudget(remote, SCROLLBACK_SHARE)
+          : pages >= MAX_PAGES;
       publish({
         status: "ready",
         error: undefined,
         readKind: undefined,
         direction: mode === "older" ? "older" : "forward",
-        canLoadMore: more && pages < MAX_PAGES,
-        limited: more && pages >= MAX_PAGES,
+        canLoadMore: more && !stop,
+        limited: more && stop,
       });
     } catch (error) {
       if (active()) {

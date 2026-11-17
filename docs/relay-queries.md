@@ -243,7 +243,10 @@ fallback. Non-UUID channels retain the legacy path. No capability cache persists
 across owners or connections.
 
 Each strict thread starts with 10 traversal rows plus their auxiliary events; later pages
-request 50 traversal rows, with at most ten pages per repair/load range. Legacy
+request 50 traversal rows. Scrollback continues until the relay reports no more or
+the view holds half its event budget; a repair re-reads the whole retained range,
+and a range under ten pages may extend to ten to reach a reply held across a
+drop. Legacy
 mode still requests 50 rows per page. The shared panel positions after the first
 strict page and demand-loads older pages on scrollback. Legacy mode still
 automatically walks its bounded oldest-first range and cannot promise the newest

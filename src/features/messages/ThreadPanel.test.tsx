@@ -230,6 +230,7 @@ function messagesHarness(
       snapshot: () => undefined,
       subscribe: () => () => {},
       attention: () => ({ unread: false }),
+      threadReadThrough: () => -1,
     },
   } as unknown as RelaySession;
   vi.spyOn(document, "hasFocus").mockReturnValue(false);
@@ -821,38 +822,45 @@ function unreadReplies(h: ReturnType<typeof messagesHarness>) {
     replyParentId: row.id,
   });
   const unread = new Set<string>();
+  const read = { through: -1 };
   Object.assign(h.session.unread, {
     attention: (_channelId: string, id: string) => ({
       unread: unread.has(id),
       forced: false,
     }),
+    threadReadThrough: () => read.through,
   });
+  // The line sits 300 into the content, which scrolls under the viewport.
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
     function (this: HTMLElement) {
       return new DOMRect(
         0,
-        this.hasAttribute("data-new-messages-boundary") ? 300 : 0,
+        this.hasAttribute("data-new-messages-boundary")
+          ? 300 - this.scrollTop
+          : 0,
         500,
         20,
       );
     },
   );
-  return { reply, unread };
+  return { reply, unread, read };
 }
 it("opens at the first unread reply behind a line that reading keeps, paging past the newest page to find it", () => {
   const h = messagesHarness(ordinaryNavigation());
-  const { reply, unread } = unreadReplies(h);
+  const { reply, unread, read: thread } = unreadReplies(h);
   const [read, first, later] = [
     reply("read", 2),
     reply("first unread", 3),
     reply("later unread", 4),
   ];
   unread.add(first.id).add(later.id);
+  thread.through = 2;
   h.snapshot.direction = "older";
   h.snapshot.canLoadMore = true;
   h.snapshot.replies = [first, later];
   h.render();
-  // Every loaded reply is unread: an earlier page may hold the first one.
+  // No thread-wide read reaches a loaded reply: an earlier page may hold the
+  // first unread one.
   expect(h.view.loadMore).toHaveBeenCalledOnce();
   expect(h.element).toHaveAttribute("data-positioning");
   h.snapshot.status = "loading";
@@ -890,6 +898,153 @@ it("opens at the first unread reply behind a line that reading keeps, paging pas
   expect(screen.getAllByRole("separator", { name: "New messages" })).toEqual([
     line,
   ]);
+});
+it("pages past an own or individually read reply until history or a thread-wide read reaches it", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread, read } = unreadReplies(h);
+  const [older, own, later] = [
+    reply("older unread", 2),
+    reply("own", 3),
+    reply("later unread", 4),
+  ];
+  unread.add(older.id).add(later.id);
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [own, later];
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+
+  h.snapshot.canLoadMore = false;
+  h.snapshot.replies = [older, own, later];
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(
+    line.compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${older.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  h.unmount();
+  cleanup();
+
+  // Past the page limit the first unread reply is unknown: no line.
+  const limited = messagesHarness(ordinaryNavigation());
+  const limits = unreadReplies(limited);
+  limits.unread.add("later unread");
+  limited.snapshot.direction = "older";
+  limited.snapshot.limited = true;
+  limited.snapshot.replies = [
+    limits.reply("own", 3),
+    limits.reply("later unread", 4),
+  ];
+  limited.render();
+  expect(limited.view.loadMore).not.toHaveBeenCalled();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+  expect(limited.element).not.toHaveAttribute("data-positioning");
+  void read;
+});
+it("leaves focus the person moved while the first unread reply loads", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread } = unreadReplies(h);
+  const first = reply("first unread", 3);
+  unread.add(first.id);
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [first];
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  h.snapshot.status = "loading";
+  h.snapshot.readKind = "older";
+  h.render();
+  const composer = document.createElement("textarea");
+  document.body.append(composer);
+  fireEvent.pointerDown(composer);
+  composer.focus();
+
+  h.snapshot.status = "ready";
+  h.snapshot.readKind = undefined;
+  h.snapshot.canLoadMore = false;
+  h.render();
+  expect(screen.getByRole("separator", { name: "New messages" })).toBeVisible();
+  expect(h.element.scrollTop).toBe(300);
+  expect(composer).toHaveFocus();
+  composer.remove();
+});
+it("decides the line once a hidden reader is shown, and again for each ordinary opening", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread } = unreadReplies(h);
+  const [first, later] = [reply("first unread", 2), reply("later", 3)];
+  unread.add(first.id);
+  h.props.active = false;
+  h.snapshot.direction = "older";
+  h.snapshot.replies = [first, later];
+  h.render();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+  expect(h.element.scrollTop).toBe(0);
+
+  h.props.active = true;
+  h.rerenderProps();
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(h.element.scrollTop).toBe(300);
+  expect(
+    line.compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${first.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+
+  // Read, scrolled away, then reopened with newer unread replies.
+  unread.clear();
+  const arrival = reply("arrival", 4);
+  unread.add(arrival.id);
+  h.snapshot.replies = [first, later, arrival];
+  h.render();
+  h.element.scrollTop = 100;
+  Object.assign(h.props, { navigation: ordinaryNavigation() });
+  h.rerenderProps();
+  const reopened = screen.getByRole("separator", { name: "New messages" });
+  expect(
+    reopened.compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${arrival.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    reopened.compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${later.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_PRECEDING,
+  ).toBeTruthy();
+  expect(h.element.scrollTop).toBe(300);
+});
+it("waits for resumed rows to refresh and a failed read to recover before deciding the line", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread } = unreadReplies(h);
+  const top = reply("read", 2);
+  const nested = { ...reply("nested unread", 4), replyParentId: top.id };
+  h.snapshot.direction = "older";
+  h.snapshot.replies = [top];
+  h.snapshot.resumed = true;
+  h.render();
+  expect(h.element).toHaveAttribute("data-positioning");
+  h.snapshot.status = "error";
+  h.snapshot.resumed = undefined;
+  h.snapshot.error = "offline";
+  h.render();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+
+  // The retried refresh brings an unread reply nested in an earlier branch:
+  // the line goes above the branch holding it.
+  unread.add(nested.id);
+  h.snapshot.status = "ready";
+  h.snapshot.error = undefined;
+  h.snapshot.replies = [top, reply("later read", 3), nested];
+  h.render();
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(
+    line.compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${top.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(h.element.scrollTop).toBe(300);
 });
 it("opens a read thread at its latest reply, and an explicit target at itself, without a line", () => {
   const h = messagesHarness(ordinaryNavigation());

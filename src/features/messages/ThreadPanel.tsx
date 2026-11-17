@@ -942,58 +942,105 @@ function ThreadMessages({
     !initialPositioned &&
     (!navigation || positionedVisit) &&
     snapshot.status !== "error";
-  // An ordinary open starts at its first unread top-level reply, decided once
-  // before positioning so reading it does not move the line. Pages older
-  // history while the oldest loaded reply is unread. Undefined while deciding.
-  const [unreadBoundary, setUnreadBoundary] = useState<string | null>();
+  // Each ordinary opening starts at the first top-level reply with unread in
+  // its branch, decided once before positioning so reading it does not move
+  // the line. Undefined while deciding.
+  const opening = rootTarget && !returning ? navigation?.signal : undefined;
+  const [boundary, setBoundary] = useState<{
+    opening?: AbortSignal | undefined;
+    id?: string | null;
+    failed?: true;
+  }>(() => ({ opening }));
+  if (opening && opening !== boundary.opening) setBoundary({ opening });
+  const unreadBoundary = boundary.id;
+  const placed = useRef<typeof boundary>(undefined);
+  // Focus as this panel opened, and whether pointer or keyboard input has
+  // come since: either way the person owns focus now.
+  const opened = useRef<{ focused: Element | null; interacted?: true }>({
+    focused: null,
+  });
+  useLayoutEffect(() => {
+    opened.current = { focused: document.activeElement };
+    const interact = () => {
+      opened.current.interacted = true;
+    };
+    document.addEventListener("pointerdown", interact, true);
+    document.addEventListener("keydown", interact, true);
+    return () => {
+      document.removeEventListener("pointerdown", interact, true);
+      document.removeEventListener("keydown", interact, true);
+    };
+  }, []);
   useEffect(() => {
-    // Attention changes without a new thread snapshot.
+    // Attention and read marks change without a new thread snapshot.
     void threadUnread;
-    if (unreadBoundary !== undefined) return;
+    if (boundary.id !== undefined) {
+      // A failed read decided nothing: decide again once it recovers.
+      if (boundary.failed && snapshot.status === "ready")
+        setBoundary({ opening: boundary.opening });
+      return;
+    }
     if (
       revealSelected ||
       returning ||
       (navigation && !rootTarget) ||
-      initialPositioned ||
-      snapshot.status === "error" ||
       (snapshot.status === "ready" && snapshot.root?.id !== messageId)
     ) {
-      setUnreadBoundary(null);
+      setBoundary({ ...boundary, id: null });
       return;
     }
-    // Decide once positioning could proceed, but not while an older page
-    // this decision asked for is in flight.
+    if (snapshot.status === "error") {
+      setBoundary({ ...boundary, id: null, failed: true });
+      return;
+    }
+    // Decide once positioning could proceed on this view's own rows, and
+    // while shown, so the line is measured and attention is current. Not while
+    // an older page this decision asked for is in flight.
     if (
+      !active ||
+      snapshot.resumed ||
       snapshot.readKind === "older" ||
       (!(snapshot.root && snapshot.direction) &&
         (snapshot.status !== "ready" ||
           (snapshot.direction !== "older" && snapshot.canLoadMore)))
     )
       return;
-    const replies = tree.children.get(undefined) ?? [];
-    const first = replies.findIndex((row) => {
-      const attention = session.unread.attention(channelId, row.id);
-      return attention.unread || attention.forced;
-    });
-    // A legacy walk reads forward from the oldest reply, so its first unread
-    // one is already loaded.
+    const unread = (id: string): boolean => {
+      const attention = session.unread.attention(channelId, id);
+      return (
+        attention.unread ||
+        attention.forced ||
+        (tree.children.get(id) ?? []).some((row) => unread(row.id))
+      );
+    };
+    const first = (tree.children.get(undefined) ?? []).find((row) =>
+      unread(row.id),
+    );
+    // With unread known in the thread, only a thread-wide read reaching the
+    // oldest loaded reply shows that older replies are read: one read alone,
+    // or the viewer's own, does not. A legacy walk reads forward from the
+    // oldest reply.
+    const oldest = snapshot.replies[0];
     if (
-      first === 0 &&
+      (first || (threadUnread?.observedCount ?? 0) > 0) &&
       snapshot.direction === "older" &&
-      snapshot.canLoadMore &&
-      !snapshot.limited
+      (snapshot.canLoadMore || snapshot.limited) &&
+      oldest &&
+      oldest.createdAt > session.unread.threadReadThrough(channelId, messageId)
     ) {
-      void view.loadMore();
+      if (snapshot.canLoadMore) void view.loadMore();
+      // Past the page limit the first unread reply stays unknown.
+      else setBoundary({ ...boundary, id: null });
       return;
     }
-    setUnreadBoundary(replies[first]?.id ?? null);
+    setBoundary({ ...boundary, id: first?.id ?? null });
   }, [
-    unreadBoundary,
+    boundary,
+    active,
     revealSelected,
     returning,
     navigation,
     rootTarget,
-    initialPositioned,
     snapshot,
     messageId,
     tree,
@@ -1376,8 +1423,11 @@ function ThreadMessages({
     }
     // Initial positioning waits for one strict page or the legacy bounded walk.
     // subsequent live changes follow only while the reader is at the bottom.
+    // Each opening's line is placed once, when decided.
+    const placing = unreadBoundary !== undefined && placed.current !== boundary;
+    if (placing) placed.current = boundary;
     const line =
-      !positioned.current && unreadBoundary
+      placing && unreadBoundary
         ? element.querySelector<HTMLElement>("[data-new-messages-boundary]")
         : null;
     if (line) {
@@ -1386,9 +1436,22 @@ function ThreadMessages({
         element,
         line.getBoundingClientRect().top - element.getBoundingClientRect().top,
       );
-      // Like a revealed message, the line is where the visit's reading
-      // starts, so content-focused navigation moves focus in.
-      if (active && navigation && navigation.focus !== "preserve")
+      // Like a revealed message, the line is where a first opening's reading
+      // starts, so content-focused navigation moves focus in: from where the
+      // opening or navigation left it, not from where the person has since
+      // moved it. A reopening keeps its own focus handoff.
+      const focused = document.activeElement;
+      if (
+        active &&
+        navigation &&
+        navigation.focus !== "preserve" &&
+        !positioned.current &&
+        !opened.current.interacted &&
+        (!focused ||
+          focused === document.body ||
+          focused === opened.current.focused ||
+          focused === document.getElementById("main-content"))
+      )
         element.focus({ preventScroll: true });
     }
     if (follow.current) element.scrollTop = element.scrollHeight;
@@ -1430,7 +1493,7 @@ function ThreadMessages({
     selectedOffset,
     tree,
     expanded,
-    unreadBoundary,
+    boundary,
   ]);
   // The effect above re-pins only when thread data changes. A growing composer
   // shrinks this viewport, late media grows rows and a join error grows the end

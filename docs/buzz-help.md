@@ -576,11 +576,13 @@ and are asked to sign in again in Buzz.
   anything is marked read; older unread messages, or a read elsewhere on this
   device while you were away, leave that visit without one.
 - **Opening a thread** without choosing a reply starts at its first unread
-  reply, below a **New messages** divider that stays for that visit as you
-  read. Buzz loads older replies until it finds where unread replies begin.
-  A thread with nothing unread opens at its latest reply. Replies nested under
-  another reply are not marked by the divider; their reply counts show what
-  is new. Opening a specific reply, such as a mention, opens at that reply.
+  reply, below a **New messages** divider that stays as you read. When the
+  unread reply is nested under another reply, the divider goes above that
+  reply's branch, whose count shows what is new. Buzz loads older replies until
+  it finds where unread replies begin. Opening the thread again, even in a tab
+  that is still open, finds the first unread reply again; switching tabs keeps
+  the divider. A thread with nothing unread opens at its latest reply. Opening
+  a specific reply, such as a mention, opens at that reply.
 - **Marking a channel read** keeps the cut from your click when retried. If a newer
   manual unread choice was saved in another window while it waited, the read fails
   rather than clearing that choice. Mark the channel read again to clear it.

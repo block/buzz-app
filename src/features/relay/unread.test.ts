@@ -3996,10 +3996,14 @@ it("thread bottom catch-up clears only its thread and preserves local and remote
   };
   await h.session.unread.markUnreadLocal(thread);
   const lease = h.session.unread.reading("room");
+  expect(h.session.unread.threadReadThrough("room", root.id)).toBeLessThan(11);
   await lease.catchUp(reply.id, root.id);
   expect(h.journal()?.state.frontiers).toEqual({
     [`thread-activity:${root.id}`]: 13,
   });
+  // Every reply through the catch-up is read; the other thread is not.
+  expect(h.session.unread.threadReadThrough("room", root.id)).toBe(13);
+  expect(h.session.unread.threadReadThrough("room", other.id)).toBeLessThan(12);
   expect(h.session.unread.snapshot(thread)).toMatchObject({
     observedCount: 0,
     manual: "local-only",

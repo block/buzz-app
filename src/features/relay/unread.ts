@@ -172,6 +172,11 @@ export interface UnreadCapability {
   /** Whether the viewer follows this canonical root: an explicit choice,
    * otherwise writing or replying anywhere in its thread. */
   following(channelId: string, rootId: string): boolean;
+  /** Through when every reply in a thread is read, except replies marked
+   * unread: its read or catch-up mark, a channel-wide read, or the retention
+   * floor. Individual reply marks do not count: they say nothing of older
+   * replies. */
+  threadReadThrough(channelId: string, rootId: string): number;
   /** Saves an explicit choice on this device; throws, unchanged, if not saved.
    * Wakes `subscribeSync` listeners. */
   follow(channelId: string, rootId: string, following: boolean): void;
@@ -2617,6 +2622,16 @@ export function createUnread({
       await reads.flush();
     },
     syncedManualUnread: false,
+    threadReadThrough(channelId, rootId) {
+      if (closed || !allowed(channelId)) return -1;
+      const { frontiers } = reads.state();
+      return Math.max(
+        frontiers[`thread:${rootId}`] ?? -1,
+        frontiers[`thread-activity:${rootId}`] ?? -1,
+        frontiers[channelId] ?? -1,
+        reads.floor(),
+      );
+    },
     following(channelId, rootId) {
       if (closed || !allowed(channelId)) return false;
       const id = rootId.toLowerCase();

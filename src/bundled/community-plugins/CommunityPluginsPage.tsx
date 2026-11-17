@@ -794,11 +794,19 @@ function AddPlugin({
   const [ref, setRef] = useState("");
   const [state, setState] = useState<AddState>({ step: "idle" });
   const busy = state.step === "checking";
+  const attempt = useRef(0);
+  const edit = (set: (value: string) => void) => (value: string) => {
+    attempt.current += 1;
+    setState({ step: "idle" });
+    set(value);
+  };
   const run = async () => {
     const input = parseSourceInput(repositoryInput, ref);
     if (!input) return setState({ step: "invalid" });
+    const current = ++attempt.current;
     setState({ step: "checking" });
     const checked = await checkSource(host, input);
+    if (current !== attempt.current) return;
     if (!checked.ok)
       return setState({ step: "rejected", message: checked.message });
     setState({
@@ -859,7 +867,7 @@ function AddPlugin({
             spellCheck={false}
             autoCapitalize="off"
             autoComplete="off"
-            onChange={(event) => setRepositoryInput(event.target.value)}
+            onChange={(event) => edit(setRepositoryInput)(event.target.value)}
           />
         </Field>
         <Field label="Branch or tag" optional>
@@ -869,7 +877,7 @@ function AddPlugin({
             spellCheck={false}
             autoCapitalize="off"
             autoComplete="off"
-            onChange={(event) => setRef(event.target.value)}
+            onChange={(event) => edit(setRef)(event.target.value)}
           />
         </Field>
         <div role="status" aria-live="polite" className={styles.form}>

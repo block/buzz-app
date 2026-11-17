@@ -371,6 +371,51 @@ it("checks a repository, then links to a sources.txt pull request and a filled-i
   ).toBe(false);
 });
 
+it("clears a checked result when the repository or branch is edited", async () => {
+  const { request } = await setup();
+  request.mockImplementation(githubAnswers("fresh", "octo.fresh", "Fresh"));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Add your plugin" }),
+  );
+  await userEvent.type(screen.getByLabelText("Repository"), "octo/fresh");
+  await userEvent.click(screen.getByRole("button", { name: "Check" }));
+  expect(await screen.findByText(/It can be listed/)).toBeInTheDocument();
+  await userEvent.type(screen.getByLabelText("Repository"), "x");
+  expect(screen.queryByText(/It can be listed/)).toBeNull();
+  expect(
+    screen.queryByRole("link", { name: "Request in an issue" }),
+  ).toBeNull();
+  await userEvent.type(screen.getByLabelText("Repository"), "{backspace}");
+  await userEvent.click(screen.getByRole("button", { name: "Check" }));
+  expect(await screen.findByText(/It can be listed/)).toBeInTheDocument();
+  await userEvent.type(screen.getByLabelText(/Branch or tag/), "main");
+  expect(screen.queryByText(/It can be listed/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Check" })).toBeEnabled();
+});
+
+it("drops the result of a check whose inputs were edited while it ran", async () => {
+  const { request } = await setup();
+  const answer = githubAnswers("fresh", "octo.fresh", "Fresh");
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  request.mockImplementation(async (input: { url: string }) => {
+    if (input.url.startsWith("https://api.github.com/")) await held;
+    return answer(input);
+  });
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Add your plugin" }),
+  );
+  await userEvent.type(screen.getByLabelText("Repository"), "octo/fresh");
+  await userEvent.click(screen.getByRole("button", { name: "Check" }));
+  await userEvent.type(screen.getByLabelText("Repository"), "-two");
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(screen.queryByText(/It can be listed/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Check" })).toBeEnabled();
+});
+
 it("opens a plugin that is already listed instead of offering to list it", async () => {
   const { request } = await setup();
   request.mockImplementation(

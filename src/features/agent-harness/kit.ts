@@ -1,4 +1,3 @@
-import { scopedSessionKey } from "./session-scope";
 // The Buzz side of an agent turn, for a harness a plugin brings: whether a
 // delivery is the harness's to act on and which conversation it goes to, the
 // prompts the bundled harnesses give, the agent's Buzz tools as an MCP
@@ -35,15 +34,15 @@ import { threadReference } from "../relay/thread-reference";
 import { MemoryReads, READ_TIMEOUT_MS } from "./core-memory";
 import { wakeAnchor, wakeLands } from "./plugin-wake";
 import { readAuthorNames } from "./author-names";
-import { NO_PROJECT, ProjectSource, ownerCanvas, readProject } from "./project";
+import { ownerCanvas, readProject } from "./project";
 
-/** Which conversations share the agent's native session. */
-export type HarnessScope = import("./session-scope").SessionScope;
+/** Whether each thread is its own conversation, or the whole channel is one. */
+export type HarnessScope = "thread" | "channel";
 
 /** Where a delivery's turn goes, frozen for the turn. */
 export type HarnessConversation = Readonly<{
-  /** Opaque session identity. Community keys include the agent membership;
-   * thread and channel keys retain their existing forms. */
+  /** The channel id, or `<channel>/<root>` for a thread's own conversation.
+   * A Solo chat and a DM are always one conversation. */
   key: string;
   channel: string;
   /** The thread's root, when the conversation is one thread. */
@@ -128,7 +127,6 @@ type Sources = Readonly<{
 /** What the kit keeps of a conversation it admitted. */
 type Admitted = Readonly<{
   event: EventData;
-  scope: HarnessScope;
   solo: boolean;
   dm: boolean;
   name?: string;
@@ -190,7 +188,6 @@ const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 export function harnessKit(sources: Sources): HarnessKit {
   const admitted = new WeakMap<HarnessConversation, Admitted>();
   const memoryReads = new MemoryReads();
-  const projects = new Map<AgentKey, ProjectSource>();
   const session = (key: AgentKey) => {
     const snapshot = sources.relay(key)?.snapshot();
     return snapshot?.status === "ready" ? snapshot.session : undefined;
@@ -246,12 +243,9 @@ export function harnessKit(sources: Sources): HarnessKit {
       const found = summary(agent.key, channel);
       const dm = found?.channelType === "dm";
       const root = threadReference(event)?.rootId ?? event.id;
-      const whole = topLevel || dm || scope !== "thread";
+      const whole = topLevel || dm || scope === "channel";
       const conversation: HarnessConversation = Object.freeze({
-        key:
-          scope === "community"
-            ? JSON.stringify(["community", agent.key])
-            : scopedSessionKey(scope, channel, whole ? undefined : root),
+        key: whole ? channel : `${channel}/${root}`,
         channel,
         ...(whole ? {} : { root }),
         topLevel,
@@ -259,7 +253,6 @@ export function harnessKit(sources: Sources): HarnessKit {
       });
       admitted.set(conversation, {
         event,
-        scope,
         solo,
         dm,
         ...(found?.name ? { name: found.name } : {}),
@@ -293,8 +286,7 @@ export function harnessKit(sources: Sources): HarnessKit {
       conversation,
       options = {},
     ) {
-      const { event, scope, solo, dm, name, wake, resumed } =
-        known(conversation);
+      const { event, solo, dm, name, wake, resumed } = known(conversation);
       const { key, channel: channelId, topLevel } = conversation;
       const ready = session(agent.key);
       const thread = threadReference(event);
@@ -303,11 +295,7 @@ export function harnessKit(sources: Sources): HarnessKit {
       // Sharing a session does not mean it has seen every thread in the
       // channel, so a channel conversation keeps a mark for each thread.
       const contextRoot =
-        scope === "community"
-          ? `${channelId}/${!dm && !topLevel ? rootId : "channel"}`
-          : key === channelId && !dm && !topLevel
-            ? rootId
-            : undefined;
+        key === channelId && !dm && !topLevel ? rootId : undefined;
       // A resumed turn's session never saw its thread, its own replies
       // included.
       const since = resumed
@@ -369,29 +357,18 @@ export function harnessKit(sources: Sources): HarnessKit {
       );
       const reads = ownerReads(sources.relay(agent.key), agent.pubkey);
       const signingAuthority = reads?.workflowAuthority();
-      const [names, loadedProject] = await Promise.all([
+      const [names, project] = await Promise.all([
         readAuthorNames(
           reads,
           [event, ...unseen.slice(-CONTEXT_LIMIT)],
           signingAuthority,
         ),
-        reading,
+        reading.then((read) => read?.section),
       ]);
-      let project = loadedProject;
-      if (scope === "community") {
-        const source = projects.get(agent.key) ?? new ProjectSource();
-        projects.set(agent.key, source);
-        project = source.resolve(channelId, solo ? loadedProject : NO_PROJECT);
-      }
       const text = turnPrompt({
         agent: agent.key,
         event,
-        scope:
-          scope === "community"
-            ? "community"
-            : key === channelId
-              ? "channel"
-              : "thread",
+        scope: key === channelId ? "channel" : "thread",
         topLevel,
         channelLevel: topLevel && !solo,
         channel: { id: channelId, ...(name ? { name } : {}), dm },
@@ -400,19 +377,18 @@ export function harnessKit(sources: Sources): HarnessKit {
         total: earlier.length + 1,
         names,
         ...(signingAuthority ? { signingAuthority } : {}),
-        ...(project ? { project: project.section } : {}),
+        ...(project ? { project } : {}),
         ...(wake
           ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
           : {}),
       });
-      const noteRoot =
-        scope === "community" && !topLevel && !dm ? rootId : conversation.root;
+      const noteRoot = conversation.root;
       const notes = agent.notes?.(channelId, noteRoot) ?? [];
       return {
         text: [
           resumed ? `${text}\n\n${RESUMED_PROMPT}` : text,
           ...notes,
-          turnNote(agent, channelId, noteRoot, scope === "community"),
+          turnNote(agent, channelId, noteRoot),
         ]
           .filter(Boolean)
           .join("\n\n"),
@@ -429,12 +405,7 @@ export function harnessKit(sources: Sources): HarnessKit {
       `<context>\nScope: standalone\nAgent: ${agent.key}\n</context>\n\n${text}`,
 
     tools(agent, conversation, options = {}) {
-      const source = conversation && known(conversation);
-      const solo = source?.solo;
-      const root =
-        source?.scope === "community" && !source.dm
-          ? (threadReference(source.event)?.rootId ?? source.event.id)
-          : conversation?.root;
+      const solo = conversation && known(conversation).solo;
       const context: Context = !conversation
         ? {}
         : conversation.topLevel
@@ -442,8 +413,8 @@ export function harnessKit(sources: Sources): HarnessKit {
               channel: conversation.channel,
               ...(solo ? { topLevel: true } : {}),
             }
-          : root
-            ? { channel: conversation.channel, root }
+          : conversation.root
+            ? { channel: conversation.channel, root: conversation.root }
             : { channel: conversation.channel };
       const pubkey = agent.pubkey;
       const reads = () => ownerReads(sources.relay(agent.key), pubkey);

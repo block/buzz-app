@@ -968,3 +968,16 @@ it("uses only the stripped sender note in a timed forward marker", async () => {
     /Forwarded message|Original Author|Copied content|⏱/,
   );
 });
+
+it("keeps the comment composer forward announcer inside the media-review modal", async () => {
+  await setupReview({ kind: "image" });
+  const input = await screen.findByRole("textbox", { name: "Reply to thread" });
+  const dialog = input.closest('[role="dialog"][aria-modal="true"]');
+  expect(dialog).not.toBeNull();
+  const announcement = document.getElementById(
+    `${input.id}-forward-announcement`,
+  );
+  expect(announcement).not.toBeNull();
+  expect(announcement?.parentElement).toBe(dialog);
+  expect(announcement).toHaveAttribute("aria-live", "polite");
+});

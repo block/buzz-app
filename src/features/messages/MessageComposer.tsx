@@ -1385,6 +1385,17 @@ function Composer({
     { ids: readonly string[]; owner: Element | null } | undefined
   >(undefined);
   const form = useRef<HTMLFormElement>(null);
+  const [announcementHost, setAnnouncementHost] = useState<Element | null>(
+    null,
+  );
+  useLayoutEffect(() => {
+    const node = form.current;
+    if (node)
+      setAnnouncementHost(
+        node.closest('[role="dialog"][aria-modal="true"]') ??
+          node.ownerDocument.body,
+      );
+  }, []);
   // Notices float above the composer, not over Send.
   useToastClearance(form);
   const notify = useToastNotification();
@@ -3530,18 +3541,19 @@ function Composer({
           focusComposer={() => input.current?.focus()}
         />
       )}
-      {/* Modal isolation exempts live-region ancestors; keep this outside the workspace. */}
-      {createPortal(
-        <div
-          id={`${inputId}-forward-announcement`}
-          aria-live="polite"
-          aria-atomic="true"
-          className="sr-only"
-        >
-          {presented ? disclosure : null}
-        </div>,
-        document.body,
-      )}
+      {/* Stay inside a modal host, but outside workspace modal-isolation boundaries. */}
+      {announcementHost &&
+        createPortal(
+          <div
+            id={`${inputId}-forward-announcement`}
+            aria-live="polite"
+            aria-atomic="true"
+            className="sr-only"
+          >
+            {presented ? disclosure : null}
+          </div>,
+          announcementHost,
+        )}
       <form
         ref={form}
         className={styles.composer}

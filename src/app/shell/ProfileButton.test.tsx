@@ -1197,6 +1197,11 @@ it("cancels feedback on disconnected community switches even when both sessions 
   try {
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Away" }));
     expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Availability unknown, updating to away",
+      }),
+    ).toBeInTheDocument();
     h.community();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     act(() => vi.advanceTimersByTime(15000));

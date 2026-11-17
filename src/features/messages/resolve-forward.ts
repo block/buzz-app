@@ -1,3 +1,4 @@
+import { isPrivateForwardSource } from "./is-private-forward-source";
 import { snapshotMessage } from "../relay/forwarded-message";
 import type { RelaySession } from "../relay/session";
 import { splitPartition } from "../relay/partition";
@@ -72,11 +73,7 @@ export async function resolveForward(
       session.profiles.snapshot().get(author)?.name ??
       author.slice(0, 10);
     const channel = session.channels.describe?.(row.channelId);
-    const privateSource =
-      channel?.state !== "found" ||
-      channel.private ||
-      channel.hidden ||
-      ["dm", "solo"].includes(channel.channelType ?? "");
+    const privateSource = isPrivateForwardSource(channel);
     const prepared = prepareForwardSource(
       row,
       name,

@@ -1,3 +1,4 @@
+import { isPrivateForwardSource } from "./is-private-forward-source";
 import { snapshotAttachments } from "../relay/forwarded-message";
 import { useEffect, useState } from "react";
 import { fullSession, type ComposerSession } from "./composer-session";
@@ -101,10 +102,7 @@ export function useComposerForward(
                 )
               : undefined;
   const privateSource = host
-    ? source.reference.state !== "found" ||
-      source.reference.private ||
-      source.reference.hidden ||
-      ["dm", "solo"].includes(source.reference.channelType ?? "")
+    ? isPrivateForwardSource(source.reference)
     : resolved?.source?.privateSource;
   return {
     disclosure:

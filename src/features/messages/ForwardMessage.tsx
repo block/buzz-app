@@ -1,3 +1,4 @@
+import { isPrivateForwardSource } from "./is-private-forward-source";
 import { snapshotAttachments } from "../relay/forwarded-message";
 import { copyAsForward } from "./forward-clipboard";
 import { snapshotMessage } from "../relay/forwarded-message";
@@ -398,11 +399,7 @@ function ForwardMessageDialog({
     : named.length > 2
       ? `${named.length} people`
       : named.map((person) => person.name).join(" and ");
-  const privateSource =
-    sourceRead.reference.state !== "found" ||
-    sourceRead.reference.private ||
-    sourceRead.reference.hidden ||
-    ["dm", "solo"].includes(sourceRead.reference.channelType ?? "");
+  const privateSource = isPrivateForwardSource(sourceRead.reference);
   const privacy = privateSource && channel?.id !== source.channelId;
 
   const forwardRow = row

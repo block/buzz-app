@@ -2124,7 +2124,7 @@ it("separates identity fields from runtime settings without changing the stored 
   expect(
     screen.getByRole("button", { name: "Huddle voice" }),
   ).toHaveAccessibleDescription(
-    "Determines which voice your agent speaks with in Huddles (Codex only).",
+    "Determines which voice your agent speaks with in Huddles (Codex only). Codex default",
   );
   expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
   expect(screen.getByLabelText("Sessions")).toBeInTheDocument();

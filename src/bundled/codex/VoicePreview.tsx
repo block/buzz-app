@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { CaretDownIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -43,6 +43,7 @@ export function VoicePreview({
   const [open, setOpen] = useState(false);
   const [locale, setLocale] = useState<string>();
   const trigger = useRef<HTMLButtonElement>(null);
+  const valueId = useId();
   const [playing, setPlaying] = useState<{
     voice: string;
     abort: AbortController;
@@ -244,6 +245,9 @@ export function VoicePreview({
           <Button
             {...accessible}
             ref={trigger}
+            aria-describedby={[accessible["aria-describedby"], valueId]
+              .filter(Boolean)
+              .join(" ")}
             size="sm"
             variant="outline"
             disabled={disabled}
@@ -255,9 +259,11 @@ export function VoicePreview({
               setOpen(true);
             }}
           >
-            {!voice && defaultVoice
-              ? `${name(defaultVoice)} · Default`
-              : label(voice)}
+            <span id={valueId}>
+              {!voice && defaultVoice
+                ? `${name(defaultVoice)} · Default`
+                : label(voice)}
+            </span>
             <CaretDownIcon size={14} aria-hidden="true" />
           </Button>
         )}

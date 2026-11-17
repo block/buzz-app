@@ -545,3 +545,25 @@ it("refreshes after a retained pane finishes leaving and returns", async () => {
     HTMLElement.prototype.checkVisibility = previous;
   }
 });
+
+it.each([
+  { voice: "maple", expected: "Maple" },
+  { voice: "", expected: "Cove · Default" },
+  { voice: "retired", expected: "Retired (unavailable)" },
+])(
+  "describes the current voice accessibly: $expected",
+  ({ voice, expected }) => {
+    render(
+      <VoicePreview
+        voices={["cove", "maple"]}
+        voice={voice}
+        defaultVoice="cove"
+        disabled={false}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Huddle voice" }),
+    ).toHaveAccessibleDescription(expect.stringContaining(expected));
+  },
+);

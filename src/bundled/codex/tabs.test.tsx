@@ -2885,7 +2885,7 @@ it("retains the saved voice label while discovery is pending", async () => {
   const voice = screen.getByRole("button", { name: "Voice" });
   try {
     await waitFor(() => expect(f.provider.snapshot().checking).toBe(true));
-    expect(voice).toBeDisabled();
+    expect(voice).toHaveAttribute("aria-disabled", "true");
     expect(voice).toHaveTextContent("Cove");
     expect(voice).not.toHaveTextContent("unavailable");
   } finally {
@@ -3116,35 +3116,44 @@ it("saves voice changes immediately without a separate Save button", async () =>
   expect(screen.getByRole("dialog", { name: "Choose voice" })).toBeVisible();
 });
 
-it("saves only the voice while retaining an unrelated instructions draft", async () => {
-  const f = fixture();
-  const save = vi.fn(async (_config?: Config) => {});
-  const user = userEvent.setup();
-  const props = f.props(defaults, save);
-  const view = render(
-    <f.tabs.SettingsTab {...props} settingsSection="identity" />,
-  );
-  const instructions = screen.getByRole("textbox", { name: "Instructions" });
-  await user.type(instructions, "Keep this draft");
-  await user.click(screen.getByRole("button", { name: "Voice" }));
-  await user.click(await screen.findByRole("radio", { name: "Maple" }));
-  await waitFor(() =>
-    expect(save).toHaveBeenCalledWith(
-      expect.objectContaining({
-        voice: "maple",
-        instructions: defaults.instructions,
-      }),
-    ),
-  );
-  const config = save.mock.calls[0]?.[0] as Config;
-  view.rerender(
-    <f.tabs.SettingsTab
-      {...props}
-      agent={{ ...props.agent, config }}
-      settingsSection="identity"
-    />,
-  );
-  await user.click(screen.getByRole("button", { name: "Close" }));
-  expect(instructions).toHaveValue("Keep this draft");
-  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-});
+it.each([false, true])(
+  "saves only voice and retains other drafts (legacy recommendation: %s)",
+  async (legacy) => {
+    const f = fixture();
+    const save = vi.fn(async (_config?: Config) => {});
+    const user = userEvent.setup();
+    const props = f.props(
+      legacy
+        ? { ...defaults, model: "model-a", preset: "recommended" }
+        : defaults,
+      save,
+    );
+    const view = render(
+      <f.tabs.SettingsTab {...props} settingsSection="identity" />,
+    );
+    const instructions = screen.getByRole("textbox", { name: "Instructions" });
+    await user.type(instructions, "Keep this draft");
+    await user.click(screen.getByRole("button", { name: "Voice" }));
+    await user.click(await screen.findByRole("radio", { name: "Maple" }));
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          voice: "maple",
+          instructions: defaults.instructions,
+        }),
+      ),
+    );
+    const config = { ...save.mock.calls[0]?.[0] } as Config;
+    delete config.preset;
+    view.rerender(
+      <f.tabs.SettingsTab
+        {...props}
+        agent={{ ...props.agent, config }}
+        settingsSection="identity"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(instructions).toHaveValue("Keep this draft");
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  },
+);

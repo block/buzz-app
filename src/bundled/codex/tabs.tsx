@@ -1506,7 +1506,10 @@ export function createTabs(
                     return;
                   }
                   if (voice === (saved.voice ?? "")) return;
-                  const next = readConfig({ ...saved, voice });
+                  const choice = readConfig({ ...saved, voice });
+                  const next = onRecommended(choice)
+                    ? choice
+                    : offRecommended(choice);
                   voiceSave.current = next;
                   setSaving(true);
                   try {

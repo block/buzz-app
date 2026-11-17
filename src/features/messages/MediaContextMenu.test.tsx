@@ -147,6 +147,51 @@ it.each([
   },
 );
 
+it("tracks pending downloads separately when the selected attachment changes", async () => {
+  function deferredDownload() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+  const first = deferredDownload();
+  const second = deferredDownload();
+  vi.mocked(invoke)
+    .mockReturnValueOnce(first.promise)
+    .mockReturnValueOnce(second.promise);
+  const secondUrl = `https://relay.test/media/${"b".repeat(64)}.png`;
+  const secondSource = `buzz-media://localhost/${encodeURIComponent(secondUrl)}`;
+  const rendered = render(menu());
+  const download = async () => {
+    await open();
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "Download image" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  };
+  try {
+    await download();
+    rendered.rerender(
+      menu({ url: secondUrl, source: secondSource, name: "second.png" }),
+    );
+    await download();
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      ["media_download", { source, name: "photo.png" }],
+      ["media_download", { source: secondSource, name: "second.png" }],
+    ]);
+
+    await act(async () => first.resolve());
+    await download();
+    expect(invoke).toHaveBeenCalledTimes(2);
+  } finally {
+    await act(async () => {
+      first.resolve();
+      second.resolve();
+    });
+  }
+});
+
 it("copies native image bytes through the host", async () => {
   render(menu());
   await open();

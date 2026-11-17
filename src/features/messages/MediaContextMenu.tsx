@@ -66,7 +66,7 @@ export function MediaContextMenu({
   const active = useConversationPresentation();
   const notify = useToastNotification();
   const dismiss = useToastDismiss();
-  const downloading = useRef(false);
+  const downloading = useRef(new Set<string>());
   const [target, setTarget] = useState<Target>();
   const [open, setOpen] = useState(false);
   const afterClose = useRef<(() => void) | undefined>(undefined);
@@ -88,11 +88,14 @@ export function MediaContextMenu({
     action: () => Promise<void>,
     success: string,
     failure: string,
-    starting?: string,
+    downloadSource?: string,
   ) => {
-    if (starting && downloading.current) return;
-    if (starting) downloading.current = true;
-    const notice = starting ? notify(starting, "info") : undefined;
+    const pending = downloading.current;
+    if (downloadSource && pending.has(downloadSource)) return;
+    if (downloadSource) pending.add(downloadSource);
+    const notice = downloadSource
+      ? notify("Starting download…", "info")
+      : undefined;
     try {
       await action();
       notify(success, "success");
@@ -100,7 +103,7 @@ export function MediaContextMenu({
       notify(failure, "error");
     } finally {
       if (notice) dismiss(notice);
-      if (starting) downloading.current = false;
+      if (downloadSource) pending.delete(downloadSource);
     }
   };
   const show = (element: HTMLElement, rect: DOMRect, focus?: HTMLElement) => {
@@ -252,7 +255,7 @@ export function MediaContextMenu({
                     () => downloadNativeMedia(target.source, name),
                     "Saved to Downloads",
                     "Couldn’t download. Try again.",
-                    "Starting download…",
+                    target.source,
                   )
                 }
               >

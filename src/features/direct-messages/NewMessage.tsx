@@ -30,6 +30,7 @@ import {
 import { MessageComposer } from "../messages/MessageComposer";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import { clearView, readView, writeView } from "../../shared/view-state";
+import type { MessageIntent } from "../channel-navigation/routes";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   useVerifiedNames,
@@ -143,12 +144,12 @@ export function NewMessage({
   onOpenThread,
   onStarted,
   visit,
-  to,
+  intent,
 }: {
   session: RelaySession;
   scope: string;
   /** The person this visit was opened from, such as by their profile's Message. */
-  to?: string | undefined;
+  intent?: MessageIntent | undefined;
   /** The visit presenting this composer, a Back stop only once drafted. */
   visit?: PageNavigation | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -333,39 +334,29 @@ export function NewMessage({
     setUploadFailed(false);
   }
   // Opened from a person, the restored draft is addressed to them as if they
-  // were chosen in To, once per visit: returning to it (Back, reload, closing
-  // Settings) keeps the recipients chosen since. A message held for delivery,
-  // even a failed one, keeps its recipients, so a retry never reaches someone
-  // new.
-  const addressed = useRef<string | undefined>(undefined);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Each visit addresses the draft once, after its restore.
+  // were chosen in To. Only a choice newer than the last one taken addresses
+  // it, so returning to a visit (Back, reload, closing Settings) keeps the
+  // recipients chosen since, and choosing someone again addresses it anew. A
+  // message held for delivery, even a failed one, keeps its recipients, so a
+  // retry never reaches someone new.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Each choice addresses the draft once, after its restore.
   useEffect(() => {
-    if (!to) {
-      addressed.current = undefined;
-      return;
-    }
-    if (!ready || addressed.current === to) return;
-    addressed.current = to;
-    const taken = readView<unknown>(scope, "direct-message:addressed", []);
-    const visits = Array.isArray(taken) ? taken : [];
-    if (visit && visits.includes(visit.entryId)) return;
-    if (visit)
-      writeView(scope, "direct-message:addressed", [
-        ...visits.slice(-49),
-        visit.entryId,
-      ]);
-    if (!pending && to !== session.viewer) {
-      const profile = session.profiles.snapshot().get(to);
-      void session.profiles.ensure([to]).catch(() => {});
-      change([
-        {
-          pubkey: to,
-          name: profile?.name ?? abbreviatedPublicKey(to) ?? "",
-          ...(profile?.isAgent ? { isAgent: true } : {}),
-        },
-      ]);
-    }
-  }, [ready, to]);
+    if (!ready || !intent) return;
+    const taken = readView<unknown>(scope, "direct-message:addressed-at", 0);
+    if (typeof taken === "number" && intent.at <= taken) return;
+    writeView(scope, "direct-message:addressed-at", intent.at);
+    const { to } = intent;
+    if (pending || to === session.viewer) return;
+    const profile = session.profiles.snapshot().get(to);
+    void session.profiles.ensure([to]).catch(() => {});
+    change([
+      {
+        pubkey: to,
+        name: profile?.name ?? abbreviatedPublicKey(to) ?? "",
+        ...(profile?.isAgent ? { isAgent: true } : {}),
+      },
+    ]);
+  }, [ready, intent?.to, intent?.at]);
   async function send(draft: MentionDraft, files?: AttachmentDraft) {
     const content = composerMarkdown(draft);
     if (

@@ -72,16 +72,22 @@ it("accepts empty, new-message and Solo draft destinations", () => {
 
 it("addresses a New message draft to one person by key", () => {
   expect(newMessage("new-message")).toEqual({});
-  const target = newMessageTarget(scope, agent);
+  const target = newMessageTarget(scope, agent, 1700000000000);
   const params = target.kind === "page" ? target.route?.params : undefined;
-  expect(newMessage(params)).toEqual({ to: agent });
+  expect(newMessage(params)).toEqual({
+    intent: { to: agent, at: 1700000000000 },
+  });
   expect(isChannelRoute(params ?? null)).toBe(true);
   for (const invalid of [
     { kind: "new-message" },
-    { kind: "new-message", to: "not-a-key" },
-    { kind: "new-message", to: agent.toUpperCase() },
-    { kind: "new-message", to: agent, text: "private draft" },
-    { kind: "new-message", to: [agent] },
+    { kind: "new-message", to: agent },
+    { kind: "new-message", to: "not-a-key", at: 1 },
+    { kind: "new-message", to: agent.toUpperCase(), at: 1 },
+    { kind: "new-message", to: agent, at: 1, text: "private draft" },
+    { kind: "new-message", to: [agent], at: 1 },
+    { kind: "new-message", to: agent, at: 0 },
+    { kind: "new-message", to: agent, at: 1.5 },
+    { kind: "new-message", to: agent, at: "1" },
   ]) {
     expect(newMessage(invalid), JSON.stringify(invalid)).toBeUndefined();
     expect(isChannelRoute(invalid)).toBe(false);

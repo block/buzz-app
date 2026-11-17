@@ -94,33 +94,44 @@ export function soloDraft(
   };
 }
 
+/** Choosing to message one person: who, and when it was chosen. */
+export type MessageIntent = Readonly<{ to: string; at: number }>;
+
 /** A new direct message, addressed to one person when opened from them.
  * Nothing exists on the relay until its first send. */
 export function newMessage(
   params: JsonValue | undefined,
-): { to?: string } | undefined {
+): { intent?: MessageIntent } | undefined {
   if (params === "new-message") return {};
   if (!params || typeof params !== "object" || Array.isArray(params)) return;
-  const { kind, to, ...rest } = params as { readonly [key: string]: JsonValue };
+  const { kind, to, at, ...rest } = params as {
+    readonly [key: string]: JsonValue;
+  };
   if (
     kind === "new-message" &&
     !Object.keys(rest).length &&
     typeof to === "string" &&
-    agentKey.test(to)
+    agentKey.test(to) &&
+    typeof at === "number" &&
+    Number.isSafeInteger(at) &&
+    at > 0
   )
-    return { to };
+    return { intent: { to, at } };
 }
 
+/** A New message draft addressed to `to`. Each choice is its own visit,
+ * stamped when chosen, so choosing the same person again addresses it anew. */
 export const newMessageTarget = (
   scope: NavigationScope,
   to: string,
+  at = Date.now(),
 ): OpenTarget => ({
   version: 1,
   kind: "page",
   pluginId: "buzz.channels",
   pageId: "channels",
   scope,
-  route: { version: 1, params: { kind: "new-message", to } },
+  route: { version: 1, params: { kind: "new-message", to, at } },
 });
 
 export function isChannelRoute(params: JsonValue) {

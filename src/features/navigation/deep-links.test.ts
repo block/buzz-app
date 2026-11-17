@@ -55,7 +55,10 @@ it("binds a New message link to the selected community and viewer", () => {
       pluginId: "buzz.channels",
       pageId: "channels",
       scope: { viewer, communityOrigin: origin },
-      route: { version: 1, params: { kind: "new-message", to: root } },
+      route: {
+        version: 1,
+        params: { kind: "new-message", to: root, at: expect.any(Number) },
+      },
     },
   });
   expect(

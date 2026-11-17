@@ -241,7 +241,11 @@ it("opens a draft to someone without a DM, creating nothing until it is sent", a
   fireEvent.click(message() as HTMLElement);
   await waitFor(() =>
     expect(f.navigate).toHaveBeenCalledExactlyOnceWith(
-      newMessageTarget({ viewer, communityOrigin: origin }, person),
+      newMessageTarget(
+        { viewer, communityOrigin: origin },
+        person,
+        expect.any(Number),
+      ),
     ),
   );
   expect(f.open).not.toHaveBeenCalled();

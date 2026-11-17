@@ -77,7 +77,7 @@ it("opens a completed hosted agent without local custody", async () => {
     .click(screen.getByRole("button", { name: "Message" }));
   expect(f.open).not.toHaveBeenCalled();
   expect(f.navigate).toHaveBeenCalledExactlyOnceWith(
-    newMessageTarget(scope, agent),
+    newMessageTarget(scope, agent, expect.any(Number)),
   );
   expect(f.refresh).not.toHaveBeenCalled();
 });

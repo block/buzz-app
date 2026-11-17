@@ -448,7 +448,9 @@ it("opens a New message link as a draft to that person in the receiving communit
   const person = "a".repeat(64);
   const href = newMessageLink(person);
   expect(buzzLinkKind(href)).toBe("buzz");
-  expect(buzzLinkTarget(href, scope)).toEqual(newMessageTarget(scope, person));
+  expect(buzzLinkTarget(href, scope)).toEqual(
+    newMessageTarget(scope, person, expect.any(Number)),
+  );
   for (const invalid of [
     "buzz://dm/new",
     "buzz://dm/new?to=",

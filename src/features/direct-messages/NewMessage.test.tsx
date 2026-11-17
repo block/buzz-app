@@ -243,10 +243,10 @@ function setup({ archived = [] as string[] } = {}) {
       signal: new AbortController().signal,
     }),
   });
-  const mount = (visit?: PageNavigation, to?: string) =>
+  const mount = (visit?: PageNavigation, to?: string, at = Date.now()) =>
     render(
       <NewMessage
-        to={to}
+        intent={to ? { to, at } : undefined}
         channels={channels.channels}
         host={
           {
@@ -1039,30 +1039,32 @@ it("addresses the draft to the person it was opened from, creating the DM only o
   expect(t.messages.send).toHaveBeenCalledOnce();
 });
 
-it("addresses the draft once per visit, so returning keeps later recipients", async () => {
+it("takes each choice of a person once, so returning keeps later recipients", async () => {
   const t = setup();
-  const [first, , third] = people;
-  if (!first || !third) throw new Error("No people");
+  const [first] = people;
+  if (!first) throw new Error("No people");
   t.profiles.set(first.pubkey, { name: first.name });
-  const visit = (entryId: string) =>
-    ({ entryId, passThrough: () => () => {} }) as unknown as PageNavigation;
-  const view = t.mount(visit("from-person-1"), first.pubkey);
+  const now = Date.now();
+  const view = t.mount(undefined, first.pubkey, now + 2);
   await t.user.click(
     await screen.findByRole("button", { name: "Remove Person 1" }),
   );
   await t.user.click(await screen.findByRole("option", { name: "Person 3" }));
   view.unmount();
-  // Back, a reload or closing Settings returns to the same visit.
-  const again = t.mount(visit("from-person-1"), first.pubkey);
-  expect(
-    await screen.findByRole("button", { name: "Remove Person 3" }),
-  ).toBeVisible();
-  expect(
-    screen.queryByRole("button", { name: "Remove Person 1" }),
-  ).not.toBeInTheDocument();
-  again.unmount();
-  // A new Message on that person is a new visit.
-  t.mount(visit("from-person-1-again"), first.pubkey);
+  // Back, a reload or closing Settings returns to the same choice, and Back
+  // to an earlier one is older still.
+  for (const at of [now + 2, now + 1]) {
+    const again = t.mount(undefined, first.pubkey, at);
+    expect(
+      await screen.findByRole("button", { name: "Remove Person 3" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Remove Person 1" }),
+    ).not.toBeInTheDocument();
+    again.unmount();
+  }
+  // Choosing that person again addresses the draft anew.
+  t.mount(undefined, first.pubkey, now + 3);
   expect(
     await screen.findByRole("button", { name: "Remove Person 1" }),
   ).toBeVisible();

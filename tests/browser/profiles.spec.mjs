@@ -1328,6 +1328,8 @@ test("member Send message navigates a human DM without sending or returning focu
 }) => {
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/profiles.html?member-message&existing-dm");
+  // The existing DM opens first; Members starts from channel One.
+  await page.locator('[data-channel-id="one"]').click();
   await page
     .getByRole("button", { name: "Manage members of One", exact: true })
     .click();

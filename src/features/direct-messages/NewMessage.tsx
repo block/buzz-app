@@ -144,11 +144,15 @@ export function NewMessage({
   onStarted,
   visit,
   to,
+  onAddressed,
 }: {
   session: RelaySession;
   scope: string;
   /** The person this visit was opened from, such as by their profile's Message. */
   to?: string | undefined;
+  /** `to` was taken, so its visit drops it: returning here (Back, reload)
+   * keeps the recipients chosen since. */
+  onAddressed?: (() => void) | undefined;
   /** The visit presenting this composer, a Back stop only once drafted. */
   visit?: PageNavigation | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -333,8 +337,9 @@ export function NewMessage({
     setUploadFailed(false);
   }
   // Opened from a person, the restored draft is addressed to them as if they
-  // were chosen in To. A message held for delivery, even a failed one, keeps
-  // its recipients, so a retry never reaches someone new.
+  // were chosen in To, once: the visit then drops the person. A message held
+  // for delivery, even a failed one, keeps its recipients, so a retry never
+  // reaches someone new.
   const addressed = useRef<string | undefined>(undefined);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Each person addresses the draft once, after its restore.
   useEffect(() => {
@@ -342,18 +347,20 @@ export function NewMessage({
       addressed.current = undefined;
       return;
     }
-    if (!ready || pending || to === session.viewer || addressed.current === to)
-      return;
+    if (!ready || addressed.current === to) return;
     addressed.current = to;
-    const profile = session.profiles.snapshot().get(to);
-    void session.profiles.ensure([to]).catch(() => {});
-    change([
-      {
-        pubkey: to,
-        name: profile?.name ?? abbreviatedPublicKey(to) ?? "",
-        ...(profile?.isAgent ? { isAgent: true } : {}),
-      },
-    ]);
+    if (!pending && to !== session.viewer) {
+      const profile = session.profiles.snapshot().get(to);
+      void session.profiles.ensure([to]).catch(() => {});
+      change([
+        {
+          pubkey: to,
+          name: profile?.name ?? abbreviatedPublicKey(to) ?? "",
+          ...(profile?.isAgent ? { isAgent: true } : {}),
+        },
+      ]);
+    }
+    onAddressed?.();
   }, [ready, to]);
   async function send(draft: MentionDraft, files?: AttachmentDraft) {
     const content = composerMarkdown(draft);

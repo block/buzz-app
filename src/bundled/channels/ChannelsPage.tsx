@@ -2526,6 +2526,23 @@ function ChannelWorkspace({
           {composingMessage ? (
             <LiveNewMessage
               to={messageDraft?.to}
+              onAddressed={() => {
+                // Drop the person from this visit so Back or a reload keeps
+                // the recipients chosen since. Behind Settings, stay put.
+                const target = navigator?.snapshot().entry.target;
+                if (
+                  navigator &&
+                  target?.kind === "page" &&
+                  newMessage(target.route?.params)?.to
+                )
+                  void navigator.open(
+                    {
+                      ...target,
+                      route: { version: 1, params: "new-message" },
+                    },
+                    { replace: true },
+                  );
+              }}
               host={{ relay, panels, navigation: navigator }}
               session={queries}
               scope={scope}

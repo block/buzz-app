@@ -834,6 +834,20 @@ test("profile Message drafts a new DM and restores a hidden one", async ({
   ).toBeVisible();
   await expect(sidebarDm).toHaveCount(0);
   expect(app.commands).toHaveLength(0);
+  // Back to the draft keeps a recipient chosen since, not the person it was
+  // opened from.
+  await page.getByRole("button", { name: "Remove Avery Chen" }).click();
+  await page.getByRole("option", { name: "Person 03", exact: true }).click();
+  await general.click();
+  await page.goBack();
+  await expect(
+    page.getByRole("button", { name: "Remove Person 03" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Remove Avery Chen" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Remove Person 03" }).click();
+  await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
   await page
     .getByRole("textbox", { name: "Message Avery Chen", exact: true })
     .fill("Hi Avery");

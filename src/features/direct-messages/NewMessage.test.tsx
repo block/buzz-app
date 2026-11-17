@@ -243,10 +243,12 @@ function setup({ archived = [] as string[] } = {}) {
       signal: new AbortController().signal,
     }),
   });
+  const onAddressed = vi.fn();
   const mount = (visit?: PageNavigation, to?: string) =>
     render(
       <NewMessage
         to={to}
+        onAddressed={onAddressed}
         channels={channels.channels}
         host={
           {
@@ -269,6 +271,7 @@ function setup({ archived = [] as string[] } = {}) {
       />,
     );
   return {
+    onAddressed,
     session,
     profiles,
     channels,
@@ -1028,6 +1031,8 @@ it("addresses the draft to the person it was opened from, creating the DM only o
   expect(
     await screen.findByRole("button", { name: "Remove Person 1" }),
   ).toBeVisible();
+  // The visit drops the person, so returning keeps recipients chosen since.
+  expect(t.onAddressed).toHaveBeenCalledOnce();
   expect(t.directMessages.open).not.toHaveBeenCalled();
   await t.user.type(screen.getByRole("textbox"), "Hello");
   await t.user.click(send());
@@ -1073,6 +1078,7 @@ it("keeps a failed message's recipients when opened from another person", async 
   expect(
     await screen.findByRole("button", { name: "Remove Person 1" }),
   ).toBeVisible();
+  await waitFor(() => expect(t.onAddressed).toHaveBeenCalledOnce());
   expect(
     screen.queryByRole("button", { name: "Remove Person 3" }),
   ).not.toBeInTheDocument();

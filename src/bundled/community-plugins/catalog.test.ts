@@ -69,6 +69,35 @@ it("orders by community counts, then by the index's own order", () => {
   expect(slugs("installs", false)).toEqual(["a", "b", "c"]);
 });
 
+it("drops only the listing whose collections are the wrong shape", () => {
+  const good = listing();
+  const bad = (slug: string, patch: Record<string, unknown>) => ({
+    ...good,
+    key: `github.com/octo/${slug}`,
+    slug,
+    id: `octo.${slug}`,
+    source: { ...good.source, repository: `https://github.com/octo/${slug}` },
+    ...patch,
+  });
+  const index = parseIndex(
+    rawIndex([
+      bad("origins", { host: { networkOrigins: "https://api.example" } }),
+      bad("shots", { demo: { screenshots: "shot.png" } }),
+      bad("demo", { demo: "video" }),
+      bad("steps", { setup: "run it" }),
+      bad("detail", { setup: [{ title: "Run", detail: { text: "x" } }] }),
+      bad("command", { setup: [{ title: "Run", command: ["pnpm", "dev"] }] }),
+      bad("step", { setup: [null] }),
+      good,
+      bad("steps-ok", { setup: [{ title: "Run", detail: "x", command: "y" }] }),
+    ]),
+  );
+  expect(index?.plugins.map((plugin) => plugin.slug)).toEqual([
+    good.slug,
+    "steps-ok",
+  ]);
+});
+
 it("rejects an index whose listings are all invalid or whose schema is unknown", () => {
   expect(parseIndex(rawIndex([{ key: "nope" }]))).toBeNull();
   expect(parseIndex({ ...rawIndex([]), schemaVersion: 2 })).toBeNull();

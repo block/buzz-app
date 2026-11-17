@@ -84,8 +84,11 @@ export function parseKey(
 
 const text = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
-const strings = (value: unknown) =>
-  value === undefined || (Array.isArray(value) && value.every(text));
+const optional = (value: unknown, valid: (item: unknown) => boolean) =>
+  value === undefined || (Array.isArray(value) && value.every(valid));
+const strings = (value: unknown) => optional(value, text);
+const optionalText = (value: unknown) =>
+  value === undefined || typeof value === "string";
 const flag = (value: unknown) =>
   value === undefined || typeof value === "boolean";
 export const httpsUrl = (url: unknown): url is string =>
@@ -117,8 +120,11 @@ function validListing(value: unknown): value is Listing {
     (source.path === undefined || source.path === parts.path) &&
     !!host &&
     typeof host === "object" &&
-    (host.networkOrigins ?? []).every((origin) =>
-      /^https:\/\/[a-z0-9.-]+(:\d+)?$/.test(origin),
+    optional(
+      host.networkOrigins,
+      (origin) =>
+        typeof origin === "string" &&
+        /^https:\/\/[a-z0-9.-]+(:\d+)?$/.test(origin),
     ) &&
     strings(host.processes) &&
     strings(host.commands) &&
@@ -130,10 +136,19 @@ function validListing(value: unknown): value is Listing {
     (listing.updatedAt === undefined ||
       typeof listing.updatedAt === "string") &&
     (demo === undefined ||
-      (media(demo.video) &&
+      (!!demo &&
+        typeof demo === "object" &&
+        media(demo.video) &&
         media(demo.poster) &&
-        (demo.screenshots ?? []).every((shot) => media(shot)))) &&
-    (listing.setup ?? []).every((step) => text(step?.title)) &&
+        optional(demo.screenshots, media))) &&
+    optional(
+      listing.setup,
+      (step) =>
+        !!step &&
+        text((step as SetupStep).title) &&
+        optionalText((step as SetupStep).detail) &&
+        optionalText((step as SetupStep).command),
+    ) &&
     (listing.links === undefined ||
       (!!listing.links && typeof listing.links === "object"))
   );

@@ -1,5 +1,9 @@
 import { followUpQueue } from "../messages/follow-up-queue";
-import type { AgentModelSettings } from "./model-settings";
+import type {
+  AgentModelSettings,
+  AgentModelSettingsContext,
+  AgentModelSettingsReadout,
+} from "./model-settings";
 import {
   createSessionAdmissions,
   type AgentSessionRouter,
@@ -959,9 +963,12 @@ export type AgentType<Config = unknown> = {
   /** What of `config` another type may adopt when the agent changes type.
    * Without it, all of its settings stay behind. */
   carry?(config: Config): Carry;
-  /** Safe saved model selections for agent_read. No discovery, I/O or
+  /** Safe model selections for agent_read. No discovery, I/O or
    * active-session claims. Without it these settings are unavailable. */
-  readModelSettings?(config: Config): AgentModelSettings;
+  readModelSettings?(
+    config: Config,
+    context?: AgentModelSettingsContext,
+  ): AgentModelSettings;
   /** Describes harness settings for a type-change preview. Rendered labels
    * never determine migration behavior. */
   describeMigration?(config: Config): readonly AgentMigrationSetting[];
@@ -1258,7 +1265,7 @@ export type AgentReadout = Readonly<
     pubkey: string;
     name: string;
     type: string;
-    modelSettings: AgentModelSettings | Readonly<{ unavailable: string }>;
+    modelSettings: AgentModelSettingsReadout;
   } & (
     | { instructions: string | null; synced: boolean; revision?: string }
     | { unavailable: string }
@@ -1490,6 +1497,10 @@ export type Agents = {
   readInterrupted(agent: Agent, signal: AbortSignal): Promise<RelayEvent[]>;
   /** The agent of this pubkey in the selected community, if it is an agent. */
   find(pubkey: string): Agent | undefined;
+  /** Safe current model selections for a local membership, as agent_read
+   * reports them. Reads existing state; never starts discovery or a harness.
+   * Feature-detect on older hosts. Does not report active session overrides. */
+  readModelSettings?(agent: AgentKey): Promise<AgentModelSettingsReadout>;
   /** The agent as `run` holds it, outside any run: for one of the calling
    * plugin's types while this copy of the app runs it, its type is not
    * changing and its community is live, else undefined. A type whose agents
@@ -2561,7 +2572,6 @@ export class AgentsService extends Service implements Agents {
             identity.owner === agent.owner &&
             originOf(identity.relay) === origin,
         );
-        const found = held.map((identity) => this.agentReadout(identity));
         // Hosted ones and ones on the owner's other devices, as listed here,
         // with their synced instructions where the owner can read them.
         const config = origin ? this.communityConfigs.get(origin) : undefined;
@@ -2595,10 +2605,18 @@ export class AgentsService extends Service implements Agents {
               };
         };
         if (target === undefined)
-          return [...found, ...(await Promise.all(listed.map(remote)))];
+          return [
+            ...(await Promise.all(
+              held.map((identity) => this.agentReadout(identity)),
+            )),
+            ...(await Promise.all(listed.map(remote))),
+          ];
         // Only the one asked for is read from the relay.
         const readers = [
-          ...found.map((entry) => ({ entry, read: () => entry })),
+          ...held.map((entry) => ({
+            entry,
+            read: () => this.agentReadout(entry),
+          })),
           ...listed.map((entry) => ({ entry, read: () => remote(entry) })),
         ];
         return pick(
@@ -4056,13 +4074,29 @@ export class AgentsService extends Service implements Agents {
   private callerTeams(agent: Agent) {
     return visibleTeams(this, this.callerOrigin(agent));
   }
-  private agentReadout(identity: AgentIdentity): AgentReadout {
+  async readModelSettings(key: AgentKey): Promise<AgentModelSettingsReadout> {
+    const identity = this.liveMember(key);
+    if (!identity || identity.deleting)
+      return { unavailable: "No such agent on this device" };
+    return (await this.agentReadout(identity)).modelSettings;
+  }
+  private async agentReadout(identity: AgentIdentity): Promise<AgentReadout> {
     const kind = this.types().find((type) => type.key === identity.type);
     const saved = this.settingsOf(identity);
     const editor = this.editorConfig(identity, saved.config as object);
     const config = editor?.config ?? saved.config;
     const side = this.configBinding(identity).instructions;
     const synced = !!side && isSynced(this.configStore, side);
+    let execution: AgentModelSettingsContext["execution"] = "local";
+    if (kind?.execution) {
+      try {
+        execution = (await this.executions.inspect(identity.key))
+          ? "remote"
+          : "local";
+      } catch {
+        execution = "unavailable";
+      }
+    }
     const base = {
       pubkey: identity.pubkey,
       name: identity.name,
@@ -4070,7 +4104,7 @@ export class AgentsService extends Service implements Agents {
       modelSettings: editor?.problem
         ? { unavailable: "Its synced config could not be read" }
         : kind?.readModelSettings
-          ? kind.readModelSettings(config)
+          ? kind.readModelSettings(config, { execution })
           : { unavailable: "Its type does not expose model settings here" },
     };
     // Synced instructions that are deleted, invalid or unreadable are not

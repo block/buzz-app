@@ -14,6 +14,7 @@ import { canMessageAgent, createAgentChoices, deletingAgent } from "./choices";
 import { createAgentLibrary } from "./library";
 import type { AttentionSource } from "./attention-sources";
 import { appClient } from "../../buzz-mcp/app-client";
+import { ClaudeDefaults } from "../../bundled/claude-code/defaults";
 import type { AgentToolAuthority, AgentToolProof } from "./tool-operation";
 import { callAttentionTool } from "../../buzz-mcp/attention";
 import { callSessionTool } from "../../buzz-mcp/session-tools";
@@ -15047,13 +15048,12 @@ it("changes instructions in place and discards a dismissed change draft", async 
 
 it("reads model selections through MCP by name and in lists without exposing config", async () => {
   const f = await setup();
+  const defaults = new ClaudeDefaults(memoryStorage());
   f.plugin.agents.register({
     ...f.type,
     id: "models",
-    readModelSettings: () => ({
-      model: { source: "configured", value: "model-a" },
-      effort: { source: "default" },
-    }),
+    readModelSettings: (config, context) =>
+      defaults.readModelSettings(config, context),
   });
   await f.service.create({ type: "example/echo", name: "Reader" });
   await f.service.create({ type: "example/models", name: "Model" });
@@ -15068,24 +15068,83 @@ it("reads model selections through MCP by name and in lists without exposing con
   const read = async (agent?: string) =>
     JSON.parse((await callTool(client, {}, "agent_read", { agent })) as string);
   try {
-    const expected = {
-      pubkey: sibling,
-      name: "Model",
-      type: "example/models",
-      instructions: "secret config",
-      synced: false,
-      modelSettings: {
-        model: { source: "configured", value: "model-a" },
-        effort: { source: "default" },
-      },
-    };
-    expect(await read("Model")).toEqual(expected);
-    expect(await read(sibling)).toEqual(expected);
-    expect(await read()).toContainEqual(expected);
+    for (const model of ["model-a", "model-b"]) {
+      await defaults.save({ model, effort: "high" });
+      const expected = {
+        pubkey: sibling,
+        name: "Model",
+        type: "example/models",
+        instructions: "secret config",
+        synced: false,
+        modelSettings: {
+          model: {
+            source: "default",
+            resolved: { value: model, source: "device" },
+          },
+          effort: {
+            source: "default",
+            resolved: { value: "high", source: "device" },
+          },
+        },
+      };
+      expect(await read("Model")).toEqual(expected);
+      expect(await read(sibling)).toEqual(expected);
+      expect(await read()).toContainEqual(expected);
+      const membership = f.service.find(sibling);
+      if (!membership) throw new Error("Missing local agent");
+      expect(await f.plugin.agents.readModelSettings?.(membership.key)).toEqual(
+        expected.modelSettings,
+      );
+    }
     expect(await read("Reader")).toMatchObject({
       modelSettings: { unavailable: expect.any(String) },
     });
   } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it("reads execution placement from saved state before projecting native defaults", async () => {
+  const storage = memoryStorage();
+  const f = await setup({ storage });
+  const defaults = new ClaudeDefaults(memoryStorage());
+  await defaults.save({ model: "local-model", effort: "high" });
+  f.plugin.agents.register({
+    ...f.type,
+    id: "models",
+    execution: true,
+    readModelSettings: (config, context) =>
+      defaults.readModelSettings(config, context),
+  });
+  await f.service.create({ type: "example/models", name: "Model" });
+  const agent = f.service.find(bot);
+  if (!agent) throw new Error("Missing local agent");
+  const key = `buzz.agent.execution.v1:${agent.key}`;
+  // The synchronous copy can lag another writer; inspect the saved binding.
+  const get = storage.get;
+  const cached = vi
+    .spyOn(storage, "get")
+    .mockImplementation((entry) => (entry === key ? null : get(entry)));
+  try {
+    await storage.set(key, JSON.stringify({ provider: "example/remote" }));
+    expect(await f.service.readModelSettings(agent.key)).toEqual({
+      model: { source: "default", resolved: { unavailable: "remote" } },
+      effort: { source: "default", resolved: { unavailable: "remote" } },
+    });
+    await storage.set(key, "invalid");
+    expect(await f.service.readModelSettings(agent.key)).toEqual({
+      model: {
+        source: "default",
+        resolved: { unavailable: "execution-unavailable" },
+      },
+      effort: {
+        source: "default",
+        resolved: { unavailable: "execution-unavailable" },
+      },
+    });
+  } finally {
+    cached.mockRestore();
+    await storage.set(key, null);
     await f.ctx.fiber.dispose();
   }
 });

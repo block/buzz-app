@@ -323,6 +323,22 @@ session-owned. The standard composer remains shared host UI, independent of any
 example plugin. Automated tests use source-only external consumer and tool fixtures
 to exercise component reuse and contribution lifecycle.
 
+### Agent model selections
+
+A plugin that injects `agents` can feature-detect
+`ctx.agents.readModelSettings?.(agentKey)`. This async read returns the same
+safe `modelSettings` projection as `agent_read`, without instructions or raw
+configuration. It accepts a local membership key from the agent service.
+Missing, unreadable or unsupported settings return `{ unavailable: "…" }`.
+Each supported field retains its saved policy and can include a resolved
+selection with provenance. A remote execution target never inherits this
+device's defaults. See [model read semantics](agents.md#creating-and-changing-agents-from-a-conversation)
+for field shapes and unresolved states. The read uses existing resolver state;
+it never starts model discovery, launches a harness or changes an agent.
+The result describes a current selection, not an existing session's override.
+Older hosts lack the method. A missing method or unresolved value does not
+establish a model; consumers must preserve that distinction.
+
 ## Plugin module contract
 
 `src/bundled/channels` is a bundled example. External projects have `manifest.json`

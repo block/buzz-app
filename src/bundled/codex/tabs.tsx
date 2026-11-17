@@ -1,4 +1,9 @@
 import type { AgentExecutionBinding } from "../../features/agents/execution";
+import {
+  readModelSettings,
+  type AgentModelResolution,
+  type AgentModelSettingsContext,
+} from "../../features/agents/model-settings";
 import type { AgentKey } from "../../features/agents/membership";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { formatItemTimestamp } from "../../shared/datetime";
@@ -57,6 +62,7 @@ import {
   config as readConfig,
   defaults,
   resolveModel,
+  resolveEffort,
   effortName,
   validWorkspace,
   type Config,
@@ -278,6 +284,68 @@ export class CodexProvider {
           ? preferred
           : (selected?.defaultReasoningEffort ?? "");
     return { ...explicit, model, effort };
+  }
+  /** Read the same next-turn selection without refreshing the catalog. */
+  readModelSettings(
+    raw: unknown,
+    { execution = "local" }: Partial<AgentModelSettingsContext> = {},
+  ) {
+    const saved = readConfig(raw);
+    const recommended = onRecommended(raw);
+    const settings = this.resolve(raw, execution !== "local");
+    const candidate = recommended ? this.recommended() : null;
+    const source = (field: "model" | "effort") =>
+      saved[field]
+        ? ("configured" as const)
+        : candidate
+          ? ("recommended" as const)
+          : field === "effort" && settings.effort !== this.state.defaults.effort
+            ? ("provider" as const)
+            : ("device" as const);
+    const unavailable =
+      execution === "unavailable"
+        ? "execution-unavailable"
+        : execution === "remote"
+          ? "remote"
+          : recommended && candidate === undefined
+            ? "not-loaded"
+            : undefined;
+    const data = this.state.data;
+    const model = resolveModel(settings.model, data?.models ?? []);
+    const selected = data?.models.find((row) => row.model === model);
+    const missing = data
+      ? "unknown"
+      : this.state.readiness === "attention"
+        ? "unknown"
+        : "not-loaded";
+    const modelResolution: AgentModelResolution = unavailable
+      ? { unavailable }
+      : data && !selected
+        ? { unavailable: "unknown" }
+        : model
+          ? {
+              value: model,
+              source: settings.model ? source("model") : "provider",
+            }
+          : { unavailable: missing };
+    const effort = selected
+      ? resolveEffort(selected, settings.effort)
+      : candidate?.effort;
+    return readModelSettings(saved, {
+      recommended,
+      resolved: {
+        model: modelResolution,
+        effort: unavailable
+          ? { unavailable }
+          : effort
+            ? {
+                value: effort,
+                source:
+                  effort === settings.effort ? source("effort") : "provider",
+              }
+            : { unavailable: missing },
+      },
+    });
   }
   dispose() {
     this.offSetup?.();

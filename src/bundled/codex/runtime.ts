@@ -73,6 +73,7 @@ import {
 import {
   config,
   resolveModel,
+  resolveEffort,
   defaults,
   absoluteWorkspace,
   effortName,
@@ -813,9 +814,7 @@ export class CodexRuntime {
           ({ reasoningEffort: id }) => ({ id, label: effortName(id) }),
         );
         // As a run picks it: the configured effort if the model has it.
-        const effort = efforts.some((level) => level.id === settings.effort)
-          ? settings.effort
-          : row.defaultReasoningEffort;
+        const effort = resolveEffort(row, settings.effort);
         return {
           id: row.model,
           label: row.displayName || row.model,
@@ -2669,14 +2668,8 @@ export class CodexRuntime {
         "The selected Codex model is unavailable. Choose an available model in Settings.",
       );
     const model = selected.model;
-    const supported = selected.supportedReasoningEfforts.map(
-      (level) => level.reasoningEffort,
-    );
     // A picked model may not support the configured effort.
-    const effort =
-      [pick.effort, settings.effort].find(
-        (level) => level && supported.includes(level),
-      ) ?? selected.defaultReasoningEffort;
+    const effort = resolveEffort(selected, pick.effort, settings.effort);
     // A synced effort is the agent's on every device: never run another.
     const kept = synced?.effort;
     if (kept && !pick.model && !pick.effort && effort !== kept)

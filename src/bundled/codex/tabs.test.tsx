@@ -818,6 +818,106 @@ it("applies provider precedence without rewriting records and falls back for inc
   const invalid = new CodexProvider(f.spawn, localStore());
   expect(invalid.resolve(defaults)).toEqual(defaults);
 });
+it("reads current defaults and mixed overrides through the provider resolver without discovery", async () => {
+  const f = fixture();
+  const read = (raw: unknown = defaults) => f.provider.readModelSettings(raw);
+  expect(read().model).toEqual({
+    source: "default",
+    resolved: { unavailable: "not-loaded" },
+  });
+  expect(f.spawn).not.toHaveBeenCalled();
+  await f.provider.check();
+  expect(read()).toEqual({
+    model: {
+      source: "default",
+      resolved: { value: "model-a", source: "provider" },
+    },
+    effort: {
+      source: "default",
+      resolved: { value: "low", source: "provider" },
+    },
+  });
+  await f.provider.saveDefaults({ model: "model-b", effort: "medium" });
+  expect(read()).toEqual({
+    model: {
+      source: "default",
+      resolved: { value: "model-b", source: "device" },
+    },
+    effort: {
+      source: "default",
+      resolved: { value: "medium", source: "device" },
+    },
+  });
+  expect(read({ ...defaults, effort: "high" })).toEqual({
+    model: {
+      source: "default",
+      resolved: { value: "model-b", source: "device" },
+    },
+    effort: {
+      source: "configured",
+      value: "high",
+      resolved: { value: "medium", source: "provider" },
+    },
+  });
+  expect(read({ ...defaults, model: "model-a" })).toEqual({
+    model: {
+      source: "configured",
+      value: "model-a",
+      resolved: { value: "model-a", source: "configured" },
+    },
+    effort: {
+      source: "default",
+      resolved: { value: "low", source: "provider" },
+    },
+  });
+  const calls = f.spawn.mock.calls.length;
+  expect(
+    f.provider.readModelSettings(defaults, { execution: "remote" }).model,
+  ).toEqual({ source: "default", resolved: { unavailable: "remote" } });
+  expect(
+    f.provider.readModelSettings(defaults, { execution: "unavailable" }).effort,
+  ).toEqual({
+    source: "default",
+    resolved: { unavailable: "execution-unavailable" },
+  });
+  expect(f.spawn).toHaveBeenCalledTimes(calls);
+});
+
+it("reads a changed provider catalog default and reports a failed source honestly", async () => {
+  const f = fixture();
+  await f.provider.check();
+  const spawn = f.spawn.getMockImplementation();
+  if (!spawn) throw new Error("Missing host fixture");
+  f.spawn.mockImplementation((id, options) =>
+    spawn(id, {
+      ...options,
+      onStdout: (data) => {
+        const wire = JSON.parse(data);
+        if (Array.isArray(wire.result?.data))
+          for (const row of wire.result.data)
+            row.isDefault = row.model === "model-b";
+        options?.onStdout?.(`${JSON.stringify(wire)}\n`);
+      },
+    }),
+  );
+  await f.provider.check();
+  expect(f.provider.readModelSettings(defaults)).toMatchObject({
+    model: {
+      source: "default",
+      resolved: { value: "model-b", source: "provider" },
+    },
+    effort: {
+      source: "default",
+      resolved: { value: "medium", source: "provider" },
+    },
+  });
+  f.disk.signedIn = false;
+  await f.provider.check();
+  expect(f.provider.readModelSettings(defaults).model).toEqual({
+    source: "default",
+    resolved: { unavailable: "unknown" },
+  });
+});
 it("selects a model in the Settings dropdown without changing local Codex preferences", async () => {
   const configured = { model: "model-b", model_reasoning_effort: "high" };
   const f = fixture({ configured });
@@ -2726,15 +2826,33 @@ describe("Recommended", () => {
     const saved = { ...defaults, preset: "recommended" as const };
     // Until the catalog is read it runs on the device's default.
     expect(f.provider.recommended()).toBeUndefined();
+    expect(f.provider.readModelSettings(saved).model).toEqual({
+      source: "recommended",
+      resolved: { unavailable: "not-loaded" },
+    });
     await f.provider.check();
     // Model Z isn't offered, nor Model B on Extra high, so the next
     // candidate, over device defaults.
     expect(f.provider.recommended()).toEqual(candidate);
+    expect(f.provider.readModelSettings(saved)).toEqual({
+      model: {
+        source: "recommended",
+        resolved: { value: "model-b", source: "recommended" },
+      },
+      effort: {
+        source: "recommended",
+        resolved: { value: "medium", source: "recommended" },
+      },
+    });
     // Kept for the launch: a later failed check doesn't move it to the default.
     f.disk.signedIn = false;
     await f.provider.check();
     expect(f.provider.snapshot().readiness).toBe("attention");
     expect(f.provider.recommended()).toEqual(candidate);
+    expect(f.provider.readModelSettings(saved).effort).toEqual({
+      source: "recommended",
+      resolved: { value: "medium", source: "recommended" },
+    });
     f.disk.signedIn = true;
     expect(f.provider.resolve(saved)).toMatchObject({
       model: "model-b",
@@ -2767,6 +2885,13 @@ describe("Recommended", () => {
     await f.provider.saveDefaults({ model: "model-a", effort: "" });
     await f.provider.check();
     expect(f.provider.recommended()).toBeNull();
+    expect(
+      f.provider.readModelSettings({ ...defaults, preset: "recommended" })
+        .model,
+    ).toEqual({
+      source: "recommended",
+      resolved: { value: "model-a", source: "device" },
+    });
     expect(
       f.provider.resolve({ ...defaults, preset: "recommended" }).model,
     ).toBe("model-a");

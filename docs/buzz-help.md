@@ -1454,7 +1454,10 @@ available rather than silently discarding it.
   restores its instructions and keeps its current name; members are not
   versioned. Teams kept only on this Mac have no versions.
 - Your agents can read your agents and teams here (`agent_read`,
-  `team_read`) and propose a team's new name or instructions
+  `team_read`). Model reads include saved choices and, for local Codex and
+  Claude agents, current defaults when Buzz can resolve them. The result names
+  the source or says why it is unknown. It does not prove a running session's
+  model. Your agents can also propose a team's new name or instructions
   (`team_update`). A proposal opens a review: nothing changes until you save
   it, members never change this way, and Save is refused if the team changed
   since the proposal.

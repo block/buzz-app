@@ -159,16 +159,31 @@ Each named or listed agent also has `modelSettings`. Codex, Claude Code, goose
 and Pi expose `model` and `effort`; goose and Pi also expose `provider`.
 Each field has a `source`: `configured` includes the saved string `value`,
 `default` inherits the type's defaults, and `recommended` follows
-Buzz's Recommended policy. Defaults and recommendations have no `value`: this
-read does not discover models, resolve aliases, inspect harness files or start
-a process. A type can inherit device preferences before the harness default.
-These are saved agent selections, not proof of an active turn's
-model or effort. Per-conversation choices can differ.
+Buzz's Recommended policy. These saved fields stay unchanged when defaults change.
+Codex and Claude Code also include `resolved` on each field. A known selection
+has `{ value, source }`, where the source is `configured`, `device`, `provider`
+or `recommended`. Codex uses the same device preferences, loaded model catalog
+and supported thinking fallback as execution. Claude resolves device preferences
+and cached Recommended choices; an unset native choice stays unknown because
+Claude Code settings can depend on the workspace. Model aliases remain aliases.
+An unresolved selection has `{ unavailable }`: `not-loaded` for a catalog or
+recommendation not yet loaded, `unknown` for a default the host cannot establish,
+`remote` for an execution target's settings, or `execution-unavailable` when its
+saved placement cannot be read. Reads never start discovery, inspect harness
+files or start a process. Other types can omit `resolved`.
+These are current selections, not proof of an active turn's model or effort.
+Per-conversation choices and existing sessions can differ.
 An invalid field has `source: "unavailable"`. A type without this read contract,
 an unreadable synced config, or an agent hosted elsewhere has
 `modelSettings: { unavailable: "…" }`, even when its instructions are readable.
 The type owns the projection through `AgentType.readModelSettings`; the service
 does not expose its config or infer settings from the type's name or summary.
+Plugins can feature-detect `ctx.agents.readModelSettings(agentKey)` to read the
+same safe metadata for a local membership, including one that runs on an execution
+target. It returns `modelSettings` directly, or `{ unavailable: "…" }` when the
+membership or settings are unavailable here. It does not read another device's
+defaults or alter agent settings. Named reads, lists and plugin reads share the
+same projection. See [the plugin contract](plugin-architecture.md#agent-model-selections).
 
 `team_read` returns the teams Your teams shows in that community, by id or
 exact name, or all of them: name, instructions, members, whether the team syncs

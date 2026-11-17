@@ -112,6 +112,8 @@ function fixture(
   /** Methods the server answers with a JSON-RPC error instead of a result. */
   const failing = new Set<string>();
   const failures = new Map<string, string>();
+  /** Interrupted turns whose completion the test sends separately. */
+  const delayedInterruptCompletions = new Set<string>();
   /** Methods the server answers only once their promise settles. */
   const held = new Map<string, Promise<void>>();
   const toolCalls = new Map<
@@ -217,7 +219,10 @@ function fixture(
       // Ids follow `complete`'s index, so a refused start still takes one.
       if (request.method === "turn/start")
         result = { turn: { id: `turn-${starts().indexOf(request) + 1}` } };
-      if (request.method === "turn/interrupt")
+      if (
+        request.method === "turn/interrupt" &&
+        !delayedInterruptCompletions.has(String(params.turnId))
+      )
         emit({
           method: "turn/completed",
           params: {
@@ -689,6 +694,7 @@ function fixture(
     modelIds,
     failing,
     failures,
+    delayedInterruptCompletions,
     held,
     emit,
     publish,
@@ -8415,58 +8421,133 @@ it("ignores retained conversation folders for remote community admission", async
   }
 });
 
-it("refuses spoken adoption while a typed community source still owns the seat", async () => {
-  vi.stubGlobal("RTCPeerConnection", class {});
-  const f = fixture();
-  const d = f.delivery("typed");
-  const config = { ...(d.config as object), scope: "community" };
-  f.huddleChannels.add("room");
-  const ended = vi.fn();
-  const connection = await f.runtime.voice(
-    {
-      config,
-      agent: { ...d.agent, config } as unknown as Agent,
-      conversation: { channelId: "room" },
-      signal: new AbortController().signal,
-      async output() {},
-      async transcript() {},
-      ended,
-    },
-    d.agent,
-  );
-  let release!: () => void;
-  try {
-    await f.runtime.run({ ...f.delivery("intervening typed"), config });
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    f.held.set(
-      "thread/inject_items",
-      new Promise<void>((resolve) => {
-        release = resolve;
-      }),
+it.each([false, true])(
+  "drains rejected Huddle speech before starting queued text (interrupt fails: %s)",
+  async (fails) => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const f = fixture();
+    const d = f.delivery("typed");
+    const config = { ...(d.config as object), scope: "community" };
+    f.huddleChannels.add("room");
+    const ended = vi.fn();
+    const connection = await f.runtime.voice(
+      {
+        config,
+        agent: { ...d.agent, config } as unknown as Agent,
+        conversation: { channelId: "room" },
+        signal: new AbortController().signal,
+        async output() {},
+        async transcript() {},
+        ended,
+      },
+      d.agent,
     );
-    await f.complete(0);
-    f.emit({
-      method: "turn/started",
-      params: { threadId: "thread-1", turn: { id: "racing-spoken" } },
-    });
-    await vi.waitFor(() =>
-      expect(ended).toHaveBeenCalledWith(
-        expect.objectContaining({ message: expect.stringContaining("Rejoin") }),
-      ),
-    );
-    expect(
-      f.sent.some(
-        (w) =>
-          w.method === "turn/interrupt" &&
-          (w.params as { turnId?: string }).turnId === "racing-spoken",
-      ),
-    ).toBe(true);
-  } finally {
-    release?.();
-    await connection.close();
-    f.runtime.dispose();
-  }
-});
+    const turnId = "racing-spoken";
+    f.delayedInterruptCompletions.add(turnId);
+    const exiting = deferred<void>();
+    if (fails) {
+      f.failing.add("turn/interrupt");
+      f.process.end.mockImplementationOnce(async () => {
+        await exiting.promise;
+        f.exits.resolve(0);
+      });
+    }
+    const restoring = deferred<void>();
+    const interrupting = deferred<void>();
+    const cleaning = deferred<void>();
+    const method = (name: string) =>
+      f.sent.find((wire) => wire.method === name);
+    try {
+      await f.runtime.run({ ...f.delivery("intervening typed"), config });
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      f.held.set("thread/inject_items", restoring.promise);
+      f.held.set("turn/interrupt", interrupting.promise);
+      f.held.set("thread/backgroundTerminals/clean", cleaning.promise);
+      await f.complete(0);
+      await vi.waitFor(() =>
+        expect(method("thread/inject_items")).toBeDefined(),
+      );
+      await f.runtime.run({
+        ...f.delivery("queued before rejection"),
+        channelId: "before",
+        config,
+      });
+      f.emit({
+        method: "turn/started",
+        params: { threadId: "thread-1", turn: { id: turnId } },
+      });
+      await vi.waitFor(() =>
+        expect(ended).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: expect.stringContaining("Rejoin"),
+          }),
+        ),
+      );
+      expect(
+        f.sent.some(
+          (w) =>
+            w.method === "turn/interrupt" &&
+            (w.params as { turnId?: string }).turnId === turnId,
+        ),
+      ).toBe(true);
+      await f.runtime.run({
+        ...f.delivery("queued after rejection"),
+        channelId: "after",
+        config,
+      });
+      restoring.resolve();
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(0);
+      vi.useRealTimers();
+      expect(f.starts()).toHaveLength(1);
+      interrupting.resolve();
+      if (fails) {
+        await vi.waitFor(() => expect(f.process.end).toHaveBeenCalled());
+        expect(f.starts()).toHaveLength(1);
+        exiting.resolve();
+        await connection.close();
+        return;
+      }
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(0);
+      vi.useRealTimers();
+      expect(method("thread/backgroundTerminals/clean")).toBeUndefined();
+      expect(f.starts()).toHaveLength(1);
+      f.emit({
+        method: "turn/completed",
+        params: {
+          threadId: "thread-1",
+          turn: { id: turnId, status: "interrupted" },
+        },
+      });
+      await vi.waitFor(() =>
+        expect(method("thread/backgroundTerminals/clean")).toBeDefined(),
+      );
+      expect(f.starts()).toHaveLength(1);
+      cleaning.resolve();
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+      const unsubscribed = f.sent.findIndex(
+        (wire) => wire.method === "thread/unsubscribe",
+      );
+      expect(unsubscribed).toBeGreaterThanOrEqual(0);
+      expect(
+        f.sent
+          .slice(0, unsubscribed)
+          .filter((wire) => wire.method === "turn/start"),
+      ).toHaveLength(1);
+      await f.complete(1);
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+      await f.complete(2);
+    } finally {
+      restoring.resolve();
+      interrupting.resolve();
+      cleaning.resolve();
+      exiting.resolve();
+      f.runtime.dispose();
+      await connection.close();
+    }
+  },
+);
 
 it("keeps the retained Solo Canvas when an intervening community turn is refused", async () => {
   const f = fixture();

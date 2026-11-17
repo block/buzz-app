@@ -238,7 +238,12 @@ type Lane = {
   /** How many of them are still being placed. */
   behind: number;
   active?: Active;
-  voice?: { loaded: Loaded; signal: AbortSignal; restore(): Promise<void> };
+  voice?: {
+    loaded: Loaded;
+    signal: AbortSignal;
+    restore(): Promise<void>;
+    rejectedSpeechClosing?: Promise<void>;
+  };
   voiceOpening?: true;
 };
 type Entry = {
@@ -1666,7 +1671,7 @@ export class CodexRuntime {
       seat.thinking?.(delegatedThinking || realtimeThinking);
     let off = () => {};
     let closing: Promise<void> | undefined;
-    const close = () => {
+    const close = (rejected?: { typed: Active; drained: Promise<void> }) => {
       if (closing) return closing;
       signal.removeEventListener("abort", onAbort);
       abort.abort();
@@ -1675,10 +1680,13 @@ export class CodexRuntime {
       // New text waits on closing, installed as lane.tail below.
       const tail = lane.tail;
       const opened = media;
-      const stopped = opened?.close();
+      // Text already queued also waits for this close on rejected speech,
+      // so the close can wait only for the typed turn that preceded it.
+      const drained = rejected
+        ? Promise.all([rejected.typed.released, rejected.drained])
+        : tail.catch(() => {});
       closing = (async () => {
-        await stopped;
-        await tail.catch(() => {});
+        await Promise.all([opened?.close(), drained]);
         if (media !== opened) await media?.close();
         if (loaded) {
           await server.rpc
@@ -1690,7 +1698,15 @@ export class CodexRuntime {
         if (!lane.active && !lane.queued && entry.lanes.get(key) === lane)
           entry.lanes.delete(key);
       })();
-      lane.tail = closing;
+      if (rejected && lane.voice) {
+        lane.voice.rejectedSpeechClosing = closing;
+        lane.tail = Promise.all([tail.catch(() => {}), closing]).then(() => {});
+        void lane.tail.catch((error) =>
+          console.error("Codex could not retire the Huddle seat", error),
+        );
+      } else {
+        lane.tail = closing;
+      }
       return closing;
     };
     const onAbort = () => {
@@ -1771,8 +1787,10 @@ export class CodexRuntime {
               signal.throwIfAborted();
               entry.project.resolve(channelId, NO_PROJECT);
             } catch (error) {
-              void close();
-              seat.ended(new Error(message(error)));
+              if (!signal.aborted) {
+                void close();
+                seat.ended(new Error(message(error)));
+              }
               throw error;
             }
           },
@@ -1791,17 +1809,18 @@ export class CodexRuntime {
             delegatedThinking = method === "turn/started";
             thinking();
           }
+          const active = lane.active;
           if (
             method === "turn/started" &&
             p.turn &&
             settings.scope === "community" &&
-            lane.active?.finished &&
-            !Object.hasOwn(lane.active.reply, "adopted")
+            active?.finished &&
+            !Object.hasOwn(active.reply, "adopted")
           ) {
-            void rpc
-              .request("turn/interrupt", { threadId, turnId: p.turn.id })
-              .catch(() => {});
-            void close();
+            void close({
+              typed: active,
+              drained: this.drainRejectedSpeech(rpc, threadId, p.turn.id),
+            });
             seat.ended(
               new Error(
                 "Room instructions are still being restored. Rejoin the Huddle and repeat your request.",
@@ -2593,6 +2612,30 @@ export class CodexRuntime {
     request.acknowledged?.(steering ? { steering: true } : undefined);
   }
 
+  private async drainRejectedSpeech(
+    rpc: AppServer,
+    threadId: string,
+    turnId: string,
+  ) {
+    // This turn cannot use the seat's signal: closing media aborts it.
+    const followed = follow(rpc, new AbortController().signal, {
+      threadId,
+      turnId,
+      finished: false,
+    });
+    try {
+      await Promise.all([
+        rpc.request("turn/interrupt", { threadId, turnId }),
+        followed.completed,
+      ]);
+      await this.terminals(rpc, threadId);
+    } catch {
+      await rpc.close();
+    } finally {
+      followed.stop();
+    }
+  }
+
   /** Compacts thread `threadId`, which runs as a turn of its own on it. */
   private async compact(
     rpc: AppServer,
@@ -2662,7 +2705,9 @@ export class CodexRuntime {
       .then(async () => {
         const ready = admitted ? await admitted : true;
         // A server-started voice turn can arrive after this job was queued.
-        while (current.active) await current.active.released;
+        while (current.active || current.voice?.rejectedSpeechClosing)
+          await (current.active?.released ??
+            current.voice?.rejectedSpeechClosing);
         entry.waiting.delete(request);
         if (!ready) return;
         if (entry.abort.signal.aborted) {
@@ -2688,6 +2733,7 @@ export class CodexRuntime {
     // Agents can deliver follow-ups and other conversations immediately.
     void job
       .catch(async (error) => {
+        entry.waiting.delete(request);
         request.failActivity(message(error));
         const reason = `Codex could not start: ${message(error)}.`;
         this.status(request.agent.key, key, "Needs attention", reason);

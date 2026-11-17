@@ -7,6 +7,7 @@ import { PluginRuntime } from "../../plugins/runtime";
 import { provideNavigation } from "../navigation/service";
 import { createNotifications } from "./platform";
 import { NotificationsService } from "./service";
+import { createNotificationPreferences } from "./preferences";
 import { messageNotificationText } from "./content";
 
 const sdk = vi.hoisted(() => ({
@@ -45,14 +46,20 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   native.value = true;
 });
-function setup() {
+function setup(storage?: Window) {
   const ctx = new Context();
   contexts.push(ctx);
   const runtime = new PluginRuntime(ctx, async () => ({ apply() {} }));
   ctx.effect(() => () => runtime.dispose());
   const navigation = provideNavigation(ctx).navigation;
-  // Exercise the production default, not an injected adapter.
-  const service = new NotificationsService(ctx, navigation);
+  // Exercise the production default, not an injected adapter. This Node host
+  // has no storage of its own; a test that needs it supplies only that.
+  const service = new NotificationsService(
+    ctx,
+    navigation,
+    undefined,
+    storage && createNotificationPreferences(storage),
+  );
   service.selectViewer("a".repeat(64));
   const submit = (sourceKey: string) =>
     service.admit(
@@ -127,6 +134,29 @@ it("macOS first-run Delivery exposes an explicit authorization action", async ()
   await service.requestPermission();
   expect(sdk.bannerRequest).toHaveBeenCalledOnce();
   expect(service.snapshot().permission).toBe("granted");
+});
+
+it("a macOS first-run arrival asks the system once in place of its banner", async () => {
+  sdk.bannerPermission.mockResolvedValue("default");
+  const values = new Map<string, string>();
+  const { service, submit } = setup({
+    localStorage: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => void values.set(key, value),
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  } as unknown as Window);
+  await flush();
+  expect(sdk.bannerRequest).not.toHaveBeenCalled();
+  await submit("first");
+  await flush();
+  expect(sdk.bannerRequest).toHaveBeenCalledOnce();
+  await submit("second");
+  await flush();
+  expect(sdk.bannerRequest).toHaveBeenCalledOnce();
+  expect(sdk.show).not.toHaveBeenCalled();
+  expect(service.snapshot()).toMatchObject({ requesting: false, error: null });
 });
 
 it("observable SDK failures surface once without retry or a browser fallback", async () => {
@@ -373,6 +403,7 @@ it.each(["Win32", "Linux x86_64"])(
     await submit("banner");
     await flush();
     expect(sdk.show).toHaveBeenCalledOnce();
+    expect(sdk.bannerRequest).not.toHaveBeenCalled();
     await ctx.fiber.dispose();
     expect(sdk.indicator).not.toHaveBeenCalled();
     expect(sdk.permission).not.toHaveBeenCalled();

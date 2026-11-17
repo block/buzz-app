@@ -12,6 +12,8 @@ export type NotificationPresentation = Readonly<{
 export interface NotificationPlatform {
   readonly label: string;
   readonly systemManaged?: boolean;
+  /** The system prompt needs no user gesture, so the first alert may ask. */
+  readonly requestsOnArrival?: boolean;
   permission(): Promise<NotificationPermissionState>;
   requestPermission(): Promise<NotificationPermissionState>;
   show(
@@ -41,6 +43,7 @@ export function createNotifications(): NotificationPlatform {
   return {
     label: "Desktop notifications",
     systemManaged: !macOS,
+    requestsOnArrival: macOS,
     // macOS uses Dock's UNUserNotificationCenter authorization source. Other
     // desktop backends have no permission query in this bridge.
     permission: () =>

@@ -107,6 +107,7 @@ export class NotificationsService extends Service implements Notifications {
   private generation = 0;
   private permissionGeneration = 0;
   private permissionRequest: Promise<void> | undefined;
+  private askedOnArrival = false;
   private scheduled = false;
   private state: NotificationSnapshot;
   constructor(
@@ -225,11 +226,14 @@ export class NotificationsService extends Service implements Notifications {
       if (generation === this.permissionGeneration) this.reportError(error);
     }
   }
-  requestPermission() {
+  /** `quiet` is the automatic request: nobody acted, so an ignored system
+   * prompt (a native timeout) is not reported and no shown error is cleared. */
+  requestPermission({ quiet = false } = {}) {
     if (this.closed || this.state.developmentPaused) return Promise.resolve();
     if (this.permissionRequest) return this.permissionRequest;
     const generation = ++this.permissionGeneration;
-    this.publish({ requesting: true, error: null });
+    const report = quiet ? () => {} : this.reportError;
+    this.publish({ requesting: true, ...(quiet ? {} : { error: null }) });
     // Keep the browser's user gesture: no asynchronous probe before the request.
     try {
       this.permissionRequest = this.platform
@@ -239,16 +243,30 @@ export class NotificationsService extends Service implements Notifications {
             this.publish({ permission });
           this.schedule();
         })
-        .catch(this.reportError)
+        .catch(report)
         .finally(() => {
           this.permissionRequest = undefined;
           this.publish({ requesting: false });
         });
     } catch (error) {
-      this.reportError(error);
+      report(error);
       this.publish({ requesting: false });
     }
     return this.permissionRequest ?? Promise.resolve();
+  }
+  /** Sends the one automatic system prompt per device; true when this alert
+   * became it. An explicit request already in flight keeps its own alerts. */
+  private requestOnFirstAlert() {
+    if (
+      this.askedOnArrival ||
+      this.permissionRequest ||
+      !this.platform.requestsOnArrival
+    )
+      return false;
+    this.askedOnArrival = true;
+    if (!this.preferences.claimAutomaticRequest()) return false;
+    void this.requestPermission({ quiet: true });
+    return true;
   }
   private allowed(item: Candidate) {
     return (
@@ -466,7 +484,16 @@ export class NotificationsService extends Service implements Notifications {
         return;
       }
       if (permission !== "granted" && permission !== "unknown") {
-        if (permission !== "default") this.pending.delete(item);
+        // Not yet asked holds the alert for an explicit Allow. The first alert
+        // the OS itself just reported as not yet asked is instead replaced by
+        // the system prompt: it is dropped, and nothing awaits the answer.
+        if (
+          permission !== "default" ||
+          (probed === "default" &&
+            item.eligible() === true &&
+            this.requestOnFirstAlert())
+        )
+          this.pending.delete(item);
         return;
       }
       if (item.eligible() !== true) {

@@ -20,14 +20,21 @@ const contexts: Context[] = [];
 afterEach(async () => {
   for (const ctx of contexts.splice(0)) await ctx.fiber.dispose();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
-function setup() {
+function setup(
+  options: {
+    requestsOnArrival?: boolean;
+    permission?: NotificationPermissionState;
+    values?: Map<string, string>;
+  } = {},
+) {
   const ctx = new Context();
   contexts.push(ctx);
   let module: PluginModule = { apply() {} };
   const runtime = new PluginRuntime(ctx, async () => module);
   ctx.effect(() => () => runtime.dispose());
-  const values = new Map<string, string>();
+  const values = options.values ?? new Map<string, string>();
   const host = {
     localStorage: {
       getItem: (key: string) => values.get(key) ?? null,
@@ -40,9 +47,10 @@ function setup() {
   const navigation = provideNavigation(ctx);
   const clicks: (() => void)[] = [];
   const failures: ((error: Error) => void)[] = [];
-  let permission: NotificationPermissionState = "granted";
+  let permission = options.permission ?? "granted";
   const platform: NotificationPlatform = {
     label: "Test",
+    ...(options.requestsOnArrival ? { requestsOnArrival: true } : {}),
     permission: vi.fn(async () => permission),
     requestPermission: vi.fn(async () => permission),
     show: vi.fn(async (_item, activate, failed) => {
@@ -106,6 +114,22 @@ function setup() {
 async function flush() {
   for (let i = 0; i < 40; i++) await Promise.resolve();
 }
+const askedKey = "buzz-notification-permission-asked.v1";
+/** A fresh install on a platform that may ask on arrival: the OS reports not yet asked. */
+function firstRun(values?: Map<string, string>) {
+  return setup({
+    requestsOnArrival: true,
+    permission: "default",
+    ...(values ? { values } : {}),
+  });
+}
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 it("deduplicates in this running session and routes clicks through existing navigation", async () => {
   const t = setup();
   expect(await t.submit()).toBe(true);
@@ -126,16 +150,257 @@ it("more than 256 sequential alerts do not fill a persistent inbox or pause deli
   expect(t.service.snapshot().error).toBeNull();
   expect(Object.keys(t.service.snapshot())).not.toContain("records");
 });
-it("retains a fresh candidate for explicit permission, without prompting on arrival", async () => {
+it("a platform that cannot ask on arrival retains a fresh candidate for explicit permission", async () => {
   const t = setup();
   t.permission("default");
   await t.submit();
   await flush();
   expect(t.platform.requestPermission).not.toHaveBeenCalled();
+  expect(t.values.has(askedKey)).toBe(false);
   expect(t.platform.show).not.toHaveBeenCalled();
   t.permission("granted");
   await t.service.requestPermission();
   await flush();
+  expect(t.platform.show).toHaveBeenCalledTimes(1);
+});
+it("simultaneous and later first-run alerts send one system request, which replaces the first alert", async () => {
+  const t = firstRun();
+  const answer = deferred<NotificationPermissionState>();
+  vi.mocked(t.platform.requestPermission).mockReturnValueOnce(answer.promise);
+  try {
+    await Promise.all(["one", "two", "three"].map((id) => t.submit(id)));
+    await flush();
+    expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+    expect(t.service.snapshot().requesting).toBe(true);
+    expect(t.values.get(askedKey)).toBe("1");
+    await t.submit("later");
+    await flush();
+    expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+    expect(t.platform.show).not.toHaveBeenCalled();
+  } finally {
+    t.permission("granted");
+    answer.resolve("granted");
+    await flush();
+  }
+  expect(t.service.snapshot()).toMatchObject({
+    requesting: false,
+    permission: "granted",
+  });
+  // The prompt replaced the alert that triggered it; the others were held as
+  // any alert is while the OS has not been asked.
+  expect(t.platform.show).toHaveBeenCalledTimes(3);
+  expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+});
+it("allowing the automatic prompt does not bring back the alert it replaced", async () => {
+  const t = firstRun();
+  vi.mocked(t.platform.requestPermission).mockImplementationOnce(async () => {
+    t.permission("granted");
+    return "granted";
+  });
+  await t.submit();
+  await flush();
+  expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+  expect(t.service.snapshot()).toMatchObject({
+    requesting: false,
+    permission: "granted",
+  });
+  expect(t.platform.show).not.toHaveBeenCalled();
+  await t.submit("next");
+  await flush();
+  expect(t.platform.show).toHaveBeenCalledTimes(1);
+});
+it.each(["denied", "unknown", "unsupported"] as const)(
+  "%s permission never asks on arrival",
+  async (permission) => {
+    const t = setup({ requestsOnArrival: true, permission });
+    await t.submit();
+    await flush();
+    // The construction read and this alert's own probe both completed.
+    expect(t.platform.permission).toHaveBeenCalledTimes(2);
+    expect(t.platform.requestPermission).not.toHaveBeenCalled();
+    expect(t.values.has(askedKey)).toBe(false);
+    expect(t.platform.show).toHaveBeenCalledTimes(
+      permission === "unknown" ? 1 : 0,
+    );
+  },
+);
+it("a stale not-yet-asked reading never asks once the OS itself reports a denial", async () => {
+  const t = firstRun();
+  await flush();
+  expect(t.service.snapshot().permission).toBe("default");
+  const probe = deferred<NotificationPermissionState>();
+  const refresh = deferred<NotificationPermissionState>();
+  vi.mocked(t.platform.permission)
+    .mockReturnValueOnce(probe.promise)
+    .mockReturnValueOnce(refresh.promise);
+  try {
+    await t.submit();
+    await flush();
+    // A newer read supersedes the alert's probe, which then falls back to the
+    // last published state: still "default".
+    void t.service.refreshPermission();
+    expect(t.platform.permission).toHaveBeenCalledTimes(3);
+    probe.resolve("denied");
+    await flush();
+    expect(t.platform.requestPermission).not.toHaveBeenCalled();
+    expect(t.values.has(askedKey)).toBe(false);
+  } finally {
+    t.permission("denied");
+    probe.resolve("denied");
+    refresh.resolve("denied");
+    await flush();
+  }
+  expect(t.service.snapshot().permission).toBe("denied");
+  expect(t.platform.requestPermission).not.toHaveBeenCalled();
+  expect(t.platform.show).not.toHaveBeenCalled();
+});
+it.each<[string, (t: ReturnType<typeof setup>) => Promise<unknown>]>([
+  [
+    "alerts turned off",
+    (t) => {
+      t.service.updatePreferences({ enabled: false });
+      return t.submit();
+    },
+  ],
+  [
+    "a disabled category",
+    (t) => {
+      t.service.updatePreferences({ categories: { mention: false } });
+      return t.submit();
+    },
+  ],
+  ["unknown read readiness", (t) => t.submit("waiting", () => "wait")],
+  ["a conversation in view", (t) => t.submit("seen", () => false)],
+  [
+    "a plugin gate",
+    async (t) => {
+      t.install({
+        inject: ["notifications"],
+        apply(ctx) {
+          ctx.notifications.gate({ id: "solo", allows: () => false });
+        },
+      });
+      await vi.waitFor(() => expect(t.service.gated(target)).toBe(false));
+      return t.submit();
+    },
+  ],
+])("%s never asks on arrival", async (_name, arrive) => {
+  const t = firstRun();
+  await arrive(t);
+  await flush();
+  expect(t.platform.requestPermission).not.toHaveBeenCalled();
+  expect(t.values.has(askedKey)).toBe(false);
+});
+it("the development pause never asks on arrival", async () => {
+  vi.stubEnv("VITE_BUZZ_NOTIFICATIONS_PAUSED", "1");
+  const t = firstRun();
+  expect(t.service.snapshot().developmentPaused).toBe(true);
+  expect(await t.submit()).toBe(false);
+  await flush();
+  expect(t.platform.requestPermission).not.toHaveBeenCalled();
+  expect(t.values.has(askedKey)).toBe(false);
+});
+it("an alert that stops being eligible during its permission probe never asks", async () => {
+  const t = firstRun();
+  await flush();
+  const probe = deferred<NotificationPermissionState>();
+  vi.mocked(t.platform.permission).mockReturnValueOnce(probe.promise);
+  let eligible: boolean | "wait" = true;
+  try {
+    await t.submit("opened", () => eligible);
+    await flush();
+    expect(t.platform.permission).toHaveBeenCalledTimes(2);
+    eligible = "wait";
+  } finally {
+    probe.resolve("default");
+    await flush();
+  }
+  expect(t.platform.requestPermission).not.toHaveBeenCalled();
+  expect(t.values.has(askedKey)).toBe(false);
+  // Still the first alert that would have shown: it asks once eligible again.
+  eligible = true;
+  t.service.revalidate();
+  await flush();
+  expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+});
+it("an ignored automatic request is not reported, retried or repeated, and keeps a shown error", async () => {
+  const t = firstRun();
+  t.service.reportError(new Error("Earlier failure"));
+  vi.mocked(t.platform.requestPermission).mockRejectedValueOnce(
+    new Error("Timed out waiting for notification permission"),
+  );
+  await t.submit();
+  await flush();
+  expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+  expect(t.service.snapshot()).toMatchObject({
+    requesting: false,
+    error: "Earlier failure",
+  });
+  await t.submit("next");
+  t.service.revalidate();
+  await flush();
+  expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+  expect(t.platform.show).not.toHaveBeenCalled();
+  // The explicit request still reports its own failure.
+  vi.mocked(t.platform.requestPermission).mockRejectedValueOnce(
+    new Error("Permission request failed"),
+  );
+  await t.service.requestPermission();
+  expect(t.platform.requestPermission).toHaveBeenCalledTimes(2);
+  expect(t.service.snapshot().error).toBe("Permission request failed");
+});
+it("the automatic request is remembered on this device across runs and accounts; explicit Allow still asks", async () => {
+  const first = firstRun();
+  await first.submit();
+  await flush();
+  expect(first.platform.requestPermission).toHaveBeenCalledTimes(1);
+  await first.ctx.fiber.dispose();
+  // A later run whose OS still reports not yet asked (an ignored banner), as
+  // another account on the same device.
+  const next = firstRun(first.values);
+  next.service.selectViewer("b".repeat(64));
+  await next.submit();
+  await flush();
+  expect(next.platform.requestPermission).not.toHaveBeenCalled();
+  expect(next.platform.show).not.toHaveBeenCalled();
+  // Its alert is held, not replaced, and the explicit request ignores the flag.
+  next.permission("granted");
+  await next.service.requestPermission();
+  await flush();
+  expect(next.platform.requestPermission).toHaveBeenCalledTimes(1);
+  expect(next.platform.show).toHaveBeenCalledTimes(1);
+});
+it("a device that cannot record the automatic request never sends it", async () => {
+  const t = firstRun();
+  vi.spyOn(t.host.localStorage, "setItem").mockImplementation(() => {
+    throw new Error("disk");
+  });
+  await t.submit();
+  await flush();
+  expect(t.platform.requestPermission).not.toHaveBeenCalled();
+  t.permission("granted");
+  await t.service.requestPermission();
+  await flush();
+  expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+  expect(t.platform.show).toHaveBeenCalledTimes(1);
+});
+it("an alert arriving during an explicit request is kept for its answer and spends no automatic request", async () => {
+  const t = firstRun();
+  const answer = deferred<NotificationPermissionState>();
+  vi.mocked(t.platform.requestPermission).mockReturnValueOnce(answer.promise);
+  const allow = t.service.requestPermission();
+  try {
+    await t.submit();
+    await flush();
+    expect(t.platform.permission).toHaveBeenCalledTimes(2);
+    expect(t.platform.requestPermission).toHaveBeenCalledTimes(1);
+    expect(t.values.has(askedKey)).toBe(false);
+  } finally {
+    t.permission("granted");
+    answer.resolve("granted");
+    await allow;
+    await flush();
+  }
   expect(t.platform.show).toHaveBeenCalledTimes(1);
 });
 it("an off/on transition during a permission probe cancels the old candidate", async () => {

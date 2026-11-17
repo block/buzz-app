@@ -26,7 +26,7 @@ test("Channels offers empty-section creation with keyboard focus, emoji and conf
   await page
     .getByRole("menuitem", { name: "Create section", exact: true })
     .click();
-  const dialog = page.getByRole("dialog", { name: "Create section" });
+  const dialog = page.getByRole("dialog", { name: "Create new section" });
   const field = dialog.getByRole("textbox", { name: "Section name" });
   await expect(field).toBeFocused();
   await page.keyboard.press("Escape");
@@ -267,7 +267,7 @@ test("New → Team → New section keeps selected artwork centered at enlarged t
   await page
     .getByRole("menuitem", { name: "New section", exact: true })
     .click();
-  const dialog = page.getByRole("dialog", { name: "Create section" });
+  const dialog = page.getByRole("dialog", { name: "Create new section" });
   const field = dialog.getByRole("textbox", { name: "Section name" });
   await expect(field).toBeFocused();
   await expectIconCentered(dialog);

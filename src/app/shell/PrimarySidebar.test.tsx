@@ -550,7 +550,7 @@ it("creates a sidebar section from New without moving or opening a conversation"
     await screen.findByRole("menuitem", { name: "New section" }),
   );
   const dialog = await screen.findByRole("dialog", {
-    name: "Create section",
+    name: "Create new section",
   });
   await user.type(
     within(dialog).getByRole("textbox", { name: "Section name" }),
@@ -558,7 +558,9 @@ it("creates a sidebar section from New without moving or opening a conversation"
   );
   await user.click(within(dialog).getByRole("button", { name: "Create" }));
   await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "Create section" })).toBeNull(),
+    expect(
+      screen.queryByRole("dialog", { name: "Create new section" }),
+    ).toBeNull(),
   );
   expect(create).toHaveBeenCalledExactlyOnceWith({
     id: expect.any(String),
@@ -672,7 +674,7 @@ it("retains scope across Settings remounts and reveals navigation outside the fi
 it.each([
   ["New workspace", "New workspace", "Name"],
   ["New channel", "Create a channel", "Name"],
-  ["New section", "Create section", "Section name"],
+  ["New section", "Create new section", "Section name"],
 ])(
   "retains typed %s input through cached reconnect and session replacement",
   async (item, title, inputName) => {

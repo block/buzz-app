@@ -57,7 +57,7 @@ export function RenameSidebarSection({
       open
       onOpenChange={(open) => !open && close()}
       preventClose={pending}
-      title="Edit section"
+      title="Rename section"
       finalFocus={finalFocus}
       actions={
         <>
@@ -71,7 +71,7 @@ export function RenameSidebarSection({
             loading={pending}
             disabled={!next}
           >
-            Save
+            Rename
           </Button>
         </>
       }
@@ -106,7 +106,7 @@ export function RenameSidebarSection({
       {error && <p role="alert">{error}</p>}
       {pending && (
         <p role="status" className="sr-only">
-          Saving section and waiting for confirmation…
+          Renaming section and waiting for confirmation…
         </p>
       )}
     </Dialog>

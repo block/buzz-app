@@ -551,9 +551,9 @@ it("edits a saved section from its menu and keeps the dialog open on failure", a
   const trigger = screen.getByRole("button", { name: "More actions for Work" });
   await user.click(trigger);
   await user.click(
-    await screen.findByRole("menuitem", { name: "Edit section" }),
+    await screen.findByRole("menuitem", { name: "Rename section" }),
   );
-  const dialog = await screen.findByRole("dialog", { name: "Edit section" });
+  const dialog = await screen.findByRole("dialog", { name: "Rename section" });
   expect(
     within(dialog).getByRole("button", {
       name: "Change section emoji, currently 🏢",
@@ -563,9 +563,9 @@ it("edits a saved section from its menu and keeps the dialog open on failure", a
   expect(input).toHaveValue("Work");
   await user.clear(input);
   await user.type(input, " Projects ");
-  await user.click(within(dialog).getByRole("button", { name: "Save" }));
+  await user.click(within(dialog).getByRole("button", { name: "Rename" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent("offline");
-  await user.click(within(dialog).getByRole("button", { name: "Save" }));
+  await user.click(within(dialog).getByRole("button", { name: "Rename" }));
   expect(rename).toHaveBeenNthCalledWith(2, { name: "Projects" });
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   await waitFor(() => expect(trigger).toHaveFocus());
@@ -603,19 +603,19 @@ it("saves icon-only edits and removes an icon without resending the name", async
   const trigger = screen.getByRole("button", { name: "More actions for Work" });
   await user.click(trigger);
   await user.click(
-    await screen.findByRole("menuitem", { name: "Edit section" }),
+    await screen.findByRole("menuitem", { name: "Rename section" }),
   );
   await user.click(
     screen.getByRole("button", { name: "Change section emoji, currently 🏢" }),
   );
   await user.click(screen.getByRole("button", { name: "📚" }));
-  await user.click(screen.getByRole("button", { name: "Save" }));
+  await user.click(screen.getByRole("button", { name: "Rename" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(rename).toHaveBeenLastCalledWith({ icon: "📚" });
   await waitFor(() => expect(trigger).toHaveFocus());
   await user.click(trigger);
   await user.click(
-    await screen.findByRole("menuitem", { name: "Edit section" }),
+    await screen.findByRole("menuitem", { name: "Rename section" }),
   );
   await user.click(
     screen.getByRole("button", { name: "Change section emoji, currently 🏢" }),
@@ -635,7 +635,7 @@ it("saves icon-only edits and removes an icon without resending the name", async
   expect(screen.getByRole("textbox", { name: "Section name" })).toHaveValue(
     "Work",
   );
-  await user.click(screen.getByRole("button", { name: "Save" }));
+  await user.click(screen.getByRole("button", { name: "Rename" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(rename).toHaveBeenLastCalledWith({ icon: null });
   owner.dispose();
@@ -662,10 +662,10 @@ it.each(["name", "icon", "none"] as const)(
         screen.getByRole("button", { name: "More actions for Work" }),
       );
       await user.click(
-        await screen.findByRole("menuitem", { name: "Edit section" }),
+        await screen.findByRole("menuitem", { name: "Rename section" }),
       );
       const dialog = await screen.findByRole("dialog", {
-        name: "Edit section",
+        name: "Rename section",
       });
       if (field === "name") {
         const input = within(dialog).getByRole("textbox", {
@@ -682,7 +682,7 @@ it.each(["name", "icon", "none"] as const)(
       view.rerender(
         <SidebarSection {...props} title="Remote name" icon="🚀" />,
       );
-      await user.click(within(dialog).getByRole("button", { name: "Save" }));
+      await user.click(within(dialog).getByRole("button", { name: "Rename" }));
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
       if (field === "none") expect(rename).not.toHaveBeenCalled();
       else
@@ -713,7 +713,7 @@ it("offers rename only for saved sections with a rename writer", async () => {
     screen.getByRole("button", { name: "More actions for Channels" }),
   );
   await screen.findByRole("menuitem", { name: "Move up" });
-  expect(screen.queryByRole("menuitem", { name: "Edit section" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "Rename section" })).toBeNull();
 });
 
 it("keeps the actions menu closed after it is hidden and shown again", async () => {

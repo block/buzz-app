@@ -105,7 +105,7 @@ export function CreateSidebarSection({
       onOpenChange={(open) => {
         if (!open) close();
       }}
-      title={channelName ? "Move to new section" : "Create section"}
+      title={channelName ? "Move to new section" : "Create new section"}
       initialFocus={input}
       finalFocus={finalFocus}
       actions={

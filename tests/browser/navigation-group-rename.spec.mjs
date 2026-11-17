@@ -23,12 +23,12 @@ test("editing a saved group's name persists and keeps its channels", async ({
   await expect(work.locator('[data-channel-id="beta"]')).toBeVisible();
 
   await page.getByRole("button", { name: "More actions for Work" }).click();
-  await page.getByRole("menuitem", { name: "Edit section" }).click();
-  const dialog = page.getByRole("dialog", { name: "Edit section" });
+  await page.getByRole("menuitem", { name: "Rename section" }).click();
+  const dialog = page.getByRole("dialog", { name: "Rename section" });
   const input = dialog.getByRole("textbox", { name: "Section name" });
   await expect(input).toHaveValue("Work");
   await input.fill("Projects");
-  await dialog.getByRole("button", { name: "Save" }).click();
+  await dialog.getByRole("button", { name: "Rename" }).click();
 
   await expect(dialog).toHaveCount(0);
   await expect(work.locator("summary")).toHaveAccessibleName("Projects");
@@ -54,8 +54,8 @@ test("section emoji edits are centered, keyboard-safe, independently removable a
   const more = page.getByRole("button", { name: "More actions for Work" });
   const openEditor = async () => {
     await more.click();
-    await page.getByRole("menuitem", { name: "Edit section" }).click();
-    const dialog = page.getByRole("dialog", { name: "Edit section" });
+    await page.getByRole("menuitem", { name: "Rename section" }).click();
+    const dialog = page.getByRole("dialog", { name: "Rename section" });
     await expect(dialog).toBeVisible();
     return dialog;
   };
@@ -88,8 +88,8 @@ test("section emoji edits are centered, keyboard-safe, independently removable a
   await dialog.screenshot({
     path: testInfo.outputPath("edit-section-community-light.png"),
   });
-  // A no-op Save closes without publishing anything or resending a stale field.
-  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  // A no-op Rename closes without publishing anything or resending a stale field.
+  await dialog.getByRole("button", { name: "Rename", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(more).toBeFocused();
   expect(app.report.sidebarPublications ?? []).toHaveLength(0);
@@ -127,7 +127,7 @@ test("section emoji edits are centered, keyboard-safe, independently removable a
   await dialog.screenshot({
     path: testInfo.outputPath("edit-section-unicode-dark.png"),
   });
-  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await dialog.getByRole("button", { name: "Rename", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(work.locator("summary")).toHaveAccessibleName("Work");
   await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(1);
@@ -141,7 +141,7 @@ test("section emoji edits are centered, keyboard-safe, independently removable a
   await dialog.screenshot({
     path: testInfo.outputPath("edit-section-community-dark.png"),
   });
-  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await dialog.getByRole("button", { name: "Rename", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(2);
   blob = app.report.sidebarPublications.at(-1).blob;
@@ -216,7 +216,7 @@ test("section emoji edits are centered, keyboard-safe, independently removable a
   await expect(search).toBeFocused();
   await expect(remove).toHaveCount(0);
   await search.press("Escape");
-  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await dialog.getByRole("button", { name: "Rename", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(3);
   blob = app.report.sidebarPublications.at(-1).blob;

@@ -681,17 +681,17 @@ and are asked to sign in again in Buzz.
     `after:` includes its day; `before:` does not.
   - `"exact phrase"` and `-word` match whole words, not word starts. Anything
     inside quotes, `from:` or `-` included, is part of the phrase.
-  Other words with a colon, such as `has:link`, are searched as text. An
-  unfinished `from:` or `in:@` lists people, `in:` or `in:#` your channels,
-  `after:`, `before:` or `during:` common dates, and `on:` a calendar; choose
-  one to make it a chip. Click a chip to remove it, or press Backspace at the
-  start of the text to edit the last one. People suggestions match both
-  verified usernames and full names, including name words, whichever name
-  this device displays. The selected chip keeps the displayed name. With a
-  filter, search shows only messages. Each message result's conversation
-  name starts with the icon its channel header shows: a hash for a public
-  channel, a lock for a private channel, or a chat bubble for a direct message
-  or chat. Screen readers announce the type before the name.
+    Other words with a colon, such as `has:link`, are searched as text. An
+    unfinished `from:` or `in:@` lists people, `in:` or `in:#` your channels,
+    `after:`, `before:` or `during:` common dates, and `on:` a calendar; choose
+    one to make it a chip. Click a chip to remove it, or press Backspace at the
+    start of the text to edit the last one. People suggestions match both
+    verified usernames and full names, including name words, whichever name
+    this device displays. The selected chip keeps the displayed name. With a
+    filter, search shows only messages. Each message result's conversation
+    name starts with the icon its channel header shows: a hash for a public
+    channel, a lock for a private channel, or a chat bubble for a direct message
+    or chat. Screen readers announce the type before the name.
 - **Find on screen**: press ⌘⇧F (Ctrl+Shift+F on Windows and Linux) to find
   text already shown in the window, like a browser's find bar. Matches are
   highlighted, with the current one in orange, and the bar shows "n of total".
@@ -978,7 +978,7 @@ and are asked to sign in again in Buzz.
   highlight the heading.
 - **Custom Team sections** can have an optional Unicode or community emoji.
   Choose it beside the name when creating a section, or use the section's
-  menu → **Edit section** to change its name or emoji, then **Save**.
+  menu → **Rename section** to change its name or emoji, then **Rename**.
   Open the emoji picker and choose **Remove emoji** to clear only the emoji;
   the name and channels stay unchanged. These controls require
   writable saved sidebar preferences.
@@ -1466,7 +1466,7 @@ available rather than silently discarding it.
   conversation's transcript. **View activity** in an agent message's menu
   opens that conversation's transcript at the reply, expanded, or at the
   prompt it answered when the transcript does not record the reply. In the
-  menu of your own message, **View *agent*'s activity** opens at the prompt
+  menu of your own message, **View _agent_'s activity** opens at the prompt
   that message began, for an agent it names or the agent in a one-to-one DM.
   When it names several agents, **View activity** lists them. Either opens
   once that turn is loaded. Working indicators describe current work,

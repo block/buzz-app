@@ -189,8 +189,8 @@ group; an accent line shows where it lands, and Escape cancels. Its section menu
 **Move up** and **Move down** are the keyboard and single-pointer path. Each move
 rewrites every live section's `order` register with one stamp, so channels, sort
 and collapsed state stay with the group's id; the order shows optimistically and
-a failure rolls back with the same move notice and Retry. **Edit section**
-in the same menu changes the name, emoji, or both through **Save**. Emoji-only
+a failure rolls back with the same move notice and Retry. **Rename section**
+in the same menu changes the name, emoji, or both through **Rename**. Emoji-only
 changes do not resend the name; omitted fields preserve their latest values, and
 **Remove emoji** writes an explicit null icon register. Changed name/icon leaves
 share one atomic register edit, leaving channels, order, sort and unrelated
@@ -870,11 +870,11 @@ inside the search field’s trailing edge, with the selected group checked in it
 menu and an active button treatment when filtered. Typing a search resets it to All.
 The **General access** Select offers three policies:
 
-| Choice | Reading | New people's admission role |
-| --- | --- | --- |
-| Public | Anyone in the community | Member (Participating) |
-| View only | Anyone in the community | Guest (Viewing only) |
-| Private | Only members | Preserves the saved default; people must be added |
+| Choice    | Reading                 | New people's admission role                       |
+| --------- | ----------------------- | ------------------------------------------------- |
+| Public    | Anyone in the community | Member (Participating)                            |
+| View only | Anyone in the community | Guest (Viewing only)                              |
+| Private   | Only members            | Preserves the saved default; people must be added |
 
 The popup separates Private from the two community-readable policies with a divider.
 Options include concise descriptions and fixed policy icons: Lock for Private,
@@ -1195,11 +1195,11 @@ roster roles must agree; malformed or inconsistent snapshots fail closed.
 Current direct owners/admins of an unarchived stream/forum channel can manage
 another non-owner member:
 
-| Target role | Change role | Remove from this channel |
-| --- | --- | --- |
-| Admin / Member / Guest | Admin / Member / Guest, excluding the current role | Yes |
-| Bot | Admin / Guest, after explicit confirmation; Participating is already selected | Yes |
-| Owner, self, unknown or inconsistent | No | No |
+| Target role                          | Change role                                                                   | Remove from this channel |
+| ------------------------------------ | ----------------------------------------------------------------------------- | ------------------------ |
+| Admin / Member / Guest               | Admin / Member / Guest, excluding the current role                            | Yes                      |
+| Bot                                  | Admin / Guest, after explicit confirmation; Participating is already selected | Yes                      |
+| Owner, self, unknown or inconsistent | No                                                                            | No                       |
 
 Agent identity is independent of channel role. Explicitly promoting a Bot to Admin grants authority to that agent’s own public key and preserves its verified agent identity; the human owner’s roles do not confer authority.
 
@@ -1579,11 +1579,11 @@ latest.
 They are advisory: the [performance suite](performance.md) reports them and does
 not fail CI on them.
 
-| While scrolling the loaded thread | Target | Ceiling |
-| --- | --- | --- |
-| 95th-percentile frame interval | 16.7 ms (60 fps) | 33 ms |
-| Frames longer than two 60 Hz frames, per run | 0 | 5 |
-| Captured frames with a blank band (35% of the pane or more), per run | 0 | 5 |
+| While scrolling the loaded thread                                    | Target           | Ceiling |
+| -------------------------------------------------------------------- | ---------------- | ------- |
+| 95th-percentile frame interval                                       | 16.7 ms (60 fps) | 33 ms   |
+| Frames longer than two 60 Hz frames, per run                         | 0                | 5       |
+| Captured frames with a blank band (35% of the pane or more), per run | 0                | 5       |
 
 The target is the goal; the ceiling is the line regressions must not cross while
 the target is out of reach. Browser engines show a different subset: Chromium's
@@ -1606,7 +1606,7 @@ Only credential-free HTTP(S) links are active; raw HTML is ignored and inline re
 are not loaded. Existing image Markdown is projected as an attachment instead. Custom emoji remain
 event-local and are not substituted inside links or code.
 Authenticated live traffic reconciles through the same session. Channel creation is not
-implemented. In the composer, typing the third character of a line holding only ```` ``` ```` or
+implemented. In the composer, typing the third character of a line holding only ` ``` ` or
 `~~~` turns that line into a code block at once, and one undo restores the typed characters.
 Shift+Enter on an empty last line leaves the block. Only a fence that opens a block converts: a
 fence typed inside an existing code block stays literal, and so does pasted or restored fenced
@@ -1675,7 +1675,6 @@ Use `session.messages.send(channelId, text)` for channel messages or
 leave the pending outbox automatically and remain in bounded retained data.
 **Outbox → Relay timings** captures and exports stage timings, including in-flight
 signing and publishing, without logging message content.
-
 
 ## Reusing conversation UI
 
@@ -1756,7 +1755,6 @@ Emoji uploads and management remain in the existing community workflow.
 See [the shared catalog/send contract](relay-queries.md#community-emoji). The local
 `/tests/fixtures/emoji.html` diagnostic uses ephemeral identities and no live relay.
 
-
 ## Unread badges and reading intent
 
 The sidebar renders the session-owned [unread capability](unread.md): observed
@@ -1802,7 +1800,6 @@ terminal, which keeps Escape and Option+Arrow for the shell.
   Escape themselves, and the narrow navigation drawer now prevents it when it closes.
 - **Mark all as read** (Shift+Escape) is registered by the shell; see
   [shell design](shell-design.md).
-
 
 ### Attachment layout and scrolling
 

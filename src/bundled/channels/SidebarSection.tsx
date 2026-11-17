@@ -410,7 +410,7 @@ export function SidebarSection({
                       <MenuIcon>
                         <PencilSimpleIcon size={14} />
                       </MenuIcon>
-                      Edit section
+                      Rename section
                     </MenuItem>
                   )}
                   {canRemove && (

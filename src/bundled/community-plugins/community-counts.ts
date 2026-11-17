@@ -1,6 +1,6 @@
 // Install counts and upvotes kept in the community itself: each member's
 // install and upvote is a NIP-AR artifact in one open NIP-CL system channel,
-// so only that community's members can read them.
+// readable by anyone the relay lets read that community.
 import {
   ARTIFACT_KIND,
   uuidv5,

@@ -255,7 +255,7 @@ it("withdraws the viewer's records and writes none while recording is off", asyn
   );
   await userEvent.click(
     await screen.findByRole("switch", {
-      name: "Record my plugins in this community",
+      name: "Record my plugins on this device",
     }),
   );
   await waitFor(() =>

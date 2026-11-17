@@ -154,10 +154,12 @@ kind of source in a `source` tag, `git` or `local`, never the repository, which
 could be private. Its `d` is derived from the member's
 key and the plugin id, so counts take each member once per plugin and an upvote
 only from someone with an install record. Index listings are counted by
-manifest id. Counts are read from current revisions, so only that community's
-members see them, along with who installed what. **Record my plugins in this
-community** on the page stops recording; turning it off withdraws the member's
-records. A community without NIP-CL or NIP-AR shows no counts and gets no
+manifest id. Counts are read from current revisions. Anyone the relay lets read that
+community can read the records, including who installed what; on a relay that
+doesn't require community membership, that is any authenticated user. **Record
+my plugins on this device** on the page stops recording in every community on
+the device; turning it off publishes an `on: false` revision of each of the
+member's records, and earlier revisions stay in the artifact history. A community without NIP-CL or NIP-AR shows no counts and gets no
 records.
 
 **Add your plugin** on the page lets an author list a plugin. It checks

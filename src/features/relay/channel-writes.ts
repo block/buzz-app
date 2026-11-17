@@ -560,32 +560,32 @@ export function createChannelWrites(
     if (active) return active;
     const work = (async () => {
       const source = writer();
-      if (!adminWriter || !relayAuthor)
+      const withRecovery = source.withRecovery;
+      const finishRecovery = source.finishRecovery;
+      if (!adminWriter || !relayAuthor || !withRecovery || !finishRecovery)
         throw new Error("This connection cannot set up chat admins.");
-      const abandoned = new AbortController();
-      const stop = source.observeDismiss((item) => {
-        if (item.event.id === pending.event.id)
-          abandoned.abort(
-            new DOMException("Chat admin setup was abandoned", "AbortError"),
-          );
-      });
-      try {
-        await created(pending.event.id);
-        const saved = await source.recovery(soloAdminKey(id));
-        // An explicit dismissal in another window retires this setup too.
-        if (!saved) return;
-        await promoteSoloAdmins(
-          saved,
-          adminWriter,
-          discovery,
-          relayAuthor,
-          AbortSignal.any([signal, abandoned.signal]),
+      await created(pending.event.id);
+      const saved = await source.recovery(soloAdminKey(id));
+      if (!saved?.recovery)
+        throw new Error(
+          "Chat admin setup was abandoned. Send a new message to continue.",
         );
-        signal.throwIfAborted();
-        await source.dismiss(saved.event.id, saved.recovery);
-      } finally {
-        stop();
-      }
+      const recovery = saved.recovery;
+      await promoteSoloAdmins(
+        saved,
+        {
+          ...adminWriter,
+          publish: (event, signal) =>
+            withRecovery(saved.event.id, recovery, () =>
+              adminWriter.publish(event, signal),
+            ),
+        },
+        discovery,
+        relayAuthor,
+        signal,
+      );
+      signal.throwIfAborted();
+      await finishRecovery(saved.event.id, recovery);
     })();
     adminSetups.set(id, work);
     void work.catch(() => {}).finally(() => adminSetups.delete(id));

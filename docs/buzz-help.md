@@ -427,9 +427,11 @@ and are asked to sign in again in Buzz.
   keep ordinary participation, and existing members keep their saved roles.
   If admin setup is interrupted, Retry on the opening message
   continues it without restoring later demotions or removals. If setup expires,
-  choose **Abandon admin setup** in Outbox to keep the chat and current roles,
-  then send a new message; or start a new chat for automatic Admin setup. Solo conversations continue at the chat's top
-  level rather than requiring a new thread for each reply. Where available, use
+  choose **Abandon admin setup** in Outbox to keep the chat and current roles.
+  This stops unfinished setup in other windows too; it does not undo grants
+  already accepted by the relay. You can send a new message, or start a new chat
+  for automatic Admin setup. Solo conversations continue at the chat's top level
+  rather than requiring a new thread for each reply. Where available, use
   **Model and effort** in the composer before sending; Solo keeps those choices
   for that chat until you reset them in the same control, even if its available
   models change. If a loaded catalog no longer offers a saved choice, the

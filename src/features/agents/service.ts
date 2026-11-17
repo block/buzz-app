@@ -4085,6 +4085,7 @@ export class AgentsService extends Service implements Agents {
     const saved = this.settingsOf(identity);
     const editor = this.editorConfig(identity, saved.config as object);
     const config = editor?.config ?? saved.config;
+    const confirmed = editor && "synced" in editor ? editor.synced : undefined;
     const side = this.configBinding(identity).instructions;
     const synced = !!side && isSynced(this.configStore, side);
     let execution: AgentModelSettingsContext["execution"] = "local";
@@ -4106,7 +4107,7 @@ export class AgentsService extends Service implements Agents {
         : kind?.readModelSettings
           ? kind.readModelSettings(config, {
               execution,
-              ...(editor?.synced && { synced: editor.synced }),
+              ...(confirmed && { synced: confirmed }),
             })
           : { unavailable: "Its type does not expose model settings here" },
     };

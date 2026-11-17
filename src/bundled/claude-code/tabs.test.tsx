@@ -960,7 +960,7 @@ it("edits the model through the Settings dropdown and preserves agent inheritanc
   const save = vi.fn(async () => undefined);
   render(<Settings agent={agent()} save={save} />);
   await waitFor(() =>
-    expect(screen.getByTitle("Default · Currently Fable 5.1")).toBeVisible(),
+    expect(screen.getByTitle("Fable 5.1 · Default")).toBeVisible(),
   );
   expect(save).not.toHaveBeenCalled();
 });

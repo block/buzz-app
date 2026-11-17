@@ -489,10 +489,11 @@ export function createTabs({
         {...props}
         models={modelChoices(state.models)}
         value={current.model}
-        defaultModel={providerDefaultModel(
-          providerDefaults.model,
-          state.models,
-        )}
+        defaultModel={
+          providerDefaults.model
+            ? providerDefaultModel(providerDefaults.model, state.models)
+            : undefined
+        }
         defaultLabel={providerDefaultLabel(
           providerDefaults.model,
           state.models,
@@ -803,7 +804,6 @@ export function createTabs({
                   saved.model)
                 : ""
             }
-            defaultModel={providerDefaultModel("", state.models)}
             defaultLabel={providerDefaultLabel("", state.models)}
             defaultDescription="Follows Claude Code settings"
             onConfigure={onConfigure}
@@ -1297,9 +1297,9 @@ export function createTabs({
           models={modelChoices(setupState.models)}
           value={draft.model}
           defaultModel={
-            remote
-              ? undefined
-              : providerDefaultModel(providerDefaults.model, setupState.models)
+            !remote && providerDefaults.model
+              ? providerDefaultModel(providerDefaults.model, setupState.models)
+              : undefined
           }
           defaultLabel={
             remote

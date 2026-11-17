@@ -415,12 +415,12 @@ test("card model and effort labels do not overlap", async ({ page }) => {
     const trigger = page
       .getByRole("gridcell", { name: "Ada", exact: true })
       .getByRole("button", {
-        name: `Model: ${pinned ? model : `Default · Currently ${model}`}, Automatic`,
+        name: `Model: ${pinned ? model : `${model} · Default`}, Automatic`,
         exact: true,
       });
     await expect(trigger).toBeVisible();
     if (pinned) await expect(trigger).not.toHaveText(/Default/);
-    else await expect(trigger).toHaveText("DefaultAutomatic");
+    else await expect(trigger).toHaveText(`${model} · DefaultAutomatic`);
     for (const theme of ["light", "dark"]) {
       for (const width of [390, 800, 1280]) {
         await page.setViewportSize({ width, height: 950 });

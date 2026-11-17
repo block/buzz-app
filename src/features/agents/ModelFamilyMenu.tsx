@@ -78,6 +78,7 @@ export function modelFamily(model: ModelChoice): string {
 export function ModelFamilyMenu({
   leading,
   inherited = false,
+  valueSuffix,
   appearance = "outlined",
   resetLabel,
   label,
@@ -98,6 +99,7 @@ export function ModelFamilyMenu({
 }: {
   leading?: ReactNode;
   inherited?: boolean;
+  valueSuffix?: string | undefined;
   appearance?: "outlined" | "glass-ghost" | "inverted";
   resetLabel?: string | undefined;
   label: string;
@@ -130,9 +132,7 @@ export function ModelFamilyMenu({
   const fastModels = models.filter((model) => model.fast);
   const fastSection =
     fastModels.length > 0 && fastModels.length < models.length;
-  const selectedLabel = inherited
-    ? `Default${selected.description ? ` · ${selected.description}` : ""}`
-    : `${selected.label}${selected.fast ? " · Fast" : ""}`;
+  const selectedLabel = `${selected.label}${selected.fast ? " · Fast" : ""}${valueSuffix ?? (inherited && selected.description ? ` · ${selected.description}` : "")}`;
   const choiceRow = (model: ModelChoice, inFastSection: boolean) => {
     const leading = inFastSection && hasFamilyLogos && (
       <span className="buzz-select-leading" aria-hidden="true">
@@ -188,9 +188,14 @@ export function ModelFamilyMenu({
             {modelLogo(modelFamily(selected), "buzz-select-leading")}
             <span className={styles.value}>
               <span className={`buzz-select-value ${styles.model}`}>
-                {inherited ? "Default" : selected.label}
+                {selected.label}
               </span>
               {selected.fast && <FastMark />}
+              {valueSuffix && (
+                <span className="buzz-select-value-suffix text-subtle">
+                  {valueSuffix}
+                </span>
+              )}
               {effortLabel && (
                 <span className={`${styles.effort} text-body-sm text-subtle`}>
                   {effortLabel}

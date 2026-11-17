@@ -119,7 +119,7 @@ test("Create agent's model picker gives the name what the level leaves", async (
   for (const [query, name, truncated] of [
     [
       "model=short",
-      /^Goose model: Default · Currently Claude Opus 5\.5, Automatic$/,
+      /^Goose model: Claude Opus 5\.5 · Default, Automatic$/,
       false,
     ],
     ["model=short&pinned", /^Goose model: Claude Opus 5\.5, Automatic$/, false],
@@ -136,19 +136,20 @@ test("Create agent's model picker gives the name what the level leaves", async (
       const rect = (selector) =>
         trigger.querySelector(selector).getBoundingClientRect();
       const value = trigger.querySelector(".buzz-select-value");
-      const effort = rect(".buzz-select-value + span");
+      const effort = rect(".text-body-sm.text-subtle");
+      const suffix = trigger.querySelector(".buzz-select-value-suffix");
+      const labelEnd = (suffix ?? value).getBoundingClientRect().right;
       const caret = [...trigger.querySelectorAll("svg")]
         .at(-1)
         .getBoundingClientRect();
       const gap = Number.parseFloat(
-        getComputedStyle(trigger.querySelector(".buzz-select-value + span"))
+        getComputedStyle(trigger.querySelector(".text-body-sm.text-subtle"))
           .marginInlineStart,
       );
       return {
         truncated: value.scrollWidth > value.clientWidth,
         // The level follows the visible model or Default label by one gap.
-        effortAfterLabel:
-          Math.abs(effort.left - value.getBoundingClientRect().right - gap) < 1,
+        effortAfterLabel: Math.abs(effort.left - labelEnd - gap) < 1,
         effortWhole: effort.width > 0 && effort.right <= caret.left + 0.5,
         // No leftover space between the level and the caret.
         caretFollows: caret.left - effort.right <= gap + 0.5,

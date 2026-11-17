@@ -1330,7 +1330,11 @@ export function createTabs(
           allowCustomModel={!!bound}
           models={choices(data)}
           value={draft.model}
-          defaultModel={catalogModel(providerDefaults.model, data)?.model ?? ""}
+          defaultModel={
+            bound
+              ? undefined
+              : catalogModel(providerDefaults.model, data)?.model
+          }
           defaultLabel={
             bound
               ? "Codex default"

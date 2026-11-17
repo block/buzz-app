@@ -803,7 +803,7 @@ it("applies provider precedence without rewriting records and falls back for inc
   await f.provider.saveDefaults({ model: "model-b", effort: "medium" });
   render(<f.tabs.SettingsTab {...f.props()} />);
   await waitFor(() =>
-    expect(screen.getByTitle("Default · Currently Model B")).toBeVisible(),
+    expect(screen.getByTitle("Model B · Default")).toBeVisible(),
   );
   // Inheriting a saved provider preference is a default, not a recommendation.
   expect(screen.getByLabelText("Thinking")).toHaveTextContent(
@@ -974,7 +974,7 @@ it("shows the recommended model and default thinking despite different local Cod
   render(<f.tabs.SettingsTab {...f.props()} />);
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
   expect(screen.getByLabelText("Model")).toHaveTextContent("Default");
-  expect(screen.getByTitle("Default · Currently Model A")).toBeVisible();
+  expect(screen.getByTitle("Model A · Default")).toBeVisible();
   expect(screen.getByLabelText("Thinking")).toHaveTextContent("Low");
 });
 it("loads model/effort choices and saves only after a validated workspace, holding the saving state", async () => {
@@ -1780,7 +1780,7 @@ it("keeps discovery alive for remaining cards and shares a retry after failure",
   view.rerender(cards(1));
   held.release();
   await waitFor(() =>
-    expect(screen.getByTitle("Default · Currently Model A")).toBeVisible(),
+    expect(screen.getByTitle("Model A · Default")).toBeVisible(),
   );
   expect(f.processes).toHaveLength(1);
   view.unmount();
@@ -2010,7 +2010,7 @@ it("moves the card from Install integration to Sign in once the install succeeds
   expect(model).not.toHaveFocus();
   loading.resolve();
   await waitFor(() => expect(model).toBeEnabled());
-  expect(within(model).getByTitle("Default · Currently Model A")).toBeVisible();
+  expect(within(model).getByTitle("Model A · Default")).toBeVisible();
   // The dialog left with setup; its focus moves to the model field once it
   // can take it.
   await waitFor(() => expect(model).toHaveFocus());

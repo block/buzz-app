@@ -187,6 +187,7 @@ export function ModelPicker({
   includeDefault?: boolean;
   value: string;
   defaultLabel: string;
+  /** A known inherited model ID, not a catalog recommendation or placeholder. */
   defaultModel?: string | undefined;
   defaultDescription?: string;
   onChange(value: string): void;
@@ -204,7 +205,7 @@ export function ModelPicker({
   )?.efforts;
   const fallback: ModelChoice = {
     id: "",
-    label: defaultChoice?.label ?? defaultLabel,
+    label: defaultModel ? (defaultChoice?.label ?? defaultLabel) : "Default",
   };
   // A named model is always a pin, even when it currently matches Default.
   const listed: ModelChoice[] = [...models];
@@ -222,14 +223,15 @@ export function ModelPicker({
   );
   const shownDefault = {
     ...formattedDefault,
-    description: defaultDescription ?? `Currently ${formattedDefault.label}`,
+    description:
+      defaultDescription ??
+      (defaultModel ? `Currently ${formattedDefault.label}` : undefined),
   };
   const shown = includeDefault ? [shownDefault, ...shownListed] : shownListed;
   const selected = shown.find((model) => model.id === value) ?? shownDefault;
   const inherited = value === "";
-  const selectedLabel = inherited
-    ? `Default · ${shownDefault.description}`
-    : selected.label;
+  const valueSuffix = inherited && defaultModel ? " · Default" : undefined;
+  const selectedLabel = `${selected.label}${valueSuffix ?? (inherited && selected.description ? ` · ${selected.description}` : "")}`;
   const discovering = loading && !pending;
   const choices =
     allowCustomModel && !compact ? [...shown, CUSTOM_MODEL_ACTION] : shown;
@@ -260,6 +262,7 @@ export function ModelPicker({
             effortLabel={effortLabel}
             onEffortChange={onEffortChange}
             inherited={!discovering && inherited}
+            valueSuffix={discovering ? undefined : valueSuffix}
             label={label}
             compact={compact}
             onConfigure={onConfigure}
@@ -278,13 +281,8 @@ export function ModelPicker({
           <Select
             label={label}
             value={selected.id}
-            valueLabel={
-              discovering
-                ? "Loading models…"
-                : inherited
-                  ? "Default"
-                  : selected.label
-            }
+            valueLabel={discovering ? "Loading models…" : selected.label}
+            valueSuffix={discovering ? undefined : valueSuffix}
             valueTitle={discovering ? "Loading models…" : selectedLabel}
             leading={modelLogo(`${selected.id} ${selected.label}`)}
             variant={compact ? "compact" : "preference"}

@@ -486,7 +486,7 @@ it("offers the matching explicit model while inheriting the default", async () =
     />,
   );
   expect(control()).toHaveTextContent("Default");
-  expect(screen.getByTitle("Default · Currently Opus")).toBeVisible();
+  expect(screen.getByTitle("Opus · Default")).toBeVisible();
   await user.click(control());
   const options = await screen.findAllByRole("option");
   expect(options).toHaveLength(3);
@@ -661,13 +661,14 @@ it("keeps the IDs of Databricks models whose names read the same", async () => {
       modelLabelPrefixes={["databricks-", "goose-"]}
       models={ids.map((id) => ({ id, label: id }))}
       value=""
+      defaultModel="acme_models.goose.goose-gpt-6-1-sol"
       defaultLabel="acme_models.goose.goose-gpt-6-1-sol"
       onChange={onChange}
     />,
   );
   await user.click(
     screen.getByRole("button", {
-      name: "Model: Default · Currently acme_models.goose.goose-gpt-6-1-sol",
+      name: "Model: acme_models.goose.goose-gpt-6-1-sol · Default",
     }),
   );
   (await screen.findByRole("menuitem", { name: "OpenAI" })).focus();
@@ -787,12 +788,13 @@ it("shows Default first and keeps its current model in supporting text", async (
       { id: "gpt-6.1-astra", label: "GPT-6.1-Astra" },
     ],
     value: "",
+    defaultModel: "gpt-6.1-sol",
     defaultLabel: "GPT-6.1-Sol",
     onChange,
   };
   const view = render(<ModelPicker {...props} />);
-  expect(control()).toHaveTextContent(/^Default$/);
-  expect(screen.getByTitle("Default · Currently GPT-6.1-Sol")).toBeVisible();
+  expect(control()).toHaveTextContent(/^GPT-6.1-Sol · Default$/);
+  expect(screen.getByTitle("GPT-6.1-Sol · Default")).toBeVisible();
   await user.click(control());
   const inherited = await screen.findByRole("option", { name: "Default" });
   expect(inherited).toHaveAttribute("aria-selected", "true");
@@ -800,8 +802,14 @@ it("shows Default first and keeps its current model in supporting text", async (
   expect((await screen.findAllByRole("option"))[0]).toBe(inherited);
   await user.keyboard("{Escape}");
 
-  view.rerender(<ModelPicker {...props} defaultLabel="GPT-6.1-Astra" />);
-  expect(control()).toHaveTextContent(/^Default$/);
+  view.rerender(
+    <ModelPicker
+      {...props}
+      defaultModel="gpt-6.1-astra"
+      defaultLabel="GPT-6.1-Astra"
+    />,
+  );
+  expect(control()).toHaveTextContent(/^GPT-6.1-Astra · Default$/);
   await user.click(control());
   expect(
     await screen.findByRole("option", { name: "Default" }),
@@ -824,7 +832,6 @@ it.each([false, true])(
         groupByFamily={groupByFamily}
         models={models}
         value=""
-        defaultModel="opus"
         defaultLabel="Opus"
         defaultDescription="Follows Claude Code settings"
         onChange={vi.fn()}
@@ -882,5 +889,110 @@ it.each(["", "reasoning"])(
     expect(
       screen.queryByRole("combobox", { name: "Thinking effort" }),
     ).toBeNull();
+  },
+);
+
+it.each([false, true])(
+  "keeps a known inherited model visible on the closed card (grouped: %s)",
+  async (groupByFamily) => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const props = {
+      compact: true,
+      appearance: "glass-ghost" as const,
+      groupByFamily,
+      models,
+      value: "",
+      defaultModel: "opus",
+      defaultLabel: "Opus",
+      onChange,
+    };
+    const view = render(<ModelPicker {...props} />);
+    const trigger = () =>
+      groupByFamily
+        ? screen.getByRole("button", { name: /^Model:/ })
+        : control();
+    expect(trigger()).toHaveTextContent(/^Opus · Default$/);
+    expect(
+      trigger().querySelector(".buzz-select-value-suffix"),
+    ).toHaveTextContent("· Default");
+    await user.click(trigger());
+    const options = await screen.findAllByRole(
+      groupByFamily ? "menuitemradio" : "option",
+    );
+    expect(options[0]).toHaveAccessibleName("Default");
+    expect(options[0]).toHaveAccessibleDescription("Currently Opus");
+    await user.keyboard("{Escape}");
+    view.rerender(<ModelPicker {...props} value="opus" />);
+    expect(trigger()).toHaveTextContent(/^Opus$/);
+    expect(trigger().querySelector(".buzz-select-value-suffix")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  },
+);
+
+it.each([false, true])(
+  "does not turn fallback labels into current model claims (grouped: %s)",
+  async (groupByFamily) => {
+    const user = userEvent.setup();
+    const props = { groupByFamily, models: [], value: "", onChange: vi.fn() };
+    const view = render(
+      <ModelPicker {...props} defaultLabel="Provider model" />,
+    );
+    for (const defaultLabel of [
+      "Provider model",
+      "Pi default",
+      "Pi default (opus)",
+      "Recommended",
+    ]) {
+      view.rerender(<ModelPicker {...props} defaultLabel={defaultLabel} />);
+      const trigger = groupByFamily
+        ? screen.getByRole("button", { name: /^Model:/ })
+        : control();
+      expect(trigger).toHaveTextContent(/^Default$/);
+      await user.click(trigger);
+      const option = await screen.findByRole(
+        groupByFamily ? "menuitemradio" : "option",
+        { name: "Default" },
+      );
+      expect(option).not.toHaveAccessibleDescription();
+      expect(option).not.toHaveTextContent("Currently");
+      await user.keyboard("{Escape}");
+    }
+  },
+);
+
+it.each([false, true])(
+  "updates the closed default when model discovery settles without writing config (grouped: %s)",
+  async (groupByFamily) => {
+    const onChange = vi.fn();
+    const props = {
+      compact: true,
+      groupByFamily,
+      value: "",
+      defaultLabel: "Recommended",
+      onChange,
+    };
+    const view = render(<ModelPicker {...props} models={[]} loading />);
+    const trigger = () =>
+      groupByFamily
+        ? screen.getByRole("button", { name: /^Model:/ })
+        : control();
+    expect(trigger()).toHaveTextContent(/^Loading models…$/);
+    expect(trigger().querySelector(".buzz-select-value-suffix")).toBeNull();
+    view.rerender(
+      <ModelPicker {...props} models={models} defaultModel="opus" />,
+    );
+    expect(trigger()).toHaveTextContent(/^Opus · Default$/);
+    view.rerender(
+      <ModelPicker
+        {...props}
+        models={models}
+        defaultModel="opus"
+        loading
+        pending
+      />,
+    );
+    expect(trigger()).toHaveTextContent(/^Opus · Default$/);
+    expect(onChange).not.toHaveBeenCalled();
   },
 );

@@ -1331,7 +1331,7 @@ export class PiRuntime {
         },
         memories: (slug) => this.memories(call.agent, slug),
         remembered: () => this.forgetMemory(call.agent),
-        ...(signal ? { signal } : {}),
+        ...(signal ? { signal, callSignal: signal } : {}),
       });
     try {
       const reply = await callSessionTool(

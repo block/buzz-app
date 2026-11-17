@@ -35,6 +35,7 @@ import {
   useVerifiedNames,
   withVerifiedNames,
 } from "../profiles/useVerifiedNames";
+import { abbreviatedPublicKey } from "../../shared/identity/public-key";
 import { RecipientPicker } from "./RecipientPicker";
 import type { Recipient } from "./usePeople";
 import { usePassThroughUntilDrafted } from "../messages/draft-visit";
@@ -142,9 +143,12 @@ export function NewMessage({
   onOpenThread,
   onStarted,
   visit,
+  to,
 }: {
   session: RelaySession;
   scope: string;
+  /** The person this visit was opened from, such as by their profile's Message. */
+  to?: string | undefined;
   /** The visit presenting this composer, a Back stop only once drafted. */
   visit?: PageNavigation | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -328,6 +332,29 @@ export function NewMessage({
     setError("");
     setUploadFailed(false);
   }
+  // Opened from a person, the restored draft is addressed to them as if they
+  // were chosen in To. A message held for delivery, even a failed one, keeps
+  // its recipients, so a retry never reaches someone new.
+  const addressed = useRef<string | undefined>(undefined);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Each person addresses the draft once, after its restore.
+  useEffect(() => {
+    if (!to) {
+      addressed.current = undefined;
+      return;
+    }
+    if (!ready || pending || to === session.viewer || addressed.current === to)
+      return;
+    addressed.current = to;
+    const profile = session.profiles.snapshot().get(to);
+    void session.profiles.ensure([to]).catch(() => {});
+    change([
+      {
+        pubkey: to,
+        name: profile?.name ?? abbreviatedPublicKey(to) ?? "",
+        ...(profile?.isAgent ? { isAgent: true } : {}),
+      },
+    ]);
+  }, [ready, to]);
   async function send(draft: MentionDraft, files?: AttachmentDraft) {
     const content = composerMarkdown(draft);
     if (

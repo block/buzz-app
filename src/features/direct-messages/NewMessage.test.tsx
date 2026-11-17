@@ -243,9 +243,10 @@ function setup({ archived = [] as string[] } = {}) {
       signal: new AbortController().signal,
     }),
   });
-  const mount = (visit?: PageNavigation) =>
+  const mount = (visit?: PageNavigation, to?: string) =>
     render(
       <NewMessage
+        to={to}
         channels={channels.channels}
         host={
           {
@@ -269,6 +270,7 @@ function setup({ archived = [] as string[] } = {}) {
     );
   return {
     session,
+    profiles,
     channels,
     directMessages,
     messages,
@@ -1015,6 +1017,65 @@ it("shows selected recipient artwork without opening or sending, and updates it 
   expect(t.directMessages.open).not.toHaveBeenCalled();
   expect(t.messages.send).not.toHaveBeenCalled();
   expect(t.onOpenThread).not.toHaveBeenCalled();
+});
+
+it("addresses the draft to the person it was opened from, creating the DM only on send", async () => {
+  const t = setup();
+  const [person] = people;
+  if (!person) throw new Error("No person");
+  t.profiles.set(person.pubkey, { name: person.name });
+  t.mount(undefined, person.pubkey);
+  expect(
+    await screen.findByRole("button", { name: "Remove Person 1" }),
+  ).toBeVisible();
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+  await t.user.type(screen.getByRole("textbox"), "Hello");
+  await t.user.click(send());
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.directMessages.open).toHaveBeenCalledExactlyOnceWith(
+    [person.pubkey],
+    expect.any(AbortSignal),
+  );
+  expect(t.messages.send).toHaveBeenCalledOnce();
+});
+
+it("keeps a held message's recipients when opened from another person", async () => {
+  const t = setup();
+  t.directMessages.delivery.mockReturnValue("unknown");
+  t.directMessages.delivered.mockRejectedValueOnce(
+    new Error("Delivery uncertain"),
+  );
+  const view = t.mount();
+  await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
+  await t.user.type(screen.getByRole("textbox"), "Held");
+  await t.user.click(send());
+  await screen.findByRole("alert");
+  view.unmount();
+  t.mount(undefined, people[2]?.pubkey);
+  expect(
+    await screen.findByRole("button", { name: "Remove Person 1" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Remove Person 3" }),
+  ).not.toBeInTheDocument();
+});
+
+it("keeps a failed message's recipients when opened from another person", async () => {
+  const t = setup();
+  t.directMessages.delivered.mockRejectedValueOnce(new Error("Send failed"));
+  const view = t.mount();
+  await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
+  await t.user.type(screen.getByRole("textbox"), "Failed");
+  await t.user.click(send());
+  await screen.findByRole("alert");
+  view.unmount();
+  t.mount(undefined, people[2]?.pubkey);
+  expect(
+    await screen.findByRole("button", { name: "Remove Person 1" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Remove Person 3" }),
+  ).not.toBeInTheDocument();
 });
 
 it("requires an arrow key before Enter selects a recipient", async () => {

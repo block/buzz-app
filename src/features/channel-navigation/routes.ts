@@ -1,6 +1,10 @@
 import { writeView } from "../../shared/view-state";
 import type { Navigation } from "../navigation/controller";
-import type { JsonValue, OpenTarget } from "../navigation/targets";
+import type {
+  JsonValue,
+  NavigationScope,
+  OpenTarget,
+} from "../navigation/targets";
 import { splitPartition } from "../relay/partition";
 import { regionLabels } from "../solo/region-labels";
 import type { SoloDraftStart } from "./solo-navigation-contract";
@@ -90,9 +94,38 @@ export function soloDraft(
   };
 }
 
+/** A new direct message, addressed to one person when opened from them.
+ * Nothing exists on the relay until its first send. */
+export function newMessage(
+  params: JsonValue | undefined,
+): { to?: string } | undefined {
+  if (params === "new-message") return {};
+  if (!params || typeof params !== "object" || Array.isArray(params)) return;
+  const { kind, to, ...rest } = params as { readonly [key: string]: JsonValue };
+  if (
+    kind === "new-message" &&
+    !Object.keys(rest).length &&
+    typeof to === "string" &&
+    agentKey.test(to)
+  )
+    return { to };
+}
+
+export const newMessageTarget = (
+  scope: NavigationScope,
+  to: string,
+): OpenTarget => ({
+  version: 1,
+  kind: "page",
+  pluginId: "buzz.channels",
+  pageId: "channels",
+  scope,
+  route: { version: 1, params: { kind: "new-message", to } },
+});
+
 export function isChannelRoute(params: JsonValue) {
   return (
-    params === "new-message" ||
+    newMessage(params) !== undefined ||
     params === "empty" ||
     soloDraft(params) !== undefined
   );

@@ -586,13 +586,9 @@ function ProfileDetails({
     viewer,
     agent: displayAgent,
     enabled: !!scoped,
-    onOpened(channelId) {
-      void scoped?.navigation.open({
-        version: 1,
-        kind: "conversation",
-        channelId,
-        scope: scoped.scope,
-      });
+    onOpened(link) {
+      const target = scoped && buzzLinkTarget(link, scoped.scope);
+      if (target) void scoped.navigation.open(target);
     },
   });
   const canEdit = !!scoped && viewer === pubkey;

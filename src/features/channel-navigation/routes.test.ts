@@ -4,6 +4,8 @@ import {
   conversationTarget,
   isChannelRoute,
   matchesConversation,
+  newMessage,
+  newMessageTarget,
   soloDraft,
   soloDraftTarget,
   resumeSoloDraftTarget,
@@ -66,6 +68,24 @@ it("accepts empty, new-message and Solo draft destinations", () => {
     project: "p",
     agent,
   });
+});
+
+it("addresses a New message draft to one person by key", () => {
+  expect(newMessage("new-message")).toEqual({});
+  const target = newMessageTarget(scope, agent);
+  const params = target.kind === "page" ? target.route?.params : undefined;
+  expect(newMessage(params)).toEqual({ to: agent });
+  expect(isChannelRoute(params ?? null)).toBe(true);
+  for (const invalid of [
+    { kind: "new-message" },
+    { kind: "new-message", to: "not-a-key" },
+    { kind: "new-message", to: agent.toUpperCase() },
+    { kind: "new-message", to: agent, text: "private draft" },
+    { kind: "new-message", to: [agent] },
+  ]) {
+    expect(newMessage(invalid), JSON.stringify(invalid)).toBeUndefined();
+    expect(isChannelRoute(invalid)).toBe(false);
+  }
 });
 
 it("rejects foreign route kinds and draft payloads", () => {

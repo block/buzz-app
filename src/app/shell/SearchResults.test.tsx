@@ -21,6 +21,7 @@ import {
 import { createAgentDirectory } from "../../features/identity-names/testing";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
+import type { ChannelList } from "../../features/relay/contracts";
 import { eventDto, type RelayEvent } from "../../features/relay/events";
 import type { VerifiedProfileSink } from "../../features/relay/verified-profile";
 import { ReadError } from "../../features/relay/errors";
@@ -112,6 +113,7 @@ it("keeps a joined private Guest channel in recents without calling it public or
     onQueryChange() {},
     input: createRef<HTMLInputElement>(),
     pages: [],
+    openNewMessage: () => {},
     openConversation: vi.fn(),
   };
   try {
@@ -171,6 +173,7 @@ it("opens with a conversation action and recent channels in activity order", asy
         pages={[]}
         currentChannelId="older"
         onScopeChange={changeScope}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -245,6 +248,7 @@ it("leads an empty search with other unmuted unread channels and DMs, selecting 
     pages: [],
     currentChannelId: "read",
     onScopeChange() {},
+    openNewMessage: () => {},
     openConversation: open,
   };
   const markUnread = (channelId: string) =>
@@ -370,6 +374,7 @@ it("shows the first six unread conversations ahead of the rest", async () => {
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -503,6 +508,7 @@ it("previews and opens the newest unread reply of a channel unread only through 
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={open}
       />,
     );
@@ -625,6 +631,7 @@ it("ranks typed channel names and selects the best one for Enter", async () => {
         pages={[]}
         currentChannelId="xlar-0"
         onScopeChange={() => {}}
+        openNewMessage={() => {}}
         openConversation={open}
       />,
     );
@@ -697,6 +704,7 @@ it("fuzzy-matches channel names after substring matches, word starts first", asy
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={open}
       />,
     );
@@ -780,6 +788,7 @@ it("leads with the group holding the best match and ranks archived channels afte
         input={createRef()}
         // PageSearch ranks pages before they arrive here.
         pages={[page("Work", work), page("Workflows")]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -855,6 +864,7 @@ it("shows the real read failure, retains conversation choices, and retries to an
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={open}
       />,
     );
@@ -939,6 +949,7 @@ it("scopes conversation search at the relay and discards out-of-scope hits", asy
         pages={[]}
         scopedChannelId="crew"
         onScopeChange={changeScope}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -1009,6 +1020,7 @@ it("offers more messages in overall search when the first page shows none", asyn
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -1086,6 +1098,7 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     pages: [],
     scopedChannelId: "crew",
     onScopeChange: () => {},
+    openNewMessage: () => {},
     openConversation: () => {},
   };
   const text = {
@@ -1250,6 +1263,7 @@ it.each(["metadata", "denial"])(
           onQueryChange={() => {}}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={() => {}}
         />,
       );
@@ -1317,6 +1331,7 @@ it("does not reveal a revoked public hit queued before React commits its result"
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -1372,6 +1387,7 @@ it.each(["", "Crew"])(
               run() {},
             },
           ]}
+          openNewMessage={() => {}}
           openConversation={() => {}}
         />,
       );
@@ -1424,6 +1440,7 @@ it("does not announce conversation enrichment over retained search choices", () 
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -1503,6 +1520,7 @@ it.each(
       onQueryChange: () => {},
       input: createRef<HTMLInputElement>(),
       pages: [],
+      openNewMessage: () => {},
       openConversation: open,
       offline: saved ? (
         <p>Only saved conversations are searched.</p>
@@ -1576,6 +1594,7 @@ it.each([
           onQueryChange={() => {}}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={() => {}}
         />,
       );
@@ -1624,6 +1643,7 @@ it("shows each channel result's member count, reading an unjoined channel's rost
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -1710,6 +1730,7 @@ it("finds active public channels the viewer has not joined without adding them t
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={openConversation}
       />,
     );
@@ -1788,6 +1809,7 @@ it.each([false, true])(
         onQueryChange: () => {},
         input: createRef<HTMLInputElement>(),
         pages: [],
+        openNewMessage: () => {},
         openConversation: () => {},
       };
       const view = render(
@@ -1797,6 +1819,7 @@ it.each([false, true])(
           onQueryChange={() => {}}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={() => {}}
         />,
       );
@@ -1885,6 +1908,7 @@ it.each([false, true])(
                   },
                 ]
           }
+          openNewMessage={() => {}}
           openConversation={() => {}}
         />,
       );
@@ -1953,6 +1977,7 @@ it.each(["crew after:", "crew from:"])(
           onQueryChange={() => {}}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={() => {}}
         />,
       );
@@ -2013,6 +2038,7 @@ it.each([false, true])(
       onQueryChange: () => {},
       input: createRef<HTMLInputElement>(),
       pages: [],
+      openNewMessage: () => {},
       openConversation: () => {},
     };
     try {
@@ -2072,6 +2098,7 @@ it("shows a delayed Channels group only while an empty directory read is pending
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -2142,7 +2169,7 @@ it("keeps a selected person and the delayed notice when channel results stream i
         id === channel.id ? channel : t.session.channels.get?.(id),
     },
   };
-  const openConversation = vi.fn();
+  const openNewMessage = vi.fn();
   try {
     render(
       <SearchResults
@@ -2151,7 +2178,8 @@ it("keeps a selected person and the delayed notice when channel results stream i
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
-        openConversation={openConversation}
+        openNewMessage={openNewMessage}
+        openConversation={() => {}}
       />,
     );
     await act(async () => vi.advanceTimersByTimeAsync(0));
@@ -2184,11 +2212,8 @@ it("keeps a selected person and the delayed notice when channel results stream i
     expect(personRow).toHaveAttribute("aria-selected", "true");
     fireEvent.keyDown(field, { key: "Enter" });
     await act(async () => {});
-    expect(t.open).toHaveBeenCalledExactlyOnceWith(
-      [person.pubkey],
-      expect.any(AbortSignal),
-    );
-    expect(openConversation).toHaveBeenCalledExactlyOnceWith("started-dm");
+    expect(openNewMessage).toHaveBeenCalledExactlyOnceWith(person.pubkey);
+    expect(t.open).not.toHaveBeenCalled();
     await act(async () => release());
     expect(screen.queryByRole("status")).toBeNull();
     expect(within(channels).queryByText("· Searching…")).toBeNull();
@@ -2236,6 +2261,7 @@ it.each(["finish", "fail"])(
         onQueryChange: () => {},
         input: createRef<HTMLInputElement>(),
         pages: [],
+        openNewMessage: () => {},
         openConversation: () => {},
       };
       const mounted = render(<SearchResults {...props} query="crew" />);
@@ -2321,6 +2347,7 @@ it("keeps the open-channel search notice silent when the directory answers withi
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -2373,6 +2400,7 @@ it("opens the open channel that lands after an early Enter, without first saying
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={openConversation}
       />,
     );
@@ -2433,6 +2461,7 @@ it("holds an early Enter for an open channel over a message that lands first, an
       onQueryChange: () => {},
       input: createRef<HTMLInputElement>(),
       pages: [],
+      openNewMessage: () => {},
       openConversation,
     };
     const mounted = render(<SearchResults {...props} query="crew" />);
@@ -2505,6 +2534,7 @@ it("opens an open channel from the first directory page after an early Enter, wh
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={openConversation}
       />,
     );
@@ -2565,6 +2595,7 @@ it("holds an early Enter on the scope action for an open channel, and scopes onc
       pages: [],
       currentChannelId: "general",
       onScopeChange: changeScope,
+      openNewMessage: () => {},
       openConversation,
     };
     const mounted = render(<SearchResults {...props} query="crew" />);
@@ -2643,6 +2674,7 @@ it.each([
           pages={[]}
           currentChannelId={currentChannelId}
           onScopeChange={changeScope}
+          openNewMessage={() => {}}
           openConversation={openConversation}
         />,
       );
@@ -2724,6 +2756,7 @@ it.each(["a click that does not focus the row", "its shortcut"])(
           pages={[]}
           currentChannelId="general"
           onScopeChange={changeScope}
+          openNewMessage={() => {}}
           openConversation={openConversation}
         />,
       );
@@ -2805,6 +2838,7 @@ it("returns keyboard focus to search when channel lookup retries, through repeat
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={openConversation}
       />,
     );
@@ -2882,6 +2916,7 @@ it("puts the earlier choice for typed text first, unless another name is exact",
     onQueryChange: () => {},
     input: createRef<HTMLElement>(),
     pages: [],
+    openNewMessage: () => {},
     openConversation: open,
     usageScope: usage,
   };
@@ -2934,6 +2969,7 @@ it("puts a remembered public channel first, even past eight joined matches", asy
             run() {},
           },
         ]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
         usageScope={usage}
       />,
@@ -2969,6 +3005,7 @@ it("lets frequent visits lift a match past a slightly better one, not a much bet
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
         usageScope={usage}
       />,
@@ -3004,6 +3041,7 @@ it("keeps the remembered choice selected when a better match arrives late", asyn
             run: workflows,
           },
         ]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
         usageScope={usage}
       />,
@@ -3060,6 +3098,7 @@ it("translates combined operators into a single server-ranked scoped read and op
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={open}
       />,
     );
@@ -3113,6 +3152,7 @@ it("does not read messages for punctuation-only operands after normalization", a
     onQueryChange: vi.fn(),
     input: createRef<HTMLInputElement>(),
     pages: [],
+    openNewMessage: () => {},
     openConversation: vi.fn(),
   };
   try {
@@ -3160,6 +3200,7 @@ it("reads no message search until the last word has three characters", async () 
     onQueryChange: () => {},
     input: createRef<HTMLInputElement>(),
     pages: [],
+    openNewMessage: () => {},
     openConversation: () => {},
   };
   try {
@@ -3222,6 +3263,7 @@ it("an in: operator does not lower the message search minimum", async () => {
     onQueryChange: () => {},
     input: createRef<HTMLInputElement>(),
     pages: [],
+    openNewMessage: () => {},
     openConversation: () => {},
   };
   try {
@@ -3267,6 +3309,7 @@ it("looks up an author by name only from two characters", async () => {
     onQueryChange: () => {},
     input: createRef<HTMLInputElement>(),
     pages: [],
+    openNewMessage: () => {},
     openConversation: () => {},
   };
   try {
@@ -3303,6 +3346,7 @@ it("asks for the connection, not more text, when a saved session's author picker
     onQueryChange: () => {},
     input: createRef<HTMLInputElement>(),
     pages: [],
+    openNewMessage: () => {},
     openConversation: () => {},
     offline: <p>Only saved conversations are searched.</p>,
   };
@@ -3346,6 +3390,7 @@ it("searches the people directory only from two characters", async () => {
     onQueryChange: () => {},
     input: createRef<HTMLInputElement>(),
     pages: [],
+    openNewMessage: () => {},
     openConversation: () => {},
   };
   try {
@@ -3388,6 +3433,7 @@ it.each([
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -3418,6 +3464,7 @@ it("neither lists nor starts a DM with someone whose Delete started, without age
     onQueryChange: () => {},
     input: createRef<HTMLInputElement>(),
     pages: [],
+    openNewMessage: () => {},
     openConversation: () => {},
   };
   try {
@@ -3474,6 +3521,7 @@ it("still looks up a one-character channel named by in:", async () => {
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -3526,6 +3574,7 @@ it("runs operator-only date and author searches without a text predicate", async
     onQueryChange: () => {},
     input: createRef<HTMLInputElement>(),
     pages: [],
+    openNewMessage: () => {},
     openConversation: () => {},
   };
   try {
@@ -3602,6 +3651,7 @@ it.each(["from:ba", "from:@ba"])(
           onQueryChange={change}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={() => {}}
         />,
       );
@@ -3640,6 +3690,7 @@ it("requests a bounded prefix page before declaring a short name absent", async 
         onQueryChange={vi.fn()}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -3688,6 +3739,7 @@ it.each(["from:we"])(
           scopedChannelId={channel}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={() => {}}
         />,
       );
@@ -3722,6 +3774,7 @@ it("distinguishes an unavailable global author lookup from no matching people", 
         onQueryChange={vi.fn()}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -3776,6 +3829,7 @@ it("offers a bounded from:@ picker with distinct identities and selects an exact
         onQueryChange={change}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -3789,6 +3843,7 @@ it("offers a bounded from:@ picker with distinct identities and selects an exact
         onQueryChange={change}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -3806,6 +3861,7 @@ it("offers a bounded from:@ picker with distinct identities and selects an exact
         onQueryChange={change}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -3908,6 +3964,7 @@ it.each(
           input={createRef()}
           pages={[]}
           scopedChannelId={scope}
+          openNewMessage={() => {}}
           openConversation={() => {}}
         />
       );
@@ -4258,6 +4315,7 @@ it.each(
           onQueryChange={change}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={() => {}}
         />,
       );
@@ -4319,6 +4377,7 @@ it.each(["before-eose", "after-eose"] as const)(
           onQueryChange={() => {}}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={() => {}}
         />,
       );
@@ -4419,6 +4478,7 @@ it.each([
           onQueryChange={change}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={() => {}}
         />,
       );
@@ -4477,6 +4537,7 @@ it.each(["cancel", "fail"])(
       onQueryChange() {},
       input: createRef<HTMLInputElement>(),
       pages: [],
+      openNewMessage() {},
       openConversation() {},
     };
     try {
@@ -4545,6 +4606,7 @@ it("offers every scoped alias match when completion is ambiguous", async () => {
         onQueryChange={change}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -4598,6 +4660,7 @@ it.each(
           }}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={() => {}}
         />
       );
@@ -4658,6 +4721,7 @@ it.each(
       input: createRef<HTMLInputElement>(),
       pages: [],
       scopedChannelId: scope,
+      openNewMessage() {},
       openConversation() {},
     };
     try {
@@ -4752,6 +4816,7 @@ it("ignores a superseded author-name lookup after the full username settles", as
     onQueryChange: change,
     input: createRef<HTMLInputElement>(),
     pages: [],
+    openNewMessage() {},
     openConversation() {},
   };
   try {
@@ -4825,6 +4890,7 @@ it("finds and resolves authors by name words, sending the relay the typed accent
     onQueryChange: () => {},
     input: createRef<HTMLInputElement>(),
     pages: [],
+    openNewMessage: () => {},
     openConversation: () => {},
   };
   try {
@@ -4897,6 +4963,7 @@ it("prioritizes people, separates agents, shows profile avatars, and excludes ar
         onQueryChange={vi.fn()}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -4948,6 +5015,7 @@ it("opens the identity picker for bare from: without an unfiltered message read"
         onQueryChange={vi.fn()}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -4991,6 +5059,7 @@ it.each([
           onQueryChange={change}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={() => {}}
         />,
       );
@@ -5051,6 +5120,7 @@ it.each([
       onQueryChange: change,
       input: createRef<HTMLInputElement>(),
       pages: [],
+      openNewMessage: () => {},
       openConversation: () => {},
     };
     try {
@@ -5093,6 +5163,7 @@ it("resolves one exact from: name in a partial prefix page", async () => {
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -5150,6 +5221,7 @@ it.each([
     onQueryChange: () => {},
     input: createRef<HTMLInputElement>(),
     pages: [],
+    openNewMessage: () => {},
     openConversation: () => {},
   };
   try {
@@ -5227,6 +5299,7 @@ it("adds a late shared agent without another keystroke or prefix read", async ()
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -5311,6 +5384,7 @@ it.each([
           }}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={() => {}}
         />
       );
@@ -5387,6 +5461,7 @@ it("renders from:<author chip> without exposing the signed operand in the input"
         onQueryChange={setQuery}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />
     );
@@ -5478,6 +5553,7 @@ it("keeps both exact authors selectable ahead of a crowded prefix page", async (
         onQueryChange={change}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -5529,6 +5605,7 @@ it("keeps a person visible when agent candidates exceed the picker cap", async (
         onQueryChange={vi.fn()}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -5575,6 +5652,7 @@ it("retains a member of the in: channel when global author lookup fails", async 
         onQueryChange={vi.fn()}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -5607,6 +5685,7 @@ it("shows only the requested date suggestions and inserts local calendar dates",
         onQueryChange={change}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -5643,6 +5722,7 @@ it("offers during: periods and an on: calendar that insert local dates", async (
       onQueryChange: change,
       input: createRef<HTMLInputElement>(),
       pages: [],
+      openNewMessage: () => {},
       openConversation: () => {},
     };
     const view = render(<SearchResults {...props} query="deploy during:" />);
@@ -5696,6 +5776,7 @@ it("picks an in: channel from the joined channels and an in:@ person like from:@
     onQueryChange: change,
     input: createRef<HTMLInputElement>(),
     pages: [],
+    openNewMessage: () => {},
     openConversation: () => {},
   };
   try {
@@ -6037,6 +6118,7 @@ it("never widens a search when a name or channel operator is unresolved", async 
         input={createRef()}
         pages={[]}
         scopedChannelId="crew"
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -6057,6 +6139,7 @@ it("never widens a search when a name or channel operator is unresolved", async 
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -6115,6 +6198,7 @@ it.each(["private", "missing"])(
         onQueryChange: () => {},
         input: createRef<HTMLInputElement>(),
         pages: [],
+        openNewMessage: () => {},
         openConversation: () => {},
       };
       const mounted = render(<SearchResults {...props} query="Public" />);
@@ -6207,6 +6291,7 @@ it("resolves an exact public name beyond eight preceding substring matches and r
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -6275,6 +6360,7 @@ it("keeps a pending in: lookup pending, then retries its failure and resumes sco
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -6335,6 +6421,7 @@ it("shows a pending in: channel lookup beside Most relevant", async () => {
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -6394,6 +6481,7 @@ it("holds an early Enter while an in: channel is still being found", async () =>
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={openConversation}
       />,
     );
@@ -6449,6 +6537,7 @@ it("holds an early Enter while the joined list is still loading", async () => {
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={openConversation}
       />,
     );
@@ -6511,6 +6600,7 @@ it("matches an in: operator against the rendered DM participant label", async ()
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -6552,6 +6642,7 @@ it("treats bare in:# as no channel operator", async () => {
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -6603,6 +6694,7 @@ it.each([true, false])(
           onQueryChange={() => {}}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={open}
         />,
       );
@@ -6715,6 +6807,7 @@ it("leads a message hit's conversation name with its type icon and words", async
           run: () => {},
         },
       ]}
+      openNewMessage={() => {}}
       openConversation={() => {}}
       inlineSettings={inlineSettings}
     />
@@ -6783,6 +6876,8 @@ function peopleSession(
     managed: boolean;
     messageable?: true;
   }[] = [],
+  /** People the viewer already has a DM with, which Message confirms. */
+  dms: readonly string[] = [],
 ) {
   const people = vi.fn(async (_query?: string) => ({
     people: directory,
@@ -6791,11 +6886,33 @@ function peopleSession(
   const open = vi.fn(async (_pubkeys: readonly string[]) => "started-dm");
   const source = session.agentChoices;
   const choices = { ...source.snapshot(), identities: agents, selectable: [] };
+  let listed: [ChannelList, ChannelList] | undefined;
+  const list = () => {
+    const base = session.channels.list();
+    if (listed?.[0] !== base)
+      listed = [
+        base,
+        {
+          ...base,
+          channels: [
+            ...base.channels,
+            ...dms.map((pubkey) => ({
+              id: `dm-${pubkey.slice(0, 8)}`,
+              name: "",
+              channelType: "dm" as const,
+              participants: [pubkey],
+            })),
+          ],
+        },
+      ];
+    return listed[1];
+  };
   return {
     people,
     open,
     session: {
       ...session,
+      ...(dms.length ? { channels: { ...session.channels, list } } : {}),
       directMessages: {
         ...session.directMessages,
         available: true,
@@ -6813,7 +6930,7 @@ function peopleSession(
   };
 }
 
-it("starts a hosted agent DM from search without local management", async () => {
+it("opens a draft to a hosted agent from search without local management", async () => {
   const relay = keypair(),
     viewer = keypair(),
     hosted = keypair();
@@ -6832,7 +6949,7 @@ it("starts a hosted agent DM from search without local management", async () => 
       },
     ],
   );
-  const openConversation = vi.fn();
+  const openNewMessage = vi.fn();
   try {
     render(
       <SearchResults
@@ -6841,19 +6958,17 @@ it("starts a hosted agent DM from search without local management", async () => 
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
-        openConversation={openConversation}
+        openNewMessage={openNewMessage}
+        openConversation={() => {}}
       />,
     );
     fireEvent.click(
       await screen.findByRole("option", { name: /Hosted helper/ }),
     );
     await waitFor(() =>
-      expect(openConversation).toHaveBeenCalledWith("started-dm"),
+      expect(openNewMessage).toHaveBeenCalledExactlyOnceWith(hosted.pubkey),
     );
-    expect(t.open).toHaveBeenCalledWith(
-      [hosted.pubkey],
-      expect.any(AbortSignal),
-    );
+    expect(t.open).not.toHaveBeenCalled();
   } finally {
     cleanup();
     owner.dispose();
@@ -6887,6 +7002,7 @@ it("keeps the directory's order for tied people, as New message does", async () 
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -6908,7 +7024,7 @@ it("keeps the directory's order for tied people, as New message does", async () 
   }
 });
 
-it("finds a person by username and starts a DM with them", async () => {
+it("finds a person by username and opens a draft to them", async () => {
   const relay = keypair(),
     viewer = keypair(),
     alice = keypair();
@@ -6921,11 +7037,7 @@ it("finds a person by username and starts a DM with them", async () => {
     },
   });
   const t = peopleSession(owner.session);
-  let started = (_id: string) => {};
-  t.open.mockImplementationOnce(
-    () => new Promise<string>((resolve) => (started = resolve)),
-  );
-  const openConversation = vi.fn();
+  const openNewMessage = vi.fn();
   try {
     render(
       <SearchResults
@@ -6934,7 +7046,8 @@ it("finds a person by username and starts a DM with them", async () => {
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
-        openConversation={openConversation}
+        openNewMessage={openNewMessage}
+        openConversation={() => {}}
       />,
     );
     // A profile already loaded elsewhere, read through the real kind-0 fold.
@@ -6951,22 +7064,10 @@ it("finds a person by username and starts a DM with them", async () => {
     fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
       key: "Enter",
     });
-    expect(
-      await screen.findByText("Opening your conversation with Alice Chen…"),
-    ).toBeVisible();
-    // A second choice while one is opening does not start another.
-    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
-      key: "Enter",
-    });
-    expect(openConversation).not.toHaveBeenCalled();
-    await act(async () => started("started-dm"));
     await waitFor(() =>
-      expect(openConversation).toHaveBeenCalledExactlyOnceWith("started-dm"),
+      expect(openNewMessage).toHaveBeenCalledExactlyOnceWith(alice.pubkey),
     );
-    expect(t.open).toHaveBeenCalledExactlyOnceWith(
-      [alice.pubkey],
-      expect.any(AbortSignal),
-    );
+    expect(t.open).not.toHaveBeenCalled();
   } finally {
     cleanup();
     owner.dispose();
@@ -7000,10 +7101,16 @@ it("lets the newest choice win over a DM that is still opening", async () => {
       );
     },
   });
-  const t = peopleSession(owner.session, [
-    { pubkey: bob.pubkey, name: "Ally Bob" },
-    { pubkey: carol.pubkey, name: "Ally Carol" },
-  ]);
+  // Each has a DM, so choosing them waits on its confirmed open.
+  const t = peopleSession(
+    owner.session,
+    [
+      { pubkey: bob.pubkey, name: "Ally Bob" },
+      { pubkey: carol.pubkey, name: "Ally Carol" },
+    ],
+    [],
+    [bob.pubkey, carol.pubkey],
+  );
   const held: ((id: string) => void)[] = [];
   const hold = () => new Promise<string>((resolve) => held.push(resolve));
   t.open
@@ -7026,6 +7133,7 @@ it("lets the newest choice win over a DM that is still opening", async () => {
         pages={[]}
         currentChannelId="chat"
         onScopeChange={onScopeChange}
+        openNewMessage={() => {}}
         openConversation={openConversation}
       />,
     );
@@ -7090,7 +7198,7 @@ it("lets the newest choice win over a DM that is still opening", async () => {
   }
 });
 
-it("opens an existing DM from a person row and reports a failed start", async () => {
+it("opens an existing DM from a person row, and a draft to someone without one", async () => {
   const relay = keypair(),
     viewer = keypair(),
     alice = keypair(),
@@ -7116,7 +7224,6 @@ it("opens an existing DM from a person row and reports a failed start", async ()
   const t = peopleSession(owner.session, [
     { pubkey: bob.pubkey, name: "Ally Bob" },
   ]);
-  t.open.mockRejectedValueOnce(new Error("Relay refused the DM."));
   // The relay's DM visibility has loaded and hides nothing.
   await owner.session.channelLifecycle.refreshVisibility();
   expect(owner.session.channelLifecycle.snapshot()).toMatchObject({
@@ -7124,6 +7231,7 @@ it("opens an existing DM from a person row and reports a failed start", async ()
     hidden: [],
   });
   const openConversation = vi.fn();
+  const openNewMessage = vi.fn();
   try {
     render(
       <SearchResults
@@ -7132,6 +7240,7 @@ it("opens an existing DM from a person row and reports a failed start", async ()
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={openNewMessage}
         openConversation={openConversation}
       />,
     );
@@ -7148,9 +7257,10 @@ it("opens an existing DM from a person row and reports a failed start", async ()
     expect(openConversation).toHaveBeenCalledExactlyOnceWith("dm");
     expect(t.open).not.toHaveBeenCalled();
     fireEvent.click(within(group).getByRole("option", { name: /Ally Bob/ }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Relay refused the DM.",
+    await waitFor(() =>
+      expect(openNewMessage).toHaveBeenCalledExactlyOnceWith(bob.pubkey),
     );
+    expect(t.open).not.toHaveBeenCalled();
     expect(openConversation).toHaveBeenCalledOnce();
   } finally {
     cleanup();
@@ -7186,7 +7296,9 @@ it("opens a DM from a person row through the confirmed open until the relay's hi
   // A username match leaves the DM out of Direct messages, so the person row
   // is what opens it.
   const t = peopleSession(owner.session);
-  t.open.mockResolvedValueOnce("dm");
+  t.open
+    .mockRejectedValueOnce(new Error("Relay refused the DM."))
+    .mockResolvedValueOnce("dm");
   const openConversation = vi.fn();
   try {
     render(
@@ -7196,6 +7308,7 @@ it("opens a DM from a person row through the confirmed open until the relay's hi
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={openConversation}
       />,
     );
@@ -7206,10 +7319,17 @@ it("opens a DM from a person row through the confirmed open until the relay's hi
     );
     expect(owner.session.channelLifecycle.snapshot().status).toBe("idle");
     fireEvent.click(row);
+    // A failed open is reported and can be chosen again.
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Relay refused the DM.",
+    );
+    expect(openConversation).not.toHaveBeenCalled();
+    fireEvent.click(row);
     await waitFor(() =>
       expect(openConversation).toHaveBeenCalledExactlyOnceWith("dm"),
     );
-    expect(t.open).toHaveBeenCalledExactlyOnceWith(
+    expect(t.open).toHaveBeenCalledTimes(2);
+    expect(t.open).toHaveBeenLastCalledWith(
       [alice.pubkey],
       expect.any(AbortSignal),
     );
@@ -7270,6 +7390,7 @@ it.each(["loading", "error"] as const)(
           onQueryChange={() => {}}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={openConversation}
         />,
       );
@@ -7339,6 +7460,7 @@ it("opens a sidebar-hidden DM from a person row when this connection cannot star
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={openConversation}
         sidebarScope={scope}
       />,
@@ -7387,6 +7509,7 @@ it("lists directory people and managed agents, not agents this community cannot 
     onQueryChange: () => {},
     input: createRef<HTMLInputElement>(),
     pages: [],
+    openNewMessage: () => {},
     openConversation: () => {},
   };
   try {
@@ -7457,6 +7580,7 @@ it("tells uncached directory namesakes apart before a DM opens", async () => {
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -7536,6 +7660,7 @@ it("uses readable owners before key suffixes for agent namesakes", async () => {
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -7638,6 +7763,7 @@ it.each([true, false])(
           onQueryChange={() => {}}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={openConversation}
           {...(solo ? { openAgentSession } : {})}
         />,
@@ -7709,6 +7835,7 @@ it.each([true, false])(
           onQueryChange={() => {}}
           input={createRef()}
           pages={[]}
+          openNewMessage={() => {}}
           openConversation={openConversation}
           openAgentSession={openAgentSession}
         />,
@@ -7819,6 +7946,7 @@ it.each([
         input={createRef()}
         pages={[]}
         usageScope={usage}
+        openNewMessage={() => {}}
         openConversation={vi.fn()}
         openAgentSession={vi.fn()}
       />,
@@ -7924,6 +8052,7 @@ it.each([
         input={createRef()}
         pages={[]}
         usageScope={usage}
+        openNewMessage={() => {}}
         openConversation={vi.fn()}
         openAgentSession={vi.fn()}
       />,
@@ -7958,6 +8087,7 @@ it("preserves remembered page ranking when inline settings match", async () => {
         onQueryChange={() => {}}
         input={createRef()}
         usageScope={usage}
+        openNewMessage={() => {}}
         openConversation={() => {}}
         pages={[
           {
@@ -8073,6 +8203,7 @@ it.each([
     } as unknown as AppServices["communities"];
     const openSection = vi.fn();
     const openConversation = vi.fn();
+    const openNewMessage = vi.fn();
     function Palette({ query }: { query: string }) {
       const inlineSettings = useSearchSettings({
         query,
@@ -8089,6 +8220,7 @@ it.each([
           onQueryChange={() => {}}
           input={createRef()}
           pages={[]}
+          openNewMessage={openNewMessage}
           openConversation={openConversation}
           inlineSettings={inlineSettings}
         />
@@ -8120,16 +8252,15 @@ it.each([
       const input = screen.getByRole("combobox", { name: "Search Buzz" });
       expect(input).toHaveAttribute("aria-activedescendant", lead?.id);
       fireEvent.keyDown(input, { key: "Enter" });
+      // Someone without a DM opens a draft to them; nothing is created.
       await waitFor(() =>
-        expect(openConversation).toHaveBeenCalledExactlyOnceWith(
-          group === "Channels" ? name : "started-dm",
-        ),
+        group === "Channels"
+          ? expect(openConversation).toHaveBeenCalledExactlyOnceWith(name)
+          : expect(openNewMessage).toHaveBeenCalledExactlyOnceWith(
+              person.pubkey,
+            ),
       );
-      if (group === "People")
-        expect(t.open).toHaveBeenCalledExactlyOnceWith(
-          [person.pubkey],
-          expect.any(AbortSignal),
-        );
+      expect(t.open).not.toHaveBeenCalled();
       expect(openSection).not.toHaveBeenCalled();
     } finally {
       cleanup();
@@ -8178,6 +8309,7 @@ it("holds an early Enter for a person still being found over a section holding t
   } as unknown as AppServices["settingsCards"];
   const openSection = vi.fn();
   const openConversation = vi.fn();
+  const openNewMessage = vi.fn();
   // "wes" finds Software updates the same way, but in the shipped palette
   // plugin rows still take its early Enter: plugin descriptions hold most
   // names' letters in order. Of the bundled plugins, controls and a member's
@@ -8198,6 +8330,7 @@ it("holds an early Enter for a person still being found over a section holding t
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={openNewMessage}
         openConversation={openConversation}
         inlineSettings={inlineSettings}
       />
@@ -8210,15 +8343,13 @@ it("holds an early Enter for a person still being found over a section holding t
       key: "Enter",
     });
     expect(openSection).not.toHaveBeenCalled();
-    expect(openConversation).not.toHaveBeenCalled();
+    expect(openNewMessage).not.toHaveBeenCalled();
     await act(async () => answer());
     await waitFor(() =>
-      expect(openConversation).toHaveBeenCalledExactlyOnceWith("started-dm"),
+      expect(openNewMessage).toHaveBeenCalledExactlyOnceWith(person.pubkey),
     );
-    expect(t.open).toHaveBeenCalledExactlyOnceWith(
-      [person.pubkey],
-      expect.any(AbortSignal),
-    );
+    expect(t.open).not.toHaveBeenCalled();
+    expect(openConversation).not.toHaveBeenCalled();
     expect(openSection).not.toHaveBeenCalled();
   } finally {
     cleanup();
@@ -8286,6 +8417,7 @@ it("excludes proven Huddles but keeps ordinary hits after mutable metadata chang
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -8347,6 +8479,7 @@ it("withholds unknown metadata, then reveals unproven legacy rooms as ordinary d
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
@@ -8437,6 +8570,7 @@ it("leaves sidebar-hidden DMs out of the rows but keeps their message hits", asy
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={openConversation}
         sidebarScope={scope}
       />,
@@ -8548,6 +8682,7 @@ it("loads verified names for a settled search page in the background and shows t
     onQueryChange() {},
     input: createRef<HTMLInputElement>(),
     pages: [],
+    openNewMessage: () => {},
     openConversation: vi.fn(),
   };
   try {
@@ -8656,6 +8791,7 @@ it("reuses shared verified names and reads only the rest of a search page", asyn
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={vi.fn()}
       />,
     );
@@ -8744,6 +8880,7 @@ it("keeps a row found by its profile name once a verified name replaces it, drop
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={vi.fn()}
       />,
     );
@@ -8836,6 +8973,7 @@ it("labels a row by its verified name over a cached profile name without a namin
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
+        openNewMessage={() => {}}
         openConversation={vi.fn()}
       />,
     );
@@ -8886,6 +9024,7 @@ const operatorProps = {
   onQueryChange: () => {},
   input: createRef<HTMLInputElement>(),
   pages: [],
+  openNewMessage: () => {},
   openConversation: () => {},
 };
 

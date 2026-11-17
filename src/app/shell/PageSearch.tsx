@@ -37,7 +37,10 @@ import {
 import { SearchResults } from "./SearchResults";
 import { ChannelDirectoryResults } from "./ChannelDirectoryResults";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
-import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import {
+  newMessageTarget,
+  soloDraftTarget,
+} from "../../features/channel-navigation/routes";
 import { usageScope } from "../../features/search/usage";
 import { unreadFirstPreference } from "../../features/search/unread-first-preference";
 
@@ -650,6 +653,11 @@ function CommunitySearch({
         views={views}
         offline={saved ? offline : undefined}
         openConversation={openConversation}
+        openNewMessage={(pubkey) => {
+          if (!current()) return;
+          close();
+          void services.navigation.open(newMessageTarget(scope, pubkey));
+        }}
         openAgentSession={(pubkey) => {
           const current = services.communities.snapshot();
           const relay = services.communities.relay.snapshot();

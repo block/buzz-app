@@ -18,6 +18,7 @@ import { createShortcutBindings } from "../../features/shortcuts/preferences";
 import { ShortcutsService } from "../../features/shortcuts/service";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { createRelaySession } from "../../features/relay/session";
+import type { ChannelList } from "../../features/relay/contracts";
 import type { RelaySnapshot } from "../../features/relay/service";
 import {
   keypair,
@@ -596,7 +597,7 @@ it("opens nothing with Command F on another page while a Bestie DM exists", asyn
   }
 });
 
-it("does not open a DM that finishes starting after search closed and reopened", async () => {
+it("does not open a DM that finishes opening after search closed and reopened", async () => {
   const root = new Context();
   root.provide("pluginStatus", {
     isActive: () => true,
@@ -613,10 +614,32 @@ it("does not open a DM that finishes starting after search closed and reopened",
   });
   let started!: (channelId: string) => void;
   let attempt!: AbortSignal;
+  // Bob already has a DM, so choosing him waits on its confirmed open.
+  let listed: [ChannelList, ChannelList] | undefined;
   const session = {
     ...owner.session,
     channels: {
       ...owner.session.channels,
+      list: () => {
+        const base = owner.session.channels.list();
+        if (listed?.[0] !== base)
+          listed = [
+            base,
+            {
+              ...base,
+              channels: [
+                ...base.channels,
+                {
+                  id: "bob-dm",
+                  name: "",
+                  channelType: "dm",
+                  participants: [bob.pubkey],
+                },
+              ],
+            },
+          ];
+        return listed[1];
+      },
       // The started DM is known, so only the closed palette stops it.
       get: (id: string) =>
         id === "bob-dm"

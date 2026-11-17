@@ -1,5 +1,5 @@
 import { revealCreatedChannel } from "./created-channel";
-import { openEmptyChannels } from "./routes";
+import { newMessage, openEmptyChannels } from "./routes";
 import {
   useCallback,
   useEffect,
@@ -321,7 +321,7 @@ export function ChannelInventory({
   const composingMessage =
     target.kind === "page" &&
     target.pluginId === "buzz.channels" &&
-    target.route?.params === "new-message";
+    newMessage(target.route?.params) !== undefined;
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = useMemo(
     () =>

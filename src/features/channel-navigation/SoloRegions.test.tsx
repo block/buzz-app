@@ -2792,4 +2792,15 @@ it("channel groups share a 3,000-record roster and retain the complete native me
     ...offered,
     "Channel actions unavailable on this connection",
   ]);
+  await user.click(
+    within(menu).getByRole("menuitem", { name: "View channel details" }),
+  );
+  expect(view.open).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: "conversation",
+      channelId: "source-2999",
+      panel: "settings",
+    }),
+    { sidebar: "preserve" },
+  );
 });

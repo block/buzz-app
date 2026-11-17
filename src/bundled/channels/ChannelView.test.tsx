@@ -10,13 +10,12 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
+import { useLayoutEffect } from "react";
 import { provideNavigation } from "../../features/navigation/service";
 import type {
   ChannelView,
   ChannelViewProps,
 } from "../../features/conversation/contracts";
-import { createNavigationController } from "../../features/navigation/controller";
-import { createMemoryHistory } from "../../features/navigation/history";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { Contribution } from "../../plugins/contributions";
@@ -76,92 +75,110 @@ it("uses deterministic active ownership and skips a throwing matcher", () => {
   expect(hook.result.current?.key).toBe("z/main");
 });
 
-it("isolates a failed view, retries it and revokes callbacks on navigation, session replacement and unmount", async () => {
-  vi.spyOn(console, "error").mockImplementation(() => {});
-  const navigator = createNavigationController(
-    createMemoryHistory(),
-  ).navigation;
-  const scope = {
-    viewer: "a".repeat(64),
-    communityOrigin: "https://relay.example",
-  };
-  void navigator.open({
-    version: 1,
-    kind: "conversation",
-    channelId: "alpha",
-    scope,
-  });
-  const session = {} as RelaySession;
-  let currentSession = session;
-  const relay = { snapshot: () => ({ session: currentSession }) } as RelayData;
-  let broken = true;
-  const callbacks: (() => boolean)[] = [];
-  const entry: Contribution<ChannelView> = {
-    key: "example.board/main",
-    pluginId: "example.board",
-    revision: "one",
-    id: "main",
-    title: "Board",
-    matches: () => true,
-    component: ({ active, channel, companion }: ChannelViewProps) => {
-      callbacks.push(active);
-      if (broken) throw new Error("Broken view");
-      return (
-        <>
-          <p>Board for {channel.name}</p>
-          {companion}
-        </>
-      );
-    },
-  };
-  const entries = [entry];
-  const registry = { snapshot: () => entries, subscribe: () => () => {} };
-  const mounted = render(
-    <SelectedChannelView
-      entry={entry}
-      registry={registry}
-      channel={{ id: "alpha", name: "Alpha" }}
-      session={session}
-      relay={relay}
-      navigator={navigator}
-      companion={<p>Independent companion</p>}
-    />,
-  );
-  expect(screen.getByText("Channel view unavailable")).toBeInTheDocument();
-  expect(screen.getByText("Independent companion")).toBeVisible();
-  mounted.rerender(
-    <SelectedChannelView
-      entry={entry}
-      registry={registry}
-      channel={{ id: "alpha", name: "Alpha" }}
-      session={session}
-      relay={relay}
-      navigator={navigator}
-      companion={<p>New companion</p>}
-    />,
-  );
-  expect(screen.getByText("New companion")).toBeVisible();
-  expect(screen.queryByText("Independent companion")).toBeNull();
-  broken = false;
-  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  await screen.findByText("Board for Alpha");
-  expect(screen.getByText("New companion")).toBeVisible();
-  const active = callbacks.at(-1);
-  expect(active?.()).toBe(true);
-  currentSession = {} as RelaySession;
-  expect(active?.()).toBe(false);
-  currentSession = session;
-  expect(active?.()).toBe(true);
-  void navigator.open({
-    version: 1,
-    kind: "conversation",
-    channelId: "beta",
-    scope,
-  });
-  expect(active?.()).toBe(false);
-  mounted.unmount();
-  expect(active?.()).toBe(false);
-});
+it.each(["render", "layout"])(
+  "isolates a %s failure, retries it and revokes callbacks on navigation, session replacement and unmount",
+  async (failure) => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const host = provideNavigation(new Context());
+    const navigator = host.navigation;
+    const scope = {
+      viewer: "a".repeat(64),
+      communityOrigin: "https://relay.example",
+    };
+    const opening = navigator.open({
+      version: 1,
+      kind: "conversation",
+      channelId: "alpha",
+      scope,
+    });
+    const session = {} as RelaySession;
+    let currentSession = session;
+    const relay = {
+      snapshot: () => ({ session: currentSession }),
+    } as RelayData;
+    let broken = true;
+    const callbacks: (() => boolean)[] = [];
+    const entry: Contribution<ChannelView> = {
+      key: "example.board/main",
+      pluginId: "example.board",
+      revision: "one",
+      id: "main",
+      title: "Board",
+      matches: () => true,
+      component: ({ active, channel, companion }: ChannelViewProps) => {
+        callbacks.push(active);
+        useLayoutEffect(() => {
+          if (broken && failure === "layout") throw new Error("Broken layout");
+        }, []);
+        if (broken && failure === "render") throw new Error("Broken view");
+        return (
+          <>
+            <p>Board for {channel.name}</p>
+            {companion}
+          </>
+        );
+      },
+    };
+    const entries = [entry];
+    const registry = { snapshot: () => entries, subscribe: () => () => {} };
+    const navigation = host.request(navigator.snapshot().attempt, {
+      valid: () => true,
+      subscribe: () => () => {},
+    }).request;
+    const mounted = render(
+      <SelectedChannelView
+        entry={entry}
+        registry={registry}
+        channel={{ id: "alpha", name: "Alpha" }}
+        session={session}
+        relay={relay}
+        navigator={navigator}
+        navigation={navigation}
+        companion={<p>Independent companion</p>}
+      />,
+    );
+    expect(screen.getByText("Channel view unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Independent companion")).toBeVisible();
+    await expect(opening).resolves.toMatchObject({
+      status: "failed",
+      presented: true,
+    });
+    mounted.rerender(
+      <SelectedChannelView
+        entry={entry}
+        registry={registry}
+        channel={{ id: "alpha", name: "Alpha" }}
+        session={session}
+        relay={relay}
+        navigator={navigator}
+        navigation={navigation}
+        companion={<p>New companion</p>}
+      />,
+    );
+    expect(screen.getByText("New companion")).toBeVisible();
+    expect(screen.queryByText("Independent companion")).toBeNull();
+    broken = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Board for Alpha");
+    expect(screen.getByText("New companion")).toBeVisible();
+    const active = callbacks.at(-1);
+    expect(active?.()).toBe(true);
+    currentSession = {} as RelaySession;
+    expect(active?.()).toBe(false);
+    currentSession = session;
+    expect(active?.()).toBe(true);
+    void navigator.open({
+      version: 1,
+      kind: "conversation",
+      channelId: "beta",
+      scope,
+    });
+    expect(active?.()).toBe(false);
+    mounted.unmount();
+    expect(active?.()).toBe(false);
+    host.dispose();
+  },
+);
 
 it("leaves a default page attempt pending until its channel destination is resolved", async () => {
   const host = provideNavigation(new Context());

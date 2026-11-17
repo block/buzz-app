@@ -72,7 +72,7 @@ export type OpenTarget =
        * channel timeline even beyond its newest page, as Open in channel asks. */
       context?: "channel";
       /** Presentation within this conversation; never mutation or confirmation state. */
-      panel?: "members";
+      panel?: "members" | "settings";
       /** Message selected for the forwarding dialog; never submission state. */
       forward?: string;
       /** Read-only content selected beside this conversation; never an action. */
@@ -414,6 +414,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
         if (
           value.panel !== undefined &&
           value.panel !== "members" &&
+          value.panel !== "settings" &&
           // Retired Shared sessions tab: saved targets still open the conversation.
           value.panel !== "shared-sessions"
         )
@@ -444,7 +445,9 @@ export function parseOpenTarget(input: unknown): OpenTarget {
             ? { threadRootId: text(value.threadRootId, hex).toLowerCase() }
             : {}),
           ...(value.context === "channel" ? { context: value.context } : {}),
-          ...(value.panel === "members" ? { panel: value.panel } : {}),
+          ...(value.panel === "members" || value.panel === "settings"
+            ? { panel: value.panel }
+            : {}),
           ...(value.forward !== undefined
             ? { forward: text(value.forward, hex).toLowerCase() }
             : {}),

@@ -8,7 +8,6 @@ import {
 } from "react";
 import { ChannelHeaderMenu } from "../../bundled/channels/ChannelHeaderMenu";
 import { canStartLinkedChat } from "../../bundled/channels/StartLinkedChat";
-import { channelTabs } from "../../bundled/channels/useChannelTabState";
 import { channelIcon } from "../channels/channel-icon";
 import {
   NavigationCard,
@@ -23,7 +22,7 @@ import type { RelaySession } from "../relay/session";
 import type { SoloChannelGroupProps } from "./solo-navigation-contract";
 import { RegionDestinationContext } from "./SoloDestination";
 import { SoloDisclosure } from "./SoloDisclosure";
-import { conversationTarget, matchesConversation } from "./routes";
+import { conversationTarget } from "./routes";
 import styles from "./RegionChannelGroup.module.css";
 
 const ChannelGroupsContext = createContext<ReadonlyMap<string, ChannelSummary>>(
@@ -66,7 +65,7 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
       item.members?.includes(context.session.viewer)
     );
   if (!context || !eligible(channel) || !channel) return null;
-  const { session, navigator, scope, active } = context;
+  const { session, navigator, scope } = context;
   const current = () =>
     session.channels
       .list()
@@ -80,22 +79,16 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
         }
       : undefined;
   const Icon = channelIcon(channel);
-  const openDetails = async () => {
+  const openDetails = () => {
     if (!eligible(current())) return;
-    const opening = navigator.open(conversationTarget(scope, channel.id), {
-      sidebar: "preserve",
-    });
-    const attempt = navigator.snapshot().attempt;
-    const result = await opening;
-    if (
-      result.status !== "opened" ||
-      attempt.signal.aborted ||
-      !active() ||
-      !eligible(current()) ||
-      !matchesConversation(navigator.snapshot().entry.target, scope, channel.id)
-    )
-      return;
-    channelTabs(session).openSettings(channel.id, attempt.id);
+    const target = conversationTarget(scope, channel.id);
+    if (target.kind !== "conversation") return;
+    void navigator.open(
+      { ...target, panel: "settings" },
+      {
+        sidebar: "preserve",
+      },
+    );
   };
   return (
     <div className={styles.group} data-solo-channel-group={channel.id}>

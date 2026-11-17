@@ -27,6 +27,7 @@ import { useReturnHighlight } from "../../features/messages/use-return-highlight
 import { useMessageOpening } from "../../features/messages/use-message-opening";
 import { ChannelBody } from "./ChannelBody";
 import {
+  channelTabs,
   entryPane,
   panelTabId,
   rootOfTab,
@@ -787,7 +788,9 @@ function ChannelWorkspace({
       !ownLoss &&
       !(
         navigation?.target.kind === "conversation" &&
-        (navigation.target.panel || navigation.target.detail)
+        (navigation.target.panel ||
+          navigation.target.detail ||
+          navigation.target.forward)
       )
       ? current
       : undefined,
@@ -864,8 +867,23 @@ function ChannelWorkspace({
     currentId,
     "messages",
     navigator,
+    (state) =>
+      !matchedChannelView ||
+      (state.paneOpen &&
+        state.selected === "settings" &&
+        state.settings?.channelId === currentId),
   );
   const { settings, setSettings } = tabState;
+  const settingsRequested =
+    navigation?.target.kind === "conversation" &&
+    navigation.target.panel === "settings";
+  useLayoutEffect(() => {
+    if (settingsRequested && currentId && !cached && !navigation.signal.aborted)
+      channelTabs(queries).openSettings(
+        currentId,
+        navigator.snapshot().attempt.id,
+      );
+  }, [settingsRequested, currentId, cached, navigation, navigator, queries]);
   useEffect(() => {
     if (!currentId || composingMessage || draft) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
@@ -901,6 +919,15 @@ function ChannelWorkspace({
   const channelView = showingSettings ? undefined : matchedChannelView;
   const closeSettings = () => {
     setSettings(undefined);
+    if (
+      settingsRequested &&
+      navigation?.target.kind === "conversation" &&
+      !navigation.signal.aborted
+    ) {
+      const { panel: _panel, ...target } = navigation.target;
+      navigator.dismiss([navigation.entryId], target);
+      return;
+    }
     afterClose("settings");
   };
   // The Solo treatment: an agent conversation. In the owner's own chat it

@@ -118,9 +118,15 @@ function MountedView({
   companionOpening?: object | undefined;
 }) {
   const root = useRef<HTMLElement>(null);
+  useEffect(() => {
+    // Layout-effect failures must reach the boundary before entry succeeds.
+    queueMicrotask(() => {
+      if (navigation?.target.kind === "conversation" && active())
+        navigation.complete({ status: "opened" });
+    });
+  }, [navigation, active]);
   useLayoutEffect(() => {
     if (navigation && navigation.target.kind !== "conversation") return;
-    navigation?.complete({ status: "opened" });
     if (
       active() &&
       navigation?.focus !== "preserve" &&
@@ -134,7 +140,13 @@ function MountedView({
       ref={root}
       tabIndex={-1}
       aria-label={entry.title}
-      style={{ display: "flex", flex: 1, minWidth: 0, minHeight: 0 }}
+      style={{
+        display: "flex",
+        width: "100%",
+        height: "100%",
+        minWidth: 0,
+        minHeight: 0,
+      }}
     >
       <Component
         session={session}

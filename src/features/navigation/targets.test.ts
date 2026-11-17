@@ -15,6 +15,14 @@ const conversation = {
 } as const;
 
 describe("open target boundary", () => {
+  it("addresses native channel settings independently of its plugin view", () => {
+    const target = parseOpenTarget({ ...conversation, panel: "settings" });
+    expect(target).toEqual({
+      ...parseOpenTarget(conversation),
+      panel: "settings",
+    });
+    expect(targetKey(target)).not.toBe(targetKey(conversation));
+  });
   it("bounds a scoped forwarding presentation independently of its underlying message", () => {
     const target = parseOpenTarget({
       ...conversation,
@@ -185,7 +193,7 @@ describe("open target boundary", () => {
       scope: { viewer: "npub1wrong", communityOrigin: "https://relay.example" },
     },
     { ...conversation, messageId: "not-an-id" },
-    { ...conversation, panel: "settings" },
+    { ...conversation, panel: "unknown" },
     { ...conversation, panel: { kind: "members", remove: "someone" } },
     { ...conversation, panel: null },
     { ...conversation, messageId: undefined, threadRootId: "b".repeat(64) },

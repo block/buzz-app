@@ -348,7 +348,9 @@ const latest = (channelId: string) => renders(channelId).at(-1);
 const timeline = (channelId: string) =>
   document.querySelector(`[data-channel-timeline="${channelId}"]`);
 
-it("replaces a resolved channel's reader with its plugin view, restores native content on disable, and preserves exact message routes", async () => {
+it("replaces a resolved channel's reader with its plugin view, restores native content on disable, and preserves native destinations", async () => {
+  let broken = false;
+  vi.spyOn(console, "error").mockImplementation(() => {});
   let entries: readonly Contribution<ChannelView>[] = [
     {
       key: "example.board/main",
@@ -357,7 +359,10 @@ it("replaces a resolved channel's reader with its plugin view, restores native c
       id: "main",
       title: "Board",
       matches: (channel) => channel.id === "alpha",
-      component: ({ channel }) => <p>Board for {channel.name}</p>,
+      component: ({ channel }) => {
+        if (broken) throw new Error("Broken board");
+        return <p>Board for {channel.name}</p>;
+      },
     },
   ];
   const listeners = new Set<() => void>();
@@ -394,14 +399,45 @@ it("replaces a resolved channel's reader with its plugin view, restores native c
   expect(
     h.panels.requestOpen({ channelId: "alpha", target: "example:panel" }),
   ).toBe(false);
+  h.go(
+    h.visit(
+      h.target("alpha", { messageId: newest.id, threadRootId: newest.id }),
+      "native-thread",
+    ),
+  );
+  await vi.waitFor(() =>
+    expect(
+      channelTabs(h.session)
+        .list("alpha")
+        .some((thread) => thread.shown),
+    ).toBe(true),
+  );
+  h.go(h.visit(h.target("alpha"), "hidden-thread"));
+  await screen.findByText("Board for alpha");
+  expect(channelTabs(h.session).list("alpha")).toMatchObject([
+    { shown: false },
+  ]);
+  expect(channelTabs(h.session).close("alpha", newest.id)).toBe("closed");
   act(() => channelTabs(h.session).openSettings("alpha", "details"));
   await screen.findByRole("tab", { name: "Channel settings" });
+  expect(screen.queryByText("Board for alpha")).toBeNull();
+  h.go(h.visit(h.target("alpha", { panel: "settings" }), "details-route"));
+  await screen.findByRole("tab", { name: "Channel settings" });
+  expect(screen.queryByText("Board for alpha")).toBeNull();
+  h.go(h.visit(h.target("alpha", { forward: newest.id }), "forward"));
+  await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
   expect(screen.queryByText("Board for alpha")).toBeNull();
   h.go(h.visit(h.target("alpha", { messageId: newest.id }), "message"));
   await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
   expect(screen.queryByText("Board for alpha")).toBeNull();
   h.go(h.visit(h.target("alpha"), "board-return"));
   await screen.findByText("Board for alpha");
+  broken = true;
+  h.go(h.visit(h.target("alpha"), "broken-board"));
+  await screen.findByText("Channel view unavailable");
+  h.go(h.visit(h.target("alpha", { panel: "settings" }), "broken-details"));
+  await screen.findByRole("tab", { name: "Channel settings" });
+  expect(screen.queryByText("Channel view unavailable")).toBeNull();
   act(() => {
     entries = [];
     for (const listener of listeners) listener();

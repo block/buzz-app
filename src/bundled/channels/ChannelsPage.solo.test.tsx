@@ -81,6 +81,7 @@ function fixture({
   viewOnly = false,
   canLeave,
   preview,
+  publisher,
   sidebarRows,
   member = false,
   emptyHistory = false,
@@ -101,6 +102,8 @@ function fixture({
   restored?: boolean;
   /** An unjoined reader of an open chat, including legacy admission defaults. */
   preview?: { joinRole?: "member" | "guest" };
+  /** Restrict root posts to either the viewer or another account. */
+  publisher?: "viewer" | "other";
   /** Other Solo chats listed after this one in the sidebar's Chats. */
   others?: readonly string[];
   /** The viewer's own profile has loaded too. */
@@ -157,6 +160,9 @@ function fixture({
     members: [viewer.pubkey, agent, ...people],
     // The signed roster's roles: a creator owns the chat, a viewer is a guest.
     viewerRole: "owner",
+    ...(publisher && {
+      messagePublisher: publisher === "viewer" ? viewer.pubkey : agent,
+    }),
     owners: canLeave ? [viewer.pubkey, agent] : [viewer.pubkey],
     ...(member && { viewerRole: "member" as const, owners: [agent] }),
     ...(viewOnly && {
@@ -1844,6 +1850,41 @@ it.each([
     ).toBeVisible();
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(!!screen.queryByRole("button", { name: "Join" })).toBe(joinable);
+  },
+);
+
+it.each([
+  { label: "non-member", preview: {}, publisher: "other" as const, join: true },
+  {
+    label: "member reader",
+    preview: undefined,
+    publisher: "other" as const,
+    join: false,
+  },
+  {
+    label: "publisher",
+    preview: undefined,
+    publisher: "viewer" as const,
+    join: false,
+  },
+])(
+  "keeps publisher guidance and the correct channel controls for $label",
+  async ({ preview, publisher, join }) => {
+    fixture({ type: "stream", ...(preview && { preview }), publisher }).mount();
+    if (publisher === "viewer") {
+      expect(
+        await screen.findByRole("textbox", { name: "Message Planning" }),
+      ).toBeVisible();
+      expect(
+        screen.queryByText("Open a post by the channel publisher to reply."),
+      ).toBeNull();
+    } else {
+      expect(
+        await screen.findByRole("region", { name: "Channel preview" }),
+      ).toHaveTextContent("Open a post by the channel publisher to reply.");
+      expect(screen.queryByRole("textbox")).toBeNull();
+    }
+    expect(!!screen.queryByRole("button", { name: "Join" })).toBe(join);
   },
 );
 

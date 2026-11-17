@@ -25,6 +25,8 @@ export type ChannelSummary = Readonly<{
   visibility?: "public" | "private" | undefined;
   /** Default for future participants; never an existing participant's role. */
   joinRole?: "member" | "guest" | undefined;
+  /** Sole root publisher; authenticated readers may reply to its threads. */
+  messagePublisher?: string | undefined;
   /** Viewer role from the relay-signed roster, independent of admission defaults. */
   viewerRole?: "owner" | "admin" | "member" | "guest" | "bot" | undefined;
   preview?: string | undefined;

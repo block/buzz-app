@@ -454,6 +454,9 @@ export async function connectNativeTransport(
   const channelIdentity =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("nip-cl");
+  const messagePublisher =
+    Array.isArray(info.supported_extensions) &&
+    info.supported_extensions.includes("buzz-message-publisher");
   const artifactSupport =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("nip-ar");
@@ -959,6 +962,7 @@ export async function connectNativeTransport(
     uploadAttachment: (file, signal, progress) =>
       nativeAttachmentUpload(origin, file, signal, progress),
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
+    ...(messagePublisher ? { messagePublisher: true as const } : {}),
     ...(searchSort ? { searchSort: true as const } : {}),
     ...(artifactSync ? { artifactSync: true as const } : {}),
     verifiedProfiles: verifiedProfileAuthority(info),

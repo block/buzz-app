@@ -1679,6 +1679,19 @@ export type Agents = {
   /** Unarchives an imported agent whose archive state was not checked, as
    * import does, keeping its key and settings. Resolves with what is left. */
   unarchive(agent: AgentKey): Promise<string | undefined>;
+  /** Whether it is protected by a plugin that isn't running, so it can't run
+   * until that plugin runs again or its protection is removed. */
+  protectionStranded(agent: AgentKey): boolean;
+  /** Removes that protection once the owner confirms in a native dialog, as
+   * its plugin can't. Resolves to whether it was removed. */
+  removeStrandedProtection(agent: AgentKey): Promise<boolean>;
+  /** Present while new agents' protection defaults name a plugin that isn't
+   * running, so new agents can't run either. */
+  strandedDefaults(): Promise<
+    Readonly<{ owner: string; revision: number }> | undefined
+  >;
+  /** Clears those defaults once the owner confirms in a native dialog. */
+  removeStrandedDefaults(): Promise<boolean>;
   /** Whether a watch's classifier can run on this device now. */
   classifier(): ClassifierAvailability;
   /** Creates a team, or replaces the one with `id`. Members, by pubkey, must
@@ -2275,29 +2288,16 @@ export class AgentsService extends Service implements Agents {
           const setProtection = this.native?.setProtection?.bind(this.native);
           if (!setProtection)
             throw new Error("Native agent protection is unavailable");
-          const members = this.identities.filter(
-            (agent) => agent.pubkey === pubkey && !agent.deleted,
+          await this.changeProtection(pubkey, policy !== null, () =>
+            setProtection(pubkey, revision, provider, policy),
           );
-          const agent = members[0];
-          if (!agent) throw new Error("No such agent on this device");
-          const type = this.types().find((type) => type.key === agent.type);
-          if (!type?.retire)
-            throw new Error(
-              "This runtime cannot safely change protection while Buzz is open",
-            );
-          await this.runners.retype(agent.key, agent.name, async () => {
-            if (policy !== null)
-              for (const member of members)
-                if (await this.executions.inspect(member.key))
-                  throw new Error(
-                    "Plugin execution does not support protected agents",
-                  );
-            for (const member of members) await type.retire?.(member.key);
-            await setProtection(pubkey, revision, provider, policy);
-            await this.refresh();
-          });
         },
       },
+    );
+    ctx.effect(() =>
+      this.protection.subscribe(() => {
+        for (const listener of this.listeners) listener();
+      }),
     );
     this.configStore = new AgentConfigStore(storage);
     this.teamsChanged();
@@ -6600,6 +6600,65 @@ export class AgentsService extends Service implements Agents {
       ),
     );
     return [...agents, ...[...unnamed].map((pubkey) => ({ pubkey }))];
+  }
+  /** Stops its sessions, then saves a protection change for every membership. */
+  private async changeProtection(
+    pubkey: string,
+    protecting: boolean,
+    save: () => Promise<unknown>,
+  ) {
+    const members = this.identities.filter(
+      (agent) => agent.pubkey === pubkey && !agent.deleted,
+    );
+    const agent = members[0];
+    if (!agent) throw new Error("No such agent on this device");
+    const type = this.types().find((type) => type.key === agent.type);
+    if (!type?.retire)
+      throw new Error(
+        "This runtime cannot safely change protection while Buzz is open",
+      );
+    await this.runners.retype(agent.key, agent.name, async () => {
+      if (protecting)
+        for (const member of members)
+          if (await this.executions.inspect(member.key))
+            throw new Error(
+              "Plugin execution does not support protected agents",
+            );
+      for (const member of members) await type.retire?.(member.key);
+      await save();
+      await this.refresh();
+    });
+  }
+  protectionStranded(key: AgentKey) {
+    const provider = this.liveMember(key)?.protection?.provider;
+    return !!provider && !this.protection.running(provider);
+  }
+  async removeStrandedProtection(key: AgentKey) {
+    const identity = this.liveMember(key);
+    if (!identity || !this.protectionStranded(key)) return false;
+    const remove = this.native?.removeProtection?.bind(this.native);
+    if (!remove) throw new Error("Native agent protection is unavailable");
+    let removed = false;
+    await this.changeProtection(identity.pubkey, false, async () => {
+      removed = await remove(identity.pubkey, identity.protectionRevision ?? 0);
+    });
+    return removed;
+  }
+  async strandedDefaults() {
+    const owner = this.communities.snapshot().viewer;
+    if (!owner || !this.native?.protectionDefaults) return undefined;
+    const saved = await this.native.protectionDefaults(owner);
+    const provider = saved.defaults?.provider;
+    return provider && !this.protection.running(provider)
+      ? { owner, revision: saved.revision }
+      : undefined;
+  }
+  async removeStrandedDefaults() {
+    const stranded = await this.strandedDefaults();
+    const remove = this.native?.removeProtectionDefaults?.bind(this.native);
+    if (!stranded) return false;
+    if (!remove) throw new Error("Native agent protection is unavailable");
+    return remove(stranded.owner, stranded.revision);
   }
   /** The membership of this key, unless it was deleted. */
   private liveMember(key: AgentKey) {

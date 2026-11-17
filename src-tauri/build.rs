@@ -204,6 +204,8 @@ fn main() {
             "app_agent_set_protection",
             "app_agent_protection_defaults",
             "app_agent_set_protection_defaults",
+            "app_agent_remove_protection",
+            "app_agent_remove_protection_defaults",
             "app_agent_create",
             "app_agent_portable",
             "app_agent_port",

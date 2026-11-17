@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -9,7 +10,12 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { AgentArchiveRetry, AgentDelete, AgentRemoveHere } from "./AgentManage";
+import {
+  AgentArchiveRetry,
+  AgentDelete,
+  AgentProtectionRecovery,
+  AgentRemoveHere,
+} from "./AgentManage";
 import type { Agent, Agents } from "./service";
 
 afterEach(cleanup);
@@ -124,3 +130,42 @@ it.each(["delete", "remove"] as const)(
     expect(onRemoved).not.toHaveBeenCalled();
   },
 );
+
+it("offers to remove protection only while its plugin isn't running, and shows a failure", async () => {
+  const user = userEvent.setup();
+  let stranded = false;
+  const listeners = new Set<() => void>();
+  const removeStrandedProtection = vi
+    .fn<Agents["removeStrandedProtection"]>()
+    .mockRejectedValueOnce(
+      new Error("Change protection in the Buzz app that runs this agent"),
+    )
+    .mockImplementationOnce(async () => {
+      stranded = false;
+      for (const listener of listeners) listener();
+      return true;
+    });
+  const agents = {
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    protectionStranded: () => stranded,
+    removeStrandedProtection,
+  };
+  render(<AgentProtectionRecovery agents={agents} agent={agent} />);
+  expect(screen.queryByText("Protection")).toBeNull();
+  stranded = true;
+  act(() => {
+    for (const listener of listeners) listener();
+  });
+  await user.click(screen.getByRole("button", { name: "Remove protection" }));
+  expect(
+    await screen.findByText(
+      "Couldn't remove protection: Change protection in the Buzz app that runs this agent",
+    ),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Remove protection" }));
+  await waitFor(() => expect(screen.queryByText("Protection")).toBeNull());
+  expect(removeStrandedProtection).toHaveBeenCalledWith(agent.key);
+});

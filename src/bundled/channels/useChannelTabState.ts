@@ -43,8 +43,8 @@ export type ConversationTab =
       revealRequest?: number | undefined;
       /** Transient visual cue when an opening reuses this tab. */
       attentionRequest?: number | undefined;
-      /** The first unread reply its latest opening named. */
-      firstUnread?: string | undefined;
+      /** Each opening that names a read time asks for its divider anew. */
+      unreadRequest?: { readThrough: number } | undefined;
       /** Threads live in the side pane unless moved or opened into main. */
       pane?: TabPane | undefined;
       /** The reader's verified root, which may differ from a link's hint. */
@@ -193,7 +193,7 @@ function withThread(
   pane: TabPane,
   attention = false,
   relocate = false,
-  firstUnread?: string,
+  unreadSince?: number,
 ): State {
   const existing = threadTab(state.tabs, channelId, rootId);
   const baseId = `thread:${channelId}:${rootId}`;
@@ -232,7 +232,8 @@ function withThread(
     pane: prior && !relocate ? tabPane(prior) : pane,
     rootId: prior?.rootId,
     name: prior?.name,
-    firstUnread,
+    unreadRequest:
+      unreadSince === undefined ? undefined : { readThrough: unreadSince },
   };
   const tabs = existing
     ? state.tabs.map((tab) => (tab.id === id ? next : tab))
@@ -637,7 +638,7 @@ export function useChannelTabState(
       rootId: string,
       intent?: ThreadIntent,
       pane: TabPane = threadPlacementPreference(),
-      firstUnread?: string,
+      unreadSince?: number,
     ) =>
       update((state) =>
         withThread(
@@ -649,7 +650,7 @@ export function useChannelTabState(
           pane,
           true,
           false,
-          firstUnread,
+          unreadSince,
         ),
       ),
     [update],

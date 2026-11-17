@@ -373,14 +373,17 @@ function InboxList({
     unread = false,
   ) => {
     const target = tabTarget(item, channel);
-    // An unread channel thread opens at its first unread reply, which the
-    // row's own read must not hide.
+    // An unread channel thread opens at its first unread reply, found from
+    // the thread's read time before the row's own read.
     const tab =
       unread && target.threadId && item.rootId && item.target.kind === "thread"
         ? {
             channelId: target.channelId,
             threadId: target.threadId,
-            firstUnread: item.messageId,
+            unreadSince: session.unread.threadReadThrough(
+              target.channelId,
+              target.threadId,
+            ),
           }
         : target;
     const shown = openTab(tab);

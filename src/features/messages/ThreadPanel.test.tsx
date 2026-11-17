@@ -1148,29 +1148,49 @@ it("opens a read thread at its latest reply, and an explicit target at itself, w
   expect(exact.view.loadMore).not.toHaveBeenCalled();
   expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
 });
-it("places a named first unread reply's line above its branch after its read, paging older to find it", () => {
-  const h = messagesHarness(ordinaryNavigation());
+it("places a requested read time's line above the first branch with a later reply from someone else, after the opener's read, and again for each request", () => {
+  // Page tabs open without navigation.
+  const h = messagesHarness();
   const { reply } = unreadReplies(h);
   // The opener has already read the thread: nothing is unread any more.
   const top = reply("top", 2);
-  const named = { ...reply("named", 3), replyParentId: top.id };
-  Object.assign(h.props as ThreadPanelProps, { firstUnread: named.id });
+  const nested = { ...reply("nested", 3), replyParentId: top.id };
+  const own = { ...reply("own", 4), authorId: viewer };
+  const later = reply("later", 5);
+  const line = () => screen.getByRole("separator", { name: "New messages" });
+  const above = (message: ChannelMessage) =>
+    line().compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${message.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_FOLLOWING;
+  Object.assign(h.props as ThreadPanelProps, {
+    unreadRequest: { readThrough: 2 },
+  });
   h.snapshot.direction = "older";
   h.snapshot.canLoadMore = true;
-  h.snapshot.replies = [reply("later", 4)];
+  h.snapshot.replies = [later];
   h.render();
+  // The oldest loaded reply is after the read time: an older page may hold
+  // the first unread one.
   expect(h.view.loadMore).toHaveBeenCalledOnce();
   expect(h.element).toHaveAttribute("data-positioning");
 
   h.snapshot.canLoadMore = false;
-  h.snapshot.replies = [top, named, reply("later", 4)];
+  h.snapshot.replies = [top, nested, own, later];
   h.render();
-  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(above(top)).toBeTruthy();
+  expect(h.element.scrollTop).toBe(300);
+
+  // The same mounted panel decides again for a new request.
+  h.element.scrollTop = 1200;
+  Object.assign(h.props as ThreadPanelProps, {
+    unreadRequest: { readThrough: 4 },
+  });
+  h.rerenderProps();
   expect(
-    line.compareDocumentPosition(
-      h.element.querySelector(`[data-message-id="${top.id}"]`) as Node,
-    ) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
+    screen.getAllByRole("separator", { name: "New messages" }),
+  ).toHaveLength(1);
+  expect(above(later)).toBeTruthy();
+  expect(above(own)).toBeFalsy();
   expect(h.element.scrollTop).toBe(300);
 });
 it("renders replies after the original without a reply-count divider", () => {

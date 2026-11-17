@@ -4263,6 +4263,20 @@ it("opens an unread thread row in a side tab beside Inbox, at its first unread r
       tab.querySelector(`[data-message-id="${h.reply.id}"]`) as Node,
     ) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
+  // Returning to Activity restores the read thread without its line.
+  cleanup();
+  render(h.view);
+  const restored = await screen.findByRole("region", {
+    name: "Conversation in Design",
+  });
+  await waitFor(() =>
+    expect(
+      restored.querySelector(`[data-message-id="${h.reply.id}"]`),
+    ).toBeInTheDocument(),
+  );
+  expect(
+    within(restored).queryByRole("separator", { name: "New messages" }),
+  ).toBeNull();
 });
 
 it("replaces the tab the previous row opened", async () => {

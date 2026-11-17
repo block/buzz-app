@@ -654,7 +654,7 @@ export function useConversationTabs({
     messageId: string,
     rootId: string,
     intent?: "reply" | "reveal" | "focus",
-    firstUnread?: string,
+    unreadSince?: number,
   ) => {
     if (!currentVisit()) return;
     // Flat sessions keep their side-only host; channels support both panes.
@@ -664,7 +664,7 @@ export function useConversationTabs({
       rootId,
       intent,
       threadPane ?? (mainPane ? undefined : "side"),
-      firstUnread,
+      unreadSince,
     );
     if (
       opening.current &&

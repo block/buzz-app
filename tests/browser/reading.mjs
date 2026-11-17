@@ -53,3 +53,12 @@ export async function markAllRead(page) {
     .click();
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
 }
+
+// An unread thread opening pages older to find its first unread reply. Release
+// the older pages the fixture holds for it until `ready` passes.
+export async function releasing(app, ready) {
+  await expect(async () => {
+    for (const receipt of app.pending) receipt.release();
+    await ready();
+  }).toPass();
+}

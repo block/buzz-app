@@ -100,9 +100,9 @@ export type ThreadPanelProps = {
   revealFocus?: boolean | undefined;
   /** With revealSelected: each new value reveals the selected message again. */
   revealRequest?: number | undefined;
-  /** The first unread reply, named by an opener that reads the thread as it
-   * opens it: the divider goes above its branch. */
-  firstUnread?: string | undefined;
+  /** An opening that reads the thread as it opens it names the thread's read
+   * time from before that read; each new request decides the divider again. */
+  unreadRequest?: { readThrough: number } | undefined;
   headerActions?: ReactNode | undefined;
   /** Saved drafts may compose only against a verified matching root. */
   requireReadyRoot?: boolean | undefined;
@@ -431,7 +431,7 @@ function OwnedThreadPanel({
   active = true,
   revealSelected,
   revealFocus,
-  firstUnread,
+  unreadRequest,
   requireReadyRoot,
   onDraftSaved,
   onSend,
@@ -507,7 +507,7 @@ function OwnedThreadPanel({
       active={active}
       revealSelected={revealSelected}
       revealFocus={revealFocus}
-      firstUnread={firstUnread}
+      unreadRequest={unreadRequest}
       requireReadyRoot={requireReadyRoot}
       onDraftSaved={onDraftSaved}
       onSend={onSend}
@@ -541,7 +541,7 @@ function ThreadMessages({
   revealSelected,
   revealFocus,
   revealRequest,
-  firstUnread,
+  unreadRequest,
   requireReadyRoot,
   onDraftSaved,
   onSend,
@@ -575,7 +575,7 @@ function ThreadMessages({
   /** Reveal an inline target without taking focus from its host. */
   revealFocus?: boolean | undefined;
   revealRequest?: number | undefined;
-  firstUnread?: string | undefined;
+  unreadRequest?: ThreadPanelProps["unreadRequest"];
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: ThreadPanelProps["onDraftSaved"];
   onSend?: ThreadPanelProps["onSend"];
@@ -952,9 +952,11 @@ function ThreadMessages({
   // Each ordinary opening starts at the first top-level reply with unread in
   // its branch, decided once before positioning so reading it does not move
   // the line. Undefined while deciding.
-  const opening = rootTarget && !returning ? navigation?.signal : undefined;
+  const opening =
+    (rootTarget && !returning ? navigation?.signal : undefined) ??
+    unreadRequest;
   const [boundary, setBoundary] = useState<{
-    opening?: AbortSignal | undefined;
+    opening?: object | undefined;
     id?: string | null;
     failed?: true;
   }>(() => ({ opening }));
@@ -1025,30 +1027,21 @@ function ThreadMessages({
       if (shown) setBoundary({ ...boundary, id: null });
       return;
     }
-    // A named first unread reply outlasts the read that opened it.
-    if (firstUnread) {
-      if (snapshot.replies.some((row) => row.id === firstUnread))
-        setBoundary({
-          ...boundary,
-          id: tree.ancestors(firstUnread).at(-1) ?? firstUnread,
-        });
-      else if (snapshot.direction === "older" && snapshot.canLoadMore)
-        void view.loadMore();
-      else setBoundary({ ...boundary, id: null });
-      return;
-    }
-    const unread = (id: string): boolean => {
-      const attention = session.unread.attention(channelId, id);
+    // A requested read time outlasts the read that opened the thread: what
+    // others posted after it is unread.
+    const since = unreadRequest?.readThrough;
+    const unread = (row: ChannelMessage): boolean => {
+      const attention = session.unread.attention(channelId, row.id);
       return (
-        attention.unread ||
-        attention.forced ||
-        (tree.children.get(id) ?? []).some((row) => unread(row.id))
+        (since === undefined
+          ? attention.unread || attention.forced
+          : row.createdAt > since && row.authorId !== session.viewer) ||
+        (tree.children.get(row.id) ?? []).some(unread)
       );
     };
-    const first = (tree.children.get(undefined) ?? []).find((row) =>
-      unread(row.id),
-    );
-    const known = !!first || (threadUnread?.observedCount ?? 0) > 0;
+    const first = (tree.children.get(undefined) ?? []).find(unread);
+    const known =
+      since !== undefined || !!first || (threadUnread?.observedCount ?? 0) > 0;
     // Resumed rows show at once; with unread known, the line waits for this
     // view's own rows.
     if (known && snapshot.resumed) return;
@@ -1062,7 +1055,8 @@ function ThreadMessages({
       snapshot.direction === "older" &&
       (snapshot.canLoadMore || snapshot.limited) &&
       oldest &&
-      oldest.createdAt > session.unread.threadReadThrough(channelId, messageId)
+      oldest.createdAt >
+        (since ?? session.unread.threadReadThrough(channelId, messageId))
     ) {
       if (snapshot.canLoadMore) void view.loadMore();
       // Past the page limit the first unread reply stays unknown.
@@ -1073,7 +1067,7 @@ function ThreadMessages({
   }, [
     boundary,
     active,
-    firstUnread,
+    unreadRequest,
     revealSelected,
     returning,
     navigation,
@@ -1082,6 +1076,7 @@ function ThreadMessages({
     messageId,
     tree,
     session.unread,
+    session.viewer,
     channelId,
     view,
     threadUnread,

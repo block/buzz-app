@@ -136,7 +136,7 @@ test("Inbox rows open their conversation in one side tab beside the list", async
 
 // Browser-only: the tab's menu takes its conversation to Channels, as the
 // former Inbox detail pane's Open in channel did. Real layout decides that
-// the channel's root row is in view and painted beside the focused thread.
+// the channel's root row is in view and painted beside the thread.
 test.describe("with the thread's root beyond the channel's newest page", () => {
   test.use({ threadUnreadNewerRows: 30 });
   test("an Inbox tab's menu opens its thread in its channel beside its root", async ({
@@ -188,23 +188,23 @@ test.describe("with the thread's root beyond the channel's newest page", () => {
       () => history.state.buzzNavigationV1.entry.target,
     );
     expect(target.threadRootId).toBe(root.id);
-    expect(target.messageId).toMatch(/^[a-f0-9]{64}$/);
-    // The thread still opens at the same message, which keeps focus.
-    const reply = page
-      .getByRole("region", { name: "Thread messages", exact: true })
-      .locator(`[data-message-id="${target.messageId}"]`);
-    await expect(reply).toContainText("Unread reply 1");
-    await expect(reply).toBeFocused();
+    // The tab opened the whole thread, so the channel opens it at its root.
+    // Seeking the root in the channel must not take focus.
+    expect(target.messageId).toBe(root.id);
+    const channel = page.getByRole("region", {
+      name: "Channel history",
+      exact: true,
+    });
+    await expect(
+      page
+        .getByRole("region", { name: "Thread messages", exact: true })
+        .locator(`[data-message-id="${root.id}"]`),
+    ).toContainText("Thread root 1");
     // Beside it, the channel waits to show its list at the thread's root,
     // reading the older page the fixture holds.
     await expect.poll(() => app.pending.length).toBe(1);
     expect(app.pending[0].channel).toBe("alpha");
-    await expect(
-      page
-        .getByRole("region", { name: "Channel history", exact: true })
-        .getByRole("status"),
-    ).toHaveText("Loading messages…");
-    await expect(reply).toBeFocused();
+    await expect(channel.getByRole("status")).toHaveText("Loading messages…");
     app.pending.shift().release();
     const head = app.report.queries.find(
       ({ community, filter }) =>
@@ -223,7 +223,11 @@ test.describe("with the thread's root beyond the channel's newest page", () => {
         .locator(`[data-message-id="${root.id}"]`),
     ).toBeInViewport();
     await expect.poll(() => page.evaluate(() => window.rootMarked)).toBe(true);
-    await expect(reply).toBeFocused();
+    expect(
+      await channel.evaluate((element) =>
+        element.contains(document.activeElement),
+      ),
+    ).toBe(false);
   });
 });
 
@@ -314,13 +318,10 @@ for (const variant of Object.keys(titles))
     const main = inbox.getByRole("tablist", { name: "Activity tabs" });
     const listTab = main.getByRole("tab", { name: "Activity", exact: true });
     if (variant === "covered") {
-      // Opening the thread reveals its message and focuses the row once the
-      // thread has loaded. Move the tab after that, or the late reveal takes
-      // focus from it.
+      // Opening the thread focuses its composer once the thread has loaded.
+      // Move the tab after that, or the late focus takes it from the tab.
       await expect(
-        inbox
-          .getByRole("region", { name: "Thread messages", exact: true })
-          .locator("[data-message-id]", { hasText: "Beta mention 3" }),
+        inbox.getByRole("textbox", { name: "Reply to thread" }),
       ).toBeFocused();
       await inbox
         .getByRole("tablist", { name: "Panel tabs" })

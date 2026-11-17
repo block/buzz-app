@@ -8,6 +8,7 @@ import {
 } from "motion/react";
 import { WORKFLOW_CHANNEL_BATCH } from "../../features/workflows/queries";
 import {
+  type ComponentProps,
   type ReactNode,
   type Ref,
   type RefObject,
@@ -447,19 +448,24 @@ function WorkflowIcon({ kind }: { kind: WorkflowCardIcon }) {
   return <Icon size={20} strokeWidth={2.5} aria-hidden="true" />;
 }
 
+/** "panel" on an inset surface, as in the detail hero. */
+type OwnerFallbackSurface = NonNullable<
+  ComponentProps<typeof Avatar>["fallbackSurface"]
+>;
+
 /** The owner's avatar, then their name. The avatar is decorative, so the name
- * is read once. */
+ * is read once. Sighted users read the avatar as "owned by"; assistive
+ * technology gets that from a label that is never drawn. */
 function WorkflowOwnerLabel({
   name,
   src,
   isAgent,
-  inset,
+  fallbackSurface,
 }: {
   name: string;
   src?: string | undefined;
   isAgent?: boolean | undefined;
-  /** Drawn on an inset surface, as in the detail hero. */
-  inset: boolean;
+  fallbackSurface: OwnerFallbackSurface;
 }) {
   return (
     <span className="workflow-owner">
@@ -469,8 +475,9 @@ function WorkflowOwnerLabel({
         fallback={name}
         src={src}
         shape={isAgent ? "squircle" : "circle"}
-        fallbackSurface={inset ? "panel" : "subtle"}
+        fallbackSurface={fallbackSurface}
       />
+      <span className="sr-only">Owner: </span>
       <span>{name}</span>
     </span>
   );
@@ -481,13 +488,13 @@ function WorkflowOwner({
   owner,
   channelId,
   keyLabel,
-  inset,
+  fallbackSurface,
 }: {
   session: RelaySession;
   owner: string;
   channelId: string;
   keyLabel: string;
-  inset: boolean;
+  fallbackSurface: OwnerFallbackSurface;
 }) {
   const selection = useMemo(
     () => selectProfiles(session.profiles, [owner]),
@@ -506,7 +513,7 @@ function WorkflowOwner({
       name={name(owner, fallback)}
       src={avatarMedia(profile?.picture, session.media)}
       isAgent={profile?.isAgent}
-      inset={inset}
+      fallbackSurface={fallbackSurface}
     />
   );
 }
@@ -795,7 +802,8 @@ function WorkflowCard({
     </>
   );
   // One line in the card and the detail: who owns it, then when it was saved.
-  const ownership = (inset: boolean) => (
+  // The line's gap separates the two, so a wrapped date leaves nothing behind.
+  const ownership = (fallbackSurface: OwnerFallbackSurface) => (
     <>
       {session ? (
         <WorkflowOwner
@@ -803,12 +811,11 @@ function WorkflowCard({
           owner={definition.owner}
           channelId={definition.channelId}
           keyLabel={keyLabel}
-          inset={inset}
+          fallbackSurface={fallbackSurface}
         />
       ) : (
-        <WorkflowOwnerLabel name={keyLabel} inset={inset} />
+        <WorkflowOwnerLabel name={keyLabel} fallbackSurface={fallbackSurface} />
       )}
-      <span aria-hidden="true">·</span>
       <time dateTime={new Date(definition.createdAt * 1000).toISOString()}>
         {new Date(definition.createdAt * 1000).toLocaleDateString()}
       </time>
@@ -837,7 +844,7 @@ function WorkflowCard({
           {channel.archived && " · Archived"}
         </p>
         <p className="workflow-detail-owner text-caption text-subtle">
-          {ownership(true)}
+          {ownership("panel")}
         </p>
         <div className="workflow-detail-actions">
           <Button
@@ -992,7 +999,7 @@ function WorkflowCard({
                   )}
                 </span>
                 <span className="workflow-card-owner text-caption text-subtle">
-                  {ownership(false)}
+                  {ownership("subtle")}
                 </span>
               </span>
             }

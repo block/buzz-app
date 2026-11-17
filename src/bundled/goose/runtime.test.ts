@@ -3344,47 +3344,61 @@ it.each(["thread", "channel"] as const)(
   },
 );
 
-it("retains the Solo Canvas after a community turn fails effort admission", async () => {
-  const f = setup({
-    scope: "community",
-    solo: new Set([channel]),
-    canvas: "RETAINED_CANVAS",
-  });
-  const listed = f.session.channels.list();
-  const first = listed.channels[0];
-  if (!first) throw new Error("missing channel");
-  vi.spyOn(f.session.channels, "list").mockReturnValue({
-    ...listed,
-    channels: [
-      ...listed.channels,
-      { ...first, id: "other", channelType: "stream" },
-    ],
-  });
-  const workingUntil = vi.fn<Delivery["workingUntil"]>();
-  try {
-    await f.deliver(message("1", "first"), { workingUntil });
-    await Promise.all(workingUntil.mock.calls.map(([done]) => done));
-    await f.deliver(
-      message("2", "refused", {
-        tags: [
-          ["h", "other"],
-          ["p", self],
-        ],
-      }),
-      { channelId: "other", synced: { effort: "high" }, workingUntil },
-    );
-    await Promise.all(workingUntil.mock.calls.map(([done]) => done));
-    expect(f.fake.geese.flatMap((p) => p.turns)).toHaveLength(1);
-    f.session.canvas.read.mockRejectedValue(new Error("offline"));
-    await f.deliver(message("3", "back"), { workingUntil });
-    await Promise.all(workingUntil.mock.calls.map(([done]) => done));
-    expect(f.fake.geese.flatMap((p) => p.turns).at(-1)?.text).toContain(
-      "RETAINED_CANVAS",
-    );
-  } finally {
-    f.runtime.dispose();
-  }
-});
+it.each(["effort admission", "native prompt rejection"])(
+  "retains the Solo Canvas after %s",
+  async (failure) => {
+    const f = setup({
+      scope: "community",
+      solo: new Set([channel]),
+      canvas: "RETAINED_CANVAS",
+    });
+    const listed = f.session.channels.list();
+    const first = listed.channels[0];
+    if (!first) throw new Error("missing channel");
+    vi.spyOn(f.session.channels, "list").mockReturnValue({
+      ...listed,
+      channels: [
+        ...listed.channels,
+        { ...first, id: "other", channelType: "stream" },
+      ],
+    });
+    const workingUntil = vi.fn<Delivery["workingUntil"]>();
+    try {
+      await f.deliver(message("1", "first"), { workingUntil });
+      await Promise.all(workingUntil.mock.calls.map(([done]) => done));
+      if (failure === "native prompt rejection") {
+        const worker = f.fake.geese.find((process) => process.turns.length);
+        if (!worker) throw new Error("missing worker");
+        worker.rejectPrompt = true;
+      }
+      await f.deliver(
+        message("2", "refused", {
+          tags: [
+            ["h", "other"],
+            ["p", self],
+          ],
+        }),
+        {
+          channelId: "other",
+          ...(failure === "effort admission"
+            ? { synced: { effort: "high" } }
+            : {}),
+          workingUntil,
+        },
+      );
+      await Promise.all(workingUntil.mock.calls.map(([done]) => done));
+      expect(f.fake.geese.flatMap((p) => p.turns)).toHaveLength(1);
+      f.session.canvas.read.mockRejectedValue(new Error("offline"));
+      await f.deliver(message("3", "back"), { workingUntil });
+      await Promise.all(workingUntil.mock.calls.map(([done]) => done));
+      expect(f.fake.geese.flatMap((p) => p.turns).at(-1)?.text).toContain(
+        "RETAINED_CANVAS",
+      );
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
 
 it("reaps an unresponsive Goose community wake after its deadline", async () => {
   const f = setup({ hold: true, scope: "community" });

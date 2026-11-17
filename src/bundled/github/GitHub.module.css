@@ -440,3 +440,33 @@
   margin: 0;
   padding-inline-start: var(--space-6);
 }
+
+.soloPullRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.soloNativeRow {
+  /* Move status below the native row before its title and menu lose space. */
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+.soloSignals {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: var(--space-1);
+  align-items: center;
+  margin-inline-start: auto;
+  color: var(--text-subtle);
+}
+.soloSignals [data-tone="success"] {
+  color: var(--icon-success);
+}
+.soloSignals [data-tone="failure"] {
+  color: var(--text-danger);
+}
+.soloSignals [data-tone="pending"] {
+  color: var(--text-warning);
+}

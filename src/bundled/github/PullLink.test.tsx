@@ -194,6 +194,8 @@ function renderers() {
     conversation: { registerLink: register("buzz.links") },
   } as never);
   apply({
+    reflect: { get: () => undefined },
+    effect: () => {},
     host: {},
     panels: { register: () => {} },
     conversation: {

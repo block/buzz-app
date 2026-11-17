@@ -97,6 +97,7 @@ export type PullState = Readonly<{
   /** The head commit, when read with `gh`, as are `settled`, `running` and
    * `failed`. */
   head?: string | undefined;
+  branch?: string | undefined;
   /** Whether every check on the head is done, and none is still expected. */
   settled?: boolean | undefined;
   /** Whether a check on the head is still running or expected, even where
@@ -207,7 +208,12 @@ export type PullStates = Readonly<{
     url: string,
     listener: () => void,
     level?: PullLevel,
-    options?: Readonly<{ polling?: Polling; wantsText?: WantsText }>,
+    options?: Readonly<{
+      polling?: Polling;
+      wantsText?: WantsText;
+      /** Panel polls are interactive by default; passive details readers use the links' public budget. */
+      interactive?: boolean;
+    }>,
   ): () => void;
   /** Its latest state, kept when a later read fails; `"failed"` when it was
    * never read or `url` is neither a pull request's nor an issue's, or
@@ -243,6 +249,7 @@ type StateData = {
   isDraft: boolean;
   mergeStateStatus?: string;
   headRefOid?: string;
+  headRefName?: string;
   commits?: {
     nodes?: ({
       commit?: {
@@ -295,7 +302,7 @@ const FAILED = new Set([
   "STALE",
 ]);
 
-const STATE = `state title isDraft mergeStateStatus headRefOid
+const STATE = `state title isDraft mergeStateStatus headRefOid headRefName
 commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCount nodes{
 __typename
 ... on CheckRun{name status conclusion}
@@ -380,6 +387,7 @@ function stateOf(pull: StateData): PullState {
             ? "draft"
             : "open",
     title: pull.title,
+    ...(pull.headRefName && { branch: pull.headRefName }),
     checks: checksOf(rollup?.state),
     conflicts: pull.mergeStateStatus === "DIRTY",
     ...(pull.headRefOid && {
@@ -672,6 +680,7 @@ const same = (a: PullState | "failed" | undefined, b: PullState | "failed") =>
     a.checks === b.checks &&
     a.conflicts === b.conflicts &&
     a.head === b.head &&
+    a.branch === b.branch &&
     a.settled === b.settled &&
     a.running === b.running &&
     sameList(a.failed, b.failed) &&
@@ -705,6 +714,7 @@ type Listener = Readonly<{
   level: PullLevel;
   polling: Polling;
   wantsText: WantsText;
+  interactive: boolean;
 }>;
 const allText: WantsText = () => true;
 
@@ -897,7 +907,11 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
     // Reads someone in the app asked for are their own, not the links'
     // share, and so are an open panel's polls; an agent's lookup is not.
     const own = (url: string) =>
-      asked.has(url) ? interactive(url) : watchedAt(url, "details");
+      asked.has(url)
+        ? interactive(url)
+        : [...(listeners.get(url) ?? [])].some(
+            (listener) => listener.interactive,
+          );
     // What each is asked for is fixed when the read starts, so what is parsed
     // is what was queried; a level asked for meanwhile is read next.
     const plan = new Map<string, Asked>();
@@ -993,9 +1007,9 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         for (const { resolve } of asked.get(url)?.waiting ?? [])
           resolve({ state, readAt: at, error });
         asked.delete(url);
-        // An unchanged state keeps its object, so whoever shows it is left be.
-        if (same(states.get(url), state)) continue;
-        states.set(url, state);
+        // Data-only readers keep their snapshot when only read metadata changes.
+        if (!same(states.get(url), state)) states.set(url, state);
+        // Metadata readers must also observe failed reads and renewed freshness.
         changed.push(url);
       }
       notify(changed);
@@ -1012,6 +1026,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         polledAt.set(url, now);
         if (plannedAll(url)) needed.delete(url);
       }
+      notify(reading.filter((url) => states.has(url)));
     } finally {
       // A reader not answered gets what is held, with why it was not read
       // again; only one with nothing held is refused.
@@ -1109,6 +1124,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         level,
         polling: options.polling ?? POLLING[level],
         wantsText: options.wantsText ?? allText,
+        interactive: options.interactive ?? level === "details",
       };
       let set = listeners.get(url);
       if (!set) {

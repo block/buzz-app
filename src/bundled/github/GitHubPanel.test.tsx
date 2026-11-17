@@ -396,7 +396,7 @@ function pullData(over: Record<string, unknown> = {}) {
         latestOpinionatedReviews: {
           nodes: [{ author: { login: "wes" }, state: "APPROVED" }],
         },
-        reviewThreads: { nodes: [] },
+        reviewThreads: { totalCount: 0, nodes: [] },
         commits: {
           nodes: [
             {

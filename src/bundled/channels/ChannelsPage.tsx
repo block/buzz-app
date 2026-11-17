@@ -1381,6 +1381,7 @@ function ChannelWorkspace({
     const retiring = closing(current.target, current.id);
     if (
       keep !== undefined &&
+      !(includeSettings && keep === "settings") &&
       (keptTab ||
         keptEntry ||
         keep === "settings" ||

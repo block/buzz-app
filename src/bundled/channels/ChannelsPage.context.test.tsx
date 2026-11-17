@@ -458,7 +458,13 @@ it("replaces a resolved channel's reader with its plugin view, restores native c
   expect(screen.queryByText("Board for alpha")).toBeNull();
 });
 
-it.each(["individual", "bulk", "keep-local", "thread-bulk"])(
+it.each([
+  "individual",
+  "individual-local",
+  "bulk",
+  "keep-local",
+  "thread-bulk",
+])(
   "restores the custom view through settings history and retires every settings visit on %s close",
   async (mode) => {
     const host = provideNavigation(new Context());
@@ -474,29 +480,27 @@ it.each(["individual", "bulk", "keep-local", "thread-bulk"])(
     };
     const empty: readonly never[] = [],
       entries = [entry];
-    const panelContributions: ReturnType<Panels["snapshot"]> =
-      mode === "keep-local"
-        ? [
-            {
-              key: "example/canvas",
-              id: "canvas",
-              pluginId: "example",
-              revision: "one",
-              title: "Canvas",
-              matches: () => true,
-              component: () => <p>Canvas content</p>,
-              channelPlacement: "tab",
-              channelLauncher: ({ toggle }) => (
-                <button
-                  type="button"
-                  onClick={() => toggle("https://example.org/canvas")}
-                >
-                  View canvas
-                </button>
-              ),
-            },
-          ]
-        : [];
+    const local = mode === "keep-local" || mode === "individual-local";
+    const panelContributions: ReturnType<Panels["snapshot"]> = local
+      ? ["Canvas", "Notes"].map((title) => ({
+          key: `example/${title}`,
+          id: title,
+          pluginId: "example",
+          revision: "one",
+          title,
+          matches: () => true,
+          component: () => <p>{title} content</p>,
+          channelPlacement: "tab",
+          channelLauncher: ({ toggle }) => (
+            <button
+              type="button"
+              onClick={() => toggle(`https://example.org/${title}`)}
+            >
+              View {title}
+            </button>
+          ),
+        }))
+      : [];
     const h = await channelsPage({
       navigationOwner: { ...host.navigation, dismiss },
       panelContributions,
@@ -504,7 +508,7 @@ it.each(["individual", "bulk", "keep-local", "thread-bulk"])(
         tools: { snapshot: () => empty, subscribe: () => () => {} },
         inline: { snapshot: () => empty, subscribe: () => () => {} },
         channelViews: {
-          snapshot: () => (mode === "keep-local" ? empty : entries),
+          snapshot: () => (local ? empty : entries),
           subscribe: () => () => {},
         },
       },
@@ -533,14 +537,33 @@ it.each(["individual", "bulk", "keep-local", "thread-bulk"])(
     };
     try {
       await open(h.target("alpha"));
-      if (mode === "keep-local")
+      if (local)
         await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
       else await screen.findByText("Custom board");
+      if (mode === "individual-local") {
+        fireEvent.click(screen.getByRole("button", { name: "View Canvas" }));
+        await screen.findByText("Canvas content");
+        fireEvent.click(screen.getByRole("button", { name: "View Notes" }));
+        await screen.findByText("Notes content");
+      }
       await open(h.target("alpha", { panel: "settings" }));
       const first = host.navigation.snapshot().entry.id;
       await screen.findByRole("tab", { name: "Channel settings" });
+      if (mode === "individual-local") {
+        fireEvent.click(
+          screen.getByRole("button", { name: "Close Channel settings tab" }),
+        );
+        await vi.waitFor(() =>
+          expect(screen.getByRole("tab", { name: "Notes" })).toHaveAttribute(
+            "aria-selected",
+            "true",
+          ),
+        );
+        expect(screen.getByText("Notes content")).toBeVisible();
+        return;
+      }
       act(() => host.navigation.back());
-      if (mode === "keep-local")
+      if (local)
         await vi.waitFor(() => expect(timeline("alpha")).not.toBeNull());
       else await screen.findByText("Custom board");
       act(() => host.navigation.forward());
@@ -549,7 +572,7 @@ it.each(["individual", "bulk", "keep-local", "thread-bulk"])(
       await open(h.target("alpha", { panel: "settings" }));
       const second = host.navigation.snapshot().entry.id;
       if (mode === "keep-local") {
-        fireEvent.click(screen.getByRole("button", { name: "View canvas" }));
+        fireEvent.click(screen.getByRole("button", { name: "View Canvas" }));
         await screen.findByText("Canvas content");
       }
       if (mode === "thread-bulk") {
@@ -557,7 +580,7 @@ it.each(["individual", "bulk", "keep-local", "thread-bulk"])(
         if (!root) throw new Error("Missing thread fixture");
         await open(h.target("alpha", { messageId: root, threadRootId: root }));
       }
-      if (mode === "individual")
+      if (mode === "individual" || mode === "individual-local")
         fireEvent.click(
           screen.getByRole("button", { name: "Close Channel settings tab" }),
         );

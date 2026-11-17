@@ -132,8 +132,8 @@ function mentionChoice(member: WorkflowMentionMember): MentionChoice {
 }
 
 // The relay reads a workflow `@Name` as plain text and does not start a name
-// after CJK punctuation, so here a query opens only after whitespace, `(`, `[`
-// or `{`.
+// after CJK punctuation, so here a query opens only at the start or after
+// whitespace, `(`, `[` or `{`.
 function workflowQuery(text: string, caret: number) {
   const query = mentionQuery(text, caret);
   return query?.start && !/[\s([{]/u.test(text[query.start - 1] ?? "")

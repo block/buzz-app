@@ -8,6 +8,7 @@ import english from "@emoji-mart/data/i18n/en.json";
 import { Data, Picker, SearchIndex } from "emoji-mart";
 import type { CustomEmoji } from "../../features/relay/emoji";
 import { rankShortcodes } from "./emoji-search";
+import { rememberEmoji } from "./emoji-usage";
 import { PREVIEW_ACTION_SLOT } from "./add-emoji";
 import {
   SKIN_TONE_SLOT,
@@ -95,13 +96,17 @@ export function mountEmojiMart({
   searchChange(value: string): void;
   entries: readonly CustomEmoji[];
   media(url: string): string | undefined;
-  select(value: string, customEmoji?: string): void;
+  // biome-ignore lint/suspicious/noConfusingVoidType: Existing picker consumers return void; false explicitly rejects selection.
+  select(value: string, customEmoji?: string): boolean | void;
   close(): void;
   /** With `preview`, the footer's skin-tone action renders the saved tone (1–6). */
   skinToneChange?(tone: number, open: boolean): void;
 }) {
   active?.();
   let disposed = false;
+  const choose = (value: string, id: string, customEmoji?: string) => {
+    if (select(value, customEmoji) !== false) rememberEmoji(scope, id);
+  };
   const values = new Map<string, { literal: string; shortcode: string }>();
   const emojis = entries.flatMap(({ shortcode, url }) => {
     const src = media(url);
@@ -174,11 +179,13 @@ export function mountEmojiMart({
     onEmojiSelect: (emoji: { native?: string; id?: string }) => {
       if (disposed) return;
       if (emoji.native) {
-        if (!promptSkinTone(emoji.id)) select(emoji.native);
+        if (emoji.id && !promptSkinTone(emoji.id))
+          choose(emoji.native, `unicode/${emoji.id}`);
         return;
       }
       const custom = values.get(emoji.id ?? "");
-      if (custom) select(custom.literal, custom.shortcode);
+      if (custom)
+        choose(custom.literal, `custom/${custom.shortcode}`, custom.shortcode);
     },
   }) as unknown as HTMLElement;
   // The documented web-component attribute updates in place: do not recreate the
@@ -656,7 +663,7 @@ ${[1, 2, 3, 4, 5, 6].map((tone) => `    .menu .skin-tone-${tone}::before { conte
     const tone = chosenTone;
     const native = tone && Data?.emojis[id]?.skins[tone - 1]?.native;
     if (!native || disposed) return false;
-    select(native);
+    choose(native, `unicode/${id}`);
     return true;
   };
   // Mart clears the preview whenever the pointer leaves an emoji, so crossing

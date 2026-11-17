@@ -1732,6 +1732,13 @@ with local ephemeral signing keys; it does not contact the deployed relay.
 
 ## Community emoji
 
+Composer autocomplete learns from accepted emoji suggestions and picker choices
+on this device, separately for each account and community. More frequently chosen
+emoji rise within exact-name, prefix and remaining matches, with exact names
+always first. The most recently chosen 256 emoji retain their counts across
+restarts. Browsing suggestions or cancelling a picker does not train autocomplete;
+unavailable local storage leaves the normal search order usable.
+
 The smile button in channel and thread composers opens Emoji Mart with standard
 Unicode emoji, skin tones, and the selected community's custom category. Its data
 and search load only when opened. Fuzzy search by name/shortcode, then choose an emoji

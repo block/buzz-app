@@ -865,7 +865,10 @@ and are asked to sign in again in Buzz.
   and, when you are elsewhere, can open it (except a huddle). Your message and
   files are back in that conversation's composer. Do not
   promise support for every file type or size.
-- **Emoji suggestions** appear when you type `:` and an emoji name. If a name
+- **Emoji suggestions** appear when you type `:` and an emoji name. Buzz learns
+  from your emoji selections and prioritizes frequently chosen matches, while
+  keeping exact names first. This history stays on this device for your current
+  account and community. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip. A chosen or picked emoji is followed
   by a space, unless one already follows, so you can keep typing.

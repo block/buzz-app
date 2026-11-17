@@ -79,7 +79,8 @@ export function EmojiPicker({
   addEmoji?: Pick<AddEmoji, "snapshot" | "subscribe"> | undefined;
   scope: string;
   disabled: boolean;
-  insert(value: string): void;
+  // biome-ignore lint/suspicious/noConfusingVoidType: Existing form consumers return void; composers return false when insertion is rejected.
+  insert(value: string): boolean | void;
   reaction?: boolean;
   gifRequests?: GifRequests | undefined;
   externalTrigger?: {
@@ -295,9 +296,10 @@ export function EmojiPicker({
           entries,
           media: session.media,
           select: (value) => {
-            onInsert.current(value);
+            if (onInsert.current(value) === false) return false;
             accepted.current = true;
             setOpen(false);
+            return true;
           },
           close: () => setOpen(false),
           skinToneChange: (tone, menuOpen) =>

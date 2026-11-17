@@ -5,11 +5,76 @@ import "@testing-library/jest-dom/vitest";
 import { mountEmojiMart } from "./emoji-mart";
 import { PREVIEW_ACTION_SLOT } from "./add-emoji";
 import { SKIN_TONE_SLOT } from "./skin-tone";
+import { emojiUsage } from "./emoji-usage";
 
 afterEach(() => {
   document.body.replaceChildren();
   vi.unstubAllGlobals();
 });
+
+it.each([true, false])(
+  "records picker choices only when the consumer accepts (%s)",
+  async (accepted) => {
+    for (const name of ["ResizeObserver", "IntersectionObserver"])
+      vi.stubGlobal(
+        name,
+        class {
+          observe() {}
+          unobserve() {}
+          disconnect() {}
+        },
+      );
+    const host = document.body.appendChild(document.createElement("div"));
+    const scope = `usage-${accepted}`;
+    const select = vi.fn(() => accepted);
+    const dispose = mountEmojiMart({
+      host,
+      autoFocus: false,
+      scope,
+      perLine: 8,
+      emojiSize: 24,
+      emojiButtonSize: 36,
+      search: "",
+      searchSelection: { current: undefined },
+      searchChange() {},
+      entries: [{ shortcode: "job", url: "https://a.test/job.png" }],
+      media: (url) => url,
+      select,
+      close() {},
+    });
+    try {
+      const input = await vi.waitFor(() => {
+        const input = host
+          .querySelector("em-emoji-picker")
+          ?.shadowRoot?.querySelector("input");
+        if (!input) throw new Error("Picker loading");
+        return input;
+      });
+      for (const [query, title, id] of [
+        ["joy", "Face with Tears of Joy", "unicode/joy"],
+        ["job", ":job:", "custom/job"],
+      ] as const) {
+        input.value = query;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        const button = await vi.waitFor(() => {
+          const button = host
+            .querySelector("em-emoji-picker")
+            ?.shadowRoot?.querySelector<HTMLButtonElement>(
+              `button[title="${title}"]`,
+            );
+          if (!button) throw new Error("Search loading");
+          return button;
+        });
+        expect(emojiUsage(scope).get(id)).toBeUndefined();
+        button.click();
+        expect(emojiUsage(scope).get(id)).toBe(accepted ? 1 : undefined);
+      }
+      expect(select).toHaveBeenCalledTimes(2);
+    } finally {
+      dispose();
+    }
+  },
+);
 
 it("adds fuzzy shortcode matches after Mart's own results", async () => {
   const martSearch = SearchIndex.search;

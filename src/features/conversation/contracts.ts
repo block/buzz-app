@@ -419,6 +419,8 @@ export type CompletionSuggestion = Readonly<{
   disabled?: string | undefined;
   /** Final synchronous evidence check; false never falls through to sending. */
   canSelect?: ((key: string) => boolean) | undefined;
+  /** Called once after the host successfully applies this suggestion's edit. */
+  onSelect?: (() => void) | undefined;
 }>;
 export type CompletionResult = Readonly<{
   items: readonly CompletionSuggestion[];

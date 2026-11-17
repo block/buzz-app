@@ -206,6 +206,61 @@ const peopleItems = [
     edit: { mention: { pubkey: "b".repeat(64), name: "Hannah" } },
   },
 ];
+
+it.each([true, false])(
+  "reports a choice only after successful replacement (%s)",
+  async (accepted) => {
+    const selected = vi.fn();
+    const replace = vi.fn(() => {
+      expect(selected).not.toHaveBeenCalled();
+      return accepted;
+    });
+    mountPeople("acme.people", {
+      items: [{ ...peopleItems[0], onSelect: selected }],
+      replace,
+    });
+    fireEvent.click(await screen.findByRole("option"));
+    expect(replace).toHaveBeenCalledOnce();
+    expect(selected).toHaveBeenCalledTimes(accepted ? 1 : 0);
+  },
+);
+
+it("does not report disabled or rejected choices, or a dismissed popup", async () => {
+  const selected = vi.fn();
+  mountPeople("acme.people", {
+    items: [
+      { ...peopleItems[0], disabled: "Unavailable", onSelect: selected },
+      { ...peopleItems[1], canSelect: () => false, onSelect: selected },
+    ],
+  });
+  for (const option of await screen.findAllByRole("option"))
+    fireEvent.click(option);
+  cleanup();
+  expect(selected).not.toHaveBeenCalled();
+});
+
+it("contains provider errors after a successful edit", async () => {
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const replace = vi.fn(() => true);
+  mountPeople("acme.people", {
+    items: [
+      {
+        ...peopleItems[0],
+        onSelect() {
+          throw new Error("Provider failed");
+        },
+      },
+    ],
+    replace,
+  });
+  expect(() => fireEvent.click(screen.getByRole("option"))).not.toThrow();
+  expect(replace).toHaveBeenCalledOnce();
+  expect(error).toHaveBeenCalledWith(
+    "Completion selection callback failed",
+    expect.any(Error),
+  );
+  error.mockRestore();
+});
 it("marks and announces agents and shows their manager in mention completion", async () => {
   mountPeople("buzz.mentions");
   expect(

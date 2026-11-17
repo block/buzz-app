@@ -83,11 +83,14 @@ export function AvatarCropFrame({
   onChange?(crop: AvatarCrop): void;
   onError?(): void;
 }) {
-  const [aspect, setAspect] = useState(1);
-  const box = avatarCropBox(aspect, crop);
+  const [loaded, setLoaded] = useState<{ src: string; aspect: number }>();
+  // An image's shape is unknown until it loads, so it stays hidden until
+  // then rather than paint squashed into the square.
+  const aspect = loaded?.src === src ? loaded.aspect : undefined;
+  const box = avatarCropBox(aspect ?? 1, crop);
   const pan = useAvatarPan(
     box.crop,
-    (x, y) => onChange?.(avatarCropBox(aspect, { ...crop, x, y }).crop),
+    (x, y) => onChange?.(avatarCropBox(aspect ?? 1, { ...crop, x, y }).crop),
     disabled,
   );
   const artwork = (
@@ -100,9 +103,13 @@ export function AvatarCropFrame({
         onError={onError}
         onLoad={(event) => {
           const image = event.currentTarget;
-          setAspect(image.naturalWidth / image.naturalHeight || 1);
+          setLoaded({
+            src,
+            aspect: image.naturalWidth / image.naturalHeight || 1,
+          });
         }}
         style={{
+          visibility: aspect ? undefined : "hidden",
           width: `${box.width * 100}%`,
           height: `${box.height * 100}%`,
           left: `${box.left * 100}%`,

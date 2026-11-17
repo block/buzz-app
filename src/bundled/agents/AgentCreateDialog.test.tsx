@@ -590,6 +590,8 @@ it("pans and zooms an uploaded image, then saves the framed crop", async () => {
   const frame = await within(dialog).findByRole("application", {
     name: "Image position",
   });
+  // The preview shows once its image loads.
+  fireEvent.load(within(frame).getByAltText("Avatar preview"));
   fireEvent.change(within(dialog).getByRole("slider", { name: "Zoom" }), {
     target: { value: "2" },
   });

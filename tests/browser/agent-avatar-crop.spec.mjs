@@ -221,3 +221,33 @@ test("the zoom slider stays while its thumb is dragged off the avatar", async ({
   await page.mouse.move(0, 0);
   await expect(pill).toHaveCSS("opacity", "0");
 });
+
+test("a wide upload is never painted squashed into the square", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/agent-avatar-picker.html");
+  // Record each preview's shape as it enters the page, before it can paint.
+  await page.evaluate(() => {
+    window.firstFrames = [];
+    new MutationObserver(() => {
+      for (const image of document.querySelectorAll(
+        'img[alt="Avatar preview"]:not([data-seen])',
+      )) {
+        image.dataset.seen = "";
+        const { width, height } = image.getBoundingClientRect();
+        window.firstFrames.push({
+          shown: getComputedStyle(image).visibility !== "hidden",
+          ratio: width / height,
+        });
+      }
+    }).observe(document, { subtree: true, childList: true });
+  });
+  await splitImage(page);
+  await expect(
+    page.getByRole("application", { name: "Image position" }),
+  ).toBeVisible();
+  const frames = await page.evaluate(() => window.firstFrames);
+  expect(frames.length).toBeGreaterThan(0);
+  for (const { shown, ratio } of frames)
+    if (shown) expect(ratio).toBeCloseTo(2, 2);
+});

@@ -3275,3 +3275,31 @@ it("preserves other drafts when a rejected voice save is confirmed later", async
     "Maple",
   );
 });
+
+it("keeps a legacy configuration clean after a voice-only save", async () => {
+  const f = fixture();
+  const save = vi.fn(async (_config?: Config) => {});
+  const props = f.props(
+    { ...defaults, model: "model-a", preset: "recommended" },
+    save,
+  );
+  const user = userEvent.setup();
+  const view = render(
+    <f.tabs.SettingsTab {...props} settingsSection="identity" />,
+  );
+  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(await screen.findByRole("radio", { name: "Maple" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  const config = save.mock.calls[0]?.[0] as Config;
+  view.rerender(
+    <f.tabs.SettingsTab
+      {...props}
+      agent={{ ...props.agent, config }}
+      settingsSection="identity"
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+});

@@ -98,6 +98,10 @@ type ProviderState = AgentProviderSnapshot &
     error: string;
     defaults: ProviderDefaults;
   }>;
+function voiceConfig(current: Config, voice: Config["voice"]): Config {
+  const next = readConfig({ ...current, voice });
+  return onRecommended(next) ? next : offRecommended(next);
+}
 const STORAGE_KEY = "buzz.codex.provider-defaults.v1";
 const SIGN_IN_ERROR = "Codex needs you to sign in.";
 const NOT_INSTALLED = "The Codex integration isn't installed yet.";
@@ -1352,7 +1356,7 @@ export function createTabs(
         voiceSave.current &&
         JSON.stringify(next) === JSON.stringify(voiceSave.current)
       ) {
-        setDraft((current) => readConfig({ ...current, voice: next.voice }));
+        setDraft((current) => voiceConfig(current, next.voice));
         voiceSave.current = undefined;
       } else setDraft(next);
     }, [agent.config]);
@@ -1519,16 +1523,13 @@ export function createTabs(
                     return;
                   }
                   if (voice === (saved.voice ?? "")) return;
-                  const choice = readConfig({ ...saved, voice });
-                  const next = onRecommended(choice)
-                    ? choice
-                    : offRecommended(choice);
+                  const next = voiceConfig(saved, voice);
                   voiceSave.current = next;
                   setError("");
                   setSaving(true);
                   try {
                     await save(next);
-                    setDraft((current) => readConfig({ ...current, voice }));
+                    setDraft((current) => voiceConfig(current, voice));
                   } catch (reason) {
                     // An unconfirmed write can still arrive through sync.
                     setError(message(reason));

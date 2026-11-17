@@ -5,13 +5,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Contribution } from "../../plugins/contributions";
-import type { useSidebarView } from "../../bundled/channels/useSidebarView";
-import type { ContributionReader } from "../conversation/contracts";
-import type { ChatIcon, ChatMenu } from "../conversation/service";
-import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
-import type { RelaySession } from "../relay/session";
-import type { SidebarRows } from "./sidebar-rows-service";
 
 /** Preview, likely to break. Elements must use stable component types. */
 export type SidebarComponentSection = Readonly<{
@@ -22,26 +16,18 @@ export type SidebarComponentSection = Readonly<{
   element: ReactElement;
 }>;
 
-/** The existing navigation environment, shared without another data owner. */
+/** Neutral props shared by sources in the active sidebar context. */
 export type SidebarSectionEnvironment = Readonly<{
   active(): boolean;
-  session: RelaySession;
-  scope: string;
-  navigator: Navigation;
   target: OpenTarget;
-  sidebar: ReturnType<typeof useSidebarView>;
-  filter: "all" | "solo" | "team";
-  soloTitle: string;
-  chatIcons?: ContributionReader<ChatIcon> | undefined;
-  chatMenus?: ContributionReader<ChatMenu> | undefined;
-  sidebarRows?: SidebarRows | undefined;
 }>;
 
 /** Preview, likely to break. One mounted source can contribute many live slots. */
 export type SidebarSectionSource = Readonly<{
   version: 2;
   id: string;
-  scope: "solo" | "team";
+  context: string;
+  scope?: string | undefined;
   component: ComponentType<
     SidebarSectionEnvironment & {
       render(sections: readonly SidebarComponentSection[]): ReactNode;
@@ -53,7 +39,7 @@ export type RegisteredSidebarSectionSource = Contribution<SidebarSectionSource>;
 export type SidebarSectionSlot = Omit<SidebarComponentSection, "element"> & {
   key: string;
   source: RegisteredSidebarSectionSource;
-  scope: "solo" | "team";
+  scope?: string | undefined;
   unavailable?: boolean | undefined;
 };
 

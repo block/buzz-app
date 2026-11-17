@@ -1,3 +1,7 @@
+import type {
+  SidebarContext,
+  RegisteredSidebarContext,
+} from "../sidebar/contracts";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { ReactElement, ReactNode } from "react";
 import type { OpenTarget } from "../navigation/targets";
@@ -46,6 +50,9 @@ export type SidebarSections = Readonly<{
   snapshot: () => readonly RegisteredSidebarSection[];
   subscribe: (listener: () => void) => () => void;
   register: (section: SidebarSectionContribution) => void;
+  registerContext?: (context: SidebarContext) => void;
+  contextSnapshot?: () => readonly RegisteredSidebarContext[];
+  contextSubscribe?: (listener: () => void) => () => void;
   /** Preview v2 component sources; likely to break. Absent on older hosts. */
   registerSource?: (source: SidebarSectionSource) => void;
   sourceSnapshot?: () => readonly RegisteredSidebarSectionSource[];
@@ -75,18 +82,38 @@ function isComponent(value: unknown) {
 export class SidebarSectionsService extends Service implements SidebarSections {
   private readonly contributions;
   private readonly sources;
+  private readonly contexts;
   readonly version = 1 as const;
 
   constructor(ctx: Context) {
     super(ctx, "sidebarSections");
     this.contributions = createContributions<SidebarSectionContribution>(ctx);
     this.sources = createContributions<SidebarSectionSource>(ctx);
+    this.contexts = createContributions<SidebarContext>(ctx);
   }
 
   snapshot = () => this.contributions.snapshot();
   subscribe = (listener: () => void) => this.contributions.subscribe(listener);
   sourceSnapshot = () => this.sources.snapshot();
   sourceSubscribe = (listener: () => void) => this.sources.subscribe(listener);
+
+  contextSnapshot = () => this.contexts.snapshot();
+  contextSubscribe = (listener: () => void) =>
+    this.contexts.subscribe(listener);
+
+  registerContext(context: SidebarContext) {
+    if (!this.ctx.pluginOwner || !isBundledOwner(this.ctx.pluginOwner))
+      throw new Error("Sidebar contexts are available only to bundled plugins");
+    if (
+      !context ||
+      typeof context.id !== "string" ||
+      !idPattern.test(context.id) ||
+      typeof context.matches !== "function" ||
+      !isComponent(context.component)
+    )
+      throw new Error("A sidebar context needs an id, matcher and component");
+    this.contexts.register(this.ctx, context);
+  }
 
   registerSource(source: SidebarSectionSource) {
     if (!this.ctx.pluginOwner || !isBundledOwner(this.ctx.pluginOwner))
@@ -97,10 +124,12 @@ export class SidebarSectionsService extends Service implements SidebarSections {
       source?.version !== 2 ||
       typeof source.id !== "string" ||
       !idPattern.test(source.id) ||
-      (source.scope !== "solo" && source.scope !== "team") ||
+      (source.scope !== undefined && typeof source.scope !== "string") ||
+      typeof source.context !== "string" ||
+      !source.context.trim() ||
       !isComponent(source.component)
     )
-      throw new Error("A sidebar source needs a v2 id, scope and component");
+      throw new Error("A sidebar source needs a v2 id, context and component");
     this.sources.register(this.ctx, source);
   }
 

@@ -100,6 +100,7 @@ it("limits preview sources to bundled owners and removes them on disposal", asyn
     version: 2 as const,
     id: "inventory",
     scope: "team" as const,
+    context: "buzz.channels/messages",
     component: () => null,
   };
   const unbundled = root.extend({
@@ -127,5 +128,38 @@ it("limits preview sources to bundled owners and removes them on disposal", asyn
   expect(registry.snapshot()).toEqual([]);
   await fiber.dispose();
   expect(registry.sourceSnapshot()).toEqual([]);
+  await root.fiber.dispose();
+});
+
+it("owns neutral sidebar contexts as bundled contributions and removes them on disposal", async () => {
+  const { bundledOwner } = await import("../../plugins/provenance");
+  const root = rootContext();
+  const registry = new SidebarSectionsService(root);
+  const context = {
+    id: "navigation",
+    matches: () => true,
+    component: () => null,
+  };
+  expect(() =>
+    root
+      .extend({ pluginOwner: { id: "example.plugin", revision: "one" } })
+      .sidebarSections?.registerContext?.(context),
+  ).toThrow(/bundled/);
+  const fiber = root
+    .extend({
+      pluginOwner: bundledOwner({ id: "example.navigation", revision: "one" }),
+    })
+    .plugin((ctx) => {
+      ctx.sidebarSections?.registerContext?.(context);
+    });
+  await fiber.await();
+  expect(registry.contextSnapshot()).toEqual([
+    expect.objectContaining({
+      key: "example.navigation/navigation",
+      component: context.component,
+    }),
+  ]);
+  await fiber.dispose();
+  expect(registry.contextSnapshot()).toEqual([]);
   await root.fiber.dispose();
 });

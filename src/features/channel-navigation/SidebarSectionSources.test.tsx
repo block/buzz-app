@@ -35,6 +35,7 @@ const owner = (
   pluginId: "example.plugin",
   revision: "bundled",
   scope: "team",
+  context: "example.plugin/navigation",
   component,
 });
 function registry(

@@ -18,6 +18,7 @@ export function TeamSidebarSection({ render }: { render(): ReactNode }) {
 export const teamSidebarSource: SidebarSectionSource = {
   version: 2,
   id: "team",
+  context: "buzz.channels/messages",
   scope: "team",
   component: function TeamSidebarSource({ render }) {
     return render(useContext(TeamSidebarSections));

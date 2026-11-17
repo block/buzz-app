@@ -1,11 +1,13 @@
-import type {
-  SidebarSectionSource,
-  SidebarSectionEnvironment,
-} from "../../features/channel-navigation/sidebar-section-components";
+import { useContext } from "react";
+import {
+  MessagesSidebarEnvironment,
+  type MessagesSidebarState,
+} from "./sidebar-environment";
+import type { SidebarSectionSource } from "../../features/channel-navigation/sidebar-section-components";
 import { SoloInventory } from "./SoloInventory";
 import { SoloRegions } from "./SoloRegions";
 
-function SoloSidebarContents(props: SidebarSectionEnvironment) {
+function SoloSidebarContents(props: MessagesSidebarState) {
   return (
     <SoloInventory
       session={props.session}
@@ -50,8 +52,12 @@ function SoloSidebarContents(props: SidebarSectionEnvironment) {
 export const soloSidebarSource: SidebarSectionSource = {
   version: 2,
   id: "solo",
+  context: "buzz.channels/messages",
   scope: "solo",
-  component: function SoloSidebarSource({ render, ...environment }) {
+  component: function SoloSidebarSource({ render }) {
+    const environment = useContext(MessagesSidebarEnvironment);
+    if (!environment)
+      throw new Error("Solo navigation requires its Messages context");
     return render([
       {
         id: "solo",

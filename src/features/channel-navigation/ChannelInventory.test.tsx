@@ -66,7 +66,7 @@ import {
   useChannelNavigation,
 } from "./ChannelNavigationState";
 import { readView, writeView } from "../../shared/view-state";
-import styles from "../../app/shell/PrimarySidebar.module.css";
+import styles from "../../bundled/channels/MessagesSidebar.module.css";
 import { BestieNavigationProvider } from "../../app/shell/BestieNavigation";
 import { PageNavigation } from "../../app/shell/PageNavigation";
 import { createAgentChoices } from "../agents/choices";
@@ -4015,6 +4015,7 @@ it("keeps active Team drags out of the Solo row context", async () => {
   const team: RegisteredSidebarSectionSource = {
     version: 2,
     id: "drag-team",
+    context: "buzz.channels/messages",
     key: "example.plugin/drag-team",
     pluginId: "example.plugin",
     revision: "bundled",

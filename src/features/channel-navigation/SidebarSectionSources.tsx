@@ -103,7 +103,7 @@ export function SidebarSectionSources({
   environment: SidebarSectionEnvironment;
   children(
     slots: readonly SidebarSectionSlot[],
-    sources: (scope?: "solo" | "team") => ReactNode,
+    sources: (scope?: string) => ReactNode,
   ): ReactNode;
   onReady?:
     | ((
@@ -119,7 +119,7 @@ export function SidebarSectionSources({
     registry?.sourceSnapshot ?? snapshot,
   );
   const [store] = useState(createSlotStore);
-  const components = (scope?: "solo" | "team") =>
+  const components = (scope?: string) =>
     registry &&
     sources
       .filter((source) => !scope || source.scope === scope)
@@ -301,6 +301,7 @@ function SlotList({
   useLayoutEffect(() => {
     onReady?.(ready, JSON.parse(committedKeys), JSON.parse(unavailableKeys));
   }, [onReady, ready, committedKeys, unavailableKeys]);
+  useLayoutEffect(() => () => onReady?.(false, [], []), [onReady]);
   return children(slots);
 }
 

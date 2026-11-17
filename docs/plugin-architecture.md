@@ -104,8 +104,9 @@ have separate boundaries. A page sidebar is isolated by the same owned-contribut
 boundary, so a failure falls back to a concise alert without taking down the page,
 Settings, or shell. The host owns the slot, collapse state, labels, and narrow drawer;
 the page owns its sidebar content and local interaction state. Sidebar presentation
-helpers remain importable from `bundled/channels`; the conversation sidebar also
-exposes a versioned section contribution for plugins.
+helpers live in `features/channel-navigation`; the global host selects a bundled
+preview context, and adapts `Page.sidebar` through the same section engine. Messages
+contributes its conversation sidebar rather than being part of the host.
 
 Channels is the page-authoring example, not a thin registration wrapper over a
 host-owned product page. Keep page-specific components, styles, interactions and tests
@@ -775,8 +776,16 @@ ctx.reflect.get("sidebarSections")?.register({
 
 #### Bundled section components (internal preview)
 
-The service also has a bundled-only version-2 preview, `registerSource`.
-It is likely to change and is type-visible through the author API's exported
+The service also has bundled-only previews, `registerContext` and version-2
+`registerSource`. A context declares its id, target matcher, optional navigation
+page owner and component. The host resolves the applicable context and supplies
+its frame and section renderer; replacing a context unmounts its sources. A
+source must name its context's full `<pluginId>/<contextId>` key. The source
+props are neutral: target, live ownership check and publication callback;
+Messages-specific state stays in the Messages contribution. Peer visibility,
+source customization and opening these previews to ordinary plugins are deferred.
+
+The preview is likely to change and is type-visible through the author API's exported
 `SidebarSections` type. Registration is supported only for bundled owners;
 the runtime rejects non-bundled owners. Version-1 registration and snapshots
 remain unchanged; plugin-development introspection currently lists only
@@ -801,7 +810,7 @@ Each slot has its own error boundary and Retry. A source failure replaces its
 slots with one unavailable-and-Retry placeholder; a source returning no
 publication settles empty. Registrations and publications are fenced by owner
 incarnation, so disabling or replacing a source retires its old content.
-The bundled Channels inventory remains the one shell-mounted preferences,
+The bundled Messages context mounts the Channels inventory as its one preferences,
 view, action and status owner. Its failures retain the whole-sidebar fallback;
 a thin Team source failure affects Team and its version-1 slots while Solo stays
 mounted. Both built-in sources require the required Channels plugin to activate.

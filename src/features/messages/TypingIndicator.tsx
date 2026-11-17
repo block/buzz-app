@@ -387,10 +387,12 @@ export function TypingIndicator({
     resolveName(pubkey, profiles.get(pubkey)?.name ?? pubkey.slice(0, 10));
   const scopeLabel = (pubkey: string, workRoot?: string) => {
     if (threadRootId) return undefined;
-    const roots = workRoot ? [workRoot] : (details.get(pubkey)?.roots ?? []);
+    // Work whose conversation is unknown has no scope to name.
+    const roots = (
+      workRoot ? [workRoot] : (details.get(pubkey)?.roots ?? [])
+    ).filter((root): root is string | null => root === null || !!root);
     const labels = roots.slice(0, 2).map((root) => {
       if (root === null) return "Channel conversation";
-      if (!root) return "Work with unconfirmed thread";
       const text = rows
         .find((row) => row.id === root)
         ?.content.replace(/\s+/g, " ")

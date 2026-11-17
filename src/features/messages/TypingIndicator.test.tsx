@@ -550,12 +550,14 @@ it.each([
     await user.click(
       screen.getByRole("button", { name: "Activity: Agent working" }),
     );
-    expect(
-      within(screen.getByRole("dialog", { name: "Working now" })).getByText(
-        /Work with unconfirmed thread/,
-      ),
-    ).toBeVisible();
-    expect(within(screen.getByRole("dialog")).getByText(status)).toBeVisible();
+    const step = within(
+      screen.getByRole("dialog", { name: "Working now" }),
+    ).getByText(status);
+    expect(step).toBeVisible();
+    // The unconfirmed turn adds no label beside the thread known from typing.
+    expect(step.parentElement?.textContent).toBe(
+      `${status} · Thread · First task`,
+    );
     await user.click(
       screen.getByRole("button", { name: "View Agent activity" }),
     );

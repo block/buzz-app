@@ -41,7 +41,7 @@ export function AgentActivityRow({
           <span className={styles.activityTimestamp}>{meta}</span>
         )}
       </span>
-      <span className={styles.activityItemMeta} title={scope}>
+      <span className={styles.activityItemMeta}>
         <span>{status}</span>
         {scope && (
           <>

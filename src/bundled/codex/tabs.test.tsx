@@ -2816,7 +2816,6 @@ it("saves an agent's Voice and restores it without changing another agent", asyn
   );
   await user.click(screen.getByRole("button", { name: "Voice" }));
   await user.click(await screen.findByRole("radio", { name: "Maple" }));
-  await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
     expect(save).toHaveBeenCalledWith(
       expect.objectContaining({ voice: "maple" }),
@@ -2861,7 +2860,6 @@ it("offers only v3 voices and lets an unavailable assignment return to default",
     screen.queryByRole("radio", { name: "Alloy" }),
   ).not.toBeInTheDocument();
   await user.click(screen.getByRole("radio", { name: "Codex default (Cove)" }));
-  await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
     expect(save).toHaveBeenCalledWith(
       expect.not.objectContaining({ voice: expect.anything() }),
@@ -2991,9 +2989,7 @@ it("publishes Codex readiness while optional recording discovery is held", async
     await waitFor(() => expect(f.provider.snapshot().readiness).toBe("ready"));
     await checking;
     expect(f.provider.snapshot().data?.models.length).toBeGreaterThan(0);
-    expect(
-      screen.getByRole("button", { name: "Preview voice" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Voice" })).toBeEnabled();
   } finally {
     gate.resolve({
       status: 200,
@@ -3100,14 +3096,55 @@ it("rediscovers both catalogs when retained settings return without losing the d
     "Maple",
   );
 });
-it("returns to a clean draft when a named voice is changed back to Codex default", async () => {
+it("saves voice changes immediately without a separate Save button", async () => {
   const f = fixture();
+  const save = vi.fn(async () => {});
   const user = userEvent.setup();
-  render(<f.tabs.SettingsTab {...f.props()} settingsSection="identity" />);
+  render(
+    <f.tabs.SettingsTab
+      {...f.props(defaults, save)}
+      settingsSection="identity"
+    />,
+  );
   await user.click(screen.getByRole("button", { name: "Voice" }));
   await user.click(await screen.findByRole("radio", { name: "Maple" }));
-  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ voice: "maple" }),
+    ),
+  );
+  expect(screen.getByRole("dialog", { name: "Choose voice" })).toBeVisible();
+});
+
+it("saves only the voice while retaining an unrelated instructions draft", async () => {
+  const f = fixture();
+  const save = vi.fn(async (_config?: Config) => {});
+  const user = userEvent.setup();
+  const props = f.props(defaults, save);
+  const view = render(
+    <f.tabs.SettingsTab {...props} settingsSection="identity" />,
+  );
+  const instructions = screen.getByRole("textbox", { name: "Instructions" });
+  await user.type(instructions, "Keep this draft");
   await user.click(screen.getByRole("button", { name: "Voice" }));
-  await user.click(screen.getByRole("radio", { name: /^Codex default/ }));
-  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  await user.click(await screen.findByRole("radio", { name: "Maple" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        voice: "maple",
+        instructions: defaults.instructions,
+      }),
+    ),
+  );
+  const config = save.mock.calls[0]?.[0] as Config;
+  view.rerender(
+    <f.tabs.SettingsTab
+      {...props}
+      agent={{ ...props.agent, config }}
+      settingsSection="identity"
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  expect(instructions).toHaveValue("Keep this draft");
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
 });

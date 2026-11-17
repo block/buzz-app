@@ -1,15 +1,9 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import {
-  CircleNotchIcon,
-  CaretDownIcon,
-  PlayIcon,
-  StopIcon,
-} from "../../shared/design-system/icons";
+import { CaretDownIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Select } from "../../shared/design-system/ui/Select";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import {
@@ -43,7 +37,7 @@ export function VoicePreview({
   disabled: boolean;
   previewDisabled?: boolean;
   previewLoading?: boolean;
-  onChange(voice: string): void;
+  onChange(voice: string): void | Promise<void>;
   onShown?(): void;
 }) {
   const [open, setOpen] = useState(false);
@@ -137,7 +131,7 @@ export function VoicePreview({
   };
   const play = async (sample: string) => {
     stop();
-    if (playing?.voice === sample) return;
+    if (previewDisabled || previewLoading) return;
     const abort = new AbortController();
     setPlaying({ voice: sample, abort, loading: true });
     setError("");
@@ -176,57 +170,38 @@ export function VoicePreview({
       {error}
     </p>
   );
-  const preview = (value: string) => (
-    <IconButton
-      aria-label={
-        playing?.voice === value
-          ? `${playing.loading ? "Cancel loading" : "Stop"} preview of ${label(value)}`
-          : `Preview ${label(value)}`
-      }
-      aria-busy={
-        previewLoading || (playing?.voice === value && playing.loading)
-      }
-      icon={
-        previewLoading ? (
-          <CircleNotchIcon className="motion-safe:animate-spin" />
-        ) : playing?.voice === value ? (
-          playing.loading ? (
-            <CircleNotchIcon className="motion-safe:animate-spin" />
-          ) : (
-            <StopIcon />
-          )
-        ) : (
-          <PlayIcon />
-        )
-      }
-      disabled={
-        disabled || previewDisabled || previewLoading || !available(value)
-      }
-      onClick={() => void play(value)}
-    />
-  );
+  const select = async (value: string) => {
+    stop();
+    setError("");
+    try {
+      await onChange(value);
+      if (trigger.current?.getAttribute("aria-expanded") === "true")
+        void play(value);
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not save voice. Try again.",
+      );
+    }
+  };
   const row = (value: string) => (
-    <div key={value} className="flex items-center gap-2">
-      <div className="min-w-0 flex-1">
-        <Radio
-          value={value}
-          variant="row"
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              event.currentTarget.click();
-            }
-          }}
-          onClick={() => {
-            stop();
-            setOpen(false);
-          }}
-          disabled={!available(value)}
-          label={label(value)}
-        />
-      </div>
-      {preview(value)}
-    </div>
+    <Radio
+      key={value}
+      value={value}
+      variant="row"
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.currentTarget.click();
+        }
+      }}
+      onClick={() => {
+        if (value === voice) void select(value);
+      }}
+      disabled={!available(value)}
+      label={label(value)}
+    />
   );
   const groups = new Map<string, string[]>();
   for (const value of [
@@ -250,55 +225,24 @@ export function VoicePreview({
       <PreferenceRow
         title="Voice"
         trailing={(accessible) => (
-          <div className="flex items-center gap-2">
-            <Button
-              {...accessible}
-              ref={trigger}
-              size="sm"
-              variant="outline"
-              disabled={disabled}
-              aria-haspopup="dialog"
-              onClick={() => {
-                setLocale(undefined);
-                setOpen(true);
-              }}
-            >
-              {!voice && defaultVoice
-                ? `${name(defaultVoice)} · Default`
-                : label(voice)}
-              <CaretDownIcon size={14} aria-hidden="true" />
-            </Button>
-            <IconButton
-              aria-label={
-                playing
-                  ? playing.loading
-                    ? "Cancel loading preview"
-                    : "Stop preview"
-                  : "Preview voice"
-              }
-              aria-busy={previewLoading || playing?.loading}
-              icon={
-                previewLoading ? (
-                  <CircleNotchIcon className="motion-safe:animate-spin" />
-                ) : playing ? (
-                  playing.loading ? (
-                    <CircleNotchIcon className="motion-safe:animate-spin" />
-                  ) : (
-                    <StopIcon />
-                  )
-                ) : (
-                  <PlayIcon />
-                )
-              }
-              disabled={
-                disabled ||
-                previewDisabled ||
-                previewLoading ||
-                !available(voice)
-              }
-              onClick={() => void play(voice)}
-            />
-          </div>
+          <Button
+            {...accessible}
+            ref={trigger}
+            size="sm"
+            variant="outline"
+            disabled={disabled}
+            aria-haspopup="dialog"
+            aria-expanded={open}
+            onClick={() => {
+              setLocale(undefined);
+              setOpen(true);
+            }}
+          >
+            {!voice && defaultVoice
+              ? `${name(defaultVoice)} · Default`
+              : label(voice)}
+            <CaretDownIcon size={14} aria-hidden="true" />
+          </Button>
         )}
       />
       {!open && failure}
@@ -337,16 +281,22 @@ export function VoicePreview({
             <RadioGroup
               size="sm"
               value={voice}
-              onValueChange={(value) => {
-                stop();
-                onChange(value);
-              }}
+              onValueChange={(value) => void select(value)}
               disabled={disabled}
             >
               {row("")}
               {(groups.get(shownLocale) ?? []).map(row)}
             </RadioGroup>
           </Field>
+          {(previewLoading || playing) && (
+            <p role="status" className="m-0 text-body-sm text-subtle">
+              {previewLoading
+                ? "Loading voice samples…"
+                : playing?.loading
+                  ? "Loading preview…"
+                  : "Playing preview…"}
+            </p>
+          )}
           {failure}
         </div>
       </Dialog>

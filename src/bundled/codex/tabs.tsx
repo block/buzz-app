@@ -1334,8 +1334,16 @@ export function createTabs(
     useEffect(() => {
       if (local && agent.key) void provider.check();
     }, [local, agent.key]);
+    const voiceSave = useRef<Config | undefined>(undefined);
     useEffect(() => {
-      setDraft(readConfig(agent.config));
+      const next = readConfig(agent.config);
+      if (
+        voiceSave.current &&
+        JSON.stringify(next) === JSON.stringify(voiceSave.current)
+      ) {
+        setDraft((current) => readConfig({ ...current, voice: next.voice }));
+        voiceSave.current = undefined;
+      } else setDraft(next);
     }, [agent.config]);
     // Inert in a build that recommends nothing for Codex.
     const following = onRecommended(draft) && candidatesFor("codex").length > 0;
@@ -1492,7 +1500,25 @@ export function createTabs(
                 disabled={saving || checking}
                 previewDisabled={!!bound}
                 previewLoading={provider.snapshot().previewChecking ?? false}
-                onChange={(voice) => setDraft(readConfig({ ...draft, voice }))}
+                onChange={async (voice) => {
+                  if (settingsHost?.pendingSave) {
+                    setDraft(readConfig({ ...draft, voice }));
+                    return;
+                  }
+                  if (voice === (saved.voice ?? "")) return;
+                  const next = readConfig({ ...saved, voice });
+                  voiceSave.current = next;
+                  setSaving(true);
+                  try {
+                    await save(next);
+                    setDraft((current) => readConfig({ ...current, voice }));
+                  } catch (reason) {
+                    voiceSave.current = undefined;
+                    throw reason;
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
                 onShown={() => {
                   if (local) provider.check();
                 }}

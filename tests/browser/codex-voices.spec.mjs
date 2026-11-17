@@ -11,12 +11,8 @@ test("Codex Voices persist separately through the settings host", async ({
   await page.getByText("Ada", { exact: true }).click();
   const pane = page.getByRole("tabpanel", { name: "Identity", exact: true });
   const voice = pane.getByRole("button", { name: "Voice", exact: true });
-  const preview = pane.getByRole("button", {
-    name: "Preview voice",
-    exact: true,
-  });
-  await expect(preview).toBeEnabled();
   await voice.click();
+  await expect(page.getByRole("button", { name: "Close", exact: true })).toBeFocused();
   const locale = page.getByRole("combobox", { name: "Language and region" });
   await expect(locale).toContainText("American English");
   await expect(
@@ -48,8 +44,8 @@ test("Codex Voices persist separately through the settings host", async ({
     page.getByRole("radio", { name: "Maple", exact: true }),
   ).toBeChecked();
   await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(voice).toBeFocused();
-  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
   ).toHaveCount(0);
@@ -60,7 +56,7 @@ test("Codex Voices persist separately through the settings host", async ({
   await expect(voice).toContainText("Cove · Default");
   await voice.click();
   await page.getByRole("radio", { name: "Cove", exact: true }).click();
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
   ).toHaveCount(0);
@@ -96,19 +92,15 @@ test("Codex Voices persist separately through the settings host", async ({
     await expect(
       chooser.getByRole("radio", { name: "Cove", exact: true }),
     ).toBeChecked();
-    const play = chooser.getByRole("button", {
-      name: "Preview Maple",
-      exact: true,
-    });
-    await play.focus();
-    await expect(play).toBeFocused();
+    const maple = chooser.getByRole("radio", { name: "Maple", exact: true });
+    await maple.focus();
+    await expect(maple).toBeFocused();
     expect(
       await chooser.evaluate((el) => el.scrollWidth <= el.clientWidth),
     ).toBe(true);
     await page.keyboard.press("Escape");
     await expect(voice).toBeFocused();
-    await page.keyboard.press("Tab");
-    await expect(preview).toBeFocused();
+    await expect(pane.getByRole("button", { name: /Preview/ })).toHaveCount(0);
     expect(await pane.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
       true,
     );

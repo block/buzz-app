@@ -1,3 +1,12 @@
+import { finalizeEvent, generateSecretKey } from "nostr-tools";
+import type { RelayEvent } from "../../src/features/relay/events";
+import {
+  AgentConfigStore,
+  syncedSettings,
+} from "../../src/features/agents/agent-config";
+import { artifactTemplate } from "../../src/features/agents/agent-config-artifacts";
+import { localStore } from "../../src/features/agents/store";
+import { createConfigWriter } from "../../src/features/agents/config-writes";
 import { createAppearance } from "../../src/shared/theme/service";
 import { ClaudeLogoIcon } from "../../src/shared/design-system/icons";
 import { agentAvatars } from "../../src/features/agents/avatar-packs";
@@ -84,7 +93,7 @@ const type: RegisteredAgentType = {
   title: "Fixture",
   description: "Fixture agent",
   defaults: () => ({ config: {} }),
-  ...(saveFooter
+  ...(saveFooter || new URLSearchParams(location.search).has("settingsRecovery")
     ? {
         tabs: [
           {
@@ -577,6 +586,112 @@ const agents = {
   },
   classifier: () => "unavailable",
 } as unknown as Agents;
+
+if (new URLSearchParams(location.search).has("settingsRecovery")) {
+  const secret = generateSecretKey();
+  const first = snapshot.agents[0];
+  if (!first) throw new Error("Missing fixture agent");
+  const expected = {
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    d: "5b1d3b52-6c4e-5a0b-8e3c-1f2a3b4c5d6e",
+    type: "buzz.agent.settings" as const,
+  };
+  const check = {
+    agentType: first.type,
+    schema: {
+      scope: ["thread", "channel"],
+      model: "string",
+      effort: ["low", "high"],
+    },
+  } as const;
+  let head: RelayEvent =
+    JSON.parse(localStorage.getItem("fixture-recovery-head") ?? "null") ??
+    finalizeEvent(
+      artifactTemplate({
+        ...expected,
+        op: "create",
+        title: "Agent settings",
+        content: JSON.stringify({
+          version: 1,
+          agentType: first.type,
+          settings: {
+            scope: "community",
+            voice: "maple",
+            model: 42,
+            effort: "high",
+          },
+          future: { keep: true },
+        }),
+      }),
+      secret,
+    );
+  const store = new AgentConfigStore(localStore(sessionStorage));
+  const subject = {
+    owner: first.owner,
+    community: "https://relay.example",
+    subject: first.pubkey,
+    channel: expected.channel,
+    type: expected.type,
+  };
+  const update = () => {
+    const checked = syncedSettings(head.content, first.type, check.schema);
+    snapshot = {
+      ...snapshot,
+      agents: snapshot.agents.map((agent) => {
+        if (agent.key !== first.key) return agent;
+        const { configProblem: _, ...rest } = agent;
+        return {
+          ...rest,
+          configBase: { settings: head.id },
+          ...("problem" in checked
+            ? { configProblem: `Settings can't be used: ${checked.problem}` }
+            : { config: { ...(agent.config as object), ...checked.settings } }),
+        };
+      }),
+    };
+    for (const listener of listeners) listener();
+  };
+  const writer = createConfigWriter({
+    store,
+    read: async () => [head],
+    online: () => true,
+    signal: new AbortController().signal,
+    maxEventBytes: 512 * 1024,
+    writer: {
+      sign: async (template) => finalizeEvent(template, secret) as RelayEvent,
+      publish: async (event) => {
+        if (event.tags.find(([name]) => name === "prev")?.[1] !== head.id)
+          throw new Error("stale prev");
+        head = event;
+        localStorage.setItem("fixture-recovery-head", JSON.stringify(head));
+      },
+    },
+  });
+  agents.configHistory = (key) =>
+    key !== first.key
+      ? undefined
+      : {
+          sides: [{ side: "settings", expected, head, version: 1 }],
+          settings: check,
+          read: async () => [head],
+          revise: async (_side, template) => {
+            const result = await writer.revise(
+              { subject, expected, title: "Agent settings" },
+              template,
+              template.tags.find(([name]) => name === "prev")?.[1] ?? "",
+            );
+            update();
+            return result.status === "saved"
+              ? { status: "accepted" }
+              : {
+                  status: "refused",
+                  message: `Repair failed: ${result.status}`,
+                };
+          },
+        };
+  update();
+}
+
 if (settingsSync) {
   Object.assign(window, {
     updateFixtureInstructions: (instructions: string) => {

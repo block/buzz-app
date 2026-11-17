@@ -390,3 +390,108 @@ it("retains opening revisions for ordinary tabs and forwards explicitly reconcil
     base: { settings: "reconciled" },
   });
 });
+
+it("repairs incompatible synced fields explicitly without changing unrelated settings", async () => {
+  const content = {
+    version: 1,
+    agentType: "test/echo",
+    future: { keep: true },
+    settings: { scope: "community", voice: "maple", model: 42, effort: "high" },
+  };
+  const expected = {
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    d: "settings",
+    type: "buzz.agent.settings" as const,
+  };
+  const head = {
+    kind: 45010,
+    id: "broken",
+    pubkey: agent.pubkey,
+    sig: "",
+    created_at: 1,
+    tags: [
+      ["ar", "1"],
+      ["h", expected.channel],
+      ["d", expected.d],
+      ["type", expected.type],
+      ["op", "create"],
+      ["title", "Agent settings"],
+    ],
+    content: JSON.stringify(content),
+  };
+  const revise = vi.fn(async () => ({ status: "accepted" as const }));
+  const history = {
+    read: async () => [],
+    sides: [{ side: "settings", expected, head, version: 1 }],
+    settings: {
+      agentType: agent.type,
+      schema: {
+        scope: ["thread", "channel"],
+        model: "string",
+        effort: ["low", "high"],
+      },
+    },
+    revise,
+  };
+  const agents = {
+    configHistory: () => history,
+    addedTabs: () => [],
+    save: vi.fn(),
+    snapshot: () => ({ agents: [agent] }),
+  } as unknown as Agents;
+  const type = {
+    tabs: [
+      {
+        id: "settings",
+        title: "Identity",
+        role: "settings",
+        component: () => <p>Harness settings</p>,
+      },
+    ],
+  } as unknown as import("./service").RegisteredAgentType;
+  render(
+    agentSections({
+      agents,
+      agent: {
+        ...agent,
+        configProblem:
+          'Settings can\'t be used: Setting "scope" has an unsupported value',
+      },
+      type,
+      memories: undefined,
+    })
+      .find((section) => section.value === "agent:settings")
+      ?.render(),
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Repair settings" }));
+  const dialog = screen.getByRole("dialog", { name: "Repair settings" });
+  expect(dialog).toHaveTextContent("community");
+  expect(dialog).toHaveTextContent("voice");
+  expect(revise).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(revise).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Repair settings" }));
+  await user.click(screen.getByRole("combobox", { name: "scope" }));
+  await user.click(await screen.findByRole("option", { name: /^channel$/ }));
+  await user.type(
+    screen.getByRole("textbox", { name: "model" }),
+    "chosen-model",
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Save repaired settings" }),
+  );
+  expect(revise).toHaveBeenCalledTimes(1);
+  const [side, template] = revise.mock.calls[0] as unknown as [
+    string,
+    { content: string; tags: string[][] },
+  ];
+  expect(side).toBe("settings");
+  expect(JSON.parse(template.content)).toEqual({
+    ...content,
+    settings: { scope: "channel", model: "chosen-model", effort: "high" },
+  });
+  expect(template.tags).toContainEqual(["prev", "broken"]);
+  expect(template.tags).toContainEqual(["op", "update"]);
+  expect(agents.save).not.toHaveBeenCalled();
+});

@@ -1289,6 +1289,10 @@ default Huddle voice.
   conversation in that target's workspace. Stop ends its active turn.
   Remote Claude usage totals and transcripts are unavailable.
 
+### Repair incompatible agent settings
+
+If an agent’s Identity settings report an unsupported saved field or invalid value, choose **Repair settings**. Review the saved values, replace invalid values with supported choices, and remove fields this build does not recognize. **Save repaired settings** changes only those entries in the shared settings; the other settings stay in place and previous values remain in History. Cancel leaves the saved settings untouched. If another device changes the settings first, close and reopen the repair to review the latest version.
+
 ### Builderlab accounts and remote agents
 
 - Builderlab uses one account and sign-in for the communities and agents it

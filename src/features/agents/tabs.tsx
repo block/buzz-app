@@ -18,6 +18,7 @@ import type {
   RegisteredAgentType,
   TranscriptRequest,
 } from "./service";
+import { AgentSettingsRecovery } from "./AgentSettingsRecovery";
 import { AgentSaveButton } from "./AgentSaveButton";
 import { AgentConfigHistoryRow } from "./AgentConfigHistoryRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
@@ -250,7 +251,7 @@ function EditorBase({
   agent,
   children,
 }: {
-  agents: Pick<Agents, "save" | "snapshot">;
+  agents: Pick<Agents, "save" | "snapshot" | "configHistory">;
   agent: Agent;
   children(save: AgentViewProps["save"]): ReactNode;
 }) {
@@ -268,9 +269,12 @@ function EditorBase({
   return (
     <>
       {agent.configProblem && (
-        <p role="alert" className="buzz-field-error">
-          {agent.configProblem}
-        </p>
+        <div className="grid gap-2">
+          <p role="alert" className="buzz-field-error">
+            {agent.configProblem}
+          </p>
+          <AgentSettingsRecovery agents={agents} agentKey={agent.key} />
+        </div>
       )}
       {editor}
     </>

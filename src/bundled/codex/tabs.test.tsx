@@ -3023,3 +3023,50 @@ it("does not hold model readiness for optional preview authentication", async ()
     f.provider.dispose();
   }
 });
+
+it("rediscovers both catalogs when retained settings return without losing the draft", async () => {
+  let revision = 0;
+  const host: PreviewHost = {
+    request: vi.fn(async () => ({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        voices: [
+          {
+            voice: "cove",
+            preview_url: `https://persistent.oaistatic.com/voice/previews/cove.${++revision}.m4a`,
+          },
+        ],
+      }),
+    })),
+    requestBytes: vi.fn(async () => ({
+      status: 200,
+      headers: {},
+      body: new Uint8Array([1]),
+    })),
+  };
+  const voices = ["cove", "maple"];
+  const f = fixture({ previewHost: host, voices });
+  const view = render(
+    <div data-testid="retained">
+      <f.tabs.SettingsTab {...f.props()} settingsSection="identity" />
+    </div>,
+  );
+  const user = userEvent.setup();
+  await waitFor(() =>
+    expect(f.provider.snapshot().data?.previews?.cove).toContain("cove.1.m4a"),
+  );
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await user.click(screen.getByRole("radio", { name: "Maple" }));
+  view.getByTestId("retained").hidden = true;
+  await act(async () => {});
+  voices.push("gleam");
+  view.getByTestId("retained").hidden = false;
+  await waitFor(() =>
+    expect(f.provider.snapshot().data?.previews?.cove).toContain("cove.2.m4a"),
+  );
+  expect(f.provider.snapshot().data?.voices).toEqual(voices);
+  expect(
+    screen.getByRole("button", { name: "Huddle voice" }),
+  ).toHaveTextContent("Maple");
+});

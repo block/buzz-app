@@ -300,3 +300,33 @@ it("stops a pending preview when retained settings become hidden", async () => {
     HTMLElement.prototype.checkVisibility = previous;
   }
 });
+
+it("stops hidden retained previews without checkVisibility", async () => {
+  const previous = HTMLElement.prototype.checkVisibility;
+  Object.defineProperty(HTMLElement.prototype, "checkVisibility", {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
+  vi.mocked(previewVoice).mockImplementation(() => new Promise(() => {}));
+  const user = userEvent.setup();
+  const view = render(
+    <div data-testid="older">
+      <VoicePreview
+        host={host}
+        previews={previews}
+        voice="maple"
+        disabled={false}
+        onChange={vi.fn()}
+      />
+    </div>,
+  );
+  try {
+    await user.click(screen.getByRole("button", { name: "Preview voice" }));
+    const signal = vi.mocked(previewVoice).mock.calls[0]?.[2];
+    view.getByTestId("older").hidden = true;
+    await waitFor(() => expect(signal?.aborted).toBe(true));
+  } finally {
+    HTMLElement.prototype.checkVisibility = previous;
+  }
+});

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   CircleNotchIcon,
   PlayIcon,
@@ -28,6 +28,7 @@ export function VoicePreview({
   disabled,
   previewDisabled = false,
   onChange,
+  onShown,
 }: {
   host?: PreviewHost | undefined;
   previews?: Record<string, string> | undefined;
@@ -37,6 +38,7 @@ export function VoicePreview({
   disabled: boolean;
   previewDisabled?: boolean;
   onChange(voice: string): void;
+  onShown?(): void;
 }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -73,36 +75,54 @@ export function VoicePreview({
   }, [playing, disabled, previewDisabled]);
   const playback = playing?.abort;
   useEffect(() => () => playback?.abort(), [playback]);
+  const visibilityChanged = useEffectEvent((visible: boolean) => {
+    if (visible) onShown?.();
+    else {
+      playback?.abort();
+      setPlaying(undefined);
+      setOpen(false);
+    }
+  });
   useEffect(() => {
-    if (!playback) return;
-    const check = () => {
-      if (
-        document.hidden ||
-        trigger.current?.checkVisibility?.({ visibilityProperty: true }) ===
-          false
-      ) {
-        playback.abort();
-        setPlaying(undefined);
-        setOpen(false);
-      }
-    };
-    const observer = new MutationObserver(check);
+    const ancestors: HTMLElement[] = [];
     for (
       let element: HTMLElement | null = trigger.current;
       element;
       element = element.parentElement
     )
+      ancestors.push(element);
+    const isVisible = () =>
+      !document.hidden &&
+      (trigger.current?.checkVisibility?.({ visibilityProperty: true }) ??
+        ancestors.every((element) => {
+          const style = getComputedStyle(element);
+          return (
+            !element.hidden &&
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            style.visibility !== "collapse"
+          );
+        }));
+    let visible = isVisible();
+    const check = () => {
+      const next = isVisible();
+      if (next !== visible) {
+        visible = next;
+        visibilityChanged(next);
+      }
+    };
+    const observer = new MutationObserver(check);
+    for (const element of ancestors)
       observer.observe(element, {
         attributes: true,
         attributeFilter: ["hidden", "class", "style", "inert"],
       });
     document.addEventListener("visibilitychange", check);
-    check();
     return () => {
       observer.disconnect();
       document.removeEventListener("visibilitychange", check);
     };
-  }, [playback]);
+  }, []);
   const stop = () => {
     playing?.abort.abort();
     setPlaying(undefined);

@@ -1486,6 +1486,9 @@ export function createTabs(
                 disabled={saving || checking}
                 previewDisabled={!!bound}
                 onChange={(voice) => setDraft({ ...draft, voice })}
+                onShown={() => {
+                  if (local) provider.check();
+                }}
               />
               {data && !data.voices && !checking && (
                 <div className="grid justify-items-start gap-2">

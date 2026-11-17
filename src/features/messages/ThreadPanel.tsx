@@ -975,8 +975,9 @@ function ThreadMessages({
     // Attention and read marks change without a new thread snapshot.
     void threadUnread;
     if (boundary.id !== undefined) {
-      // A failed read decided nothing: decide again once it recovers.
-      if (boundary.failed && snapshot.status === "ready")
+      // A failed read decided nothing: decide again once it recovers, unless
+      // the reader has left the latest reply since.
+      if (boundary.failed && snapshot.status === "ready" && follow.current)
         setBoundary({ opening: boundary.opening });
       return;
     }
@@ -993,18 +994,22 @@ function ThreadMessages({
       setBoundary({ ...boundary, id: null, failed: true });
       return;
     }
-    // Decide once positioning could proceed on this view's own rows, and
-    // while shown, so the line is measured and attention is current. Not while
-    // an older page this decision asked for is in flight.
+    // Decide once positioning could proceed, but not while an older page this
+    // decision asked for is in flight.
     if (
-      !active ||
-      snapshot.resumed ||
       snapshot.readKind === "older" ||
       (!(snapshot.root && snapshot.direction) &&
         (snapshot.status !== "ready" ||
           (snapshot.direction !== "older" && snapshot.canLoadMore)))
     )
       return;
+    // An inactive reader reads nothing. Laid out, it is a preview and gets no
+    // line; hidden, it decides once shown, so the line is measured.
+    if (!active) {
+      if (scroller.current?.clientHeight)
+        setBoundary({ ...boundary, id: null });
+      return;
+    }
     const unread = (id: string): boolean => {
       const attention = session.unread.attention(channelId, id);
       return (
@@ -1016,13 +1021,17 @@ function ThreadMessages({
     const first = (tree.children.get(undefined) ?? []).find((row) =>
       unread(row.id),
     );
+    const known = !!first || (threadUnread?.observedCount ?? 0) > 0;
+    // Resumed rows show at once; with unread known, the line waits for this
+    // view's own rows.
+    if (known && snapshot.resumed) return;
     // With unread known in the thread, only a thread-wide read reaching the
     // oldest loaded reply shows that older replies are read: one read alone,
     // or the viewer's own, does not. A legacy walk reads forward from the
     // oldest reply.
     const oldest = snapshot.replies[0];
     if (
-      (first || (threadUnread?.observedCount ?? 0) > 0) &&
+      known &&
       snapshot.direction === "older" &&
       (snapshot.canLoadMore || snapshot.limited) &&
       oldest &&

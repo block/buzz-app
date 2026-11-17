@@ -976,6 +976,10 @@ it("decides the line once a hidden reader is shown, and again for each ordinary 
   const { reply, unread } = unreadReplies(h);
   const [first, later] = [reply("first unread", 2), reply("later", 3)];
   unread.add(first.id);
+  // Hidden: no layout.
+  const height = vi
+    .spyOn(HTMLElement.prototype, "clientHeight", "get")
+    .mockReturnValue(0);
   h.props.active = false;
   h.snapshot.direction = "older";
   h.snapshot.replies = [first, later];
@@ -983,6 +987,7 @@ it("decides the line once a hidden reader is shown, and again for each ordinary 
   expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
   expect(h.element.scrollTop).toBe(0);
 
+  height.mockReturnValue(600);
   h.props.active = true;
   h.rerenderProps();
   const line = screen.getByRole("separator", { name: "New messages" });
@@ -1015,9 +1020,38 @@ it("decides the line once a hidden reader is shown, and again for each ordinary 
   ).toBeTruthy();
   expect(h.element.scrollTop).toBe(300);
 });
+it("shows a visible inactive preview and read resumed rows at once, without a line", () => {
+  // A draft preview is laid out but reads nothing.
+  const preview = messagesHarness();
+  const previewReplies = unreadReplies(preview);
+  previewReplies.unread.add("unread");
+  preview.props.active = false;
+  preview.snapshot.direction = "older";
+  preview.snapshot.canLoadMore = true;
+  preview.snapshot.replies = [previewReplies.reply("unread", 2)];
+  preview.render();
+  expect(preview.element).not.toHaveAttribute("data-positioning");
+  expect(preview.view.loadMore).not.toHaveBeenCalled();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+  preview.unmount();
+  cleanup();
+
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply } = unreadReplies(h);
+  h.snapshot.direction = "older";
+  h.snapshot.replies = [reply("read", 2)];
+  h.snapshot.resumed = true;
+  h.render();
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+  expect(h.element.scrollTop).toBe(4000 - 600);
+});
 it("waits for resumed rows to refresh and a failed read to recover before deciding the line", () => {
   const h = messagesHarness(ordinaryNavigation());
   const { reply, unread } = unreadReplies(h);
+  // The store knows of unread in the thread that resumed rows may not hold.
+  const known = { observedCount: 1 };
+  Object.assign(h.session.unread, { snapshot: () => known });
   const top = reply("read", 2);
   const nested = { ...reply("nested unread", 4), replyParentId: top.id };
   h.snapshot.direction = "older";
@@ -1045,6 +1079,27 @@ it("waits for resumed rows to refresh and a failed read to recover before decidi
     ) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
   expect(h.element.scrollTop).toBe(300);
+});
+it("keeps a place the reader chose after a failed read when it recovers", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread } = unreadReplies(h);
+  h.snapshot.direction = "older";
+  h.snapshot.replies = [reply("read", 2)];
+  h.snapshot.status = "error";
+  h.snapshot.error = "offline";
+  h.render();
+  expect(h.element.scrollTop).toBe(4000 - 600);
+  h.element.scrollTop = 1200;
+  fireEvent.scroll(h.element);
+
+  const later = reply("unread", 3);
+  unread.add(later.id);
+  h.snapshot.status = "ready";
+  h.snapshot.error = undefined;
+  h.snapshot.replies = [reply("read", 2), later];
+  h.render();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+  expect(h.element.scrollTop).toBe(1200);
 });
 it("opens a read thread at its latest reply, and an explicit target at itself, without a line", () => {
   const h = messagesHarness(ordinaryNavigation());

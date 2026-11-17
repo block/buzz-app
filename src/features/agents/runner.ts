@@ -3,6 +3,7 @@ import type {
   AgentSessionAssociation,
   AgentSessionSource,
 } from "./session-admission";
+import { onAutomatic } from "./recommended";
 // The agent runner: one queue per agent, its rate limit, mention and watch
 // matching, due timers, the run deadline and the claim that lets exactly one
 // host run each agent. It knows nothing of where it runs: everything it needs
@@ -27,6 +28,7 @@ import type {
   Trigger,
 } from "./service";
 import type { LocalAgentActivity, WorkOutcome } from "./local-activity";
+import type { MentionRefusal } from "./owner-attestation";
 import { threadReference } from "../relay/thread-reference";
 import {
   hasEventProof,
@@ -173,6 +175,9 @@ async function pickFor(
     trigger.event.pubkey !== agent.owner
   )
     return {};
+  // An agent on Automatic runs on the recommendation; a pick for it, as one
+  // saved before it switched, is ignored.
+  if (onAutomatic(agent.config, type.id)) return {};
   const asked = (name: string) =>
     trigger.event.tags.find(
       (tag) => tag[0] === name && tag[1] === agent.pubkey,
@@ -2793,7 +2798,7 @@ export class AgentRunners {
         workingUntil: working.hold,
         ...(job.work
           ? {
-              ignored: () => job.work?.remove(),
+              ignored: (refusal?: MentionRefusal) => job.work?.remove(refusal),
               acknowledged: (input?: Readonly<{ steering?: true }>) => {
                 job.work?.started();
                 job.work?.acknowledged(input);

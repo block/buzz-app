@@ -44,6 +44,10 @@ export const PULL_RETAIN_MS = 15 * 60_000;
 export const FEEDBACK_READ = 100;
 /** Characters of each feedback body kept. */
 export const BODY_CHARS = 1_000;
+/** Pull requests asked of GitHub in one request. Their checks are costly to
+ * gather: a few dozen in one can outlast GitHub's own deadline, which then
+ * answers with a gateway error rather than with any of them. */
+export const PULLS_PER_READ = 10;
 
 /** What a reader wants of a pull request. Every level has its state:
  * - `state`: its title, draft, merged or closed, checks and conflicts, as
@@ -94,20 +98,36 @@ export type PullState = Readonly<{
   /** The head commit's combined checks, when read with `gh`. */
   checks?: "success" | "failure" | "pending" | undefined;
   conflicts?: boolean | undefined;
-  /** The head commit, when read with `gh`, as are `settled` and `failed`. */
+  /** The head commit, when read with `gh`, as are `settled`, `running` and
+   * `failed`. */
   head?: string | undefined;
   /** Whether every check on the head is done, and none is still expected. */
   settled?: boolean | undefined;
+  /** Whether a check on the head is still running or expected, even where
+   * one that failed already makes the combined checks a failure. */
+  running?: boolean | undefined;
   /** The names of the head's checks that failed. */
   failed?: readonly string[] | undefined;
   /** At `feedback`, with `gh`: the signed-in account, which agents use too,
    * every feedback id listed, newest reviews and comments, and the text of
-   * those read so far. */
+   * those read so far; with what a watch needs to tell the pull request is
+   * ready to merge, or has stopped being on its way. */
   feedback?:
     | Readonly<{
         viewer: string;
         ids: readonly string[];
         items: readonly Feedback[];
+        /** GitHub's mergeStateStatus: CLEAN, BLOCKED, BEHIND, DIRTY, … */
+        merge?: string | undefined;
+        /** GitHub's reviewDecision, such as `APPROVED`; absent where no
+         * review is required. */
+        decision?: string | undefined;
+        /** Auto-merge is on, or it is in the merge queue. */
+        autoMerge?: true | undefined;
+        queued?: true | undefined;
+        /** Unresolved review threads; absent when more threads were open
+         * than one read lists. */
+        unresolved?: number | undefined;
       }>
     | undefined;
   /** At `details`. */
@@ -239,6 +259,13 @@ type StateData = {
   };
   reviews?: { nodes?: ({ id?: string; comments?: Ids } | null)[] };
   comments?: Ids;
+  reviewDecision?: string | null;
+  isInMergeQueue?: boolean;
+  autoMergeRequest?: object | null;
+  reviewThreads?: {
+    totalCount?: number;
+    nodes?: ({ isResolved?: boolean } | null)[];
+  };
 };
 type IssueData = {
   state: "OPEN" | "CLOSED";
@@ -281,7 +308,9 @@ const ISSUE = "state stateReason title";
 // Every inline comment, a reply on an old thread too, comes with a newly
 // submitted review; pending ones are not yet sent.
 const FEEDBACK = `reviews(last:50,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]){nodes{id comments(first:100){nodes{id}}}}
-comments(last:50){nodes{id}}`;
+comments(last:50){nodes{id}}
+reviewDecision isInMergeQueue autoMergeRequest{mergeMethod}
+reviewThreads(last:100){totalCount nodes{isResolved}}`;
 const TEXT = `query($ids:[ID!]!){nodes(ids:$ids){__typename id
 ... on PullRequestReview{author{__typename login} state body url}
 ... on IssueComment{author{__typename login} body url}
@@ -302,6 +331,28 @@ function idsOf(pull: StateData) {
     ),
     ...ids(pull.comments, "comment"),
   ];
+}
+
+/** How far `pull` is on its way to merging, as a watch follows it. */
+function mergingOf(pull: StateData) {
+  return {
+    merge: pull.mergeStateStatus,
+    decision: pull.reviewDecision ?? undefined,
+    ...(pull.autoMergeRequest && { autoMerge: true as const }),
+    ...(pull.isInMergeQueue && { queued: true as const }),
+    ...unresolvedOf(pull.reviewThreads),
+  };
+}
+
+/** How many review threads are open, when that is known: threads beyond
+ * those listed are older, so when none listed is open, they may be. A partial
+ * answer without them says nothing. */
+function unresolvedOf(threads: StateData["reviewThreads"]) {
+  if (!threads) return {};
+  const listed = threads.nodes ?? [];
+  const unresolved = listed.filter((thread) => !thread?.isResolved).length;
+  const complete = (threads.totalCount ?? 0) <= listed.length;
+  return unresolved > 0 || complete ? { unresolved } : {};
 }
 
 /** The state in `pull`, an alias's answer, without its feedback or details. */
@@ -344,6 +395,9 @@ function stateOf(pull: StateData): PullState {
         // here.
         rollup?.contexts?.totalCount === contexts.length &&
         !["PENDING", "EXPECTED"].includes(str(rollup?.state)),
+      running:
+        checks.some((check) => !check.done) ||
+        ["PENDING", "EXPECTED"].includes(str(rollup?.state)),
       failed: checks
         .filter((check) => check.failed)
         .map((check) => check.name || "unnamed check"),
@@ -424,11 +478,43 @@ type Asked = Readonly<{
   listed: readonly string[];
 }>;
 
-/** All of `urls`, canonical pull request and issue URLs, in one GitHub
- * request, and the text of feedback not yet held in another: each one's
- * state, or an error for one GitHub could not read, as is an issue's URL
- * that numbers a pull request. Throws when it answered for none. */
+/** All of `urls`, canonical pull request and issue URLs, in requests of
+ * PULLS_PER_READ at most, and the text of feedback not yet held in another:
+ * each one's state, or an error for one GitHub could not read, as is an
+ * issue's URL that numbers a pull request, or one whose request failed.
+ * Throws when it answered for none. */
 async function readStates(
+  gh: GitHubCli,
+  urls: readonly string[],
+  asks: (url: string) => Asked,
+  signal: AbortSignal,
+): Promise<(PullState | Error)[]> {
+  const pages: (readonly string[])[] = [];
+  for (let at = 0; at < urls.length; at += PULLS_PER_READ)
+    pages.push(urls.slice(at, at + PULLS_PER_READ));
+  const read = await Promise.allSettled(
+    pages.map((page) => readPage(gh, page, asks, signal)),
+  );
+  const [first] = read;
+  if (
+    first?.status === "rejected" &&
+    read.every((page) => page.status === "rejected")
+  )
+    throw first.reason;
+  const states = pages.flatMap((page, i) => {
+    const result = read[i];
+    if (result?.status === "fulfilled") return result.value;
+    const reason: unknown = result?.reason;
+    return page.map(() =>
+      reason instanceof Error ? reason : new Error(String(reason)),
+    );
+  });
+  await readText(gh, urls, states, asks, signal);
+  return states;
+}
+
+/** One request of `readStates`. */
+async function readPage(
   gh: GitHubCli,
   urls: readonly string[],
   asks: (url: string) => Asked,
@@ -486,7 +572,7 @@ async function readStates(
     return {
       ...state,
       ...(feedback && {
-        feedback: { viewer, ids: idsOf(pull), items: held },
+        feedback: { viewer, ids: idsOf(pull), items: held, ...mergingOf(pull) },
       }),
       ...(details &&
         reference && {
@@ -497,7 +583,6 @@ async function readStates(
         }),
     };
   });
-  await readText(gh, urls, states, asks, signal);
   return states;
 }
 
@@ -623,6 +708,7 @@ const same = (a: PullState | "failed" | undefined, b: PullState | "failed") =>
     a.conflicts === b.conflicts &&
     a.head === b.head &&
     a.settled === b.settled &&
+    a.running === b.running &&
     sameList(a.failed, b.failed) &&
     JSON.stringify(a.feedback) === JSON.stringify(b.feedback) &&
     JSON.stringify(a.details) === JSON.stringify(b.details));

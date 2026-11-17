@@ -117,7 +117,11 @@ const type: RegisteredAgentType = {
         groupByFamily
         appearance={modelAppearance}
         models={[{ id: inheritedModel, label: inheritedModel }]}
-        value=""
+        value={
+          new URLSearchParams(location.search).has("pinned")
+            ? inheritedModel
+            : ""
+        }
         defaultModel={inheritedModel}
         defaultLabel={inheritedModel}
         effortLabel="Automatic"
@@ -221,6 +225,7 @@ if (thinkingHarness === "claude") {
   };
   const provider = {
     ...staticStore(providerState),
+    recommended: () => null,
     resolve: (value: unknown) => ({
       ...codexDefaults,
       ...(value as Partial<typeof codexDefaults>),

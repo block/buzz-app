@@ -109,7 +109,7 @@ it("keeps an unreadable public source loading until lookup settles", async () =>
         state: "found",
         name: "Source",
         readable: false,
-        ...(looking ? { looking: true } : {}),
+        ...(looking ? { looking: true } : { answered: true }),
       }),
     },
   } as unknown as RelaySession;
@@ -147,7 +147,7 @@ it.each([true, false])(
           state: "found",
           name: "Source",
           readable: false,
-          ...(looking ? { looking: true } : {}),
+          ...(looking ? { looking: true } : { answered: true }),
         }),
       },
     } as unknown as RelaySession;

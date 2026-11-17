@@ -1080,8 +1080,17 @@ it("sorts a conversation newest first across pages and restarts paging when the 
   const owner = createRelaySession({
     ...wire.transport,
     searchSort: true,
+    // Searches and history pages reach the scripted wire; the preview's
+    // neighbor reads, three before the hit or a window after it, don't.
     query(filters, signal) {
-      if (filters.some((filter) => filter.kinds?.includes(9)))
+      if (
+        filters.some(
+          (filter) =>
+            filter.kinds?.includes(9) &&
+            filter.since === undefined &&
+            filter.limit !== 3,
+        )
+      )
         return wire.transport.query(filters, signal);
       return Promise.resolve(
         discovery.filter((event) =>
@@ -1252,8 +1261,9 @@ it.each([
     const owner = createRelaySession({
       ...wire.transport,
       searchSort: true,
+      // Searches reach the scripted wire; the preview's neighbor reads don't.
       query(filters, signal) {
-        if (filters.some((filter) => filter.kinds?.includes(9)))
+        if (filters.some((filter) => filter.search !== undefined))
           return wire.transport.query(filters, signal);
         return Promise.resolve(
           discovery.filter((event) =>
@@ -1296,11 +1306,18 @@ it.each([
           message(viewer, "crew", "sortword hit", 1700000001),
         ]),
       );
-      expect(screen.getAllByRole("group")).toEqual([group()]);
+      expect(within(screen.getByRole("listbox")).getAllByRole("group")).toEqual(
+        [group()],
+      );
       expect(heading()).toBe("Messages · Most relevant");
       expect(
         within(group()).getByRole("option", { name: /sortword hit/ }),
       ).toBeVisible();
+      await waitFor(() =>
+        expect(
+          screen.getByRole("complementary", { name: "Preview" }),
+        ).toHaveTextContent(/sortword hit/),
+      );
 
       fireEvent.click(screen.getByRole("button", { name: "Sort messages" }));
       fireEvent.click(
@@ -4570,6 +4587,8 @@ it.each(["before-eose", "after-eose"] as const)(
   async (refuseVerification) => {
     const { owner, person, reads, verificationReads, verifiedSubscriptions } =
       verifiedAuthorSession({ refuseVerification });
+    // The preview reads the hit's neighbors; count message searches alone.
+    const searches = () => reads.filter((read) => read.search !== undefined);
     try {
       owner.session.channels.ensureList();
       await waitFor(() =>
@@ -4600,19 +4619,20 @@ it.each(["before-eose", "after-eose"] as const)(
         await act(async () =>
           vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS + 1),
         );
-      // Query resolution and first-message byline enrichment each ensure once.
+      // Query resolution, first-message byline enrichment and the preview's
+      // bylines each ensure once.
       expect(verifiedSubscriptions.length).toBeLessThanOrEqual(
-        beforeSearch + 2,
+        beforeSearch + 3,
       );
       expect(verificationReads).toHaveLength(1);
-      expect(reads).toHaveLength(1);
-      expect(reads).toContainEqual(
+      expect(searches()).toHaveLength(1);
+      expect(searches()).toContainEqual(
         expect.objectContaining({ authors: [person.pubkey], search: "deploy" }),
       );
       const counts = [
         verifiedSubscriptions.length,
         verificationReads.length,
-        reads.length,
+        searches().length,
       ];
       const result = screen.getByRole("option", { name: /deploy the engine/ });
       for (let cycle = 0; cycle < 4; cycle++)
@@ -4622,7 +4642,7 @@ it.each(["before-eose", "after-eose"] as const)(
       expect([
         verifiedSubscriptions.length,
         verificationReads.length,
-        reads.length,
+        searches().length,
       ]).toEqual(counts);
       expect(result).toBeVisible();
       expect(
@@ -4636,7 +4656,9 @@ it.each(["before-eose", "after-eose"] as const)(
           vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS + 1),
         );
       expect(verifiedSubscriptions).toHaveLength(beforeRetry + 1);
-      expect([verificationReads.length, reads.length]).toEqual(counts.slice(1));
+      expect([verificationReads.length, searches().length]).toEqual(
+        counts.slice(1),
+      );
       expect(result).toBeVisible();
     } finally {
       cleanup();

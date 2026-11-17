@@ -75,9 +75,7 @@ export function registerAppShortcuts(
       binding: { key: "o", mod: true },
       order: HOST_SHORTCUT_ORDER.attachFiles,
       allowInEditable: true,
-      // A shell keeps Ctrl+O in the terminal.
-      when: () =>
-        !document.activeElement?.closest(".xterm") && !!attachFilesTrigger(),
+      when: () => !!attachFilesTrigger(),
       run: () => attachFilesTrigger()?.click(),
     }),
     ...(apple ? (["main", "side"] as const) : [undefined]).map((pane) =>

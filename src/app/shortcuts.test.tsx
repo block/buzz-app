@@ -565,7 +565,7 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
 );
 
 it.each(["MacIntel", "Win32"])(
-  "%s Mod+O presses the focused composer's Attach files, else the pane's",
+  "%s Mod+O presses the focused composer's Attach files",
   async (platform) => {
     const h = harness(platform);
     const apple = platform === "MacIntel";
@@ -650,15 +650,12 @@ it.each(["MacIntel", "Win32"])(
         prevented: true,
         clicked: ["Attach to Thread"],
       });
-      // Elsewhere in a pane, that pane's composer; outside any, the main one.
+      // Focus outside every composer, even in its pane, leaves the key alone.
       expect(attach(screen.getByRole("tab", { name: "Thread tab" }))).toEqual({
-        prevented: true,
-        clicked: ["Attach to Thread"],
+        prevented: false,
+        clicked: [],
       });
-      expect(attach(outside)).toEqual({
-        prevented: true,
-        clicked: ["Attach to Channel"],
-      });
+      expect(attach(outside)).toEqual({ prevented: false, clicked: [] });
       // An editing composer disables its button: the key does nothing, rather
       // than attaching to another composer.
       screen

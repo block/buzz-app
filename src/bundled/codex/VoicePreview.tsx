@@ -264,7 +264,6 @@ export function VoicePreview({
         title="Choose voice"
         size="compact"
         headerGap="compact"
-        footerGap="none"
         finalFocus={trigger}
       >
         <div className="grid gap-3">
@@ -288,7 +287,6 @@ export function VoicePreview({
           )}
           <Field label="Voice" labelVisibility="hidden">
             <RadioGroup
-              size="sm"
               value={voice}
               onValueChange={(value) => void select(value)}
               disabled={disabled}

@@ -15,6 +15,36 @@ test("Codex Voices persist separately through the settings host", async ({
   await expect(
     page.getByRole("button", { name: "Close", exact: true }),
   ).toBeFocused();
+  const chooserRows = page.getByRole("dialog", { name: "Choose voice" });
+  await expect
+    .poll(() =>
+      chooserRows.evaluate((dialog) => {
+        const rows = [
+          ...dialog.querySelectorAll('.buzz-choice[data-variant="row"]'),
+        ];
+        return rows
+          .slice(1)
+          .every(
+            (row, index) =>
+              row.getBoundingClientRect().top >
+              rows[index].getBoundingClientRect().bottom,
+          );
+      }),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      chooserRows.evaluate((dialog) => {
+        const rows = dialog.querySelectorAll(
+          '.buzz-choice[data-variant="row"]',
+        );
+        return (
+          dialog.getBoundingClientRect().bottom -
+          rows[rows.length - 1].getBoundingClientRect().bottom
+        );
+      }),
+    )
+    .toBeGreaterThan(8);
   const locale = page.getByRole("combobox", { name: "Language and region" });
   await expect(locale).toContainText("American English");
   await expect(

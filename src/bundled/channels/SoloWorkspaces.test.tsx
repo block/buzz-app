@@ -280,6 +280,26 @@ it("keeps chats after project deletion and allows retry after a rejected deletio
   owner.dispose();
 });
 
+it("leaves the chat count out when deleting an empty workspace", async () => {
+  const h = fixture();
+  const owner = h.store();
+  const user = userEvent.setup();
+  await owner.queries.ensure();
+  render(h.view(owner.queries));
+  await user.click(
+    await screen.findByRole("button", { name: "Actions for Work" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete workspace" }),
+  );
+  expect(
+    await screen.findByRole("alertdialog", { name: "Delete Work?" }),
+  ).toHaveAccessibleDescription(
+    "Its instructions, folders and agent list are cleared on all your devices, but your agents aren't deleted. It can't be undone.",
+  );
+  owner.dispose();
+});
+
 it("asks before deleting a workspace, and Cancel or Escape keeps it", async () => {
   const h = fixture();
   const owner = h.store();
@@ -296,7 +316,7 @@ it("asks before deleting a workspace, and Cancel or Escape keeps it", async () =
       name: "Delete Work?",
     });
     expect(dialog).toHaveAccessibleDescription(
-      "Its chats move to Chats. Its instructions, folders and agents are cleared on all your devices. It can't be undone.",
+      "1 chat moves to Chats. Its instructions, folders and agent list are cleared on all your devices, but your agents aren't deleted. It can't be undone.",
     );
     const cancel = within(dialog).getByRole("button", { name: "Cancel" });
     await waitFor(() => expect(cancel).toHaveFocus());

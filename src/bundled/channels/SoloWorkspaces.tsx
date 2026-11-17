@@ -73,6 +73,15 @@ import { SidebarRowRenderer } from "../../features/channel-navigation/SidebarRow
 
 const emptyRows: readonly RegisteredSidebarRows[] = [];
 
+/** What deleting a workspace does, with its real chat count. */
+function deleteDescription(chatCount: number) {
+  const chats =
+    chatCount === 0
+      ? ""
+      : `${chatCount} ${chatCount === 1 ? "chat moves" : "chats move"} to Chats. `;
+  return `${chats}Its instructions, folders and agent list are cleared on all your devices, but your agents aren't deleted. It can't be undone.`;
+}
+
 /** Presentation only. The caller supplies authorized, saved chats. */
 export type ChatListItem = Readonly<{
   id: string;
@@ -926,7 +935,10 @@ export function SoloWorkspaces({
         <AlertDialog
           // The current name, in case it's renamed on another device meanwhile.
           title={`Delete ${groups.find((group) => group.id === confirmDelete.id)?.name ?? confirmDelete.name}?`}
-          description="Its chats move to Chats. Its instructions, folders and agents are cleared on all your devices. It can't be undone."
+          description={deleteDescription(
+            projects.find((project) => project.id === confirmDelete.id)?.rows
+              .length ?? 0,
+          )}
           pending={deleting === confirmDelete.id}
           initialFocus={cancelDelete}
           // Back to the workspace's heading, or to Chats, which now holds its

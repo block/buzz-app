@@ -288,7 +288,7 @@ export class CodexProvider {
   /** Read the same next-turn selection without refreshing the catalog. */
   readModelSettings(
     raw: unknown,
-    { execution = "local" }: Partial<AgentModelSettingsContext> = {},
+    { execution = "local", synced }: Partial<AgentModelSettingsContext> = {},
   ) {
     const saved = readConfig(raw);
     const recommended = onRecommended(raw);
@@ -337,13 +337,15 @@ export class CodexProvider {
         model: modelResolution,
         effort: unavailable
           ? { unavailable }
-          : effort
-            ? {
-                value: effort,
-                source:
-                  effort === settings.effort ? source("effort") : "provider",
-              }
-            : { unavailable: missing },
+          : synced?.effort && effort && effort !== synced.effort
+            ? { unavailable: "unsupported" }
+            : effort
+              ? {
+                  value: effort,
+                  source:
+                    effort === settings.effort ? source("effort") : "provider",
+                }
+              : { unavailable: missing },
       },
     });
   }

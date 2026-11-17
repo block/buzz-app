@@ -4104,7 +4104,10 @@ export class AgentsService extends Service implements Agents {
       modelSettings: editor?.problem
         ? { unavailable: "Its synced config could not be read" }
         : kind?.readModelSettings
-          ? kind.readModelSettings(config, { execution })
+          ? kind.readModelSettings(config, {
+              execution,
+              ...(editor?.synced && { synced: editor.synced }),
+            })
           : { unavailable: "Its type does not expose model settings here" },
     };
     // Synced instructions that are deleted, invalid or unreadable are not
@@ -6896,7 +6899,11 @@ export class AgentsService extends Service implements Agents {
     );
     const resolved = this.resolve(identity, local);
     if (resolved.ok)
-      return { config: resolved.config, base: Object.freeze(base) };
+      return {
+        config: resolved.config,
+        base: Object.freeze(base),
+        ...(resolved.synced && { synced: resolved.synced }),
+      };
     // Without a usable confirmed copy, a synced side's local field is stale:
     // the editor shows the problem instead of it.
     const schema = this.configAgent(identity, local).schema ?? {};

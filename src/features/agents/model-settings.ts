@@ -9,11 +9,14 @@ export type AgentModelResolution = Readonly<
         | "not-loaded"
         | "unknown"
         | "remote"
+        | "unsupported"
         | "execution-unavailable";
     }
 >;
 export type AgentModelSettingsContext = Readonly<{
   execution: "local" | "remote" | "unavailable";
+  /** Confirmed synced choices that execution must preserve or refuse. */
+  synced?: Readonly<Record<string, string>>;
 }>;
 /** Saved policy stays distinct from the selection it resolves to here. */
 export type AgentModelSetting = Readonly<

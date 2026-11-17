@@ -168,8 +168,9 @@ and cached Recommended choices; an unset native choice stays unknown because
 Claude Code settings can depend on the workspace. Model aliases remain aliases.
 An unresolved selection has `{ unavailable }`: `not-loaded` for a catalog or
 recommendation not yet loaded, `unknown` for a default the host cannot establish,
-`remote` for an execution target's settings, or `execution-unavailable` when its
-saved placement cannot be read. Reads never start discovery, inspect harness
+`remote` for an execution target's settings, `unsupported` when execution would
+refuse a synced thinking choice, or `execution-unavailable` when its saved
+placement cannot be read. Reads never start discovery, inspect harness
 files or start a process. Other types can omit `resolved`.
 These are current selections, not proof of an active turn's model or effort.
 Per-conversation choices and existing sessions can differ.

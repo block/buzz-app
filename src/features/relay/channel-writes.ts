@@ -603,7 +603,7 @@ export function createChannelWrites(
       const saved = await source.recovery(soloAdminKey(id));
       if (!saved?.recovery)
         throw new Error(
-          "Chat admin setup was abandoned. Send a new message to continue.",
+          "Chat admin setup ended in another window. Retry this message to continue.",
         );
       const recovery = saved.recovery;
       await promoteSoloAdmins(

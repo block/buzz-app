@@ -962,7 +962,7 @@ export function createOutbox(
         // dependent publication and successful recovery completion.
         if (!shared && dismissAbsent) return;
         throw new Error(
-          "This operation was removed or changed in another window. Send a new message to continue.",
+          "This operation was removed or changed in another window. Retry the message to continue.",
         );
       }
       await run();

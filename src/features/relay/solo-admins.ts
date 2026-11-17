@@ -62,34 +62,38 @@ export function soloAdminRecovery(
   return { key: soloAdminKey(channel), value: JSON.stringify(unique) };
 }
 
-/** Only explicit abandonment of a delivered, expired setup may waive its gate.
- * No unrecorded grant can start after this deadline; recorded roles stay put. */
-export function isExpiredSoloAdminSetup(item: OutgoingEvent): boolean {
+/** Recognize a saved setup independently of its delivery state. */
+export function soloAdminSetup(item: OutgoingEvent) {
+  try {
+    return readSoloAdminSetup(item);
+  } catch {
+    return;
+  }
+}
+
+function readSoloAdminSetup(item: OutgoingEvent) {
   const create = item.event;
   const channel = create.tags.find(([tag]) => tag === "h")?.[1];
   if (
     create.kind !== 9007 ||
     !channel ||
-    !["accepted", "seen"].includes(item.delivery) ||
-    item.recovery?.key !== soloAdminKey(channel) ||
-    !(Date.now() / 1000 - (create.created_at ?? Infinity) >= 15 * 60)
+    item.recovery?.key !== soloAdminKey(channel)
   )
-    return false;
-  try {
-    const admins: unknown = JSON.parse(item.recovery.value);
-    return (
-      Array.isArray(admins) &&
-      admins.length > 0 &&
-      admins.every((key) => typeof key === "string" && key !== create.pubkey) &&
-      soloAdminRecovery(
-        channel,
-        create.tags.flatMap(([tag, key]) => (tag === "p" && key ? [key] : [])),
-        admins,
-      )?.value === item.recovery.value
-    );
-  } catch {
-    return false;
-  }
+    return;
+  const admins: unknown = JSON.parse(item.recovery.value);
+  if (
+    Array.isArray(admins) &&
+    admins.length > 0 &&
+    admins.every(
+      (key): key is string => typeof key === "string" && key !== create.pubkey,
+    ) &&
+    soloAdminRecovery(
+      channel,
+      create.tags.flatMap(([tag, key]) => (tag === "p" && key ? [key] : [])),
+      admins,
+    )?.value === item.recovery.value
+  )
+    return { channel, admins, recovery: item.recovery };
 }
 
 /** Reconstruct the exact same promotions after interruption. Their timestamp
@@ -110,25 +114,12 @@ export async function promoteSoloAdmins(
   owned?: (key: string, targets: readonly string[]) => Promise<() => boolean>,
 ) {
   const create = creation.event;
-  const channel = create.tags.find(([tag]) => tag === "h")?.[1];
-  const admins: unknown = JSON.parse(creation.recovery?.value ?? "null");
-  if (
-    create.kind !== 9007 ||
-    !channel ||
-    creation.recovery?.key !== soloAdminKey(channel) ||
-    !Array.isArray(admins) ||
-    !admins.length ||
-    admins.some((key) => typeof key !== "string" || key === create.pubkey) ||
-    soloAdminRecovery(
-      channel,
-      create.tags.flatMap(([tag, key]) => (tag === "p" && key ? [key] : [])),
-      admins,
-    )?.value !== creation.recovery.value
-  )
-    throw new Error("The saved chat admin setup is invalid.");
+  const setup = readSoloAdminSetup(creation);
+  if (!setup) throw new Error("The saved chat admin setup is invalid.");
+  const { channel, admins } = setup;
   const read = (filters: Parameters<RelayReader["read"]>[0]) =>
     reader.read(filters, { signal, fresh: true, priority: "foreground" });
-  for (const admin of admins as string[]) {
+  for (const admin of admins) {
     signal.throwIfAborted();
     const template = {
       ...memberAdministrationTemplate(channel, create.pubkey, {
@@ -157,11 +148,11 @@ export async function promoteSoloAdmins(
       throw new Error(
         "Chat admin setup expired. Abandon setup in Outbox to continue with current roles, or start a new chat.",
       );
-    const ownership = await owned?.(admin, admins as string[]);
+    const ownership = await owned?.(admin, admins);
     const checkOwnership = () => {
       if (!ownership?.())
         throw new Error(
-          "An opening agent is not verified as owned by the chat creator. Check chat access before retrying.",
+          "An opening agent is not verified as owned by the chat creator. Retry this message or choose Abandon admin setup in Outbox to continue with current roles.",
         );
     };
     checkOwnership();
@@ -185,7 +176,7 @@ export async function promoteSoloAdmins(
     )?.[3];
     if (!role || !["member", "bot", "admin"].includes(role))
       throw new Error(
-        "An opening agent's access changed. Check chat access before retrying.",
+        "An opening agent's access changed. Choose Abandon admin setup in Outbox to continue with current roles.",
       );
     checkOwnership();
     const signed = await writer.sign(template, signal);

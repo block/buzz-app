@@ -8,6 +8,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import {
   HELD_RETRY_REFUSED,
@@ -61,6 +62,33 @@ function show(item: OutgoingEvent) {
   fireEvent.click(screen.getByText("Outbox · 1 items"));
   return { retry, add, acknowledge };
 }
+
+it("labels a setup with unconfirmed creation and withholds abandonment and removal", () => {
+  const viewer = keypair();
+  const agent = keypair().pubkey;
+  const event = signed(viewer, {
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", "chat"],
+      ["p", agent],
+    ],
+  });
+  show({
+    event,
+    delivery: "unknown",
+    recovery: soloAdminRecovery("chat", [agent], [agent]),
+  });
+  expect(
+    screen.getByText("Opening agent admin setup · Unconfirmed"),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Abandon admin setup" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Remove from outbox" }),
+  ).not.toBeInTheDocument();
+});
 
 it("does not offer generic retry for guarded invitations from either profile or composer", () => {
   const { retry } = show({ ...invitation, guarded: true });
@@ -625,20 +653,37 @@ it("abandons expired admin setup durably through Outbox and releases the chat ga
       />,
     );
     fireEvent.click(screen.getByText("Outbox · 1 items"));
+    const remove = () =>
+      screen.getByRole("button", { name: "Abandon admin setup" });
+    await screen.findByRole("button", { name: "Abandon admin setup" });
+    expect(screen.getByText(/Opening agent admin setup · Sent/)).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Remove from outbox" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(remove());
+    let confirmation = screen.getByRole("alertdialog", {
+      name: "Abandon admin setup?",
+    });
+    expect(
+      within(confirmation).getByText(/Retry your opening message/),
+    ).toBeVisible();
+    fireEvent.click(
+      within(confirmation).getByRole("button", { name: "Cancel" }),
+    );
+    expect(outbox.snapshot().some((item) => item.recovery)).toBe(true);
     clock.mockReturnValue(now);
     await expect(session.channelWrites.prepareOpening(channel)).rejects.toThrow(
       "expired",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Remove from outbox" }));
-    await screen.findByRole("button", { name: "Abandon admin setup" });
-    expect(outbox.snapshot().some((item) => item.recovery)).toBe(true);
-    expect(
-      screen.getByText(/Send a new message to continue with the current roles/),
-    ).toBeVisible();
-    const remove = () =>
-      screen.getByRole("button", { name: "Abandon admin setup" });
     failRemoval = true;
     fireEvent.click(remove());
+    confirmation = screen.getByRole("alertdialog", {
+      name: "Abandon admin setup?",
+    });
+    const confirm = within(confirmation).getByRole("button", {
+      name: "Abandon admin setup",
+    });
+    fireEvent.click(confirm);
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Storage unavailable",
     );
@@ -647,7 +692,7 @@ it("abandons expired admin setup durably through Outbox and releases the chat ga
       "expired",
     );
     failRemoval = false;
-    fireEvent.click(remove());
+    fireEvent.click(confirm);
     await waitFor(() => expect(outbox.snapshot()).toHaveLength(0));
     expect(records.some((item) => item.recovery)).toBe(false);
     expect(session.channels.get?.(channel)?.members).toContain(agent.pubkey);

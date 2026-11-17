@@ -149,6 +149,12 @@ for (const mode of ["cross-window", "same-window", "failed-storage"])
     const scope = `https://primary.example:${app.viewer}`;
     app.report.setupReceiverTime = createdAt + 895;
     await page.clock.setFixedTime(new Date((createdAt + 899) * 1000));
+    if (mode === "same-window") {
+      await page.setViewportSize({ width: 840, height: 900 });
+      await page.addInitScript(() => {
+        localStorage.setItem("buzz-font-scale.v1", "1.5");
+      });
+    }
     await page.addInitScript(
       ({ scope, creation, message, recovery }) => {
         localStorage.setItem(
@@ -184,20 +190,20 @@ for (const mode of ["cross-window", "same-window", "failed-storage"])
       const row = a.getByRole("listitem").filter({ hasText: "Opening work" });
       await row.getByRole("button", { name: "Retry", exact: true }).click();
       await expect.poll(() => signingStarted).toBe(true);
-      await page.clock.setFixedTime(new Date((createdAt + 900) * 1000));
+      if (mode !== "same-window")
+        await page.clock.setFixedTime(new Date((createdAt + 900) * 1000));
       other = mode === "same-window" ? page : await context.newPage();
       if (other !== page) {
         app.watchPageErrors(other);
         await other.clock.setFixedTime(new Date((createdAt + 900) * 1000));
       }
       const b = other === page ? a : await openOutbox(other, app.origin);
-      if (mode === "same-window") {
-        // The view was opened before expiry: first click exposes explicit consent.
-        await b
-          .getByRole("button", { name: "Remove from outbox", exact: true })
-          .first()
-          .click();
-      }
+      const setup = b.getByRole("listitem").filter({
+        hasText: "Opening agent admin setup",
+      });
+      await expect(
+        setup.getByRole("button", { name: "Remove from outbox" }),
+      ).toHaveCount(0);
       if (mode === "failed-storage")
         await other.evaluate(
           ({ scope, id }) => {
@@ -212,11 +218,29 @@ for (const mode of ["cross-window", "same-window", "failed-storage"])
           },
           { scope, id: creation.id },
         );
-      await b
+      const abandon = setup.getByRole("button", {
+        name: "Abandon admin setup",
+        exact: true,
+      });
+      await abandon.click();
+      const confirmation = other.getByRole("alertdialog", {
+        name: "Abandon admin setup?",
+      });
+      if (mode === "same-window") {
+        const cancel = confirmation.getByRole("button", {
+          name: "Cancel",
+          exact: true,
+        });
+        await expect(cancel).toBeFocused();
+        await cancel.click();
+        await expect(abandon).toBeFocused();
+        await abandon.click();
+      }
+      await confirmation
         .getByRole("button", { name: "Abandon admin setup", exact: true })
         .click();
       if (mode === "failed-storage")
-        await expect(b.getByRole("alert")).toBeVisible();
+        await expect(confirmation.getByRole("alert")).toBeVisible();
       else
         await expect(
           b.getByRole("button", { name: "Abandon admin setup", exact: true }),

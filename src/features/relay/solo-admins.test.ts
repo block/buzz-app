@@ -1,6 +1,6 @@
 import { assert, expect, it, vi } from "vitest";
 import {
-  isExpiredSoloAdminSetup,
+  soloAdminSetup,
   ownedSoloAgents,
   promoteSoloAdmins,
   soloAdminRecovery,
@@ -226,43 +226,32 @@ it("rejects recovery that grants a nonmember admin, without signing", async () =
   expect(h.writer.sign).not.toHaveBeenCalled();
 });
 
-it("limits abandonment to a valid delivered and expired opening-admin receipt", () => {
+it("recognizes a valid opening-admin receipt before delivery or expiry", () => {
   const h = setup();
   const recovery = h.creation.recovery;
-  const createdAt = h.creation.event.created_at;
   assert.exists(recovery);
-  assert.exists(createdAt);
-  const clock = vi
-    .spyOn(Date, "now")
-    .mockReturnValue(Date.now() + 16 * 60 * 1000);
-  try {
-    expect(isExpiredSoloAdminSetup(h.creation)).toBe(true);
-    for (const item of [
-      { ...h.creation, delivery: "unknown" as const },
-      { ...h.creation, recovery: undefined },
-      {
-        ...h.creation,
-        recovery: { key: "another-owner", value: recovery.value },
+  expect(soloAdminSetup(h.creation)?.recovery).toEqual(recovery);
+  expect(soloAdminSetup({ ...h.creation, delivery: "unknown" })).toBeDefined();
+  for (const item of [
+    { ...h.creation, recovery: undefined },
+    {
+      ...h.creation,
+      recovery: { key: "another-owner", value: recovery.value },
+    },
+    {
+      ...h.creation,
+      recovery: { key: recovery.key, value: "invalid JSON" },
+    },
+    {
+      ...h.creation,
+      recovery: {
+        key: recovery.key,
+        value: JSON.stringify([keypair().pubkey]),
       },
-      {
-        ...h.creation,
-        recovery: { key: recovery.key, value: "invalid JSON" },
-      },
-      {
-        ...h.creation,
-        recovery: {
-          key: recovery.key,
-          value: JSON.stringify([keypair().pubkey]),
-        },
-      },
-      { ...h.creation, event: { ...h.creation.event, kind: 9000 } },
-    ])
-      expect(isExpiredSoloAdminSetup(item)).toBe(false);
-    clock.mockReturnValue((createdAt + 14 * 60) * 1000);
-    expect(isExpiredSoloAdminSetup(h.creation)).toBe(false);
-  } finally {
-    clock.mockRestore();
-  }
+    },
+    { ...h.creation, event: { ...h.creation.event, kind: 9000 } },
+  ])
+    expect(soloAdminSetup(item)).toBeUndefined();
 });
 
 it("invalidates a verified ownership guard when its head is replaced or evicted", async () => {

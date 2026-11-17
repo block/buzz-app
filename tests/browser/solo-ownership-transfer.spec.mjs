@@ -6,6 +6,7 @@ const channel = "11111111-1111-4111-8111-111111111111";
 const chat = "33333333-3333-4333-8333-333333333333";
 test.use({
   productionBroker: true,
+  colorScheme: "dark",
   pluginFixtures: true,
   openingAdminSetup: true,
   channelLifecycle: true,
@@ -237,6 +238,40 @@ for (const opening of [true, false])
             message.id,
           ),
         ).toContain("not verified as owned");
+        const setup = outbox.getByRole("listitem").filter({
+          hasText: "Opening agent admin setup",
+        });
+        await setup.screenshot({
+          path: info.outputPath("OPENING_ADMIN_SETUP_OUTBOX.png"),
+        });
+        await setup
+          .getByRole("button", { name: "Abandon admin setup" })
+          .click();
+        const confirmation = page.getByRole("alertdialog", {
+          name: "Abandon admin setup?",
+        });
+        await confirmation.screenshot({
+          path: info.outputPath("ABANDON_ADMIN_SETUP.png"),
+        });
+        await confirmation
+          .getByRole("button", { name: "Abandon admin setup" })
+          .click();
+        await expect(setup).toHaveCount(0);
+        await outbox
+          .getByRole("listitem")
+          .filter({ hasText: message.content })
+          .getByRole("button", { name: "Retry", exact: true })
+          .click();
+        await expect
+          .poll(() =>
+            app.report.publications
+              .filter(({ event }) => event.kind === 9)
+              .map(({ event }) => event),
+          )
+          .toEqual([message]);
+        expect(
+          app.report.publications.filter(({ event }) => event.kind === 9000),
+        ).toHaveLength(1);
       }
       await page.screenshot({
         path: info.outputPath("RECEIVED_OWNERSHIP_TRANSFER.png"),

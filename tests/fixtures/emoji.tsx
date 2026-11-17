@@ -89,6 +89,13 @@ const sessions = ["a", "b"].map((community) => {
           ? []
           : [
               ["emoji", "party", `${origin}/media/${time}.png`],
+              ...(new URLSearchParams(location.search).has("numeric-codes")
+                ? ["25", "30"].map((code) => [
+                    "emoji",
+                    code,
+                    `${origin}/media/${code}.png`,
+                  ])
+                : []),
               ...[62, 63, 64].map((length) => {
                 const name = "a".repeat(length);
                 return ["emoji", name, `${origin}/media/${name}.png`];

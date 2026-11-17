@@ -85,13 +85,23 @@ export function emojiTags(event: {
 export const messageParts = (content: string) =>
   content.split(/(https?:\/\/[^\s<>"`]+)/g);
 export const linkPart = (part: string) => /^https?:\/\//.test(part);
-const shortcodePattern = () => /(?=(:([a-zA-Z0-9_-]{1,64}):))/g;
+function* shortcodeMatches(content: string) {
+  for (const match of content.matchAll(/(?=(:([a-zA-Z0-9_-]{1,64}):))/g)) {
+    // Keep numeric fragments after digits literal, including 12:25:30:.
+    if (
+      /^\d+$/.test(match[2] ?? "") &&
+      /\d/.test(content[match.index - 1] ?? "")
+    )
+      continue;
+    yield match;
+  }
+}
 export function* emojiMatches(
   content: string,
   entries: readonly CustomEmoji[],
 ) {
   let end = 0;
-  for (const match of content.matchAll(shortcodePattern())) {
+  for (const match of shortcodeMatches(content)) {
     if (match.index < end) continue;
     const emoji = entries.find(
       (entry) => entry.shortcode === match[2]?.toLowerCase(),
@@ -143,9 +153,7 @@ export function referencedEmoji(content: string): string[] {
       messageParts(content).flatMap((part) =>
         linkPart(part)
           ? []
-          : [...part.matchAll(shortcodePattern())].map((m) =>
-              (m[2] ?? "").toLowerCase(),
-            ),
+          : [...shortcodeMatches(part)].map((m) => (m[2] ?? "").toLowerCase()),
       ),
     ),
   ];

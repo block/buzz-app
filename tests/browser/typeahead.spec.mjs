@@ -89,6 +89,128 @@ test("closing-colon emoji conversion restores literal source and caret on undo",
   await expect(input).toHaveJSProperty("value", "```\n:-1:\n```");
 });
 
+// Native typing and paste must preserve the literal time through token
+// decoration, submission and timeline rendering in both browser engines;
+// explicit picker selection must still insert a renderable numeric emoji.
+test("numeric custom emoji preserve times during typing, paste and send", async ({
+  page,
+}) => {
+  await page.route("**/emoji-media/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"/>',
+    }),
+  );
+  await page.goto("/tests/fixtures/emoji.html?reactions&numeric-codes");
+  const input = page.getByRole("textbox", {
+    name: "Message #general",
+    exact: true,
+  });
+  // A visible exact result establishes that the numeric catalog has loaded.
+  await input.fill(":25");
+  await expect(
+    page.getByRole("option", { name: ":25:", exact: true }),
+  ).toBeVisible();
+  await input.press("Tab");
+  await expect(input).toHaveJSProperty("value", ":25: ");
+  await expect(input.locator("img[data-copy-emoji]")).toHaveCount(1);
+
+  for (const mode of ["typing", "paste"]) {
+    await input.fill("");
+    if (mode === "typing") await input.pressSequentially("12:25:30:");
+    else
+      await input.evaluate((element) => {
+        const clipboardData = new DataTransfer();
+        clipboardData.setData("text/plain", "12:25:30:");
+        element.dispatchEvent(
+          new ClipboardEvent("paste", {
+            bubbles: true,
+            cancelable: true,
+            clipboardData,
+          }),
+        );
+      });
+    await expect(input).toHaveJSProperty("value", "12:25:30:");
+    await expect(input.locator("img[data-copy-emoji]")).toHaveCount(0);
+    await input.press("Enter");
+    const count = mode === "typing" ? 1 : 2;
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.emojiFixture.report.publications.length),
+      )
+      .toBe(count);
+    const sent = await page.evaluate(
+      () => window.emojiFixture.report.publications.at(-1).event,
+    );
+    expect(sent.content).toBe("12:25:30:");
+    expect(sent.tags.filter(([name]) => name === "emoji")).toEqual([]);
+    const row = page.locator(`[data-message-id="${sent.id}"]`);
+    await expect(row).toContainText("12:25:30:");
+    await expect(row.locator("img[data-copy-emoji]")).toHaveCount(0);
+  }
+
+  await input.pressSequentially("10:30:party:");
+  await expect(input).toHaveJSProperty("value", "10:30:party:");
+  await expect(input.locator("img[data-copy-emoji]")).toHaveCount(1);
+  await expect(input.locator("img[data-copy-emoji]")).toHaveAttribute(
+    "alt",
+    ":party:",
+  );
+  await input.press("Enter");
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.emojiFixture.report.publications.length),
+    )
+    .toBe(3);
+  const mixed = await page.evaluate(
+    () => window.emojiFixture.report.publications.at(-1).event,
+  );
+  expect(mixed.content).toBe("10:30:party:");
+  expect(mixed.tags.filter(([name]) => name === "emoji")).toEqual([
+    ["emoji", "party", "https://a.test/media/1.png"],
+  ]);
+  const mixedRow = page.locator(`[data-message-id="${mixed.id}"]`);
+  await expect(mixedRow).toContainText("10:30");
+  await expect(mixedRow.locator("img[data-copy-emoji]")).toHaveCount(1);
+  await expect(mixedRow.locator("img[data-copy-emoji]")).toHaveAttribute(
+    "alt",
+    ":party:",
+  );
+
+  await input.fill("score 5");
+  await page
+    .getByRole("button", { name: "Emoji and GIFS", exact: true })
+    .click();
+  const picker = page.locator("em-emoji-picker");
+  await picker.getByRole("searchbox").fill("25");
+  await picker
+    .locator("button")
+    .filter({ has: page.locator('img[src*="25.png"]') })
+    .click();
+  await expect(input).toHaveJSProperty("value", "score 5 :25: ");
+  await expect(input.locator("img[data-copy-emoji]")).toHaveCount(1);
+  await input.press("Enter");
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.emojiFixture.report.publications.length),
+    )
+    .toBe(4);
+  const picked = await page.evaluate(
+    () => window.emojiFixture.report.publications.at(-1).event,
+  );
+  expect(picked.content).toBe("score 5 :25:");
+  expect(picked.tags.filter(([name]) => name === "emoji")).toEqual([
+    ["emoji", "25", "https://a.test/media/25.png"],
+  ]);
+  const pickedRow = page.locator(`[data-message-id="${picked.id}"]`);
+  await expect(pickedRow).toContainText("score 5");
+  await expect(pickedRow.locator("img[data-copy-emoji]")).toHaveCount(1);
+  await expect(pickedRow.locator("img[data-copy-emoji]")).toHaveAttribute(
+    "alt",
+    ":25:",
+  );
+});
+
 const expectAvatarShape = async (target, shape) => {
   await expect(target.locator("[data-avatar-shape]")).toHaveAttribute(
     "data-avatar-shape",

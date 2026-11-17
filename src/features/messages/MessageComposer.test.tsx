@@ -7879,6 +7879,30 @@ it("renders a leading custom emoji inline without changing trailing text", () =>
   );
 });
 
+it.each([
+  ["12:25:30: :25:", ":25:"],
+  ["10:30:party:", ":party:"],
+])("keeps time fragments literal beside custom emoji: %s", (text, image) => {
+  const h = mount();
+  h.setEmoji(
+    ["25", "30", "party"].map((shortcode) => ({
+      shortcode,
+      url: `https://example.org/emoji/${shortcode}.png`,
+    })),
+  );
+  h.fill(text);
+  expect(h.input()).toHaveValue(text);
+  expect(within(h.input()).getAllByRole("img")).toHaveLength(1);
+  expect(within(h.input()).getByRole("img")).toHaveAttribute("alt", image);
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    text,
+    [],
+    [],
+  );
+});
+
 /** The real Emoji provider; the fixture provider above never publishes an exact match. */
 function mountEmojiTypeahead() {
   // jsdom has no canvas; previews fall back to the uncentred glyph.
@@ -8184,19 +8208,33 @@ it.each([
   // A replaced selection reuses the space after it.
   ["ax b", 1, 2, "😀", "a😀 b", 4],
   ["ab", 1, 1, ":party:", "a:party: b", 9],
+  ["5x", 1, 1, ":25:", "5 :25: x", 7],
+  ["5 x", 1, 1, ":25:", "5 :25: x", 7],
+  ["5xx z", 1, 3, ":25:", "5 :25: z", 7],
+  ["5x", 0, 1, ":25:", ":25: x", 5],
+  ["ab", 1, 1, ":25:", "a:25: b", 6],
   // Other tool text is inserted exactly as given.
   ["ab", 1, 1, "x", "axb", 2],
 ])(
   "spaces emoji a composer tool inserts: %j",
   async (text, start, end, inserted, expected, after) => {
     const h = mount();
-    h.setEmoji([{ shortcode: "party", url: "https://emoji.test/party.png" }]);
+    h.setEmoji(
+      ["party", "25"].map((shortcode) => ({
+        shortcode,
+        url: `https://example.org/emoji/${shortcode}.png`,
+      })),
+    );
     h.fill(text);
     act(() => h.input().setSelectionRange(start, end));
     act(() => {
       expect(h.commands().insertText(inserted)).toBe(true);
     });
     expect(h.input()).toHaveValue(expected);
+    if (inserted === ":25:")
+      expect(
+        within(h.input()).getByRole("img", { name: ":25:" }),
+      ).toBeVisible();
     expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([
       after,
       after,

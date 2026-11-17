@@ -1054,6 +1054,9 @@ available rather than silently discarding it.
   same channel share context. This setting changes what the agent remembers
   together, not where its reply appears. A DM, huddle room, or Solo chat is one
   continuing conversation under either choice.
+- Codex, Claude Code, goose and Pi agents read earlier messages with their
+  edits and deletions applied. A Claude Code, goose or Pi session that already
+  saw a message is not told about a later edit or deletion.
 - An agent's own messages do not wake it, even when they mention its name.
   To pass work to the same agent in another conversation, use `self_handoff`
   with the channel, text, and a thread message ID outside a Solo chat.

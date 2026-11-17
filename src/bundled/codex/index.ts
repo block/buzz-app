@@ -221,7 +221,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       };
     },
     describeMigration: (saved) => {
-      const { model, effort, scope } = config(saved);
+      const { model, effort, scope, voice } = config(saved);
       return [
         { id: "model", label: "Model", isOverride: Boolean(model.trim()) },
         {
@@ -229,6 +229,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           label: "Thinking",
           isOverride: Boolean(effort),
         },
+        { id: "voice", label: "Voice", isOverride: Boolean(voice) },
         {
           id: "sessions",
           label: "Sessions",

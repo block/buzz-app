@@ -992,6 +992,8 @@ function Timeline({
   const layoutCorrection = useRef(false);
   // A held pointer can drag the scrollbar without directional input events.
   const pointerHeld = useRef(false);
+  // The intent under which a press in history was last released.
+  const released = useRef<number | undefined>(undefined);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const recordPosition = useCallback(
@@ -1421,14 +1423,16 @@ function Timeline({
     // A live append must not choose a newly inserted row while the older
     // page is still measuring; keep the reader's original row and offset.
     // A later render holds the row again under the same input. Input that
-    // ended during an earlier hold sends no further pointerup to end this one.
+    // ended during an earlier hold, or before any hold, sends no further
+    // pointerup to end this one.
     const anchor = {
       id,
       y,
       intent: intent.current,
       ended:
-        heldReader.current?.intent === intent.current &&
-        heldReader.current.ended,
+        released.current === intent.current ||
+        (heldReader.current?.intent === intent.current &&
+          heldReader.current.ended),
     };
     heldReader.current = anchor;
     const top = () =>
@@ -2038,6 +2042,7 @@ function Timeline({
         const document = scroller.current?.ownerDocument;
         const up = () => {
           pointerHeld.current = false;
+          released.current = intent.current;
           document?.removeEventListener("pointerup", up);
           document?.removeEventListener("pointercancel", up);
         };

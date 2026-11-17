@@ -279,6 +279,13 @@ test.describe("pages inside one second", () => {
       await settle(page);
       await expectAnchor(page, before);
     });
+    // A reader 1400px up keeps their rows to the end, so the page shifts them
+    // and holds no row. The first hold starts at the live message, after the
+    // drag was released.
+    test(
+      "a drag released before the first render that holds its row ends the hold",
+      dragReleasedBeforeHold,
+    );
   });
 
   test("input after the page lands starts from the reader's row", async ({
@@ -610,10 +617,11 @@ test.describe("pages inside one second", () => {
     await expectAnchor(page, beforeGrowth);
   });
 
-  test("a drag released before a render that holds its row again ends the hold", async ({
-    page,
-    app,
-  }) => {
+  test(
+    "a drag released before a render that holds its row again ends the hold",
+    dragReleasedBeforeHold,
+  );
+  async function dragReleasedBeforeHold({ page, app }) {
     const pending = await reading(page, app, 1400);
     const box = await history(page).boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -659,7 +667,7 @@ test.describe("pages inside one second", () => {
     }, before.id);
     await settle(page);
     await expectAnchor(page, before);
-  });
+  }
 
   test("a cancelled drag ends the hold", async ({ page, app }) => {
     const pending = await reading(page, app, 1400);

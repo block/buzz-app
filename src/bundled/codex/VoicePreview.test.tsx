@@ -25,7 +25,14 @@ it("previews the unsaved choice, stops immediately, and ignores a late failure",
       }),
   );
   const user = userEvent.setup();
-  render(<VoicePreview spawn={spawn} voice="maple" disabled={false} />);
+  render(
+    <VoicePreview
+      spawn={spawn}
+      voice="maple"
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
   await user.click(screen.getByRole("button", { name: "Preview voice" }));
   expect(previewVoice).toHaveBeenCalledWith(
     spawn,
@@ -46,12 +53,24 @@ it("ends a preview when its keyed voice changes or settings closes", async () =>
   vi.mocked(previewVoice).mockImplementation(() => new Promise(() => {}));
   const user = userEvent.setup();
   const view = render(
-    <VoicePreview key="cove" spawn={spawn} voice="cove" disabled={false} />,
+    <VoicePreview
+      key="cove"
+      spawn={spawn}
+      voice="cove"
+      disabled={false}
+      onChange={vi.fn()}
+    />,
   );
   await user.click(screen.getByRole("button", { name: "Preview voice" }));
   const first = vi.mocked(previewVoice).mock.calls[0]?.[2];
   view.rerender(
-    <VoicePreview key="maple" spawn={spawn} voice="maple" disabled={false} />,
+    <VoicePreview
+      key="maple"
+      spawn={spawn}
+      voice="maple"
+      disabled={false}
+      onChange={vi.fn()}
+    />,
   );
   expect(first?.aborted).toBe(true);
   await user.click(screen.getByRole("button", { name: "Preview voice" }));
@@ -65,7 +84,9 @@ it("shows errors and lets the user retry the default voice", async () => {
     .mockRejectedValueOnce(new Error("Sign in to Codex."))
     .mockResolvedValueOnce();
   const user = userEvent.setup();
-  render(<VoicePreview spawn={spawn} voice="" disabled={false} />);
+  render(
+    <VoicePreview spawn={spawn} voice="" disabled={false} onChange={vi.fn()} />,
+  );
   await user.click(screen.getByRole("button", { name: "Preview voice" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Sign in to Codex.",
@@ -79,4 +100,54 @@ it("shows errors and lets the user retry the default voice", async () => {
     "",
     expect.any(AbortSignal),
   );
+});
+
+it("previews dialog rows independently from selection and stops on dismissal", async () => {
+  vi.mocked(previewVoice).mockImplementation(() => new Promise(() => {}));
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <VoicePreview
+      spawn={spawn}
+      voice="cove"
+      voices={["cove", "maple"]}
+      defaultVoice="cove"
+      disabled={false}
+      onChange={onChange}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  expect(screen.getByRole("radio", { name: "Cove" })).toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Preview Maple" }));
+  const first = vi.mocked(previewVoice).mock.calls[0]?.[2];
+  expect(onChange).not.toHaveBeenCalled();
+  expect(screen.getByRole("radio", { name: "Cove" })).toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Preview Cove" }));
+  expect(first?.aborted).toBe(true);
+  const second = vi.mocked(previewVoice).mock.calls[1]?.[2];
+  await user.keyboard("{Escape}");
+  expect(second?.aborted).toBe(true);
+  expect(screen.getByRole("button", { name: "Preview voice" })).toBeVisible();
+});
+
+it("chooses a row without starting a preview", async () => {
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <VoicePreview
+      spawn={spawn}
+      voice=""
+      voices={["cove", "maple"]}
+      defaultVoice="cove"
+      disabled={false}
+      onChange={onChange}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Huddle voice" }),
+  ).toHaveTextContent("Cove · Default");
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await user.click(screen.getByRole("radio", { name: "Maple" }));
+  expect(onChange).toHaveBeenCalledWith("maple");
+  expect(previewVoice).not.toHaveBeenCalled();
 });

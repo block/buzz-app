@@ -10,14 +10,14 @@ test("Codex Huddle voices persist separately through the settings host", async (
   });
   await page.getByText("Ada", { exact: true }).click();
   const pane = page.getByRole("tabpanel", { name: "Identity", exact: true });
-  const voice = pane.getByRole("combobox", { name: "Huddle voice" });
+  const voice = pane.getByRole("button", { name: "Huddle voice" });
   const preview = pane.getByRole("button", {
     name: "Preview voice",
     exact: true,
   });
   await expect(preview).toBeEnabled();
   await voice.click();
-  await page.getByRole("option", { name: "Maple", exact: true }).click();
+  await page.getByRole("radio", { name: "Maple", exact: true }).click();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
@@ -26,9 +26,9 @@ test("Codex Huddle voices persist separately through the settings host", async (
   await page.getByText("Ada", { exact: true }).click();
   await expect(voice).toContainText("Maple");
   await page.getByText("Bo", { exact: true }).click();
-  await expect(voice).toContainText("Codex default");
+  await expect(voice).toContainText("Cove · Default");
   await voice.click();
-  await page.getByRole("option", { name: "Cove", exact: true }).click();
+  await page.getByRole("radio", { name: "Cove", exact: true }).click();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
@@ -49,16 +49,31 @@ test("Codex Huddle voices persist separately through the settings host", async (
       { dark, fontSize },
     );
     await voice.scrollIntoViewIfNeeded();
+    const label = pane.getByText("Huddle voice", { exact: true });
+    expect(
+      await label.evaluate(
+        (el) =>
+          el.getBoundingClientRect().height <=
+          2 * Number.parseFloat(getComputedStyle(el).lineHeight),
+      ),
+    ).toBe(true);
     await voice.focus();
     await expect(voice).toBeFocused();
     await page.keyboard.press("Enter");
+    const chooser = page.getByRole("dialog", { name: "Choose Huddle voice" });
+    await expect(chooser).toBeVisible();
     await expect(
-      page.getByRole("option", { name: "Cove", exact: true }),
-    ).toBeFocused();
-    await page.keyboard.press("Home");
-    await expect(
-      page.getByRole("option", { name: "Codex default", exact: true }),
-    ).toBeFocused();
+      chooser.getByRole("radio", { name: "Cove", exact: true }),
+    ).toBeChecked();
+    const play = chooser.getByRole("button", {
+      name: "Preview Maple",
+      exact: true,
+    });
+    await play.focus();
+    await expect(play).toBeFocused();
+    expect(
+      await chooser.evaluate((el) => el.scrollWidth <= el.clientWidth),
+    ).toBe(true);
     await page.keyboard.press("Escape");
     await expect(voice).toBeFocused();
     await page.keyboard.press("Tab");

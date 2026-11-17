@@ -81,6 +81,7 @@ export async function previewVoice(
         undefined,
         voice || undefined,
         true,
+        context,
       ),
     );
     signal.throwIfAborted();

@@ -13,12 +13,13 @@ export async function openVoice(
   thinking?: (active: boolean) => void,
   voice?: string,
   standalone = false,
+  unlockedContext?: AudioContext,
 ) {
   signal.throwIfAborted();
   const peer = new RTCPeerConnection();
   let context: AudioContext;
   try {
-    context = new AudioContext({ sampleRate: 48000 });
+    context = unlockedContext ?? new AudioContext({ sampleRate: 48000 });
   } catch (error) {
     peer.close();
     throw error;

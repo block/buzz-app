@@ -64,7 +64,7 @@ import {
 import {
   AppServer,
   listModels,
-  listVoices,
+  voiceCatalog,
   needsSignIn,
   type Spawn,
 } from "./rpc";
@@ -78,6 +78,7 @@ const label = ({ channelId, name, root }: SavedConversation) =>
 
 type Catalog = {
   voices?: string[] | undefined;
+  defaultVoice?: string | undefined;
   models: Model[];
 };
 type ProviderDefaults = Readonly<{ model: string; effort: string }>;
@@ -106,7 +107,21 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
     if (await needsSignIn(rpc)) throw new Error(SIGN_IN_ERROR);
     const models = await listModels(rpc);
     // Older Codex releases do not publish a v3 catalog. Model selection still works.
-    return { models, voices: await listVoices(rpc).catch(() => undefined) };
+    const [voices, config] = await Promise.all([
+      voiceCatalog(rpc).catch(() => undefined),
+      rpc
+        .request<{ config: { realtime?: { voice?: string } } }>("config/read", {
+          includeLayers: false,
+        })
+        .catch(() => undefined),
+    ]);
+    return {
+      models,
+      voices: voices?.v3,
+      defaultVoice: config
+        ? (config.config.realtime?.voice ?? voices?.defaultV1)
+        : undefined,
+    };
   } finally {
     signal.removeEventListener("abort", abort);
     await rpc.close();
@@ -1425,48 +1440,15 @@ export function createTabs(
               )}
             </SettingsGroup>
             <SettingsGroup>
-              <Select
-                label="Huddle voice"
-                description="Applies when this agent next joins a Huddle."
-                variant="preference"
-                value={draft.voice ?? ""}
-                groups={[
-                  {
-                    label: "",
-                    options: [
-                      { value: "", label: "Codex default" },
-                      ...(draft.voice && !data?.voices?.includes(draft.voice)
-                        ? [
-                            {
-                              value: draft.voice,
-                              label:
-                                data?.voices && !checking
-                                  ? `${effortName(draft.voice)} (unavailable)`
-                                  : effortName(draft.voice),
-                              disabled: true,
-                            },
-                          ]
-                        : []),
-                      ...(data?.voices ?? []).map((value) => ({
-                        value,
-                        label: value.charAt(0).toUpperCase() + value.slice(1),
-                      })),
-                    ],
-                  },
-                ]}
-                disabled={saving || checking}
-                onValueChange={(voice) => setDraft({ ...draft, voice })}
-              />
               <VoicePreview
                 key={`${agent.key}:${draft.voice ?? ""}`}
                 spawn={spawn}
                 voice={draft.voice ?? ""}
-                disabled={
-                  saving ||
-                  checking ||
-                  !!bound ||
-                  (!!draft.voice && !data?.voices?.includes(draft.voice))
-                }
+                voices={data?.voices}
+                defaultVoice={data?.defaultVoice}
+                disabled={saving || checking}
+                previewDisabled={!!bound}
+                onChange={(voice) => setDraft({ ...draft, voice })}
               />
               {data && !data.voices && !checking && (
                 <div className="grid justify-items-start gap-2">

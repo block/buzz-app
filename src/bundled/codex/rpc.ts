@@ -304,10 +304,14 @@ export async function listModels(rpc: AppServer) {
   return models;
 }
 
-/** The installed Codex's v3 voices; older releases omit this catalog. */
+/** The installed Codex's voice catalog; older releases omit v3. */
+export async function voiceCatalog(rpc: AppServer) {
+  const result = await rpc.request<{
+    voices?: { v3?: string[]; defaultV1?: string };
+  }>("thread/realtime/listVoices");
+  return result.voices;
+}
+
 export async function listVoices(rpc: AppServer) {
-  const result = await rpc.request<{ voices?: { v3?: string[] } }>(
-    "thread/realtime/listVoices",
-  );
-  return result.voices?.v3;
+  return (await voiceCatalog(rpc))?.v3;
 }

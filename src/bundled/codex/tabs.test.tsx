@@ -96,7 +96,11 @@ function fixture({
   saved?: Record<string, unknown>;
   turns?: (threadId: string) => Wire;
   threads?: { id: string; name: string; updatedAt: number }[] | string;
-  configured?: { model?: string; model_reasoning_effort?: string };
+  configured?: {
+    model?: string;
+    model_reasoning_effort?: string;
+    realtime?: { voice?: string };
+  };
   voices?: string[] | null;
   voicesGate?: Promise<void>;
   voicesError?: () => boolean;
@@ -184,7 +188,11 @@ function fixture({
             return;
           }
           result = {
-            voices: { v2: ["alloy"], ...(voices ? { v3: voices } : {}) },
+            voices: {
+              defaultV1: "cove",
+              v2: ["alloy"],
+              ...(voices ? { v3: voices } : {}),
+            },
           };
         }
         if (wire.method === "model/list")
@@ -2797,8 +2805,8 @@ it("saves an agent's Huddle voice and restores it without changing another agent
       settingsSection="identity"
     />,
   );
-  await user.click(screen.getByRole("combobox", { name: "Huddle voice" }));
-  await user.click(await screen.findByRole("option", { name: "Maple" }));
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await user.click(await screen.findByRole("radio", { name: "Maple" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
     expect(save).toHaveBeenCalledWith(
@@ -2812,7 +2820,7 @@ it("saves an agent's Huddle voice and restores it without changing another agent
     <f.tabs.SettingsTab {...f.props(saved)} settingsSection="identity" />,
   );
   expect(
-    screen.getByRole("combobox", { name: "Huddle voice" }),
+    screen.getByRole("button", { name: "Huddle voice" }),
   ).toHaveTextContent("Maple");
   reopened.unmount();
   render(
@@ -2822,7 +2830,7 @@ it("saves an agent's Huddle voice and restores it without changing another agent
     />,
   );
   expect(
-    screen.getByRole("combobox", { name: "Huddle voice" }),
+    screen.getByRole("button", { name: "Huddle voice" }),
   ).toHaveTextContent("Cove");
 });
 
@@ -2834,16 +2842,16 @@ it("offers only v3 voices and lets an unavailable assignment return to default",
       {...f.props({ ...defaults, voice: "future-voice" }, save)}
     />,
   );
-  const voice = screen.getByRole("combobox", { name: "Huddle voice" });
+  const voice = screen.getByRole("button", { name: "Huddle voice" });
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
   expect(voice).toHaveTextContent("Future-voice (unavailable)");
   const user = userEvent.setup();
   await user.click(voice);
-  expect(await screen.findByRole("option", { name: "Maple" })).toBeEnabled();
+  expect(await screen.findByRole("radio", { name: "Maple" })).toBeEnabled();
   expect(
-    screen.queryByRole("option", { name: "Alloy" }),
+    screen.queryByRole("radio", { name: "Alloy" }),
   ).not.toBeInTheDocument();
-  await user.click(screen.getByRole("option", { name: "Codex default" }));
+  await user.click(screen.getByRole("radio", { name: "Codex default (Cove)" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
     expect(save).toHaveBeenCalledWith(
@@ -2856,7 +2864,7 @@ it("keeps model settings usable when an older Codex has no v3 voice catalog", as
   render(<f.tabs.SettingsTab {...f.props({ ...defaults, voice: "cove" })} />);
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
   expect(
-    screen.getByRole("combobox", { name: "Huddle voice" }),
+    screen.getByRole("button", { name: "Huddle voice" }),
   ).toHaveTextContent("Cove");
   expect(
     screen.getByRole("button", { name: "Check voices again" }),
@@ -2867,7 +2875,7 @@ it("retains the saved voice label while discovery is pending", async () => {
   const gate = deferred<void>();
   const f = fixture({ voicesGate: gate.promise });
   render(<f.tabs.SettingsTab {...f.props({ ...defaults, voice: "cove" })} />);
-  const voice = screen.getByRole("combobox", { name: "Huddle voice" });
+  const voice = screen.getByRole("button", { name: "Huddle voice" });
   try {
     await waitFor(() => expect(f.provider.snapshot().checking).toBe(true));
     expect(voice).toBeDisabled();
@@ -2890,7 +2898,7 @@ it("explains failed voice discovery and retries without losing the saved choice"
   expect(screen.getByText(/Voice choices could not be checked/)).toBeVisible();
   expect(screen.getByLabelText("Model")).toBeEnabled();
   expect(
-    screen.getByRole("combobox", { name: "Huddle voice" }),
+    screen.getByRole("button", { name: "Huddle voice" }),
   ).toHaveTextContent("Cove");
   failed = false;
   await userEvent.setup().click(retry);
@@ -2899,8 +2907,23 @@ it("explains failed voice discovery and retries without losing the saved choice"
       screen.queryByRole("button", { name: "Check voices again" }),
     ).not.toBeInTheDocument(),
   );
-  const voice = screen.getByRole("combobox", { name: "Huddle voice" });
+  const voice = screen.getByRole("button", { name: "Huddle voice" });
   await waitFor(() => expect(voice).toBeEnabled());
   await userEvent.setup().click(voice);
-  expect(await screen.findByRole("option", { name: "Maple" })).toBeVisible();
+  expect(await screen.findByRole("radio", { name: "Maple" })).toBeVisible();
+});
+
+it("shows the configured realtime voice as the Codex default", async () => {
+  const f = fixture({ configured: { realtime: { voice: "maple" } } });
+  render(
+    <f.tabs.SettingsTab {...f.props(defaults)} settingsSection="identity" />,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Huddle voice" }),
+    ).toHaveTextContent("Maple · Default"),
+  );
+  expect(
+    screen.queryByText("Applies when this agent next joins a Huddle."),
+  ).not.toBeInTheDocument();
 });

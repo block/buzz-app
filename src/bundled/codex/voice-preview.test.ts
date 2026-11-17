@@ -65,6 +65,7 @@ function fixture(resume = Promise.resolve()) {
   const spawn = vi.fn();
   return {
     close,
+    context,
     input,
     abort,
     spawn,
@@ -86,6 +87,7 @@ it("uses an ephemeral read-only seat and bundled input, then closes after the sa
     }),
   );
   expect(vi.mocked(openVoice).mock.calls[0]?.[7]).toBe("maple");
+  expect(vi.mocked(openVoice).mock.calls[0]?.[9]).toBe(f.context);
   expect(f.input).toHaveBeenCalledTimes(2);
   expect(vi.mocked(openVoice).mock.calls[0]?.[2].aborted).toBe(true);
   expect(f.close).toHaveBeenCalled();

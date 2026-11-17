@@ -169,6 +169,23 @@ it("keeps incoming WebRTC audio decoding and releases its muted sink on close", 
   expect(f.decoder.pause).toHaveBeenCalledOnce();
   expect(f.decoder.srcObject).toBeNull();
 });
+it("reuses the context unlocked by the preview click instead of creating a second autoplay-gated context", async () => {
+  const f = fixture();
+  const connection = await openVoice(
+    f.rpc as unknown as AppServer,
+    "thread",
+    f.abort.signal,
+    f.output,
+    f.ended,
+    "Greeting only",
+    undefined,
+    "cove",
+    true,
+    f.context as unknown as AudioContext,
+  );
+  expect(AudioContext).not.toHaveBeenCalled();
+  await connection.close();
+});
 it("excludes agent context and automatic handoffs from standalone samples", async () => {
   const f = fixture();
   const connection = await openVoice(

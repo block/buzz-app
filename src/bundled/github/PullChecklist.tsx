@@ -405,7 +405,10 @@ function Actions({
         ) : pull.autoMerge ? (
           <>
             <span className={styles.pullActionNote}>
-              Merges automatically when ready
+              {/* GitHub enqueues a queue branch's pull request, not merges it. */}
+              {pull.queueRequired
+                ? "Joins the merge queue when ready"
+                : "Merges automatically when ready"}
               {pull.autoMerge.by && ` · set by ${pull.autoMerge.by}`}
             </span>
             {pull.canDisableAutoMerge && (

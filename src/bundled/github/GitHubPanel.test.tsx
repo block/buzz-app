@@ -800,7 +800,11 @@ it.each(
     for (const name of ["Queue for merge", "Merge", "Squash and merge"])
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     await user.click(button);
-    await screen.findByText(/Merges automatically when ready/);
+    await screen.findByText(
+      queue
+        ? /Joins the merge queue when ready/
+        : /Merges automatically when ready/,
+    );
     expect(gh.mock.calls[1]).toEqual([
       "mutation($input:EnablePullRequestAutoMergeInput!){enablePullRequestAutoMerge(input:$input){clientMutationId}}",
       {

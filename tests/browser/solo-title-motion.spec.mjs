@@ -33,8 +33,6 @@ test("Solo rename animates both titles without interrupting typing or overflowin
       name: `Share access to ${name}`,
       exact: true,
     });
-  const oldHeader = await header("Alpha").elementHandle();
-
   // Hold only the title's real browser animations, then release one phase at a time.
   await page.evaluate(() => {
     window.titleAnimations = new WeakMap();
@@ -58,12 +56,28 @@ test("Solo rename animates both titles without interrupting typing or overflowin
   const rename = (name) =>
     app.setChannelMetadata(chat, [
       ["name", name],
+      ["private"],
       ["t", "stream"],
       ["t", "buzz.solo"],
       ["t", "buzz.session.named"],
     ]);
   const titlesFor = (name) =>
     row.locator(titleSelector).or(header(name).locator(titleSelector));
+  const localTitle = "Local planning";
+  await page.getByRole("button", { name: "Chat actions", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Chat settings", exact: true })
+    .click();
+  const settings = page.getByRole("dialog", { name: "Edit chat", exact: true });
+  await settings.getByRole("textbox", { name: /^Chat name/ }).fill(localTitle);
+  await settings
+    .getByRole("button", { name: "Save changes", exact: true })
+    .click();
+  await expect(settings).toBeHidden();
+  // A title animation would be held indefinitely on the previous name.
+  await expect(titlesFor(localTitle)).toHaveText([localTitle, localTitle]);
+  const oldHeader = await header(localTitle).elementHandle();
+
   rename(title);
   const renamedHeader = header(title);
   await expect(row).toHaveAccessibleName(title);
@@ -73,7 +87,7 @@ test("Solo rename animates both titles without interrupting typing or overflowin
   await expect(composer).toBeFocused();
 
   const titles = titlesFor(title);
-  await expect(titles.filter({ hasText: "Alpha" })).toHaveCount(2);
+  await expect(titles.filter({ hasText: localTitle })).toHaveCount(2);
   await expect(titles.locator("> span")).toHaveCount(0);
   await expect
     .poll(() =>
@@ -229,6 +243,21 @@ test("Solo rename animates both titles without interrupting typing or overflowin
     expect(await hebrewRunIsRTL()).toEqual([true, true]);
     previous = name;
   }
+
+  // The old local save must not suppress an incoming return to the same name.
+  rename(localTitle);
+  const reverted = titlesFor(localTitle);
+  await expect(reverted).toHaveText([previous, previous]);
+  await expect(reverted.and(page.locator("[data-exiting]"))).toHaveCount(2);
+  await row.dblclick();
+  const inlineName = sidebar.getByRole("textbox", { name: "Chat name" });
+  await inlineName.fill("Handoff notes");
+  await inlineName.press("Enter");
+  await expect(inlineName).toBeHidden();
+  await expect(titlesFor("Handoff notes")).toHaveText([
+    "Handoff notes",
+    "Handoff notes",
+  ]);
 
   await sidebar.locator(`[data-solo-channel-id="${other}"]`).click();
   const nextTitle = header("Beta").locator(titleSelector);

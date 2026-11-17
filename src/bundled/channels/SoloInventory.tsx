@@ -626,7 +626,14 @@ function SoloConversationRow({
               <UnreadBadge
                 session={session}
                 channelId={id}
-                label={<SoloChatTitle key={id} title={title} />}
+                label={
+                  <SoloChatTitle
+                    key={id}
+                    channelId={id}
+                    title={title}
+                    details={session.channelDetails}
+                  />
+                }
                 labelUnread="all"
               />
             </span>

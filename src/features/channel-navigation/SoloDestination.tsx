@@ -305,7 +305,12 @@ function ConversationLink(props: SoloConversationLinkProps) {
       aria-describedby={props["aria-describedby"]}
       label={
         !props.multiline && props.label === state.channel.name ? (
-          <SoloChatTitle key={state.channel.id} title={state.channel.name} />
+          <SoloChatTitle
+            key={state.channel.id}
+            channelId={state.channel.id}
+            title={state.channel.name}
+            details={context?.session.channelDetails}
+          />
         ) : (
           props.label
         )

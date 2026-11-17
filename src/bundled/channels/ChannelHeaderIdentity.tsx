@@ -76,7 +76,12 @@ export function ChannelHeaderIdentity({
       <span className={styles.label}>
         <span className={`${styles.name} text-body-sm`}>
           {access === soloAccess || access === soloReadOnlyAccess ? (
-            <SoloChatTitle key={channelId} title={name} />
+            <SoloChatTitle
+              key={channelId}
+              channelId={channelId}
+              title={name}
+              details={session.channelDetails}
+            />
           ) : (
             name
           )}

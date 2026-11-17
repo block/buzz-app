@@ -6,6 +6,7 @@ import {
   useReducedMotion,
 } from "motion/react";
 import { useEffect, useRef, useState } from "react";
+import type { ChannelDetailsCapability } from "../relay/channel-details";
 import styles from "./SoloChatTitle.module.css";
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -26,8 +27,24 @@ const character = {
 };
 
 /** Key by chat id at the call site: renames animate, navigation starts at rest. */
-export function SoloChatTitle({ title }: { title: string }) {
+export function SoloChatTitle({
+  title,
+  channelId,
+  details,
+}: {
+  title: string;
+  channelId?: string;
+  details?: Pick<ChannelDetailsCapability, "localRename"> | undefined;
+}) {
   const reducedMotion = useReducedMotion();
+  const localRename = channelId
+    ? details?.localRename?.(channelId, title)
+    : undefined;
+  const [presenceKey, setPresenceKey] = useState(localRename);
+  // Start a new presence group at rest for this editor's save. Keep its key
+  // for the next incoming title so that title can still animate.
+  if (localRename !== undefined && localRename !== presenceKey)
+    setPresenceKey(localRename);
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -40,8 +57,12 @@ export function SoloChatTitle({ title }: { title: string }) {
           {title}
         </span>
       ) : (
-        <AnimatePresence initial={false} mode="wait">
-          <TitleValue key={title} title={title} reveal={mounted.current} />
+        <AnimatePresence key={presenceKey} initial={false} mode="wait">
+          <TitleValue
+            key={title}
+            title={title}
+            reveal={mounted.current && localRename === undefined}
+          />
         </AnimatePresence>
       )}
     </span>

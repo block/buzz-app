@@ -518,6 +518,8 @@ and are asked to sign in again in Buzz.
   not change.
   Chats reorder by recent activity with the same short slides and fades as Team
   channels. Reduced motion applies the new order immediately.
+  A Solo chat name you save here changes immediately. Title changes that arrive
+  from an agent or another device animate unless reduced motion is enabled.
   Deleting or archiving the open chat keeps you in Solo and opens another chat
   or a new draft.
   **Start Solo chat**, in the menu of any delivered message (and in a channel's

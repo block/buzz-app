@@ -1825,12 +1825,14 @@ export function SearchResults({
   // The text whose results the person has started moving through: a rerank
   // that lands after that is dropped.
   const [movedFor, setMovedFor] = useState<string>();
+  if (movedFor !== undefined && movedFor !== query) setMovedFor(undefined);
   const rerank = useMessageRerank({
     decisions,
     community,
     query: parsed.text,
     messages: search.messages,
-    enabled: !!parsed.text && !search.newestFirst && !search.loading,
+    enabled:
+      canRerank && !!parsed.text && !search.newestFirst && !search.loading,
     facts: (message) => {
       const channel = session.channels.get?.(message.channelId);
       return {

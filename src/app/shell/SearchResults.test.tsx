@@ -48,6 +48,10 @@ import {
   type ReadJournal,
 } from "../../features/relay/read-state-storage";
 import type { AppServices } from "../services";
+import type {
+  DecisionRequest,
+  Decisions,
+} from "../../features/decisions/service";
 import type { SearchGroup } from "./SearchChoices";
 import { setUnreadFirstPreference } from "../../features/search/unread-first-preference";
 import { SearchResults } from "./SearchResults";
@@ -1347,6 +1351,135 @@ it("offers more messages in overall search when the first page shows none", asyn
     expect(
       screen.queryByRole("option", { name: "Show more messages" }),
     ).toBeNull();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("reranks message hits once the decision provider can answer, holding them once the person moves for that text", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair();
+  const discovery = [
+    metadata(relay, "crew", "crew"),
+    roster(relay, "crew", [viewer.pubkey]),
+  ];
+  const limits: (number | undefined)[] = [];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      const read = filters.find(
+        (filter) => filter.search !== undefined && filter.kinds?.includes(9),
+      );
+      if (read) {
+        limits.push(read.limit);
+        return Promise.resolve(
+          ["one", "two", "runbook"].map((word, index) =>
+            message(
+              viewer,
+              "crew",
+              `${read.search} ${word}`,
+              1700000500 - index,
+            ),
+          ),
+        );
+      }
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        ),
+      );
+    },
+  });
+  // Each call waits until the test answers it, favouring the runbook.
+  const pending: (() => void)[] = [];
+  let status = "needs-setup";
+  const listeners = new Set<() => void>();
+  const decisions = {
+    status: () => status,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    decide: (request: DecisionRequest) =>
+      new Promise((resolve) => {
+        const { candidates } = JSON.parse(request.state) as {
+          candidates: { n: number; text: string }[];
+        };
+        pending.push(() =>
+          resolve({
+            outcome: "answered",
+            backend: "test",
+            model: "test",
+            answers: Object.fromEntries(
+              candidates.map(({ n, text }) => [
+                `m${n}`,
+                {
+                  type: "yes_no",
+                  probability: text.endsWith("runbook") ? 0.9 : 0.1,
+                },
+              ]),
+            ),
+          }),
+        );
+      }),
+  } as unknown as Decisions;
+  const props = {
+    session: owner.session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openConversation: () => {},
+    openNewMessage: () => {},
+    decisions,
+  };
+  // Results land, then settle long enough for the provider to be asked.
+  const search = async (query: string) => {
+    view.rerender(<SearchResults {...props} query={query} />);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    expect(pending).toHaveLength(1);
+  };
+  const answer = () => act(async () => pending.shift()?.());
+  const order = () =>
+    within(screen.getByRole("group", { name: "Messages" }))
+      .getAllByRole("option")
+      .map((row) => /(one|two|runbook)/.exec(row.textContent ?? "")?.[1]);
+  const view = render(<SearchResults {...props} query="deploy" />);
+  try {
+    // Until the provider is set up, one page reads and nothing is asked.
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    expect(limits).toEqual([20]);
+    expect(pending).toHaveLength(0);
+
+    // Once it can answer, the same text reads more and asks once. Moving
+    // before the answer lands keeps the keyword order.
+    act(() => {
+      status = "ready";
+      for (const listener of listeners) listener();
+    });
+    await search("deploy");
+    expect(limits).toEqual([20, 60]);
+    expect(order()).toEqual(["one", "two", "runbook"]);
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "ArrowDown",
+    });
+    await answer();
+    expect(order()).toEqual(["one", "two", "runbook"]);
+    expect(screen.queryByText(/Reranked/)).toBeNull();
+
+    // New text isn't held.
+    await search("deploys");
+    await answer();
+    expect(order()).toEqual(["runbook", "one", "two"]);
+    expect(screen.getByText(/· Reranked/)).toBeVisible();
+
+    // Nor is the earlier text, once the person has typed past it.
+    await search("deploy");
+    await answer();
+    expect(order()).toEqual(["runbook", "one", "two"]);
   } finally {
     cleanup();
     owner.dispose();

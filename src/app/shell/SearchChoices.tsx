@@ -474,7 +474,11 @@ export function SearchChoices({
     // waiting for results never runs one of its rows.
     query: onBack ? `\u0000${query}` : query,
     keys,
-    onChoose: (key) => destinations.find((row) => row.key === key)?.run(),
+    onChoose: (key) => {
+      // Choosing acts on the order shown: a later rerank must not move it.
+      peek?.onMove?.();
+      destinations.find((row) => row.key === key)?.run();
+    },
     open,
     pending,
     isAction,

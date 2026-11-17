@@ -278,6 +278,7 @@ export function useSearchMessages(
       attempt,
       newest,
       verifiedRevision,
+      firstPages,
     }),
     [
       session,
@@ -287,6 +288,7 @@ export function useSearchMessages(
       attempt,
       newest,
       verifiedRevision,
+      firstPages,
     ],
   );
   // The copied result changes synchronously even if React has not committed it yet.

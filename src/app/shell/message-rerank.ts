@@ -53,7 +53,7 @@ const canRerank = (status: DecisionProviderStatus | "unavailable") =>
 
 /** The decision calls that judge the first hits: one yes/no question per
  * candidate, numbered from 1 within each call, in calls of equal size. */
-export function rerankRequests(
+function rerankRequests(
   query: string,
   messages: readonly SearchMessage[],
   facts: (message: SearchMessage) => RerankFacts,
@@ -97,7 +97,7 @@ export function rerankRequests(
 }
 
 /** Message ids, most likely wanted first; ties keep the relay's order. */
-export function rerankOrder(
+function rerankOrder(
   messages: readonly SearchMessage[],
   probabilities: readonly number[],
 ): string[] {
@@ -115,9 +115,10 @@ export function rerankOrder(
 /**
  * Reorders the first relevance-ranked hits by how likely the decision
  * provider judges each to be what the searcher wants. The keyword order shows
- * first; a failed or unavailable provider leaves it. Once `held`, an answer
- * that arrives later is dropped, so rows don't move under someone reading
- * them; one already applied stays.
+ * first; a failed provider leaves it. Enable it only while `useCanRerank`
+ * holds, so a provider that becomes able to answer starts it. Once `held`,
+ * an answer that arrives later is dropped, so rows don't move under someone
+ * reading them; one already applied stays.
  */
 export function useMessageRerank({
   decisions,
@@ -148,7 +149,6 @@ export function useMessageRerank({
   // biome-ignore lint/correctness/useExhaustiveDependencies: The key names the request; messages and facts are read as it starts.
   useEffect(() => {
     if (!key || !decisions || ids.length < 2) return;
-    if (!canRerank(decisions.status())) return;
     let live = true;
     const timer = setTimeout(() => {
       const requests = rerankRequests(query, messages, facts, community);

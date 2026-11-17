@@ -890,3 +890,22 @@ it("reports the first move for each text, with or without a preview", () => {
   fireEvent.keyDown(field, { key: "ArrowDown" });
   expect(onMove).toHaveBeenCalledTimes(2);
 });
+
+it("reports a move before choosing the highlighted row, so the order shown holds", () => {
+  const onMove = vi.fn();
+  render(
+    <SearchChoices
+      query="deploy"
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      peek={{ ranked: false, onMove }}
+      groups={[{ label: "Messages", destinations }]}
+    />,
+  );
+  fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+  expect(run).toHaveBeenCalledWith(0);
+  expect(onMove).toHaveBeenCalledOnce();
+  expect(onMove.mock.invocationCallOrder[0]).toBeLessThan(
+    run.mock.invocationCallOrder.at(-1) ?? 0,
+  );
+});

@@ -7,11 +7,7 @@ import type {
   Decisions,
 } from "../../features/decisions/service";
 import { checkRequest } from "../../features/decisions/service";
-import {
-  rerankOrder,
-  rerankRequests,
-  useMessageRerank,
-} from "./message-rerank";
+import { useMessageRerank } from "./message-rerank";
 import type { SearchMessage } from "./useSearchMessages";
 
 const message = (id: string) =>
@@ -26,10 +22,11 @@ const message = (id: string) =>
 const ids = (count: number) =>
   Array.from({ length: count }, (_, index) => `m${index}`);
 const facts = () => ({ where: "#c", author: "A", mine: false });
-/** Answers each question with the probability `score` gives its candidate. */
+/** Answers each question with the probability `score` gives its candidate,
+ * leaving out candidates it gives none. */
 const answered = (
   request: DecisionRequest,
-  score: (text: string) => number,
+  score: (text: string) => number | undefined,
 ): DecisionResult => {
   const { candidates } = JSON.parse(request.state) as {
     candidates: { n: number; text: string }[];
@@ -39,10 +36,12 @@ const answered = (
     backend: "test",
     model: "test",
     answers: Object.fromEntries(
-      candidates.map(({ n, text }) => [
-        `m${n}`,
-        { type: "yes_no", probability: score(text) },
-      ]),
+      candidates.flatMap(({ n, text }) => {
+        const probability = score(text);
+        return probability === undefined
+          ? []
+          : [[`m${n}`, { type: "yes_no", probability }]];
+      }),
     ),
   };
 };
@@ -53,9 +52,39 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-it("orders by the provider's probability, keeping relay order on ties and gaps", () => {
-  const messages = ["a", "b", "c", "d"].map(message);
-  expect(rerankOrder(messages, [0.2, 0.9, 0.2, -1])).toEqual([
+/** Renders the hook over `messages` and lets the settle delay pass. */
+const settle = async (
+  messages: readonly SearchMessage[],
+  decide: Decisions["decide"],
+  community?: string,
+) => {
+  vi.useFakeTimers();
+  const decisions = decisionsOf(decide);
+  const { result } = renderHook(() =>
+    useMessageRerank({
+      decisions,
+      community,
+      query: "q",
+      messages,
+      enabled: true,
+      facts,
+      held: false,
+    }),
+  );
+  await act(async () => {
+    vi.advanceTimersByTime(500);
+  });
+  return result;
+};
+
+it("orders by the provider's probability, keeping relay order on ties and gaps", async () => {
+  // No answer for d: it sorts below every answered hit.
+  const scores: Record<string, number> = { a: 0.2, b: 0.9, c: 0.2 };
+  const result = await settle(
+    ["a", "b", "c", "d"].map(message),
+    async (request) => answered(request, (text) => scores[text]),
+  );
+  expect(result.current.messages.map(({ id }) => id)).toEqual([
     "b",
     "a",
     "c",
@@ -71,13 +100,12 @@ it.each([
   { count: 80, sizes: [30, 30] },
 ])(
   "asks about the first $count hits in calls the provider accepts",
-  ({ count, sizes }) => {
-    const requests = rerankRequests(
-      "q",
-      ids(count).map(message),
-      facts,
-      "wss://relay.example.org",
+  async ({ count, sizes }) => {
+    const decide = vi.fn(async (request: DecisionRequest) =>
+      answered(request, () => 0.5),
     );
+    await settle(ids(count).map(message), decide, "wss://relay.example.org");
+    const requests = decide.mock.calls.map(([request]) => request);
     expect(
       requests.map((request) => Object.keys(request.questions).length),
     ).toEqual(sizes);

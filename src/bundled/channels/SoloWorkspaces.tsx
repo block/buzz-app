@@ -46,7 +46,10 @@ import {
   type RefObject,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
-import { useLiveChannelSummary } from "../../features/relay/react";
+import {
+  useChannelRoster,
+  useLiveChannelSummary,
+} from "../../features/relay/react";
 import { readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationSectionHeading } from "../../shared/design-system/ui/NavigationSection";
@@ -96,6 +99,11 @@ export type ChatListItem = Readonly<{
 export const SOLO_CHAT_CAP = 7;
 export const SOLO_CHAT_STEP = 10;
 const workspaceSectionKey = (id: string) => (id ? `group:${id}` : "solo");
+
+// Only Solo chats are ordered by activity; other channels' messages leave
+// the Solo sidebar alone.
+export const soloActivity = (channel: ChannelSummary) =>
+  channel.channelType === "solo";
 
 /** The existing relay preference service owns delivery, rollback and retry. */
 export function SoloWorkspaces({
@@ -159,10 +167,9 @@ export function SoloWorkspaces({
     preferences.snapshot,
     preferences.snapshot,
   );
-  const channels = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
-  );
+  const channels = useChannelRoster(session.channels, {
+    activity: soloActivity,
+  });
   useEffect(() => {
     if (channels.status === "ready") void preferences.ensure();
   }, [preferences, channels.status]);

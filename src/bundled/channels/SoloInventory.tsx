@@ -34,7 +34,11 @@ import { WorkingAgentsBadge } from "./WorkingAgentsBadge";
 import { UnreadBadge } from "./UnreadBadge";
 import { useUnreadChannelIds } from "./useSidebarFilters";
 import { compareRecent } from "./sidebar-sections";
-import { SoloWorkspaces, type ChatListItem } from "./SoloWorkspaces";
+import {
+  SoloWorkspaces,
+  soloActivity,
+  type ChatListItem,
+} from "./SoloWorkspaces";
 import {
   soloSharedMarkId,
   useSharedWithPeople,
@@ -86,11 +90,6 @@ const chatIcon = (
     <ChatCircleIcon size={16} />
   </span>
 );
-
-// Only Solo chats are ordered by activity; other channels' messages leave
-// this list alone.
-const soloActivity = (channel: ChannelSummary) =>
-  channel.channelType === "solo";
 
 /** Solo projects and conversations: the owner's private filing of ordinary channels. */
 export function SoloInventory({

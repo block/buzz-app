@@ -9,7 +9,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { useState } from "react";
+import { Profiler, useState } from "react";
 import {
   WorkspaceCompositionContext,
   RegionWorkspace,
@@ -115,12 +115,24 @@ function fixture(projectName = "Work") {
     return saved;
   });
   const onNew = vi.fn();
-  const channels = {
+  let channels = {
     status: "ready",
     channels: [
       { id: "chat", name: "Planning", channelType: "solo" },
       { id: "other", name: "Existing chat", channelType: "solo" },
+      { id: "team", name: "Team", channelType: "stream" },
     ],
+  };
+  const channelListeners = new Set<() => void>();
+  const channelQueries = {
+    list: () => channels,
+    subscribeList: (listener: () => void) => {
+      channelListeners.add(listener);
+      return () => {
+        channelListeners.delete(listener);
+      };
+    },
+    ensureList() {},
   };
   const view = (
     preferences: ReturnType<typeof store>["queries"],
@@ -142,7 +154,7 @@ function fixture(projectName = "Work") {
           sidebarPreferences: preferences,
           unread,
           canvas: { available: false },
-          channels: { list: () => channels, subscribeList: () => () => {} },
+          channels: channelQueries,
         } as unknown as RelaySession
       }
       scope={scope}
@@ -167,6 +179,15 @@ function fixture(projectName = "Work") {
     },
     onNew,
     saved: () => saved,
+    updateChannel(id: string, change: object) {
+      channels = {
+        ...channels,
+        channels: channels.channels.map((channel) =>
+          channel.id === id ? { ...channel, ...change } : channel,
+        ),
+      };
+      for (const listener of channelListeners) listener();
+    },
   };
 }
 
@@ -360,6 +381,23 @@ it("starts an unfiled chat from the Chats heading plus without collapsing it", a
     "true",
   );
   owner.dispose();
+});
+
+it("renders again for a Solo chat's activity but not another channel's", async () => {
+  const h = fixture();
+  const commits = vi.fn();
+  render(
+    <Profiler id="solo" onRender={commits}>
+      {h.view(h.store().queries)}
+    </Profiler>,
+  );
+  await screen.findByRole("button", { name: "Planning" });
+  await waitFor(() => expect(commits).toHaveBeenCalled());
+  commits.mockClear();
+  act(() => h.updateChannel("team", { lastActivityAt: 10, preview: "hi" }));
+  expect(commits).not.toHaveBeenCalled();
+  act(() => h.updateChannel("chat", { lastActivityAt: 10 }));
+  expect(commits).toHaveBeenCalled();
 });
 
 it("copies the chat link", async () => {

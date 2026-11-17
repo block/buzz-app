@@ -101,6 +101,38 @@ export function projectSoloRegions(
   return { regions, excluded, managed };
 }
 
+/** Equal placements keep one identity, so a roster publish that moves no chat
+ * between regions does not re-render every consumer. */
+export function sameSoloPlacement(a: SoloPlacement, b: SoloPlacement) {
+  return (
+    sameSet(a.excluded, b.excluded) &&
+    sameSet(a.managed, b.managed) &&
+    a.regions.length === b.regions.length &&
+    a.regions.every((region, index) => {
+      const other = b.regions[index];
+      return (
+        !!other &&
+        region.key === other.key &&
+        region.label === other.label &&
+        region.title === other.title &&
+        region.source === other.source &&
+        region.snapshot === other.snapshot &&
+        region.reason === other.reason &&
+        region.hidden === other.hidden &&
+        sameSet(region.live, other.live) &&
+        region.channels.length === other.channels.length &&
+        region.channels.every((channel, i) => channel === other.channels[i])
+      );
+    })
+  );
+}
+
+function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>) {
+  if (a.size !== b.size) return false;
+  for (const value of a) if (!b.has(value)) return false;
+  return true;
+}
+
 function soloRegionLabelOf(source: RegisteredSoloSource) {
   return `${REGION_PREFIX}${source.pluginId}:${source.id}`;
 }

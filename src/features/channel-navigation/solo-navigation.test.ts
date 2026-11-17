@@ -78,6 +78,25 @@ it("keeps labeled channels in one live or recovery placement throughout registra
   ).rejects.toThrow("ended");
 });
 
+it("keeps one snapshot until a roster publish changes a region's chats", async () => {
+  const h = fixture();
+  await h.register();
+  const before = h.service.snapshot();
+  const channels = h.session.channels.list().channels;
+  const touched = (id: string, changes: object) =>
+    channels.map((channel) =>
+      channel.id === id ? { ...channel, ...changes } : channel,
+    );
+  h.roster(touched("chat", { lastActivityAt: 10, preview: "hi" }));
+  expect(h.service.snapshot()).toBe(before);
+  h.roster(touched("owned", { lastActivityAt: 10, preview: "hi" }));
+  const changed = h.service.snapshot();
+  expect(changed).not.toBe(before);
+  expect(changed.regions[0]?.channels[0]).toMatchObject({ preview: "hi" });
+  h.roster(touched("owned", { labels: ["buzz.solo"] }));
+  expect([...h.service.snapshot().excluded]).toEqual(["shared"]);
+});
+
 it("fences reconnects and rejects old or conflicting snapshots without losing labeled channels", async () => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
   const h = fixture(),

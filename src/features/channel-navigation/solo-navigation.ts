@@ -21,6 +21,7 @@ import { soloDraft, soloDraftTarget } from "./routes";
 import { createSoloWorkspaces } from "./solo-workspaces";
 import {
   projectSoloRegions,
+  sameSoloPlacement,
   type RegisteredSoloSource,
   type SoloPlacement,
 } from "./solo-navigation-model";
@@ -449,7 +450,11 @@ export class SoloNavigationService extends Service implements SoloNavigation {
           }),
           ...(binding ? { binding } : {}),
         };
-        this.value = next;
+        if (
+          next.binding !== this.value.binding ||
+          !sameSoloPlacement(next, this.value)
+        )
+          this.value = next;
         const isDisabledChat = (id: string | undefined) =>
           id !== undefined &&
           next.regions.some(

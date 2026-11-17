@@ -18,6 +18,10 @@ import {
 } from "../features/federated-identity/service";
 import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
+import {
+  createCommunityUnreads,
+  type UnreadGates,
+} from "../features/notifications/community-unread";
 import { provideNavigation } from "../features/navigation/service";
 import {
   bindDeepLinks,
@@ -132,6 +136,7 @@ export function createServices() {
   ctx.provide("communityReader", {
     snapshot: communities.snapshot,
     subscribe: communities.subscribe,
+    retained: communities.retained,
   });
   ctx.provide("knownCommunities", {
     snapshot: communities.snapshot,
@@ -282,13 +287,20 @@ export function createServices() {
         : undefined;
     }),
   );
+  const unreadGates: UnreadGates = {
+    allows: (target) => notifications.gated(target),
+    subscribe: notifications.subscribeGates,
+  };
   if (notifications.indicator.available)
     ctx.effect(() =>
-      bindUnreadIndicator(communities, notifications.indicator.setUnread, {
-        allows: (target) => notifications.gated(target),
-        subscribe: notifications.subscribeGates,
-      }),
+      bindUnreadIndicator(
+        communities,
+        notifications.indicator.setUnread,
+        unreadGates,
+      ),
     );
+  const communityUnreads = createCommunityUnreads(communities, unreadGates);
+  ctx.effect(() => communityUnreads.dispose);
   let disposal: Promise<void> | undefined;
   return {
     identity,
@@ -318,6 +330,7 @@ export function createServices() {
     firstRunFederatedIdentity,
     relay,
     communities,
+    communityUnreads,
     invites,
     rejectedLinks,
     deepLinks,

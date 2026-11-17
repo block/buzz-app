@@ -215,7 +215,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Dialog",
     purpose: "A shared modal frame with title, content and actions.",
     behavior:
-      "Shared title/description header and secondary Close; 2rem insets (1rem at viewport widths up to 30rem) and a fixed 1rem minimum gutter above footer buttons outside scrolling content. Compact dialogs center; task modals start 8rem from the top. Base UI owns focus, default outside dismissal and transition presence; shared motion tokens animate entry and exit. The host can preserve native titlebar dragging through the backdrop.",
+      "Shared title/description header and secondary Close; one 12px heading-to-body gap, 2rem outer insets (1rem at viewport widths up to 30rem) and a fixed 1rem minimum gutter above footer buttons outside scrolling content. Compact dialogs center; task modals start 8rem from the top. Base UI owns focus, default outside dismissal and transition presence; shared motion tokens animate entry and exit. The host can preserve native titlebar dragging through the backdrop.",
     variants: [
       "compact (25rem)",
       "default (40rem)",
@@ -568,6 +568,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "bare (no background in any state; glyph-state toggles use 20px artwork at sm; row-revealed actions retain standard artwork sizing)",
       "shape: inset (container radius minus inset via --control-inset-radius) | control (default, 10px) | round (avatar default) | row-end | squircle (prominent avatar edit action)",
       "size: xs (20px, 12px icon) | sm (default, 32px, 16px icon) | md (40px) | lg (52px)",
+      "emoji: a glyph in place of the icon, at --size-emoji-inline",
       "legacy aliases: quiet, solid, compact, toolbar, default, large",
     ],
     status: "proposed",

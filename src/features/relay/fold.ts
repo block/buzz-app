@@ -284,12 +284,10 @@ export function foldMessages(
   const replies = new Map<string, EventData[]>();
   for (const event of events) {
     if (channelRowKind(event.kind)) {
+      // Most callers pass no pending replies; skip the tag scan for them.
+      if (!pendingReplies?.has(event.id)) continue;
       const rootId = threadReference(event)?.rootId;
-      if (
-        rootId &&
-        pendingReplies?.has(event.id) &&
-        channelRowChannel(event) === channelId
-      ) {
+      if (rootId && channelRowChannel(event) === channelId) {
         const list = replies.get(rootId) ?? [];
         list.push(event);
         replies.set(rootId, list);

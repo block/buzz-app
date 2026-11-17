@@ -546,6 +546,12 @@
   .buzz-button[data-icon-shape="round"] {
     border-radius: var(--radius-pill);
   }
+  .buzz-icon-button-emoji {
+    display: block;
+    font-family: var(--font-emoji);
+    font-size: var(--size-emoji-inline);
+    line-height: 1;
+  }
 
   .buzz-button[data-color-swatch] .buzz-button-label {
     color: var(--text-on-accent);

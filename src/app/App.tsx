@@ -3,6 +3,7 @@ import { AgentAvatarArtworkProvider } from "../features/agents/AgentAvatarArtwor
 import { Welcome } from "../features/identity/Welcome";
 import { NewMenu } from "./shell/NewMenu";
 import { PrimarySidebar } from "./shell/PrimarySidebar";
+import { sidebarTarget } from "../features/channel-navigation/routes";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { AgentsContext } from "../features/agents/react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
@@ -32,8 +33,10 @@ import { UpdateReview } from "../bundled/agents/UpdateReview";
 import { TeamUpdateReview } from "../bundled/agents/TeamUpdateReview";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -63,6 +66,7 @@ import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { ShellBackdrops } from "../features/backdrops/ShellBackdrops";
 import { PanelCard } from "../features/panels/PanelCard";
+import { targetKey } from "../features/navigation/targets";
 import { communityDestination } from "../features/communities/destination";
 import { CommunityLanding } from "../features/communities/CommunityLanding";
 import { LegacyCommunityImport } from "../features/communities/LegacyCommunityImport";
@@ -370,6 +374,85 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     (settings
       ? !!workspace.request
       : !route.failure && !route.waiting && !failedPage);
+  // A page with its own sidebar follows each request; the primary sidebar
+  // follows only the open conversation, so AppShell keeps its sidebar subtree
+  // when a thread opens or closes there.
+  const ownSidebar =
+    workspace.page?.sidebar && pageSidebarReady
+      ? { target: workspace.target, resolve: route.workspaceRequestFor }
+      : undefined;
+  const conversationKey = targetKey(sidebarTarget(workspace.target));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: A change within the open conversation keeps the sidebar's target.
+  const conversationTarget = useMemo(
+    () => sidebarTarget(workspace.target),
+    [conversationKey],
+  );
+  const sidebar = useCallback(
+    (pageNavigation: ReactNode, creationAction: ReactNode) =>
+      ownSidebar ? (
+        <Presented store={route.presented} resolve={ownSidebar.resolve}>
+          {(request) =>
+            workspace.page && (
+              <OwnedContribution
+                entry={workspace.page}
+                registry={services.pages}
+                resetIdentity={request}
+                fallback={
+                  <div className="shell-sidebar-default">
+                    <SidebarFrame label={`${workspace.page.title} sidebar`}>
+                      <SidebarList>
+                        <p role="alert">This page’s sidebar is unavailable.</p>
+                        {pageNavigation}
+                      </SidebarList>
+                    </SidebarFrame>
+                  </div>
+                }
+              >
+                {(entry) => {
+                  const Sidebar = entry.sidebar;
+                  return Sidebar ? (
+                    <Sidebar target={ownSidebar.target}>
+                      {pageNavigation}
+                    </Sidebar>
+                  ) : null;
+                }}
+              </OwnedContribution>
+            )
+          }
+        </Presented>
+      ) : workspace.page?.sidebar ? (
+        <div className="shell-sidebar-default">
+          <SidebarFrame label="Page navigation">
+            <SidebarList>{pageNavigation}</SidebarList>
+          </SidebarFrame>
+        </div>
+      ) : (
+        <PrimarySidebar
+          creationAction={creationAction}
+          federatedIdentity={services.federatedIdentity}
+          memberships={client.memberships}
+          relay={services.relay}
+          navigator={services.navigation}
+          agents={services.agents}
+          chatIcons={services.conversation.chatIcons}
+          chatMenus={services.conversation.chatMenus}
+          sidebarSections={services.sidebarSections}
+          sidebarScope={services.sidebarScope}
+          sidebarRows={services.sidebarRows}
+          target={conversationTarget}
+        >
+          {pageNavigation}
+        </PrimarySidebar>
+      ),
+    [
+      ownSidebar,
+      workspace.page,
+      route.presented,
+      conversationTarget,
+      client.memberships,
+      services,
+    ],
+  );
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
     return document.getElementById("buzz-launch") ? null : (
@@ -639,70 +722,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             />
           )}
           workspaceRef={setWorkspaceElement}
-          sidebar={(pageNavigation, creationAction) =>
-            workspace.page?.sidebar && pageSidebarReady ? (
-              <Presented
-                store={route.presented}
-                resolve={route.workspaceRequestFor}
-              >
-                {(request) =>
-                  workspace.page && (
-                    <OwnedContribution
-                      entry={workspace.page}
-                      registry={services.pages}
-                      resetIdentity={request}
-                      fallback={
-                        <div className="shell-sidebar-default">
-                          <SidebarFrame
-                            label={`${workspace.page.title} sidebar`}
-                          >
-                            <SidebarList>
-                              <p role="alert">
-                                This page’s sidebar is unavailable.
-                              </p>
-                              {pageNavigation}
-                            </SidebarList>
-                          </SidebarFrame>
-                        </div>
-                      }
-                    >
-                      {(entry) => {
-                        const Sidebar = entry.sidebar;
-                        return Sidebar ? (
-                          <Sidebar target={workspace.target}>
-                            {pageNavigation}
-                          </Sidebar>
-                        ) : null;
-                      }}
-                    </OwnedContribution>
-                  )
-                }
-              </Presented>
-            ) : workspace.page?.sidebar ? (
-              <div className="shell-sidebar-default">
-                <SidebarFrame label="Page navigation">
-                  <SidebarList>{pageNavigation}</SidebarList>
-                </SidebarFrame>
-              </div>
-            ) : (
-              <PrimarySidebar
-                creationAction={creationAction}
-                federatedIdentity={services.federatedIdentity}
-                memberships={client.memberships}
-                relay={services.relay}
-                navigator={services.navigation}
-                agents={services.agents}
-                chatIcons={services.conversation.chatIcons}
-                chatMenus={services.conversation.chatMenus}
-                sidebarSections={services.sidebarSections}
-                sidebarScope={services.sidebarScope}
-                sidebarRows={services.sidebarRows}
-                target={workspace.target}
-              >
-                {pageNavigation}
-              </PrimarySidebar>
-            )
-          }
+          sidebar={sidebar}
           navigationControls={
             <NavigationControls navigation={services.navigation} />
           }
@@ -710,6 +730,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           // A scoped Settings target selects its community on the way.
           onOpenTarget={(target) => void services.navigation.open(target)}
           communities={services.communities}
+          communityUnreads={services.communityUnreads}
           federatedIdentity={services.federatedIdentity}
           invite={invite?.viewer === client.viewer ? invite : undefined}
           onInviteClose={services.invites.clear}

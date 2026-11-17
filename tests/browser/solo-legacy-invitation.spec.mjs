@@ -92,7 +92,7 @@ test("Outbox Retry reconciles a recorded then removed Solo invitation without re
       json: { accepted: true, event_id: event.id, message: "" },
     });
   });
-  await page.route("**/api/relay/**/query", async (route) => {
+  await page.route("**/api/relay/primary/query", async (route) => {
     const filters = route.request().postDataJSON();
     if (
       filters.some(

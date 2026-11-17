@@ -831,7 +831,7 @@ async fn corrupt_storage_is_unavailable_and_public_snapshots_have_no_secret() {
         state.snapshot.status = Status::SignedIn;
     }
     let public = serde_json::to_value(host.snapshot()).unwrap();
-    assert_eq!(public.as_object().unwrap().len(), 9);
+    assert_eq!(public.as_object().unwrap().len(), 10);
     assert!(!public.to_string().contains("fixture-session-token"));
 }
 

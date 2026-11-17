@@ -1,4 +1,5 @@
 import { followUpQueue } from "../messages/follow-up-queue";
+import type { AgentModelSettings } from "./model-settings";
 import {
   createSessionAdmissions,
   type AgentSessionRouter,
@@ -15,6 +16,7 @@ import {
 } from "./execution";
 import type { JsonValue } from "../navigation/targets";
 import { removeSessionPrompts } from "./session-prompts";
+import { removeStandaloneSessions } from "./standalone-sessions";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
 import { respondExternal } from "../../buzz-mcp/external";
@@ -799,8 +801,9 @@ export type Delivery<Config = unknown> = Readonly<{
   workingUntil(done: PromiseLike<unknown>): void;
   /** Optional presentation evidence supplied by the harness, not inferred by the UI. */
   step?(tool: string, target?: string): void;
-  /** The plugin declined this request; no work or successful outcome is implied. */
-  ignored?(): void;
+  /** The plugin declined this request; no work or successful outcome is implied.
+   * A `refusal` shows its owner, on this device, why the agent didn't act. */
+  ignored?(refusal?: MentionRefusal): void;
   /** The harness acknowledged this exact request. Not proof of model consumption. */
   acknowledged?(input?: Readonly<{ steering?: true }>): void;
   /** A newer acknowledged request owns this turn's activity; hide this message's
@@ -956,6 +959,9 @@ export type AgentType<Config = unknown> = {
   /** What of `config` another type may adopt when the agent changes type.
    * Without it, all of its settings stay behind. */
   carry?(config: Config): Carry;
+  /** Safe saved model selections for agent_read. No discovery, I/O or
+   * active-session claims. Without it these settings are unavailable. */
+  readModelSettings?(config: Config): AgentModelSettings;
   /** Describes harness settings for a type-change preview. Rendered labels
    * never determine migration behavior. */
   describeMigration?(config: Config): readonly AgentMigrationSetting[];
@@ -1248,7 +1254,12 @@ export type AgentUpdateRequest = AgentUpdate &
  * its synced instructions when the owner can read them here, and otherwise
  * has `unavailable` instead, saying why. */
 export type AgentReadout = Readonly<
-  { pubkey: string; name: string; type: string } & (
+  {
+    pubkey: string;
+    name: string;
+    type: string;
+    modelSettings: AgentModelSettings | Readonly<{ unavailable: string }>;
+  } & (
     | { instructions: string | null; synced: boolean; revision?: string }
     | { unavailable: string }
   )
@@ -1884,7 +1895,8 @@ export function teamPrompt(
     })
     .join("\n\n");
 }
-export { fromOwner } from "./owner-attestation";
+export { fromOwner, mentionAuthority } from "./owner-attestation";
+import type { MentionRefusal } from "./owner-attestation";
 
 /** What Agents needs of the communities: the viewer, the selected one, and
  * a connection to any joined one without selecting it. */
@@ -2565,6 +2577,12 @@ export class AgentsService extends Service implements Agents {
             pubkey: item.pubkey,
             name: item.name,
             type: item.type,
+            modelSettings: {
+              unavailable:
+                item.place === "hosted"
+                  ? "Its provider keeps its model settings"
+                  : "Its model settings are on another device",
+            },
           };
           return read
             ? { ...base, ...read, synced: true }
@@ -3773,18 +3791,39 @@ export class AgentsService extends Service implements Agents {
     | {
         identities: readonly AgentIdentity[];
         state: Pick<AgentsSnapshot, "status" | "error">;
+        bindings: number;
         remote: ReadonlySet<AgentKey>;
         hosted: readonly Agent[];
         value: LocalAgentsSnapshot;
       }
     | undefined;
+  private hostedCache:
+    | { agents: readonly Agent[]; hosted: readonly Agent[] }
+    | undefined;
   /** Local identities in every community, plus completed hosted choices in the
    * selected community. Hosted choices grant no local custody. */
   local = (): LocalAgentsSnapshot => {
     const { identities, state } = this;
-    const hosted = state.agents.filter(
-      (agent) => agent.place === "hosted" && !agent.unfinished,
-    );
+    // Every name lookup asks for this snapshot: filter the agents again only
+    // when the list changes.
+    if (this.hostedCache?.agents !== state.agents)
+      this.hostedCache = {
+        agents: state.agents,
+        hosted: state.agents.filter(
+          (agent) => agent.place === "hosted" && !agent.unfinished,
+        ),
+      };
+    const { hosted } = this.hostedCache;
+    const cached = this.localCache;
+    const unchanged =
+      cached?.identities === identities &&
+      cached.hosted.length === hosted.length &&
+      hosted.every((agent, index) => agent === cached.hosted[index]) &&
+      cached.state.status === state.status &&
+      cached.state.error === state.error;
+    // Reread each agent's binding only after one may have changed.
+    const bindings = this.executions.bindingChanges();
+    if (unchanged && cached.bindings === bindings) return cached.value;
     const remote = new Set(
       identities
         .filter(
@@ -3792,17 +3831,14 @@ export class AgentsService extends Service implements Agents {
         )
         .map((identity) => identity.key),
     );
-    const cached = this.localCache;
     if (
-      cached?.identities === identities &&
+      unchanged &&
       cached.remote.size === remote.size &&
-      [...remote].every((key) => cached.remote.has(key)) &&
-      cached.hosted.length === hosted.length &&
-      hosted.every((agent, index) => agent === cached.hosted[index]) &&
-      cached.state.status === state.status &&
-      cached.state.error === state.error
-    )
+      [...remote].every((key) => cached.remote.has(key))
+    ) {
+      this.localCache = { ...cached, bindings };
       return cached.value;
+    }
     const value: LocalAgentsSnapshot = Object.freeze({
       status: state.status,
       agents: Object.freeze(
@@ -3839,7 +3875,7 @@ export class AgentsService extends Service implements Agents {
         : {}),
       ...(state.error ? { error: state.error } : {}),
     });
-    this.localCache = { identities, state, remote, hosted, value };
+    this.localCache = { identities, state, bindings, remote, hosted, value };
     return value;
   };
 
@@ -4031,6 +4067,11 @@ export class AgentsService extends Service implements Agents {
       pubkey: identity.pubkey,
       name: identity.name,
       type: identity.type,
+      modelSettings: editor?.problem
+        ? { unavailable: "Its synced config could not be read" }
+        : kind?.readModelSettings
+          ? kind.readModelSettings(config)
+          : { unavailable: "Its type does not expose model settings here" },
     };
     // Synced instructions that are deleted, invalid or unreadable are not
     // empty ones.
@@ -6526,6 +6567,7 @@ export class AgentsService extends Service implements Agents {
       if (this.storage.get(recordKey(key)) !== null)
         await removeRecord(this.storage, key);
       await removeSessionPrompts(this.storage, key);
+      await removeStandaloneSessions(this.storage, key);
     }
     const { [key]: _, ...others } = this.records;
     this.records = next ? { ...others, [key]: next } : others;

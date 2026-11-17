@@ -8,6 +8,10 @@ export type Config = {
   instructions: string;
   workspace: string;
   scope: "thread" | "channel";
+  /** Leaves Codex's Apps and plugins features to its own configuration
+   * instead of turning them off. This device's only, as Apps follow its
+   * Codex sign-in; never for protected agents. */
+  apps?: true;
   /** On Recommended, whose model and thinking level runs replace these. */
   preset?: typeof PRESET;
 };
@@ -46,6 +50,7 @@ export function config(raw: unknown): Config {
         ? value.workspace.trim()
         : defaults.workspace,
     scope: value.scope === "channel" ? "channel" : "thread",
+    ...(value.apps === true ? { apps: true as const } : {}),
     ...(value.preset === PRESET ? { preset: PRESET } : {}),
   };
 }

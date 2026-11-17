@@ -168,7 +168,7 @@ async function holdDetails(page) {
     started = resolve;
   });
   let holding = true;
-  await page.route("**/api/relay/**/query", async (route) => {
+  await page.route("**/api/relay/primary/query", async (route) => {
     const filters = route.request().postDataJSON();
     if (
       holding &&

@@ -9,7 +9,6 @@ Build defaults are readable binary data, **never secret storage**.
 | Input | Consumer and boundary |
 | --- | --- |
 | `BUZZ_EXTERNAL_MCP_COMMUNITIES` | Frontend build: space-separated secure community origins allowed to authorize external MCP access. Empty disables access. See below. |
-| `BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES` | Frontend build: space-separated secure community origins where workflow messages cannot start or steer local agents. Empty keeps checked workflow delegation everywhere. See below. |
 | `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: the live development broker's Builderlab, and whether a build without an added sign-in server keeps the built-in one; no runtime override. See below. |
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | Shared frontend/native build: exact Apps cookie domain paired with the login origin for native viewer SSO; no runtime override. |
 | `BUZZ_BUILDERLAB_APPS_CONTROL_PLANE` | Shared frontend/native build: HTTPS origin of the Apps control plane for the configured login origin, for deployments the built-in public table does not list; no runtime override. |
@@ -48,18 +47,6 @@ The distributor's release build chooses the allowed communities; this
 repository's workflow sets none. Community names do not grant access. The Agents service compares the exact canonical origin before
 opening a connection and on each tool call. Consent disables other communities,
 and Settings hides External apps there. Normal agent MCP servers are unchanged.
-
-## Workflow restriction community flag
-
-`BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES` is a space-separated list of `https://`
-or `wss://` community origins, parsed as the external flag is. The default is
-empty: in every community, a workflow mention can start or steer a local Claude,
-Codex, Goose or Pi agent when its creator is the agent's owner or a sibling the
-owner attested. Each build lists its own restricted community origins. In a listed community no
-workflow-marked message authorizes a local agent request, in bundled or plugin
-harnesses; the message stays visible. While any community is listed, an agent
-whose community cannot be read is restricted too. See
-[workflows](workflows.md).
 
 ## Packaged community default
 
@@ -298,6 +285,15 @@ Staging is then the build's Builderlab, with the built-in production server
 after it for the public communities. A native test parses this exact
 descriptor, so keep the two in step.
 
+Remote agents follow the selected community: in a community another listed
+server covers, the bundled Builderlab plugin's agent calls carry that
+community (`relay`) and native sends them with that server's session, origin
+and API base path, under the same granted routes. Elsewhere, including
+Personal space, they use the build's Builderlab. Each saved agent and pending
+creation is kept with its server, so an agent is managed only while one of its
+server's communities is selected. Known communities, backup, hosted
+communities, Apps and decisions always use the build's Builderlab.
+
 `signIn` and `organization` are optional. `signIn` is `on-demand` by default:
 the app asks for organization sign-in only when a protected community refuses
 the viewer, or from Settings → Identity. `at-launch` signs in before the app
@@ -330,7 +326,8 @@ inputs.
 Identity backup uses the session only when its separately configured service URL
 is the build's Builderlab, at the same origin and API base path. Backup still
 requires its own service URL, namespace and user choice. The existing
-identity-binding validator accepts production Builderlab or the configured origin.
+identity-binding validator accepts production Builderlab or a configured sign-in
+server's identity origin.
 
 Native viewer SSO also needs the exact Apps domain in
 `BUZZ_BUILDERLAB_APPS_DOMAIN`, for example `apps.example.com` for a Builderlab

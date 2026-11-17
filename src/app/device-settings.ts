@@ -1,6 +1,7 @@
 import { autocorrectSetting } from "../features/messages/autocorrect-preference";
 import { followUpBehaviorSetting } from "../features/messages/follow-up-preference";
 import { rememberAgentsSetting } from "../features/messages/mention-preferences";
+import { expandNestedRepliesSetting } from "../features/messages/nested-replies-preference";
 import { threadPlacementSetting } from "../features/messages/thread-preferences";
 import { unreadFirstSetting } from "../features/search/unread-first-preference";
 import { createDeviceSettings } from "../shared/device-settings";
@@ -16,6 +17,7 @@ export const deviceSettings = (appearance: Appearance) =>
   createDeviceSettings([
     ...appearanceSettings(appearance),
     threadPlacementSetting,
+    expandNestedRepliesSetting,
     followUpBehaviorSetting,
     autocorrectSetting,
     rememberAgentsSetting,

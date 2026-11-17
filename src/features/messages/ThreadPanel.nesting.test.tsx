@@ -19,6 +19,7 @@ import type { ThreadSnapshot } from "../relay/threads";
 import type { MessageComposerProps } from "./MessageComposer";
 import type { MessageRowProps } from "./MessageRow";
 import { DayDivider } from "./MessageTimestamp";
+import { setExpandNestedRepliesPreference } from "./nested-replies-preference";
 import { ThreadPanel } from "./ThreadPanel";
 
 vi.mock("./use-reading", () => ({
@@ -795,4 +796,66 @@ it("does not steal focus moved after removal but before queued recovery", async 
   send.focus();
   await act(async () => {});
   expect(send).toHaveFocus();
+});
+
+it("shows nested replies open when Expand nested replies is on, and keeps a collapse", () => {
+  setExpandNestedRepliesPreference(true);
+  try {
+    const h = setup();
+    expect(screen.getByText("grandchild")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /^View \d+ repl/ }),
+    ).not.toBeInTheDocument();
+    // Nothing was expanded by a click, so no revealed reply takes focus.
+    expect(document.activeElement?.closest("article")).toBeNull();
+
+    h.update([
+      row("parent", "root"),
+      row("child", "parent"),
+      row("grandchild", "child"),
+      row("other", "root"),
+      row("nephew", "other"),
+    ]);
+    expect(screen.getByText("nephew")).toBeVisible();
+
+    fireEvent.click(
+      within(branchOf("other")).getByRole("button", {
+        name: "Collapse 1 reply",
+      }),
+    );
+    expect(screen.queryByText("nephew")).not.toBeInTheDocument();
+    h.update([
+      row("parent", "root"),
+      row("child", "parent"),
+      row("grandchild", "child"),
+      row("other", "root"),
+      row("nephew", "other"),
+      row("niece", "other"),
+    ]);
+    expect(screen.queryByText("niece")).not.toBeInTheDocument();
+    expect(screen.getByText("grandchild")).toBeVisible();
+
+    // Changing the default starts every branch over from it.
+    act(() => setExpandNestedRepliesPreference(false));
+    expect(screen.queryByText("child")).not.toBeInTheDocument();
+    expect(screen.queryByText("nephew")).not.toBeInTheDocument();
+    act(() => setExpandNestedRepliesPreference(true));
+    expect(screen.getByText("niece")).toBeVisible();
+  } finally {
+    setExpandNestedRepliesPreference(false);
+  }
+});
+
+it("keeps Reply nesting under the chosen message when Expand nested replies is on", () => {
+  setExpandNestedRepliesPreference(true);
+  try {
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Reply to child" }));
+    expect(screen.getByLabelText("Composer")).toHaveAttribute(
+      "data-parent",
+      "child",
+    );
+  } finally {
+    setExpandNestedRepliesPreference(false);
+  }
 });

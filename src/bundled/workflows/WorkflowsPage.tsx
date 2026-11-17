@@ -48,6 +48,12 @@ type WorkflowsNavigation = {
   navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
 };
+/** The visit whose route is answered, kept by the page: the community below
+ * is rebuilt on every reconnect and must not open that workflow again. */
+type AnsweredRoute = {
+  revealed?: string | undefined;
+  onRevealed?: ((entryId: string) => void) | undefined;
+};
 const withoutRoute = (target: Extract<OpenTarget, { kind: "page" }>) => {
   const { route: _route, ...page } = target;
   return page;
@@ -59,6 +65,7 @@ export function WorkflowsPage({
   navigator,
 }: { relay: RelayData } & WorkflowsNavigation) {
   const connection = useRelayConnection(relay);
+  const [revealed, setRevealed] = useState<string>();
   return connection.status === "ready" ? (
     <WorkflowCommunity
       key={`${connection.scope}:${connection.generation}`}
@@ -66,6 +73,8 @@ export function WorkflowsPage({
       viewer={connection.viewer ?? ""}
       navigation={navigation}
       navigator={navigator}
+      revealed={revealed}
+      onRevealed={setRevealed}
     />
   ) : (
     <WorkflowsPanel>
@@ -99,10 +108,13 @@ export function WorkflowCommunity({
   viewer,
   navigation,
   navigator,
+  revealed,
+  onRevealed,
 }: {
   session: RelaySession;
   viewer: string;
-} & WorkflowsNavigation) {
+} & WorkflowsNavigation &
+  AnsweredRoute) {
   const capability = session.workflows;
   const channels = useChannelList(session.channels);
   const eligible = channels.channels.filter(
@@ -343,7 +355,12 @@ export function WorkflowCommunity({
                   detailTarget={detailTarget}
                   selected={detail?.key}
                   onSelect={selectDetail}
-                  reveal={reveal}
+                  reveal={
+                    onRevealed && reveal?.entryId !== revealed
+                      ? reveal
+                      : undefined
+                  }
+                  onRevealed={onRevealed}
                   onCreate={beginCreate}
                   onDelete={deleteWorkflow}
                   onOpen={(definition, nextChannel) =>

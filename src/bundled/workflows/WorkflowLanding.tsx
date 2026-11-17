@@ -1400,6 +1400,7 @@ export function WorkflowLanding({
   selected,
   onSelect,
   reveal,
+  onRevealed,
 }: {
   /** Live identity names; offline diagnostic fixtures use public-key labels. */
   session?: RelaySession | undefined;
@@ -1410,8 +1411,11 @@ export function WorkflowLanding({
   selected: string | undefined;
   /** Reports the selected workflow and its name, or clears the selection. */
   onSelect: (key: string | undefined, name?: string) => void;
-  /** A visit's request to open one workflow, applied once per `entryId`. */
+  /** A visit's request to open one workflow, until `onRevealed` answers it. */
   reveal?: Readonly<{ entryId: string; owner: string; id: string }> | undefined;
+  /** The request is answered and its owner withdraws it: the workflow opened
+   * or was not found, or the reader selected or filtered for themselves. */
+  onRevealed?: ((entryId: string) => void) | undefined;
   /** Channel IDs to show; every channel is still read. Empty shows all. */
   filter: readonly string[];
   onFilterChange: (channelIds: readonly string[]) => void;
@@ -1515,13 +1519,21 @@ export function WorkflowLanding({
   }, [snapshots, mineOnly, status, triggers, viewer]);
   const filtered =
     mineOnly || status !== "all" || triggers.length > 0 || filter.length > 0;
-  const resetFilters = () => {
+  // The reader's own selection or filter change answers a visit still waiting
+  // for its workflow: a read that lands later must not replace their choice.
+  const own =
+    <Args extends unknown[]>(choose: (...args: Args) => void) =>
+    (...args: Args) => {
+      if (reveal) onRevealed?.(reveal.entryId);
+      choose(...args);
+    };
+  const resetFilters = own(() => {
     onFilterChange([]);
     setMineOnly(false);
     setStatus("all");
     setTriggers([]);
     ownerTriggerRef.current?.focus();
-  };
+  });
   const ordered = [...channels].sort(
     (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
   );
@@ -1571,29 +1583,28 @@ export function WorkflowLanding({
   }, [onSelect, reading, selected, selectedName, selectionFilteredOut]);
   // A visit opened at one workflow selects it once, clearing the filters that
   // hide it; selecting, filtering and closing afterwards stay the reader's.
-  const [revealed, setRevealed] = useState<string>();
-  const revealing = reveal && reveal.entryId !== revealed ? reveal : undefined;
   const revealItem =
-    revealing &&
+    reveal &&
     ordered
       .flatMap((channel) => snapshots[channel.id]?.data.items ?? [])
       .find(
         (definition) =>
-          definition.owner === revealing.owner &&
-          definition.id === revealing.id,
+          definition.owner === reveal.owner && definition.id === reveal.id,
       );
   const revealShown = !!revealItem && items.includes(revealItem);
   // Only a completed read of every channel shows that it is not here.
   const revealAbsent =
-    !!revealing &&
+    !!reveal &&
     !revealItem &&
     ordered.every((channel) => snapshots[channel.id]?.status === "ready");
   useEffect(() => {
-    if (!revealing || (!revealItem && !revealAbsent)) return;
-    setRevealed(revealing.entryId);
+    if (!reveal || (!revealItem && !revealAbsent)) return;
+    onRevealed?.(reveal.entryId);
     if (!revealItem) {
+      // Not finding it here is not proof it is gone: this page reads fewer
+      // channels than the lookup that offered the link.
       setError(
-        "That workflow isn’t available. It may have been deleted, or you may no longer have access to its channel.",
+        "Couldn’t find that workflow here. It may have been deleted, or its channel may not be listed on this page.",
       );
       return;
     }
@@ -1609,12 +1620,13 @@ export function WorkflowLanding({
         "Unnamed or malformed workflow",
     );
   }, [
-    revealing,
+    reveal,
     revealItem,
     revealShown,
     revealAbsent,
     onFilterChange,
     onSelect,
+    onRevealed,
   ]);
   const cleared = visible.some(
     (channel) =>
@@ -1713,7 +1725,7 @@ export function WorkflowLanding({
             options={OWNER_OPTIONS}
             icon={<UserIcon size={16} aria-hidden="true" />}
             showDefault
-            onChange={(value) => setMineOnly(value === "mine")}
+            onChange={own((value) => setMineOnly(value === "mine"))}
           />
           <WorkflowFilterMenu
             label="Status"
@@ -1727,7 +1739,7 @@ export function WorkflowLanding({
                 <CircleIcon size={16} aria-hidden="true" />
               )
             }
-            onChange={setStatus}
+            onChange={own(setStatus)}
           />
           <WorkflowMultiFilterMenu
             label="Trigger"
@@ -1735,7 +1747,7 @@ export function WorkflowLanding({
             emptyMessage="No trigger types available."
             triggerRef={triggerTypeRef}
             value={triggers}
-            onChange={setTriggers}
+            onChange={own(setTriggers)}
             wide
             icon={<LightningIcon size={16} aria-hidden="true" />}
             options={TRIGGER_OPTIONS.map((option) => {
@@ -1758,7 +1770,7 @@ export function WorkflowLanding({
             emptyMessage="No channels with workflows yet."
             triggerRef={channelsTriggerRef}
             value={filter}
-            onChange={onFilterChange}
+            onChange={own(onFilterChange)}
             wide
             icon={<HashIcon size={16} aria-hidden="true" />}
             options={populated.map((channel) => ({
@@ -1851,10 +1863,10 @@ export function WorkflowLanding({
           action={
             emptyFromOwnership ? (
               <Button
-                onClick={() => {
+                onClick={own(() => {
                   setMineOnly(false);
                   ownerTriggerRef.current?.focus();
-                }}
+                })}
               >
                 Show all channel workflows
               </Button>
@@ -1885,7 +1897,7 @@ export function WorkflowLanding({
                 target.closest(".workflow-detail"))
             ) {
               event.preventDefault();
-              onSelect(undefined);
+              own(onSelect)(undefined);
             }
           }}
         >
@@ -1907,7 +1919,7 @@ export function WorkflowLanding({
                   detailTarget={detailTarget}
                   onOpen={onOpen}
                   onDelete={onDelete}
-                  onSelect={onSelect}
+                  onSelect={own(onSelect)}
                   onRun={runRequest}
                   onError={setError}
                   operations={operations}

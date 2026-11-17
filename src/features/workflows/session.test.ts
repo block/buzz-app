@@ -381,6 +381,52 @@ it("revoking one channel purges a loaded batch before observers and fences its l
   expect(h.pending).toHaveLength(0);
 });
 
+it("locates nothing in a channel the session knows the viewer is outside, and drops an answer it gave before it knew", async () => {
+  const coordinate = { owner: viewer.pubkey, id };
+  const lookup = [
+    { kinds: [30620], authors: [viewer.pubkey], "#d": [id], limit: 1 },
+  ];
+  // Discovery has placed the viewer outside the channel.
+  const outside = setup();
+  outside.emit([roster(relay, channelId, [], 1)]);
+  const hidden = outside.session.workflows.locate(coordinate);
+  const refused = hidden.refresh();
+  await vi.waitFor(() => expect(outside.pending).toHaveLength(1));
+  const asked = outside.next();
+  expect(asked.filters).toEqual(lookup);
+  // A relay that answered anyway is not believed.
+  asked.respond([definition]);
+  await refused;
+  expect(hidden.snapshot()).toEqual({ status: "ready", data: undefined });
+
+  // Until discovery places a channel, the session passes it: the relay's
+  // scoping of the read is the only gate.
+  const h = setup();
+  const early = h.session.workflows.locate(coordinate);
+  const answered = early.refresh();
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  h.next().respond([definition]);
+  await answered;
+  expect(early.snapshot()).toMatchObject({
+    status: "ready",
+    data: { id, channelId, owner: viewer.pubkey },
+  });
+  // Discovery then finds the viewer outside it. The answer goes with the
+  // access change, before observers run, and no later lookup reuses it.
+  const checked = vi.fn(() => expect(early.snapshot().data).toBeUndefined());
+  early.subscribe(checked);
+  h.session.channels.subscribeList(checked);
+  h.emit([roster(relay, channelId, [], 2)]);
+  expect(checked).toHaveBeenCalled();
+  expect(early.snapshot().data).toBeUndefined();
+  const later = h.session.workflows.locate(coordinate);
+  expect(later.snapshot().data).toBeUndefined();
+  const reread = later.refresh({ ifStale: true });
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  h.next().respond([definition]);
+  await reread;
+  expect(later.snapshot()).toEqual({ status: "ready", data: undefined });
+});
 it("regrant cannot resurrect stale history; clear-cache and dispose cancel interest", async () => {
   const h = setup();
   h.emit([roster(relay, channelId, [viewer.pubkey], 1)]);

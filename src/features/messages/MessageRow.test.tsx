@@ -21,7 +21,10 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
+import {
+  hoverOpenTiming,
+  PREVIEW_REST_MS,
+} from "../../shared/design-system/ui/hoverIntent";
 import { messageCopyText } from "./message-copy";
 import {
   SPRING_LOAD_DELAY_MS,
@@ -3135,6 +3138,52 @@ it("opens workflow message details once the pointer rests, without a competing h
   } finally {
     cleanup();
     vi.useRealTimers();
+  }
+});
+
+it("reads the workflow only once the pointer has rested on its details, and cancels that read when the pointer leaves", async () => {
+  vi.useFakeTimers();
+  const message = renderIdentifiedWorkflowMessage();
+  // The relay has not answered, so leaving finds the read still in flight.
+  message.read.mockImplementation(
+    (_filters, options) =>
+      new Promise<RelayEvent[]>((_resolve, reject) =>
+        options?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("Aborted", "AbortError")),
+        ),
+      ),
+  );
+  try {
+    fireEvent.mouseEnter(message.trigger);
+    fireEvent.mouseMove(message.trigger);
+    // A pointer crossing the icon opens nothing and asks the relay nothing.
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS - 1));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(message.read).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    const card = screen.getByRole("dialog", { name: "Workflow message" });
+    expect(message.read).toHaveBeenCalledTimes(1);
+    const signal = message.read.mock.calls[0]?.[1]?.signal;
+    expect(signal?.aborted).toBe(false);
+    // Unanswered, the card stays as it was.
+    expect(card).toHaveTextContent(WORKFLOW_CARD, {
+      normalizeWhitespace: false,
+    });
+    fireEvent.mouseLeave(message.trigger);
+    await act(() =>
+      vi.advanceTimersByTimeAsync(hoverOpenTiming.preview.closeDelay - 1),
+    );
+    expect(signal?.aborted).toBe(false);
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(signal?.aborted).toBe(true);
+    // Nothing retries the cancelled read.
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+    expect(message.read).toHaveBeenCalledTimes(1);
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+    message.workflows.dispose();
   }
 });
 

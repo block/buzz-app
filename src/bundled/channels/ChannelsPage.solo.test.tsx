@@ -2021,33 +2021,24 @@ function watchForLossNotice() {
   };
 }
 
-it("names an archived channel above its history, and its owner unarchives it there", async () => {
+it("offers Unarchive in the lower archived pill without an upper archive notice", async () => {
   const f = fixture({ type: "stream", archived: true, emptyHistory: true });
   f.mountWithToasts();
-  const banner = await screen.findByRole("region", {
-    name: "Archived · view only",
-  });
-  expect(banner).toHaveTextContent(
-    "It’s hidden from the sidebar until it’s unarchived.",
-  );
-  // The pane's persistent status announces it; the notice is not another one.
-  expect(banner.parentElement).toHaveAttribute("role", "status");
-  expect(banner).not.toHaveAttribute("role");
-  expect(banner).not.toHaveAttribute("aria-live");
-  const history = screen.getByRole("region", {
-    name: "Channel message history",
+  const notice = await screen.findByRole("region", {
+    name: "Archived channel",
   });
   expect(
-    banner.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
-  // The lower notice still says what archiving does to writing.
+    within(notice).getByText(
+      "This channel is archived, so it’s read-only and hidden from your sidebar until unarchived.",
+    ),
+  ).toBeVisible();
   expect(
-    screen.getByRole("region", { name: "Archived channel" }),
-  ).toHaveTextContent("This channel is archived");
+    screen.queryByRole("region", { name: "Archived · view only" }),
+  ).toBeNull();
   expect(await screen.findByText("No messages yet.")).toBeVisible();
   expect(screen.queryByText("Start the conversation below.")).toBeNull();
   const user = userEvent.setup();
-  await user.click(within(banner).getByRole("button", { name: "Unarchive" }));
+  await user.click(within(notice).getByRole("button", { name: "Unarchive" }));
   const dialog = await screen.findByRole("dialog", {
     name: "Unarchive channel: Planning",
   });
@@ -2066,9 +2057,7 @@ it("names an archived channel above its history, and its owner unarchives it the
       screen.getByRole("textbox", { name: "Message Planning" }),
     ).toHaveFocus(),
   );
-  expect(
-    screen.queryByRole("region", { name: "Archived · view only" }),
-  ).toBeNull();
+  expect(screen.queryByRole("region", { name: "Archived channel" })).toBeNull();
   expect(screen.getByText("Start the conversation below.")).toBeVisible();
 });
 
@@ -2086,19 +2075,29 @@ it("returns focus to Unarchive when its confirmation is cancelled", async () => 
 
 it("offers no Unarchive to a member of an archived channel", async () => {
   fixture({ type: "stream", archived: true, member: true }).mount();
-  const banner = await screen.findByRole("region", {
-    name: "Archived · view only",
+  const notice = await screen.findByRole("region", {
+    name: "Archived channel",
   });
-  expect(within(banner).queryByRole("button")).toBeNull();
+  expect(within(notice).queryByRole("button")).toBeNull();
+  expect(
+    within(notice).getByText(
+      "This channel is archived, so it’s read-only and hidden from your sidebar until unarchived.",
+    ),
+  ).toBeVisible();
 });
 
-it("says nothing about the sidebar to a preview reader of an archived channel", async () => {
+it("shows only the archived pill to a preview reader without Unarchive permission", async () => {
   fixture({ type: "stream", archived: true, preview: {} }).mount();
-  const banner = await screen.findByRole("region", {
-    name: "Archived · view only",
+  const notice = await screen.findByRole("region", {
+    name: "Archived channel",
   });
-  // It was never in their sidebar.
-  expect(banner).toHaveTextContent(/^Archived · view only$/);
+  expect(
+    within(notice).getByText("This channel is archived and read-only."),
+  ).toBeVisible();
+  expect(within(notice).queryByRole("button")).toBeNull();
+  expect(
+    screen.queryByRole("region", { name: "Archived · view only" }),
+  ).toBeNull();
 });
 
 it.each(["private", "public"] as const)(
@@ -2151,7 +2150,7 @@ it("explains lost membership of an already-archived channel opened from Search",
   // Out of the sidebar, so its membership comes from the roster itself.
   const f = fixture({ type: "stream", archived: true });
   f.mountWithToasts();
-  await screen.findByRole("region", { name: "Archived · view only" });
+  await screen.findByRole("region", { name: "Archived channel" });
   act(() => f.remove("private"));
   const banner = await screen.findByRole("region", {
     name: "You’re no longer a member of Planning",

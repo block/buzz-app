@@ -137,12 +137,46 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   await expect(dialog).toHaveCount(0);
   await expect(row).toHaveCount(0);
   await expect(page).toHaveURL(conversationUrl);
-  // The pane names the archived state above its history, with its restore.
+  // Archive recovery lives in the lower pill beside its status.
   await expect(
     page
-      .getByRole("region", { name: "Archived · view only", exact: true })
+      .getByRole("region", { name: "Archived channel", exact: true })
       .getByRole("button", { name: "Unarchive", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Archived · view only", exact: true }),
+  ).toHaveCount(0);
+  const unarchive = page
+    .getByRole("region", { name: "Archived channel", exact: true })
+    .getByRole("button", { name: "Unarchive", exact: true });
+  // The wrapping pill must leave empty history readable at enlarged text.
+  await page.setViewportSize({ width: 480, height: 950 });
+  await page.evaluate(() => localStorage.setItem("buzz-font-scale.v1", "2"));
+  await page.reload();
+  await expect(unarchive).toBeInViewport();
+  const emptyTitle = page.getByRole("heading", {
+    name: "No messages yet.",
+    exact: true,
+  });
+  await expect(emptyTitle).toBeVisible();
+  await expect
+    .poll(async () => {
+      const title = await emptyTitle.boundingBox();
+      const pill = await page
+        .getByRole("region", { name: "Archived channel", exact: true })
+        .locator('[data-ready="true"]')
+        .boundingBox();
+      return !!title && !!pill && title.y + title.height < pill.y;
+    })
+    .toBe(true);
+  await unarchive.click();
+  const restore = page.getByRole("dialog", {
+    name: "Unarchive channel: Lifecycle channel",
+  });
+  await restore.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(restore).toHaveCount(0);
+  await expect(unarchive).toBeFocused();
+  await page.setViewportSize({ width: 1440, height: 950 });
   await openChannelDetails(page);
   await expect(
     page.getByRole("button", { name: "Unarchive channel", exact: true }),
@@ -330,8 +364,10 @@ for (const action of ["archive", "hide"]) {
       if (action === "archive") {
         await expect(composer).toHaveCount(0);
         await expect(
-          page.getByRole("region", { name: "Archived channel", exact: true }),
-        ).toHaveText("This channel is archived");
+          page
+            .getByRole("region", { name: "Archived channel", exact: true })
+            .getByText(/^This channel is archived\b/),
+        ).toBeVisible();
       } else await expect(composer).toHaveCount(0);
       await page.reload();
       await expect(destination).toBeVisible();
@@ -346,8 +382,10 @@ for (const action of ["archive", "hide"]) {
       if (action === "archive") {
         await expect(composer).toHaveCount(0);
         await expect(
-          page.getByRole("region", { name: "Archived channel", exact: true }),
-        ).toHaveText("This channel is archived");
+          page
+            .getByRole("region", { name: "Archived channel", exact: true })
+            .getByText(/^This channel is archived\b/),
+        ).toBeVisible();
       } else await expect(composer).toHaveCount(0);
       expect(
         app.report.lifecyclePublications.map((event) => event.kind),
@@ -680,7 +718,9 @@ test.describe("remote archive focus", () => {
             created_at: ++timestamp,
           }),
         );
-        await expect(notice).toHaveText("This channel is archived");
+        await expect(
+          notice.getByText(/^This channel is archived\b/),
+        ).toBeVisible();
         await expect(editor).toHaveCount(0);
         await frames(page);
         await expect(focus === "elsewhere" ? elsewhere : history).toBeFocused();

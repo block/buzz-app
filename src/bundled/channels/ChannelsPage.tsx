@@ -58,12 +58,11 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ChannelHeaderMenu } from "./ChannelHeaderMenu";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 import { ChannelJoinNotice } from "../../features/messages/ChannelJoinNotice";
+import { ChannelStateNotice, ChannelStateRegion } from "./ChannelStateNotice";
 import {
-  ArchivedChannelNotice,
-  ChannelStateNotice,
-  ChannelStateRegion,
-} from "./ChannelStateNotice";
-import { ChannelLifecycleActions } from "./ChannelLifecycleActions";
+  ChannelLifecycleActions,
+  ChannelUnarchiveButton,
+} from "./ChannelLifecycleActions";
 import { lifecycleNoun } from "./ChannelLifecycleDialog";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -2184,7 +2183,6 @@ function ChannelWorkspace({
   // Delete all drop the channel from the roster alike.
   const removedTitle =
     removed && `You’re no longer a member of ${removed.label}`;
-  const archivedChannel = current?.archived && !solo ? current : undefined;
   const stateNotice = removedTitle ? (
     <ChannelStateNotice title={removedTitle}>
       <Button
@@ -2196,12 +2194,6 @@ function ChannelWorkspace({
         Back to channels
       </Button>
     </ChannelStateNotice>
-  ) : archivedChannel ? (
-    <ArchivedChannelNotice
-      channel={archivedChannel}
-      session={queries}
-      unarchive={(trigger) => unarchive(archivedChannel, trigger)}
-    />
   ) : undefined;
   // A focused composer that archiving removes hands focus to the history.
   const focusArchivedHistory = useCallback(() => {
@@ -2295,6 +2287,10 @@ function ChannelWorkspace({
     (current.archived ||
       (current.readOnly &&
         (!current.cached || current.viewerRole === "guest")));
+  const archivedMessage =
+    current?.readOnly && !current.cached && current.viewerRole !== "guest"
+      ? "This channel is archived and read-only."
+      : "This channel is archived, so it’s read-only and hidden from your sidebar until unarchived.";
   useChannelHistoryFocus(
     historyContainer,
     navigation,
@@ -2363,6 +2359,7 @@ function ChannelWorkspace({
             ready={contentReadyChannel === current.id}
             channelId={current.id}
             archived={!!current.archived}
+            archivedMessage={!solo ? archivedMessage : undefined}
             place={solo ? "chat" : "channel"}
             guest={current.viewerRole === "guest"}
             joinRole={current.joinRole}
@@ -2376,7 +2373,15 @@ function ChannelWorkspace({
             }
             onJoin={() => setJoiningChannel(current.id)}
             onHeightChange={setJoinNoticeHeight}
-          />
+          >
+            {current.archived && !solo && handoff && (
+              <ChannelUnarchiveButton
+                channel={current}
+                session={queries}
+                unarchive={(trigger) => unarchive(current, trigger)}
+              />
+            )}
+          </ChannelJoinNotice>
         )}
       </section>
       {!cached && (

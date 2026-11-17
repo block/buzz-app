@@ -776,10 +776,10 @@ and are asked to sign in again in Buzz.
   available when the pause ends; it checks your permission again before deleting.
   For an open Solo chat, the confirmation reappears over the new destination.
   **Cancel** keeps the chat; you can reopen it from the sidebar.
-- **Archived channels** show **Archived · view only** above their messages.
-  You can still read them, but they're hidden from the sidebar; find them in
-  search. If you own or administer the channel, choose **Unarchive** there to
-  restore it for everyone.
+- **Archived channels** show a notice below their messages explaining that
+  they're read-only. Archived channels are hidden from the sidebar and can be
+  found in search. If you own or administer the channel, choose **Unarchive**
+  in the notice to restore it for everyone.
 - **No longer a member**: if you're removed from the channel you're reading,
   or it's deleted, or you leave it on another device, it says **You’re no
   longer a member of** that channel. Choose **Back to channels** to move on. A

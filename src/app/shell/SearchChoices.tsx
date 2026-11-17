@@ -226,6 +226,7 @@ export function SearchChoices({
   onRowsShown,
   peek,
   completing = false,
+  completionPending = false,
 }: SearchInputProps & {
   groups: readonly SearchGroup[];
   children?: ReactNode;
@@ -249,6 +250,9 @@ export function SearchChoices({
   /** The rows complete an unfinished filter, such as `in:` or `from:`, so
    * Tab chooses the highlighted one as Enter does. */
   completing?: boolean;
+  /** The suggestions that would complete the filter are still loading, so
+   * Tab stays in the field rather than leaving before they arrive. */
+  completionPending?: boolean;
 }) {
   const palette = useRef<HTMLDivElement>(null);
   // A hidden preview would still read; it mounts only where it shows.
@@ -846,7 +850,8 @@ export function SearchChoices({
             }
             if (event.key === "ArrowDown" || event.key === "ArrowUp")
               restore.current = 0;
-            // Tab completes a filter with its highlighted row. With nothing
+            // Tab completes a filter with its highlighted row, and stays in
+            // the field while its suggestions are still loading. With nothing
             // to complete it moves on, so other controls stay in reach.
             if (
               completing &&
@@ -855,12 +860,17 @@ export function SearchChoices({
               !event.ctrlKey &&
               !event.metaKey &&
               !event.altKey &&
-              !event.nativeEvent.isComposing &&
-              keys.includes(selected)
+              !event.nativeEvent.isComposing
             ) {
-              event.preventDefault();
-              if (!event.repeat) highlight.choose(selected);
-              return;
+              if (keys.includes(selected)) {
+                event.preventDefault();
+                if (!event.repeat) highlight.choose(selected);
+                return;
+              }
+              if (completionPending) {
+                event.preventDefault();
+                return;
+              }
             }
             // Tab moves between groups, and stays in the field while results
             // are still landing. Past the first or last group it moves on as

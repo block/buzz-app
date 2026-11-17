@@ -6064,6 +6064,51 @@ it.each([
   },
 );
 
+it("keeps Tab in the field while a filter's people are still loading", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const { owner } = operatorSession(viewer, relay, []);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const change = vi.fn();
+  try {
+    render(
+      <SearchResults
+        {...operatorProps}
+        session={{
+          ...owner.session,
+          searchProfiles: async () => {
+            await held;
+            return [eventDto(profile(alice, { display_name: "Alice" }))];
+          },
+        }}
+        query="deploy from:@ali"
+        onQueryChange={change}
+      />,
+    );
+    expect(await screen.findByText("Searching people…")).toBeVisible();
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(false);
+    expect(change).not.toHaveBeenCalled();
+    release();
+    const option = await within(
+      await screen.findByRole("group", { name: "People" }),
+    ).findByRole("option", { name: /Alice/ });
+    await waitFor(() =>
+      expect(option).toHaveAttribute("aria-selected", "true"),
+    );
+    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(false);
+    expect(change).toHaveBeenLastCalledWith(`from:${alice.pubkey} deploy `);
+  } finally {
+    release();
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("moves focus on Tab when a filter has no suggestion to complete", async () => {
   const relay = keypair(),
     viewer = keypair();

@@ -2272,6 +2272,9 @@ export function SearchResults({
           showDateChoices ||
           showChannelPicker
         }
+        completionPending={
+          showAuthorPicker && !authorAnswer && !authorChoices.length
+        }
         footer={offline}
         peek={{
           // A filter asks for messages only, so they aren't ranked with

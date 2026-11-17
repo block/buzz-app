@@ -2084,6 +2084,59 @@ it("finds labeled system channels from any creator, oldest first", async () => {
   );
 });
 
+async function systemLookup() {
+  const h = setup({}, { channelIdentity: true });
+  h.channels.ensureList();
+  (await h.next(39002)).respond([]);
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `50000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const system = (n: number, created: number, labeled = false) =>
+    metadata(relay, id(n), `system ${n}`, created, [
+      ["public"],
+      ["t", "system"],
+      ["P", keypair().pubkey],
+      ...(labeled ? [["t", "buzz-marketplace"]] : []),
+    ]);
+  return { h, id, system };
+}
+
+it("pages system channels through the relay's tie-breaking cursor", async () => {
+  const { h, id, system } = await systemLookup();
+  const first = Array.from({ length: 100 }, (_, n) => system(n, 1_700_000_000));
+  const done = h.channels.findSystemLabeled?.("buzz-marketplace");
+  assert.exists(done);
+  (await h.next(39000)).respond(first);
+  const last = [...first].sort((a, b) => a.id.localeCompare(b.id)).at(-1);
+  assert.exists(last);
+  const second = await h.next(39000);
+  expect(second.filters[0]).toMatchObject({
+    until: 1_700_000_000,
+    before_id: last.id,
+  });
+  const old = system(200, 1_699_999_000, true);
+  second.respond([old]);
+  const resolve = await h.next(39000);
+  expect(resolve.filters[0]?.["#d"]).toEqual([id(200)]);
+  resolve.respond([old]);
+  expect((await done).map((channel) => channel.id)).toEqual([id(200)]);
+});
+
+it("refuses an answer from a system channel scan it had to cut short", async () => {
+  const { h, system } = await systemLookup();
+  const done = h.channels.findSystemLabeled?.("buzz-marketplace");
+  assert.exists(done);
+  const failed = done.catch((error: unknown) => error);
+  for (let page = 0; page < 10; page++)
+    (await h.next(39000)).respond(
+      Array.from({ length: 100 }, (_, n) =>
+        system(page * 100 + n, 1_700_000_000 - page),
+      ),
+    );
+  expect(await failed).toMatchObject({ name: "ChannelScanIncomplete" });
+});
+
 it("refuses a system label lookup on a relay without channel identity", async () => {
   const h = setup();
   h.channels.ensureList();

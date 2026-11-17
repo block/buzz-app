@@ -17,6 +17,7 @@ import {
   withRecord,
   writeRecord,
 } from "./community-counts";
+import { ChannelScanIncomplete } from "../../features/relay/channel-labels";
 import { fakeCommunity } from "./testing";
 
 const alice = "a".repeat(64);
@@ -232,6 +233,18 @@ it("doesn't hand a second reader the first reader's aborted lookup", async () =>
   const second = await readCounts(session, new AbortController().signal);
   expect(second.channel).toBe(channel.id);
   await expect(one).resolves.toBe("AbortError");
+});
+
+it("neither finds nor creates a channel when the search was incomplete", async () => {
+  const community = fakeCommunity();
+  community.findSystemLabeled.mockRejectedValue(new ChannelScanIncomplete());
+  await expect(findChannel(community.session)).rejects.toThrow(
+    ChannelScanIncomplete,
+  );
+  await expect(ensureChannel(community.session)).rejects.toThrow(
+    ChannelScanIncomplete,
+  );
+  expect(community.create).not.toHaveBeenCalled();
 });
 
 it("looks for the channel again once a lookup has settled", async () => {

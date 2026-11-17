@@ -159,7 +159,9 @@ function capabilities(session: RelaySession) {
  * channel with the marketplace label. One the relay created itself wins over
  * any a member made, since a relay that provisions the channel reserves its
  * label. Otherwise it's the oldest, whoever made it. A private or archived
- * one is skipped, so the next oldest takes over. */
+ * one is skipped, so the next oldest takes over. Rejects when the relay's
+ * system channels were not all searched: an undefined result always means
+ * there is none. */
 export async function findChannel(
   session: RelaySession,
   signal?: AbortSignal,

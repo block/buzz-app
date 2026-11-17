@@ -107,6 +107,22 @@ it("orders each new choice after the last, even when the clock moves back", () =
   now.mockRestore();
 });
 
+it("orders a choice after one stored by an earlier load, even when the clock moves back", async () => {
+  const stored = new Map([["buzz-message-intent.v1", "9000"]]);
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => stored.get(key) ?? null,
+    setItem: (key: string, value: string) => stored.set(key, value),
+  });
+  const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+  vi.resetModules();
+  const fresh = await import("./routes");
+  const next = fresh.nextMessageIntent();
+  expect(next).toBe(9_001);
+  expect(stored.get("buzz-message-intent.v1")).toBe("9001");
+  now.mockRestore();
+  vi.unstubAllGlobals();
+});
+
 it("rejects foreign route kinds and draft payloads", () => {
   for (const params of [
     null,

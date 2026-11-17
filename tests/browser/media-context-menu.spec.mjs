@@ -27,11 +27,15 @@ for (const kind of ["image", "video"]) {
       contentType: kind === "image" ? "image/png" : "video/mp4",
     });
     await page.addInitScript(() => {
-      window.mediaClipboard = { urls: [], images: [] };
+      window.mediaClipboard = { urls: [], images: [], denyUrlCopy: false };
       Object.defineProperty(navigator, "clipboard", {
         configurable: true,
         value: {
-          writeText: async (value) => window.mediaClipboard.urls.push(value),
+          writeText: async (value) => {
+            if (window.mediaClipboard.denyUrlCopy)
+              throw new Error("Copy denied");
+            window.mediaClipboard.urls.push(value);
+          },
           write: async (items) => {
             const blob = await items[0].getType("image/png");
             window.mediaClipboard.images.push({
@@ -138,6 +142,32 @@ for (const kind of ["image", "video"]) {
     await page.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
     await expect(control).toBeFocused();
+    const feedback = viewer.getByRole("status", { name: "Media actions" });
+    await expect(feedback).toBeEmpty();
+    await expect(feedback).toHaveAttribute("aria-live", "polite");
+    await page.evaluate(() => {
+      window.mediaClipboard.denyUrlCopy = true;
+    });
+    await page.keyboard.press("Shift+F10");
+    await menu.getByRole("menuitem", { name: `Copy ${kind} URL` }).click();
+    await expect(menu).toHaveCount(0);
+    await expect(feedback).toHaveText("Couldn’t copy URL. Try again.");
+    await expect(viewer).toBeVisible();
+    const toastRoot = page.locator("#buzz-toast-root");
+    await expect(toastRoot).toHaveAttribute("aria-hidden", "true");
+    await expect(
+      toastRoot.getByText("Couldn’t copy URL. Try again.", { exact: true }),
+    ).toBeVisible();
+    await page.evaluate(() => {
+      window.mediaClipboard.denyUrlCopy = false;
+    });
+    await control.focus();
+    await page.keyboard.press("Shift+F10");
+    await menu.getByRole("menuitem", { name: `Copy ${kind} URL` }).click();
+    await expect(feedback).toHaveText(
+      kind === "image" ? "Image URL copied" : "Video URL copied",
+    );
+    await expect(menu).toHaveCount(0);
     await viewer
       .getByRole("button", { name: "Close fullscreen viewer" })
       .click();
@@ -147,6 +177,12 @@ for (const kind of ["image", "video"]) {
       ["light", 1440, "100%"],
       ["dark", 390, "125%"],
     ]) {
+      // Keep the real pointer target clear when resizing moves it under the
+      // toast stack. Leaving the stack lets notification expiry resume.
+      await page.mouse.move(0, 0);
+      await expect(
+        toastRoot.getByRole("button", { name: "Dismiss notification" }),
+      ).toHaveCount(0);
       await page.setViewportSize({ width, height: 950 });
       await page.evaluate(
         ({ mode, font }) => {

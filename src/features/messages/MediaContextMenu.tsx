@@ -21,10 +21,7 @@ import {
   MenuPopup,
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
-import {
-  useToastDismiss,
-  useToastNotification,
-} from "../../shared/design-system/ui/Toast";
+import { useToastDismiss } from "../../shared/design-system/ui/Toast";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import {
   isNativeMediaSource,
@@ -34,6 +31,7 @@ import {
 import { copyImageToClipboard, supportsImageCopy } from "./image-copy";
 import { copyNativeImage } from "./native-image-copy";
 import { downloadNativeMedia } from "./native-download";
+import { useMediaActionNotification } from "./MediaActionAnnouncements";
 
 type Target = {
   source: string;
@@ -64,7 +62,7 @@ export function MediaContextMenu({
   children: ReactElement<HTMLAttributes<HTMLElement>>;
 }) {
   const active = useConversationPresentation();
-  const notify = useToastNotification();
+  const notify = useMediaActionNotification();
   const dismiss = useToastDismiss();
   const downloading = useRef(new Set<string>());
   const [target, setTarget] = useState<Target>();

@@ -32,6 +32,7 @@ import styles from "./Messages.module.css";
 import { useModalBoundary } from "./useModalBoundary";
 import { useMediaElementSource } from "./use-media-element-source";
 import { MediaContextMenu } from "./MediaContextMenu";
+import { MediaActionAnnouncements } from "./MediaActionAnnouncements";
 
 export type MediaPlayback = Readonly<{
   attachmentUrl: string;
@@ -532,7 +533,7 @@ export function MediaViewer({
             }
           />
         </div>
-        {children}
+        <MediaActionAnnouncements>{children}</MediaActionAnnouncements>
       </section>
     </div>
   );

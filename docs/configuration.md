@@ -454,3 +454,55 @@ unrelated settings and credentials, and so do the release-only
 `BUZZ_UPDATER_*` inputs. `BUZZ_` values reach child processes of the app, so keep them
 to public configuration. Direct `pnpm tauri build` and `cargo` runs do not load
 `.env.local` this way.
+
+## Blurry chat text on Linux with NVIDIA
+
+On one Ubuntu 26.04 / GNOME Wayland system, Buzz 1.0.4's Debian package showed
+blurry message text in both wide and narrow layouts. Opening the replies panel
+made the text sharper; small window resizes did not. This occurred with an
+RTX 3060, NVIDIA 620.70.06 and system WebKitGTK 2.52.6, after enabling NVIDIA
+composition to resolve typing lag. The underlying graphics defect is still
+unresolved.
+
+An opt-in workaround on that system used Mesa's llvmpipe software renderer
+with WebKit's threaded compositor and shared-memory frame transport. Text was
+sharp and typing in both chat and search was responsive. Disabling the WebKit
+renderer entirely also sharpened the text, but brought input lag back.
+
+For that Debian-package setup, save drafts and fully quit Buzz before trying
+the command below; launching a second instance only focuses the existing one.
+It requires X11/XWayland, Mesa's software renderer and the readable EGL vendor
+file `/usr/share/glvnd/egl_vendor.d/50_mesa.json`. If those are unavailable, do
+not apply this configuration. Remove conflicting renderer-disable overrides
+from this launch:
+
+```sh
+env -u WEBKIT_DISABLE_DMABUF_RENDERER -u WEBKIT_DISABLE_COMPOSITING_MODE \
+  GDK_BACKEND=x11 \
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
+  LIBGL_ALWAYS_SOFTWARE=1 \
+  WEBKIT_FORCE_DMABUF_RENDERER=1 \
+  WEBKIT_DMABUF_RENDERER_FORCE_SHM=1 \
+  WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 \
+  __NV_DISABLE_EXPLICIT_SYNC=1 \
+  /usr/bin/Buzz
+```
+
+This is the tested combination, not evidence that each variable is independently
+necessary. The explicit-sync override was retained from the earlier NVIDIA
+setup. A separate process-local reduced-motion workaround for the onboarding
+crash also remained enabled during testing; this command does not supply it or
+establish a fix for that crash.
+
+Check text with replies closed and open, then type without sending in both chat
+and search. These settings render graphics on the CPU and can increase CPU use
+and power consumption. Calls, video, screen sharing and sustained load were not
+tested. The result does not establish compatibility with other drivers, GPUs,
+WebKit versions or the AppImage's bundled libraries.
+
+The command affects this launch and its child processes. To undo it, fully quit
+Buzz and reopen with the previous launcher. If it helps and you want it to
+persist, put the settings in a Buzz-only launcher and make the desktop/dock
+entry use that launcher; a one-off terminal launch does not change the dock.
+Do not put these variables in the session-wide environment. The `BUZZ_`-only
+`.env.local` loader described above does not load them.

@@ -45,6 +45,14 @@ leave and rejoin to retry.
 Final voice transcripts appear in the room with speaker credit and do not
 mention anyone. Explicit agent watches on that room can still receive them.
 
+## Linux display troubleshooting
+
+If chat text is blurry but becomes sharp when replies open, see the
+[NVIDIA text-rendering workaround](configuration.md#blurry-chat-text-on-linux-with-nvidia).
+It documents a Mesa software-rendering launch tested on one Linux setup, with
+responsive chat/search typing. It can use more CPU and is not a default setting
+or a confirmed fix for onboarding crashes.
+
 ## Identity and getting connected
 
 - If Buzz can’t finish starting, the window says **Buzz couldn’t open**

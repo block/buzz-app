@@ -3360,21 +3360,29 @@ export class CodexRuntime {
     lane.active = active;
     next?.begin(active);
     const { settings, agent } = request;
-    const followed = follow(server.rpc, signal, active, (method, item) => {
-      const step = method === "item/started" ? codexStep(item) : undefined;
-      if (step)
-        for (const taken of active.activity.values())
-          taken.step?.(step.tool, step.target);
-      if (method === "item/started" && item.command)
-        this.status(agent.key, key, "Working", item.command);
-      if (method === "item/completed" && item.type === "commandExecution")
-        this.status(
-          agent.key,
-          key,
-          "Working",
-          `${item.command ?? ""}\n${item.aggregatedOutput ?? ""}`,
-        );
-    });
+    // A community wake can report its deadline before Codex has stopped.
+    const waitForNative = request.unaddressed !== undefined;
+    const followed = follow(
+      server.rpc,
+      waitForNative ? undefined : signal,
+      active,
+      (method, item) => {
+        if (signal.aborted) return;
+        const step = method === "item/started" ? codexStep(item) : undefined;
+        if (step)
+          for (const taken of active.activity.values())
+            taken.step?.(step.tool, step.target);
+        if (method === "item/started" && item.command)
+          this.status(agent.key, key, "Working", item.command);
+        if (method === "item/completed" && item.type === "commandExecution")
+          this.status(
+            agent.key,
+            key,
+            "Working",
+            `${item.command ?? ""}\n${item.aggregatedOutput ?? ""}`,
+          );
+      },
+    );
     let hookBridge: Awaited<ReturnType<typeof openHookBridge>> | undefined;
     let explain: (() => string | undefined) | undefined;
     try {
@@ -3564,7 +3572,9 @@ export class CodexRuntime {
         ready();
         this.status(agent.key, key, "Working");
       }
-      const status = await followed.completed;
+      const status = await (waitForNative
+        ? abortable(followed.completed, signal)
+        : followed.completed);
       await active.steering;
       // Closing the seat after Codex completed does not undo its spoken reply.
       if (adopted === undefined || !active.finished) signal.throwIfAborted();
@@ -3595,22 +3605,34 @@ export class CodexRuntime {
       if (error instanceof Refused && !active.turnId) restoreNotes(request);
       for (const taken of active.requests) taken.failActivity(message(error));
       const ended = active.finished;
-      active.finished = true;
+      const drainingWake = waitForNative && signal.aborted;
+      if (!drainingWake) active.finished = true;
       notReady(error);
       await active.steering;
       // Other agents share the server, so even a stopped agent interrupts
       // its turn rather than ending the process.
-      if (signal.aborted && !ended && active.threadId && active.turnId) {
+      if (
+        signal.aborted &&
+        (!ended || drainingWake) &&
+        active.threadId &&
+        active.turnId
+      ) {
         try {
-          await server.rpc.request("turn/interrupt", {
-            threadId: active.threadId,
-            turnId: active.turnId,
-          });
+          if (!drainingWake || !active.finished) {
+            const interrupt = server.rpc.request("turn/interrupt", {
+              threadId: active.threadId,
+              turnId: active.turnId,
+            });
+            if (drainingWake)
+              await Promise.all([interrupt, followed.completed]);
+            else await interrupt;
+          }
           await this.terminals(server.rpc, active.threadId);
         } catch {
           await server.rpc.close();
         }
       }
+      active.finished = true;
       const why = explain?.();
       if (!signal.aborted) {
         const reason = `Codex could not finish: ${message(error)}.`;
@@ -3670,7 +3692,7 @@ type Item = {
  * turn fails, `signal` aborts or the connection closes. */
 function follow(
   rpc: AppServer,
-  signal: AbortSignal,
+  signal: AbortSignal | undefined,
   turn: { threadId?: string; turnId?: string; finished: boolean },
   onItem?: (method: string, item: Item) => void,
 ) {
@@ -3681,8 +3703,8 @@ function follow(
     fail = reject;
   });
   void completed.catch(() => undefined);
-  const abort = () => fail(signal.reason);
-  signal.addEventListener("abort", abort, { once: true });
+  const abort = () => fail(signal?.reason);
+  signal?.addEventListener("abort", abort, { once: true });
   const off = rpc.onMessage((wire) => {
     const p = wire.params as
       | {
@@ -3711,7 +3733,7 @@ function follow(
   return {
     completed,
     stop() {
-      signal.removeEventListener("abort", abort);
+      signal?.removeEventListener("abort", abort);
       off();
     },
   };

@@ -8136,6 +8136,58 @@ it.each(["interrupt", "deadline", "delegated deadline"])(
   },
 );
 
+it("waits for native completion after a community wake deadline", async () => {
+  const f = fixture();
+  const base = f.delivery("seed");
+  const config = { ...(base.config as object), scope: "community" };
+  const abort = new AbortController();
+  const cleaned = deferred<void>();
+  f.delayedInterruptCompletions.add("turn-1");
+  f.held.set("thread/backgroundTerminals/clean", cleaned.promise);
+  const once = f.runtime.runOnce({
+    delivery: { ...base, config },
+    key: "watch",
+    signal: abort.signal,
+    prompt: async () => "check",
+  });
+  try {
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.runtime.run({ ...f.delivery("next text"), config });
+    abort.abort(new Error("deadline"));
+    await expect(once).resolves.toEqual({ ok: false, error: "deadline" });
+    await vi.waitFor(() =>
+      expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(
+        true,
+      ),
+    );
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.useRealTimers();
+    expect(
+      f.sent.some((wire) => wire.method === "thread/backgroundTerminals/clean"),
+    ).toBe(false);
+    expect(f.starts()).toHaveLength(1);
+    await f.complete(0, "");
+    await vi.waitFor(() =>
+      expect(
+        f.sent.some(
+          (wire) => wire.method === "thread/backgroundTerminals/clean",
+        ),
+      ).toBe(true),
+    );
+    expect(f.starts()).toHaveLength(1);
+    cleaned.resolve();
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
+    await f.complete(1);
+  } finally {
+    abort.abort();
+    cleaned.resolve();
+    f.runtime.dispose();
+    await once;
+  }
+});
+
 it("runs an unaddressed wake in the community session without inheriting a posting destination", async () => {
   const f = fixture();
   const base = f.delivery("first");

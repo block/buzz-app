@@ -341,7 +341,7 @@ test("real same-origin windows queue one publisher and transfer its Web Lock on 
     await second
       .getByRole("button", { name: "Your profile", exact: true })
       .click();
-    await second.getByRole("button", { name: /^Availability:/ }).click();
+    await second.getByRole("button", { name: /^Availability/ }).click();
     await second
       .getByRole("menuitemradio", { name: "Offline", exact: true })
       .click();

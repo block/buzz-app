@@ -59,7 +59,7 @@ The account avatar, message/thread bylines and one-to-one DM avatars
 consume the selected community session's observed directory. A menu choice is a
 command, not evidence: only accepted publication, verified live events, or a
 verified complete snapshot changes badges. Pending/unavailable status has no
-badge; the account control says **Status unavailable**. Personal space has no
+badge; the account control says **Availability unknown**. Personal space has no
 community authority, so it also has no observed badge.
 
 The account dropdown offers **Online**, **Away**, and **Offline**. Online resumes

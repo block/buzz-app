@@ -106,10 +106,20 @@ it("closes on Escape until a new mention starts, and accepts a pointer pick", as
 it("does not suggest after CJK punctuation, where the relay matches no name", async () => {
   const user = userEvent.setup();
   render(<Example />);
-  const text = screen.getByRole("textbox", { name: "Message text" });
-  await user.type(text, "你好，@bo");
+  const text = screen.getByRole<HTMLTextAreaElement>("textbox", {
+    name: "Message text",
+  });
+  const replace = async (value: string) => {
+    text.setSelectionRange(0, text.value.length);
+    await user.paste(value);
+  };
+  await user.type(text, "hi @bo");
+  expect(await screen.findByRole("listbox")).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await replace("你好，@bo");
   expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
-  await user.type(text, "{Backspace}{Backspace}{Backspace} @bo");
+  // The Escape held only the `@` it closed, so a later real query there opens.
+  await replace("你好 @bo");
   expect(await screen.findByRole("listbox")).toBeInTheDocument();
 });
 

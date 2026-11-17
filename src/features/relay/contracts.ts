@@ -278,6 +278,9 @@ export type ChannelReference =
        * open; `looking` while that lookup is queued or in flight. */
       readable?: false;
       looking?: true;
+      /** A completed lookup admitted no readable channel. Absent before the
+       * first answer or after access/cache reset; retained during rechecks. */
+      answered?: true;
     }>;
 /** Reads are side-effect-free; snapshots retain identity until their value changes.
  * Commands are idempotent requests; the store decides whether network work is needed. */

@@ -421,9 +421,23 @@ and are asked to sign in again in Buzz.
   not change the copy. Forwarded attribution is supplied by the sender, not
   cryptographic proof. Mentions inside the copy retain their labels but do not
   notify again. The dialog’s optional note is plain text; its mentions do not notify.
+  **Copy as forward** is available in the Forward message dialog for DMs,
+  channels and Solo chats. Paste it into a message box or thread to attach a
+  removable preview; any note typed in the dialog comes along as editable text.
+  Files added alongside the preview belong to your message, outside the copied
+  card, and are not included when re-forwarding the original. Selected mentions in the composer
+  note notify normally. Only one forward can be attached. The preview is saved
+  with your draft; loading or inaccessible sources block Send until resolved or
+  removed. The current account must still be able to read the source.
+  Pasting a forward from a DM, private channel or Solo chat into a different
+  conversation shows a quiet reminder that its recipients can read the copy.
+  Pasting back into the source conversation shows no reminder.
+  Pasting inside a code block or using plain-text paste inserts the copied text
+  without attaching a forward. Ordinary pasted links stay links; pasting outside
+  Buzz provides quoted text.
   Messages exceeding the forwarding size limit, or containing a local file
   without sharable attachment metadata (including custom emoji), show an
-  explanation before sending. Forward is disabled; **Copy link** is available
+  explanation before sending. Forward and Copy as forward are disabled; **Copy link** is available
   in the dialog. A link still requires access to the original conversation.
 - Select text in a message, such as by double-clicking a word, then right-click
   the highlight and choose **Quote highlight** (or press Q) to add it to that
@@ -451,8 +465,19 @@ and are asked to sign in again in Buzz.
   the full, scrollable list of names. Messages and huddle entries split groups.
 
 - **Solo** organizes your chats with agents. Choose **New chat**, select or tag
-  an agent, and send a message. Solo conversations continue at the chat's top
-  level rather than requiring a new thread for each reply. Where available, use
+  an agent, and send a message. Your agents become chat admins before the opening
+  message is delivered, including agents added by workspace defaults; you remain
+  owner. Ownership is verified from their signed profiles. Your agents added
+  later to a Solo chat you own also join as admins, whether from the composer or
+  Chat access. Other people's agents get ordinary participation; later additions
+  use Bot. Existing members keep their saved roles.
+  If admin setup is interrupted, **Retry** on the opening message attempts to
+  finish it without restoring later demotions or removals. If setup is blocked,
+  choose **Abandon admin setup** in Outbox as soon as the chat exists. This keeps
+  the chat and current roles and stops unfinished setup in other windows. Then
+  retry the opening message, or send a new one if the original has expired.
+  Solo conversations continue at the chat's top level
+  rather than requiring a new thread for each reply. Where available, use
   **Model and effort** in the composer before sending; Solo keeps those choices
   for that chat until you reset them in the same control, even if its available
   models change. If a loaded catalog no longer offers a saved choice, the

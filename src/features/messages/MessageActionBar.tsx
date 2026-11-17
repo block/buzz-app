@@ -276,7 +276,7 @@ function MessageActionBarControls({
     try {
       await (html === undefined
         ? writeClipboardText(text())
-        : writeClipboardRichText(text(), html));
+        : writeClipboardRichText(text(), html, { fallbackToPlainText: true }));
       setNotice({ text: `${label} copied`, error: false });
     } catch {
       setNotice({

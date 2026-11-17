@@ -10,12 +10,13 @@ export function writeClipboardText(text: string): Promise<void> {
     : navigator.clipboard.writeText(text);
 }
 
-/** Keep the semantic selection HTML and its plain-text alternative together.
+/** Keep semantic HTML and its plain-text alternative together.
  * The desktop host retains clipboard ownership and avoids WebKit activation
  * loss. Browser writes start synchronously inside the menu's user gesture. */
 export function writeClipboardRichText(
   text: string,
   html: string,
+  options?: { fallbackToPlainText?: boolean },
 ): Promise<void> {
   if (isTauri()) return invoke("clipboard_write_text", { text, html });
   if (
@@ -23,7 +24,9 @@ export function writeClipboardRichText(
     typeof navigator.clipboard?.write !== "function" ||
     ClipboardItem.supports?.("text/html") === false
   )
-    return writeClipboardText(text);
+    return options?.fallbackToPlainText
+      ? writeClipboardText(text)
+      : Promise.reject(new Error("Rich clipboard copies are not supported."));
   return navigator.clipboard.write([
     new ClipboardItem({
       "text/plain": new Blob([text], { type: "text/plain" }),

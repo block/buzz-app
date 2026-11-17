@@ -241,6 +241,7 @@ it("copies the whole message or the captured highlight independently", async () 
   expect(rich).toHaveBeenCalledExactlyOnceWith(
     "Quote me (https://example.org/)",
     '<div data-buzz-copy="timeline"><a href="https://example.org/">Quote me</a></div>',
+    { fallbackToPlainText: true },
   );
   expect(controller.quote).not.toHaveBeenCalled();
 });

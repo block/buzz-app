@@ -55,13 +55,19 @@ it("starts one browser write with both clipboard flavors inside the gesture", as
 });
 
 it.each(["item", "write", "html"])(
-  "keeps plain copying available when rich clipboard support lacks %s",
+  "requires an explicit plain fallback when rich clipboard support lacks %s",
   async (missing) => {
     if (missing === "item") vi.stubGlobal("ClipboardItem", undefined);
     if (missing === "write") navigator.clipboard.write = undefined as never;
     if (missing === "html")
       vi.spyOn(CopyItem, "supports").mockReturnValue(false);
-    await writeClipboardRichText("Keep bold", "Keep <strong>bold</strong>");
+    await expect(
+      writeClipboardRichText("Keep bold", "Keep <strong>bold</strong>"),
+    ).rejects.toThrow("Rich clipboard copies are not supported.");
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+    await writeClipboardRichText("Keep bold", "Keep <strong>bold</strong>", {
+      fallbackToPlainText: true,
+    });
     expect(navigator.clipboard.writeText).toHaveBeenCalledExactlyOnceWith(
       "Keep bold",
     );

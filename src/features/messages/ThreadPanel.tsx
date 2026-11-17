@@ -750,8 +750,9 @@ function ThreadMessages({
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
   const follow = useRef(true);
-  // A placed unread line decides following until the reader scrolls.
-  const lineHeld = useRef(false);
+  // Where a placed unread line and the panel's own corrections since left the
+  // scroller; a scroll landing there is not the reader's.
+  const lineTop = useRef<number | undefined>(undefined);
   const resizePosition = useRef<
     | {
         width: number;
@@ -1436,8 +1437,10 @@ function ThreadMessages({
       reading?.anchor &&
       (reading.scrollTop === element.scrollTop || clamped || reshown) &&
       element.contains(reading.anchor.element)
-    )
+    ) {
       correctScrollTop(element, readingDrift(element, reading.anchor));
+      if (lineTop.current !== undefined) lineTop.current = element.scrollTop;
+    }
     if (olderAnchor.current) {
       const anchor = olderAnchor.current;
       const added = tree
@@ -1447,11 +1450,14 @@ function ThreadMessages({
         const row = [
           ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
         ].find((row) => row.dataset.messageId === anchor.id);
-        if (row)
+        if (row) {
           correctScrollTop(
             element,
             row.getBoundingClientRect().top - anchor.top,
           );
+          if (lineTop.current !== undefined)
+            lineTop.current = element.scrollTop;
+        }
         if (snapshot.status !== "loading") olderAnchor.current = undefined;
       }
     }
@@ -1482,7 +1488,7 @@ function ThreadMessages({
       // Only a line that leaves the reader at the latest reply follows it.
       follow.current =
         element.scrollHeight - element.clientHeight - element.scrollTop < 1;
-      lineHeld.current = true;
+      lineTop.current = element.scrollTop;
       // Like a revealed message, the line is where a first opening's reading
       // starts, so content-focused navigation moves focus in: from where the
       // opening or navigation left it, not from where the person has since
@@ -1623,6 +1629,7 @@ function ThreadMessages({
         element.scrollTop = element.scrollHeight;
       } else if (previous.anchor && element.contains(previous.anchor.element)) {
         correctScrollTop(element, readingDrift(element, previous.anchor));
+        if (lineTop.current !== undefined) lineTop.current = element.scrollTop;
       }
       // Exact-history restoration must start from this corrected geometry,
       // rather than applying the same child-only height delta a second time.
@@ -2041,10 +2048,9 @@ function ThreadMessages({
             80;
           if (jumpingToLatest.current) return;
           captureResizePosition();
-          // The panel's own scrolls land where it last saved the position.
-          if (!lineHeld.current || previous?.scrollTop !== element.scrollTop) {
+          if (element.scrollTop !== lineTop.current) {
             follow.current = bottom;
-            lineHeld.current = false;
+            lineTop.current = undefined;
           }
           setShowJumpToLatest(!bottom);
           if (bottom) setNewMessageCount(0);

@@ -999,6 +999,30 @@ test("a line placed just short of the latest reply stays in view", async ({
   expect(Math.abs((await measure()).top)).toBeLessThan(1);
   await page.setViewportSize({ width, height: page.viewportSize().height });
   expect(Math.abs((await measure()).top)).toBeLessThan(1);
+  // The reader's own scrolling still decides following: back at the latest
+  // reply, a new one is followed.
+  const rows = history.locator("[data-message-id]");
+  const arrive = async () => {
+    const count = await rows.count();
+    app.reply(root.id);
+    await expect(rows).toHaveCount(count + 1);
+    return measure();
+  };
+  await history.hover();
+  await page.mouse.wheel(0, -200);
+  await expect.poll(async () => (await measure()).below).toBeGreaterThan(100);
+  await page.mouse.wheel(0, 1000);
+  await expect.poll(async () => (await measure()).below).toBeLessThan(1);
+  expect((await arrive()).below).toBeLessThan(1);
+  await close();
+  // Scrolled up from a fitting line that follows, a new reply leaves it there.
+  await page.setViewportSize({ width, height: 950 });
+  expect((await reopen()).below).toBeLessThan(1);
+  await history.hover();
+  await page.mouse.wheel(0, -200);
+  await expect.poll(async () => (await measure()).below).toBeGreaterThan(100);
+  const away = (await measure()).below;
+  expect((await arrive()).below).toBeGreaterThan(away);
 });
 
 test("channel bottom quiets ordinary replies newer than the latest top-level message without reading their threads", async ({

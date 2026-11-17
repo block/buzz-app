@@ -180,10 +180,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
         return [...used]
           .sort(([, a], [, b]) => b - a)
           .map(([key, at]) => {
-            const { channelId, root } = runtime.source(agentKey, key);
+            const { channelId, root, community } = runtime.source(
+              agentKey,
+              key,
+            );
             const working = busy.get(key);
             return {
               channelId,
+              ...(community && { community }),
               ...(root && { root }),
               at,
               ...(working !== undefined && {

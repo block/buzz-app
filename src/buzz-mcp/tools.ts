@@ -229,36 +229,31 @@ export const TOOLS: readonly Tool[] = [
     { id: str, emoji: str, off: { type: "boolean" } },
     ["id", "emoji"],
   ),
-  tool(
-    "read",
-    "Read a thread (default: current), a channel's latest, or search with q.",
-    {
-      channel: str,
-      thread: str,
-      message_url: {
-        type: "string",
-        description: "Buzz message link; replaces channel and thread.",
-      },
-      q: str,
-      author: {
-        type: "string",
-        description: "With q or channel: only this hex pubkey or npub.",
-      },
-      since: {
-        type: "integer",
-        description: "With q or channel: Unix seconds, at or after.",
-      },
-      before: { type: "integer", description: "Unix seconds, at or before." },
-      before_id: {
-        type: "string",
-        description: "For paginating: with before, from a continue line.",
-      },
-      limit: {
-        type: "integer",
-        description: "Search 20 (max 100), thread 100 (500), channel 30 (200).",
-      },
+  tool("read", "Read a thread (default: current) or a channel's latest.", {
+    channel: str,
+    thread: str,
+    message_url: {
+      type: "string",
+      description: "Buzz message link; replaces channel and thread.",
     },
-  ),
+    author: {
+      type: "string",
+      description: "With channel: only this hex pubkey or npub.",
+    },
+    since: {
+      type: "integer",
+      description: "With channel: Unix seconds, at or after.",
+    },
+    before: { type: "integer", description: "Unix seconds, at or before." },
+    before_id: {
+      type: "string",
+      description: "For paginating: with before, from a continue line.",
+    },
+    limit: {
+      type: "integer",
+      description: "Thread 100 (max 500), channel 30 (max 200).",
+    },
+  }),
   tool(
     "search",
     'Search messages you can read, best match first. The query q matches whole words only, not other forms of a word, and supports "exact phrase", -word and a or b. Without q, the newest messages matching the other fields. Each result has a link to cite it or open it with read.',
@@ -771,6 +766,9 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
 
   async read(tools, args) {
     const { client, context } = tools;
+    // A session that kept an older tool list may still search through read.
+    if (text(args.q))
+      throw new Error("read does not search; use search with the same q.");
     args = ignoreBlankFields(args, [
       "channel",
       "thread",
@@ -822,32 +820,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       ...(before !== undefined ? { until: before } : {}),
       ...(beforeId ? { before_id: beforeId } : {}),
     };
-    const q = text(args.q);
     let channel = text(args.channel) ?? context.channel;
-    if (q) {
-      if (beforeId)
-        throw new Error(
-          "before_id pages thread and channel reads; narrow a search with before or since.",
-        );
-      const max = bound(limit, 20, 100);
-      const found = await client.query([
-        {
-          kinds: SEARCH,
-          search: q,
-          limit: max,
-          ...(args.channel ? { "#h": [channel] } : {}),
-          ...cursor,
-          ...filters,
-        },
-      ]);
-      const lines = await tools.messages(found, {});
-      if (!lines.length) return "No messages.";
-      if (found.length >= max)
-        lines.push(
-          "Result limit reached; more matches may exist. Narrow with channel, author, since or before.",
-        );
-      return lines.join("\n");
-    }
     let scope: { channel?: string; root?: string };
     let max: number;
     let more: Args;
@@ -856,7 +829,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (text(args.thread) || (args.channel === undefined && context.root)) {
       if (author || since !== undefined)
         throw new Error(
-          "author and since filter a search (q) or a channel read, not a thread; add q or channel.",
+          "author and since filter a channel read, not a thread; add channel, or use search.",
         );
       const id = text(args.thread) ?? (context.root as string);
       let root = id;

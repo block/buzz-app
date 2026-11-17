@@ -889,14 +889,9 @@ it("reads the current thread when optional fields are blank or 0", async () => {
 
 it.each([
   ["channel", { channel: "chan" }],
-  ["search", { q: "hello" }],
   ["current thread", {}],
   ["explicit thread", { thread: nested }],
   ["message link", { message_url: `buzz://message?channel=chan&id=${nested}` }],
-  [
-    "message search",
-    { message_url: `buzz://message?channel=chan&id=${nested}`, q: "hello" },
-  ],
 ] as const)(
   "keeps agent ownership and nested reply context in a %s read",
   async (_, args) => {
@@ -942,7 +937,7 @@ it.each([
     expect(line).toContain(`from ${alice} "Alice Smith" claimed owner ${bob}`);
     expect(line).toContain(`reply_to ${nested}`);
     expect(line).toContain("hello, edited");
-    if ("channel" in args || "q" in args) expect(line).toContain(`re ${root}`);
+    if ("channel" in args) expect(line).toContain(`re ${root}`);
     else expect(text.split("\n")[0]).toBe(`thread ${root} in chan`);
     // Human authors and direct replies keep their compact, unambiguous form.
     expect(
@@ -975,47 +970,7 @@ const next = (answer: string) => {
   return found ? (JSON.parse(found) as Record<string, unknown>) : undefined;
 };
 
-it("searches one author's messages since a time across channels, before the limit", async () => {
-  const { client } = fake([
-    profile(alice, "Alice Smith"),
-    event({ id: "3".repeat(64), created_at: 50, content: "too old" }),
-    event({
-      id: "4".repeat(64),
-      created_at: 200,
-      content: "rollout done",
-      tags: [["h", "other"]],
-    }),
-    // Newer messages from someone else that a limit applied first would keep.
-    ...["5", "6", "7"].map((n) =>
-      event({ id: n.repeat(64), pubkey: bob, created_at: 300 }),
-    ),
-  ]);
-  const answer = await read(client, {
-    q: "rollout",
-    author: npubEncode(alice),
-    since: 100,
-    limit: 2,
-  });
-  expect(answer).toBe(
-    `${"4".repeat(64)} from ${alice} "Alice Smith" in other at 1970-01-01T00:03Z: rollout done`,
-  );
-  // Without a channel, search still spans every channel it can read.
-  expect(client.query).toHaveBeenCalledWith([
-    {
-      kinds: [9, 40002, 45001, 45003],
-      search: "rollout",
-      limit: 2,
-      authors: [alice],
-      since: 100,
-    },
-  ]);
-  // A full page says more may match.
-  expect(await read(client, { q: "x", limit: 1 })).toMatch(
-    /\nResult limit reached; more matches may exist\. Narrow with channel, author, since or before\.$/,
-  );
-});
-
-it("tells apart people with the same name, and where each message is", async () => {
+it("names a channel read's channel once, and each reply's thread", async () => {
   const { client } = fake([
     profile(alice, "Sam"),
     profile(bob, "Sam"),
@@ -1031,11 +986,6 @@ it("tells apart people with the same name, and where each message is", async () 
       ],
     }),
   ]);
-  expect((await read(client, { q: "ship" })).split("\n")).toEqual([
-    `${"3".repeat(64)} from ${alice} "Sam" in chan at 1970-01-01T00:01Z: ship it`,
-    `${"4".repeat(64)} from ${bob} "Sam" in other re ${root} at 1970-01-01T00:02Z: ship it too`,
-  ]);
-  // A channel read names the channel once, and each reply's thread.
   expect(
     (await read(client, { channel: "other", author: bob, since: 110 })).split(
       "\n",
@@ -1096,26 +1046,34 @@ it("pages a thread to its start, each reply once, through timestamp ties", async
 it("refuses read arguments it cannot apply, saying how to fix them", async () => {
   const { client } = fake(community);
   for (const [args, error] of [
-    [{ q: "x", author: "alice" }, "author must be a hex pubkey or npub"],
-    [{ q: "x", author: 7 }, "author must be a hex pubkey or npub"],
-    [{ q: "x", since: "friday" }, "since must be Unix seconds"],
-    [{ q: "x", since: -1 }, "since must be Unix seconds"],
-    [{ q: "x", since: 1.5 }, "since must be Unix seconds"],
-    [{ q: "x", since: 1_760_000_000_000 }, "since must be Unix seconds"],
-    [{ q: "x", since: 200, before: 100 }, "since must not be after before"],
+    // A session that kept an older tool list may still search through read.
+    [{ q: "x" }, "read does not search; use search with the same q."],
+    [{ q: "x", channel: "chan" }, "read does not search; use search"],
+    [
+      { channel: "chan", author: "alice" },
+      "author must be a hex pubkey or npub",
+    ],
+    [{ channel: "chan", author: 7 }, "author must be a hex pubkey or npub"],
+    [{ channel: "chan", since: "friday" }, "since must be Unix seconds"],
+    [{ channel: "chan", since: -1 }, "since must be Unix seconds"],
+    [{ channel: "chan", since: 1.5 }, "since must be Unix seconds"],
+    [
+      { channel: "chan", since: 1_760_000_000_000 },
+      "since must be Unix seconds",
+    ],
+    [
+      { channel: "chan", since: 200, before: 100 },
+      "since must not be after before",
+    ],
     [{ channel: "chan", before_id: root }, "before_id needs before"],
     [{ channel: "chan", before: 1, before_id: "x" }, "before_id must be"],
     [
-      { q: "x", before: 1, before_id: root },
-      "before_id pages thread and channel reads",
-    ],
-    [
       { author: alice },
-      "author and since filter a search (q) or a channel read",
+      "author and since filter a channel read, not a thread; add channel, or use search.",
     ],
     [
       { thread: root, since: 1 },
-      "author and since filter a search (q) or a channel read",
+      "author and since filter a channel read, not a thread",
     ],
   ] as const)
     await expect(read(client, args), JSON.stringify(args)).rejects.toThrow(

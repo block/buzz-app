@@ -1,103 +1,141 @@
-import { createPlayout } from "../../features/huddle/playout";
-import { defaults } from "./config";
-import { AppServer, type Spawn } from "./rpc";
-import { openVoice } from "./voice";
-import promptUrl from "./voice-preview-prompt.mp3?url";
+import type { Host } from "../../features/host/service";
+import type { AppServer } from "./rpc";
 
-/** A disposable speech sample, with no microphone, tools, or saved conversation. */
+export type PreviewHost = Pick<Host, "request" | "requestBytes">;
+const LIMIT = 1024 * 1024;
+const BUDGET = 4 * LIMIT;
+const recordings = new Map<string, Uint8Array>();
+const pending = new Map<string, Promise<Uint8Array>>();
+let bytes = 0;
+
+function previewUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return (
+      url.origin === "https://persistent.oaistatic.com" &&
+      !url.username &&
+      !url.password &&
+      url.pathname.startsWith("/voice/previews/") &&
+      url.pathname.endsWith(".m4a")
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Refresh with the settings catalog; only ChatGPT credentials go to ChatGPT. */
+export async function discoverPreviews(rpc: AppServer, host: PreviewHost) {
+  const auth = await rpc.request<{ authMethod?: string; authToken?: string }>(
+    "getAuthStatus",
+    { includeToken: true, refreshToken: false },
+  );
+  if (auth.authMethod !== "chatgpt" || !auth.authToken) return {};
+  const response = await host.request({
+    url: "https://chatgpt.com/backend-api/settings/voices?spoken_language=en&voice_mode=wingman",
+    headers: { Authorization: `Bearer ${auth.authToken}` },
+  });
+  if (response.status !== 200)
+    throw new Error("Voice previews could not be discovered. Try again.");
+  const data: {
+    voices?: { voice?: unknown; name?: unknown; preview_url?: unknown }[];
+  } = JSON.parse(response.body);
+  if (!Array.isArray(data.voices))
+    throw new Error("Voice preview catalog is invalid.");
+  const urls: Record<string, string> = {};
+  for (const entry of data.voices) {
+    if (!entry || !previewUrl(entry.preview_url)) continue;
+    for (const key of [entry.voice, entry.name])
+      if (typeof key === "string") urls[key.toLowerCase()] = entry.preview_url;
+  }
+  return urls;
+}
+
+/** URL-keyed, size-bounded session memory, like attachment media caches. */
+export async function preloadPreview(
+  host: PreviewHost | undefined,
+  url: string,
+) {
+  if (!previewUrl(url))
+    throw new Error("No recording is available for this voice.");
+  const cached = recordings.get(url);
+  if (cached) {
+    recordings.delete(url);
+    recordings.set(url, cached);
+    return cached;
+  }
+  const running = pending.get(url);
+  if (running) return running;
+  const read = host?.requestBytes;
+  if (!read) throw new Error("Voice previews are unavailable on this device.");
+  const load = (async () => {
+    const response = await read({ url, maxBytes: LIMIT });
+    if (
+      response.status !== 200 ||
+      !response.body.byteLength ||
+      response.body.byteLength > LIMIT
+    )
+      throw new Error("Voice recording could not be loaded. Try again.");
+    recordings.set(url, response.body);
+    bytes += response.body.byteLength;
+    for (const [oldest, recording] of recordings) {
+      if (bytes <= BUDGET) break;
+      recordings.delete(oldest);
+      bytes -= recording.byteLength;
+    }
+    return response.body;
+  })();
+  pending.set(url, load);
+  try {
+    return await load;
+  } finally {
+    pending.delete(url);
+  }
+}
+
+/** A recording only: no conversation, generation, or microphone. */
 export async function previewVoice(
-  spawn: Spawn,
-  voice: string,
+  host: PreviewHost | undefined,
+  url: string,
   signal: AbortSignal,
+  started?: () => void,
 ) {
   signal.throwIfAborted();
-  const context = new AudioContext({ sampleRate: 48000 });
-  const resumed = context.resume();
-  const playout = createPlayout(context, context.destination, 0.02);
-  const rpc = new AppServer();
-  const abort = new AbortController();
-  let quiet: ReturnType<typeof setTimeout> | undefined;
+  const context = new AudioContext();
+  const source = context.createBufferSource();
   let finish!: () => void;
-  let fail!: (error: unknown) => void;
-  const done = new Promise<void>((resolve, reject) => {
+  const stopped = new Promise<void>((resolve) => {
     finish = resolve;
-    fail = reject;
   });
-  void done.catch(() => {});
+  const stop = () => {
+    finish();
+    void context.close().catch(() => {});
+  };
+  signal.addEventListener("abort", stop, { once: true });
   const wait = <T>(operation: Promise<T>) =>
     Promise.race([
       operation,
-      done.then(() => {
+      stopped.then(() => {
         throw new Error("Voice preview stopped");
       }),
     ]);
-  const stop = () => {
-    abort.abort();
-    playout.close();
-    void context.close().catch(() => {});
-    void rpc.close();
-    finish();
-  };
-  signal.addEventListener("abort", stop, { once: true });
-  const timeout = setTimeout(() => {
-    fail(new Error("Voice preview timed out. Try again."));
-    abort.abort();
-    void rpc.close();
-  }, 30_000);
+  source.onended = finish;
   try {
-    await wait(resumed);
-    const response = await wait(
-      fetch(promptUrl, { signal: AbortSignal.any([signal, abort.signal]) }),
+    const [recording] = await wait(
+      Promise.all([preloadPreview(host, url), context.resume()]),
     );
-    if (!response.ok)
-      throw new Error("Voice preview sample could not be loaded.");
-    const prompt = await wait(
-      context.decodeAudioData(await wait(response.arrayBuffer())),
-    );
-    await wait(rpc.open(spawn, defaults.workspace));
-    signal.throwIfAborted();
-    const { thread } = await wait(
-      rpc.request<{ thread: { id: string } }>("thread/start", {
-        ephemeral: true,
-        approvalPolicy: "never",
-        sandbox: "read-only",
-        config: { mcp_servers: {}, "features.apps": false },
-      }),
-    );
-    const connection = await wait(
-      openVoice(
-        rpc,
-        thread.id,
-        abort.signal,
-        async (samples) => {
-          playout.play(samples);
-          if (samples.some((sample) => Math.abs(sample) > 0.001)) {
-            clearTimeout(quiet);
-            quiet = setTimeout(finish, 1200);
-          }
-        },
-        (error) => (error ? fail(error) : finish()),
-        "Read the supplied speech sample only. Do not use tools.",
-        undefined,
-        voice || undefined,
-        true,
-        context,
-      ),
+    source.buffer = await wait(
+      context.decodeAudioData(recording.slice().buffer as ArrayBuffer),
     );
     signal.throwIfAborted();
-    // A bundled greeting request starts speech without opening a microphone.
-    const samples = prompt.getChannelData(0);
-    for (let offset = 0; offset < samples.length; offset += 960) {
-      abort.signal.throwIfAborted();
-      connection.input(Array.from(samples.subarray(offset, offset + 960)));
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    await done;
+    source.connect(context.destination);
+    source.start();
+    started?.();
+    await stopped;
   } finally {
-    clearTimeout(timeout);
-    clearTimeout(quiet);
     signal.removeEventListener("abort", stop);
-    stop();
-    await rpc.close();
+    source.onended = null;
+    source.disconnect();
+    await context.close().catch(() => {});
   }
 }

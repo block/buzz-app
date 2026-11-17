@@ -1,43 +1,149 @@
-import { afterEach, expect, it, vi } from "vitest";
-import { previewVoice } from "./voice-preview";
-import { openVoice } from "./voice";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { AppServer } from "./rpc";
 
-const rpc = vi.hoisted(() => ({
-  open: vi.fn(async () => {}),
-  close: vi.fn(async () => {}),
-  request: vi.fn(async () => ({ thread: { id: "preview" } })),
-}));
-vi.mock("./rpc", () => ({
-  AppServer: vi.fn(function AppServerMock() {
-    return rpc;
-  }),
-}));
-vi.mock("./voice", () => ({ openVoice: vi.fn() }));
-afterEach(() => {
-  vi.unstubAllGlobals();
-  vi.clearAllMocks();
-  vi.useRealTimers();
+beforeEach(() => vi.resetModules());
+afterEach(() => vi.unstubAllGlobals());
+const url = (name: string) =>
+  `https://persistent.oaistatic.com/voice/previews/${name}.en.test.m4a`;
+const response = (bytes = 12) => ({
+  status: 200,
+  headers: {},
+  body: new Uint8Array(bytes),
+});
+function fixture(authMethod = "chatgpt") {
+  const request = vi.fn(async () => ({ authMethod, authToken: "test-token" }));
+  const host = {
+    request: vi.fn(),
+    requestBytes: vi.fn(async () => response()),
+  };
+  return { rpc: { request } as unknown as AppServer, request, host };
+}
+
+it("discovers aliases from returned names and refreshes URLs on every request", async () => {
+  const { discoverPreviews } = await import("./voice-preview");
+  const f = fixture();
+  vi.mocked(f.host.request)
+    .mockResolvedValueOnce({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        voices: [
+          { voice: "orbit", name: "Spruce", preview_url: url("orbit") },
+          {
+            voice: "invalid",
+            name: "Invalid",
+            preview_url: "https://example.org/sample.m4a",
+          },
+        ],
+      }),
+    })
+    .mockResolvedValueOnce({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        voices: [
+          { voice: "orbit", name: "Spruce", preview_url: url("new-orbit") },
+        ],
+      }),
+    });
+  expect(await discoverPreviews(f.rpc, f.host)).toEqual({
+    orbit: url("orbit"),
+    spruce: url("orbit"),
+  });
+  expect(await discoverPreviews(f.rpc, f.host)).toEqual({
+    orbit: url("new-orbit"),
+    spruce: url("new-orbit"),
+  });
+  expect(f.host.request).toHaveBeenCalledTimes(2);
+  expect(f.host.request).toHaveBeenCalledWith(
+    expect.objectContaining({
+      url: "https://chatgpt.com/backend-api/settings/voices?spoken_language=en&voice_mode=wingman",
+      headers: { Authorization: "Bearer test-token" },
+    }),
+  );
 });
 
-function fixture(resume = Promise.resolve()) {
-  vi.useFakeTimers();
-  const close = vi.fn(async () => {});
-  const input = vi.fn();
+it("never sends an API key to ChatGPT", async () => {
+  const { discoverPreviews } = await import("./voice-preview");
+  const f = fixture("apikey");
+  expect(await discoverPreviews(f.rpc, f.host)).toEqual({});
+  expect(f.host.request).not.toHaveBeenCalled();
+});
+
+it("shares concurrent downloads, caches bytes by URL and refetches changed URLs", async () => {
+  const { preloadPreview } = await import("./voice-preview");
+  const f = fixture();
+  let release!: (value: ReturnType<typeof response>) => void;
+  vi.mocked(f.host.requestBytes).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const first = preloadPreview(f.host, url("cove"));
+  const second = preloadPreview(f.host, url("cove"));
+  expect(f.host.requestBytes).toHaveBeenCalledTimes(1);
+  release(response());
+  expect(await first).toBe(await second);
+  await preloadPreview(f.host, url("cove"));
+  expect(f.host.requestBytes).toHaveBeenCalledTimes(1);
+  await preloadPreview(f.host, url("cove-v2"));
+  expect(f.host.requestBytes).toHaveBeenCalledTimes(2);
+});
+
+it("evicts least recently used bytes at the budget and retries failed downloads", async () => {
+  const { preloadPreview } = await import("./voice-preview");
+  const f = fixture();
+  vi.mocked(f.host.requestBytes).mockResolvedValue(response(1024 * 1024));
+  for (const name of ["a", "b", "c", "d"])
+    await preloadPreview(f.host, url(name));
+  await preloadPreview(f.host, url("a"));
+  await preloadPreview(f.host, url("e"));
+  await preloadPreview(f.host, url("a"));
+  expect(f.host.requestBytes).toHaveBeenCalledTimes(5);
+  await preloadPreview(f.host, url("b"));
+  expect(f.host.requestBytes).toHaveBeenCalledTimes(6);
+  vi.mocked(f.host.requestBytes).mockRejectedValueOnce(new Error("offline"));
+  await expect(preloadPreview(f.host, url("retry"))).rejects.toThrow("offline");
+  await preloadPreview(f.host, url("retry"));
+  expect(f.host.requestBytes).toHaveBeenCalledTimes(8);
+});
+
+it("rejects foreign URLs and oversized recordings before caching", async () => {
+  const { preloadPreview } = await import("./voice-preview");
+  const f = fixture();
+  await expect(
+    preloadPreview(f.host, "https://example.org/sample.m4a"),
+  ).rejects.toThrow("No recording");
+  expect(f.host.requestBytes).not.toHaveBeenCalled();
+  vi.mocked(f.host.requestBytes).mockResolvedValueOnce(
+    response(1024 * 1024 + 1),
+  );
+  await expect(preloadPreview(f.host, url("huge"))).rejects.toThrow(
+    "could not be loaded",
+  );
+  await preloadPreview(f.host, url("huge"));
+  expect(f.host.requestBytes).toHaveBeenCalledTimes(2);
+});
+
+function audio() {
+  let began!: () => void;
+  const playing = new Promise<void>((resolve) => {
+    began = resolve;
+  });
+  const source = {
+    buffer: null,
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    start: vi.fn(began),
+    onended: null as (() => void) | null,
+  };
   const context = {
     destination: {},
-    currentTime: 0,
-    resume: () => resume,
-    close,
-    decodeAudioData: async () => ({
-      getChannelData: () => new Float32Array(1920).fill(0.1),
-    }),
-    createBuffer: () => ({ copyToChannel: vi.fn(), duration: 0.02 }),
-    createBufferSource: () => ({
-      connect: vi.fn(),
-      start: vi.fn(),
-      stop: vi.fn(),
-      disconnect: vi.fn(),
-    }),
+    createBufferSource: () => source,
+    resume: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    decodeAudioData: vi.fn(async () => ({})),
   };
   vi.stubGlobal(
     "AudioContext",
@@ -45,69 +151,46 @@ function fixture(resume = Promise.resolve()) {
       return context;
     }),
   );
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => ({
-      ok: true,
-      arrayBuffer: async () => new ArrayBuffer(1),
-    })),
+  return { source, context, playing };
+}
+it("plays decoded recording bytes and ends on the source event", async () => {
+  const { previewVoice } = await import("./voice-preview");
+  const f = fixture();
+  const a = audio();
+  const started = vi.fn();
+  const done = previewVoice(
+    f.host,
+    url("cove"),
+    new AbortController().signal,
+    started,
   );
-  vi.mocked(openVoice).mockImplementation(
-    async (_rpc, _thread, _signal, output) => ({
-      close: async () => {},
-      input: (samples) => {
-        input(samples);
-        void output([0.5]);
-      },
-    }),
+  await a.playing;
+  expect(started).toHaveBeenCalledOnce();
+  expect(a.context.decodeAudioData).toHaveBeenCalledOnce();
+  a.source.onended?.();
+  await done;
+  expect(a.context.close).toHaveBeenCalled();
+});
+it("cancels while loading without starting audio, then reuses the completed download", async () => {
+  const { previewVoice, preloadPreview } = await import("./voice-preview");
+  const f = fixture();
+  const a = audio();
+  let release!: (value: ReturnType<typeof response>) => void;
+  vi.mocked(f.host.requestBytes).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
   );
   const abort = new AbortController();
-  const spawn = vi.fn();
-  return {
-    close,
-    context,
-    input,
-    abort,
-    spawn,
-    start: () => previewVoice(spawn, "maple", abort.signal),
-  };
-}
-
-it("uses an ephemeral read-only seat and bundled input, then closes after the sample", async () => {
-  const f = fixture();
-  const playing = f.start();
-  await vi.advanceTimersByTimeAsync(1500);
-  await playing;
-  expect(rpc.request).toHaveBeenCalledWith(
-    "thread/start",
-    expect.objectContaining({
-      ephemeral: true,
-      sandbox: "read-only",
-      approvalPolicy: "never",
-    }),
-  );
-  expect(vi.mocked(openVoice).mock.calls[0]?.[7]).toBe("maple");
-  expect(vi.mocked(openVoice).mock.calls[0]?.[9]).toBe(f.context);
-  expect(f.input).toHaveBeenCalledTimes(2);
-  expect(vi.mocked(openVoice).mock.calls[0]?.[2].aborted).toBe(true);
-  expect(f.close).toHaveBeenCalled();
-  expect(rpc.close).toHaveBeenCalled();
-});
-
-it("stops a pending autoplay resume without starting Codex", async () => {
-  const f = fixture(new Promise(() => {}));
-  const playing = expect(f.start()).rejects.toThrow("stopped");
-  f.abort.abort();
-  await playing;
-  expect(rpc.open).not.toHaveBeenCalled();
-  expect(f.close).toHaveBeenCalled();
-});
-
-it("times out stalled startup and releases playback", async () => {
-  const f = fixture(new Promise(() => {}));
-  const playing = expect(f.start()).rejects.toThrow("timed out");
-  await vi.advanceTimersByTimeAsync(30_000);
-  await playing;
-  expect(f.close).toHaveBeenCalled();
-  expect(rpc.close).toHaveBeenCalled();
+  const done = expect(
+    previewVoice(f.host, url("cove"), abort.signal),
+  ).rejects.toThrow("stopped");
+  abort.abort();
+  await done;
+  expect(a.source.start).not.toHaveBeenCalled();
+  expect(a.context.close).toHaveBeenCalled();
+  release(response());
+  await preloadPreview(f.host, url("cove"));
+  expect(f.host.requestBytes).toHaveBeenCalledOnce();
 });

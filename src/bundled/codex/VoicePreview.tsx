@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  CheckIcon,
+  CircleNotchIcon,
   PlayIcon,
   StopIcon,
 } from "../../shared/design-system/icons";
@@ -10,14 +10,18 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
-import type { Spawn } from "./rpc";
-import { previewVoice } from "./voice-preview";
+import {
+  previewVoice,
+  preloadPreview,
+  type PreviewHost,
+} from "./voice-preview";
 
 const name = (voice: string) => voice.charAt(0).toUpperCase() + voice.slice(1);
 
 /** One playback owner for the settings control and its transient chooser. */
 export function VoicePreview({
-  spawn,
+  host,
+  previews,
   voice,
   voices,
   defaultVoice,
@@ -25,7 +29,8 @@ export function VoicePreview({
   previewDisabled = false,
   onChange,
 }: {
-  spawn: Spawn;
+  host?: PreviewHost | undefined;
+  previews?: Record<string, string> | undefined;
   voice: string;
   voices?: string[] | undefined;
   defaultVoice?: string | undefined;
@@ -38,8 +43,28 @@ export function VoicePreview({
   const [playing, setPlaying] = useState<{
     voice: string;
     abort: AbortController;
+    loading: boolean;
   }>();
   const [error, setError] = useState("");
+  useEffect(() => {
+    if (disabled || previewDisabled) return;
+    const selected = previews?.[voice || defaultVoice || ""];
+    if (selected) void preloadPreview(host, selected).catch(() => {});
+    if (open)
+      for (const choice of voices ?? []) {
+        const url = previews?.[choice];
+        if (url) void preloadPreview(host, url).catch(() => {});
+      }
+  }, [
+    host,
+    previews,
+    voice,
+    defaultVoice,
+    voices,
+    open,
+    disabled,
+    previewDisabled,
+  ]);
   useEffect(() => {
     if (disabled || previewDisabled) {
       playing?.abort.abort();
@@ -59,10 +84,18 @@ export function VoicePreview({
     stop();
     if (playing?.voice === sample) return;
     const abort = new AbortController();
-    setPlaying({ voice: sample, abort });
+    setPlaying({ voice: sample, abort, loading: true });
     setError("");
     try {
-      await previewVoice(spawn, sample, abort.signal);
+      await previewVoice(
+        host,
+        previews?.[sample || defaultVoice || ""] ?? "",
+        abort.signal,
+        () =>
+          setPlaying((current) =>
+            current?.abort === abort ? { ...current, loading: false } : current,
+          ),
+      );
     } catch (reason) {
       if (!abort.signal.aborted)
         setError(
@@ -92,10 +125,21 @@ export function VoicePreview({
     <IconButton
       aria-label={
         playing?.voice === value
-          ? `Stop preview of ${label(value)}`
+          ? `${playing.loading ? "Cancel loading" : "Stop"} preview of ${label(value)}`
           : `Preview ${label(value)}`
       }
-      icon={playing?.voice === value ? <StopIcon /> : <PlayIcon />}
+      aria-busy={playing?.voice === value && playing.loading}
+      icon={
+        playing?.voice === value ? (
+          playing.loading ? (
+            <CircleNotchIcon className="motion-safe:animate-spin" />
+          ) : (
+            <StopIcon />
+          )
+        ) : (
+          <PlayIcon />
+        )
+      }
       disabled={disabled || previewDisabled || !available(value)}
       onClick={() => void play(value)}
     />
@@ -119,8 +163,25 @@ export function VoicePreview({
                 : label(voice)}
             </Button>
             <IconButton
-              aria-label={playing ? "Stop preview" : "Preview voice"}
-              icon={playing ? <StopIcon /> : <PlayIcon />}
+              aria-label={
+                playing
+                  ? playing.loading
+                    ? "Cancel loading preview"
+                    : "Stop preview"
+                  : "Preview voice"
+              }
+              aria-busy={playing?.loading}
+              icon={
+                playing ? (
+                  playing.loading ? (
+                    <CircleNotchIcon className="motion-safe:animate-spin" />
+                  ) : (
+                    <StopIcon />
+                  )
+                ) : (
+                  <PlayIcon />
+                )
+              }
               disabled={disabled || previewDisabled || !available(voice)}
               onClick={() => void play(voice)}
             />
@@ -136,10 +197,13 @@ export function VoicePreview({
         }}
         title="Choose Huddle voice"
         size="compact"
+        headerGap="compact"
+        footerGap="none"
         finalFocus={trigger}
       >
         <Field label="Voice" labelVisibility="hidden">
           <RadioGroup
+            size="sm"
             value={voice}
             onValueChange={(value) => {
               stop();
@@ -157,14 +221,9 @@ export function VoicePreview({
                 <div className="min-w-0 flex-1">
                   <Radio
                     value={value}
-                    variant="tile"
+                    variant="row"
                     disabled={!available(value)}
-                    label={
-                      <span className="flex items-center gap-2">
-                        {label(value)}
-                        {voice === value && <CheckIcon aria-hidden="true" />}
-                      </span>
-                    }
+                    label={label(value)}
                   />
                 </div>
                 {preview(value)}

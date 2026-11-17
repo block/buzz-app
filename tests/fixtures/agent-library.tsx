@@ -221,6 +221,7 @@ if (thinkingHarness === "claude") {
   };
   const provider = {
     ...staticStore(providerState),
+    check: async () => {},
     recommended: () => null,
     resolve: (value: unknown) => ({
       ...codexDefaults,

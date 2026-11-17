@@ -1,19 +1,25 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { VoicePreview } from "./VoicePreview";
-import { previewVoice } from "./voice-preview";
-import type { Spawn } from "./rpc";
+import { previewVoice, preloadPreview } from "./voice-preview";
+import type { PreviewHost } from "./voice-preview";
 
-vi.mock("./voice-preview", () => ({ previewVoice: vi.fn() }));
-const spawn: Spawn = async () => {
-  throw new Error("Unexpected process");
+vi.mock("./voice-preview", () => ({
+  previewVoice: vi.fn(),
+  preloadPreview: vi.fn(async () => new Uint8Array()),
+}));
+const host: PreviewHost = { request: vi.fn(), requestBytes: vi.fn() };
+const previews = {
+  cove: "https://persistent.oaistatic.com/voice/previews/cove.test.m4a",
+  maple: "https://persistent.oaistatic.com/voice/previews/maple.test.m4a",
 };
 afterEach(() => {
   cleanup();
-  vi.resetAllMocks();
+  vi.clearAllMocks();
+  vi.mocked(previewVoice).mockReset();
 });
 
 it("previews the unsaved choice, stops immediately, and ignores a late failure", async () => {
@@ -27,7 +33,8 @@ it("previews the unsaved choice, stops immediately, and ignores a late failure",
   const user = userEvent.setup();
   render(
     <VoicePreview
-      spawn={spawn}
+      host={host}
+      previews={previews}
       voice="maple"
       disabled={false}
       onChange={vi.fn()}
@@ -35,12 +42,15 @@ it("previews the unsaved choice, stops immediately, and ignores a late failure",
   );
   await user.click(screen.getByRole("button", { name: "Preview voice" }));
   expect(previewVoice).toHaveBeenCalledWith(
-    spawn,
-    "maple",
+    host,
+    previews.maple,
     expect.any(AbortSignal),
+    expect.any(Function),
   );
   const signal = vi.mocked(previewVoice).mock.calls[0]?.[2];
-  await user.click(screen.getByRole("button", { name: "Stop preview" }));
+  await user.click(
+    screen.getByRole("button", { name: "Cancel loading preview" }),
+  );
   expect(signal?.aborted).toBe(true);
   reject(new Error("Late error"));
   expect(
@@ -55,7 +65,8 @@ it("ends a preview when its keyed voice changes or settings closes", async () =>
   const view = render(
     <VoicePreview
       key="cove"
-      spawn={spawn}
+      host={host}
+      previews={previews}
       voice="cove"
       disabled={false}
       onChange={vi.fn()}
@@ -66,7 +77,8 @@ it("ends a preview when its keyed voice changes or settings closes", async () =>
   view.rerender(
     <VoicePreview
       key="maple"
-      spawn={spawn}
+      host={host}
+      previews={previews}
       voice="maple"
       disabled={false}
       onChange={vi.fn()}
@@ -85,7 +97,13 @@ it("shows errors and lets the user retry the default voice", async () => {
     .mockResolvedValueOnce();
   const user = userEvent.setup();
   render(
-    <VoicePreview spawn={spawn} voice="" disabled={false} onChange={vi.fn()} />,
+    <VoicePreview
+      host={host}
+      previews={previews}
+      voice=""
+      disabled={false}
+      onChange={vi.fn()}
+    />,
   );
   await user.click(screen.getByRole("button", { name: "Preview voice" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -96,9 +114,10 @@ it("shows errors and lets the user retry the default voice", async () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
   );
   expect(previewVoice).toHaveBeenLastCalledWith(
-    spawn,
+    host,
     "",
     expect.any(AbortSignal),
+    expect.any(Function),
   );
 });
 
@@ -108,7 +127,8 @@ it("previews dialog rows independently from selection and stops on dismissal", a
   const user = userEvent.setup();
   render(
     <VoicePreview
-      spawn={spawn}
+      host={host}
+      previews={previews}
       voice="cove"
       voices={["cove", "maple"]}
       defaultVoice="cove"
@@ -135,7 +155,8 @@ it("chooses a row without starting a preview", async () => {
   const user = userEvent.setup();
   render(
     <VoicePreview
-      spawn={spawn}
+      host={host}
+      previews={previews}
       voice=""
       voices={["cove", "maple"]}
       defaultVoice="cove"
@@ -150,4 +171,57 @@ it("chooses a row without starting a preview", async () => {
   await user.click(screen.getByRole("radio", { name: "Maple" }));
   expect(onChange).toHaveBeenCalledWith("maple");
   expect(previewVoice).not.toHaveBeenCalled();
+});
+
+it("keeps loading cancellable until the first audio and ignores stale audio callbacks", async () => {
+  vi.mocked(previewVoice).mockImplementation(() => new Promise(() => {}));
+  const user = userEvent.setup();
+  render(
+    <VoicePreview
+      host={host}
+      previews={previews}
+      voice="cove"
+      voices={["cove", "maple"]}
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Preview voice" }));
+  const loading = screen.getByRole("button", {
+    name: "Cancel loading preview",
+  });
+  expect(loading).toBeEnabled();
+  expect(loading).toHaveAttribute("aria-busy", "true");
+  const stale = vi.mocked(previewVoice).mock.calls[0]?.[3];
+  await user.click(loading);
+  await user.click(screen.getByRole("button", { name: "Preview voice" }));
+  act(() => stale?.());
+  expect(
+    screen.getByRole("button", { name: "Cancel loading preview" }),
+  ).toHaveAttribute("aria-busy", "true");
+  act(() => vi.mocked(previewVoice).mock.calls[1]?.[3]?.());
+  expect(
+    screen.getByRole("button", { name: "Stop preview" }),
+  ).not.toHaveAttribute("aria-busy", "true");
+});
+
+it("preloads the selected recording, then the other choices when the picker opens", async () => {
+  const user = userEvent.setup();
+  render(
+    <VoicePreview
+      host={host}
+      previews={previews}
+      voice=""
+      defaultVoice="cove"
+      voices={["cove", "maple"]}
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
+  await waitFor(() =>
+    expect(preloadPreview).toHaveBeenCalledWith(host, previews.cove),
+  );
+  expect(preloadPreview).not.toHaveBeenCalledWith(host, previews.maple);
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  expect(preloadPreview).toHaveBeenCalledWith(host, previews.maple);
 });

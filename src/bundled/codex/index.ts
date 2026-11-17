@@ -34,6 +34,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     start,
     ctx.agents.storage,
     setup,
+    {
+      request: (input) => ctx.host.request(input),
+      ...(ctx.host.requestBytes
+        ? { requestBytes: ctx.host.requestBytes.bind(ctx.host) }
+        : {}),
+    },
   );
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.codex"}/${TYPE_ID}`;
   const runtime = new CodexRuntime(

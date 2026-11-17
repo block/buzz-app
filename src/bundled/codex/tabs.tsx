@@ -72,11 +72,13 @@ import type { CodexRuntime, SavedConversation } from "./runtime";
 import type { CodexSetup } from "./setup";
 import { readTranscript, TURN_LIMIT } from "./transcript";
 import { VoicePreview } from "./VoicePreview";
+import { discoverPreviews, type PreviewHost } from "./voice-preview";
 
 const label = ({ channelId, name, root }: SavedConversation) =>
   `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 
 type Catalog = {
+  previews?: Record<string, string> | undefined;
   voices?: string[] | undefined;
   defaultVoice?: string | undefined;
   models: Model[];
@@ -94,7 +96,7 @@ const SIGN_IN_ERROR = "Codex needs you to sign in.";
 const NOT_INSTALLED = "The Codex integration isn't installed yet.";
 const CONVERSATION_LIMIT = 30;
 /** Read-only setup/catalog discovery uses the same declared native transport. */
-async function catalog(spawn: Spawn, signal: AbortSignal) {
+async function catalog(spawn: Spawn, signal: AbortSignal, host?: PreviewHost) {
   const rpc = new AppServer();
   const abort = () => {
     void rpc.close();
@@ -107,15 +109,17 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
     if (await needsSignIn(rpc)) throw new Error(SIGN_IN_ERROR);
     const models = await listModels(rpc);
     // Older Codex releases do not publish a v3 catalog. Model selection still works.
-    const [voices, config] = await Promise.all([
+    const [voices, config, previews] = await Promise.all([
       voiceCatalog(rpc).catch(() => undefined),
       rpc
         .request<{ config: { realtime?: { voice?: string } } }>("config/read", {
           includeLayers: false,
         })
         .catch(() => undefined),
+      host ? discoverPreviews(rpc, host).catch(() => undefined) : undefined,
     ]);
     return {
+      previews,
       models,
       voices: voices?.v3,
       defaultVoice: config
@@ -140,6 +144,7 @@ export class CodexProvider {
     private readonly spawn: Spawn,
     private readonly storage: AgentStore = localStore(),
     private readonly setup?: CodexSetup,
+    readonly previewHost?: PreviewHost,
   ) {
     this.state = Object.freeze({
       readiness: "checking",
@@ -195,7 +200,7 @@ export class CodexProvider {
               ? SIGN_IN_ERROR
               : status.message,
         );
-      const data = await catalog(this.spawn, abort.signal);
+      const data = await catalog(this.spawn, abort.signal, this.previewHost);
       if (this.abort === abort) {
         this.set({
           readiness: "ready",
@@ -1290,7 +1295,11 @@ export function createTabs(
       defaults: providerDefaults,
       check,
       bound,
+      local,
     } = useProvider(agent);
+    useEffect(() => {
+      if (local && agent.key) void provider.check();
+    }, [local, agent.key]);
     useEffect(() => {
       setDraft(readConfig(agent.config));
     }, [agent.config]);
@@ -1441,8 +1450,9 @@ export function createTabs(
             </SettingsGroup>
             <SettingsGroup>
               <VoicePreview
-                key={`${agent.key}:${draft.voice ?? ""}`}
-                spawn={spawn}
+                key={agent.key}
+                host={provider.previewHost}
+                previews={data?.previews}
                 voice={draft.voice ?? ""}
                 voices={data?.voices}
                 defaultVoice={data?.defaultVoice}

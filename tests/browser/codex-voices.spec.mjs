@@ -18,6 +18,7 @@ test("Codex Huddle voices persist separately through the settings host", async (
   await expect(preview).toBeEnabled();
   await voice.click();
   await page.getByRole("radio", { name: "Maple", exact: true }).click();
+  await expect(voice).toBeFocused();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),

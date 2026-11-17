@@ -39,6 +39,7 @@ import { sessionTag } from "./prompt";
 import { CodexProvider, createTabs } from "./tabs";
 import { CodexRuntime } from "./runtime";
 import type { Wire } from "./rpc";
+import type { PreviewHost } from "./voice-preview";
 import { CodexSetup } from "./setup";
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -64,6 +65,7 @@ afterEach(() => {
   localStorage.clear();
 });
 function fixture({
+  previewHost,
   signedIn = true,
   requiresOpenaiAuth = true,
   installed = true,
@@ -82,6 +84,7 @@ function fixture({
   inspection,
   sessionStorage,
 }: {
+  previewHost?: PreviewHost;
   binding?: AgentExecutionBinding;
   inspection?: Promise<AgentExecutionBinding | undefined>;
   sessionStorage?: AgentStore;
@@ -172,6 +175,8 @@ function fixture({
             nextCursor: null,
           };
         }
+        if (wire.method === "getAuthStatus")
+          result = { authMethod: "chatgpt", authToken: "test-token" };
         if (wire.method === "account/read")
           result = {
             account: disk.signedIn
@@ -236,7 +241,7 @@ function fixture({
     return process;
   });
   const setup = new CodexSetup(spawn);
-  const provider = new CodexProvider(spawn, storage, setup);
+  const provider = new CodexProvider(spawn, storage, setup, previewHost);
   const relay = {
     snapshot: () => ({
       status: "ready",
@@ -2926,4 +2931,43 @@ it("shows the configured realtime voice as the Codex default", async () => {
   expect(
     screen.queryByText("Applies when this agent next joins a Huddle."),
   ).not.toBeInTheDocument();
+});
+
+it("rediscovers supported voices and preview URLs whenever settings is reopened", async () => {
+  let revision = 0;
+  const host: PreviewHost = {
+    request: vi.fn(async () => ({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        voices: [
+          {
+            voice: "cove",
+            name: "Cove",
+            preview_url: `https://persistent.oaistatic.com/voice/previews/cove.${++revision}.m4a`,
+          },
+        ],
+      }),
+    })),
+    requestBytes: vi.fn(async () => ({
+      status: 200,
+      headers: {},
+      body: new Uint8Array([1]),
+    })),
+  };
+  const voices = ["cove"];
+  const f = fixture({ previewHost: host, voices });
+  const first = render(<f.tabs.SettingsTab {...f.props()} />);
+  await waitFor(() =>
+    expect(f.provider.snapshot().data?.previews?.cove).toContain("cove.1.m4a"),
+  );
+  first.unmount();
+  voices.push("maple");
+  const next = render(<f.tabs.SettingsTab {...f.props()} />);
+  await waitFor(() =>
+    expect(f.provider.snapshot().data?.previews?.cove).toContain("cove.2.m4a"),
+  );
+  expect(host.request).toHaveBeenCalledTimes(2);
+  expect(f.provider.snapshot().data?.voices).toEqual(["cove", "maple"]);
+  next.unmount();
 });

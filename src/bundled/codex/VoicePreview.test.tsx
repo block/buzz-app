@@ -203,6 +203,7 @@ it("keeps loading cancellable until the first audio and ignores stale audio call
   expect(
     screen.getByRole("button", { name: "Stop preview" }),
   ).not.toHaveAttribute("aria-busy", "true");
+  expect(vi.mocked(previewVoice).mock.calls[1]?.[2].aborted).toBe(false);
 });
 
 it("preloads the selected recording, then the other choices when the picker opens", async () => {
@@ -224,4 +225,50 @@ it("preloads the selected recording, then the other choices when the picker open
   expect(preloadPreview).not.toHaveBeenCalledWith(host, previews.maple);
   await user.click(screen.getByRole("button", { name: "Huddle voice" }));
   expect(preloadPreview).toHaveBeenCalledWith(host, previews.maple);
+});
+
+it("keeps playback alive when loading changes to playing", async () => {
+  vi.mocked(previewVoice).mockImplementation(() => new Promise(() => {}));
+  const user = userEvent.setup();
+  const view = render(
+    <VoicePreview
+      host={host}
+      previews={previews}
+      voice="cove"
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Preview voice" }));
+  const call = vi.mocked(previewVoice).mock.calls[0];
+  act(() => call?.[3]?.());
+  expect(call?.[2].aborted).toBe(false);
+  view.unmount();
+  expect(call?.[2].aborted).toBe(true);
+});
+it("keeps arrow navigation open and dismisses activation of the selected row", async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  render(
+    <VoicePreview
+      host={host}
+      previews={previews}
+      voice=""
+      voices={["cove", "maple"]}
+      defaultVoice="cove"
+      disabled={false}
+      onChange={onChange}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  screen.getByRole("radio", { name: "Codex default (Cove)" }).focus();
+  await user.keyboard("{ArrowDown}");
+  expect(
+    screen.getByRole("dialog", { name: "Choose Huddle voice" }),
+  ).toBeVisible();
+  expect(onChange).toHaveBeenCalledWith("cove");
+  await user.click(screen.getByRole("radio", { name: "Codex default (Cove)" }));
+  expect(
+    screen.queryByRole("dialog", { name: "Choose Huddle voice" }),
+  ).not.toBeInTheDocument();
 });

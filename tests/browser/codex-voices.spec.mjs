@@ -17,7 +17,18 @@ test("Codex Huddle voices persist separately through the settings host", async (
   });
   await expect(preview).toBeEnabled();
   await voice.click();
-  await page.getByRole("radio", { name: "Maple", exact: true }).click();
+  await page
+    .getByRole("radio", { name: "Codex default (Cove)", exact: true })
+    .focus();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    page.getByRole("dialog", { name: "Choose Huddle voice" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("radio", { name: "Maple", exact: true }),
+  ).toBeChecked();
+  await page.keyboard.press("Enter");
   await expect(voice).toBeFocused();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(

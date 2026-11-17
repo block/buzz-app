@@ -71,11 +71,8 @@ export function VoicePreview({
       setPlaying(undefined);
     }
   }, [playing, disabled, previewDisabled]);
-  useEffect(() => {
-    return () => {
-      playing?.abort.abort();
-    };
-  }, [playing]);
+  const playback = playing?.abort;
+  useEffect(() => () => playback?.abort(), [playback]);
   const stop = () => {
     playing?.abort.abort();
     setPlaying(undefined);
@@ -208,7 +205,6 @@ export function VoicePreview({
             onValueChange={(value) => {
               stop();
               onChange(value);
-              setOpen(false);
             }}
             disabled={disabled}
           >
@@ -222,6 +218,16 @@ export function VoicePreview({
                   <Radio
                     value={value}
                     variant="row"
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        event.currentTarget.click();
+                      }
+                    }}
+                    onClick={() => {
+                      stop();
+                      setOpen(false);
+                    }}
                     disabled={!available(value)}
                     label={label(value)}
                   />

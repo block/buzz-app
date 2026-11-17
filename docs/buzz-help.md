@@ -397,13 +397,23 @@ and are asked to sign in again in Buzz.
 - Plugins can add actions to this toolbar. A link to an active plugin panel
   opens that panel in the conversation. If the plugin is removed, its actions
   and panel links become unavailable.
-- **Forward message** in a message's menu sends its link to one person in the
-  current community, with an optional note. Buzz sends it in your direct
-  message with them, starting one if needed, and you stay where you are;
-  select the confirmation notice while it's showing to open the forwarded
-  message in that DM. The link previews the original message; the
-  recipient still needs access to its conversation. Forwarding is unavailable
-  when the connection cannot start DMs or the message has no link yet.
+- **Forward message** in a message's menu sends a readable copy to a person,
+  several people (a group DM), or one channel in the current community, with an
+  optional note. Only channels you can post in appear. You stay where you are;
+  select the confirmation notice to open the sent message.
+  The **Forwarded** card includes the original author, time, text and attachments.
+  Recipients can read the copy without access to the original conversation.
+  Private sources have a sharing notice before sending. Their names are shown
+  only to viewers who can access them; others see **Private conversation**.
+  **View original** appears when the original can be opened. Long copies expand
+  inline with **Show full message**. Later edits or deletion of the original do
+  not change the copy. Forwarded attribution is supplied by the sender, not
+  cryptographic proof. Mentions inside the copy retain their labels but do not
+  notify again. The dialog’s optional note is plain text; its mentions do not notify.
+  Messages exceeding the forwarding size limit, or containing a local file
+  without sharable attachment metadata (including custom emoji), show an
+  explanation before sending. Forward is disabled; **Copy link** is available
+  in the dialog. A link still requires access to the original conversation.
 - Select text in a message, such as by double-clicking a word, and choose
   **Quote** (or press Q) to add it to the end of that conversation's draft as a
   quote, ready for your reply below it. A selection in a thread quotes into the
@@ -575,6 +585,17 @@ and are asked to sign in again in Buzz.
   meanwhile get a divider above the first of them when you come back, before
   anything is marked read; older unread messages, or a read elsewhere on this
   device while you were away, leave that visit without one.
+- **Opening a thread** without choosing a reply starts at its first unread
+  reply, below a **New messages** divider that stays as you read. When the
+  unread reply is nested under another reply, the divider goes above that
+  reply's branch, whose count shows what is new. Buzz loads older replies until
+  it finds where unread replies begin. Opening the thread again, even in a tab
+  that is still open, finds the first unread reply again; switching tabs keeps
+  the divider. A thread with nothing unread opens at its latest reply, as
+  does one whose unread replies this device has not seen yet. An unread
+  channel thread selected in Activity opens the same way, though selecting it
+  marks it read. Opening a specific reply, such as a mention, opens at that
+  reply.
 - **Marking a channel read** keeps the cut from your click when retried. If a newer
   manual unread choice was saved in another window while it waited, the read fails
   rather than clearing that choice. Mark the channel read again to clear it.
@@ -624,7 +645,7 @@ and are asked to sign in again in Buzz.
   nothing typed lists up to six of your other unread channels and DMs first,
   most recently active first, and selects the first, so Enter opens it, instead
   of reopening where you left it. A conversation unread only through thread
-  replies previews its newest unread reply and opens it in its thread. Muted
+  replies previews its newest unread reply and opens that thread. Muted
   conversations are left out. Turn this off with **Show unread first in
   search** in Settings → Appearance → Conversations.
 - **Activity** threads name their channel above the original message. Select that

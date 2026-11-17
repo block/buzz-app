@@ -3307,7 +3307,7 @@ it("tells a thread through its latest request when the turn took in a steer from
   }));
   await f.runtime.run({
     ...steered,
-    agent: { ...steered.agent, publish } as Delivery["agent"],
+    agent: { ...steered.agent, publish } as unknown as Delivery["agent"],
   });
   await vi.waitFor(() =>
     expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(

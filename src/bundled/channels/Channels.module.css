@@ -694,29 +694,12 @@ details:not([open]) > summary .sectionChevron {
   width: 0;
   height: 1em;
   vertical-align: middle;
-  opacity: 0;
-  transform: translateX(calc(-1 * var(--space-1)));
-  transition:
-    opacity var(--duration-state) var(--easing-state),
-    transform var(--duration-state) var(--easing-state);
 }
 .settingsTitlePencil > svg {
   position: absolute;
   inset-inline-start: var(--space-2);
   top: 50%;
   transform: translateY(-50%);
-}
-.settingsTitleAction[aria-busy="true"] .settingsTitlePencil,
-.settingsTitleAction:hover .settingsTitlePencil,
-.settingsTitleAction:focus-visible .settingsTitlePencil {
-  opacity: 1;
-  transform: translateX(0);
-}
-@media (hover: none) {
-  .settingsTitlePencil {
-    opacity: 1;
-    transform: none;
-  }
 }
 .settingsIcon {
   display: grid;
@@ -773,36 +756,6 @@ details:not([open]) > summary .sectionChevron {
 .settingsDetailIcon {
   display: inline-flex;
   color: var(--text-subtle);
-  opacity: 0;
-  transform: translateX(calc(-1 * var(--space-1)));
-  transition:
-    opacity var(--duration-state) var(--easing-state),
-    transform var(--duration-state) var(--easing-state);
-}
-.settingsDetailAction[aria-busy="true"] .settingsDetailIcon,
-.settingsDetailAction:hover .settingsDetailIcon,
-.settingsDetailAction:focus-visible .settingsDetailIcon,
-.settingsDetails > div:hover .settingsLabelAction .settingsDetailIcon {
-  opacity: 1;
-  transform: translateX(0);
-}
-@media (hover: none) {
-  .settingsDetailIcon {
-    opacity: 1;
-    transform: none;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .settingsTitlePencil,
-  .settingsTitleAction:hover .settingsTitlePencil,
-  .settingsTitleAction:focus-visible .settingsTitlePencil,
-  .settingsDetailIcon,
-  .settingsDetailAction:hover .settingsDetailIcon,
-  .settingsDetailAction:focus-visible .settingsDetailIcon,
-  .settingsDetails > div:hover .settingsLabelAction .settingsDetailIcon {
-    transform: none;
-    transition: none;
-  }
 }
 .settingsDetailAction:focus-visible {
   outline: none;
@@ -826,6 +779,18 @@ details:not([open]) > summary .sectionChevron {
 .settingsDetails dd {
   margin: var(--space-1) 0 0;
   color: var(--text-subtle);
+}
+/* Matches a menu option: icon beside the label, description beneath it. */
+.settingsAccess {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-2);
+  margin-block-start: var(--space-1);
+  overflow-wrap: break-word;
+}
+.settingsAccess > :last-child {
+  grid-column: 2;
 }
 /* The switch trails its description; an error spans the row below both. */
 .settingsSwitch > dd {

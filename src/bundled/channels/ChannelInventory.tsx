@@ -214,11 +214,18 @@ export function ChannelInventory({
     },
     [preferences.data, rowSortModes],
   );
+  const appliedSorts = Object.keys(preferences.data?.sort ?? {}).map(
+    sectionSort,
+  );
+  const pluginSorted = appliedSorts.some(
+    (mode) => mode !== "alpha" && mode !== "recent",
+  );
   const list = useChannelRoster(queries.channels, {
     activity:
-      Object.keys(preferences.data?.sort ?? {}).some(
-        (key) => sectionSort(key) !== "alpha",
-      ) || Object.values(preferences.data?.filters ?? {}).includes("active"),
+      pluginSorted ||
+      appliedSorts.includes("recent") ||
+      Object.values(preferences.data?.filters ?? {}).includes("active"),
+    preview: pluginSorted,
   });
   const rosterRecovers = useRecoveryOwns(queries, (live) =>
     rosterRecovering(live.roster),

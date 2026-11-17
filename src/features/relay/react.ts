@@ -27,18 +27,28 @@ export function useChannelList(queries: ChannelQueries) {
 /**
  * The roster without its live activity: previews and activity replace the list
  * on every message, so a ready list that changed only those fields keeps the
- * previous snapshot. With `activity`, only previews are ignored, for surfaces
- * that order or filter by `lastActivityAt`. Read `preview` from
- * useChannelList or useLiveChannelSummary.
+ * previous snapshot. `activity` keeps `lastActivityAt` and `activityKnown`
+ * changes, and `preview` keeps `preview` changes, for surfaces that order or
+ * filter by them. Rows read their own preview with useLiveChannelSummary.
  */
 export function useChannelRoster(
   queries: ChannelQueries,
-  { activity = false }: { activity?: boolean } = {},
+  {
+    activity = false,
+    preview = false,
+  }: { activity?: boolean; preview?: boolean } = {},
 ) {
   useEffect(() => queries.ensureList(), [queries]);
+  const ignored = activity
+    ? preview
+      ? noFields
+      : previewField
+    : preview
+      ? activityTimes
+      : activityFields;
   const last = useRef<{
     queries: ChannelQueries;
-    activity: boolean;
+    ignored: ReadonlySet<string>;
     list: ChannelList;
   }>(undefined);
   const snapshot = useCallback(() => {
@@ -46,15 +56,15 @@ export function useChannelRoster(
     const previous = last.current;
     if (
       previous?.queries === queries &&
-      previous.activity === activity &&
+      previous.ignored === ignored &&
       previous.list.activityStatus === next.activityStatus &&
       previous.list.error === next.error &&
-      sameRoster(previous.list, next, activity ? previewField : activityFields)
+      sameRoster(previous.list, next, ignored)
     )
       return previous.list;
-    last.current = { queries, activity, list: next };
+    last.current = { queries, ignored, list: next };
     return next;
-  }, [queries, activity]);
+  }, [queries, ignored]);
   return useSyncExternalStore(queries.subscribeList, snapshot, snapshot);
 }
 const listIndexes = new WeakMap<ChannelList, Map<string, ChannelSummary>>();
@@ -66,20 +76,45 @@ function listEntry(list: ChannelList, id: string) {
   }
   return index.get(id);
 }
-/** One row's current summary, so a message re-renders that row only. Falls
- * back to `channel` while the live list does not hold it. */
+/**
+ * One row's live preview and activity, so a message re-renders that row only.
+ * Everything else, including the host's resolved DM name, stays `channel`'s.
+ */
 export function useLiveChannelSummary(
   queries: ChannelQueries,
   channel: ChannelSummary,
 ) {
   const snapshot = useCallback(
-    () => listEntry(queries.list(), channel.id) ?? channel,
-    [queries, channel],
+    () => listEntry(queries.list(), channel.id),
+    [queries, channel.id],
   );
-  return useSyncExternalStore(queries.subscribeList, snapshot, snapshot);
+  const live = useSyncExternalStore(queries.subscribeList, snapshot, snapshot);
+  return useMemo(
+    () =>
+      !live ||
+      [...activityFields].every(
+        (key) =>
+          live[key as keyof ChannelSummary] ===
+          channel[key as keyof ChannelSummary],
+      )
+        ? channel
+        : withActivity(channel, live),
+    [channel, live],
+  );
+}
+function withActivity(channel: ChannelSummary, live: ChannelSummary) {
+  const merged: Record<string, unknown> = { ...channel };
+  for (const key of activityFields) {
+    const value = live[key as keyof ChannelSummary];
+    if (value === undefined) delete merged[key];
+    else merged[key] = value;
+  }
+  return merged as ChannelSummary;
 }
 const activityFields = new Set(["preview", "lastActivityAt", "activityKnown"]);
 const previewField = new Set(["preview"]);
+const activityTimes = new Set(["lastActivityAt", "activityKnown"]);
+const noFields = new Set<string>();
 function sameRoster(
   a: ChannelList,
   b: ChannelList,

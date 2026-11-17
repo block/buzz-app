@@ -234,6 +234,8 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     messageId: string;
     navigation: PageNavigation | undefined;
     revealRequest: number | undefined;
+    // Settles with its selection, so a retarget's line is decided for it.
+    unreadRequest: ThreadPanelProps["unreadRequest"];
     revision: number;
   };
   const current = useRef<Opening | undefined>(undefined);
@@ -263,6 +265,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     onRetryNavigation,
     revealSelected,
     revealRequest,
+    unreadRequest,
   } = props;
   const retryNavigation = useCallback(() => {
     retrying.current = true;
@@ -295,6 +298,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
         !navigation &&
         prior.messageId === messageId &&
         prior.revealRequest === revealRequest &&
+        prior.unreadRequest === unreadRequest &&
         !retrying.current
       ) {
         const next = { ...prior, navigation: undefined };
@@ -314,7 +318,13 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
         }
         if (signal.aborted || current.current !== prior) return;
         if (result === "selected") {
-          const next = { ...prior, messageId, navigation, revealRequest };
+          const next = {
+            ...prior,
+            messageId,
+            navigation,
+            revealRequest,
+            unreadRequest,
+          };
           current.current = next;
           setOpening(next);
           settle();
@@ -354,6 +364,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           messageId,
           navigation,
           revealRequest,
+          unreadRequest,
           revision: (prior?.revision ?? 0) + 1,
         };
         current.current = next;
@@ -380,6 +391,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     navigation,
     revealSelected,
     revealRequest,
+    unreadRequest,
     attempt,
   ]);
   return (
@@ -401,6 +413,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           navigation={opening.navigation}
           routePending={!!routing}
           revealRequest={opening.revealRequest}
+          unreadRequest={opening.unreadRequest}
           selectionFailure={
             failure && { ...failure, pending, retry: retryNavigation }
           }

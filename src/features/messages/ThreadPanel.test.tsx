@@ -1200,6 +1200,42 @@ it("places a requested read time's line above the first branch unread as of that
   expect(above(own)).toBeFalsy();
   expect(h.element.scrollTop).toBe(300);
 });
+it("a retained panel shown at a reply places a requested read time's line once it retargets to the root", async () => {
+  const h = messagesHarness();
+  const { reply, asOf } = unreadReplies(h);
+  const earlier = reply("earlier", 2);
+  const later = reply("later", 5);
+  asOf.set(2, new Set([later.id]));
+  h.snapshot.replies = [earlier, later];
+  Object.assign(h.props as ThreadPanelProps, {
+    messageId: earlier.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  let release!: (value: "selected") => void;
+  h.view.retarget.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  Object.assign(h.props as ThreadPanelProps, {
+    messageId: row.id,
+    revealSelected: false,
+    revealRequest: undefined,
+    unreadRequest: { readThrough: 2 },
+  });
+  h.rerenderProps();
+  await act(async () => release("selected"));
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(
+    line.compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${later.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+});
 it("renders replies after the original without a reply-count divider", () => {
   const h = messagesHarness();
   h.snapshot.root = { ...row, replyCount: 0 };

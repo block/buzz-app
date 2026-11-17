@@ -154,6 +154,22 @@ without them), whether they sync and the current instructions revision. A
 hosted agent or one on another device gives its synced instructions when the
 owner can read them here (read only, never creating or moving its config),
 and otherwise `unavailable` saying why.
+
+Each named or listed agent also has `modelSettings`. Codex, Claude Code, goose
+and Pi expose `model` and `effort`; goose and Pi also expose `provider`.
+Each field has a `source`: `configured` includes the saved string `value`,
+`default` inherits the type's defaults, and `recommended` follows
+Buzz's Recommended policy. Defaults and recommendations have no `value`: this
+read does not discover models, resolve aliases, inspect harness files or start
+a process. A type can inherit device preferences before the harness default.
+These are saved agent selections, not proof of an active turn's
+model or effort. Per-conversation choices can differ.
+An invalid field has `source: "unavailable"`. A type without this read contract,
+an unreadable synced config, or an agent hosted elsewhere has
+`modelSettings: { unavailable: "…" }`, even when its instructions are readable.
+The type owns the projection through `AgentType.readModelSettings`; the service
+does not expose its config or infer settings from the type's name or summary.
+
 `team_read` returns the teams Your teams shows in that community, by id or
 exact name, or all of them: name, instructions, members, whether the team syncs
 and its revision. `team_update` submits an unsaved draft of a team's new name
@@ -1912,17 +1928,27 @@ Claude implements it from the transcripts Claude Code keeps for the agent's
 workspace: sessions whose first prompt names the agent, plus those this app saved
 for it (prompts from before agents were named), with their subagents' requests.
 Streamed responses repeat their usage on each line, so each request is counted
-once.
+once. A watch's or timer's standalone turn opens with no context, so only the
+app's record of the session it started says it is the agent's. That record is
+kept apart from saved prompts, for 32 days from the session's start, longer than
+Usage reads back, with no limit on how many sessions it holds. Each day's starts
+are saved as one value, and a day's value is removed once all of it is past
+keeping. The snapshot has no `channelId`, and a session from before that
+record was kept is not counted.
 
 Codex finds the agent's threads through app-server by the agent's name in their
 thread names, keeps those whose rollout's developer instructions name the agent's
 pubkey, and reads each rollout's per-response `token_usage_record` entries, adding
-the subagent threads each one spawned. Codex records no cost.
+the subagent threads each one spawned. Codex records no cost. A standalone turn
+runs on an ephemeral thread, which Codex keeps no rollout for, so Usage does not
+count it.
 
 Goose lists the agent's sessions in its workspace through `goose-acp`, as its
 Activity tab does, and reads the usage goose saves on each reply, with goose's
 own cost estimate where it has one. Both count a request's cached tokens in its
-input, which the readers subtract.
+input, which the readers subtract. Goose and Pi also count a standalone turn's
+session, which has no `channelId`; Pi finds it by the same kept record and
+counts it by when it last answered.
 
 All three read only the harness's own session history; none reads Buzz's saved
 agent activity or turn metrics.

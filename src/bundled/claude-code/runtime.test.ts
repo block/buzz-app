@@ -4525,6 +4525,40 @@ it("keeps a community predecessor's reply destination after later admission fail
   }
 });
 
+it.each(["thread", "community"] as const)(
+  "includes standalone wake instructions once in %s scope",
+  async (scope) => {
+    const f = setup([], { hold: true });
+    Object.assign(f.agent, {
+      instructions: () => [
+        { plugin: "example", text: "ONE_PLUGIN_INSTRUCTION" },
+      ],
+    });
+    try {
+      await f.deliver(timer("daily", "ops"), {
+        config: { ...DEFAULT_CONFIG, scope },
+      });
+      await vi.waitFor(() =>
+        expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+      );
+      const text = f
+        .claudes()
+        .flatMap((p) => p.prompts)
+        .join("\n");
+      expect(text.split("ONE_PLUGIN_INSTRUCTION")).toHaveLength(2);
+      expect(text.split("Handle the work that caused this turn.")).toHaveLength(
+        2,
+      );
+      if (scope === "community")
+        expect(text).toContain("Disregard any earlier <owner-instructions>");
+    } finally {
+      for (const worker of f.claudes()) worker.finish();
+      await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+      f.runtime.dispose();
+    }
+  },
+);
+
 it("does not start a deferred community request cancelled during execution inspection", async () => {
   const f = setup([], { hold: true });
   const config = { ...DEFAULT_CONFIG, scope: "community" as const };

@@ -1,3 +1,4 @@
+import { ownerInstructions } from "../../features/agent-harness/plugin-instructions";
 import {
   ProjectSource,
   NO_PROJECT,
@@ -820,7 +821,7 @@ export class GooseRuntime {
                   [
                     standalonePrompt(agent.key, text, true),
                     NO_PROJECT.section,
-                    turnNote(entry.handle, undefined, undefined, true),
+                    ownerInstructions(undefined, true),
                   ]
                     .filter(Boolean)
                     .join("\n\n"),

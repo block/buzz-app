@@ -1,3 +1,4 @@
+import { ownerInstructions } from "../../features/agent-harness/plugin-instructions";
 import {
   ProjectSource,
   NO_PROJECT,
@@ -1475,7 +1476,7 @@ export class ClaudeRuntime {
                   COMMUNITY_SESSION,
                   [
                     `<context>\nScope: standalone\nSession scope: community\nAgent: ${agent.key}\n</context>\n\n${NO_PROJECT.section}\n\n${text}`,
-                    turnNote(entry.handle, undefined, undefined, true),
+                    ownerInstructions(undefined, true),
                   ]
                     .filter(Boolean)
                     .join("\n\n"),

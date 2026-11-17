@@ -1,3 +1,4 @@
+import { ownerInstructions } from "../../features/agent-harness/plugin-instructions";
 import {
   ProjectSource,
   NO_PROJECT,
@@ -3415,7 +3416,7 @@ export class CodexRuntime {
                     `<context>\n${JSON.stringify({ agent: agent.key, session_scope: "community" })}\n</context>`,
                     request.project,
                     standaloneText,
-                    turnNote(agent, undefined, undefined, true),
+                    ownerInstructions(undefined, true),
                   ]
                     .filter(Boolean)
                     .join("\n\n")) ??

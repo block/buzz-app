@@ -1,3 +1,4 @@
+import { ownerInstructions } from "../../features/agent-harness/plugin-instructions";
 import {
   ProjectSource,
   NO_PROJECT,
@@ -948,11 +949,7 @@ export class PiRuntime {
       }>(community ? "deliver" : "once", {
         agent: agent.key,
         text: community
-          ? [
-              NO_PROJECT.section,
-              text,
-              turnNote(entry.handle, undefined, undefined, true),
-            ]
+          ? [NO_PROJECT.section, text, ownerInstructions(undefined, true)]
               .filter(Boolean)
               .join("\n\n")
           : text,

@@ -2703,6 +2703,7 @@ export class CodexRuntime {
           !current.voiceOpening
         ) {
           entry.lanes.delete(key);
+          if (this.entries.get(request.agent.key) !== entry) return;
           if (
             this.sessions(request.agent.key).find((view) => view.key === key)
               ?.status === "Starting"

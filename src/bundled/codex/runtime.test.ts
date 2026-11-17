@@ -9068,6 +9068,55 @@ it.each(["withdrawn wake", "rejected admission"])(
   },
 );
 
+it("keeps replacement community status Starting while retired work drains", async () => {
+  const f = fixture();
+  const d = f.delivery("first");
+  const config = { ...(d.config as object), scope: "community" };
+  const unsubscribe = deferred<void>();
+  const cleanup = deferred<void>();
+  f.held.set("thread/unsubscribe", unsubscribe.promise);
+  f.held.set("thread/backgroundTerminals/clean", cleanup.promise);
+  let retirement: Promise<void> | undefined;
+  try {
+    await f.runtime.run({ ...d, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const other = second(f);
+    await f.runtime.run(other.delivery("keep server alive"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    await f.runtime.run({ ...f.delivery("old queued"), config });
+    await f.complete(0, "");
+    await vi.waitFor(() =>
+      expect(f.sent.some(({ method }) => method === "thread/unsubscribe")).toBe(
+        true,
+      ),
+    );
+    retirement = f.runtime.retire(pubkey);
+    await f.runtime.run({ ...f.delivery("replacement"), config });
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Starting");
+    unsubscribe.resolve();
+    await vi.waitFor(() =>
+      expect(
+        f.sent.some(
+          ({ method }) => method === "thread/backgroundTerminals/clean",
+        ),
+      ).toBe(true),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Starting");
+    expect(f.starts()).toHaveLength(2);
+    cleanup.resolve();
+    await retirement;
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+    await f.complete(2, "");
+    await f.complete(1, "");
+  } finally {
+    unsubscribe.resolve();
+    cleanup.resolve();
+    await retirement;
+    f.runtime.dispose();
+  }
+});
+
 it.each(["stop", "interrupt"])(
   "keeps community work cancellable through retirement: %s",
   async (action) => {

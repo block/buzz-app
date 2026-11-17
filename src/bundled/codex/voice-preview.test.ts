@@ -27,7 +27,12 @@ it("discovers aliases from returned names and refreshes URLs on every request", 
       headers: {},
       body: JSON.stringify({
         voices: [
-          { voice: "orbit", name: "Spruce", preview_url: url("orbit") },
+          {
+            voice: "orbit",
+            name: "Spruce",
+            preview_url: url("orbit"),
+            accent: "American English",
+          },
           {
             voice: "invalid",
             name: "Invalid",
@@ -46,12 +51,12 @@ it("discovers aliases from returned names and refreshes URLs on every request", 
       }),
     });
   expect(await discoverPreviews(f.auth, f.host)).toEqual({
-    orbit: url("orbit"),
-    spruce: url("orbit"),
+    previews: { orbit: url("orbit"), spruce: url("orbit") },
+    accents: { orbit: "American English", spruce: "American English" },
   });
   expect(await discoverPreviews(f.auth, f.host)).toEqual({
-    orbit: url("new-orbit"),
-    spruce: url("new-orbit"),
+    previews: { orbit: url("new-orbit"), spruce: url("new-orbit") },
+    accents: {},
   });
   expect(f.host.request).toHaveBeenCalledTimes(2);
   expect(f.host.request).toHaveBeenCalledWith(

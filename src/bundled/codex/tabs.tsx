@@ -83,6 +83,7 @@ const label = ({ channelId, name, root }: SavedConversation) =>
 
 type Catalog = {
   previews?: Record<string, string> | undefined;
+  accents?: Record<string, string> | undefined;
   voices?: string[] | undefined;
   defaultVoice?: string | undefined;
   models: Model[];
@@ -237,7 +238,10 @@ export class CodexProvider {
         });
         void previews?.then((previews) => {
           if (this.abort === abort && !abort.signal.aborted)
-            this.set({ data: { ...data, previews }, previewChecking: false });
+            this.set({
+              data: { ...data, ...previews },
+              previewChecking: false,
+            });
         });
       }
     } catch (error) {
@@ -1476,12 +1480,11 @@ export function createTabs(
                   {customization}
                 </>
               )}
-            </SettingsGroup>
-            <SettingsGroup>
               <VoicePreview
                 key={agent.key}
                 host={provider.previewHost}
                 previews={data?.previews}
+                accents={data?.accents}
                 voice={draft.voice ?? ""}
                 voices={data?.voices}
                 defaultVoice={data?.defaultVoice}

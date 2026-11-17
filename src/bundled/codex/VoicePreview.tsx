@@ -1,12 +1,14 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   CircleNotchIcon,
+  CaretDownIcon,
   PlayIcon,
   StopIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
@@ -22,6 +24,7 @@ const name = (voice: string) => voice.charAt(0).toUpperCase() + voice.slice(1);
 export function VoicePreview({
   host,
   previews,
+  accents,
   voice,
   voices,
   defaultVoice,
@@ -33,6 +36,7 @@ export function VoicePreview({
 }: {
   host?: PreviewHost | undefined;
   previews?: Record<string, string> | undefined;
+  accents?: Record<string, string> | undefined;
   voice: string;
   voices?: string[] | undefined;
   defaultVoice?: string | undefined;
@@ -200,16 +204,48 @@ export function VoicePreview({
       onClick={() => void play(value)}
     />
   );
+  const row = (value: string) => (
+    <div key={value} className="flex items-center gap-2">
+      <div className="min-w-0 flex-1">
+        <Radio
+          value={value}
+          variant="row"
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              event.currentTarget.click();
+            }
+          }}
+          onClick={() => {
+            stop();
+            setOpen(false);
+          }}
+          disabled={!available(value)}
+          label={label(value)}
+        />
+      </div>
+      {preview(value)}
+    </div>
+  );
+  const groups = new Map<string, string[]>();
+  for (const value of [
+    ...(voice && !voices?.includes(voice) ? [voice] : []),
+    ...(voices ?? []),
+  ]) {
+    const accent = accents?.[value] ?? "Other voices";
+    groups.set(accent, [...(groups.get(accent) ?? []), value]);
+  }
   return (
     <>
       <PreferenceRow
-        title="Huddle voice"
+        title="Voice"
         trailing={(accessible) => (
           <div className="flex items-center gap-2">
             <Button
               {...accessible}
               ref={trigger}
-              variant="ghost"
+              size="sm"
+              variant="outline"
               disabled={disabled}
               aria-haspopup="dialog"
               onClick={() => setOpen(true)}
@@ -217,6 +253,7 @@ export function VoicePreview({
               {!voice && defaultVoice
                 ? `${name(defaultVoice)} · Default`
                 : label(voice)}
+              <CaretDownIcon size={14} aria-hidden="true" />
             </Button>
             <IconButton
               aria-label={
@@ -258,7 +295,7 @@ export function VoicePreview({
           stop();
           setOpen(next);
         }}
-        title="Choose Huddle voice"
+        title="Choose voice"
         size="compact"
         headerGap="compact"
         footerGap="none"
@@ -274,33 +311,19 @@ export function VoicePreview({
             }}
             disabled={disabled}
           >
-            {[
-              "",
-              ...(voice && !voices?.includes(voice) ? [voice] : []),
-              ...(voices ?? []),
-            ].map((value) => (
-              <div key={value} className="flex items-center gap-2">
-                <div className="min-w-0 flex-1">
-                  <Radio
-                    value={value}
-                    variant="row"
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        event.currentTarget.click();
-                      }
-                    }}
-                    onClick={() => {
-                      stop();
-                      setOpen(false);
-                    }}
-                    disabled={!available(value)}
-                    label={label(value)}
-                  />
-                </div>
-                {preview(value)}
-              </div>
-            ))}
+            {row("")}
+            {[...groups]
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([accent, choices]) => (
+                <fieldset
+                  key={accent}
+                  aria-label={accent}
+                  className="grid gap-1"
+                >
+                  <InlineHeader title={accent} />
+                  {choices.map(row)}
+                </fieldset>
+              ))}
           </RadioGroup>
         </Field>
         {failure}

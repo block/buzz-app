@@ -2804,7 +2804,7 @@ describe("Recommended", () => {
   });
 });
 
-it("saves an agent's Huddle voice and restores it without changing another agent", async () => {
+it("saves an agent's Voice and restores it without changing another agent", async () => {
   const f = fixture();
   const save = vi.fn(async () => {});
   const user = userEvent.setup();
@@ -2814,7 +2814,7 @@ it("saves an agent's Huddle voice and restores it without changing another agent
       settingsSection="identity"
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await user.click(screen.getByRole("button", { name: "Voice" }));
   await user.click(await screen.findByRole("radio", { name: "Maple" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
@@ -2828,9 +2828,9 @@ it("saves an agent's Huddle voice and restores it without changing another agent
   const reopened = render(
     <f.tabs.SettingsTab {...f.props(saved)} settingsSection="identity" />,
   );
-  expect(
-    screen.getByRole("button", { name: "Huddle voice" }),
-  ).toHaveTextContent("Maple");
+  expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
+    "Maple",
+  );
   reopened.unmount();
   render(
     <f.tabs.SettingsTab
@@ -2838,9 +2838,9 @@ it("saves an agent's Huddle voice and restores it without changing another agent
       settingsSection="identity"
     />,
   );
-  expect(
-    screen.getByRole("button", { name: "Huddle voice" }),
-  ).toHaveTextContent("Cove");
+  expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
+    "Cove",
+  );
 });
 
 it("offers only v3 voices and lets an unavailable assignment return to default", async () => {
@@ -2851,7 +2851,7 @@ it("offers only v3 voices and lets an unavailable assignment return to default",
       {...f.props({ ...defaults, voice: "future-voice" }, save)}
     />,
   );
-  const voice = screen.getByRole("button", { name: "Huddle voice" });
+  const voice = screen.getByRole("button", { name: "Voice" });
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
   expect(voice).toHaveTextContent("Future-voice (unavailable)");
   const user = userEvent.setup();
@@ -2872,9 +2872,9 @@ it("keeps model settings usable when an older Codex has no v3 voice catalog", as
   const f = fixture({ voices: null });
   render(<f.tabs.SettingsTab {...f.props({ ...defaults, voice: "cove" })} />);
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
-  expect(
-    screen.getByRole("button", { name: "Huddle voice" }),
-  ).toHaveTextContent("Cove");
+  expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
+    "Cove",
+  );
   expect(
     screen.getByRole("button", { name: "Check voices again" }),
   ).toBeEnabled();
@@ -2884,7 +2884,7 @@ it("retains the saved voice label while discovery is pending", async () => {
   const gate = deferred<void>();
   const f = fixture({ voicesGate: gate.promise });
   render(<f.tabs.SettingsTab {...f.props({ ...defaults, voice: "cove" })} />);
-  const voice = screen.getByRole("button", { name: "Huddle voice" });
+  const voice = screen.getByRole("button", { name: "Voice" });
   try {
     await waitFor(() => expect(f.provider.snapshot().checking).toBe(true));
     expect(voice).toBeDisabled();
@@ -2906,9 +2906,9 @@ it("explains failed voice discovery and retries without losing the saved choice"
   });
   expect(screen.getByText(/Voice choices could not be checked/)).toBeVisible();
   expect(screen.getByLabelText("Model")).toBeEnabled();
-  expect(
-    screen.getByRole("button", { name: "Huddle voice" }),
-  ).toHaveTextContent("Cove");
+  expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
+    "Cove",
+  );
   failed = false;
   await userEvent.setup().click(retry);
   await waitFor(() =>
@@ -2916,7 +2916,7 @@ it("explains failed voice discovery and retries without losing the saved choice"
       screen.queryByRole("button", { name: "Check voices again" }),
     ).not.toBeInTheDocument(),
   );
-  const voice = screen.getByRole("button", { name: "Huddle voice" });
+  const voice = screen.getByRole("button", { name: "Voice" });
   await waitFor(() => expect(voice).toBeEnabled());
   await userEvent.setup().click(voice);
   expect(await screen.findByRole("radio", { name: "Maple" })).toBeVisible();
@@ -2928,9 +2928,9 @@ it("shows the configured realtime voice as the Codex default", async () => {
     <f.tabs.SettingsTab {...f.props(defaults)} settingsSection="identity" />,
   );
   await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Huddle voice" }),
-    ).toHaveTextContent("Maple · Default"),
+    expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
+      "Maple · Default",
+    ),
   );
   expect(
     screen.queryByText("Applies when this agent next joins a Huddle."),
@@ -3060,7 +3060,7 @@ it("rediscovers both catalogs when retained settings return without losing the d
   await waitFor(() =>
     expect(f.provider.snapshot().data?.previews?.cove).toContain("cove.1.m4a"),
   );
-  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await user.click(screen.getByRole("button", { name: "Voice" }));
   await user.click(screen.getByRole("radio", { name: "Maple" }));
   view.getByTestId("retained").hidden = true;
   await act(async () => {});
@@ -3070,18 +3070,18 @@ it("rediscovers both catalogs when retained settings return without losing the d
     expect(f.provider.snapshot().data?.previews?.cove).toContain("cove.2.m4a"),
   );
   expect(f.provider.snapshot().data?.voices).toEqual(voices);
-  expect(
-    screen.getByRole("button", { name: "Huddle voice" }),
-  ).toHaveTextContent("Maple");
+  expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
+    "Maple",
+  );
 });
 it("returns to a clean draft when a named voice is changed back to Codex default", async () => {
   const f = fixture();
   const user = userEvent.setup();
   render(<f.tabs.SettingsTab {...f.props()} settingsSection="identity" />);
-  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await user.click(screen.getByRole("button", { name: "Voice" }));
   await user.click(await screen.findByRole("radio", { name: "Maple" }));
   expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await user.click(screen.getByRole("button", { name: "Voice" }));
   await user.click(screen.getByRole("radio", { name: /^Codex default/ }));
   expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
 });

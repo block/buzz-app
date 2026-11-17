@@ -2,7 +2,7 @@ import { test, expect } from "./source-fixture.mjs";
 
 // Browser-only contract: the shared settings host saves each agent independently,
 // restores the choices after reload, and keeps the chooser usable in narrow panes.
-test("Codex Huddle voices persist separately through the settings host", async ({
+test("Codex Voices persist separately through the settings host", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/agent-library.html?settingsSync=codex", {
@@ -10,20 +10,26 @@ test("Codex Huddle voices persist separately through the settings host", async (
   });
   await page.getByText("Ada", { exact: true }).click();
   const pane = page.getByRole("tabpanel", { name: "Identity", exact: true });
-  const voice = pane.getByRole("button", { name: "Huddle voice" });
+  const voice = pane.getByRole("button", { name: "Voice", exact: true });
   const preview = pane.getByRole("button", {
     name: "Preview voice",
     exact: true,
   });
   await expect(preview).toBeEnabled();
   await voice.click();
+  await expect(
+    page.getByRole("group", { name: "American English", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", { name: "British English", exact: true }),
+  ).toBeVisible();
   await page
     .getByRole("radio", { name: "Codex default (Cove)", exact: true })
     .focus();
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await expect(
-    page.getByRole("dialog", { name: "Choose Huddle voice" }),
+    page.getByRole("dialog", { name: "Choose voice" }),
   ).toBeVisible();
   await expect(
     page.getByRole("radio", { name: "Maple", exact: true }),
@@ -61,7 +67,7 @@ test("Codex Huddle voices persist separately through the settings host", async (
       { dark, fontSize },
     );
     await voice.scrollIntoViewIfNeeded();
-    const label = pane.getByText("Huddle voice", { exact: true });
+    const label = pane.getByText("Voice", { exact: true });
     expect(
       await label.evaluate(
         (el) =>
@@ -72,7 +78,7 @@ test("Codex Huddle voices persist separately through the settings host", async (
     await voice.focus();
     await expect(voice).toBeFocused();
     await page.keyboard.press("Enter");
-    const chooser = page.getByRole("dialog", { name: "Choose Huddle voice" });
+    const chooser = page.getByRole("dialog", { name: "Choose voice" });
     await expect(chooser).toBeVisible();
     await expect(
       chooser.getByRole("radio", { name: "Cove", exact: true }),

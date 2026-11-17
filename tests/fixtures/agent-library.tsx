@@ -215,7 +215,16 @@ if (thinkingHarness === "claude") {
   const providerState = {
     readiness: "ready",
     checking: false,
-    data: { models: [model], defaultVoice: "cove", voices: ["cove", "maple"] },
+    data: {
+      models: [model],
+      defaultVoice: "cove",
+      voices: ["cove", "maple", "vale"],
+      accents: {
+        cove: "American English",
+        maple: "American English",
+        vale: "British English",
+      },
+    },
     error: "",
     defaults: { model: "", effort: "" },
   };

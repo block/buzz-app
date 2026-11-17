@@ -37,17 +37,28 @@ export async function discoverPreviews(
   if (response.status !== 200)
     throw new Error("Voice previews could not be discovered. Try again.");
   const data: {
-    voices?: { voice?: unknown; name?: unknown; preview_url?: unknown }[];
+    voices?: {
+      voice?: unknown;
+      name?: unknown;
+      preview_url?: unknown;
+      accent?: unknown;
+    }[];
   } = JSON.parse(response.body);
   if (!Array.isArray(data.voices))
     throw new Error("Voice preview catalog is invalid.");
-  const urls: Record<string, string> = {};
+  const previews: Record<string, string> = {};
+  const accents: Record<string, string> = {};
   for (const entry of data.voices) {
-    if (!entry || !previewUrl(entry.preview_url)) continue;
+    if (!entry) continue;
     for (const key of [entry.voice, entry.name])
-      if (typeof key === "string") urls[key.toLowerCase()] = entry.preview_url;
+      if (typeof key === "string") {
+        const id = key.toLowerCase();
+        if (previewUrl(entry.preview_url)) previews[id] = entry.preview_url;
+        if (typeof entry.accent === "string" && entry.accent.trim())
+          accents[id] = entry.accent.trim();
+      }
   }
-  return urls;
+  return { previews, accents };
 }
 
 /** URL-keyed, size-bounded session memory, like attachment media caches. */

@@ -45,7 +45,7 @@ leave and rejoin to retry.
 Final voice transcripts appear in the room with speaker credit and do not
 mention anyone. Explicit agent watches on that room can still receive them.
 
-In a Codex agent’s settings, open **Huddle voice** to choose a voice. Use **Preview voice** in settings or the play button beside any voice in the chooser to hear a sample before saving. **Stop preview** ends playback; choosing another voice or leaving settings also stops it. Preview plays an available prerecorded sample on the local Codex host and does not use your microphone. Voice choices and sample URLs refresh when settings opens; downloaded samples are reused during the app session. Each agent has its own choice, synced with its settings. **Codex default** shows and follows the provider’s current default voice. The saved change applies when the agent next joins a Huddle.
+In a Codex agent’s settings, open **Voice** alongside Harness and Model to choose a voice. The chooser groups supported voices by the catalog’s language or accent labels. Use **Preview voice** in settings or the play button beside any voice in the chooser to hear a sample before saving. **Stop preview** ends playback; choosing another voice or leaving settings also stops it. Preview plays an available prerecorded sample on the local Codex host and does not use your microphone. Voice choices and sample URLs refresh when settings opens; downloaded samples are reused during the app session. Each agent has its own choice, synced with its settings. **Codex default** shows and follows the provider’s current default voice. The saved change applies when the agent next joins a Huddle.
 
 ## Identity and getting connected
 

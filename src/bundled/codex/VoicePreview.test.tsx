@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { VoicePreview } from "./VoicePreview";
@@ -136,7 +143,7 @@ it("previews dialog rows independently from selection and stops on dismissal", a
       onChange={onChange}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await user.click(screen.getByRole("button", { name: "Voice" }));
   expect(screen.getByRole("radio", { name: "Cove" })).toBeChecked();
   await user.click(screen.getByRole("button", { name: "Preview Maple" }));
   const first = vi.mocked(previewVoice).mock.calls[0]?.[2];
@@ -164,10 +171,10 @@ it("chooses a row without starting a preview", async () => {
       onChange={onChange}
     />,
   );
-  expect(
-    screen.getByRole("button", { name: "Huddle voice" }),
-  ).toHaveTextContent("Cove · Default");
-  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  expect(screen.getByRole("button", { name: "Voice" })).toHaveTextContent(
+    "Cove · Default",
+  );
+  await user.click(screen.getByRole("button", { name: "Voice" }));
   await user.click(screen.getByRole("radio", { name: "Maple" }));
   expect(onChange).toHaveBeenCalledWith("maple");
   expect(previewVoice).not.toHaveBeenCalled();
@@ -223,7 +230,7 @@ it("preloads the selected recording, then the other choices when the picker open
     expect(preloadPreview).toHaveBeenCalledWith(host, previews.cove),
   );
   expect(preloadPreview).not.toHaveBeenCalledWith(host, previews.maple);
-  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await user.click(screen.getByRole("button", { name: "Voice" }));
   expect(preloadPreview).toHaveBeenCalledWith(host, previews.maple);
 });
 
@@ -260,16 +267,14 @@ it("keeps arrow navigation open and dismisses activation of the selected row", a
       onChange={onChange}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+  await user.click(screen.getByRole("button", { name: "Voice" }));
   screen.getByRole("radio", { name: "Codex default (Cove)" }).focus();
   await user.keyboard("{ArrowDown}");
-  expect(
-    screen.getByRole("dialog", { name: "Choose Huddle voice" }),
-  ).toBeVisible();
+  expect(screen.getByRole("dialog", { name: "Choose voice" })).toBeVisible();
   expect(onChange).toHaveBeenCalledWith("cove");
   await user.click(screen.getByRole("radio", { name: "Codex default (Cove)" }));
   expect(
-    screen.queryByRole("dialog", { name: "Choose Huddle voice" }),
+    screen.queryByRole("dialog", { name: "Choose voice" }),
   ).not.toBeInTheDocument();
 });
 
@@ -329,4 +334,43 @@ it("stops hidden retained previews without checkVisibility", async () => {
   } finally {
     HTMLElement.prototype.checkVisibility = previous;
   }
+});
+
+it("groups supported choices by discovered accent and leaves unknown choices available", async () => {
+  const user = userEvent.setup();
+  render(
+    <VoicePreview
+      voice=""
+      voices={["cove", "vale", "neer", "new"]}
+      accents={{
+        cove: "American English",
+        vale: "British English",
+        neer: "Hindi",
+        unsupported: "French",
+      }}
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
+  const trigger = screen.getByRole("button", { name: "Voice" });
+  expect(trigger).toHaveAttribute("data-variant", "outline");
+  await user.click(trigger);
+  expect(
+    within(screen.getByRole("group", { name: "British English" })).getByRole(
+      "radio",
+      { name: "Vale" },
+    ),
+  ).toBeEnabled();
+  expect(
+    within(screen.getByRole("group", { name: "Hindi" })).getByRole("radio", {
+      name: "Neer",
+    }),
+  ).toBeEnabled();
+  expect(
+    within(screen.getByRole("group", { name: "Other voices" })).getByRole(
+      "radio",
+      { name: "New" },
+    ),
+  ).toBeEnabled();
+  expect(screen.queryByRole("group", { name: "French" })).toBeNull();
 });

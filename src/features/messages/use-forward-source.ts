@@ -114,8 +114,7 @@ export function useForwardSource(
       reference.state === "withheld" ||
       (reference.state === "found" &&
         reference.readable === false &&
-        reference.answered === true &&
-        !reference.looking) ||
+        reference.answered === true) ||
       (readable && result?.key === key && result.stopped),
   };
 }

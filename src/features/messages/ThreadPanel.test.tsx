@@ -976,18 +976,27 @@ it("decides the line once a hidden reader is shown, and again for each ordinary 
   const { reply, unread } = unreadReplies(h);
   const [first, later] = [reply("first unread", 2), reply("later", 3)];
   unread.add(first.id);
-  // Hidden: no layout.
-  const height = vi
-    .spyOn(HTMLElement.prototype, "clientHeight", "get")
-    .mockReturnValue(0);
+  // A covered tab keeps its layout but is inert and not visible.
+  const visible = vi.fn(() => false);
+  Object.assign(HTMLElement.prototype, { checkVisibility: visible });
+  onTestFinished(() => {
+    delete (HTMLElement.prototype as Partial<HTMLElement>).checkVisibility;
+  });
   h.props.active = false;
   h.snapshot.direction = "older";
   h.snapshot.replies = [first, later];
   h.render();
   expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
   expect(h.element.scrollTop).toBe(0);
+  // Leaving under the tab animation: visible, still inert.
+  const pane = h.element.parentElement as HTMLElement;
+  pane.setAttribute("inert", "");
+  visible.mockReturnValue(true);
+  h.snapshot.replies = [first, later];
+  h.render();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
 
-  height.mockReturnValue(600);
+  pane.removeAttribute("inert");
   h.props.active = true;
   h.rerenderProps();
   const line = screen.getByRole("separator", { name: "New messages" });
@@ -1100,6 +1109,14 @@ it("keeps a place the reader chose after a failed read when it recovers", () => 
   h.render();
   expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
   expect(h.element.scrollTop).toBe(1200);
+
+  // Back at the latest reply, a live reply keeps following without a line.
+  h.element.scrollTop = 4000 - 600;
+  fireEvent.scroll(h.element);
+  h.snapshot.replies = [...h.snapshot.replies, reply("live", 4)];
+  h.render();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+  expect(h.element.scrollTop).toBe(4000 - 600);
 });
 it("opens a read thread at its latest reply, and an explicit target at itself, without a line", () => {
   const h = messagesHarness(ordinaryNavigation());

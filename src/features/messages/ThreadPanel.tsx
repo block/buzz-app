@@ -977,8 +977,12 @@ function ThreadMessages({
     if (boundary.id !== undefined) {
       // A failed read decided nothing: decide again once it recovers, unless
       // the reader has left the latest reply since.
-      if (boundary.failed && snapshot.status === "ready" && follow.current)
-        setBoundary({ opening: boundary.opening });
+      if (boundary.failed && snapshot.status === "ready")
+        setBoundary(
+          follow.current
+            ? { opening: boundary.opening }
+            : { opening: boundary.opening, id: null },
+        );
       return;
     }
     if (
@@ -1003,11 +1007,15 @@ function ThreadMessages({
           (snapshot.direction !== "older" && snapshot.canLoadMore)))
     )
       return;
-    // An inactive reader reads nothing. Laid out, it is a preview and gets no
-    // line; hidden, it decides once shown, so the line is measured.
+    // An inactive reader reads nothing. Shown, it is a preview and gets no
+    // line; in a covered tab, it decides once shown, so the line is measured.
     if (!active) {
-      if (scroller.current?.clientHeight)
-        setBoundary({ ...boundary, id: null });
+      const shown =
+        scroller.current &&
+        (scroller.current.checkVisibility?.({ visibilityProperty: true }) ??
+          true) &&
+        !scroller.current.closest("[inert]");
+      if (shown) setBoundary({ ...boundary, id: null });
       return;
     }
     const unread = (id: string): boolean => {

@@ -697,7 +697,14 @@ export function SearchResults({
     // conversations, search keeps relevance.
     effectiveChannelId ? sort : "relevance",
   );
-  const sortable = !!effectiveChannelId && session.searchSort && !!parsed.text;
+  // Offline or asking, nothing is searched, so there is no order to choose.
+  const sortable =
+    !offline &&
+    !asking &&
+    !!effectiveChannelId &&
+    session.searchSort &&
+    !!parsed.text;
+  const order = search.newestFirst ? "Most recent" : "Most relevant";
   const showAmbiguousPicker = !!search.ambiguousAuthor && !pickerPrompt;
   // Ambiguity is known only after a completed token. Keep its original span so
   // choosing a key does not discard free text or other operators after it.
@@ -2039,9 +2046,7 @@ export function SearchResults({
                   rank: Infinity,
                   icon: ChatCircleIcon,
                   why: sortable
-                    ? search.newestFirst
-                      ? "Most recent"
-                      : "Most relevant"
+                    ? order
                     : hasOperator
                       ? "Filters apply to messages"
                       : undefined,
@@ -2208,7 +2213,8 @@ export function SearchResults({
                   <IconButton
                     {...props}
                     variant="ghost"
-                    aria-label="Sort messages"
+                    // The heading's order is visual only; name it here.
+                    aria-label={`Sort messages: ${order}`}
                     title="Sort messages"
                     icon={<ArrowsDownUpIcon size={16} aria-hidden="true" />}
                   />

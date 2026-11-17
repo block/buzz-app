@@ -987,7 +987,7 @@ it("scopes conversation search at the relay and discards out-of-scope hits", asy
       screen.queryByRole("option", { name: /scope elsewhere/ }),
     ).toBeNull();
     // A relay without `buzz-search-sort` would rank "Most recent" anyway.
-    expect(screen.queryByRole("button", { name: "Sort messages" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Sort messages/ })).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: /Remove .* search scope/ }),
     );
@@ -1138,7 +1138,7 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     await act(async () => relevance.respond(hits(20, 1700000020)));
     expect(order()).toBe("Messages · Most relevant");
 
-    fireEvent.click(screen.getByRole("button", { name: "Sort messages" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Sort messages/ }));
     expect(
       await screen.findByRole("menuitemradio", { name: "Most relevant" }),
     ).toBeChecked();
@@ -1212,7 +1212,7 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     ]);
     await act(async () => history.respond(hits(1, 1700000001)));
     expect(order()).toBe("Messages · Filters apply to messages");
-    expect(screen.queryByRole("button", { name: "Sort messages" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Sort messages/ })).toBeNull();
 
     mounted.rerender(<SearchResults {...scoped} query="sortword" />);
     const resumed = await request();
@@ -1227,13 +1227,13 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     expect(global.filters).toEqual([unscopedText]);
     await act(async () => global.respond(hits(1, 1700000001)));
     expect(screen.getByRole("group", { name: "Messages" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Sort messages" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Sort messages/ })).toBeNull();
 
     mounted.rerender(<SearchResults {...scoped} query="sortword" />);
     const rescoped = await request();
     expect(rescoped.filters).toEqual([{ ...text, search_sort: "newest" }]);
     await act(async () => rescoped.respond(hits(20, 1700000100)));
-    fireEvent.click(screen.getByRole("button", { name: "Sort messages" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Sort messages/ }));
     fireEvent.click(
       await screen.findByRole("menuitemradio", { name: "Most relevant" }),
     );
@@ -1319,7 +1319,10 @@ it.each([
         ).toHaveTextContent(/sortword hit/),
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Sort messages" }));
+      // The heading's order is visual only; the trigger names it.
+      fireEvent.click(
+        screen.getByRole("button", { name: "Sort messages: Most relevant" }),
+      );
       fireEvent.click(
         await screen.findByRole("menuitemradio", { name: "Most recent" }),
       );
@@ -1327,6 +1330,9 @@ it.each([
       expect(newest.filters).toEqual([{ ...text, search_sort: "newest" }]);
       await act(async () => newest.respond([]));
       expect(heading()).toBe("Messages · Most recent");
+      expect(
+        screen.getByRole("button", { name: "Sort messages: Most recent" }),
+      ).toBeVisible();
       expect(
         within(group()).getByText(
           "No matching messages in accessible conversations.",
@@ -1339,40 +1345,60 @@ it.each([
   },
 );
 
-it("names an empty conversation search Messages, not by an order", () => {
-  const relay = keypair();
-  const viewer = keypair();
-  const owner = createRelaySession({
-    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
-    searchSort: true,
-    query: async () => [],
-  });
-  try {
-    render(
-      <SearchResults
-        session={owner.session}
-        query=""
-        scopedChannelId="crew"
-        onScopeChange={() => {}}
-        onQueryChange={() => {}}
-        input={createRef()}
-        pages={[]}
-        openConversation={() => {}}
-      />,
-    );
-    const group = screen.getByRole("group", { name: "Messages" });
-    expect(group.querySelector(".navigation-section-label")?.textContent).toBe(
-      "Messages",
-    );
-    expect(
-      within(group).getByText("Type to search messages in this conversation."),
-    ).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Sort messages" })).toBeNull();
-  } finally {
-    cleanup();
-    owner.dispose();
-  }
-});
+it.each([
+  { state: "an empty field", query: "", offline: undefined },
+  {
+    state: "a disconnected search",
+    query: "sortword",
+    offline: <p>Only saved conversations are searched.</p>,
+  },
+])(
+  "shows no order for a conversation search with $state",
+  ({ query, offline }) => {
+    const relay = keypair();
+    const viewer = keypair();
+    const owner = createRelaySession({
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      searchSort: true,
+      query: async () => [],
+    });
+    try {
+      render(
+        <SearchResults
+          session={owner.session}
+          query={query}
+          scopedChannelId="crew"
+          onScopeChange={() => {}}
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          openConversation={() => {}}
+          offline={offline}
+        />,
+      );
+      if (offline) {
+        // Nothing is searched, so no order shows.
+        expect(screen.queryByText(/Most (recent|relevant)/)).toBeNull();
+      } else {
+        const group = screen.getByRole("group", { name: "Messages" });
+        expect(
+          group.querySelector(".navigation-section-label")?.textContent,
+        ).toBe("Messages");
+        expect(
+          within(group).getByText(
+            "Type to search messages in this conversation.",
+          ),
+        ).toBeVisible();
+      }
+      expect(
+        screen.queryByRole("button", { name: /^Sort messages/ }),
+      ).toBeNull();
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
 
 it.each(["metadata", "denial"])(
   "does not resurrect displayed public hits after %s loss and regrant",

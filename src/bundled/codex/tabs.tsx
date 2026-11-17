@@ -1350,8 +1350,10 @@ export function createTabs(
       if (local && agent.key) void provider.check();
     }, [local, agent.key]);
     const voiceSave = useRef<Config | undefined>(undefined);
+    const configRevision = useRef(0);
     useEffect(() => {
       const next = readConfig(agent.config);
+      configRevision.current++;
       if (
         voiceSave.current &&
         JSON.stringify(next) === JSON.stringify(voiceSave.current)
@@ -1566,11 +1568,13 @@ export function createTabs(
                 if (voice === (saved.voice ?? "")) return;
                 const next = voiceConfig(saved, voice);
                 voiceSave.current = next;
+                const revision = configRevision.current;
                 setError("");
                 setSaving(true);
                 try {
                   await save(next);
-                  setDraft((current) => voiceConfig(current, voice));
+                  if (configRevision.current === revision)
+                    setDraft((current) => voiceConfig(current, voice));
                 } catch (reason) {
                   // An unconfirmed write can still arrive through sync.
                   setError(message(reason));

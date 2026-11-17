@@ -3272,3 +3272,37 @@ it("keeps a legacy configuration clean after a voice-only save", async () => {
     screen.queryByRole("button", { name: "Save" }),
   ).not.toBeInTheDocument();
 });
+
+it("keeps a newer synced voice when an earlier save finishes", async () => {
+  const f = fixture();
+  const gate = deferred<void>();
+  const save = vi.fn(async (_config?: Config) => gate.promise);
+  const props = f.props(defaults, save);
+  const user = userEvent.setup();
+  const view = render(<f.tabs.SettingsTab {...props} />);
+  try {
+    await user.click(screen.getByRole("button", { name: "Huddle voice" }));
+    await user.click(await screen.findByRole("radio", { name: "Maple" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    const config = save.mock.calls[0]?.[0] as Config;
+    view.rerender(
+      <f.tabs.SettingsTab {...props} agent={{ ...props.agent, config }} />,
+    );
+    view.rerender(
+      <f.tabs.SettingsTab
+        {...props}
+        agent={{ ...props.agent, config: { ...config, voice: "cove" } }}
+      />,
+    );
+    await act(async () => gate.resolve());
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(
+      screen.getByRole("button", { name: "Huddle voice" }),
+    ).toHaveTextContent("Cove");
+    expect(
+      screen.queryByRole("button", { name: "Save" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    gate.resolve();
+  }
+});

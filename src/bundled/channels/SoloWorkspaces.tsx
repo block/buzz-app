@@ -26,6 +26,11 @@ import {
 } from "../../features/channel-navigation/ChannelSidebarDnd";
 import { WorkspaceSettings } from "../../features/solo/WorkspaceSettings";
 import {
+  ArchiveInactiveChats,
+  inactiveChat,
+  type InactiveChatsRun,
+} from "./ArchiveInactiveChats";
+import {
   memo,
   cloneElement,
   isValidElement,
@@ -252,6 +257,35 @@ export function SoloWorkspaces({
     target?.focus({ preventScroll: true });
   }, [stepFocus]);
   const [creatingFor, setCreatingFor] = useState<ChatListItem>();
+  // One bulk archive at a time; an Undo waits behind the run holding the gate.
+  const [inactiveRuns, setInactiveRuns] = useState<readonly InactiveChatsRun[]>(
+    [],
+  );
+  const inactiveRunKey = useRef(0);
+  const queueInactiveRun = (run: Omit<InactiveChatsRun, "key">) =>
+    setInactiveRuns((current) => [
+      ...current,
+      { ...run, key: ++inactiveRunKey.current },
+    ]);
+  // The open chat stays: archiving it would pull it out from under the viewer.
+  const inactiveIn = (workspaceId: string, id: string) => {
+    const channel = session.channels
+      .list()
+      .channels.find((channel) => channel.id === id);
+    const item = chats.find((item) => item.id === id);
+    return (
+      !!channel &&
+      !!item &&
+      (ids.has(assignmentFor(item) ?? "") ? assignmentFor(item) : "") ===
+        workspaceId &&
+      !matchesConversation(
+        navigationController?.snapshot().entry.target,
+        scope,
+        id,
+      ) &&
+      inactiveChat(session, channel, Date.now() / 1000)
+    );
+  };
   const [settingsFor, setSettingsFor] = useState<{
     id: string;
     name: string;
@@ -575,6 +609,29 @@ export function SoloWorkspaces({
             </MenuItem>
             <MenuItem onClick={() => setSettingsFor(project)}>
               Workspace settings
+            </MenuItem>
+            <MenuItem
+              disabled={
+                !session.channelLifecycle.available ||
+                inactiveRuns.length > 0 ||
+                !!handoff?.lifecycleDialog
+              }
+              onClick={() => {
+                const inactive = project.rows
+                  .filter((item) => inactiveIn(project.id, item.id))
+                  .map((item) => item.id);
+                // Let the menu restore focus before opening confirmation.
+                requestAnimationFrame(() =>
+                  queueInactiveRun({
+                    action: "archive",
+                    workspaceId: project.id,
+                    workspaceName: project.name,
+                    ids: inactive,
+                  }),
+                );
+              }}
+            >
+              Archive inactive chats
             </MenuItem>
             <MenuItem
               tone="danger"
@@ -1011,6 +1068,18 @@ export function SoloWorkspaces({
           scope={scope}
           target={{ kind: "project", ...settingsFor }}
           close={() => setSettingsFor(undefined)}
+        />
+      )}
+      {inactiveRuns[0] && (
+        <ArchiveInactiveChats
+          key={inactiveRuns[0].key}
+          session={session}
+          run={inactiveRuns[0]}
+          eligible={(id) =>
+            !!inactiveRuns[0] && inactiveIn(inactiveRuns[0].workspaceId, id)
+          }
+          undo={queueInactiveRun}
+          close={() => setInactiveRuns((current) => current.slice(1))}
         />
       )}
       {creatingFor && (

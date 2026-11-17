@@ -511,6 +511,10 @@ and are asked to sign in again in Buzz.
   To rename one, open **Workspace settings** from its heading’s **…** or right-click
   menu, edit **Workspace name**, and choose **Save changes**. Chats, tasks and
   starting settings stay in place.
+  **Archive inactive chats** in the same menu shows how many of the workspace's
+  chats have had no messages for 14 days and archives them after you confirm.
+  It skips the open chat and chats with agent work running or messages still
+  queued or sending. **Undo** on the result restores them.
   Retrying an instructions-only draft keeps the current workspace name. If a
   workspace name edit conflicts, copy your draft before using
   **Review saved settings** to discard it and reload.

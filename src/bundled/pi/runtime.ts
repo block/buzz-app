@@ -162,6 +162,8 @@ type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
   where?: Where;
   /** A recovered turn holds its posting policy until its run settles. */
   settled?: Promise<void>;
+  /** Records a successful final post before the native tail drains. */
+  published?: () => void;
   /** A wake prompt rebuilt when the native queue is ready to submit. */
   prompt?: () => Promise<{ text: string; steer: string } | undefined>;
 };
@@ -870,13 +872,23 @@ export class PiRuntime {
 
   /** Runs a standalone turn, such as a watch's or a timer's, in a one-off
    * Pi conversation, stopped when `signal` aborts. */
-  runOnce(turn: StandaloneTurn): Promise<TurnResult> {
-    return this.standalone(turn);
+  async runOnce(turn: StandaloneTurn): Promise<TurnResult> {
+    let answered = false;
+    try {
+      const result = await this.standalone(turn, false, false, () => {
+        answered = true;
+      });
+      return answered ? { ok: true } : result;
+    } catch (error) {
+      if (answered) return { ok: true };
+      throw error;
+    }
   }
   private async standalone(
     { delivery, key, signal, prompt }: StandaloneTurn,
     community = false,
     reserved = false,
+    published = () => {},
   ): Promise<TurnResult> {
     const settings = config(delivery.config);
     if (settings.scope === "community" && !community && !reserved)
@@ -884,7 +896,12 @@ export class PiRuntime {
         `${delivery.agent.key}/${COMMUNITY_SESSION}`,
         signal,
         (signal) =>
-          this.standalone({ delivery, key, signal, prompt }, false, true),
+          this.standalone(
+            { delivery, key, signal, prompt },
+            false,
+            true,
+            published,
+          ),
       );
     const { agent, team } = delivery;
     const entry = this.entry(agent, settings);
@@ -893,7 +910,12 @@ export class PiRuntime {
         entry.policies,
         signal,
         (signal) =>
-          this.standalone({ delivery, key, signal, prompt }, false, true),
+          this.standalone(
+            { delivery, key, signal, prompt },
+            false,
+            true,
+            published,
+          ),
         () => this.notify(),
       );
     if (settings.scope !== "community" || !entry.handle) {
@@ -907,7 +929,12 @@ export class PiRuntime {
         this.controls,
         `${agent.key}/${COMMUNITY_SESSION}`,
         (signal) =>
-          this.standalone({ delivery, key, signal, prompt }, true, true),
+          this.standalone(
+            { delivery, key, signal, prompt },
+            true,
+            true,
+            published,
+          ),
         () => this.notify(),
       );
     let stop: (() => void) | undefined;
@@ -940,6 +967,7 @@ export class PiRuntime {
         entry.receipts.set(request, {
           key: COMMUNITY_SESSION,
           scope: COMMUNITY_SESSION,
+          published,
           acknowledged: () => entry.project.resolve(undefined, NO_PROJECT),
           settled: new Promise<void>((resolve) => {
             release = resolve;
@@ -1007,6 +1035,9 @@ export class PiRuntime {
   /** Runs a Buzz tool for Pi, for the conversation that called it. */
   async tool(call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
     const entry = this.agents.get(call.agent);
+    const receipts = [
+      ...(entry?.active.get(call.conversation)?.values() ?? []),
+    ];
     const client =
       entry?.handle &&
       appClient(entry.handle, {
@@ -1039,9 +1070,11 @@ export class PiRuntime {
         call.arguments,
         this.added(),
       );
+      const final = isFinalMessage(call.name, call.arguments);
+      if (final) for (const receipt of receipts) receipt.published?.();
       return {
         content: content(reply),
-        ...(isFinalMessage(call.name, call.arguments) ? { final: true } : {}),
+        ...(final ? { final: true } : {}),
       };
     } catch (error) {
       return {

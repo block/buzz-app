@@ -33,6 +33,7 @@ import {
   addedKey,
   sessionHint,
   turnNote,
+  isFinalMessage,
 } from "../../buzz-mcp/session-tools";
 import {
   unsupportedSynced,
@@ -179,6 +180,8 @@ type Entry = {
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
+  /** Records confirmed final publication by the admitted community wake. */
+  wakePublished?: () => void;
   /** The folders each conversation's process may use: its Solo chat's
    * latest Canvas folders and every folder its owner referenced. */
   directories: Map<string, readonly string[]>;
@@ -1394,19 +1397,30 @@ export class ClaudeRuntime {
 
   /** Runs a standalone turn, such as a watch's or a timer's, as a one-off
    * process: a new session that is not saved. */
-  runOnce(turn: StandaloneTurn): Promise<TurnResult> {
-    return this.standalone(turn);
+  async runOnce(turn: StandaloneTurn): Promise<TurnResult> {
+    let answered = false;
+    try {
+      const result = await this.standalone(turn, false, () => {
+        answered = true;
+      });
+      return answered ? { ok: true } : result;
+    } catch (error) {
+      if (answered) return { ok: true };
+      throw error;
+    }
   }
   private async standalone(
     { delivery, key, signal, prompt }: StandaloneTurn,
     reserved = false,
+    published = () => {},
   ): Promise<TurnResult> {
     const settings = this.resolveConfig(delivery.config);
     if (settings.scope === "community" && !reserved)
       return this.controls.wake(
         `${delivery.agent.key}/${COMMUNITY_SESSION}`,
         signal,
-        (signal) => this.standalone({ delivery, key, signal, prompt }, true),
+        (signal) =>
+          this.standalone({ delivery, key, signal, prompt }, true, published),
       );
     const { agent, team } = delivery;
     if (await this.inspect?.(agent.key)) {
@@ -1436,7 +1450,8 @@ export class ClaudeRuntime {
       return standaloneTurn(
         entry.policies,
         signal,
-        (signal) => this.standalone({ delivery, key, signal, prompt }, true),
+        (signal) =>
+          this.standalone({ delivery, key, signal, prompt }, true, published),
         () => this.notify(),
       );
     if (settings.scope !== "community" || !entry.handle) {
@@ -1473,6 +1488,7 @@ export class ClaudeRuntime {
                   );
               };
               signal.addEventListener("abort", stop, { once: true });
+              entry.wakePublished = published;
               try {
                 const result = await entry.sessions.deliver(
                   COMMUNITY_SESSION,
@@ -1493,6 +1509,8 @@ export class ClaudeRuntime {
                 return result;
               } finally {
                 signal.removeEventListener("abort", stop);
+                if (entry.wakePublished === published)
+                  delete entry.wakePublished;
                 await stopping;
               }
             },
@@ -1797,13 +1815,28 @@ export class ClaudeRuntime {
           });
         const context =
           (conversation && entry.contexts.get(conversation)) || {};
-        return respond(
+        const published =
+          conversation === COMMUNITY_SESSION ? entry.wakePublished : undefined;
+        const reply = await respond(
           client,
           context,
           message,
           this.added(),
           listing(this.added()),
         );
+        const call = message as {
+          method?: string;
+          params?: { name?: unknown; arguments?: unknown };
+        } | null;
+        const result = (reply as { result?: { isError?: boolean } }).result;
+        if (
+          call?.method === "tools/call" &&
+          result &&
+          !result.isError &&
+          isFinalMessage(call.params?.name, call.params?.arguments)
+        )
+          published?.();
+        return reply;
       };
     const saved = this.savedSessions(agent);
     entry.sessions = new AgentSessions({

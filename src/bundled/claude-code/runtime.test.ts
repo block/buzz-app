@@ -5170,68 +5170,97 @@ it.each(["thread", "channel"] as const)(
   },
 );
 
-it("drains an expired community wake's interrupt before admitting its successor", async () => {
-  const f = setup([], { hold: true });
-  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
-  const abort = new AbortController();
-  const done = f.runtime.runOnce({
-    delivery: { agent: f.agent, config, current: () => true },
-    key: "expired",
-    signal: abort.signal,
-    prompt: async () => "check",
-  } as unknown as Parameters<ClaudeRuntime["runOnce"]>[0]);
-  try {
-    await vi.waitFor(() =>
-      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
-    );
-    const worker = f.claudes().find((p) => p.prompts.length);
-    if (!worker) throw new Error("missing worker");
-    const emit = worker.emit.bind(worker);
-    let interrupt: unknown;
-    const held = vi.spyOn(worker, "emit").mockImplementation((message) => {
-      const response = message.response as { request_id?: unknown } | undefined;
-      const request = worker.received.find(
-        (row) => row.request_id === response?.request_id,
+it.each(["unpublished", "published", "failed"])(
+  "drains an expired %s community wake before its successor",
+  async (publication) => {
+    const f = setup([], { hold: true });
+    const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+    const abort = new AbortController();
+    const done = f.runtime.runOnce({
+      delivery: { agent: f.agent, config, current: () => true },
+      key: "expired",
+      signal: abort.signal,
+      prompt: async () => "check",
+    } as unknown as Parameters<ClaudeRuntime["runOnce"]>[0]);
+    try {
+      await vi.waitFor(() =>
+        expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
       );
-      if (
-        message.type === "control_response" &&
-        (request?.request as { subtype?: string })?.subtype === "interrupt"
-      ) {
-        interrupt = response?.request_id;
-        return;
+      const worker = f.claudes().find((p) => p.prompts.length);
+      if (!worker) throw new Error("missing worker");
+      if (publication !== "unpublished") {
+        if (publication === "failed")
+          f.agent.publish.mockRejectedValueOnce(new Error("offline"));
+        const result = await mcp(worker, 91, "tools/call", {
+          name: "send",
+          arguments: {
+            channel,
+            text: "DONE",
+            audience: "everyone",
+            final: true,
+          },
+        });
+        expect(result).toMatchObject(
+          publication === "failed"
+            ? { isError: true }
+            : { content: expect.any(Array) },
+        );
       }
-      emit(message);
-    });
-    abort.abort(new Error("deadline"));
-    await vi.waitFor(() => expect(interrupt).toBeDefined());
-    worker.finish();
-    await f.deliver(
-      { type: "mention", event: message("2", "next") },
-      { config },
-    );
-    await flush();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(worker.prompts).toHaveLength(1);
-    held.mockRestore();
-    emit({
-      type: "control_response",
-      response: { subtype: "error", request_id: interrupt, error: "too late" },
-    });
-    await done;
-    await vi.waitFor(() =>
-      expect(f.claudes().flatMap((p) => p.prompts)).toHaveLength(2),
-    );
-    const next = f.claudes().find((p) => p !== worker && p.prompts.length);
-    expect(next).toBeDefined();
-    expect(next?.killed).toBe(false);
-    next?.finish();
-    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
-  } finally {
-    for (const worker of f.claudes()) worker.exit(0);
-    await done;
-    f.runtime.dispose();
-  }
-});
+      const emit = worker.emit.bind(worker);
+      let interrupt: unknown;
+      const held = vi.spyOn(worker, "emit").mockImplementation((message) => {
+        const response = message.response as
+          | { request_id?: unknown }
+          | undefined;
+        const request = worker.received.find(
+          (row) => row.request_id === response?.request_id,
+        );
+        if (
+          message.type === "control_response" &&
+          (request?.request as { subtype?: string })?.subtype === "interrupt"
+        ) {
+          interrupt = response?.request_id;
+          return;
+        }
+        emit(message);
+      });
+      abort.abort(new Error("deadline"));
+      await vi.waitFor(() => expect(interrupt).toBeDefined());
+      worker.finish();
+      await f.deliver(
+        { type: "mention", event: message("2", "next") },
+        { config },
+      );
+      await flush();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(worker.prompts).toHaveLength(1);
+      held.mockRestore();
+      emit({
+        type: "control_response",
+        response: {
+          subtype: "error",
+          request_id: interrupt,
+          error: "too late",
+        },
+      });
+      await expect(done).resolves.toMatchObject({
+        ok: publication === "published",
+      });
+      await vi.waitFor(() =>
+        expect(f.claudes().flatMap((p) => p.prompts)).toHaveLength(2),
+      );
+      const next = f.claudes().find((p) => p !== worker && p.prompts.length);
+      expect(next).toBeDefined();
+      expect(next?.killed).toBe(false);
+      next?.finish();
+      await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    } finally {
+      for (const worker of f.claudes()) worker.exit(0);
+      await done;
+      f.runtime.dispose();
+    }
+  },
+);
 
 it("retains the Solo Canvas after a community turn fails effort admission", async () => {
   const f = setup([], {

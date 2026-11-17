@@ -7,7 +7,7 @@ for (const provider of ["claude", "codex"]) {
     page,
   }) => {
     await page.goto(
-      `/tests/fixtures/agent-library.html?settingsSync&settingsHarness=${provider}`,
+      `/tests/fixtures/agent-library.html?settingsSync=${provider}`,
       { waitUntil: "domcontentloaded" },
     );
     await page.getByRole("gridcell", { name: "Ada", exact: true }).click();

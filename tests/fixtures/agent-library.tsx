@@ -31,7 +31,7 @@ import "../../src/shared/styles/globals.css";
 const harness = new URLSearchParams(location.search).get("harness");
 const settingsSync = new URLSearchParams(location.search).has("settingsSync");
 const thinkingHarness = settingsSync
-  ? (new URLSearchParams(location.search).get("settingsHarness") ?? "claude")
+  ? new URLSearchParams(location.search).get("settingsSync") || "claude"
   : new URLSearchParams(location.search).get("thinking");
 const importing = new URLSearchParams(location.search).has("import");
 const teamImport = new URLSearchParams(location.search).has("teamImport");

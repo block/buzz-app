@@ -7268,7 +7268,12 @@ it("opening a channel quiets its row while its messages and threads stay unread"
 
   // Opening quiets the row at once, before the visit is ready.
   const entered = h.session.unread.enterChannel("room");
-  const quiet = { observedCount: 0, attentionCount: 0, threadCount: 0 };
+  const quiet = {
+    observedCount: 0,
+    attentionCount: 0,
+    mentionCount: 0,
+    threadCount: 0,
+  };
   expect(h.snapshot()).toMatchObject({ observedCount: 3, row: quiet });
   await entered;
   // What arrives during the visit is seen too.
@@ -7299,6 +7304,7 @@ it("opening a channel quiets its row while its messages and threads stay unread"
   ]);
   expect(h.snapshot().row).toEqual({
     observedCount: 1,
+    mentionCount: 0,
     attentionCount: 1,
     threadCount: 1,
   });
@@ -7376,7 +7382,12 @@ it.each([
         [`seen:msg:${mention.id}`]: seen,
       }),
     );
-    const quiet = { observedCount: 0, attentionCount: 0, threadCount: 0 };
+    const quiet = {
+      observedCount: 0,
+      attentionCount: 0,
+      mentionCount: 0,
+      threadCount: 0,
+    };
     expect(h.snapshot().row).toEqual(quiet);
     // An ordinary message at the cut stays quiet: only a timestamp says so.
     h.emit([message(h.alice, "room", "late ordinary", delivered)]);
@@ -7544,4 +7555,48 @@ it("inactive entry sees nothing until the open visit resumes", async () => {
   await vi.waitFor(() =>
     expect(h.journal()?.state.frontiers[`seen:msg:${mention.id}`]).toBe(100),
   );
+});
+
+it("counts direct mentions separately from broadcasts and followed replies, and updates after reading a mention", async () => {
+  const h = setup();
+  h.grant("room");
+  const target = { kind: "channel" as const, channelId: "room" };
+  const root = message(h.viewer, "room", "My thread", 20);
+  const mention = message(h.alice, "room", "Direct ask", 21, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const replyMention = message(h.alice, "room", "Direct reply ask", 22, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  const reply = message(h.alice, "room", "Reply", 23, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const broadcast = message(h.alice, "room", "Everyone", 24, [
+    ["broadcast", "1"],
+  ]);
+  h.emit([root, mention, replyMention, reply, broadcast]);
+  expect(h.session.unread.snapshot(target)).toMatchObject({
+    observedCount: 4,
+    mentionCount: 2,
+    row: { mentionCount: 2 },
+  });
+  await h.session.unread.markThrough(
+    { kind: "message", channelId: "room", messageId: mention.id },
+    mention.id,
+  );
+  expect(h.session.unread.snapshot(target)).toMatchObject({
+    observedCount: 3,
+    mentionCount: 1,
+    row: { mentionCount: 1 },
+  });
+  await h.session.unread.markThrough(
+    { kind: "message", channelId: "room", messageId: replyMention.id },
+    replyMention.id,
+  );
+  expect(h.session.unread.snapshot(target)).toMatchObject({
+    observedCount: 2,
+    mentionCount: 0,
+    row: { mentionCount: 0 },
+  });
 });

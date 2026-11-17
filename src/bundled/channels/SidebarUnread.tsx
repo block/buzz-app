@@ -9,11 +9,21 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
   type RefObject,
 } from "react";
+import type {
+  SidebarRows,
+  RegisteredSidebarRows,
+} from "../../features/channel-navigation/sidebar-rows-service";
+
 import { CONVERSATION_LIST_LABEL, UNREAD_MARKERS } from "./conversation-rows";
 import styles from "./Channels.module.css";
+
+const noSubscription = () => () => {};
+const noContributions: readonly RegisteredSidebarRows[] = [];
+const emptySnapshot = () => noContributions;
 
 export type UnreadDmPreview = {
   name: string;
@@ -29,7 +39,7 @@ type EdgeTarget = {
 type Edges = { above: EdgeTarget[]; below: EdgeTarget[] };
 
 /** Geometry over rendered unread destinations, not another unread store. */
-function unreadEdges(list: HTMLElement): Edges {
+function unreadEdges(list: HTMLElement, mentionsAndDms = false): Edges {
   const edges: Edges = { above: [], below: [] };
   const visible = new Set<string>();
   const viewport = list.getBoundingClientRect();
@@ -56,6 +66,12 @@ function unreadEdges(list: HTMLElement): Edges {
       row.getAttribute("data-channel-type") === "dm" ||
       row.querySelector('[data-priority="true"]') !== null ||
       row.querySelector("[data-channel-activity]") !== null;
+    if (
+      mentionsAndDms &&
+      row.getAttribute("data-channel-type") !== "dm" &&
+      !row.querySelector("[data-channel-mention]")
+    )
+      continue;
     const target = { row, channelId, attention };
     if (rect.bottom <= viewport.top) edges.above.push(target);
     else if (rect.top >= viewport.top + list.clientHeight)
@@ -81,11 +97,21 @@ export function SidebarUnread({
   children,
   listRef,
   dmPreviews,
+  sidebarRows,
 }: {
   children: ReactNode;
   listRef?: RefObject<HTMLElement | null>;
   dmPreviews?: ReadonlyMap<string, UnreadDmPreview>;
+  sidebarRows?: SidebarRows | undefined;
 }) {
+  const contributions = useSyncExternalStore(
+    sidebarRows?.subscribe ?? noSubscription,
+    sidebarRows?.snapshot ?? emptySnapshot,
+    sidebarRows?.snapshot ?? emptySnapshot,
+  );
+  const mentionsAndDms = contributions.some(
+    (entry) => entry.unreadCues === "mentions-and-dms",
+  );
   const ownList = useRef<HTMLElement>(null);
   const list = listRef ?? ownList;
   const content = useRef<HTMLDivElement>(null);
@@ -97,7 +123,7 @@ export function SidebarUnread({
     let frame = 0;
     const measure = () => {
       frame = 0;
-      const next = unreadEdges(viewport);
+      const next = unreadEdges(viewport, mentionsAndDms);
       setEdges((previous) =>
         (["above", "below"] as const).every(
           (edge) =>
@@ -127,6 +153,7 @@ export function SidebarUnread({
       attributeFilter: [
         "open",
         "data-channel-unread",
+        "data-channel-mention",
         "data-channel-muted",
         "data-channel-activity",
         "data-channel-type",
@@ -143,12 +170,12 @@ export function SidebarUnread({
       mutations.disconnect();
       viewport.removeEventListener("scroll", schedule);
     };
-  }, [list]);
+  }, [list, mentionsAndDms]);
   const reveal = (edge: keyof Edges) => {
     const viewport = list.current;
     if (!viewport) return;
     // Recheck at activation: unread/roster changes may precede the queued frame.
-    const targets = unreadEdges(viewport)[edge];
+    const targets = unreadEdges(viewport, mentionsAndDms)[edge];
     const target = edge === "above" ? targets.at(-1) : targets[0];
     if (!target) return;
     const { row } = target;

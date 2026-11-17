@@ -1,6 +1,8 @@
 // Installed fixture code only; app composition, manager, contributions and UI remain production.
 import { soloRegionFixture } from "./solo-region-fixture";
 import { companionPlugins } from "./companion-fixture";
+import * as mentionsAndDms from "../../examples/plugins/mentions-and-dms/plugin.js";
+import mentionsManifest from "../../examples/plugins/mentions-and-dms/manifest.json";
 import * as shortcutCounter from "../../examples/plugins/shortcut-counter/plugin.js";
 import shortcutManifest from "../../examples/plugins/shortcut-counter/manifest.json";
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -137,6 +139,11 @@ const fill = (background: string, zIndex?: number) => () => (
 );
 
 export const fixturePlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...mentionsManifest, apiVersion: 1 },
+    module: mentionsAndDms,
+    enabledByDefault: false,
+  },
   soloRegionFixture,
   {
     manifest: {

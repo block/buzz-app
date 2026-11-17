@@ -949,10 +949,11 @@ for (const local of [false, true]) {
       );
     } else {
       // Without a DM, Message drafts one: Pinky sees nothing until a send.
+      // The draft takes Pinky, then its visit drops them.
       await message.click();
-      const pinky = await page.evaluate(
-        () => window.profilesFixture.keys.pinky,
-      );
+      await expect(
+        page.getByRole("button", { name: "Remove Pinky" }),
+      ).toBeVisible();
       await expect
         .poll(() =>
           page.evaluate(
@@ -961,7 +962,7 @@ for (const local of [false, true]) {
                 ?.params,
           ),
         )
-        .toEqual({ kind: "new-message", to: pinky });
+        .toBe("new-message");
       expect(await page.evaluate(() => window.profilesFixture.dmOpens)).toEqual(
         [],
       );

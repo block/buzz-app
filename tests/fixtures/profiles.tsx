@@ -224,7 +224,12 @@ function session() {
           await replyGate;
         }
         return filters.flatMap((filter) => {
-          if (dmOpened && filter["#d"]?.includes("member-dm"))
+          // Only a lookup of the DM alone; a batched one also names channels.
+          if (
+            dmOpened &&
+            filter["#d"]?.length === 1 &&
+            filter["#d"][0] === "member-dm"
+          )
             return dmEvents().filter((event) =>
               filter.kinds?.includes(event.kind),
             );

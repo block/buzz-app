@@ -838,6 +838,10 @@ test("profile Message drafts a new DM and restores a hidden one", async ({
   // opened from.
   await page.getByRole("button", { name: "Remove Avery Chen" }).click();
   await page.getByRole("option", { name: "Person 03", exact: true }).click();
+  // A written draft makes the visit a Back stop.
+  await page
+    .getByRole("textbox", { name: "Message Person 03", exact: true })
+    .fill("Hi Avery");
   await general.click();
   await page.goBack();
   await expect(
@@ -848,9 +852,9 @@ test("profile Message drafts a new DM and restores a hidden one", async ({
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Remove Person 03" }).click();
   await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
-  await page
-    .getByRole("textbox", { name: "Message Avery Chen", exact: true })
-    .fill("Hi Avery");
+  await expect(
+    page.getByRole("textbox", { name: "Message Avery Chen", exact: true }),
+  ).toHaveText("Hi Avery");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(sidebarDm).toBeVisible();
   await expect(

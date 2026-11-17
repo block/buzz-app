@@ -2202,7 +2202,24 @@ export const test = base.extend({
           }),
         })
       : undefined;
+    // Browser-managed downloads can bypass Playwright's page routes. Serve
+    // opted-in attachment bytes over HTTP, shared with ordinary media reads.
+    const mediaFiles = new Map();
     const middleware = async (request, response, next) => {
+      const requested = new URL(request.url, "http://fixture.local");
+      const mediaFile = mediaFiles.get(requested.searchParams.get("url"));
+      if (
+        request.method === "GET" &&
+        /^\/api\/relay\/[^/]+\/media$/.test(requested.pathname) &&
+        mediaFile
+      ) {
+        response.writeHead(200, {
+          "Content-Type": mediaFile.contentType,
+          "Content-Length": mediaFile.bytes.length,
+        });
+        response.end(mediaFile.bytes);
+        return;
+      }
       // Development-React journeys restore the shared login at startup too.
       // This synthetic host has no Builderlab account; keep its stream open
       // until the page disconnects, just like the real broker's signed-out state.
@@ -2654,6 +2671,7 @@ export const test = base.extend({
         },
       );
       await use({
+        mediaFiles,
         sign: (template) => finalizeEvent(template, userKey),
         channelMetadata: (id, tags) => sign(39000, [["d", id], ...tags]),
         // Model an owner changing visibility; production discovery consumes the

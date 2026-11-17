@@ -380,6 +380,16 @@ and are asked to sign in again in Buzz.
   with that name, or a neutral smiley when there is none or its image can't load.
 - In the fullscreen video viewer, comments and emoji reactions at the current
   frame stay attached to that video when you move through a thread's media.
+- Right-click an uploaded image to **Copy image**, **Copy image URL**, or
+  **Download image**. Videos offer **Copy video URL** and **Download video**.
+  **Open image** or **Open video** opens the preview in the fullscreen gallery.
+  With a keyboard, focus a preview or viewer control and press Shift+F10 or the
+  Menu key.
+  These actions also work in fullscreen viewers. URLs use the original media
+  address; access still depends on the recipient's community permissions.
+  Desktop menu downloads show **Starting download…**, then confirm when saved to
+  Downloads or report a failure. Browser downloads use the browser's
+  settings, and image copying requires browser clipboard support.
 - With **Voice Notes** enabled, use the microphone in the composer to record
   and attach a voice note. Sending requires ffmpeg on the host computer. Sent
   notes support playback and seeking; a note's duration appears once it
@@ -392,8 +402,9 @@ and are asked to sign in again in Buzz.
   inline.
 - Right-click a message, including its timestamp, to open its More actions with
   **Reply** added; Shift+F10 or the Menu key opens it from a focused control in
-  the message. Links keep their own menu; images, media and text you already
-  selected keep the system menu. Touch long-press keeps text selection.
+  the message. Links keep their own menu; uploaded images and videos have media
+  actions. Other media and text you already selected keep the system menu.
+  Touch long-press keeps text selection.
 - Plugins can add actions to this toolbar. A link to an active plugin panel
   opens that panel in the conversation. If the plugin is removed, its actions
   and panel links become unavailable.

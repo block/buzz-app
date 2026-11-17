@@ -35,7 +35,7 @@ import {
 } from "./parseSearchOperators";
 
 const noAgentNames: ReadonlyMap<string, string> = new Map();
-const PAGE_SIZE = 20;
+export const PAGE_SIZE = 20;
 
 export type SearchSort = "relevance" | "newest";
 
@@ -128,7 +128,7 @@ async function readPage(
     ];
   });
   // The relay pages by offset, so only a full page can have a successor.
-  return { messages, more: relayCount >= PAGE_SIZE };
+  return { messages, more: relayCount >= (filter.limit ?? PAGE_SIZE) };
 }
 
 /** Later pages extend the list. Offsets can shift between reads, so a repeated
@@ -160,6 +160,9 @@ export function useSearchMessages(
   agentNames: ReadonlyMap<string, string> = noAgentNames,
   /** Newest is honored only by relays advertising `buzz-search-sort`. */
   sort: SearchSort = "relevance",
+  /** Pages the first relevance-ranked read asks for at once, so a reranker
+   * sees more than one. Later pages are read one at a time. */
+  rankedPages = 1,
 ) {
   const ordinaryChannel = useCallback(
     (id: string, includePending = false) => {
@@ -216,6 +219,7 @@ export function useSearchMessages(
   const newest = sort === "newest" && session.searchSort;
   // Without text the relay reads its ordinary newest-first history.
   const newestFirst = newest || !parsed.text;
+  const firstPages = newestFirst ? 1 : rankedPages;
   // Only evidence consulted by this resolution can invalidate its results.
   // Other views verify unrelated people without resetting these pages.
   const verification = useMemo(() => {
@@ -474,7 +478,7 @@ export function useSearchMessages(
                 ...(newest ? { search_sort: "newest" as const } : {}),
               }
             : {}),
-          limit: PAGE_SIZE,
+          limit: PAGE_SIZE * firstPages,
           ...(channelId ? { "#h": [channelId] } : {}),
           ...(author ? { authors: [author] } : {}),
           ...(parsed.since !== null ? { since: parsed.since } : {}),
@@ -487,9 +491,18 @@ export function useSearchMessages(
           1,
           controller.signal,
         );
+        // Offsets count in the later pages' size: after n first pages, the
+        // next is page n + 1.
         return {
           messages: page.messages,
-          ...(page.more ? { next: { filter, page: 2 } } : {}),
+          ...(page.more
+            ? {
+                next: {
+                  filter: { ...filter, limit: PAGE_SIZE },
+                  page: firstPages + 1,
+                },
+              }
+            : {}),
         };
       })()
         .then(({ messages, next, ambiguousAuthor }) => {
@@ -528,6 +541,7 @@ export function useSearchMessages(
     agents,
     newest,
     verification,
+    firstPages,
   ]);
   const loadMore = useCallback(() => {
     const base = copied.current;

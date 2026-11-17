@@ -102,6 +102,8 @@ import {
   channelIconLabel,
 } from "../../features/channels/channel-icon";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
+import type { Decisions } from "../../features/decisions/service";
+import { RERANK_PAGES, useCanRerank, useMessageRerank } from "./message-rerank";
 import {
   MESSAGE_SEARCH_MIN_CHARS,
   SEARCH_MIN_CHARS,
@@ -241,8 +243,14 @@ export function SearchResults({
   views,
   offline,
   openAsk,
+  decisions,
+  community,
 }: {
   session: RelaySession;
+  /** Reranks message hits by how well each answers the query. */
+  decisions?: Decisions | undefined;
+  /** The community (its relay URL) a decision call bills. */
+  community?: string | undefined;
   /** Open a new chat with `agent` that starts with `question`. */
   openAsk?:
     | ((question: string, agent: { pubkey: string; name: string }) => void)
@@ -719,6 +727,7 @@ export function SearchResults({
   const [sort, setSort] = useState<SearchSort>("relevance");
   // The chip or a single resolved `in:` limits results to one conversation.
   const effectiveChannelId = scopedChannelId ?? operatorChannelId;
+  const canRerank = useCanRerank(decisions);
   const search = useSearchMessages(
     session,
     offline || asking ? "" : query,
@@ -735,6 +744,7 @@ export function SearchResults({
     // Only one conversation's results offer the choice; across
     // conversations, search keeps relevance.
     effectiveChannelId ? sort : "relevance",
+    canRerank ? RERANK_PAGES : 1,
   );
   // Offline or asking, nothing is searched, so there is no order to choose.
   const sortable =
@@ -1812,7 +1822,32 @@ export function SearchResults({
       : name;
   };
   const terms = useMemo(() => searchTerms(parsed.text), [parsed.text]);
-  const messages: SearchDestination[] = search.messages.map((message) => {
+  // The text whose results the person has started moving through: a rerank
+  // that lands after that is dropped.
+  const [movedFor, setMovedFor] = useState<string>();
+  const rerank = useMessageRerank({
+    decisions,
+    community,
+    query: parsed.text,
+    messages: search.messages,
+    enabled: !!parsed.text && !search.newestFirst && !search.loading,
+    facts: (message) => {
+      const channel = session.channels.get?.(message.channelId);
+      return {
+        where:
+          channel?.channelType === "dm"
+            ? `Direct message: ${whereOf(message.channelId)}`
+            : whereOf(message.channelId),
+        author: nameOf(
+          message.workflowOwnerId ?? message.authorId,
+          message.channelId,
+        ),
+        mine: message.authorId === session.viewer,
+      };
+    },
+    held: movedFor === query,
+  });
+  const messages: SearchDestination[] = rerank.messages.map((message) => {
     // Every listed hit's channel is readable here, with settled metadata.
     const channel = session.channels.get?.(message.channelId);
     const displayId = message.workflowOwnerId ?? message.authorId;
@@ -2172,9 +2207,7 @@ export function SearchResults({
     tone: "message",
     rank: messageLead === 0 ? -Infinity : Infinity,
     why: hits
-      ? words >= 3
-        ? "Reads like a topic"
-        : `${messageCount ?? hits} mention it`
+      ? `${words >= 3 ? "Reads like a topic" : `${messageCount ?? hits} mention it`}${rerank.reranked ? " · Reranked" : ""}`
       : undefined,
     count: messageCount,
     destinations: messageRows,
@@ -2270,11 +2303,17 @@ export function SearchResults({
                   label: "Messages",
                   rank: Infinity,
                   icon: ChatCircleIcon,
-                  why: sortable
-                    ? order
-                    : hasOperator
-                      ? "Filters apply to messages"
-                      : undefined,
+                  why:
+                    [
+                      sortable
+                        ? order
+                        : hasOperator
+                          ? "Filters apply to messages"
+                          : undefined,
+                      rerank.reranked ? "Reranked" : undefined,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") || undefined,
                   destinations: messageRows,
                   headingStatus: slowMessages ? "Searching…" : undefined,
                   empty: messageEmpty,
@@ -2536,6 +2575,7 @@ export function SearchResults({
             !guideOpen &&
             !!query.trim() &&
             (messagesPending || directoryPending),
+          onMove: () => setMovedFor(query),
           unsearched:
             !guideOpen && (search.tooShort || search.onlyExclusions)
               ? { Messages: messageEmpty }

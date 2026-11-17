@@ -867,3 +867,26 @@ it("steps through results with Control+J/N and K/P after the person's own keys",
   expect(control("j")).toBe(false);
   expect(highlighted()).toContain("channel-0");
 });
+
+it("reports the first move for each text, with or without a preview", () => {
+  const onMove = vi.fn();
+  const palette = (query: string) => (
+    <SearchChoices
+      query={query}
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      peek={{ ranked: false, onMove }}
+      groups={[{ label: "Messages", destinations }]}
+    />
+  );
+  const { rerender } = render(palette("deploy"));
+  expect(onMove).not.toHaveBeenCalled();
+  const field = screen.getByRole("combobox");
+  fireEvent.keyDown(field, { key: "ArrowDown" });
+  fireEvent.keyDown(field, { key: "ArrowDown" });
+  expect(onMove).toHaveBeenCalledOnce();
+  rerender(palette("deploys"));
+  expect(onMove).toHaveBeenCalledOnce();
+  fireEvent.keyDown(field, { key: "ArrowDown" });
+  expect(onMove).toHaveBeenCalledTimes(2);
+});

@@ -122,3 +122,71 @@ it.each([
     }
   },
 );
+
+it.each([
+  { query: "deploy", limit: 60, next: 4 },
+  // Without text the read is newest-first history, which isn't reranked.
+  { query: "before:2026-10-01", limit: 20, next: 2 },
+])(
+  "reads $limit hits first for $query when three ranked pages are asked for",
+  async ({ query, limit, next: nextPage }) => {
+    const viewer = keypair();
+    const relay = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const discovery = [
+      metadata(relay, "crew", "crew"),
+      roster(relay, "crew", [viewer.pubkey]),
+    ];
+    const owner = createRelaySession({
+      ...wire.transport,
+      query(filters, signal) {
+        if (filters.some((filter) => filter.kinds?.includes(9)))
+          return wire.transport.query(filters, signal);
+        return Promise.resolve(
+          discovery.filter((event) =>
+            filters.some((filter) => filter.kinds?.includes(event.kind)),
+          ),
+        );
+      },
+    });
+    try {
+      owner.session.channels.ensureList();
+      await waitFor(() =>
+        expect(owner.session.channels.get?.("crew")).toBeDefined(),
+      );
+      const { result } = renderHook(() =>
+        useSearchMessages(
+          owner.session,
+          query,
+          undefined,
+          undefined,
+          undefined,
+          "relevance",
+          3,
+        ),
+      );
+      await waitFor(() => expect(wire.pending).toHaveLength(1));
+      const first = wire.next();
+      expect(first.filters[0]?.limit).toBe(limit);
+      await act(async () =>
+        first.respond(
+          Array.from({ length: limit }, (_, index) =>
+            message(viewer, "crew", `deploy ${index}`, 1700000000 + index),
+          ),
+        ),
+      );
+      await waitFor(() => expect(result.current.hasMore).toBe(true));
+      expect(result.current.messages).toHaveLength(limit);
+      act(() => result.current.loadMore());
+      await waitFor(() => expect(wire.pending).toHaveLength(1));
+      // Later pages keep the page size, so page n + 1 starts where the first
+      // read ended.
+      expect(wire.next().filters).toEqual([
+        { ...first.filters[0], limit: 20, page: nextPage },
+      ]);
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);

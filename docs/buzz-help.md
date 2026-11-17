@@ -819,6 +819,14 @@ and are asked to sign in again in Buzz.
   slower results arrive until you move the highlight; after that they stay
   put and later groups join at the end. The panel and key hints hide in
   narrow windows.
+- **Reranked messages**: when this device has a Decisions API provider set up
+  (Settings → Decisions API), searching messages by relevance reads the first
+  60 matches, then has the provider reorder them by how well each answers what
+  you typed. The keyword order shows first; the reordered list replaces it a
+  moment later, and the heading says **Reranked**. If you've already moved the
+  highlight, the order stays as it is. The provider sees the query and those
+  messages' text, conversation names and authors. Newest-first and filter-only
+  searches aren't reranked.
 - **Ask an agent**: start with `ask:` to write a question for your default
   agent, or choose **Ask** under a long query. Enter opens New chat with the
   question addressed to that agent; press Enter again to send it. If New chat

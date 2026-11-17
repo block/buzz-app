@@ -1,0 +1,221 @@
+// @vitest-environment jsdom
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import type {
+  DecisionRequest,
+  DecisionResult,
+  Decisions,
+} from "../../features/decisions/service";
+import { checkRequest } from "../../features/decisions/service";
+import {
+  rerankOrder,
+  rerankRequests,
+  useMessageRerank,
+} from "./message-rerank";
+import type { SearchMessage } from "./useSearchMessages";
+
+const message = (id: string) =>
+  ({
+    id,
+    channelId: "c",
+    authorId: "a",
+    createdAt: 0,
+    preview: id,
+    text: id,
+  }) as SearchMessage;
+const ids = (count: number) =>
+  Array.from({ length: count }, (_, index) => `m${index}`);
+const facts = () => ({ where: "#c", author: "A", mine: false });
+/** Answers each question with the probability `score` gives its candidate. */
+const answered = (
+  request: DecisionRequest,
+  score: (text: string) => number,
+): DecisionResult => {
+  const { candidates } = JSON.parse(request.state) as {
+    candidates: { n: number; text: string }[];
+  };
+  return {
+    outcome: "answered",
+    backend: "test",
+    model: "test",
+    answers: Object.fromEntries(
+      candidates.map(({ n, text }) => [
+        `m${n}`,
+        { type: "yes_no", probability: score(text) },
+      ]),
+    ),
+  };
+};
+const decisionsOf = (decide: Decisions["decide"]) =>
+  ({ decide, status: () => "ready" }) as unknown as Decisions;
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+it("orders by the provider's probability, keeping relay order on ties and gaps", () => {
+  const messages = ["a", "b", "c", "d"].map(message);
+  expect(rerankOrder(messages, [0.2, 0.9, 0.2, -1])).toEqual([
+    "b",
+    "a",
+    "c",
+    "d",
+  ]);
+});
+
+it.each([
+  { count: 2, sizes: [2] },
+  { count: 32, sizes: [32] },
+  { count: 33, sizes: [17, 16] },
+  { count: 60, sizes: [30, 30] },
+  { count: 80, sizes: [30, 30] },
+])(
+  "asks about the first $count hits in calls the provider accepts",
+  ({ count, sizes }) => {
+    const requests = rerankRequests(
+      "q",
+      ids(count).map(message),
+      facts,
+      "wss://relay.example.org",
+    );
+    expect(
+      requests.map((request) => Object.keys(request.questions).length),
+    ).toEqual(sizes);
+    for (const request of requests) {
+      expect(checkRequest(request)).toBeUndefined();
+      expect(request.community).toBe("wss://relay.example.org");
+    }
+  },
+);
+
+it("reorders the first hits across every call's answers", async () => {
+  vi.useFakeTimers();
+  const messages = ids(60).map(message);
+  // The last hit is the most wanted, the first the least.
+  const decide = vi.fn(async (request: DecisionRequest) =>
+    answered(request, (text) => Number(text.slice(1)) / 100),
+  );
+  const decisions = decisionsOf(decide);
+  const { result } = renderHook(() =>
+    useMessageRerank({
+      decisions,
+      community: undefined,
+      query: "q",
+      messages,
+      enabled: true,
+      facts,
+      held: false,
+    }),
+  );
+  expect(result.current.messages[0]?.id).toBe("m0");
+  await act(async () => {
+    vi.advanceTimersByTime(500);
+  });
+  expect(decide).toHaveBeenCalledTimes(2);
+  expect(result.current.reranked).toBe(true);
+  expect(result.current.messages.map(({ id }) => id)).toEqual(
+    ids(60).reverse(),
+  );
+});
+
+it("keeps the relay order when any call fails", async () => {
+  vi.useFakeTimers();
+  const messages = ids(60).map(message);
+  let calls = 0;
+  const decide = vi.fn(async (request: DecisionRequest) =>
+    calls++
+      ? ({
+          outcome: "failed",
+          backend: "test",
+          reason: "timeout",
+        } as DecisionResult)
+      : answered(request, () => 0.5),
+  );
+  const decisions = decisionsOf(decide);
+  const { result } = renderHook(() =>
+    useMessageRerank({
+      decisions,
+      community: undefined,
+      query: "q",
+      messages,
+      enabled: true,
+      facts,
+      held: false,
+    }),
+  );
+  await act(async () => {
+    vi.advanceTimersByTime(500);
+  });
+  expect(decide).toHaveBeenCalledTimes(2);
+  expect(result.current.reranked).toBe(false);
+  expect(result.current.messages).toBe(messages);
+});
+
+it("drops an answer that lands after the person moved, keeping the relay order", async () => {
+  vi.useFakeTimers();
+  let answer: (result: DecisionResult) => void = () => {};
+  let asked: DecisionRequest | undefined;
+  const decide = vi.fn(
+    (request: DecisionRequest) =>
+      new Promise<DecisionResult>((resolve) => {
+        asked = request;
+        answer = resolve;
+      }),
+  );
+  const decisions = decisionsOf(decide);
+  const messages = ["a", "b"].map(message);
+  const { result, rerender } = renderHook(
+    ({ held }) =>
+      useMessageRerank({
+        decisions,
+        community: undefined,
+        query: "q",
+        messages,
+        enabled: true,
+        facts,
+        held,
+      }),
+    { initialProps: { held: false } },
+  );
+  await act(async () => {
+    vi.advanceTimersByTime(500);
+  });
+  expect(decide).toHaveBeenCalledOnce();
+  rerender({ held: true });
+  await act(async () => {
+    answer(
+      answered(asked as DecisionRequest, (text) => (text === "b" ? 0.9 : 0.1)),
+    );
+  });
+  expect(result.current.reranked).toBe(false);
+  expect(result.current.messages.map(({ id }) => id)).toEqual(["a", "b"]);
+});
+
+it("keeps an applied order while a later page extends the hits", async () => {
+  vi.useFakeTimers();
+  const decide = vi.fn(async (request: DecisionRequest) =>
+    answered(request, (text) => (text === "b" ? 0.9 : 0.1)),
+  );
+  const decisions = decisionsOf(decide);
+  const { result, rerender } = renderHook(
+    ({ messages, held }) =>
+      useMessageRerank({
+        decisions,
+        community: undefined,
+        query: "q",
+        messages,
+        enabled: true,
+        facts,
+        held,
+      }),
+    { initialProps: { messages: ["a", "b"].map(message), held: false } },
+  );
+  await act(async () => {
+    vi.advanceTimersByTime(500);
+  });
+  expect(result.current.messages.map(({ id }) => id)).toEqual(["b", "a"]);
+  // The person moves, then loads the next page.
+  rerender({ messages: ["a", "b", "c"].map(message), held: true });
+  expect(result.current.reranked).toBe(true);
+  expect(result.current.messages.map(({ id }) => id)).toEqual(["b", "a", "c"]);
+});

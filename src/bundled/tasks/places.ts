@@ -18,8 +18,6 @@ export type Place = Readonly<{
   kind: "chat" | "channel";
   /** The channel it is filed under (NIP-29 `parent`), if any. */
   parent?: string | undefined;
-  /** Open to everyone in the community. */
-  open?: true | undefined;
   /** What it takes from the places above it (`parent_access`): `guest`
    * lets their people read but not post, `none` shuts them out. */
   parentAccess?: "guest" | "none" | undefined;
@@ -73,7 +71,6 @@ function placeOf(event: RelayEvent): Place | undefined {
       ? { archived: true as const }
       : {}),
     ...(isChannelId(parent) ? { parent } : {}),
-    ...(channelVisibility(event) === "public" ? { open: true as const } : {}),
     ...parentAccessOf(event),
   };
 }
@@ -98,21 +95,19 @@ export function placeLabel(
     : `#${place.name}`;
 }
 
-/** Who can see what lives in `home`: anyone, when a place it is seen from
- * is open; otherwise the members of those places, from their relay-signed
- * rosters. The relay refuses an assignee who can't. */
-export async function readReaders(
+/** People to offer for a task in `home`: the members of it and of the
+ * places it is seen from, as far as the viewer can read their relay-signed
+ * rosters. A list of names only; who of them can see `home` is the relay's
+ * answer, from {@link whoCanRead}. */
+export async function readMembers(
   session: Pick<RelaySession, "snapshotRead" | "relayAuthor">,
   home: string,
   signal: AbortSignal,
-): Promise<Readonly<{ anyone: boolean; people: ReadonlySet<string> }>> {
+): Promise<ReadonlySet<string>> {
   const read = session.snapshotRead;
   const author = session.relayAuthor;
-  if (!read || !author) return { anyone: false, people: new Set() };
-  const places = await readPlaces(session, [home], signal);
-  const chain = seenFrom(home, places);
-  if (chain.some((id) => places.get(id)?.open))
-    return { anyone: true, people: new Set() };
+  if (!read || !author) return new Set();
+  const chain = seenFrom(home, await readPlaces(session, [home], signal));
   const rosters = await read(
     [{ kinds: [39002], authors: [author], "#d": chain, limit: chain.length }],
     { signal },
@@ -122,7 +117,27 @@ export async function readReaders(
     if (roster.pubkey === author && chain.includes(tag(roster, "d") ?? ""))
       for (const [name, value] of roster.tags)
         if (name === "p" && isPubkey(value)) people.add(value);
-  return { anyone: false, people };
+  return people;
+}
+
+/** The relay's answer to which of `pubkeys` can see `place`, or undefined
+ * when there is none: an older relay, a refusal or a failure. Undefined
+ * means the app doesn't know, so it flags and unassigns nobody, and the
+ * relay's own check catches a real problem at save time. */
+export async function whoCanRead(
+  session: Pick<RelaySession, "channelReaders">,
+  place: string,
+  pubkeys: readonly string[],
+  signal: AbortSignal,
+): Promise<ReadonlyMap<string, boolean> | undefined> {
+  if (!pubkeys.length) return new Map();
+  try {
+    return await session.channelReaders?.(place, pubkeys, signal);
+  } catch (reason) {
+    signal.throwIfAborted();
+    console.warn("Couldn’t ask the relay who can see a place:", reason);
+    return undefined;
+  }
 }
 
 /** The places named by `ids`, and the projects they are filed in. This

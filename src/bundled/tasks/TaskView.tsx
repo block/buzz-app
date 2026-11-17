@@ -63,7 +63,8 @@ import {
   type Place,
   placeLabel,
   projectOf,
-  readReaders,
+  readMembers,
+  whoCanRead,
 } from "./places";
 import { usePlaceAccess, usePlaces, useTaskPlaces } from "./react";
 import { saveTask, type SaveTarget } from "./store";
@@ -161,6 +162,7 @@ function TaskDetails({
   const places = usePlaces(session, [task.home]);
   const project = projectOf(task, places);
   const home = places.get(task.home);
+  const lostRead = useWhoCanRead(session, task.home, task.assignees);
   // Immediate changes: status and assignees, on the revision shown.
   const change = async (next: Partial<TaskFields>) => {
     if (saving) return;
@@ -265,6 +267,18 @@ function TaskDetails({
           </>
         )}
       </div>
+      <LostAccess
+        session={session}
+        assignees={task.assignees}
+        read={lostRead}
+        disabled={saving}
+        {...(canEdit && {
+          unassign: (lost: readonly string[]) =>
+            void change({
+              assignees: task.assignees.filter((key) => !lost.includes(key)),
+            }),
+        })}
+      />
       {task.description.trim() ? (
         <MarkdownDocument
           content={task.description}
@@ -378,6 +392,40 @@ function Assignees({
 
 type Person = ReturnType<ReturnType<typeof usePeople>>;
 
+/** Assignees the relay says can't see the task anymore, and to someone who
+ * can edit, a way to unassign them. Never why, and nothing when the relay
+ * can't say. */
+function LostAccess({
+  session,
+  assignees,
+  read,
+  disabled,
+  unassign,
+}: {
+  session: RelaySession;
+  assignees: readonly string[];
+  read: ReadonlyMap<string, boolean> | null | undefined;
+  disabled: boolean;
+  unassign?: (lost: readonly string[]) => void;
+}) {
+  const person = usePeople(session, assignees);
+  const lost = assignees.filter((key) => read?.get(key) === false);
+  if (!lost.length) return null;
+  const names = listNames(lost.map((key) => person(key).name));
+  return (
+    <div className={styles.actions}>
+      <p className="text-body-sm text-subtle m-0">
+        {names} can’t see this task anymore.
+      </p>
+      {unassign ? (
+        <Button size="sm" disabled={disabled} onClick={() => unassign(lost)}>
+          {lost.length === 1 ? `Unassign ${names}` : "Unassign all"}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 /** Up to four people, chosen from the people who can see the task. Agents
  * are never offered: a person always answers for the work. */
 function AssigneePicker({
@@ -393,12 +441,21 @@ function AssigneePicker({
   disabled: boolean;
   onChange(assignees: readonly string[]): void;
 }) {
-  // Its members and those of the places it is filed under. An open place
-  // has more readers than these; the relay checks every assignee either way.
-  const readers = useReadersOf(session, home);
+  // The members the viewer can see here and where it is filed, less anyone
+  // the relay says can't see it. When it can't say, all of them: the relay
+  // refuses a bad save by name.
+  const members = useMembersOf(session, home);
+  const candidates = useMemo(
+    () => [...(members ?? [])].filter((key) => !assignees.includes(key)),
+    [members, assignees],
+  );
+  const read = useWhoCanRead(session, home, candidates);
   const pubkeys = useMemo(
-    () => [...new Set([...assignees, ...(readers?.people ?? [])])],
-    [assignees, readers],
+    () => [
+      ...assignees,
+      ...candidates.filter((key) => read?.get(key) !== false),
+    ],
+    [assignees, candidates, read],
   );
   const person = usePeople(session, pubkeys);
   const [search, setSearch] = useState("");
@@ -727,14 +784,12 @@ function MoveTask({
   const change = to ? accessChange(task.home, to, named) : undefined;
   const destination = to && named.get(to);
   const label = destination ? placeLabel(destination, named) : "that place";
-  const readers = useReadersOf(session, to);
+  // Only those the relay says can't see it; when it can't say, nobody.
+  const read = useWhoCanRead(session, to, task.assignees);
   const person = usePeople(session, task.assignees);
-  const dropped =
-    readers && !readers.anyone
-      ? task.assignees.filter((pubkey) => !readers.people.has(pubkey))
-      : [];
+  const dropped = task.assignees.filter((key) => read?.get(key) === false);
   const problem = to ? placeProblem(target.access, label) : "";
-  const ready = !!to && problem === undefined && !!readers;
+  const ready = !!to && problem === undefined && read !== undefined;
   const move = async () => {
     if (!to || !ready) return;
     setPending(true);
@@ -838,21 +893,42 @@ const placeList = (
 const listNames = (names: readonly string[]) =>
   new Intl.ListFormat("en", { type: "conjunction" }).format(names);
 
-/** Who can see what lives in `home`; undefined until read, or with no home. */
-function useReadersOf(session: RelaySession, home: string | undefined) {
-  const [readers, setReaders] =
-    useState<Awaited<ReturnType<typeof readReaders>>>();
+/** People to offer for a task in `home`, from the member lists the viewer
+ * can read; undefined until read, or with no home. */
+function useMembersOf(session: RelaySession, home: string | undefined) {
+  const [members, setMembers] = useState<ReadonlySet<string>>();
   useEffect(() => {
-    setReaders(undefined);
+    setMembers(undefined);
     if (!home) return;
     const controller = new AbortController();
-    readReaders(session, home, controller.signal).then(
-      (read) => !controller.signal.aborted && setReaders(read),
+    readMembers(session, home, controller.signal).then(
+      (read) => !controller.signal.aborted && setMembers(read),
       () => {},
     );
     return () => controller.abort();
   }, [session, home]);
-  return readers;
+  return members;
+}
+
+/** The relay's answer to which of `pubkeys` can see `place`: undefined while
+ * asking, null when it can't say, so nobody is flagged or unassigned. */
+function useWhoCanRead(
+  session: RelaySession,
+  place: string | undefined,
+  pubkeys: readonly string[],
+) {
+  const [read, setRead] = useState<ReadonlyMap<string, boolean> | null>();
+  const key = pubkeys.join(",");
+  useEffect(() => {
+    setRead(undefined);
+    if (!place) return;
+    const controller = new AbortController();
+    whoCanRead(session, place, key ? key.split(",") : [], controller.signal)
+      .then((answer) => !controller.signal.aborted && setRead(answer ?? null))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [session, place, key]);
+  return read;
 }
 
 function TaskEditor({

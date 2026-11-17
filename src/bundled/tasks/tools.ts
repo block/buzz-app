@@ -32,7 +32,7 @@ import {
   placeLabel,
   projectOf,
   readPlaces,
-  readReaders,
+  whoCanRead,
 } from "./places";
 import {
   readTask,
@@ -128,8 +128,9 @@ function assigneesArg(args: Args) {
   return [...new Set(list)];
 }
 
-/** Refuses anyone who isn't a known person able to see what lives in
- * `home`, rather than guessing: an agent never answers for a task. */
+/** Refuses anyone who isn't a known person, or whom the relay says can't
+ * see what lives in `home`, rather than guessing: an agent never answers
+ * for a task. When the relay can't say, the save's own check decides. */
 async function checkAssignees(
   session: RelaySession,
   reads: TaskSource,
@@ -149,12 +150,11 @@ async function checkAssignees(
     if (profile.isAgent)
       throw new Error("Only people can be assigned, never agents");
   }
-  const readers = await readReaders(reads, home, signal);
-  if (readers.anyone) return;
-  const blind = assignees.filter((pubkey) => !readers.people.has(pubkey));
+  const read = await whoCanRead(session, home, assignees, signal);
+  const blind = assignees.filter((pubkey) => read?.get(pubkey) === false);
   if (blind.length)
     throw new Error(
-      `${blind.map((pubkey) => nameOf(session, pubkey)).join(", ")} can't see this task, so they can't be assigned`,
+      `${blind.map((pubkey) => nameOf(session, pubkey)).join(", ")} can't see ${labelOf(home, await readPlaces(reads, [home], signal))}, so they can't be assigned. Nothing changed.`,
     );
 }
 
@@ -644,10 +644,9 @@ export function addTaskTools(agents: Agents) {
       return `Moved.\n\n${describe(moved, session, places)}`;
     }
     const { gain, lose } = accessChange(task.home, to, places);
-    const readers = await readReaders(reads, to, signal);
-    const keep = readers.anyone
-      ? task.assignees
-      : task.assignees.filter((pubkey) => readers.people.has(pubkey));
+    // Only those the relay says can't see it; when it can't say, nobody.
+    const read = await whoCanRead(session, to, task.assignees, signal);
+    const keep = task.assignees.filter((pubkey) => read?.get(pubkey) !== false);
     const dropped = task.assignees.filter((pubkey) => !keep.includes(pubkey));
     for (const [key, value] of previews)
       if (value.expires < Date.now()) previews.delete(key);

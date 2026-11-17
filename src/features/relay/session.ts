@@ -2576,6 +2576,9 @@ export function createRelaySession(
           )) satisfies SnapshotRead)
       : undefined,
     configArtifactWriter: transport?.configArtifacts,
+    /** Which named people can read a channel, from the relay; absent when it
+     * can't say. */
+    channelReaders: transport?.channelReaders,
     workflowAuthority: transport?.archiveAuthority,
     authorizeAgentLog: transport?.authorizeAgentLog,
     authorizeGit: transport?.authorizeGit,

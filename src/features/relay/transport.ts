@@ -1,4 +1,5 @@
 import type { ChannelAccessReader } from "./channel-access";
+import type { ChannelReadersReader } from "./channel-readers";
 import type { ArtifactIncrementalReader } from "./artifact-incremental-reader.ts";
 import type { VerifiedProfileAuthority } from "./verified-profile";
 import type { ReminderHost } from "./reminders";
@@ -158,6 +159,9 @@ export interface ReadTransport {
    * (`buzz-channel-access`). Absent: posting where the viewer is not a
    * member stays unavailable. */
   readonly channelAccess?: ChannelAccessReader;
+  /** The relay's answer to which named people can read a channel the viewer
+   * can read (`buzz-channel-readers`). Absent: the app can't know. */
+  readonly channelReaders?: ChannelReadersReader;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
   readStateSnapshot?(
     signal: AbortSignal,

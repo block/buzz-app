@@ -99,6 +99,18 @@ function answer(events: Event[], filters: Filter[]) {
   });
 }
 
+/** Who the relay says can read each place: its own judgment, including
+ * project members let into a filed channel, never the rosters'. */
+const canRead: Record<string, string[]> = {
+  [home]: [viewer, person],
+  [chat]: [viewer, person],
+  [secret]: [viewer],
+  [lobby]: [viewer, leo],
+  [project]: [viewer, leo],
+  [filed]: [viewer, leo],
+  [shut]: [viewer],
+};
+
 type Signed = { kind: number; content: string; tags: string[][] };
 
 /** The owner can read `heads` and every place; the agent can read every
@@ -107,6 +119,10 @@ function setup(
   publish: () => Promise<string>,
   heads: () => Event[],
   where = chat,
+  readers: RelaySession["channelReaders"] = async (channel, pubkeys) =>
+    new Map(
+      pubkeys.map((key) => [key, canRead[channel]?.includes(key) ?? false]),
+    ),
 ) {
   const signed: Signed[] = [];
   const posted: Signed[] = [];
@@ -152,6 +168,7 @@ function setup(
     snapshotRead: vi.fn(async (filters: Filter[]) =>
       answer([...heads(), ...places()], filters),
     ),
+    channelReaders: readers,
     configArtifactWriter: {
       sign: vi.fn(async (template: Signed) => {
         signed.push(template);
@@ -408,11 +425,13 @@ it("refuses an assignee who can't see the task", async () => {
   );
   await expect(
     call("tasks_update", { id, assignees: [person, leo] }),
-  ).rejects.toThrow("Leo can't see this task");
+  ).rejects.toThrow(
+    "Leo can't see #design, so they can't be assigned. Nothing changed.",
+  );
   expect(signed).toHaveLength(0);
 });
 
-it("counts a project's people only where the channel lets them in", async () => {
+it("goes by the relay's answer of who can see a place, not its member lists", async () => {
   const there = (home: string) => () => [head("d".repeat(64), [], { home })];
   // Filed in the project as usual: Leo, only in the project, can see it.
   const open = setup(async () => "", there(filed));
@@ -422,8 +441,41 @@ it("counts a project's people only where the channel lets them in", async () => 
   const closed = setup(async () => "", there(shut));
   await expect(
     closed.call("tasks_update", { id, assignees: [leo] }),
-  ).rejects.toThrow("Leo can't see this task");
+  ).rejects.toThrow("Leo can't see #payroll-review");
   expect(closed.signed).toHaveLength(0);
+});
+
+it("keeps someone on a move when the relay says they can see the destination", async () => {
+  // Leo isn't on #billing's member list, but reads it through Payments.
+  const { call, signed } = setup(
+    async () => "",
+    () => [head("d".repeat(64), [["assignee", leo]], { home: lobby })],
+  );
+  const preview = await call("tasks_update", { id, place: filed });
+  expect(preview).not.toContain("unassigned");
+  const confirm = /confirm "([^"]+)"/.exec(preview)?.[1];
+  await call("tasks_update", { id, place: filed, confirm });
+  expect(assignees(signed[0])).toEqual([leo]);
+});
+
+it("flags and unassigns nobody when the relay can't say who can see a place", async () => {
+  const unknown = async () => {
+    throw new Error("not-allowed");
+  };
+  const { call, signed } = setup(
+    async () => "",
+    () => [head("d".repeat(64), [["assignee", leo]], { home: filed })],
+    chat,
+    unknown,
+  );
+  const preview = await call("tasks_update", { id, place: shut });
+  expect(preview).not.toContain("Leo");
+  const confirm = /confirm "([^"]+)"/.exec(preview)?.[1];
+  await call("tasks_update", { id, place: shut, confirm });
+  expect(assignees(signed[0])).toEqual([leo]);
+  // An edit isn't refused either; the relay's own check decides the save.
+  await call("tasks_update", { id, assignees: [leo, person] });
+  expect(assignees(signed[1])).toEqual([leo, person]);
 });
 
 it("names a project member a move shuts out", async () => {

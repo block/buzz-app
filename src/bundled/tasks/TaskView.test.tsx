@@ -35,6 +35,10 @@ const theirs = revision("c".repeat(64), "Their title");
 const project = "33333333-3333-4333-8333-333333333333";
 const launch = "44444444-4444-4444-8444-444444444444";
 const leo = "c".repeat(64);
+const riley = "9".repeat(64);
+/** The relay's answer for `home`: Leo can see it, Riley can't. */
+const relayReaders = async (_channel: string, pubkeys: readonly string[]) =>
+  new Map(pubkeys.map((key) => [key, key !== riley]));
 const dm = "55555555-5555-4555-8555-555555555555";
 
 type Answer = ChannelReachState;
@@ -50,13 +54,17 @@ const opened = (post: boolean): Answer => ({
 function setup(
   publish: () => Promise<string>,
   answers: Record<string, Answer> = { [home]: opened(true) },
+  readers: RelaySession["channelReaders"] = relayReaders,
 ) {
   const signed: { tags: string[][] }[] = [];
   const channels: ChannelSummary[] = [
     { id: home, name: "design", channelType: "stream", viewerRole: "member" },
     { id: launch, name: "launch", channelType: "stream", readOnly: true },
   ];
-  const profiles = new Map([[leo, { name: "Leo" }]]);
+  const profiles = new Map([
+    [leo, { name: "Leo" }],
+    [riley, { name: "Riley" }],
+  ]);
   const list = { status: "ready", channels };
   const metadata = (d: string, name: string, extra: string[][] = []) => ({
     id: d.slice(0, 8).padEnd(64, "0"),
@@ -115,6 +123,7 @@ function setup(
               ["d", home],
               ["p", viewer],
               ["p", leo],
+              ["p", riley],
             ],
           },
         ].filter((event) =>
@@ -125,6 +134,7 @@ function setup(
         ? [theirs]
         : [];
     }),
+    channelReaders: readers,
     configArtifactWriter: {
       sign: vi.fn(async (template: { tags: string[][] }) => {
         signed.push(template);
@@ -299,4 +309,141 @@ it("starts a new task from a DM with no place, and won't create until one is pic
   expect(screen.getByText("Choose a place")).toBeInTheDocument();
   fireEvent.click(create);
   expect(signed).toHaveLength(0);
+});
+
+const assignedTo = (...people: string[]) =>
+  taskOf({
+    ...revision("d".repeat(64), "Fix the header"),
+    tags: [
+      ...revision("d".repeat(64), "Fix the header").tags,
+      ...people.map((key) => ["assignee", key]),
+    ],
+  }) as Task;
+
+it("names someone the relay says lost access, and unassigns only them", async () => {
+  const { session, signed } = setup(async () => "");
+  const onSaved = vi.fn();
+  render(
+    <TaskView
+      session={session}
+      task={assignedTo(leo, riley)}
+      openConversation={() => {}}
+      onSaved={onSaved}
+    />,
+  );
+  expect(
+    await screen.findByText("Riley can’t see this task anymore."),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/Leo can’t see/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Unassign Riley" }));
+  await vi.waitFor(() => expect(onSaved).toHaveBeenCalled());
+  const tags = signed[0]?.tags ?? [];
+  expect(tags.filter(([name]) => name === "assignee")).toEqual([
+    ["assignee", leo],
+  ]);
+});
+
+it("offers to unassign several who lost access all at once", async () => {
+  const { session } = setup(
+    async () => "",
+    undefined,
+    async (_, pubkeys) => new Map(pubkeys.map((key) => [key, false])),
+  );
+  render(
+    <TaskView
+      session={session}
+      task={assignedTo(leo, riley)}
+      openConversation={() => {}}
+      onSaved={() => {}}
+    />,
+  );
+  expect(
+    await screen.findByText("Leo and Riley can’t see this task anymore."),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Unassign all" }),
+  ).toBeInTheDocument();
+});
+
+it("names someone who lost access to a view-only reader, with no way to unassign", async () => {
+  const { session } = setup(async () => "", { [home]: opened(false) });
+  render(
+    <TaskView
+      session={session}
+      task={assignedTo(riley)}
+      openConversation={() => {}}
+      onSaved={() => {}}
+    />,
+  );
+  expect(
+    await screen.findByText("Riley can’t see this task anymore."),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /Unassign/ }),
+  ).not.toBeInTheDocument();
+});
+
+it("offers only people the relay says can see the task", async () => {
+  const { session } = setup(async () => "");
+  render(
+    <TaskView
+      session={session}
+      task={mine}
+      openConversation={() => {}}
+      onSaved={() => {}}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("combobox", { name: "Assignees" }));
+  expect(await screen.findByRole("option", { name: /Leo/ })).toBeVisible();
+  expect(screen.queryByRole("option", { name: /Riley/ })).toBeNull();
+});
+
+it("says nothing about access, and offers everyone, when the relay can't say", async () => {
+  const { session } = setup(
+    async () => "",
+    undefined,
+    async () => {
+      throw new Error("not-allowed");
+    },
+  );
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  render(
+    <TaskView
+      session={session}
+      task={assignedTo(riley)}
+      openConversation={() => {}}
+      onSaved={() => {}}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("combobox", { name: "Assignees" }));
+  expect(await screen.findByRole("option", { name: /Leo/ })).toBeVisible();
+  expect(screen.queryByText(/can’t see/)).toBeNull();
+  warn.mockRestore();
+});
+
+it("unassigns on a move only those the relay says can't see the destination", async () => {
+  const { session, signed } = setup(async () => "", {
+    [home]: opened(true),
+    [launch]: opened(true),
+  });
+  const onSaved = vi.fn();
+  render(
+    <TaskView
+      session={session}
+      task={assignedTo(leo, riley)}
+      openConversation={() => {}}
+      onSaved={onSaved}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Move…" }));
+  fireEvent.click(await screen.findByRole("combobox", { name: "Move to" }));
+  fireEvent.click(await screen.findByRole("option", { name: /launch/ }));
+  expect(
+    await screen.findByText(/Riley can’t see #launch and will be unassigned/),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Move" }));
+  await vi.waitFor(() => expect(signed).toHaveLength(1));
+  expect(
+    (signed[0]?.tags ?? []).filter(([name]) => name === "assignee"),
+  ).toEqual([["assignee", leo]]);
 });

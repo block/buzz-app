@@ -121,7 +121,9 @@ function harness(
     disabled = false,
     onFocusedRemoval,
     audience,
+    removalAllowed = false,
   }: {
+    removalAllowed?: boolean;
     audience?: "agents";
     disabled?: boolean;
     onFocusedRemoval?: () => void;
@@ -145,6 +147,7 @@ function harness(
             />
           </div>
           <MessageReactions
+            removalAllowed={removalAllowed}
             {...(onFocusedRemoval ? { onFocusedRemoval } : {})}
             row={audience ? { ...row, audience } : row}
             session={owner.session}
@@ -1042,4 +1045,19 @@ it("keeps the raw emoji when the name table fails to load, and the next reveal r
     process.off("unhandledRejection", unhandled);
     warned.mockRestore();
   }
+});
+
+it("allows removing an owned reaction while additions remain disabled", async () => {
+  const h = harness([react(), react(other)]);
+  render(<h.Controls disabled removalAllowed />);
+  expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "👍: 2 people" }));
+  await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+  expect(h.session.outbox?.snapshot().map((item) => item.event.kind)).toEqual([
+    5,
+  ]);
+  fireEvent.click(
+    screen.getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` }),
+  );
+  expect(h.session.outbox?.snapshot()).toHaveLength(1);
 });

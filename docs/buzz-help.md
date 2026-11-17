@@ -1935,3 +1935,12 @@ occurs. It contains operation metadata, with no draft text or secrets. See
 ## Plugin account actions
 
 Plugins can add actions to your avatar menu. Profile-related actions may appear just above Settings; other plugin actions appear below it.
+
+
+### Viewer participation in channels
+
+Channel owners and admins can use **Edit details** to allow viewers to reply in
+threads and to react, independently, when the community supports these settings.
+Both are off by default. Viewers still cannot start conversations or send replies
+to the channel feed. Changing general access affects future joiners; existing
+members keep their roles until an owner or admin changes them.

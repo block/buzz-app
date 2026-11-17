@@ -1,6 +1,7 @@
 import { byteSize } from "./budget";
 import {
   channelJoinRole,
+  guestPermissions,
   channelTtl,
   channelVisibility,
 } from "./channel-details-protocol";
@@ -505,6 +506,7 @@ export class DiscoveryState {
         ? {
             visibility: channelVisibility(event),
             joinRole: channelJoinRole(event),
+            ...guestPermissions(event),
             description: tag(event, "about") ?? "",
           }
         : {}),

@@ -20,7 +20,7 @@ fn common(event: &EventTemplate) -> bool {
     event.content.is_empty() && event.created_at <= i64::MAX as u64
 }
 fn details(event: &EventTemplate) -> bool {
-    if event.kind != 9002 || !common(event) || !(3..=14).contains(&event.tags.len()) {
+    if event.kind != 9002 || !common(event) || !(3..=16).contains(&event.tags.len()) {
         return false;
     }
     let (Some(id), Some(name), Some(about)) = (
@@ -53,6 +53,14 @@ fn details(event: &EventTemplate) -> bool {
             return false;
         }
         index += 1;
+    }
+    for key in ["guest_replies", "guest_reactions"] {
+        if let Some(value) = tag(event, index, key) {
+            if !matches!(value, "true" | "false") {
+                return false;
+            }
+            index += 1;
+        }
     }
     let labels = &event.tags[index..];
     let labels_valid = details_labels(labels);
@@ -700,6 +708,35 @@ mod boundary_tests {
                 altered["tags"][1][1] = Value::String("Tampered".into());
                 assert!(validate("channel-details", &altered, altered["pubkey"].as_str()).is_err());
             }
+        }
+    }
+
+    #[test]
+    fn details_admit_only_explicit_guest_contribution_booleans() {
+        for value in ["true", "false"] {
+            let event = serde_json::to_value(details_event(vec![
+                vec!["guest_replies".into(), value.into()],
+                vec!["guest_reactions".into(), value.into()],
+            ]))
+            .unwrap();
+            assert!(validate("channel-details", &event, None).is_ok());
+            assert!(validate("channel-lifecycle", &event, None).is_err());
+        }
+        for tags in [
+            vec![vec!["guest_replies", "yes"]],
+            vec![vec!["guest_reactions", ""]],
+            vec![
+                vec!["guest_replies", "true"],
+                vec!["guest_replies", "false"],
+            ],
+        ] {
+            let event = serde_json::to_value(details_event(
+                tags.into_iter()
+                    .map(|tag| tag.into_iter().map(str::to_owned).collect())
+                    .collect(),
+            ))
+            .unwrap();
+            assert!(validate("channel-details", &event, None).is_err());
         }
     }
 

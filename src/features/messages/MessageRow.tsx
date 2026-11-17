@@ -1,3 +1,4 @@
+import { channelCan } from "../relay/channel-permissions";
 import { snapshotAttachments } from "../relay/forwarded-message";
 import { ForwardedMessage } from "./ForwardedMessage";
 import { requestWork, isSettledWork } from "../agents/request-work";
@@ -337,6 +338,17 @@ function MessageRowContent({
     row.channelId,
     (channel) => !!channel?.readOnly,
   );
+  const replyAllowed = useListedChannel(channels, row.channelId, (channel) =>
+    channelCan(channel, "reply"),
+  );
+  const reactionsAllowed = useListedChannel(
+    channels,
+    row.channelId,
+    (channel) => channelCan(channel, "react"),
+  );
+  const removalAllowed = useListedChannel(channels, row.channelId, (channel) =>
+    channelCan(channel, "removeReaction"),
+  );
   const { messageTimestamps } = useClockPreference();
   const solo = useListedChannel(
     references?.channels,
@@ -540,7 +552,7 @@ function MessageRowContent({
     session.outbox.supports(5) &&
     (!session.channels.get || listed) &&
     !archived &&
-    !readOnly
+    reactionsAllowed
   );
   const rowRef = useRef<HTMLDivElement>(null);
   const menuTrigger = useRef<HTMLButtonElement>(null);
@@ -1181,7 +1193,7 @@ function MessageRowContent({
       replyDisabled={
         !!(row.delivery && !["accepted", "seen"].includes(row.delivery)) ||
         archived ||
-        (!!session?.channels.get && (!listed || readOnly))
+        (!!session?.channels.get && (!listed || !replyAllowed))
       }
       onSendToChannel={
         session &&
@@ -1436,6 +1448,13 @@ function MessageRowContent({
         tools={extensions.tools}
         inline={extensions.inline}
         profiles={directory.profiles}
+        removalAllowed={
+          removalAllowed &&
+          !archived &&
+          !!session.outbox?.supports(5) &&
+          (!session.channels.get || listed) &&
+          (!row.delivery || ["accepted", "seen"].includes(row.delivery))
+        }
         disabled={
           !canReact ||
           (!!row.delivery && !["accepted", "seen"].includes(row.delivery))

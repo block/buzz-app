@@ -18,6 +18,8 @@ export type ChannelDetailsDraft = Readonly<{
   visibility: "public" | "private";
   /** Admission default only; omission preserves existing relay behavior. */
   joinRole?: "member" | "guest" | undefined;
+  guestReplies?: boolean | undefined;
+  guestReactions?: boolean | undefined;
   /** Absent means ongoing; retain existing custom temporary intervals. */
   ttlSeconds?: number | undefined;
   /** NIP-CL labels. Absent leaves the relay's set unchanged; empty clears it. */
@@ -81,6 +83,11 @@ export function detailsDraftErrors(draft: ChannelDetailsDraft) {
         ? "Channel visibility could not be verified."
         : undefined,
     labels: labelsError(draft?.labels),
+    guestPermissions: [draft?.guestReplies, draft?.guestReactions].some(
+      (value) => value !== undefined && typeof value !== "boolean",
+    )
+      ? "Viewer permissions could not be verified."
+      : undefined,
     joinRole:
       draft?.joinRole !== undefined &&
       draft.joinRole !== "member" &&
@@ -118,7 +125,8 @@ export function validateDetailsDraft(draft: ChannelDetailsDraft): void {
     errors.visibility ??
     errors.lifetime ??
     errors.labels ??
-    errors.joinRole;
+    errors.joinRole ??
+    errors.guestPermissions;
   if (error) throw new Error(error);
 }
 
@@ -152,6 +160,7 @@ export function detailsSettings(
     description,
     visibility,
     ...(joinRole ? { joinRole } : {}),
+    ...guestPermissions(metadata),
     ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
     labels: channelIdentity(metadata).labels,
     canEdit:
@@ -192,6 +201,14 @@ export function detailsTemplate(
       ...(draft.joinRole !== undefined && draft.joinRole !== base.joinRole
         ? [["join_role", draft.joinRole]]
         : []),
+      ...(
+        [
+          ["guest_replies", draft.guestReplies, base.guestReplies],
+          ["guest_reactions", draft.guestReactions, base.guestReactions],
+        ] as const
+      ).flatMap(([key, value, previous]) =>
+        value !== undefined && value !== previous ? [[key, String(value)]] : [],
+      ),
       // NIP-CL: `t` tags replace the set; one empty `t` clears it; none keeps it.
       ...(draft.labels !== undefined &&
       !sameLabels(draft.labels, base.labels ?? [])
@@ -224,6 +241,35 @@ export function channelTtl(event: RelayEvent): number | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Only one exact signed boolean grants a capability; absence stays unsupported. */
+export function guestPermissions(event: RelayEvent) {
+  const read = (name: string): boolean | undefined => {
+    const tags = event.tags.filter(([key]) => key === name);
+    return tags.length === 1 &&
+      tags[0]?.length === 2 &&
+      ["true", "false"].includes(tags[0]?.[1] ?? "")
+      ? tags[0]?.[1] === "true"
+      : undefined;
+  };
+  return {
+    guestReplies: read("guest_replies"),
+    guestReactions: read("guest_reactions"),
+  };
+}
+
+function detailsKeys(tags: readonly (readonly string[])[]) {
+  let index = 3;
+  for (const key of [
+    "visibility",
+    "ttl",
+    "join_role",
+    "guest_replies",
+    "guest_reactions",
+  ])
+    if (tags[index]?.[0] === key) index++;
+  return tags.slice(index).every(([key]) => key === "t");
 }
 
 /** Legacy absence means Member; malformed explicit defaults fail closed to Guest. */
@@ -265,26 +311,18 @@ export function validateDetailsTemplate(event: EventTemplate): void {
     !["h", "name", "about"].every(
       (key, index) => event.tags[index]?.[0] === key,
     ) ||
-    ![
-      [],
-      ["visibility"],
-      ["ttl"],
-      ["visibility", "ttl"],
-      ["join_role"],
-      ["visibility", "join_role"],
-      ["ttl", "join_role"],
-      ["visibility", "ttl", "join_role"],
-    ].some(
-      (keys) =>
-        keys.every((key, index) => event.tags[index + 3]?.[0] === key) &&
-        event.tags.slice(keys.length + 3).every(([key]) => key === "t"),
-    )
+    !detailsKeys(event.tags)
   )
     throw new Error("Invalid channel details command.");
   const labels = detailsLabels(event.tags.filter(([key]) => key === "t"));
   const visibility = event.tags.find(([key]) => key === "visibility");
   if (visibility && !["private", "open"].includes(visibility[1] ?? ""))
     throw new Error("Invalid channel details command.");
+  for (const key of ["guest_replies", "guest_reactions"]) {
+    const tag = event.tags.find(([name]) => name === key);
+    if (tag && !["true", "false"].includes(tag[1] ?? ""))
+      throw new Error("Invalid viewer permission.");
+  }
   const ttl = event.tags.find(([key]) => key === "ttl")?.[1];
   const joinRole = event.tags.find(([key]) => key === "join_role")?.[1];
   if (joinRole !== undefined && joinRole !== "member" && joinRole !== "guest")

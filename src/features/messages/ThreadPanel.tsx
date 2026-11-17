@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { channelCan } from "../relay/channel-permissions";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
@@ -602,7 +603,8 @@ function ThreadMessages({
     (listed) => {
       const channel = listed ?? session.channels?.get?.(channelId);
       if (channel?.archived) return "archived";
-      if (channel?.viewerRole === "guest") return "guest";
+      if (channel?.viewerRole === "guest")
+        return channelCan(channel, "reply") ? "member" : "guest";
       if (channel?.readOnly && !channel.cached) {
         return channel.channelType === "stream" ||
           channel.channelType === "forum" ||

@@ -1,3 +1,5 @@
+import { channelCan, type ChannelAction } from "./channel-permissions";
+import { threadReference as contributionThread } from "./thread-reference";
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
 import { createSoloPreferences, soloGroups } from "./solo-preferences";
@@ -128,6 +130,7 @@ import {
 import { relayPartition, transportPartition } from "./partition";
 import { browserThreadFollows } from "./thread-follows";
 import { createMessages } from "./messages";
+import { reactionTarget as reactionTargetId } from "./reaction-target";
 import { retryRead } from "./read-retry";
 import { messageAuthor } from "./fold";
 import { createThreadView, resumeAfter, type ThreadResume } from "./threads";
@@ -1579,7 +1582,30 @@ export function createRelaySession(
       ? channel.members.filter((key) => key !== transport.viewer)
       : [];
   }
-  function validateMentions(channelId: string, pubkeys: readonly string[]) {
+  function messageEvent(id: string) {
+    const outgoing = local().find((item) => item.event.id === id);
+    // Prefer admitted signed bytes to the optimistic projection when available.
+    return (
+      outgoing?.signed ??
+      recent.peek(id)?.event ??
+      retainedEvent(id) ??
+      outgoing?.event
+    );
+  }
+  function canContribute(channelId: string, action: ChannelAction) {
+    const channel = channels.queries.get?.(channelId);
+    return (
+      channels.canWrite(channelId) ||
+      (channel?.viewerRole === "guest" &&
+        channels.canParticipate(channelId) &&
+        channelCan(channel, action))
+    );
+  }
+  function validateMentions(
+    channelId: string,
+    pubkeys: readonly string[],
+    action: ChannelAction = "post",
+  ) {
     if (!pubkeys.length) return;
     const channel = channels.queries
       .list()
@@ -1591,7 +1617,7 @@ export function createRelaySession(
     const addressesPartnerOnly = pubkeys.every((key) => partners.includes(key));
     if (
       closed ||
-      !channels.canWrite(channelId) ||
+      !canContribute(channelId, action) ||
       !channel?.members ||
       channel.archived ||
       (transport?.subscribe &&
@@ -1617,6 +1643,57 @@ export function createRelaySession(
     if ([9000, 9001, 9022].includes(event.kind)) return;
     const id = event.tags.find(([key]) => key === "h")?.[1];
     if (!id || channels.queries.get?.(id)?.viewerRole !== "guest") return;
+    const channel = channels.queries.get?.(id);
+    const thread = contributionThread(event);
+    const broadcast = event.tags.some(
+      ([key, value]) => key === "broadcast" && value === "1",
+    );
+    if (
+      (event.kind === 9 || event.kind === 40002) &&
+      thread &&
+      !broadcast &&
+      channelCan(channel, "reply")
+    )
+      return;
+    if (event.kind === 7 && channelCan(channel, "react")) return;
+    const contributionTargets = event.tags.filter(([key]) => key === "e");
+    if (
+      (event.kind === 5 || event.kind === 40003) &&
+      contributionTargets.length === 1
+    ) {
+      const target = contributionTargets[0]?.[1];
+      const original = messageEvent(target ?? "");
+      const reactionTarget =
+        original?.kind === 7 ? reactionTargetId(original) : undefined;
+      const reactionSource = reactionTarget
+        ? messageEvent(reactionTarget)
+        : undefined;
+      const originalChannel =
+        original?.tags.find(([key]) => key === "h")?.[1] ??
+        reactionSource?.tags.find(([key]) => key === "h")?.[1];
+      if (
+        original &&
+        messageAuthor(original, transport?.archiveAuthority) ===
+          transport?.viewer &&
+        originalChannel === id
+      ) {
+        if (
+          event.kind === 5 &&
+          original.kind === 7 &&
+          channelCan(channel, "removeReaction")
+        )
+          return;
+        if (
+          [9, 40002].includes(original.kind) &&
+          contributionThread(original) &&
+          !original.tags.some(
+            ([key, value]) => key === "broadcast" && value === "1",
+          ) &&
+          channelCan(channel, "reply")
+        )
+          return;
+      }
+    }
     // Workflow-coordinate deletion is an ownership action, not a contribution.
     // Full command validation still runs before signing and publication.
     if (event.kind === 5 && isWorkflowOperation(event)) {
@@ -1681,6 +1758,7 @@ export function createRelaySession(
     validateMentions(
       destinations[0][1],
       recipients.map((tag) => tag[1] ?? ""),
+      contributionThread(event) ? "reply" : "post",
     );
   }
   async function prepareMentionPublication(
@@ -2688,11 +2766,11 @@ export function createRelaySession(
                 uploadLifetime.signal,
               ]);
               combined.throwIfAborted();
-              if (!channelId || closed || !channels.canWrite(channelId))
+              if (!channelId || closed || !canContribute(channelId, "reply"))
                 throw new UploadError("denied");
               const result = await uploadAttachment(file, combined, progress);
               combined.throwIfAborted();
-              if (!channels.canWrite(channelId))
+              if (!canContribute(channelId, "reply"))
                 throw new UploadError("denied");
               return result;
             },
@@ -2751,22 +2829,12 @@ export function createRelaySession(
       ...createMessages(
         writes?.outbox,
         transport?.viewer,
-        (id) => {
-          const outgoing = local().find((item) => item.event.id === id);
-          // The optimistic projection is unsigned even after publication. Use
-          // its admitted signed record when an operation needs source evidence.
-          return (
-            outgoing?.signed ??
-            recent.peek(id)?.event ??
-            retainedEvent(id) ??
-            outgoing?.event
-          );
-        },
+        messageEvent,
         emoji.tags,
         validateMentions,
-        (id, owner) =>
+        (id, owner, action = "post") =>
           !closed &&
-          (channels.canWrite(id) ||
+          (canContribute(id, action) ||
             // editOwnedAgent and messages.remove supply owner evidence;
             // validateChannelWrite rechecks it before signing and publication.
             (!!owner && channels.canParticipate(id))),

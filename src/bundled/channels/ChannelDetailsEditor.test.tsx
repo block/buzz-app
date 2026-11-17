@@ -1505,3 +1505,35 @@ it("keeps invited-only Read access intact when editing details", async () => {
     expect.any(AbortSignal),
   );
 });
+
+it("saves independent viewer grants through the existing details editor", async () => {
+  const h = harness();
+  const grants = { ...base, guestReplies: false, guestReactions: false };
+  h.load.mockResolvedValue(grants);
+  const user = userEvent.setup();
+  render(
+    <ChannelDetailsEditor
+      scope="community:viewer"
+      capability={h.capability}
+      channel={channel}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Edit details" }));
+  const replies = screen.getByRole("switch", {
+    name: "Allow viewers to reply in threads",
+  });
+  const reactions = screen.getByRole("switch", {
+    name: "Allow viewers to react",
+  });
+  expect(replies).not.toBeChecked();
+  expect(reactions).not.toBeChecked();
+  await user.click(replies);
+  expect(replies).toBeChecked();
+  expect(reactions).not.toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(h.save).toHaveBeenCalledWith(
+    grants,
+    { ...grants, guestReplies: true },
+    expect.any(AbortSignal),
+  );
+});

@@ -99,7 +99,9 @@ export function ChannelGeneralAccess({
             </p>
             <p className="text-caption text-subtle">
               {channel.viewerRole === "guest" || channel.joinRole === "guest"
-                ? "Viewing only. Ask an owner or admin to participate."
+                ? channel.guestReplies || channel.guestReactions
+                  ? `Viewers can ${[channel.guestReplies ? "reply in threads" : "", channel.guestReactions ? "react" : ""].filter(Boolean).join(" and ")}. Only members with posting access can start conversations.`
+                  : "Viewing only. Ask an owner or admin to participate."
                 : channel.joinRole === "member"
                   ? `New people can participate. People already in the ${policy?.subject ?? "channel"} keep their access.`
                   : "New people’s access could not be confirmed."}

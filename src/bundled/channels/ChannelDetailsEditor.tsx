@@ -16,6 +16,7 @@ import {
   type ChannelDetails,
   type ChannelDetailsDraft,
 } from "../../features/relay/channel-details-protocol";
+import { Switch } from "../../shared/design-system/ui/Switch";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { ChannelDurationField } from "./ChannelDurationField";
@@ -159,6 +160,8 @@ export function ChannelDetailsEditor({
       normalized.description !== view.base.description ||
       normalized.visibility !== view.base.visibility ||
       normalized.joinRole !== view.base.joinRole ||
+      normalized.guestReplies !== view.base.guestReplies ||
+      normalized.guestReactions !== view.base.guestReactions ||
       normalized.ttlSeconds !== view.base.ttlSeconds);
   const temporaryTtl =
     draft?.ttlSeconds ??
@@ -201,6 +204,8 @@ export function ChannelDetailsEditor({
       draft.description !== view.base.description ||
       draft.visibility !== view.base.visibility ||
       draft.joinRole !== view.base.joinRole ||
+      draft.guestReplies !== view.base.guestReplies ||
+      draft.guestReactions !== view.base.guestReactions ||
       draft.ttlSeconds !== view.base.ttlSeconds);
   const requestClose = () => {
     if (pending || busy.current) return;
@@ -417,6 +422,32 @@ export function ChannelDetailsEditor({
                     patch({ draft: { ...draft, description } })
                   }
                 />
+                {["stream", "forum"].includes(channel.channelType ?? "") &&
+                  view.base?.guestReplies !== undefined &&
+                  view.base.guestReactions !== undefined && (
+                    <>
+                      <Switch
+                        label="Allow viewers to reply in threads"
+                        checked={draft.guestReplies ?? false}
+                        disabled={locked || !canEdit}
+                        onCheckedChange={(guestReplies) =>
+                          patch({ draft: { ...draft, guestReplies } })
+                        }
+                      />
+                      <Switch
+                        label="Allow viewers to react"
+                        checked={draft.guestReactions ?? false}
+                        disabled={locked || !canEdit}
+                        onCheckedChange={(guestReactions) =>
+                          patch({ draft: { ...draft, guestReactions } })
+                        }
+                      />
+                      <p className="text-caption text-subtle">
+                        Viewers cannot start conversations. Existing members
+                        keep their posting access.
+                      </p>
+                    </>
+                  )}
                 <ChannelDurationField
                   temporary={draft.ttlSeconds !== undefined}
                   ttlSeconds={temporaryTtl}

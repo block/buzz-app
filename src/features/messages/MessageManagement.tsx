@@ -1,3 +1,4 @@
+import { channelCan } from "../relay/channel-permissions";
 import {
   BellIcon,
   BellSlashIcon,
@@ -173,7 +174,7 @@ export function useMessageKeyActions(session: RelaySession) {
         const channel = joined(row);
         return (
           !!channel &&
-          !channel.readOnly &&
+          channelCan(channel, row.threadRootId ? "reply" : "post") &&
           !channel.archived &&
           !!session.viewer &&
           row.authorId === session.viewer &&
@@ -247,7 +248,7 @@ export function MessageManagement({
     (channel) =>
       !!channel &&
       !channel.cached &&
-      (!channel.readOnly ||
+      (channelCan(channel, selection?.row.threadRootId ? "reply" : "post") ||
         (channel.viewerRole === "guest" && !!selection?.authorization)),
   );
   const available =
@@ -590,7 +591,7 @@ function ManagedMessageItems({
   const writable = useListedChannel(
     session.channels,
     row.channelId,
-    (channel) => !!channel && !channel.readOnly && !channel.cached,
+    (channel) => channelCan(channel, row.threadRootId ? "reply" : "post"),
   );
   const threadRootId = row.threadRootId ?? row.id;
   const following = useSyncExternalStore(session.unread.subscribeSync, () =>
@@ -745,7 +746,7 @@ function DeleteMessageDialog({
               channel.id === row.channelId &&
               !channel.archived &&
               !channel.cached &&
-              (!channel.readOnly ||
+              (channelCan(channel, row.threadRootId ? "reply" : "post") ||
                 (channel.viewerRole === "guest" && !!authorization)),
           )
       )

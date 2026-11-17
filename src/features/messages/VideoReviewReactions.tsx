@@ -1,3 +1,4 @@
+import { channelCan } from "../relay/channel-permissions";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useState, useSyncExternalStore, type RefObject } from "react";
 import type { RelaySession } from "../relay/session";
@@ -32,7 +33,7 @@ export function VideoReviewReactions({
     session.channels.list,
   );
   const disabled = !channels.channels.some(
-    (channel) => channel.id === channelId && !channel.readOnly,
+    (channel) => channel.id === channelId && channelCan(channel, "post"),
   );
   const [error, setError] = useState<string>();
   const select = (emoji: string) => {

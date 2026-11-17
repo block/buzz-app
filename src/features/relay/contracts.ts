@@ -26,6 +26,9 @@ export type ChannelSummary = Readonly<{
   visibility?: "public" | "private" | undefined;
   /** Default for future participants; never an existing participant's role. */
   joinRole?: "member" | "guest" | undefined;
+  /** Explicit signed Guest grants; absence means unsupported or unverified. */
+  guestReplies?: boolean | undefined;
+  guestReactions?: boolean | undefined;
   /** Viewer role from the relay-signed roster, independent of admission defaults. */
   viewerRole?: "owner" | "admin" | "member" | "guest" | "bot" | undefined;
   preview?: string | undefined;

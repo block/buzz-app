@@ -1,3 +1,4 @@
+import { channelCan } from "../relay/channel-permissions";
 import { draftEditorId, traceDraft } from "../../shared/draft-diagnostics";
 import {
   soloModelPicksKey,
@@ -562,10 +563,8 @@ function Composer({
   const listed =
     session.channels?.get || soloConversation ? session.channels : undefined;
   const channels = () => (listed?.list() ?? noChannels).channels;
-  const writable = useListedChannel(
-    listed,
-    channelId,
-    (channel) => !!channel && !channel.readOnly && !channel.archived,
+  const writable = useListedChannel(listed, channelId, (channel) =>
+    channelCan(channel, threadRootId ? "reply" : "post"),
   );
   const readOnly = !submission && !!session.channels?.get && !writable;
   const cached = useListedChannel(
@@ -1316,7 +1315,8 @@ function Composer({
   const editLocked = useListedChannel(
     listed,
     channelId,
-    (channel) => !!channel?.archived || !!channel?.readOnly,
+    (channel) =>
+      !!channel && !channelCan(channel, threadRootId ? "reply" : "post"),
   );
   const editDisabled = disabled || editLocked;
   const chips = useMemo(

@@ -1,3 +1,4 @@
+import type { ChannelAction } from "./channel-permissions";
 import {
   forwardBody,
   forwardQuote,
@@ -52,10 +53,15 @@ export function createMessages(
   viewer: string | undefined,
   find: (id: string) => EventData | undefined,
   emojiTags: (content: string) => string[][],
-  validateMentions: (channelId: string, pubkeys: readonly string[]) => void,
+  validateMentions: (
+    channelId: string,
+    pubkeys: readonly string[],
+    action?: ChannelAction,
+  ) => void,
   canWrite: (
     channelId: string,
     owner?: AgentOwnerAuthorization,
+    action?: ChannelAction,
   ) => boolean = () => true,
   relayOrigin?: string,
   /** Resolves on relay OK. Reports are never echoed, so they bypass the outbox. */
@@ -73,8 +79,9 @@ export function createMessages(
     kind: number,
     channelId: string,
     owner?: AgentOwnerAuthorization,
+    action: ChannelAction = "post",
   ) => {
-    if (!canWrite(channelId, owner))
+    if (!canWrite(channelId, owner, action))
       throw new Error("You don’t have write access to this conversation.");
     if (!outbox?.supports(kind))
       throw new Error("This connection cannot publish that operation");
@@ -87,14 +94,18 @@ export function createMessages(
     if (!value) throw new Error("Message is empty");
     return value;
   };
-  const mentionTags = (channelId: string, pubkeys: readonly string[]) => {
+  const mentionTags = (
+    channelId: string,
+    pubkeys: readonly string[],
+    action?: ChannelAction,
+  ) => {
     if (
       pubkeys.length > 32 ||
       pubkeys.some((key) => !/^[0-9a-f]{64}$/.test(key))
     )
       throw new Error("Choose at most 32 valid mention recipients");
     const unique = [...new Set(pubkeys)];
-    validateMentions(channelId, unique);
+    validateMentions(channelId, unique, action);
     return unique.map((key) => ["p", key]);
   };
   /** A one-to-one DM's agent partner must be `p`-tagged: a hosted agent is
@@ -146,7 +157,12 @@ export function createMessages(
   /** The author's other copies of a message: its source reply and every
    * sent-to-channel copy of it, deduplicated, never the message itself. */
   const linkedCopies = (message: EventData, channelId: string) => {
-    if (!ownedMessage(message) || message.kind !== 9) return [];
+    if (
+      !ownedMessage(message) ||
+      message.kind !== 9 ||
+      !canWrite(channelId, undefined, "post")
+    )
+      return [];
     const sourceId = message.tags.find(
       ([name, value]) => name === "buzz:copy-of" && value,
     )?.[1];
@@ -205,7 +221,12 @@ export function createMessages(
     )
       throw new Error("Reload the message before editing its attachments.");
     const sendEdit = (targetId: string) =>
-      writer(40003, channelId, ownerEdit ? authorization : undefined).send({
+      writer(
+        40003,
+        channelId,
+        ownerEdit ? authorization : undefined,
+        threadReference(original) ? "reply" : "post",
+      ).send({
         kind: 40003,
         content: text(content),
         tags: [
@@ -279,7 +300,16 @@ export function createMessages(
     // The relay accepts exactly one target per deletion, so each copy gets its
     // own event. One that cannot be queued does not stop the rest; any failure
     // is reported once every other target has been attempted.
-    const queue = writer(5, channelId, authorization);
+    const queue = writer(
+      5,
+      channelId,
+      authorization,
+      originals.every((event) => event.kind === 7)
+        ? "removeReaction"
+        : originals.every((event) => !!threadReference(event))
+          ? "reply"
+          : "post",
+    );
     const failures: unknown[] = [];
     const operations = targets.flatMap((event) => {
       try {
@@ -624,14 +654,14 @@ export function createMessages(
       if (mediaTargetUrl && !mediaTarget)
         throw new Error("A valid media target is required");
       const message = attachmentMessage(content, attachments, relayOrigin);
-      return writer(9, channelId).send({
+      return writer(9, channelId, undefined, "reply").send({
         kind: 9,
         content: text(message.content),
         tags: [
           ["h", channelId],
           ...(parentId === rootId ? [] : [["e", rootId, "", "root"]]),
           ["e", parentId, "", "reply"],
-          ...mentionTags(channelId, withDmAgents(channelId, mentions)),
+          ...mentionTags(channelId, withDmAgents(channelId, mentions), "reply"),
           ...referenceTags(references),
           ...pickTags(channelId, mentions, picks),
           ...(mediaTarget ? [[MEDIA_TARGET_TAG, mediaTarget]] : []),
@@ -680,7 +710,7 @@ export function createMessages(
       if (!channelId) throw new Error("Message has no channel");
       const value = text(content);
       if (!validReactionContent(value)) throw new Error("Reaction is too long");
-      return writer(7, channelId).send({
+      return writer(7, channelId, undefined, "react").send({
         kind: 7,
         content: value,
         tags: [

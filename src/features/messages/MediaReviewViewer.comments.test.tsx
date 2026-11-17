@@ -38,6 +38,7 @@ type MediaKind = "image" | "video";
 type ReviewFixtureOptions = {
   kind: MediaKind;
   typingAgent?: ReturnType<typeof keypair>;
+  guestReplies?: boolean;
   openComments?: boolean;
   replies?: (
     viewer: ReturnType<typeof keypair>,
@@ -57,6 +58,7 @@ function mime(kind: MediaKind) {
 async function setupReview({
   kind,
   typingAgent,
+  guestReplies = false,
   openComments = true,
   replies: buildReplies = () => [],
   extraRootTags = [],
@@ -130,8 +132,23 @@ async function setupReview({
             return events.filter((event) => event.kind === 0);
           if (filter.kinds?.includes(39002) || filter.kinds?.includes(39000))
             return [
-              roster(relay, "one", [viewer.pubkey]),
-              metadata(relay, "one", "One"),
+              guestReplies
+                ? signed(relay, {
+                    kind: 39002,
+                    content: "",
+                    created_at: 1_700_000_000,
+                    tags: [
+                      ["d", "one"],
+                      ["p", viewer.pubkey, "", "guest"],
+                    ],
+                  })
+                : roster(relay, "one", [viewer.pubkey]),
+              guestReplies
+                ? metadata(relay, "one", "One", 1_700_000_000, [
+                    ["t", "stream"],
+                    ["guest_replies", "true"],
+                  ])
+                : metadata(relay, "one", "One"),
             ];
           if (filter.ids)
             return events.filter((event) => filter.ids?.includes(event.id));
@@ -833,6 +850,19 @@ it("shares legacy fractional timecodes between timeline markers and sidebar and 
   expect(
     await screen.findByRole("button", { name: /^Seek to 0:42,/ }),
   ).toBeInTheDocument();
+});
+
+it("keeps frame reactions writer-only when Guests can reply", async () => {
+  const { user, sign } = await setupReview({
+    kind: "video",
+    guestReplies: true,
+  });
+  const react = await screen.findByRole("button", {
+    name: "React 👍 at current frame",
+  });
+  expect(react).toBeDisabled();
+  await user.click(react);
+  expect(sign).not.toHaveBeenCalled();
 });
 
 it.each(["image", "video"] as const)(

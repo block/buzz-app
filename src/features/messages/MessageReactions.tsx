@@ -37,6 +37,7 @@ type Props = {
   session: RelaySession;
   scope: string;
   disabled: boolean;
+  removalAllowed?: boolean;
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;
 };
@@ -44,12 +45,12 @@ const noSubscribe = () => () => {};
 const noOperations = Object.freeze([]);
 const empty = () => noOperations;
 
-function useReactionAction({ row, session, disabled }: Props) {
+function useReactionAction({ row, session, disabled, removalAllowed }: Props) {
   const presented = useConversationPresentation();
   const [error, setError] = useState<string>();
   const active = useRef(false);
   useLayoutEffect(() => {
-    active.current = !disabled && presented;
+    active.current = (!disabled || !!removalAllowed) && presented;
   });
   useLayoutEffect(
     () => () => {
@@ -79,6 +80,7 @@ function useReactionAction({ row, session, disabled }: Props) {
         [];
       if (mine.length) session.messages.remove(mine.map((event) => event.id));
       else {
+        if (disabled) return false;
         session.messages.react(row.id, content, emoji);
       }
       setError(undefined);
@@ -503,7 +505,7 @@ export function MessageReactions(
               mine={mine}
               session={session}
               profiles={props.profiles}
-              disabled={props.disabled}
+              disabled={props.disabled && !(mine && props.removalAllowed)}
               busy={action.busy}
               toggle={action.toggle}
               onFocusedRemoval={props.onFocusedRemoval}

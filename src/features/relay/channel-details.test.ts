@@ -3,6 +3,7 @@ import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { createChannelDetails } from "./channel-details";
 import {
   channelVisibility,
+  guestPermissions,
   channelJoinRole,
   canonicalDetailsName,
   detailsSettings,
@@ -1156,4 +1157,48 @@ it("keeps a region label when an editor replaces the label set with empty", asyn
   );
   await h.owner.capability.save(base, { ...base, labels: [] });
   expect((await h.owner.capability.load(id)).labels).toEqual([region]);
+});
+
+it("round-trips independent viewer grants and rejects malformed metadata commands", () => {
+  const h = harness();
+  for (const replies of [false, true])
+    for (const reactions of [false, true]) {
+      const grants = { guestReplies: replies, guestReactions: reactions };
+      const base = {
+        ...draft,
+        guestReplies: !replies,
+        guestReactions: !reactions,
+      };
+      const event = detailsTemplate(id, { ...draft, ...grants }, base);
+      expect(() => validateDetailsTemplate(event)).not.toThrow();
+      expect(guestPermissions(h.record(39000, event.tags))).toEqual(grants);
+      expect(
+        detailsTemplate(id, { ...draft, ...grants }, { ...draft, ...grants })
+          .tags,
+      ).toEqual(detailsTemplate(id, draft, draft).tags);
+    }
+  for (const name of ["guest_replies", "guest_reactions"])
+    for (const tags of [
+      [[name]],
+      [[name, "1"]],
+      [[name, "true", "extra"]],
+      [
+        [name, "true"],
+        [name, "false"],
+      ],
+    ]) {
+      expect(() =>
+        validateDetailsTemplate({
+          ...detailsTemplate(id, draft, draft),
+          tags: [...detailsTemplate(id, draft, draft).tags, ...tags],
+        }),
+      ).toThrow();
+      const permissions = guestPermissions(h.record(39000, tags));
+      expect(permissions.guestReplies).not.toBe(true);
+      expect(permissions.guestReactions).not.toBe(true);
+    }
+  expect(guestPermissions(h.record(39000, []))).toEqual({
+    guestReplies: undefined,
+    guestReactions: undefined,
+  });
 });

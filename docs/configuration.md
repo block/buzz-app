@@ -171,8 +171,9 @@ session) clears it. A 401/403 from discovery or inference applies the same rule.
 When the route is otherwise blocked (network, gateway error, or a community or
 identity problem), the harness runs with the user's own configuration and none
 of the Buzz request context, and the turn is noted "Ran without the agent
-gateway" with the reason: under the request for a mention, and in the harness's own turn activity for other turns, which receive
-it as `delivery.gatewayFallback`. The note stays under the request even when a
+gateway" with the reason: under the request for a mention, and in the
+harness's own turn activity for other turns, which receive it as
+`delivery.gatewayFallback`. The note stays under the request even when a
 later message supersedes it. That choice is made before dispatch; a turn whose
 gateway access is revoked after dispatch fails visibly and is never
 replayed. Memberships in other communities and hosted agents are unchanged.

@@ -253,9 +253,10 @@ export class GatewayRoutes {
    * a check that outlasts the wait leaves it pending. With no request bound
    * or nothing in flight it doesn't wait at all. A failed route is checked
    * again, so a turn can route after a network blip; the turn waits for that
-   * recheck like any other, since its answer could be a denial. A known auth
-   * refusal is returned at once instead and remains effective throughout
-   * rechecks, even when they fail or outlast the wait. The caller owns the
+   * recheck like any other, since its answer could be a denial, except that
+   * a failed check's auth refusal is returned at once. A known auth refusal
+   * remains effective throughout rechecks, even when they fail or outlast
+   * the wait. The caller owns the
    * wait's cap and any cancellation, and checks its own signal afterwards. */
   async routeForTurn(key: AgentKey, wait?: AbortSignal): Promise<GatewayRoute> {
     const route = this.routeFor(key);

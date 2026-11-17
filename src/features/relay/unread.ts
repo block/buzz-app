@@ -192,6 +192,13 @@ export interface UnreadCapability {
     target: ReadTarget,
     messageId: string,
   ): Promise<ReadMutationResult>;
+  /** An Activity row's `readThrough` steps as one explicit intent, saved in
+   * order. Local unread intent is cut once, at the call: a newer Mark as
+   * unread on a later step's target, even one queued behind an earlier step,
+   * rejects that step and stops the rest. */
+  markReadThrough(
+    steps: readonly Readonly<{ target: ReadTarget; messageId: string }>[],
+  ): Promise<readonly ReadMutationResult[]>;
   /** Explicit read of these verified top-level messages in one save, as the
    * reader's catch-up reads a channel bottom: the channel catch-up mark reads
    * ordinary messages through the newest, and still-unread mentions,
@@ -3004,6 +3011,38 @@ export function createUnread({
           true,
         ),
       );
+    },
+    async markReadThrough(steps) {
+      const generation = epoch;
+      const admitted = steps.map(({ target, messageId }) => ({
+        target,
+        messageId,
+        event: requireMessage(target, messageId),
+      }));
+      // Reserve one saved cut at the click, before any newer manual action.
+      const cut = reads.captureLocalUnreadRevision();
+      const fences = admitted.map(({ target }) =>
+        reads.captureLocalUnread([targetKey(target)], cut),
+      );
+      const results: ReadMutationResult[] = [];
+      for (const [index, { target, messageId, event }] of admitted.entries())
+        results.push(
+          await serialize(target.channelId, () =>
+            reads.read(
+              targetKey(target),
+              event.created_at,
+              () =>
+                !closed &&
+                generation === epoch &&
+                requireMessage(target, messageId) === event,
+              true,
+              undefined,
+              undefined,
+              fences[index],
+            ),
+          ),
+        );
+      return results;
     },
     async markTimelineRead(channelId, messageIds) {
       const target = { kind: "channel" as const, channelId };

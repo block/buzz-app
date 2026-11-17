@@ -73,9 +73,8 @@ async function readRow(session: RelaySession, item: InboxItem) {
     await session.unread.prepareChannelRead(item.channelId)();
   else if (item.timeline)
     await session.unread.markTimelineRead(item.channelId, item.messageIds);
-  else
-    for (const step of item.readThrough)
-      await session.unread.markThrough(step.target, step.messageId);
+  // One intent across its steps: a newer Mark as unread stops the rest.
+  else await session.unread.markReadThrough(item.readThrough);
 }
 
 /** Recent activity, shown while the pointer rests on the sidebar's Activity row. */

@@ -41,6 +41,9 @@ export type CommunityCounts = Readonly<{
   channel: string;
   viewer: string;
   tally: Tally;
+  /** Plugins the viewer's own install record is on for, read on their own
+   * so a partial tally doesn't hide them. */
+  myInstalls: ReadonlySet<string>;
   /** Plugins the viewer's own upvote record is on for, counted or not. */
   myVotes: ReadonlySet<string>;
 }>;
@@ -256,21 +259,22 @@ export async function readCounts(
 ): Promise<CommunityCounts> {
   const { read, viewer } = capabilities(session);
   const channel = await ensureChannel(session, signal);
-  const [installs, votes] = await Promise.all([
+  const [installs, votes, own] = await Promise.all([
     readAll(read, channel.id, INSTALL_TYPE, signal),
     readAll(read, channel.id, VOTE_TYPE, signal),
+    readOwn(session, channel.id, signal),
   ]);
-  const myVotes = new Set<string>();
-  for (const [key, people] of await collect(
-    votes.events.filter((event) => event.pubkey === viewer),
-    channel.id,
-    VOTE_TYPE,
-  ))
-    if (people.has(viewer)) myVotes.add(key);
+  const mine = (type: RecordType) =>
+    new Set(
+      own
+        .filter((record) => record.type === type && record.on)
+        .map((record) => record.id),
+    );
   return {
     channel: channel.id,
     viewer,
-    myVotes,
+    myInstalls: mine(INSTALL_TYPE),
+    myVotes: mine(VOTE_TYPE),
     tally: await tally(
       installs.events,
       votes.events,
@@ -472,6 +476,7 @@ export function withRecord(
   const voters = new Map(
     [...counts.tally.voters].map(([k, people]) => [k, new Set(people)]),
   );
+  const myInstalls = new Set(counts.myInstalls);
   const myVotes = new Set(counts.myVotes);
   const people = (map: Map<string, Set<string>>) => {
     const found = map.get(id) ?? new Set<string>();
@@ -481,21 +486,24 @@ export function withRecord(
   const viewer = counts.viewer;
   if (type === INSTALL_TYPE) {
     if (on) {
+      myInstalls.add(id);
       people(installers).add(viewer);
       if (myVotes.has(id)) people(voters).add(viewer);
     } else {
+      myInstalls.delete(id);
       installers.get(id)?.delete(viewer);
       voters.get(id)?.delete(viewer);
     }
   } else if (on) {
     myVotes.add(id);
-    if (installers.get(id)?.has(viewer)) people(voters).add(viewer);
+    if (myInstalls.has(id)) people(voters).add(viewer);
   } else {
     myVotes.delete(id);
     voters.get(id)?.delete(viewer);
   }
   return {
     ...counts,
+    myInstalls,
     myVotes,
     tally: { installers, voters, partial: counts.tally.partial },
   };

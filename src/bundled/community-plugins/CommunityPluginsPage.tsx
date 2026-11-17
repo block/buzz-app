@@ -398,16 +398,25 @@ function Browse({
       {counts.state.status === "unavailable" ? (
         <p className="text-caption text-subtle">{counts.state.message}</p>
       ) : (
-        <SwitchPreferenceRow
-          label="Record my plugins on this device"
-          description="Anyone who can read the community you have selected can see which plugins you installed and upvoted. This applies to every community you use on this device. Turning it off takes yours out of the counts; earlier records stay in the community's history."
-          checked={counts.recording}
-          disabled={changing || !ready}
-          onCheckedChange={(on: boolean) => {
-            setChanging(true);
-            void counts.changeRecording(on).finally(() => setChanging(false));
-          }}
-        />
+        <>
+          <SwitchPreferenceRow
+            label="Record my plugins in this community"
+            description="Anyone who can read this community can see which plugins you installed and upvoted. Each community keeps its own choice on this device. Turning it off takes yours out of the counts; earlier records stay in the community's history."
+            checked={counts.recording}
+            disabled={changing || !ready}
+            onCheckedChange={(on: boolean) => {
+              setChanging(true);
+              void counts.changeRecording(on).finally(() => setChanging(false));
+            }}
+          />
+          {counts.failed && (
+            <p role="alert" className="text-caption text-danger">
+              {counts.recording
+                ? "Buzz couldn't record all your plugins yet. It will keep trying."
+                : "Buzz couldn't withdraw all your records yet. It will keep trying."}
+            </p>
+          )}
+        </>
       )}
     </>
   );

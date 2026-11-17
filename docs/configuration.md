@@ -157,10 +157,11 @@ only from someone with an install record. Index listings are counted by
 manifest id. Counts are read from current revisions. Anyone the relay lets read that
 community can read the records, including who installed what; on a relay that
 doesn't require community membership, that is any authenticated user. **Record
-my plugins on this device** on the page stops recording in every community on
+my plugins in this community** on the page keeps one choice per community on
 the device; turning it off publishes an `on: false` revision of each of the
-member's records, and earlier revisions stay in the artifact history. A community without NIP-CL or NIP-AR shows no counts and gets no
-records.
+member's records there, and earlier revisions stay in the artifact history. A
+build without an index records nothing. A community without NIP-CL or NIP-AR
+shows no counts and gets no records.
 
 **Add your plugin** on the page lets an author list a plugin. It checks
 anonymously through `https://api.github.com` that the repository is public and

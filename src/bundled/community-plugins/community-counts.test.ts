@@ -406,3 +406,17 @@ it("updates counts the way the written record reads back", async () => {
   expect(upvoteCount(removed.tally, key)).toBe(0);
   expect(upvoteCount(counts.tally, key)).toBe(0);
 });
+
+it("reads the viewer's own records on their own, past a partial tally", async () => {
+  const community = existing();
+  await record(community, INSTALL_TYPE, alice, key);
+  await record(community, VOTE_TYPE, alice, key);
+  const read = community.snapshotRead.getMockImplementation();
+  community.snapshotRead.mockImplementation(async (filters) =>
+    filters[0]?.["#installer"] ? ((await read?.(filters)) ?? []) : [],
+  );
+  const counts = await readCounts(community.session);
+  expect(installCount(counts.tally, key)).toBe(0);
+  expect(counts.myInstalls).toEqual(new Set([key]));
+  expect(counts.myVotes).toEqual(new Set([key]));
+});

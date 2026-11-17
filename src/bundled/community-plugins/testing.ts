@@ -51,12 +51,16 @@ type FakeChannel = {
 
 /** An in-memory community: NIP-CL system channel lookups and a NIP-AR store
  * holding each `d`'s current revision. */
+let communities = 0;
+
 export function fakeCommunity({
   viewer = "a".repeat(64),
   channels = [] as FakeChannel[],
+  scope = `wss://community-${++communities}.example:${viewer}`,
 }: {
   viewer?: string;
   channels?: FakeChannel[];
+  scope?: string;
 } = {}) {
   const relayAuthor = "9".repeat(64);
   const heads = new Map<string, Event>();
@@ -126,6 +130,7 @@ export function fakeCommunity({
   const session = {
     viewer,
     relayAuthor,
+    scope,
     snapshotRead,
     configArtifactWriter: { sign, publish },
     channels: { findSystemLabeled },

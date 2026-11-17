@@ -255,7 +255,7 @@ it("withdraws the viewer's records and writes none while recording is off", asyn
   );
   await userEvent.click(
     await screen.findByRole("switch", {
-      name: "Record my plugins on this device",
+      name: "Record my plugins in this community",
     }),
   );
   await waitFor(() =>
@@ -428,4 +428,68 @@ it("shows why GitHub rejected a repository and offers no links", async () => {
   expect(await screen.findAllByRole("button", { name: /^Open / })).toHaveLength(
     2,
   );
+});
+
+it("says so when turning recording off couldn't withdraw every record", async () => {
+  const installer = fakeInstaller("installed");
+  const community = await seeded();
+  await setup(installer, community);
+  await screen.findByText("Installed by 3 people here");
+  await userEvent.click(
+    screen.getByRole("button", { name: "Open Octo notes" }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Add to Buzz" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Upvote" })).toBeEnabled(),
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: "All community plugins" }),
+  );
+  community.publish.mockRejectedValue(new Error("offline"));
+  await userEvent.click(
+    await screen.findByRole("switch", {
+      name: "Record my plugins in this community",
+    }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Buzz couldn't withdraw all your records yet. It will keep trying.",
+  );
+  expect(
+    screen.getByRole("switch", { name: "Record my plugins in this community" }),
+  ).not.toBeChecked();
+});
+
+it("shows the upvote that finished while a refresh was reading", async () => {
+  const installer = fakeInstaller("installed");
+  const community = await seeded();
+  await setup(installer, community);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Open Octo notes" }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Add to Buzz" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Upvote" })).toBeEnabled(),
+  );
+  const read = community.snapshotRead.getMockImplementation();
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let holding = true;
+  community.snapshotRead.mockImplementation(async (filters) => {
+    const filter = filters[0] as Record<string, string[] | undefined>;
+    const answer = await read?.(filters);
+    if (holding && filter["#type"]?.[0] === VOTE_TYPE && !filter["#d"])
+      await held;
+    return answer ?? [];
+  });
+  await userEvent.click(
+    screen.getByRole("button", { name: "Refresh community plugins" }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Upvote" }));
+  await screen.findByRole("button", { name: "Upvoted" });
+  holding = false;
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(screen.getByRole("button", { name: "Upvoted" })).toBeInTheDocument();
 });

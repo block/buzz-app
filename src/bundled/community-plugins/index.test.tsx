@@ -1,5 +1,5 @@
 import { Context } from "@deepseek-ai/cordis";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { provideNavigation } from "../../features/navigation/service";
 import { PagesService } from "../../features/pages/service";
 import { apply, inject } from ".";
@@ -41,6 +41,40 @@ it("registers one primary workspace page and removes it on dispose", async () =>
     await scope.dispose();
     expect(pages.snapshot()).toEqual([]);
   } finally {
+    await scope.dispose();
+    await ctx.fiber.dispose();
+  }
+});
+
+it("records nothing in a build without a community index", async () => {
+  vi.stubEnv("VITE_BUZZ_COMMUNITY_PLUGIN_INDEX_URL", "");
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  new PagesService(ctx);
+  provideNavigation(ctx, undefined);
+  const subscribe = vi.fn(() => () => {});
+  ctx.provide("relay", {
+    snapshot: () => ({ status: "disconnected" }),
+    subscribe,
+  });
+  const installed = vi.fn(() => []);
+  ctx.provide("pluginInventory", { installed, subscribe });
+  ctx.provide("host", {
+    request: async () => ({ status: 404, headers: {}, body: "" }),
+  });
+  const scope = ctx
+    .extend({
+      pluginOwner: { id: "buzz.community-plugins", revision: "bundled" },
+    })
+    .plugin({ inject, apply });
+  try {
+    await scope;
+    expect(subscribe).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllEnvs();
     await scope.dispose();
     await ctx.fiber.dispose();
   }

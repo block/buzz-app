@@ -18,14 +18,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
     | PluginInstaller
     | undefined;
   const inventory = ctx.pluginInventory;
-  const recorder = createRecorder({
-    relay: ctx.relay,
-    inventory: {
-      installed: () => inventory.installed(),
-      subscribe: (listener) => inventory.subscribe(listener),
-    },
-  });
-  ctx.effect(() => () => recorder.stop());
+  // Without an index there is nothing to browse, so nothing is recorded.
+  const recorder = indexUrl
+    ? createRecorder({
+        relay: ctx.relay,
+        inventory: {
+          installed: () => inventory.installed(),
+          subscribe: (listener) => inventory.subscribe(listener),
+        },
+      })
+    : undefined;
+  if (recorder) ctx.effect(() => () => recorder.stop());
   const openPluginSettings = () =>
     void ctx.navigation.open({
       version: 1,

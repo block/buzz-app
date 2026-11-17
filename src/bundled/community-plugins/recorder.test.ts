@@ -129,12 +129,12 @@ it("writes nothing when the records already match", async () => {
   const first = start(community.relay, plugins);
   await first.sync();
   expect(community.publish).toHaveBeenCalledTimes(1);
-  await first.sync();
+  const reads = community.snapshotRead.mock.calls.length;
   plugins.set([notes]);
   await new Promise((resolve) => setTimeout(resolve, 10));
-  const reads = community.snapshotRead.mock.calls.length;
-  await first.sync();
   expect(community.snapshotRead).toHaveBeenCalledTimes(reads);
+  await first.sync();
+  expect(community.publish).toHaveBeenCalledTimes(1);
   first.stop();
   await start(community.relay, inventory([notes])).sync();
   expect(community.publish).toHaveBeenCalledTimes(1);
@@ -163,7 +163,9 @@ it("withdraws every record when recording is turned off, and restores them", asy
   const recorder = start(community.relay, inventory([notes, board]));
   await recorder.sync();
   await recorder.setRecording(false);
-  expect(window.localStorage.getItem(RECORD_KEY)).toBe("off");
+  expect(JSON.parse(window.localStorage.getItem(RECORD_KEY) ?? "")).toEqual({
+    [community.session.scope]: false,
+  });
   expect(recorder.recording()).toBe(false);
   expect(on(community)).toEqual([]);
   const writes = community.publish.mock.calls.length;
@@ -174,8 +176,11 @@ it("withdraws every record when recording is turned off, and restores them", asy
 });
 
 it("creates no channel while recording is off", async () => {
-  window.localStorage.setItem(RECORD_KEY, "off");
   const community = fakeCommunity();
+  window.localStorage.setItem(
+    RECORD_KEY,
+    JSON.stringify({ [community.session.scope]: false }),
+  );
   await start(community.relay, inventory([notes])).sync();
   expect(community.create).not.toHaveBeenCalled();
   expect(community.publish).not.toHaveBeenCalled();
@@ -191,4 +196,132 @@ it("stays quiet where the community can't keep records", async () => {
   const pending = fakeCommunity();
   await start(pending.relay, inventory(undefined)).sync();
   expect(pending.findSystemLabeled).not.toHaveBeenCalled();
+});
+
+it("keeps each community's choice, so turning one on leaves another off", async () => {
+  const home = fakeCommunity();
+  const work = fakeCommunity();
+  const relay = switchableRelay(home);
+  const recorder = start(relay.relay, inventory([notes]));
+  await recorder.sync();
+  await recorder.setRecording(false);
+  expect(on(home)).toEqual([]);
+  relay.select(work);
+  await recorder.setRecording(true);
+  expect(on(work)).toEqual(["octo.notes"]);
+  relay.select(home);
+  expect(recorder.recording()).toBe(false);
+  await recorder.sync();
+  expect(on(home)).toEqual([]);
+});
+
+it("holds an opt-out the device couldn't save", async () => {
+  const community = fakeCommunity();
+  const plugins = inventory([notes]);
+  const recorder = createRecorder({
+    relay: community.relay,
+    inventory: plugins,
+    delayMs: 1,
+    storage: {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("quota");
+      },
+    },
+  });
+  recorders.push(recorder);
+  await recorder.sync();
+  await recorder.setRecording(false);
+  expect(recorder.recording()).toBe(false);
+  expect(on(community)).toEqual([]);
+  plugins.set([notes, board]);
+  await recorder.sync();
+  expect(on(community)).toEqual([]);
+});
+
+it("publishes nothing more from a pass that was running when recording turned off", async () => {
+  const community = fakeCommunity({
+    channels: [{ id: channel, creator: bob, createdAt: 1 }],
+  });
+  let release = () => {};
+  const lookup = community.findSystemLabeled.getMockImplementation();
+  community.findSystemLabeled.mockImplementationOnce(async (label: string) => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return (await lookup?.(label)) ?? [];
+  });
+  const recorder = start(community.relay, inventory([notes]));
+  const pass = recorder.sync();
+  await vi.waitFor(() =>
+    expect(community.findSystemLabeled).toHaveBeenCalled(),
+  );
+  const off = recorder.setRecording(false);
+  release();
+  await Promise.all([pass.catch(() => {}), off]);
+  await vi.waitFor(() => expect(recorder.recording()).toBe(false));
+  expect(
+    community.publish.mock.calls.some(
+      ([event]) => JSON.parse(event.content).on === true,
+    ),
+  ).toBe(false);
+});
+
+it("reports a withdrawal that failed and retries it", async () => {
+  const community = fakeCommunity();
+  const recorder = createRecorder({
+    relay: community.relay,
+    inventory: inventory([notes]),
+    delayMs: 1,
+    retryMs: 5,
+  });
+  recorders.push(recorder);
+  await recorder.sync();
+  community.publish.mockRejectedValueOnce(new Error("offline"));
+  await expect(recorder.setRecording(false)).rejects.toThrow("offline");
+  expect(on(community)).toEqual(["octo.notes"]);
+  await vi.waitFor(() => expect(on(community)).toEqual([]));
+});
+
+it("waits for an upvote in flight before withdrawing, so it doesn't outlive the opt-out", async () => {
+  const community = fakeCommunity();
+  const recorder = start(community.relay, inventory([notes]));
+  await recorder.sync();
+  let release = () => {};
+  const vote = recorder.write(async (session) => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { writeRecord } = await import("./community-counts");
+    const [found] = await community.findSystemLabeled("buzz-marketplace");
+    await writeRecord(session, found?.id ?? "", VOTE_TYPE, "octo.notes", true);
+    return true;
+  });
+  const off = recorder.setRecording(false);
+  release();
+  await Promise.all([vote, off]);
+  expect(on(community, VOTE_TYPE)).toEqual([]);
+  expect(on(community)).toEqual([]);
+  await expect(recorder.write(async () => true)).resolves.toBeUndefined();
+});
+
+it("records in the channel the counts moved to, though nothing installed changed", async () => {
+  const community = fakeCommunity({
+    channels: [{ id: channel, creator: bob, createdAt: 1 }],
+  });
+  const recorder = start(community.relay, inventory([notes]));
+  await recorder.sync();
+  community.made[0] = { ...community.made[0], archived: true } as never;
+  const successor = "00000002-0000-4000-8000-000000000000";
+  community.made.push({ id: successor, creator: bob, createdAt: 2 });
+  recorder.sawChannel(successor);
+  await vi.waitFor(() =>
+    expect(
+      community.store
+        .heads()
+        .some((event) =>
+          event.tags.some((t) => t[0] === "h" && t[1] === successor),
+        ),
+    ).toBe(true),
+  );
 });

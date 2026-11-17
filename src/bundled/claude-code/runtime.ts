@@ -1163,7 +1163,7 @@ export class ClaudeRuntime {
           delivered = Promise.resolve({ ok: true });
           return;
         }
-        if (!deferred) signal.throwIfAborted();
+        if (reserved || !deferred) signal.throwIfAborted();
         const admitted = await admission(deferred);
         session = admitted?.session ?? session;
         sessionContext = admitted?.context ?? sessionContext;

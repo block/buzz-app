@@ -4459,6 +4459,71 @@ it("kills community wake execution if its deadline interrupt is refused", async 
   }
 });
 
+it("does not start a deferred community request cancelled during execution inspection", async () => {
+  const f = setup([], { hold: true });
+  const config = { ...DEFAULT_CONFIG, scope: "community" as const };
+  const agent = { ...f.agent, config } as unknown as Agent;
+  let inspected!: () => void, release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    inspected = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    await f.deliver(
+      { type: "mention", event: message("1", "first") },
+      { config },
+    );
+    await vi.waitFor(() =>
+      expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+    );
+    const worker = f.claudes().find((p) => p.prompts.length);
+    if (!worker) throw new Error("Missing worker");
+    worker.finish();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, { channelId: channel })).toBe(
+        "idle",
+      ),
+    );
+    const compacted = f.runtime.session(
+      agent,
+      { channelId: channel },
+      "compact",
+    );
+    await vi.waitFor(() => expect(worker.prompts[1]).toBe("/compact"));
+    Object.assign(f.runtime, {
+      execution: async () => {
+        throw new Error("Unexpected remote execution");
+      },
+      inspect: vi
+        .fn(async () => undefined)
+        .mockImplementationOnce(async () => {
+          inspected();
+          await gate;
+          return undefined;
+        }),
+    });
+    await f.deliver(
+      { type: "mention", event: message("2", "CANCELLED_DURING_INSPECTION") },
+      { config },
+    );
+    worker.finish();
+    await compacted;
+    await entered;
+    await f.runtime.session(agent, { channelId: channel }, "interrupt");
+    release();
+    await flush(10);
+    for (const active of f.claudes()) active.finish();
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(worker.prompts).toHaveLength(2);
+  } finally {
+    release();
+    for (const worker of f.claudes()) worker.finish();
+    f.runtime.dispose();
+  }
+});
+
 it("keeps addressed community admission ahead of a later wake during compaction", async () => {
   const f = setup([], { hold: true });
   const config = { ...DEFAULT_CONFIG, scope: "community" as const };

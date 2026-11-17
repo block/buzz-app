@@ -29,9 +29,11 @@ export const NO_PROJECT: Project = Object.freeze({
 export class ProjectSource {
   private source: string | undefined;
   private project: Project = NO_PROJECT;
+  preview(source: string | undefined, project: Project | undefined): Project {
+    return project ?? (source === this.source ? this.project : NO_PROJECT);
+  }
   resolve(source: string | undefined, project: Project | undefined): Project {
-    this.project =
-      project ?? (source === this.source ? this.project : NO_PROJECT);
+    this.project = this.preview(source, project);
     this.source = source;
     return this.project;
   }

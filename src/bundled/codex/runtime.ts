@@ -3345,7 +3345,7 @@ export class CodexRuntime {
         if (settings.scope === "community")
           request.project =
             [
-              entry.project.resolve(
+              entry.project.preview(
                 request.unaddressed
                   ? undefined
                   : request.conversation.channelId,
@@ -3385,6 +3385,11 @@ export class CodexRuntime {
             }
             throw error;
           });
+        if (settings.scope === "community")
+          entry.project.resolve(
+            request.unaddressed ? undefined : request.conversation.channelId,
+            request.solo ? request.canvas : NO_PROJECT,
+          );
         active.turnId = turn.turn.id;
         if (fresh)
           void this.prompts(agent.key).save(

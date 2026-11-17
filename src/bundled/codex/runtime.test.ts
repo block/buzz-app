@@ -8240,6 +8240,38 @@ it("refuses spoken adoption while a typed community source still owns the seat",
   }
 });
 
+it("keeps the retained Solo Canvas when an intervening community turn is refused", async () => {
+  const f = fixture();
+  const d = f.delivery("first");
+  const config = { ...(d.config as object), scope: "community" };
+  f.soloChannels.add("channel");
+  f.snapshot.session.canvas.available = true;
+  f.snapshot.session.canvas.read.mockResolvedValue(
+    canvasHead("RETAINED_CANVAS"),
+  );
+  try {
+    await f.runtime.run({ ...d, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete(0);
+    f.failing.add("turn/start");
+    await f.runtime.run({
+      ...f.delivery("refused channel turn"),
+      config,
+      channelId: "other",
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    await f.workingUntil.mock.calls.at(-1)?.[0];
+    f.failing.delete("turn/start");
+    f.snapshot.session.canvas.read.mockRejectedValue(new Error("offline"));
+    await f.runtime.run({ ...f.delivery("back to Solo"), config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+    expect(inputText(f.starts()[2])).toContain("RETAINED_CANVAS");
+    await f.complete(2);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 it("keeps the retained Solo Canvas when a community wake expires during preparation", async () => {
   const f = fixture();
   const d = f.delivery("first");

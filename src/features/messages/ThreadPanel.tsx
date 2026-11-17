@@ -750,8 +750,8 @@ function ThreadMessages({
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
   const follow = useRef(true);
-  // Where placing an unread line left the scroller; that scroll is not the reader's.
-  const lineTop = useRef<number | undefined>(undefined);
+  // A placed unread line decides following until the reader scrolls.
+  const lineHeld = useRef(false);
   const resizePosition = useRef<
     | {
         width: number;
@@ -1482,7 +1482,7 @@ function ThreadMessages({
       // Only a line that leaves the reader at the latest reply follows it.
       follow.current =
         element.scrollHeight - element.clientHeight - element.scrollTop < 1;
-      lineTop.current = element.scrollTop;
+      lineHeld.current = true;
       // Like a revealed message, the line is where a first opening's reading
       // starts, so content-focused navigation moves focus in: from where the
       // opening or navigation left it, not from where the person has since
@@ -2041,9 +2041,10 @@ function ThreadMessages({
             80;
           if (jumpingToLatest.current) return;
           captureResizePosition();
-          if (element.scrollTop !== lineTop.current) {
+          // The panel's own scrolls land where it last saved the position.
+          if (!lineHeld.current || previous?.scrollTop !== element.scrollTop) {
             follow.current = bottom;
-            lineTop.current = undefined;
+            lineHeld.current = false;
           }
           setShowJumpToLatest(!bottom);
           if (bottom) setNewMessageCount(0);

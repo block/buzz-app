@@ -991,6 +991,14 @@ test("a line placed just short of the latest reply stays in view", async ({
     height: page.viewportSize().height,
   });
   expect(Math.abs((await measure()).top)).toBeLessThan(1);
+  // Nor does the panel's own correction for a row above growing, as late
+  // media would.
+  await history.evaluate((element) => {
+    element.querySelector("[data-message-id]").style.paddingBottom = "30px";
+  });
+  expect(Math.abs((await measure()).top)).toBeLessThan(1);
+  await page.setViewportSize({ width, height: page.viewportSize().height });
+  expect(Math.abs((await measure()).top)).toBeLessThan(1);
 });
 
 test("channel bottom quiets ordinary replies newer than the latest top-level message without reading their threads", async ({

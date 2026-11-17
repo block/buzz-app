@@ -1032,11 +1032,8 @@ scrollTest(
       release = resolve;
     });
     let decodes = 0;
-    // Only the community on screen. Another joined community opens in the
-    // background after a random delay and decodes its own preferences once,
-    // which is not a page return.
-    const preferences = "**/api/relay/primary/sidebar-preferences";
-    await page.route(preferences, async (route) => {
+    // Other communities can warm in the background; this return reuses Primary.
+    await page.route("**/primary/sidebar-preferences", async (route) => {
       decodes++;
       await held;
       await route.continue();
@@ -1089,7 +1086,7 @@ scrollTest(
       ).toBe(0);
     } finally {
       release();
-      await page.unroute(preferences);
+      await page.unrouteAll({ behavior: "wait" });
     }
   },
 );

@@ -12,6 +12,12 @@ for (const [scheme, width, scale] of [
     page,
     app,
   }) => {
+    await page.addInitScript(() => {
+      window.copied = [];
+      navigator.clipboard.writeText = async (text) => {
+        window.copied.push(text);
+      };
+    });
     await page.emulateMedia({ colorScheme: scheme });
     await page.setViewportSize({ width, height: 950 });
     await open(page, app);
@@ -83,11 +89,32 @@ for (const [scheme, width, scale] of [
       menu.getByRole("menuitem", { name: "Copy message", exact: true }),
     ).toBeVisible();
     await expect(
-      menu.getByRole("menuitem", { name: "Copy link", exact: true }),
+      menu.getByRole("menuitem", { name: "Copy message link", exact: true }),
     ).toBeVisible();
+    await expect(menu.getByRole("menuitem").nth(2)).toHaveText("Copy link URL");
     expect(
-      (await menu.getByRole("menuitem").allTextContents()).slice(2),
+      (await menu.getByRole("menuitem").allTextContents())
+        .slice(3)
+        .map((label) => (label === "Copy message link" ? "Copy link" : label)),
     ).toEqual(messageActions);
+    await menu
+      .getByRole("menuitem", { name: "Copy link URL", exact: true })
+      .click();
+    await expect(menu).toHaveCount(0);
+    await expect
+      .poll(() => page.evaluate(() => window.copied.at(-1)))
+      .toBe("https://example.org/pull/1");
+    await selectLink();
+    await link.click({ button: "right" });
+    await menu
+      .getByRole("menuitem", { name: "Copy message link", exact: true })
+      .click();
+    await expect(menu).toHaveCount(0);
+    await expect
+      .poll(() => page.evaluate(() => window.copied.at(-1)))
+      .toBe(`buzz://message?channel=alpha&id=${message.id}`);
+    await selectLink();
+    await link.click({ button: "right" });
     const input = page.getByRole("textbox", {
       name: "Message #Alpha",
       exact: true,

@@ -184,9 +184,10 @@ it("prepends selection actions to the message menu, including over a selected li
   ).toEqual([
     "Copy highlight",
     "Quote highlight",
+    "Copy link URL",
     "Mark unread",
     "Copy message",
-    "Copy link",
+    "Copy message link",
     "Forward message",
     "Delete message",
     "Follow thread",
@@ -204,15 +205,31 @@ it("copies the whole message or the captured highlight independently", async () 
   const { open, select, controller } = setup();
   open();
   await user.click(
+    await screen.findByRole("menuitem", { name: "Copy link URL" }),
+  );
+  expect(copy).toHaveBeenCalledExactlyOnceWith("https://example.org/");
+  select();
+  open();
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Copy message link" }),
+  );
+  expect(copy).toHaveBeenLastCalledWith(
+    "buzz://message?channel=general&id=one",
+  );
+  select();
+  open();
+  await user.click(
     await screen.findByRole("menuitem", { name: "Copy message" }),
   );
-  expect(copy).toHaveBeenCalledExactlyOnceWith("Whole message");
+  expect(copy).toHaveBeenLastCalledWith("Whole message");
   select();
   open();
   const item = await screen.findByRole("menuitem", { name: "Copy highlight" });
   act(() => document.getSelection()?.removeAllRanges());
   await user.click(item);
   expect(copy.mock.calls.map(([text]) => text)).toEqual([
+    "https://example.org/",
+    "buzz://message?channel=general&id=one",
     "Whole message",
     "Quote me (https://example.org/)",
   ]);

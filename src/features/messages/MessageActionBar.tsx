@@ -208,6 +208,7 @@ function MessageActionBarControls({
   const [open, setOpen] = useState(false);
   const [selection, setSelection] =
     useState<ReturnType<typeof captureSelectedQuote>>();
+  const [contextLink, setContextLink] = useState<string>();
   // A hidden conversation, or a list's removed row, retires its open menu.
   if (open && (!active || (host && !messageId))) setOpen(false);
   const barRef = useRef<HTMLDivElement>(null);
@@ -334,6 +335,17 @@ function MessageActionBarControls({
               </MenuIcon>
               Quote highlight
             </MenuItem>
+            {contextLink && (
+              <MenuItem
+                disabled={copying}
+                onClick={() => void copy(() => contextLink, "Link URL")}
+              >
+                <MenuIcon>
+                  <LinkIcon />
+                </MenuIcon>
+                Copy link URL
+              </MenuItem>
+            )}
             <MenuSeparator />
           </>
         )}
@@ -393,7 +405,7 @@ function MessageActionBarControls({
           <MenuIcon>
             <LinkIcon />
           </MenuIcon>
-          Copy link
+          {contextLink ? "Copy message link" : "Copy link"}
         </MenuItem>
         {onForward && (
           <MenuItem
@@ -426,6 +438,7 @@ function MessageActionBarControls({
     if (!opened) {
       host?.release();
       setSelection(undefined);
+      setContextLink(undefined);
       const action = afterClose.current;
       afterClose.current = undefined;
       action?.();
@@ -491,6 +504,10 @@ function MessageActionBarControls({
               event.stopPropagation();
               selectedAtPress.current = undefined;
               setSelection(quote);
+              setContextLink(
+                (event.target as Element).closest<HTMLAnchorElement>("a[href]")
+                  ?.href,
+              );
               setHandingOffFocus(false);
               afterClose.current = undefined;
               const rect = new DOMRect(event.clientX, event.clientY, 0, 0);
@@ -611,6 +628,7 @@ function MessageActionBarControls({
                   const quote = overflowSelection.current;
                   overflowSelection.current = undefined;
                   setSelection(quote);
+                  setContextLink(undefined);
                   if (quote) contextFocus.current = quote.element;
                   setHandingOffFocus(false);
                   // Base UI opens on mousedown, so a real pointer press carries a

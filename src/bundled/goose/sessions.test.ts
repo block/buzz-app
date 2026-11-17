@@ -487,6 +487,19 @@ describe("AgentSessions", () => {
     ]);
     goose?.turns[0]?.finish();
     await expect(Promise.all([first, other, same])).resolves.toHaveLength(3);
+    // The next turn on the same session names its own thread.
+    const next = sessions.deliver("c", "next", 4, { activityScope: "B" });
+    await flush(30);
+    const late = sessions.deliver("c", "plain", 5, {
+      steer: "late",
+      activityScope: "C",
+    });
+    await flush(30);
+    expect(goose?.turns[1]?.steered).toEqual([
+      'late\n\nThe reply target above is for the new message only. If you are still working on an earlier request, ordinary replies about that work still go to `reply: "B"`.',
+    ]);
+    goose?.turns[1]?.finish();
+    await expect(Promise.all([next, late])).resolves.toHaveLength(2);
   });
 
   it("runs another thread's steer unchanged when it becomes the next turn", async () => {
@@ -508,8 +521,19 @@ describe("AgentSessions", () => {
     await flush(30);
     expect(goose?.turns[0]?.steered).toEqual([]);
     expect(goose?.turns.map((turn) => turn.text)).toEqual(["first", "steer"]);
+    // Now a turn of its own, the steer is the work a later steer names.
+    const later = sessions.deliver("c", "plain", 3, {
+      steer: "later",
+      activityScope: "C",
+    });
+    await flush(30);
+    held.release();
+    await flush(30);
+    expect(goose?.turns[1]?.steered).toEqual([
+      'later\n\nThe reply target above is for the new message only. If you are still working on an earlier request, ordinary replies about that work still go to `reply: "B"`.',
+    ]);
     goose?.turns[1]?.finish();
-    await expect(Promise.all([first, other])).resolves.toHaveLength(2);
+    await expect(Promise.all([first, other, later])).resolves.toHaveLength(3);
   });
 
   it("runs a turn on the model its message asked for, and the next on the agent's", async () => {

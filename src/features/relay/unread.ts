@@ -39,6 +39,12 @@ export type UnreadSnapshot = Readonly<{
    * Bounded like `observedCount`: missing history can leave a later message
    * the oldest one known. Absent when none is unread. */
   oldestUnreadId?: string;
+  /** Channel targets with `oldestUnreadId`: the newest incoming timeline
+   * message older than it that a channel-wide read reaches (`attention()`
+   * reports `prefixRead`). Evidence can have gaps, so it proves where unread
+   * begins only once a contiguous page shows it directly above
+   * `oldestUnreadId`. */
+  readBeforeOldestUnreadId?: string;
   /** Channel targets: a repair has read every channel in unread scope since
    * evidence was last emptied or a channel entered that scope, so evidence
    * reaches past the rows channel windows loaded, up to the repair's per-batch
@@ -1349,6 +1355,29 @@ export function createUnread({
       if (category(entry, dm)) rowAttention++;
       if (entry.rootId && activityEvidence(entry)) rowThreads.add(entry.rootId);
     }
+    // The newest incoming timeline message older than the oldest unread one
+    // that a channel-wide read reaches, as `attention` reports `prefixRead`.
+    let readBefore: RelayEvent | undefined;
+    if (oldest) {
+      const prefix = Math.max(
+        state.frontiers[target.channelId] ?? -1,
+        reads.floor(),
+      );
+      const caughtUp = state.frontiers[`activity:${target.channelId}`] ?? -1;
+      for (const entry of byChannel.get(target.channelId) ?? []) {
+        const event = entry.event;
+        if (
+          (!entry.parentId || entry.broadcast) &&
+          event.pubkey !== viewer &&
+          !entry.quiet &&
+          order(event, oldest) < 0 &&
+          (!readBefore || order(event, readBefore) > 0) &&
+          (prefix >= event.created_at ||
+            (timeline(entry, dm) && caughtUp >= event.created_at))
+        )
+          readBefore = event;
+      }
+    }
     const manual = reads.localUnread(key)
       ? "local-only"
       : target.kind === "message" &&
@@ -1369,6 +1398,9 @@ export function createUnread({
         ? { latestMessage: { id: latest.id, createdAt: latest.created_at } }
         : {}),
       ...(evidence && oldest ? { oldestUnreadId: oldest.id } : {}),
+      ...(evidence && oldest && readBefore
+        ? { readBeforeOldestUnreadId: readBefore.id }
+        : {}),
       ...(evidence && target.kind === "channel" && sampled
         ? { sampled: true as const }
         : {}),
@@ -1400,6 +1432,7 @@ export function createUnread({
   const equal = (a: UnreadSnapshot, b: UnreadSnapshot) =>
     a.latestMessage?.id === b.latestMessage?.id &&
     a.oldestUnreadId === b.oldestUnreadId &&
+    a.readBeforeOldestUnreadId === b.readBeforeOldestUnreadId &&
     a.sampled === b.sampled &&
     a.sampling === b.sampling &&
     a.observedCount === b.observedCount &&

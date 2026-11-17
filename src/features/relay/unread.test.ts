@@ -1078,6 +1078,34 @@ it("unread messages read no relay and open no window", async () => {
   );
 });
 
+it("the channel snapshot names the newest message a channel-wide read reaches before its oldest unread one", async () => {
+  const h = setup();
+  h.grant("room");
+  const first = message(h.alice, "room", "first", 10);
+  const second = message(h.alice, "room", "second", 11);
+  const own = message(h.viewer, "room", "own", 12);
+  const third = message(h.alice, "room", "third", 13);
+  h.emit([first, second, own, third]);
+  // Nothing read: evidence may have stopped inside an unread run.
+  expect(h.snapshot()).toMatchObject({ oldestUnreadId: first.id });
+  expect(h.snapshot().readBeforeOldestUnreadId).toBeUndefined();
+
+  // A message's own receipt says nothing about the messages before it.
+  await h.session.unread.markMessageRead("room", first.id);
+  expect(h.snapshot()).toMatchObject({ oldestUnreadId: second.id });
+  expect(h.snapshot().readBeforeOldestUnreadId).toBeUndefined();
+
+  // The viewer's own message is never the read one.
+  await h.session.unread.markThrough(h.target, own.id);
+  expect(h.snapshot()).toMatchObject({
+    oldestUnreadId: third.id,
+    readBeforeOldestUnreadId: second.id,
+  });
+  await h.session.unread.markThrough(h.target, third.id);
+  expect(h.snapshot().oldestUnreadId).toBeUndefined();
+  expect(h.snapshot().readBeforeOldestUnreadId).toBeUndefined();
+});
+
 it("the channel snapshot says sampled once a repair finishes, keeps it through later repairs and regains it after a cache clear; sampling until then", async () => {
   const h = setup();
   const rows = Array.from({ length: 30 }, (_, i) =>

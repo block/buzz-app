@@ -120,6 +120,8 @@ type NewMessageBoundary = {
   channelId: string;
   captured: boolean;
   messageId?: string;
+  /** A line above the entry page draws only below this read message. */
+  readAboveId?: string;
 };
 type NewMessageBoundaryBaseline = {
   token: object;
@@ -579,7 +581,22 @@ function Timeline({
           ? { ready: false, awaitingRepair: true }
           : { ready: true };
       const oldest = unreadSnapshot.oldestUnreadId;
-      if (!oldest || !baseline.messageIds?.has(oldest)) return { ready: true };
+      if (!oldest) return { ready: true };
+      if (!baseline.messageIds?.has(oldest)) {
+        // More unread than the entry page holds: the oldest unread message is
+        // not loaded, and a read message sits above it in the store's
+        // evidence. The line is fixed above it now, from entry evidence, and
+        // draws only once paging loads both with nothing between them. A
+        // loaded row that is not an entry row (an arrival or an older page)
+        // never defines the boundary.
+        const readAbove = unreadSnapshot.readBeforeOldestUnreadId;
+        return readAbove &&
+          !chronologicalRows.some(
+            (row) => row.id === oldest || row.id === readAbove,
+          )
+          ? { ready: true, messageId: oldest, readAboveId: readAbove }
+          : { ready: true };
+      }
     }
     if (!chronologicalRows.length) return { ready: noUnreadEvidence };
     // A repair batch that fills its limit can stop inside the window, leaving
@@ -643,6 +660,9 @@ function Timeline({
       captured: true,
       ...(boundaryCandidate.messageId
         ? { messageId: boundaryCandidate.messageId }
+        : {}),
+      ...(boundaryCandidate.readAboveId
+        ? { readAboveId: boundaryCandidate.readAboveId }
         : {}),
     });
   useLayoutEffect(() => {
@@ -755,9 +775,28 @@ function Timeline({
         messageId: returnCandidate.messageId,
       });
   }
+  // A line fixed above the entry page draws once a contiguous page proves it:
+  // the read message directly above it, with no row that could be unread
+  // between them, all above the entry rows.
+  const boundaryProven = (() => {
+    const { messageId, readAboveId } = newMessageBoundary;
+    if (!readAboveId) return true;
+    const at = chronologicalRows.findIndex((row) => row.id === messageId);
+    const above = chronologicalRows.findIndex((row) => row.id === readAboveId);
+    const entry = chronologicalRows.findIndex((row) =>
+      baseline.messageIds?.has(row.id),
+    );
+    return (
+      above >= 0 &&
+      above < at &&
+      (entry < 0 || at < entry) &&
+      !chronologicalRows.slice(above + 1, at).some(classifiable)
+    );
+  })();
   const newMessageBoundaryId =
     boundaryMatchesVisit &&
     newMessageBoundary.captured &&
+    boundaryProven &&
     messageVisit?.active === true &&
     messageVisit?.ready === true &&
     messageVisit?.failed === false

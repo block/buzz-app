@@ -748,85 +748,146 @@ it("carries the owner's profile purge generation so the companion rereads shown 
   await vi.waitFor(() => expect(ensure).toHaveBeenCalledTimes(2));
 });
 
-it("resolves and rechecks a detached forward in the owning session, never accepting clipboard content", async () => {
-  const h = harness();
-  const reference = {
-    version: 1 as const,
-    origin: "https://example.test",
-    channelId: "source",
-    id: "c".repeat(64),
-  };
-  const agent = "de".repeat(32);
-  Object.assign(h.session, {
-    agentLibrary: {
-      snapshot: () => ({
-        identities: [{ pubkey: agent, name: "Local Agent" }],
-      }),
-    },
-  });
-  let content = "Authorized source @Local Agent";
-  const row = () => ({
-    id: reference.id,
-    channelId: "source",
-    authorId: h.session.viewer,
-    createdAt: 1,
-    content,
-    mentions: [agent],
-    participants: [],
-    attachments: [],
-    reactions: [],
-    replyCount: 0,
-  });
-  const dispose = vi.fn();
-  vi.spyOn(h.session, "thread").mockImplementation(
-    () =>
-      ({
+it.each(["private", "dm", "solo", "public"] as const)(
+  "resolves and discloses a detached %s forward in the owning session",
+  async (privacy) => {
+    const h = harness();
+    const reference = {
+      version: 1 as const,
+      origin: "https://example.test",
+      channelId: "source",
+      id: "c".repeat(64),
+    };
+    const agent = "de".repeat(32);
+    Object.assign(h.session, {
+      agentLibrary: {
         snapshot: () => ({
-          status: "ready",
-          targetStatus: "ready",
-          target: row(),
-          replies: [],
-          canLoadMore: false,
+          identities: [{ pubkey: agent, name: "Local Agent" }],
         }),
-        subscribe: () => () => {},
-        refresh: async () => {},
-        dispose,
-      }) as unknown as ReturnType<typeof h.session.thread>,
-  );
-  vi.spyOn(h.session.messages, "forwardProblem").mockReturnValue(undefined);
-  const forward = vi
-    .spyOn(h.session.messages, "forward")
-    .mockReturnValue("forwarded-id");
-  const { remote } = await h.connect();
-  expect(
-    (await remote.forwarding?.resolve(reference, new AbortController().signal))
-      ?.row.content,
-  ).toBe("Authorized source @Local Agent");
-  content = "Current authorized source @Local Agent";
-  expect(await remote.forwarding?.send(reference, "Note", [], [], [], {})).toBe(
-    "forwarded-id",
-  );
-  expect(forward).toHaveBeenCalledWith(
-    "room",
-    expect.objectContaining({
+      },
+    });
+    let content = "Authorized source @Local Agent";
+    const row = () => ({
+      id: reference.id,
+      channelId: "source",
+      authorId: h.session.viewer,
+      createdAt: 1,
       content,
-      mentionLabels: [{ id: agent, names: ["Local Agent"] }],
-    }),
-    expect.any(String),
-    "Note",
-    undefined,
-    { mentions: [], attachments: [], references: [], picks: {} },
-  );
-  expect(dispose).toHaveBeenCalledTimes(2);
-  await expect(
-    remote.forwarding?.resolve(
-      { ...reference, origin: "https://other.example" },
-      new AbortController().signal,
-    ),
-  ).rejects.toThrow(/another community/);
-  h.revoke();
-  await expect(
-    remote.forwarding?.send(reference, "", [], [], [], {}),
-  ).rejects.toThrow();
-  expect(forward).toHaveBeenCalledOnce();
-});
+      mentions: [agent],
+      participants: [],
+      attachments: [],
+      reactions: [],
+      replyCount: 0,
+    });
+    const dispose = vi.fn();
+    vi.spyOn(h.session, "thread").mockImplementation(
+      () =>
+        ({
+          snapshot: () => ({
+            status: "ready",
+            targetStatus: "ready",
+            target: row(),
+            replies: [],
+            canLoadMore: false,
+          }),
+          subscribe: () => () => {},
+          refresh: async () => {},
+          dispose,
+        }) as unknown as ReturnType<typeof h.session.thread>,
+    );
+    vi.spyOn(h.session.messages, "forwardProblem").mockReturnValue(undefined);
+    const forward = vi
+      .spyOn(h.session.messages, "forward")
+      .mockReturnValue("forwarded-id");
+    Object.assign(h.session.channels, {
+      describe: () => ({
+        state: "found",
+        name: "Source",
+        private: privacy === "private",
+        hidden: false,
+        archived: false,
+        joined: true,
+        channelType:
+          privacy === "dm" || privacy === "solo" ? privacy : "stream",
+      }),
+    });
+    const { remote } = await h.connect();
+    expect(
+      (
+        await remote.forwarding?.resolve(
+          reference,
+          new AbortController().signal,
+        )
+      )?.row.content,
+    ).toBe("Authorized source @Local Agent");
+    expect(
+      (
+        await remote.forwarding?.resolve(
+          reference,
+          new AbortController().signal,
+        )
+      )?.privateSource,
+    ).toBe(privacy !== "public");
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const view = render(
+      createElement(MessageComposer, {
+        session: remote,
+        scope: h.scope,
+        channelId: "room",
+        channelName: "Huddle",
+        label: "Detached draft",
+      }),
+    );
+    const { forwardClipboard } = await import("../messages/forward-clipboard");
+    const payload = forwardClipboard(reference, "Untrusted clipboard text");
+    fireEvent.paste(screen.getByRole("textbox", { name: "Detached draft" }), {
+      clipboardData: {
+        getData: (type: string) =>
+          type === "text/html" ? payload.html : payload.text,
+        items: [],
+      },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled(),
+    );
+    expect(
+      Boolean(screen.queryByText(/will be able to read this message/)),
+    ).toBe(privacy !== "public");
+    view.unmount();
+    content = "Current authorized source @Local Agent";
+    expect(
+      await remote.forwarding?.send(reference, "Note", [], [], [], {}),
+    ).toBe("forwarded-id");
+    expect(forward).toHaveBeenCalledWith(
+      "room",
+      expect.objectContaining({
+        content,
+        mentionLabels: [{ id: agent, names: ["Local Agent"] }],
+      }),
+      expect.any(String),
+      "Note",
+      undefined,
+      { mentions: [], attachments: [], references: [], picks: {} },
+    );
+    expect(dispose).toHaveBeenCalledTimes(4);
+    await expect(
+      remote.forwarding?.resolve(
+        { ...reference, origin: "https://other.example" },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/another community/);
+    h.revoke();
+    await expect(
+      remote.forwarding?.send(reference, "", [], [], [], {}),
+    ).rejects.toThrow();
+    expect(forward).toHaveBeenCalledOnce();
+  },
+);

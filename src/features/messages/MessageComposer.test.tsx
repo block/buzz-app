@@ -1893,6 +1893,8 @@ async function mountUploadComposer(
   options: {
     threadRootId?: string;
     sourceMessages?: boolean;
+    sourcePrivacy?: "private" | "dm" | "solo" | "public";
+    destination?: string;
     mediaTimeSeconds?: number;
     mediaTargetUrl?: string;
     replyParentId?: string;
@@ -1986,7 +1988,22 @@ async function mountUploadComposer(
                           1700000000,
                           [["private"], ["t", "stream"], ["ttl", "3600"]],
                         )
-                      : metadata(relay, "channel", "General", 1700000000),
+                      : metadata(
+                          relay,
+                          "channel",
+                          "General",
+                          1700000000,
+                          options.sourcePrivacy === "private"
+                            ? [["private"]]
+                            : options.sourcePrivacy === "dm"
+                              ? [["t", "dm"]]
+                              : options.sourcePrivacy === "solo"
+                                ? [
+                                    ["t", "stream"],
+                                    ["t", "buzz.solo"],
+                                  ]
+                                : [],
+                        ),
                   ]
                 : [],
         );
@@ -2013,6 +2030,8 @@ async function mountUploadComposer(
       { kinds: [39000], "#d": ["channel"], limit: 1 },
     ]),
   );
+  if (options.destination === "other") await otherMembership(true);
+  let destination = options.destination ?? "channel";
   const scope = `https://relay.example.test:${viewer.pubkey}`;
   const composer = (presented = true, shown = true) => (
     <AgentsContext.Provider value={options.agents}>
@@ -2021,8 +2040,8 @@ async function mountUploadComposer(
           shown={shown}
           session={owner.session}
           scope={scope}
-          channelId="channel"
-          channelName="General"
+          channelId={destination}
+          channelName={destination === "channel" ? "General" : "Random"}
           {...(options.mediaTimeSeconds !== undefined
             ? { mediaTimeSeconds: options.mediaTimeSeconds }
             : {})}
@@ -2061,6 +2080,10 @@ async function mountUploadComposer(
     sign,
     publish,
     otherMembership,
+    retargetChannel: (id: string) => {
+      destination = id;
+      view.rerender(composer());
+    },
     present: (presented: boolean, shown = true) =>
       view.rerender(composer(presented, shown)),
   };
@@ -17344,3 +17367,109 @@ it("preserves the selected video when pasting a timed forward into a two-video t
   ).toHaveLength(2);
   expect(rows.find((row) => row.id === event?.id)?.mediaTargetUrl).toBe(second);
 });
+
+it.each([
+  ["private", "other", true],
+  ["dm", "other", true],
+  ["solo", "other", true],
+  ["private", "channel", false],
+  ["dm", "channel", false],
+  ["solo", "channel", false],
+  ["public", "other", false],
+] as const)(
+  "discloses pasted %s source in %s only when privacy requires it",
+  async (sourcePrivacy, destination, expected) => {
+    const h = await mountUploadComposer({
+      sourceMessages: true,
+      sourcePrivacy,
+      destination,
+    });
+    const id = h.owner.session.messages.send("channel", "Source message");
+    await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+    const { forwardClipboard } = await import("./forward-clipboard");
+    const payload = forwardClipboard(
+      {
+        version: 1,
+        origin: "https://relay.example.test",
+        channelId: "channel",
+        id,
+      },
+      "Untrusted clipboard text",
+    );
+    fireEvent.paste(h.input(), {
+      clipboardData: {
+        getData: (type: string) =>
+          type === "text/html" ? payload.html : payload.text,
+        items: [],
+      },
+    });
+    await waitFor(() => expect(h.send()).toBeEnabled());
+    const disclosure = screen.queryByText(
+      /will be able to read this message, even if they can’t see where it came from/,
+    );
+    expect(Boolean(disclosure)).toBe(expected);
+    if (expected) {
+      expect(disclosure).toHaveTextContent("Everyone in #Random");
+      expect(disclosure?.closest('[role="status"]')).toHaveAttribute(
+        "aria-live",
+        "polite",
+      );
+      expect(disclosure?.closest('[role="status"]')).toHaveAttribute(
+        "aria-atomic",
+        "true",
+      );
+      expect(h.send()).toHaveAccessibleDescription(
+        /Everyone in #Random will be able to read/,
+      );
+      // Reopen the same saved forward in its source conversation: destination is
+      // derived from the live composer, not persisted alongside the locator.
+      await waitFor(() =>
+        expect(readView(h.scope, "draft:other", null)).toHaveProperty(
+          "forward",
+        ),
+      );
+      writeView(
+        h.scope,
+        "draft:channel",
+        readView(h.scope, "draft:other", null),
+      );
+      h.retargetChannel("channel");
+      await waitFor(() => expect(h.send()).toBeEnabled());
+      expect(
+        screen.queryByText(/will be able to read this message/),
+      ).not.toBeInTheDocument();
+      h.retargetChannel("other");
+      await waitFor(() =>
+        expect(h.send()).toHaveAccessibleDescription(
+          /Everyone in #Random will be able to read/,
+        ),
+      );
+      const region = disclosure?.closest('[role="status"]');
+      fireEvent.click(
+        screen.getByRole("button", { name: "Remove forwarded message" }),
+      );
+      expect(
+        screen.queryByText(/will be able to read this message/),
+      ).not.toBeInTheDocument();
+      expect(region).toBeInTheDocument();
+      expect(region).toBeEmptyDOMElement();
+      // The source is warm: repasting must update the existing live region.
+      fireEvent.paste(h.input(), {
+        clipboardData: {
+          getData: (type: string) =>
+            type === "text/html" ? payload.html : payload.text,
+          items: [],
+        },
+      });
+      await waitFor(() => expect(h.send()).toBeEnabled());
+      expect(
+        screen
+          .getByText(/will be able to read this message/)
+          .closest('[role="status"]'),
+      ).toBe(region);
+      expect(h.send()).toHaveAccessibleDescription(
+        /Everyone in #Random will be able to read/,
+      );
+    }
+  },
+);

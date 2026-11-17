@@ -1,3 +1,4 @@
+import { ForwardDisclosure } from "./ForwardDisclosure";
 import { pastedForward } from "./forward-clipboard";
 import { ComposerForward, useComposerForward } from "./ComposerForward";
 import { draftEditorId, traceDraft } from "../../shared/draft-diagnostics";
@@ -589,6 +590,7 @@ function Composer({
     [replyParentId, mediaTargetUrl],
   );
   const inputId = useId();
+  const forwardDisclosureId = useId();
   const draftKey =
     submission?.draftKey ??
     (threadRootId
@@ -3947,6 +3949,25 @@ function Composer({
               />
             </div>
           )}
+        <div
+          id={forwardDisclosureId}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          className={
+            !editing.target && forwarded.disclosure ? "text-subtle" : "sr-only"
+          }
+        >
+          {!editing.target && forwarded.disclosure && (
+            <ForwardDisclosure
+              audience={
+                channelType === "dm" || channelType === "solo" || solo
+                  ? "The recipients"
+                  : `Everyone in #${channelName}`
+              }
+            />
+          )}
+        </div>
         {voice.element}
         <div className={styles.composerActions} hidden={voice.capturing}>
           <div className={styles.composerToolRow}>
@@ -4035,6 +4056,11 @@ function Composer({
               type="submit"
               style={editing.target ? undefined : accentButtonStyle}
               aria-label={editing.target ? "Save changes" : "Send message"}
+              aria-describedby={
+                !editing.target && forwarded.disclosure
+                  ? forwardDisclosureId
+                  : undefined
+              }
               title={
                 editing.target
                   ? "Save changes"

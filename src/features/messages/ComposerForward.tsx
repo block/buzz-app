@@ -100,7 +100,15 @@ export function useComposerForward(
                   note,
                 )
               : undefined;
+  const privateSource = host
+    ? source.reference.state !== "found" ||
+      source.reference.private ||
+      source.reference.hidden ||
+      ["dm", "solo"].includes(source.reference.channelType ?? "")
+    : resolved?.source?.privateSource;
   return {
+    disclosure:
+      !!forwardRow && !!privateSource && sourceChannel !== destination,
     row: forwardRow,
     snapshot,
     name,

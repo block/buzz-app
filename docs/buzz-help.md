@@ -418,6 +418,9 @@ and are asked to sign in again in Buzz.
   note notify normally. Only one forward can be attached. The preview is saved
   with your draft; loading or inaccessible sources block Send until resolved or
   removed. The current account must still be able to read the source.
+  Pasting a forward from a DM, private channel or Solo chat into a different
+  conversation shows a quiet reminder that its recipients can read the copy.
+  Pasting back into the source conversation shows no reminder.
   Ordinary pasted links stay links; pasting outside Buzz provides quoted text.
   Messages exceeding the forwarding size limit, or containing a local file
   without sharable attachment metadata (including custom emoji), show an

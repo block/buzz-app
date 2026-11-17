@@ -2,7 +2,7 @@ import { snapshotAttachments } from "../relay/forwarded-message";
 import { copyAsForward } from "./forward-clipboard";
 import { snapshotMessage } from "../relay/forwarded-message";
 import { writeClipboardText } from "../../shared/clipboard";
-import { LockIcon } from "../../shared/design-system/icons";
+import { ForwardDisclosure } from "./ForwardDisclosure";
 import { projectMarkdownAttachments } from "../relay/message-content";
 import {
   createContext,
@@ -734,16 +734,14 @@ function ForwardMessageDialog({
             </p>
           )}
           {privacy && (
-            <p id={privacyId} className={`text-body-sm ${styles.privacy}`}>
-              <LockIcon size={14} aria-hidden="true" />
-              <span>
-                {channel
+            <ForwardDisclosure
+              id={privacyId}
+              audience={
+                channel
                   ? `Everyone in #${channel.name}`
-                  : destinationName || "The recipients"}{" "}
-                will be able to read this message, even if they can’t see where
-                it came from.
-              </span>
-            </p>
+                  : destinationName || "The recipients"
+              }
+            />
           )}
           {error && (
             <p role="alert" className="text-body-sm text-subtle">

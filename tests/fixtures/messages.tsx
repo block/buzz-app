@@ -284,7 +284,15 @@ const owner = createRelaySession({
           if (filter.kinds?.includes(39002) || filter.kinds?.includes(39000))
             return [
               roster(relay, channelOne, [viewer.pubkey]),
-              metadata(relay, channelOne, "One"),
+              metadata(
+                relay,
+                channelOne,
+                "One",
+                1700000000,
+                new URLSearchParams(location.search).has("privateForward")
+                  ? [["private"]]
+                  : [],
+              ),
               roster(relay, channelTwo, [viewer.pubkey]),
               metadata(relay, channelTwo, "Two"),
             ];

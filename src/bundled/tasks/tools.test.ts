@@ -441,12 +441,12 @@ it("names a project member a move shuts out", async () => {
   expect(assignees(signed[0])).toEqual([]);
 });
 
-it("shows the relay's reason when it refuses an assignee anyway", async () => {
+it("says the relay's reason in plain words when it refuses an assignee anyway", async () => {
   const { call } = setup(
     async () => {
       throw new PublishRejected(
         "rejected",
-        "invalid: assignee can't read this task",
+        `invalid: assignee-unreadable:${person} — an assignee can't see this artifact`,
       );
     },
     () => [head("d".repeat(64))],
@@ -454,8 +454,17 @@ it("shows the relay's reason when it refuses an assignee anyway", async () => {
   await expect(
     call("tasks_update", { id, assignees: [person] }),
   ).rejects.toThrow(
-    "Couldn’t save the task: invalid: assignee can't read this task",
+    `Riley can’t see #design, so they can’t be assigned. Nothing was saved. The relay said: invalid: assignee-unreadable:${person} — an assignee can't see this artifact`,
   );
+});
+
+it("keeps someone assigned who lost access when an edit adds nobody new", async () => {
+  const { call, signed } = setup(
+    async () => "",
+    () => [head("d".repeat(64), [["assignee", leo]])],
+  );
+  await call("tasks_update", { id, assignees: [leo, person] });
+  expect(assignees(signed[0])).toEqual([leo, person]);
 });
 
 it("previews a move, by place, and moves only with its confirm", async () => {

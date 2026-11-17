@@ -10,6 +10,8 @@ import type { RelayEvent } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
 import {
   checkedFields,
+  isPubkey,
+  MAX_ASSIGNEES,
   TASK_TYPE,
   type Task,
   type TaskFields,
@@ -18,7 +20,7 @@ import {
   taskOf,
   taskTags,
 } from "./model";
-import { canHoldTasks, readPlaces } from "./places";
+import { canHoldTasks, type Place, placeLabel, readPlaces } from "./places";
 
 export type TasksState = Readonly<{
   status: "loading" | "live" | "error";
@@ -237,27 +239,38 @@ export async function saveTask(
     if (!place) throw new Error("You can’t see that place. Nothing was saved.");
     if (!canHoldTasks(place)) throw new Error(NOT_A_TASK_PLACE);
   }
-  const event = await writer.sign(
-    {
-      kind: ARTIFACT_KIND,
-      created_at: Math.floor(Date.now() / 1000),
-      content: taskContent(checked),
-      tags: [
-        ["ar", "1"],
-        ["d", id],
-        ["h", home],
-        ["type", TASK_TYPE],
-        ["title", checked.title],
-        ["op", target.op],
-        ...(base ? [["prev", base.revision]] : []),
-        ...taskTags(checked),
-        ...(creator ? [["creator", creator]] : []),
-        ...(via ? [["via", via]] : []),
-      ],
-    },
-    signal,
-  );
-  const delivery = await deliver(writer, event, signal);
+  const send = async (creator: string | undefined) => {
+    const event = await writer.sign(
+      {
+        kind: ARTIFACT_KIND,
+        created_at: Math.floor(Date.now() / 1000),
+        content: taskContent(checked),
+        tags: [
+          ["ar", "1"],
+          ["d", id],
+          ["h", home],
+          ["type", TASK_TYPE],
+          ["title", checked.title],
+          ["op", target.op],
+          ...(base ? [["prev", base.revision]] : []),
+          ...taskTags(checked),
+          ...(creator ? [["creator", creator]] : []),
+          ...(via ? [["via", via]] : []),
+        ],
+      },
+      signal,
+    );
+    return { event, delivery: await deliver(writer, event, signal) };
+  };
+  let { event, delivery } = await send(creator);
+  // The relay keeps the creator a task was made by. A tag saved before it
+  // checked can disagree; its refusal names the one it keeps, so resend once
+  // with that, and the task carries the right creator from then on.
+  const kept =
+    delivery.status === "refused"
+      ? keptCreator(delivery.message, creator)
+      : undefined;
+  if (kept !== undefined) ({ event, delivery } = await send(kept ?? undefined));
   if (delivery.status === "accepted") {
     const task = taskOf(event);
     if (!task) throw new Error("Couldn’t read the saved task.");
@@ -280,16 +293,97 @@ export async function saveTask(
         "Someone else changed or removed this task. Nothing was saved.",
       );
   }
-  throw new Error(
-    delivery.status === "refused" && delivery.refusal === "permission"
-      ? target.op === "move"
+  if (delivery.status === "refused" && delivery.refusal === "permission")
+    throw new Error(
+      target.op === "move"
         ? "You can only move a task between places you can post in."
-        : "You can only view tasks here."
-      : delivery.status === "refused" && delivery.refusal === "too-large"
-        ? "This task is too large to save. Shorten the description."
-        : // The relay's own reason, such as an assignee who can't see it.
-          delivery.status === "refused" && delivery.refusal === "invalid"
-          ? `Couldn’t save the task: ${delivery.message}`
-          : "Couldn’t save the task. Try again.",
-  );
+        : "You can only view tasks here.",
+    );
+  if (delivery.status === "refused" && delivery.refusal === "too-large")
+    throw new Error("This task is too large to save. Shorten the description.");
+  if (delivery.status === "refused" && delivery.refusal === "invalid") {
+    console.warn("The relay refused a task save:", delivery.message);
+    const places = await readPlaces(reader, [home], signal).catch(
+      () => new Map<string, Place>(),
+    );
+    const place = places.get(home);
+    throw new TaskRefused(
+      refusedText(
+        delivery.message,
+        session,
+        place ? placeLabel(place, places) : undefined,
+      ),
+      delivery.message,
+    );
+  }
+  throw new Error("Couldn’t save the task. Try again.");
+}
+
+/** A save the relay refused as invalid: `message` in plain words for
+ * people, `relay` the relay's own text, for an agent to act on. */
+export class TaskRefused extends Error {
+  constructor(
+    message: string,
+    readonly relay: string,
+  ) {
+    super(message);
+    this.name = "TaskRefused";
+  }
+}
+
+/** A NIP-AR reason code and the keys it names, from a relay refusal of the
+ * form `invalid: <code>:<keys> — <text>`; undefined for any other text. */
+function reasonOf(message: string) {
+  const match = /^invalid: ([a-z][a-z-]*):(\S*) — /.exec(message);
+  if (!match) return undefined;
+  return {
+    code: match[1] ?? "",
+    keys: match[2] ? match[2].split(",") : [],
+  };
+}
+
+/** The creator to resend with after `creator-changed`: a pubkey, `null` for
+ * none, or undefined when this refusal isn't one to resend. */
+function keptCreator(message: string, sent: string | undefined) {
+  const reason = reasonOf(message);
+  if (reason?.code !== "creator-changed" || reason.keys.length !== 1)
+    return undefined;
+  const key = reason.keys[0];
+  const kept = key === "none" ? null : key && isPubkey(key) ? key : undefined;
+  return kept === undefined || (kept ?? undefined) === sent ? undefined : kept;
+}
+
+/** What to tell someone when the relay refuses a save as invalid: its
+ * reason in plain words, naming people the app knows and the task's place,
+ * `where`, when known. Never the relay's own text or a key. */
+function refusedText(
+  message: string,
+  session: RelaySession,
+  where: string | undefined,
+) {
+  const reason = reasonOf(message);
+  const known = session.profiles.snapshot();
+  const names = reason?.keys.map((key) => known.get(key)?.name);
+  const named =
+    names?.length && names.every((name) => !!name)
+      ? new Intl.ListFormat("en", { type: "conjunction" }).format(
+          names as string[],
+        )
+      : undefined;
+  switch (reason?.code) {
+    case "assignee-unreadable":
+      return named
+        ? `${named} can’t see ${where ?? "where this task lives"}, so they can’t be assigned. Nothing was saved.`
+        : `One of the people assigned can’t see ${where ?? "where this task lives"}. Nothing was saved.`;
+    case "assignee-agent":
+      return named
+        ? `Only people can be assigned, and ${named} ${names?.length === 1 ? "is an agent" : "are agents"}. Nothing was saved.`
+        : "Only people can be assigned, not agents. Nothing was saved.";
+    case "too-many-assignees":
+      return `A task can have up to ${MAX_ASSIGNEES} people assigned. Nothing was saved.`;
+    case "signer-agent":
+      return "Only a person can save a task, not an agent. Nothing was saved.";
+    default:
+      return "This change isn’t allowed. Nothing was saved.";
+  }
 }

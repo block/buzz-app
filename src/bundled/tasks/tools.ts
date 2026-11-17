@@ -34,7 +34,13 @@ import {
   readPlaces,
   readReaders,
 } from "./places";
-import { readTask, readTasks, saveTask, type TaskSource } from "./store";
+import {
+  readTask,
+  readTasks,
+  saveTask,
+  TaskRefused,
+  type TaskSource,
+} from "./store";
 import { holdsWords, sameness } from "./similar";
 
 type Agents = Pick<AgentsService, "addTool" | "relay">;
@@ -63,6 +69,15 @@ const deadline = (client: Client) =>
   client.signal
     ? AbortSignal.any([client.signal, AbortSignal.timeout(STEP_TIMEOUT)])
     : AbortSignal.timeout(STEP_TIMEOUT);
+
+/** Saves as `saveTask` does, but a refusal also carries the relay's own
+ * text: an agent can act on it, where a person gets only the plain line. */
+const save: typeof saveTask = (...args) =>
+  saveTask(...args).catch((reason: unknown) => {
+    throw reason instanceof TaskRefused
+      ? new Error(`${reason.message} The relay said: ${reason.relay}`)
+      : reason;
+  });
 
 /** The agent's own reads, as task reads take them. */
 function agentReads(client: Client, session: RelaySession): TaskSource {
@@ -261,7 +276,7 @@ export function addTaskTools(agents: Agents) {
         home && home !== task.home
           ? { op: "move" as const, base: task, home }
           : { op: "update" as const, base: task };
-      const result = await saveTask(session, reads, edit(task), target, signal);
+      const result = await save(session, reads, edit(task), target, signal);
       if (result.status === "saved") return result.task;
       // Someone else saved first; the agent's own read found their version.
       // A task that moved meanwhile isn't changed in its new place unseen.
@@ -436,7 +451,7 @@ export function addTaskTools(agents: Agents) {
           .join("\n")}${unsure}`;
       // Named before saving, so a retry after an unclear outcome can check.
       const id = crypto.randomUUID();
-      const result = await saveTask(
+      const result = await save(
         session,
         reads,
         fields,
@@ -529,8 +544,16 @@ export function addTaskTools(agents: Agents) {
           "Done or Cancelled needs evidence: say in one line why, such as the merged pull request or who said it's finished",
         );
       const task = await current(reads, id, signal);
+      // Only the people it adds: someone assigned who has since lost access
+      // doesn't block an edit, as the relay rules too.
       if (assignees)
-        await checkAssignees(session, reads, task.home, assignees, signal);
+        await checkAssignees(
+          session,
+          reads,
+          task.home,
+          assignees.filter((key) => !task.assignees.includes(key)),
+          signal,
+        );
       // The evidence comes first: no comment, no close.
       if (closing && evidence && task.status !== status)
         await postAgentComment(

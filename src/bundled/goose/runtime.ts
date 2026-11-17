@@ -730,19 +730,30 @@ export class GooseRuntime {
 
   /** Runs a standalone turn, such as a watch's or a timer's, in a one-off
    * session that joins no conversation. */
-  runOnce(turn: StandaloneTurn): Promise<TurnResult> {
-    return this.standalone(turn);
+  async runOnce(turn: StandaloneTurn): Promise<TurnResult> {
+    let answered = false;
+    try {
+      const result = await this.standalone(turn, false, () => {
+        answered = true;
+      });
+      return answered ? { ok: true } : result;
+    } catch (error) {
+      if (answered) return { ok: true };
+      throw error;
+    }
   }
   private async standalone(
     { delivery, key, signal, prompt }: StandaloneTurn,
     reserved = false,
+    answered = () => {},
   ): Promise<TurnResult> {
     const settings = this.settings(delivery.config);
     if (settings.scope === "community" && !reserved)
       return this.controls.wake(
         `${delivery.agent.key}/${COMMUNITY_SESSION}`,
         signal,
-        (signal) => this.standalone({ delivery, key, signal, prompt }, true),
+        (signal) =>
+          this.standalone({ delivery, key, signal, prompt }, true, answered),
       );
     const { agent, team } = delivery;
     await this.follow(delivery.config);
@@ -824,6 +835,7 @@ export class GooseRuntime {
                       : {}),
                   },
                 );
+                if (result.ok && result.answered) answered();
                 await entry.sessions.idle(COMMUNITY_SESSION);
                 return result;
               } finally {

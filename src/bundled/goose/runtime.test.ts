@@ -2871,8 +2871,23 @@ it("retains a community wake deadline after final publication until native idle"
       expect(f.published.some((event) => event.kind === 9)).toBe(true),
     );
     expect(settled).not.toHaveBeenCalled();
+    process.silent.add("session/cancel");
     abort.abort(new Error("deadline"));
-    await vi.waitFor(() => expect(process.cancelled).toHaveLength(1));
+    await vi.waitFor(() =>
+      expect(
+        process.received.some((wire) => wire.method === "session/cancel"),
+      ).toBe(true),
+    );
+    await done;
+    expect(settled).toHaveBeenCalledWith({ ok: true });
+    const workingUntil = vi.fn<Delivery["workingUntil"]>();
+    await f.deliver(message("2", "after completed wake"), { workingUntil });
+    await flush(10);
+    expect(process.turns).toHaveLength(1);
+    process.turns[0]?.finish();
+    await vi.waitFor(() => expect(process.turns).toHaveLength(2));
+    process.turns[1]?.finish();
+    await Promise.all(workingUntil.mock.calls.map(([work]) => work));
   } finally {
     f.goose()?.turns[0]?.finish();
     await done.catch(() => {});

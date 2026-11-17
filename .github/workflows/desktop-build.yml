@@ -450,8 +450,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: linux-release
-          # TEMPORARY (revert before merge): save from this branch to test restore.
-          save-if: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: pnpm install --frozen-lockfile
       - name: Install pinned AppImage repacking tools
         run: |

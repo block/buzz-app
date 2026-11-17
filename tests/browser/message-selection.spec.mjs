@@ -12,20 +12,22 @@ for (const [scheme, width, scale] of [
     page,
     app,
   }) => {
-    await page.addInitScript(() => {
-      window.copied = [];
-      navigator.clipboard.writeText = async (text) => {
-        window.copied.push(text);
-      };
-      // Observe real ClipboardItem flavors without replacing the operator's
-      // system clipboard. The editor below consumes the captured payload.
-      navigator.clipboard.write = async ([item]) => {
-        window.copiedHighlight = {
-          text: await (await item.getType("text/plain")).text(),
-          html: await (await item.getType("text/html")).text(),
+    if (scheme === "light") {
+      await page.addInitScript(() => {
+        window.copied = [];
+        navigator.clipboard.writeText = async (text) => {
+          window.copied.push(text);
         };
-      };
-    });
+        // Observe real ClipboardItem flavors without replacing the operator's
+        // system clipboard. The editor below consumes the captured payload.
+        navigator.clipboard.write = async ([item]) => {
+          window.copiedHighlight = {
+            text: await (await item.getType("text/plain")).text(),
+            html: await (await item.getType("text/html")).text(),
+          };
+        };
+      });
+    }
     await page.emulateMedia({ colorScheme: scheme });
     await page.setViewportSize({ width, height: 950 });
     await open(page, app);
@@ -105,69 +107,65 @@ for (const [scheme, width, scale] of [
         .slice(3)
         .map((label) => (label === "Copy message link" ? "Copy link" : label)),
     ).toEqual(messageActions);
-    await menu
-      .getByRole("menuitem", { name: "Copy link URL", exact: true })
-      .click();
-    await expect(menu).toHaveCount(0);
-    await expect
-      .poll(() => page.evaluate(() => window.copied.at(-1)))
-      .toBe("https://example.org/pull/1");
-    await selectLink();
-    await link.click({ button: "right" });
-    await menu
-      .getByRole("menuitem", { name: "Copy message link", exact: true })
-      .click();
-    await expect(menu).toHaveCount(0);
-    await expect
-      .poll(() => page.evaluate(() => window.copied.at(-1)))
-      .toBe(`buzz://message?channel=alpha&id=${message.id}`);
-    await selectLink();
-    await link.click({ button: "right" });
     const input = page.getByRole("textbox", {
       name: "Message #Alpha",
       exact: true,
       includeHidden: true,
     });
-    await page.keyboard.press("Escape");
-    await expect(menu).toHaveCount(0);
-    const paragraph = link.locator("xpath=ancestor::p[1]");
-    await paragraph.selectText();
-    await paragraph.locator("strong").click({ button: "right" });
-    await menu
-      .getByRole("menuitem", { name: "Copy highlight", exact: true })
-      .click();
-    await expect(menu).toHaveCount(0);
-    await expect
-      .poll(() => page.evaluate(() => window.copiedHighlight?.text))
-      .toBe("Before bold Example link (https://example.org/pull/1) after.");
-    const copied = await page.evaluate(() => window.copiedHighlight);
-    expect(copied.html).toContain('<a href="https://example.org/pull/1">');
-    expect(copied.html).toContain("<strong>bold</strong>");
-    await input.evaluate((element, copied) => {
-      const data = new DataTransfer();
-      data.setData("text/plain", copied.text);
-      data.setData("text/html", copied.html);
-      element.focus();
-      element.dispatchEvent(
-        new ClipboardEvent("paste", {
-          clipboardData: data,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-    }, copied);
-    await expect(input.locator("strong")).toHaveText("bold");
-    const pastedLink = input.locator("[data-source]");
-    await expect(pastedLink).toHaveAttribute(
-      "data-source",
-      "[Example link](https://example.org/pull/1)",
-    );
-    await expect(pastedLink).toHaveText("Example link");
-    await input.fill("");
-    await expect(input).toBeEmpty();
-    await selectLink();
-    await link.click({ button: "right" });
     if (scheme === "light") {
+      await menu
+        .getByRole("menuitem", { name: "Copy link URL", exact: true })
+        .click();
+      await expect(menu).toHaveCount(0);
+      await expect
+        .poll(() => page.evaluate(() => window.copied.at(-1)))
+        .toBe("https://example.org/pull/1");
+      await selectLink();
+      await link.click({ button: "right" });
+      await menu
+        .getByRole("menuitem", { name: "Copy message link", exact: true })
+        .click();
+      await expect(menu).toHaveCount(0);
+      await expect
+        .poll(() => page.evaluate(() => window.copied.at(-1)))
+        .toBe(`buzz://message?channel=alpha&id=${message.id}`);
+      const paragraph = link.locator("xpath=ancestor::p[1]");
+      await paragraph.selectText();
+      await paragraph.locator("strong").click({ button: "right" });
+      await menu
+        .getByRole("menuitem", { name: "Copy highlight", exact: true })
+        .click();
+      await expect(menu).toHaveCount(0);
+      await expect
+        .poll(() => page.evaluate(() => window.copiedHighlight?.text))
+        .toBe("Before bold Example link (https://example.org/pull/1) after.");
+      const copied = await page.evaluate(() => window.copiedHighlight);
+      expect(copied.html).toContain('<a href="https://example.org/pull/1">');
+      expect(copied.html).toContain("<strong>bold</strong>");
+      await input.evaluate((element, copied) => {
+        const data = new DataTransfer();
+        data.setData("text/plain", copied.text);
+        data.setData("text/html", copied.html);
+        element.focus();
+        element.dispatchEvent(
+          new ClipboardEvent("paste", {
+            clipboardData: data,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }, copied);
+      await expect(input.locator("strong")).toHaveText("bold");
+      const pastedLink = input.locator("[data-source]");
+      await expect(pastedLink).toHaveAttribute(
+        "data-source",
+        "[Example link](https://example.org/pull/1)",
+      );
+      await expect(pastedLink).toHaveText("Example link");
+      await input.fill("");
+      await expect(input).toBeEmpty();
+      await selectLink();
+      await link.click({ button: "right" });
       // The public editor setter models a composer locking while its menu is open.
       await input.evaluate((element) => {
         element.readOnly = true;

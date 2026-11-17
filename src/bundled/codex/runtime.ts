@@ -1552,9 +1552,17 @@ export class CodexRuntime {
     const key = scopedKey(settings.scope, channelId);
     if (settings.scope === "community" && !reserved) {
       let connection: AgentVoiceConnection | undefined;
+      // A running wake owns ordered admission until its turn ends.
+      const entry = this.entries.get(agent.key);
+      const active = entry?.lanes.get(key)?.active;
+      const interrupted =
+        entry && active?.reply.unaddressed
+          ? this.interrupt(entry, key, active.reply)
+          : Promise.resolve();
       const handoff = this.controls.deliver(
         `${agent.key}/${key}`,
         async (_deferred, signal) => {
+          await interrupted;
           connection = await this.openVoice(
             { ...seat, signal: AbortSignal.any([seat.signal, signal]) },
             agent,
@@ -1563,7 +1571,14 @@ export class CodexRuntime {
         },
         true,
       );
-      await abortable(handoff.done, seat.signal);
+      try {
+        await interrupted;
+        await abortable(handoff.done, seat.signal);
+      } catch (error) {
+        handoff.cancel();
+        void handoff.done.catch(() => {});
+        throw error;
+      }
       if (!connection) throw new Error("Voice startup was interrupted");
       return connection;
     }
@@ -1595,6 +1610,14 @@ export class CodexRuntime {
       if (active) await this.interrupt(entry, key, active.reply);
     } catch (error) {
       delete lane.voiceOpening;
+      if (
+        !lane.active &&
+        !lane.queued &&
+        !lane.behind &&
+        !lane.voice &&
+        entry.lanes.get(key) === lane
+      )
+        entry.lanes.delete(key);
       throw error;
     }
     const abort = new AbortController();
@@ -1711,8 +1734,6 @@ export class CodexRuntime {
             ],
           });
         signal.throwIfAborted();
-        if (settings.scope === "community")
-          entry.project.resolve(channelId, NO_PROJECT);
         const threadId = loaded.threadId;
         lane.voice = {
           loaded,
@@ -1820,6 +1841,8 @@ export class CodexRuntime {
           },
         );
         signal.throwIfAborted();
+        if (settings.scope === "community")
+          entry.project.resolve(channelId, NO_PROJECT);
         this.save(request, entry, key, {
           threadId,
           workspace: loaded.workspace,
@@ -2638,7 +2661,12 @@ export class CodexRuntime {
         );
       })
       .finally(() => {
-        if (current.tail === job && !current.active && !current.voice) {
+        if (
+          current.tail === job &&
+          !current.active &&
+          !current.voice &&
+          !current.voiceOpening
+        ) {
           entry.lanes.delete(key);
           if (
             this.sessions(request.agent.key).find((view) => view.key === key)

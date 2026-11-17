@@ -1893,7 +1893,7 @@ it("lets a joined Guest read an Inbox item and change its personal unread state"
 // the row's state: a read row offers Mark unread, an unread row Mark as read.
 async function openRowMenu(
   method: "context" | "keyboard" | "contextKey" = "context",
-  name: "Mark as read" | "Mark unread" = "Mark unread",
+  name: "Mark as read" | "Mark as unread" = "Mark as unread",
 ) {
   const row = rows()[0];
   if (!row) throw new Error("Missing inbox row");
@@ -1915,7 +1915,7 @@ async function openRowMenu(
   const action = await screen.findByRole("menuitem", { name });
   expect(
     screen.queryByRole("menuitem", {
-      name: name === "Mark unread" ? "Mark as read" : "Mark unread",
+      name: name === "Mark as unread" ? "Mark as read" : "Mark as unread",
     }),
   ).not.toBeInTheDocument();
   return action;
@@ -1962,7 +1962,7 @@ it.each(["Please review", "A thread update"])(
     );
     fireEvent.contextMenu(within(row).getByRole("button", { name: /^Open / }));
     fireEvent.click(
-      await screen.findByRole("menuitem", { name: "Mark unread" }),
+      await screen.findByRole("menuitem", { name: "Mark as unread" }),
     );
     await waitFor(() =>
       expect(
@@ -2006,7 +2006,9 @@ it("reads a reopened row again after its tab closes", async () => {
   await findReader();
   await waitFor(() => expect(unread()).not.toBeInTheDocument());
   fireEvent.contextMenu(within(row()).getByRole("button", { name: /^Open / }));
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Mark unread" }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Mark as unread" }),
+  );
   await waitFor(() => expect(unread()).toBeInTheDocument());
   const side = sideTabList();
   if (!side) throw new Error("Missing side tabs");
@@ -2589,7 +2591,7 @@ it.each(["context", "keyboard"] as const)(
     await waitFor(() => expect(row).toHaveAttribute("data-unread"));
     expect(row).toBeInTheDocument();
     expect(screen.getAllByRole("menuitem")).toEqual([action]);
-    expect(action).toHaveTextContent("Mark unread");
+    expect(action).toHaveTextContent("Mark as unread");
     expect(action).toHaveAttribute("aria-disabled", "true");
     const before = h.journal();
     fireEvent.click(action);
@@ -2638,7 +2640,7 @@ it("opens local unread actions with the ContextMenu key without changing selecti
   );
   expect(queryReader()).not.toBeInTheDocument();
   const action = await openRowMenu("contextKey");
-  expect(action).toHaveTextContent("Mark unread");
+  expect(action).toHaveTextContent("Mark as unread");
   expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21);
   expect(queryReader()).not.toBeInTheDocument();
   expect(sideTabs()).toEqual([]);
@@ -3080,7 +3082,7 @@ it("combines the existing filter choices without placeholder actions", async () 
       .map((list) => list.getAttribute("aria-label")),
   ).toEqual(["Activity type"]);
   expect(
-    screen.queryByRole("button", { name: /Mark shown as read|Mark unread/ }),
+    screen.queryByRole("button", { name: /Mark shown as read|Mark as unread/ }),
   ).toBeNull();
   // Mark as read is a per-row action, never a list-wide one.
   expect(
@@ -3389,7 +3391,7 @@ it("routine delayed publication does not cancel Retry for a failed mark-unread s
   const release = h.holdSave();
   h.failSave();
   try {
-    fireEvent.click(screen.getByRole("menuitem", { name: "Mark unread" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Mark as unread" }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });

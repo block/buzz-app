@@ -1597,7 +1597,7 @@ it.each(["peer", "own"] as const)(
       ).toEqual(
         author === "own"
           ? [
-              "Mark unread",
+              "Mark as unread",
               "Copy message",
               "Send to channel",
               "Copy link",
@@ -1606,7 +1606,7 @@ it.each(["peer", "own"] as const)(
               "Report",
             ]
           : [
-              "Mark unread",
+              "Mark as unread",
               "Copy message",
               "Copy link",
               "Follow thread",

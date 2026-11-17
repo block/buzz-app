@@ -24,11 +24,17 @@ import {
 import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import { ArrowRightIcon, ChecksIcon } from "../../shared/design-system/icons";
+import {
+  ArrowRightIcon,
+  ChecksIcon,
+  EnvelopeOpenIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Switch } from "../../shared/design-system/ui/Switch";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { readView, writeView } from "../../shared/view-state";
 import {
   hasUnread,
@@ -38,6 +44,8 @@ import {
   rowProfileIds,
 } from "./InboxRow";
 import { inboxTarget } from "./route";
+import type { InboxItem } from "../../features/relay/inbox";
+import listRowStyles from "../../features/messages/MessageListRow.module.css";
 import styles from "./InboxPreview.module.css";
 
 /** Rows the card renders and enriches; the Activity page holds the rest. */
@@ -58,6 +66,17 @@ const shortAge = (createdAt: number, now = Date.now()) => {
     day: "numeric",
   });
 };
+
+/** The row's explicit read, as Activity's Mark as read saves it. */
+async function readRow(session: RelaySession, item: InboxItem) {
+  if (item.target.kind === "channel")
+    await session.unread.prepareChannelRead(item.channelId)();
+  else if (item.timeline)
+    await session.unread.markTimelineRead(item.channelId, item.messageIds);
+  else
+    for (const step of item.readThrough)
+      await session.unread.markThrough(step.target, step.messageId);
+}
 
 /** Recent activity, shown while the pointer rests on the sidebar's Activity row. */
 export function InboxPreview({
@@ -243,6 +262,54 @@ function InboxPreviewCard({
     await session.unread.retrySync();
   };
   const unreadOnlyControl = useRef<HTMLElement>(null);
+  const notify = useToastNotification();
+  const listRef = useRef<HTMLUListElement>(null);
+  const [reading, setReading] = useState<ReadonlySet<string>>(new Set());
+  const canRead = sync.capability === "frontier-sync";
+  /** Mark as read keeps focus in the card when its action leaves: on its
+   * row, which stays read, or when Unread only drops the row, on a neighbor. */
+  const markRead = async (item: InboxItem) => {
+    if (reading.has(item.id)) return;
+    const held = !!listRef.current
+      ?.querySelector(`[data-preview-row="${CSS.escape(item.id)}"]`)
+      ?.contains(document.activeElement);
+    const order = [
+      ...(listRef.current?.querySelectorAll<HTMLElement>(
+        "[data-preview-row]",
+      ) ?? []),
+    ].map((row) => row.dataset.previewRow);
+    const index = order.indexOf(item.id);
+    setReading((current) => new Set(current).add(item.id));
+    try {
+      await readRow(session, item);
+    } catch {
+      notify("Couldn't mark as read", "error");
+    } finally {
+      setReading((current) => {
+        const next = new Set(current);
+        next.delete(item.id);
+        return next;
+      });
+    }
+    if (!held) return;
+    requestAnimationFrame(() => {
+      const list = listRef.current;
+      // Only focus the action took with it when it left: a failed read keeps
+      // its action, and focus elsewhere stays where the user put it.
+      const focused = document.activeElement;
+      if (!list || (focused && focused !== document.body)) return;
+      const row = [item.id, order[index + 1], order[index - 1]]
+        .map((id) =>
+          id === undefined
+            ? null
+            : list.querySelector(
+                `[data-preview-row="${CSS.escape(id)}"] button`,
+              ),
+        )
+        .find(Boolean) as HTMLElement | null | undefined;
+      (row ?? unreadOnlyControl.current)?.focus({ preventScroll: true });
+    });
+  };
   const retryFocus = useRef(false);
   const retryButton = useCallback((button: HTMLButtonElement | null) => {
     if (!button) return;
@@ -318,11 +385,24 @@ function InboxPreviewCard({
         </div>
       )}
       {rows.length ? (
-        <ul className={styles.list} aria-label="Recent activity">
+        <ul ref={listRef} className={styles.list} aria-label="Recent activity">
           {rows.map((row) => {
             const item = row.item;
+            const identity =
+              row.kind === "conversation"
+                ? rowIdentity(
+                    row.item,
+                    channelOf(item.channelId),
+                    profiles,
+                    name,
+                  )
+                : undefined;
             return (
-              <li key={item.id}>
+              <li
+                key={item.id}
+                className={listRowStyles.unreadActionHost}
+                data-preview-row={item.id}
+              >
                 {row.kind === "reaction" ? (
                   <ReactionRowButton
                     item={row.item}
@@ -334,19 +414,33 @@ function InboxPreviewCard({
                     onClick={() => open(row)}
                   />
                 ) : (
-                  <InboxRowButton
-                    item={row.item}
-                    identity={rowIdentity(
-                      row.item,
-                      channelOf(item.channelId),
-                      profiles,
-                      name,
-                    )}
-                    media={session.media}
-                    feed={feed}
-                    time={shortAge(item.createdAt)}
-                    onClick={() => open(row)}
-                  />
+                  identity && (
+                    <>
+                      <InboxRowButton
+                        item={row.item}
+                        identity={identity}
+                        media={session.media}
+                        feed={feed}
+                        time={shortAge(item.createdAt)}
+                        onClick={() => open(row)}
+                      />
+                      {canRead && hasUnread(row.item) && (
+                        <span className={listRowStyles.unreadAction}>
+                          <IconButton
+                            size="sm"
+                            variant="ghost"
+                            loading={reading.has(item.id)}
+                            aria-label={`Mark as read ${identity.sender} in ${identity.context}`}
+                            title="Mark as read"
+                            onClick={() => void markRead(row.item)}
+                            icon={
+                              <EnvelopeOpenIcon size={16} aria-hidden="true" />
+                            }
+                          />
+                        </span>
+                      )}
+                    </>
+                  )
                 )}
               </li>
             );

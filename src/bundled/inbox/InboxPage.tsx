@@ -49,16 +49,23 @@ import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
-import { BellIcon, CheckIcon } from "../../shared/design-system/icons";
+import {
+  BellIcon,
+  CheckIcon,
+  EnvelopeIcon,
+  EnvelopeOpenIcon,
+} from "../../shared/design-system/icons";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
+  MenuIcon,
   MenuItem,
   MenuPopup,
 } from "../../shared/design-system/ui/Menu";
 import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
 import styles from "./Inbox.module.css";
+import listRowStyles from "../../features/messages/MessageListRow.module.css";
 import {
   readView,
   subscribeView,
@@ -1197,7 +1204,11 @@ function InboxList({
                       }
                     >
                       <ContextMenuTrigger
-                        render={<div className={styles.rowSurface} />}
+                        render={
+                          <div
+                            className={`${styles.rowSurface} ${listRowStyles.unreadActionHost}`}
+                          />
+                        }
                         onKeyDown={(event) => {
                           if (
                             event.key === "ContextMenu" ||
@@ -1272,7 +1283,7 @@ function InboxList({
                           }}
                         />
                         {readable && (
-                          <span className={styles.rowAction}>
+                          <span className={listRowStyles.unreadAction}>
                             <IconButton
                               size="sm"
                               variant="ghost"
@@ -1280,7 +1291,12 @@ function InboxList({
                               aria-label={`Mark as read ${sender} in ${context}`}
                               title="Mark as read"
                               onClick={() => markRead(item)}
-                              icon={<CheckIcon size={16} aria-hidden="true" />}
+                              icon={
+                                <EnvelopeOpenIcon
+                                  size={16}
+                                  aria-hidden="true"
+                                />
+                              }
                             />
                           </span>
                         )}
@@ -1303,7 +1319,14 @@ function InboxList({
                             menuUnread ? markRead(item) : mutate(item, true)
                           }
                         >
-                          {menuUnread ? "Mark as read" : "Mark unread"}
+                          <MenuIcon>
+                            {menuUnread ? (
+                              <EnvelopeOpenIcon size={14} />
+                            ) : (
+                              <EnvelopeIcon size={14} />
+                            )}
+                          </MenuIcon>
+                          {menuUnread ? "Mark as read" : "Mark as unread"}
                         </MenuItem>
                       </MenuPopup>
                     </ContextMenuRoot>

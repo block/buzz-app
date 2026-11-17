@@ -105,18 +105,23 @@ it("opens a near-limit historical draft Canvas as structured settings and protec
   expect((field as HTMLTextAreaElement).value.length).toBe(body.length);
   await user.keyboard("{Escape}");
   expect(h.close).toHaveBeenCalledOnce();
+  change(/^Chat name/, "Updated plan");
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(h.save).toHaveBeenCalledWith(header + body, undefined, "Updated plan");
+  h.save.mockClear();
+  change(/^Chat name/, "");
   change(/^Instructions/, `${body.slice(0, -1)}y`);
   await user.keyboard("{Escape}");
   await user.click(
     within(await prompt()).getByRole("button", { name: "Keep editing" }),
   );
-  change(/^Instructions/, body);
-  await user.keyboard("{Escape}");
-  expect(h.close).toHaveBeenCalledTimes(2);
-  expect(screen.queryByRole("alertdialog")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(LIVE_CANVAS_LIMIT);
   expect(h.save).not.toHaveBeenCalled();
+  change(/^Instructions/, body);
+  await user.keyboard("{Escape}");
+  expect(h.close).toHaveBeenCalledTimes(3);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
   change(/^Instructions/, "Shorter instructions");
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(h.save).toHaveBeenCalledOnce();

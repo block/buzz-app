@@ -256,7 +256,7 @@ it("recreates deleted section defaults using the tombstone revision", async () =
 
 // The combined modal talks to the real signed details owner; Canvas remains its
 // independent revision/receipt boundary, held explicitly for orchestration tests.
-function combined() {
+function combined(initialCanvas = "Original Canvas") {
   const id = "11111111-1111-4111-8111-111111111111";
   const viewer = keypair(),
     relay = keypair();
@@ -307,7 +307,7 @@ function combined() {
     canAccess: () => true,
     acceptDiscovery: () => {},
   });
-  let head = { id: "revision-one", content: "Original Canvas" };
+  let head = { id: "revision-one", content: initialCanvas };
   const canvas = {
     available: true,
     read: vi.fn(async () => head),
@@ -1178,27 +1178,9 @@ it("opens a near-limit historical chat Canvas as structured settings and protect
     "",
   ].join("\n");
   const body = "x".repeat(LIVE_CANVAS_BYTES - header.length);
-  const save = vi.fn(async (_id: string, content: string) => ({
-    id: "new",
-    content,
-  }));
-  const close = vi.fn();
-  render(
-    <WorkspaceSettings
-      session={
-        {
-          canvas: {
-            available: true,
-            read: async () => ({ id: "old", content: header + body }),
-            save,
-          },
-        } as unknown as RelaySession
-      }
-      scope="test"
-      target={{ kind: "chat", id: "near-limit", name: "Plan" }}
-      close={close}
-    />,
-  );
+  const h = combined(header + body);
+  const { close } = h;
+  const save = h.canvas.save;
   expect(
     await screen.findByRole("button", { name: "Remove repo" }),
   ).toBeVisible();
@@ -1213,18 +1195,36 @@ it("opens a near-limit historical chat Canvas as structured settings and protect
   await user.keyboard("{Escape}");
   expect(close).toHaveBeenCalledOnce();
   expect(screen.queryByRole("alertdialog")).toBeNull();
+  await waitFor(() =>
+    expect(screen.getByRole("radio", { name: /^Ongoing/ })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    ),
+  );
+  fireEvent.click(screen.getByRole("radio", { name: /^Ongoing/ }));
+  h.publish.mockImplementationOnce(async (event) => {
+    h.apply(event);
+    throw new Error("Lost ack");
+  });
+  fireEvent.click(saveChanges());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "may have been saved",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Check save status" }));
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(2));
+  expect(save).not.toHaveBeenCalled();
   fireEvent.change(field, { target: { value: `${body.slice(0, -1)}y` } });
   await user.keyboard("{Escape}");
   await user.click(
     within(await prompt()).getByRole("button", { name: "Keep editing" }),
   );
-  fireEvent.change(field, { target: { value: body } });
-  await user.keyboard("{Escape}");
-  expect(close).toHaveBeenCalledTimes(2);
-  expect(screen.queryByRole("alertdialog")).toBeNull();
   fireEvent.click(saveChanges());
   expect(await screen.findByRole("alert")).toHaveTextContent(LIVE_CANVAS_LIMIT);
   expect(save).not.toHaveBeenCalled();
+  fireEvent.change(field, { target: { value: body } });
+  await user.keyboard("{Escape}");
+  expect(close).toHaveBeenCalledTimes(3);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
   fireEvent.change(field, { target: { value: "Shorter instructions" } });
   fireEvent.click(saveChanges());
   await waitFor(() => expect(save).toHaveBeenCalledOnce());

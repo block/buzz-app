@@ -795,6 +795,8 @@ and are asked to sign in again in Buzz.
   **Settings → Shortcuts → Sending messages → Send with ⌘ Enter** (Ctrl+Enter
   outside Apple platforms) swaps that on this device: Enter adds a line and
   ⌘/Ctrl+Enter sends. It starts off.
+- Arrow keys move out of a code block, even when it's the first or last thing
+  in a message.
 - If a message can't be sent, **Retry** appears under it right away. If its
   delivery is only unconfirmed, Buzz waits about ten seconds before saying so.
   Some plugins prepare before a message sends. After a restart, Buzz can't

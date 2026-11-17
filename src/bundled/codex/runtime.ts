@@ -2879,24 +2879,25 @@ export class CodexRuntime {
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
-    // Each thread the turn still owes a final reply hears how it ended, once.
-    // When every request was answered, the latest still hears it.
+    // Each thread the turn still owes a final reply hears how it ended, once,
+    // through its latest request, which owns the thread's activity. When
+    // every request was answered, the latest still hears it.
     const notify = (content: string) => {
       const open = active.requests.filter(
         (taken) => taken.finalDelivery !== true,
       );
+      const threads = new Map(
+        (open.length ? open : active.requests.slice(-1)).map((taken) => [
+          taken.replyRoot,
+          taken,
+        ]),
+      );
       return Promise.all(
-        (open.length ? open : active.requests.slice(-1))
-          .filter(
-            (taken, index, all) =>
-              all.findIndex((other) => other.replyRoot === taken.replyRoot) ===
-              index,
-          )
-          .map((taken) =>
-            this.publish(taken, content).catch((failure) =>
-              console.error("Codex could not publish its failure", failure),
-            ),
+        [...threads.values()].map((taken) =>
+          this.publish(taken, content).catch((failure) =>
+            console.error("Codex could not publish its failure", failure),
           ),
+        ),
       );
     };
     const { settings, agent } = request;

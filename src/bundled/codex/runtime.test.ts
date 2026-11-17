@@ -3296,6 +3296,35 @@ it.each([
     );
   },
 );
+it("tells a thread through its latest request when the turn took in a steer from that thread", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("WORK_A"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const steered = f.delivery("WORK_B");
+  const publish = vi.fn(async (event: unknown) => ({
+    ...(event as object),
+    id: "c".repeat(64),
+  }));
+  await f.runtime.run({
+    ...steered,
+    agent: { ...steered.agent, publish } as Delivery["agent"],
+  });
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      1,
+    ),
+  );
+  f.interrupt();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Interrupted"),
+  );
+  expect(f.publish).not.toHaveBeenCalled();
+  expect(
+    publish.mock.calls.map(([event]) => (event as { content: string }).content),
+  ).toEqual([
+    "Codex’s turn was interrupted. Send another mention to continue.",
+  ]);
+});
 it("tells only the steered thread when the thread that started the turn already has its final reply", async () => {
   const f = fixture();
   vi.spyOn(f.snapshot.session.channels, "list").mockReturnValue({

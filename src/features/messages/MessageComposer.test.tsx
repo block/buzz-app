@@ -17412,16 +17412,14 @@ it.each([
     if (expected) {
       expect(disclosure).toHaveTextContent("Everyone in #Random");
       expect(
-        h.input().closest("form")?.previousElementSibling,
+        document.getElementById(`${h.input().id}-forward-announcement`),
       ).toHaveTextContent(/Everyone in #Random will be able to read/);
-      expect(h.input().closest("form")?.previousElementSibling).toHaveAttribute(
-        "aria-live",
-        "polite",
-      );
-      expect(h.input().closest("form")?.previousElementSibling).toHaveAttribute(
-        "aria-atomic",
-        "true",
-      );
+      expect(
+        document.getElementById(`${h.input().id}-forward-announcement`),
+      ).toHaveAttribute("aria-live", "polite");
+      expect(
+        document.getElementById(`${h.input().id}-forward-announcement`),
+      ).toHaveAttribute("aria-atomic", "true");
       expect(h.send()).toHaveAccessibleDescription(
         /Everyone in #Random will be able to read/,
       );
@@ -17450,7 +17448,24 @@ it.each([
           /Everyone in #Random will be able to read/,
         ),
       );
-      const region = h.input().closest("form")?.previousElementSibling;
+      const region = document.getElementById(
+        `${h.input().id}-forward-announcement`,
+      );
+      for (const [active, shown] of [
+        [false, true],
+        [true, false],
+      ]) {
+        h.present(active, shown);
+        expect(region).toBeInTheDocument();
+        expect(region).toBeEmptyDOMElement();
+        h.present(true);
+        await waitFor(() =>
+          expect(region).toHaveTextContent(
+            /Everyone in #Random will be able to read/,
+          ),
+        );
+      }
+
       fireEvent.click(
         screen.getByRole("button", { name: "Remove forwarded message" }),
       );
@@ -17460,6 +17475,7 @@ it.each([
         ),
       ).not.toBeInTheDocument();
       expect(region).toBeInTheDocument();
+      expect(region?.parentElement).toBe(document.body);
       expect(region).toBeEmptyDOMElement();
       // The source is warm: repasting must update the existing live region.
       fireEvent.paste(h.input(), {
@@ -17470,7 +17486,9 @@ it.each([
         },
       });
       await waitFor(() => expect(h.send()).toBeEnabled());
-      expect(h.input().closest("form")?.previousElementSibling).toBe(region);
+      expect(
+        document.getElementById(`${h.input().id}-forward-announcement`),
+      ).toBe(region);
       expect(region).toHaveTextContent(
         /Everyone in #Random will be able to read/,
       );

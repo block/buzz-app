@@ -1196,14 +1196,17 @@ for (const privateSource of [false, true]) {
             form.getByRole("button", { name: "Send message" }),
           ).toHaveAccessibleDescription(/will be able to read this message/);
           await notice.evaluate((el) => {
-            window.messagesFixture.disclosureRegion =
-              el.closest("form").previousElementSibling;
+            window.messagesFixture.disclosureRegion = document.getElementById(
+              `${el.closest("form").querySelector("[contenteditable]").id}-forward-announcement`,
+            );
           });
           expect(
             await notice.evaluate((el) =>
-              el
-                .closest("form")
-                .previousElementSibling.getAttribute("aria-live"),
+              document
+                .getElementById(
+                  `${el.closest("form").querySelector("[contenteditable]").id}-forward-announcement`,
+                )
+                .getAttribute("aria-live"),
             ),
           ).toBe("polite");
           await expect
@@ -1246,8 +1249,9 @@ for (const privateSource of [false, true]) {
           expect(
             await notice.evaluate(
               (el) =>
-                el.closest("form").previousElementSibling ===
-                window.messagesFixture.disclosureRegion,
+                document.getElementById(
+                  `${el.closest("form").querySelector("[contenteditable]").id}-forward-announcement`,
+                ) === window.messagesFixture.disclosureRegion,
             ),
           ).toBe(true);
         } else await expect(notice).toHaveCount(0);

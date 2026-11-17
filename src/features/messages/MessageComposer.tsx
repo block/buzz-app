@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { ForwardDisclosure } from "./ForwardDisclosure";
 import { pastedForward } from "./forward-clipboard";
 import { ComposerForward, useComposerForward } from "./ComposerForward";
@@ -3529,9 +3530,18 @@ function Composer({
           focusComposer={() => input.current?.focus()}
         />
       )}
-      <div aria-live="polite" aria-atomic="true" className="sr-only">
-        {disclosure}
-      </div>
+      {/* Modal isolation exempts live-region ancestors; keep this outside the workspace. */}
+      {createPortal(
+        <div
+          id={`${inputId}-forward-announcement`}
+          aria-live="polite"
+          aria-atomic="true"
+          className="sr-only"
+        >
+          {presented ? disclosure : null}
+        </div>,
+        document.body,
+      )}
       <form
         ref={form}
         className={styles.composer}

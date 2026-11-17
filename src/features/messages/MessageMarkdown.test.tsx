@@ -750,6 +750,20 @@ describe("Markdown profile mentions", () => {
     },
   );
 
+  it("keeps one link when an uppercase URL contains another URL", () => {
+    const html = render("HTTPS://example.org/a/https://example.test，b");
+    expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual([
+      "https://example.org/a/https://example.test",
+    ]);
+  });
+
+  it("leaves no marker in table code that CommonMark reads differently", () => {
+    const html = render(
+      "| a | b |\n| - | - |\n| `x | `https://example.test，y` |",
+    );
+    expect(html).not.toMatch(/[\uE000-\uE002]/);
+  });
+
   it("keeps an entity at the end of a bare link", () => {
     const html = render("https://example.test/a&gt;");
     expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual([

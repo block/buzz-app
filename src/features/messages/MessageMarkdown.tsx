@@ -142,6 +142,12 @@ function protectInlineContent(
       part.target && /[\p{P}\p{S}]$/u.test(part.text) ? "\uFFFC" : "\uE002";
     return `${start}${parts.length - 1}${end}`;
   };
+  // GFM runs a bare URL into the Markdown after it; end it where message
+  // links end, so `https://x，[a](y)` still parses the link.
+  const linkEnds = Array.from(
+    row.content.matchAll(bareUrlEnd),
+    (match) => match.index + match[0].length,
+  ).filter((at) => /[^\s<]/.test(row.content[at] ?? ""));
   let offset = 0;
   const content = profileMentionParts(row, profiles, agents)
     .map((segment) => {
@@ -177,16 +183,14 @@ function protectInlineContent(
                   literal: undefined,
                 }))),
             ...(urlPart ? [] : encoded),
-            // GFM runs a bare URL into the Markdown after it; end it where
-            // message links end, so `https://x，[a](y)` still parses the link.
-            ...Array.from(part.matchAll(bareUrlEnd), (match) => ({
-              start: match.index + match[0].length,
-              end: match.index + match[0].length,
-              literal: undefined,
-              linkEnd: true,
-            })).filter(({ start }) =>
-              /[^\s<]/.test(row.content[partStart + start] ?? ""),
-            ),
+            ...linkEnds
+              .filter((at) => at > partStart && at <= partStart + part.length)
+              .map((at) => ({
+                start: at - partStart,
+                end: at - partStart,
+                literal: undefined,
+                linkEnd: true,
+              })),
             ...spoilerDelimiters
               .filter(
                 (start) =>
@@ -380,7 +384,10 @@ function remarkBareLinkEnd(content: string, linkEnd: string) {
   return function visit(parent: MarkdownNode) {
     if (!parent.children) return;
     parent.children = parent.children.flatMap((child) => {
-      if (child.type === "text" && child.value?.includes(linkEnd)) {
+      if (
+        (child.type === "text" || child.type === "inlineCode") &&
+        child.value?.includes(linkEnd)
+      ) {
         const value = child.value.replaceAll(linkEnd, "");
         return value ? [{ ...child, value }] : [];
       }

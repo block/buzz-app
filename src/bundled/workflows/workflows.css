@@ -139,14 +139,29 @@
   min-width: 0;
   gap: var(--space-2);
 }
-.workflow-card-owner {
+/* Avatar, name, then date on one line. Too narrow, the date moves to a second
+   line before the name is squeezed, and a long name wraps beside its avatar. */
+.workflow-card-owner,
+.workflow-detail-owner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-2);
   white-space: normal;
   overflow-wrap: anywhere;
+}
+.workflow-detail-owner {
+  justify-content: center;
+}
+.workflow-owner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
 }
 .workflow-card-meta > .workflow-card-name {
   min-width: 0;
 }
-.workflow-card-meta > time,
 .workflow-card-meta > [aria-hidden] {
   flex-shrink: 0;
 }

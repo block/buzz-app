@@ -907,10 +907,11 @@ test("restricted cards and read-only editors keep keyboard controls without disc
         )
         .toBe(true);
       // A short owner identifier may wrap, but must not become a tall column
-      // of single characters when artwork and controls consume its width.
+      // of single characters when artwork and controls consume its width. The
+      // fixture owner has no profile name, so the identifier is a short key.
       await expect
         .poll(() =>
-          ownerLabel.evaluate((node) => {
+          ownerLabel.getByText(/^npub…/).evaluate((node) => {
             const range = document.createRange();
             range.selectNodeContents(node);
             return new Set([...range.getClientRects()].map((rect) => rect.top))

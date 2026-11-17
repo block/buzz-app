@@ -94,8 +94,36 @@ function detailPane() {
   return within(screen.getByRole("region", { name: "Workflow details" }));
 }
 
-it("shows the owner's identity in the row and detail and follows profile updates", async () => {
+const savedDate = new Date(
+  fixtureDefinition.createdAt * 1000,
+).toLocaleDateString();
+
+/** The owner line of a card or of the detail hero reads avatar, name, then
+ * date, with no "Owner" label. The avatar is decorative, so the name is
+ * exposed once. Returns the avatar. */
+function ownerAvatar(scope: HTMLElement, name: string) {
+  const date = within(scope).getByText(savedDate);
+  const line = date.parentElement as HTMLElement;
+  const label = within(line).getByText(name);
+  const avatar = line.querySelector("[data-avatar-shape]") as HTMLElement;
+  expect(avatar).toHaveAttribute("aria-hidden", "true");
+  expect(
+    avatar.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    label.compareDocumentPosition(date) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(line).not.toHaveTextContent("Owner");
+  return avatar;
+}
+
+it("shows the owner's avatar, name and date in the row and detail and follows profile updates", async () => {
   const owner = keypair();
+  const keyLabel = `${formatPublicKey(owner.pubkey)}`;
+  const picture = "data:image/png;base64,AAAA";
+  const card = () =>
+    screen.getByRole("button", { name: /^Open Message helper:/ });
+  const detail = () => screen.getByRole("region", { name: "Workflow details" });
   let releaseRead: (events: readonly RelayEvent[]) => void = () => {};
   const pendingRead = new Promise<readonly RelayEvent[]>((resolve) => {
     releaseRead = resolve;
@@ -135,30 +163,44 @@ it("shows the owner's identity in the row and detail and follows profile updates
       screen.getByRole("radio", { name: "All channel workflows" }),
     );
     await waitFor(() => expect(read).toHaveBeenCalledOnce());
-    await waitFor(() =>
-      expect(
-        screen.getByText(`Owner: ${formatPublicKey(owner.pubkey)}`),
-      ).toBeVisible(),
+    await waitFor(() => expect(screen.getByText(keyLabel)).toBeVisible());
+    // No profile yet: the shortened key beside the default avatar.
+    expect(ownerAvatar(card(), keyLabel).querySelector("img")).toBeNull();
+    await act(async () =>
+      releaseRead([profile(owner, { name: "Salman", picture })]),
     );
-    await act(async () => releaseRead([profile(owner, { name: "Salman" })]));
-    expect(screen.getByText("Owner: Salman")).toBeVisible();
-    fireEvent.click(
-      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    expect(ownerAvatar(card(), "Salman").querySelector("img")).toHaveAttribute(
+      "src",
+      picture,
     );
-    expect(detailPane().getByText("Owner: Salman")).toBeVisible();
+    fireEvent.click(card());
+    expect(
+      ownerAvatar(detail(), "Salman").querySelector("img"),
+    ).toHaveAttribute("src", picture);
+    expect(ownerAvatar(detail(), "Salman")).toHaveAttribute(
+      "data-avatar-shape",
+      "circle",
+    );
     act(() =>
       profiles.accept([
-        profile(owner, { name: "Updated name" }, 1_700_000_001),
+        profile(owner, { name: "Updated name", is_agent: true }, 1_700_000_001),
       ]),
     );
-    expect(detailPane().getByText("Owner: Updated name")).toBeVisible();
-    expect(screen.queryByText("Owner: Salman")).toBeNull();
+    // The hero is an inset surface, so its default avatar is panel-colored.
+    const updated = ownerAvatar(detail(), "Updated name");
+    expect(updated).toHaveAttribute("data-avatar-shape", "squircle");
+    expect(updated).toHaveAttribute("data-fallback-surface", "panel");
+    expect(ownerAvatar(card(), "Updated name")).toHaveAttribute(
+      "data-fallback-surface",
+      "subtle",
+    );
+    expect(screen.queryByText("Salman")).toBeNull();
     act(() => {
       alias = "Local owner alias";
       renamed();
     });
-    expect(screen.getAllByText("Owner: Local owner alias")).toHaveLength(2);
-    expect(screen.queryByText("Owner: Updated name")).toBeNull();
+    expect(screen.getAllByText("Local owner alias")).toHaveLength(2);
+    expect(screen.queryByText("Updated name")).toBeNull();
   } finally {
     await act(async () => releaseRead([]));
     cleanup();
@@ -215,18 +257,16 @@ it.each(["{}", "malformed JSON"])(
       );
       await waitFor(() =>
         expect(
-          screen.getByText(`Owner: ${formatPublicKey(owner.pubkey)}`),
+          screen.getByText(`${formatPublicKey(owner.pubkey)}`),
         ).toBeVisible(),
       );
       fireEvent.click(
         screen.getByRole("button", { name: /^Open Message helper:/ }),
       );
       expect(
-        detailPane().getByText(`Owner: ${formatPublicKey(owner.pubkey)}`),
+        detailPane().getByText(`${formatPublicKey(owner.pubkey)}`),
       ).toBeVisible();
-      expect(
-        screen.queryByText(`Owner: ${owner.pubkey.slice(0, 10)}`),
-      ).toBeNull();
+      expect(screen.queryByText(owner.pubkey.slice(0, 10))).toBeNull();
     } finally {
       cleanup();
       names.dispose();
@@ -266,7 +306,7 @@ it("hydrates distinct displayed workflow owners in one batched profile query", a
       screen.getByRole("radio", { name: "All channel workflows" }),
     );
     await waitFor(() =>
-      expect(screen.getAllByText(/^Owner: Owner \d$/)).toHaveLength(4),
+      expect(screen.getAllByText(/^Owner \d$/)).toHaveLength(4),
     );
     expect(read).toHaveBeenCalledOnce();
   } finally {
@@ -294,9 +334,9 @@ it("lengthens fallback key suffixes when visible owners share one", async () => 
   );
   fireEvent.click(screen.getByRole("button", { name: "Owner: My workflows" }));
   fireEvent.click(screen.getByRole("radio", { name: "All channel workflows" }));
-  expect(await screen.findByText("Owner: npub…rcaj")).toBeVisible();
-  expect(screen.getByText("Owner: npub…vcaj")).toBeVisible();
-  expect(screen.queryByText("Owner: npub…caj")).toBeNull();
+  expect(await screen.findByText("npub…rcaj")).toBeVisible();
+  expect(screen.getByText("npub…vcaj")).toBeVisible();
+  expect(screen.queryByText("npub…caj")).toBeNull();
 });
 
 it("delivers a late webhook secret on the landing page after confirmed navigation", async () => {

@@ -368,6 +368,7 @@ const history = (...authors: string[]) =>
     subject: `Change ${index + 1}`,
   }));
 it.each([
+  { authors: [], summary: "Latest 0 commits" },
   { authors: ["Ada"], summary: "Latest 1 commit" },
   { authors: ["Ada", "Grace", "Ada"], summary: "Latest 3 commits" },
 ])("summarises the Commits tab as $summary", async ({ authors, summary }) => {
@@ -406,11 +407,12 @@ it.each([
     ).toEqual(rows);
   },
 );
-it("shows file sizes in units, and an unreadable file's size against the text limit", async () => {
-  const image = {
-    path: "docs/diagram.png",
+it("shows file sizes in units, in the file list and for a file just too large to show", async () => {
+  // One byte over the hosts' 1 MiB text limit: the size rounds to the limit.
+  const log = {
+    path: "docs/build.log",
     hash: "d".repeat(40),
-    size: 2 * 1024 * 1024,
+    size: 1024 * 1024 + 1,
   };
   const t = setup({ type: "repo", owner, dtag: "repo", tab: "files" });
   t.readGit.mockImplementation(async (input) => ({
@@ -418,10 +420,10 @@ it("shows file sizes in units, and an unreadable file's size against the text li
     files: [
       ...git.files,
       { path: "docs/architecture.md", hash: "c".repeat(40), size: 184320 },
-      image,
+      log,
     ],
     file: input.path
-      ? { path: input.path, content: null, size: image.size }
+      ? { path: input.path, content: null, size: log.size }
       : null,
   }));
   t.mount();
@@ -432,11 +434,11 @@ it("shows file sizes in units, and an unreadable file's size against the text li
   ).toEqual([
     "README.md6 B",
     "docs/architecture.md180 KB",
-    "docs/diagram.png2 MB",
+    "docs/build.log1 MB",
   ]);
-  await userEvent.click(content.getByRole("button", { name: image.path }));
+  await userEvent.click(content.getByRole("button", { name: log.path }));
   expect(
-    await screen.findByText("Binary file or text larger than 1 MB (2 MB)."),
+    await screen.findByText("Binary file, or text too large to show (1 MB)."),
   ).toBeVisible();
 });
 it("heads a commit with the short hash its row shows, keeping the full hash in its title and link", async () => {

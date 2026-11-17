@@ -533,8 +533,6 @@ function Destination({
   );
 }
 
-/** The hosts' Git readers (`TEXT_BYTES`) return no content for a larger file. */
-const TEXT_BYTES = 1024 * 1024;
 const commitCount = (count: number) =>
   `${count} ${count === 1 ? "commit" : "commits"}`;
 
@@ -560,7 +558,7 @@ function GitContent({
           <pre className="repo-code text-code">{git.file.content}</pre>
         ) : (
           <p>
-            Binary file or text larger than {formatFileSize(TEXT_BYTES)} (
+            Binary file, or text too large to show (
             {formatFileSize(git.file.size)}).
           </p>
         )}

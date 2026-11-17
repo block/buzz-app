@@ -12,7 +12,9 @@ test("Codex Voices persist separately through the settings host", async ({
   const pane = page.getByRole("tabpanel", { name: "Identity", exact: true });
   const voice = pane.getByRole("button", { name: "Voice", exact: true });
   await voice.click();
-  await expect(page.getByRole("button", { name: "Close", exact: true })).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Close", exact: true }),
+  ).toBeFocused();
   const locale = page.getByRole("combobox", { name: "Language and region" });
   await expect(locale).toContainText("American English");
   await expect(

@@ -2610,14 +2610,26 @@ it.each([
     await run(f.delivery("THIRD_THREAD", "d".repeat(64)));
     await vi.waitFor(() => expect(steers()).toHaveLength(3));
     const [same, other, third] = steers();
-    const line = `The reply target above is for the new message only. If you are still working on an earlier request, ordinary replies about that work still go to \`reply: "${root}"\`.`;
+    const line = (running: string) =>
+      `The reply target above is for the new message only. If you are still working on an earlier request, ordinary replies about that work still go to \`reply: "${running}"\`.`;
     expect(same).toContain("SAME_THREAD");
     expect(same).not.toContain("ordinary replies");
     expect(other).toContain("OTHER_THREAD");
-    expect(other).toContain(line);
+    expect(other).toContain(line(root));
     // The line names the turn's first request, not the latest steer.
     expect(third).toContain("THIRD_THREAD");
-    expect(third).toContain(line);
+    expect(third).toContain(line(root));
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+    );
+    // The next turn names its own first request.
+    await run(f.delivery("NEXT_TURN", "e".repeat(64)));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    await run(f.delivery("LATER_THREAD", "d".repeat(64)));
+    await vi.waitFor(() => expect(steers()).toHaveLength(4));
+    expect(steers()[3]).toContain("LATER_THREAD");
+    expect(steers()[3]).toContain(line("e".repeat(64)));
     await f.complete();
     await vi.waitFor(() =>
       expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),

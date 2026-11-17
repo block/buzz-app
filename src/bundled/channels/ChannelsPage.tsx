@@ -2362,7 +2362,9 @@ function ChannelWorkspace({
         {current && channelNotice && (
           <ChannelJoinNotice
             key={`join:${current.id}`}
-            ready={contentReadyChannel === current.id}
+            ready={
+              (current.archived && !solo) || contentReadyChannel === current.id
+            }
             channelId={current.id}
             archived={!!current.archived}
             archivedMessage={!solo ? archivedMessage : undefined}

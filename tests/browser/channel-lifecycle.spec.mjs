@@ -190,6 +190,83 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   expect(app.report.unexpected).toEqual([]);
 });
 
+test.describe("cold archived channel", () => {
+  const channelId = "11111111-1111-4111-8111-111111111111";
+  test.use({ lifecycleVisibility: { archived: [channelId], hidden: [] } });
+
+  // Exercise Search, the broker's first timeline read, and the modal focus
+  // handoff together. The archived channel has never been opened in this visit.
+  test("offers Unarchive from Search while the first history read is pending", async ({
+    page,
+    app,
+  }) => {
+    let historyRequested = false;
+    const historyRelease = Promise.withResolvers();
+    await page.route("**/api/relay/primary/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (
+        filters.some(
+          (filter) => filter.top_level && filter["#h"]?.includes(channelId),
+        )
+      ) {
+        historyRequested = true;
+        await historyRelease.promise;
+      }
+      await route.continue();
+    });
+
+    const archived = page.getByRole("region", {
+      name: "Archived channel",
+      exact: true,
+    });
+    const unarchive = archived.getByRole("button", {
+      name: "Unarchive",
+      exact: true,
+    });
+    try {
+      await openLifecycle(page, app);
+      await page
+        .getByRole("button", { name: "Search Buzz", exact: true })
+        .click();
+      const search = page.getByRole("dialog", {
+        name: "Search Buzz",
+        exact: true,
+      });
+      await search.getByRole("combobox").fill("Lifecycle channel");
+      await search
+        .getByRole("option", {
+          name: "Lifecycle channel Archived channel · 1 member",
+          exact: true,
+        })
+        .click();
+      await expect.poll(() => historyRequested).toBe(true);
+      await expect(
+        archived.getByText(
+          "This channel is archived. It's read-only and hidden from your sidebar.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await unarchive.click();
+      const confirmation = page.getByRole("dialog", {
+        name: "Unarchive channel: Lifecycle channel",
+        exact: true,
+      });
+      await expect(confirmation).toBeVisible();
+      await confirmation
+        .getByRole("button", { name: "Cancel", exact: true })
+        .click();
+      await expect(unarchive).toBeFocused();
+      expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
+    } finally {
+      historyRelease.resolve();
+    }
+    await expect(
+      page.getByRole("heading", { name: "No messages yet.", exact: true }),
+    ).toBeVisible();
+    await expect(unarchive).toBeFocused();
+  });
+});
+
 // The production page must project the separate per-viewer visibility snapshot
 // after remount/reload, while membership/authorized channel reads remain intact.
 test("DM hide is per-viewer visibility, survives reload and never sends Leave or Delete", async ({

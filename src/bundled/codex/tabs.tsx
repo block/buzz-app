@@ -1524,12 +1524,14 @@ export function createTabs(
                     ? choice
                     : offRecommended(choice);
                   voiceSave.current = next;
+                  setError("");
                   setSaving(true);
                   try {
                     await save(next);
                     setDraft((current) => readConfig({ ...current, voice }));
                   } catch (reason) {
                     voiceSave.current = undefined;
+                    setError(message(reason));
                     throw reason;
                   } finally {
                     setSaving(false);

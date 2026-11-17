@@ -172,6 +172,8 @@ export function VoicePreview({
           })
         : Promise.resolve(previews?.[value || defaultVoice || ""] ?? "");
       const ready = Promise.all([saved, recording]).then(([, url]) => url);
+      // Readiness still settles if the device cannot initialize audio.
+      void ready.catch(() => {});
       setPlaying({ voice: value, abort, loading: true });
       // Enter the audio owner during activation; sound waits for save and discovery.
       await previewVoice(host, ready, abort.signal, () =>

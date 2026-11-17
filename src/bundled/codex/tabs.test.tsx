@@ -3203,3 +3203,42 @@ it.each(["voices", "config"])(
     }
   },
 );
+
+it("reports a failed voice save after the picker has closed", async () => {
+  vi.stubGlobal(
+    "AudioContext",
+    class {
+      createBufferSource() {
+        return { disconnect() {} };
+      }
+      resume() {
+        return new Promise<void>(() => {});
+      }
+      close() {
+        return Promise.resolve();
+      }
+    },
+  );
+  const f = fixture();
+  let reject!: (reason: Error) => void;
+  const save = vi.fn(
+    () =>
+      new Promise<void>((_resolve, fail) => {
+        reject = fail;
+      }),
+  );
+  const user = userEvent.setup();
+  render(
+    <f.tabs.SettingsTab
+      {...f.props(defaults, save)}
+      settingsSection="identity"
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Voice" }));
+  await user.click(await screen.findByRole("radio", { name: "Maple" }));
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  await act(async () => reject(new Error("Voice save failed")));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Voice save failed",
+  );
+});

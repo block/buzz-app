@@ -1341,7 +1341,7 @@ export function createTabs(
               : providerDefaultLabel(providerDefaults.model, data)
           }
           {...(bound && {
-            defaultDescription: "Use the model default on the target computer",
+            defaultDescription: "Follows the target computer's settings",
           })}
           loading={checking}
           disabled={saving}

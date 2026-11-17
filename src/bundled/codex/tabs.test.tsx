@@ -2451,6 +2451,9 @@ it("keeps remote settings read-only without opening a model catalog", async () =
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   expect(
+    await screen.findByRole("option", { name: "Default" }),
+  ).toHaveAccessibleDescription("Follows the target computer's settings");
+  expect(
     await screen.findByRole("option", { name: /Custom model/ }),
   ).toBeVisible();
   expect(

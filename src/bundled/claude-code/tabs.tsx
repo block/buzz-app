@@ -1308,7 +1308,7 @@ export function createTabs({
           }
           defaultDescription={
             remote
-              ? "Use the model configured on the target"
+              ? "Follows the target computer's settings"
               : providerDefaults.model
                 ? `Currently ${providerDefaultLabel(providerDefaults.model, setupState.models)}`
                 : "Follows Claude Code settings"

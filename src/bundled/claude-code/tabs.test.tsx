@@ -2624,7 +2624,7 @@ it("uses target model settings for remote Claude without a local catalog or a ta
   render(<Settings agent={agent()} save={save} />);
   await waitFor(() =>
     expect(
-      screen.getByTitle("Default · Use the model configured on the target"),
+      screen.getByTitle("Default · Follows the target computer's settings"),
     ).toBeVisible(),
   );
   expect(screen.getByLabelText("Workspace")).toBeDisabled();
@@ -2660,7 +2660,7 @@ it("refreshes mounted Claude Settings after an execution binding changes", async
   );
   await waitFor(() =>
     expect(
-      screen.getByTitle("Default · Use the model configured on the target"),
+      screen.getByTitle("Default · Follows the target computer's settings"),
     ).toBeVisible(),
   );
   expect(screen.getByLabelText("Workspace")).toBeDisabled();

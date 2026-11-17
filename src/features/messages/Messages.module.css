@@ -2900,6 +2900,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 /* Content hugs short messages while rich content can use the available width. */
 .messageBubble {
   position: relative;
+  /* Like the Markdown boxes inside it: no WebKit selection fill in the
+     bubble's padding or beside short lines, only behind selected text. */
+  translate: 0 0;
   --message-link: var(--text-message-link);
   --message-inset: var(--space-2);
   --message-radius: calc(

@@ -3,7 +3,7 @@
 // own `usage` read. Nothing is stored; it is an estimate, not a bill.
 import type { Agent, Agents } from "../../features/agents/service";
 import { loadPrices } from "../usage/pricing";
-import { dayStart, stats, sum, type Total } from "../usage/stats";
+import { since, stats, sum, type Total } from "../usage/stats";
 
 export const COST_DAYS = 7;
 
@@ -30,8 +30,10 @@ export async function weekCost(
 ): Promise<WeekCost> {
   const read = agents.types().find((type) => type.key === agent.type)?.usage;
   if (!read || agent.place !== "here") throw new Error("No usage");
+  // Usage's window, not just the week: a harness that shares one read
+  // between concurrent callers keeps only what the first one asked for.
   const [sessions] = await Promise.all([
-    read(agent, { since: dayStart(now, COST_DAYS - 1), signal }),
+    read(agent, { since: since(now), signal }),
     loadPrices().catch(() => {}),
   ]);
   const week = stats(

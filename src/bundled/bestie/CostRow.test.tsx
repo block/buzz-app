@@ -9,7 +9,12 @@ import type {
   SessionUsage,
   UsageObservation,
 } from "../../features/agents/service";
-import { dayStart } from "../usage/stats";
+import type { EventData } from "../../features/relay/events";
+import { turnPrompt } from "../claude-code/prompt";
+import { fakeSpawn } from "../goose/goose-testing";
+import { GooseHistory } from "../goose/transcript";
+import { readUsage } from "../goose/usage";
+import { dayStart, since } from "../usage/stats";
 import { CostRow } from "./CostRow";
 import { weekCost } from "./cost";
 
@@ -90,11 +95,89 @@ it("adds the last seven days up and ignores older requests", async () => {
     0.5, 0, 0, 0, 1.5, 0, 0.25,
   ]);
   expect(week.total).toEqual({ value: 2.25, partial: false });
-  // Only the week is read, from the start of its first day.
+  // Usage's own window is read, so a read Usage joins misses nothing.
   expect(usage).toHaveBeenCalledWith(agent, {
-    since: dayStart(NOW, 6),
+    since: since(NOW),
     signal: expect.any(AbortSignal),
   });
+});
+
+it("leaves Usage's month whole when its read joins the week's", async () => {
+  // goose shares one workspace read between every agent's concurrent reads.
+  const mention = {
+    id: "1".repeat(64),
+    pubkey: "b".repeat(64),
+    kind: 9,
+    created_at: NOW / 1000,
+    content: "@Ada fix the build",
+    tags: [["h", "chan"]],
+    sig: "",
+  } as EventData;
+  const ask = turnPrompt({
+    agent: agent.pubkey,
+    event: mention,
+    channel: { id: "chan", name: "general" },
+    scope: "thread",
+    context: [],
+    total: 1,
+  });
+  const saved = (sessionId: string, ago: number, cost: number) => {
+    const at = dayStart(NOW, ago) + 60_000;
+    return {
+      sessionId,
+      title: `Ada · #general · ${sessionId}`,
+      cwd: "/home/test/.buzz",
+      updatedAt: new Date(at).toISOString(),
+      conversation: [
+        {
+          role: "user",
+          created: at / 1000,
+          content: [{ type: "text", text: ask }],
+          metadata: { userVisible: true },
+        },
+        {
+          role: "assistant",
+          created: at / 1000,
+          content: [{ type: "text", text: "Done." }],
+          metadata: {
+            userVisible: true,
+            usage: {
+              inputTokens: 1,
+              outputTokens: 1,
+              cost,
+              costSource: "estimated",
+            },
+          },
+        },
+      ],
+    };
+  };
+  const goose = fakeSpawn({
+    home: "/home/test",
+    history: [saved("recent", 2, 0.25), saved("older", 20, 3)],
+  });
+  const history = new GooseHistory(goose);
+  const read = (from: number) =>
+    readUsage(
+      history,
+      agent.pubkey,
+      "~/.buzz",
+      from,
+      new AbortController().signal,
+    );
+  const goosey = agentsWith((reader: Agent, options: { since: number }) =>
+    read(options.since),
+  );
+  const [week, month] = await Promise.all([
+    weekCost(goosey, agent, new AbortController().signal, NOW),
+    read(since(NOW)),
+  ]);
+  expect(goose.geese).toHaveLength(1);
+  expect(month.map((session) => session.id).sort()).toEqual([
+    "older",
+    "recent",
+  ]);
+  expect(week.total).toEqual({ value: 0.25, partial: false });
 });
 
 it("shows the total and a daily sparkline, and opens Usage", async () => {

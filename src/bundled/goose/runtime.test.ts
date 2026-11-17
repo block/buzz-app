@@ -2054,9 +2054,23 @@ it.each([false, true])(
     expect(
       await deliver(reply("9", bRoot, "@Gander finish B", 150)),
     ).not.toContain(bNote.content);
+    // A new session has seen no thread, not only the first one it is given.
+    const agent = {
+      ...f.agent,
+      config: { ...DEFAULT_CONFIG, scope: "channel" },
+    } as unknown as Agent;
+    const place = { channelId: channel };
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    await f.runtime.session(agent, place, "new");
+    await deliver(reply("10", dm ? aRoot : first, "@Gander back to A", 160));
+    expect(
+      await deliver(reply("11", bRoot, "@Gander back to B", 170)),
+    ).toContain(bNote.content);
     const turns = f.goose()?.turns ?? [];
-    expect(turns).toHaveLength(5);
-    expect(new Set(turns.map((turn) => turn.sessionId)).size).toBe(1);
+    expect(turns).toHaveLength(7);
+    expect(new Set(turns.map((turn) => turn.sessionId)).size).toBe(2);
   },
 );
 

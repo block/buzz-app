@@ -184,7 +184,9 @@ function protectInlineContent(
               end: match.index + match[0].length,
               literal: undefined,
               linkEnd: true,
-            })).filter(({ start }) => /[^\s<]/.test(part[start] ?? "")),
+            })).filter(({ start }) =>
+              /[^\s<]/.test(row.content[partStart + start] ?? ""),
+            ),
             ...spoilerDelimiters
               .filter(
                 (start) =>

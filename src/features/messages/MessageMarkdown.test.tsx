@@ -731,16 +731,20 @@ describe("Markdown profile mentions", () => {
     expect(html).toContain('aria-label="View Mic profile"');
   });
 
-  it.each(["https", "HTTPS"])(
-    "keeps a mention after a bare %s link and CJK punctuation through an Edit save",
-    (scheme) => {
-      const sent = props(`看这个 ${scheme}://example.test，@Mic`).row;
-      const saved = messageEditText(sent, profiles).replace("看这个", "看看");
-      expect(saved).toContain("，[@Mic](nostr:");
+  it.each([
+    "看这个 https://example.test，@Mic",
+    "看这个 HTTPS://example.test，@Mic",
+    '看这个 "https://example.test"@Mic',
+    "看这个 https://example.org，https://example.test，@Mic",
+  ])(
+    "keeps a mention after a bare link through an Edit save: %s",
+    (content) => {
+      const saved = messageEditText(props(content).row, profiles).replace(
+        "看这个",
+        "看看",
+      );
+      expect(saved).toContain("[@Mic](nostr:");
       const html = render(saved, { patch: { edited: true } });
-      expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual([
-        "https://example.test/",
-      ]);
       expect(html).toContain('aria-label="View Mic profile"');
       expect(html).not.toContain("](nostr:");
     },

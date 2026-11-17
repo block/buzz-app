@@ -1,5 +1,4 @@
 import {
-  type Ref,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -27,13 +26,11 @@ const day = (start: number) =>
   });
 
 /** A bar per day, tallest the costliest day; the figures are in its label. */
-function Sparkline({ ref, week }: { ref: Ref<SVGSVGElement>; week: WeekCost }) {
+function Sparkline({ week }: { week: WeekCost }) {
   const top = Math.max(...week.days.map((entry) => entry.cost.value ?? 0), 0);
   return (
     <svg
-      ref={ref}
       role="img"
-      tabIndex={-1}
       aria-label={`Daily cost, oldest first: ${week.days
         .map((entry) => `${day(entry.start)} ${costText(entry.cost)}`)
         .join(", ")}`}
@@ -60,27 +57,30 @@ function Sparkline({ ref, week }: { ref: Ref<SVGSVGElement>; week: WeekCost }) {
   );
 }
 
-/** The agent's estimated cost over the last week, read when the tab opens: a
- * sparkline, the total and, while the Usage plugin is on, a way to it. The
- * figures come from the agent type's own read, so they show either way. It
- * says so when the agent's type reports no usage or the agent isn't on this
- * device, and when a read fails, with Retry; it never stands in the way of
- * the tab. */
-export function CostRow({
-  agents,
-  agent,
-  open,
-  settingsCards,
-}: {
+type Props = {
   agents: Pick<Agents, "types">;
   agent: Agent;
   open: Navigation["open"];
   settingsCards: Pick<SettingsCards, "subscribe" | "has">;
-}) {
-  const readable = readsUsage(agents, agent);
-  const usagePage = useSyncExternalStore(settingsCards.subscribe, () =>
+};
+
+/** The agent's estimated cost over the last week, only while the Usage plugin
+ * is on: with Usage off there is no row and nothing is read, and turning it
+ * off stops a read under way. */
+export function CostRow(props: Props) {
+  const { settingsCards } = props;
+  const usage = useSyncExternalStore(settingsCards.subscribe, () =>
     settingsCards.has(USAGE),
   );
+  return usage ? <WeekCostRow {...props} /> : null;
+}
+
+/** The week's cost, read when the tab opens: a sparkline, the total and a way
+ * to Usage. It says so when the agent's type reports no usage or the agent
+ * isn't on this device, and when a read fails, with Retry; it never stands in
+ * the way of the tab. */
+function WeekCostRow({ agents, agent, open }: Props) {
+  const readable = readsUsage(agents, agent);
   // A read is kept for the agent it was for; Retry keeps the failed one, and
   // its focused Retry, on screen until the next read settles.
   const key = `${agent.pubkey}:${agent.type}`;
@@ -112,13 +112,12 @@ export function CostRow({
     };
   }, []);
   const openUsage = useRef<HTMLButtonElement>(null);
-  const cost = useRef<SVGSVGElement>(null);
   useLayoutEffect(() => {
     if (!retryFocus.current) return;
     retryFocus.current = false;
     // A recovered Retry hands its focus to the week it read.
     if (week === "error" || document.activeElement !== document.body) return;
-    (openUsage.current ?? cost.current)?.focus({ preventScroll: true });
+    openUsage.current?.focus({ preventScroll: true });
   }, [week]);
   const title = `Cost, last ${COST_DAYS} days`;
   if (!readable)
@@ -158,18 +157,16 @@ export function CostRow({
       subtitle="An estimate from its sessions on this device, not a bill."
       trailing={(label) => (
         <div className="flex flex-wrap items-center justify-end gap-3">
-          <Sparkline ref={cost} week={week} />
+          <Sparkline week={week} />
           <span className="tabular-nums">{costText(week.total)}</span>
-          {usagePage && (
-            <Button
-              ref={openUsage}
-              variant="outline"
-              aria-describedby={label["aria-labelledby"]}
-              onClick={() => void open(settingsTarget({ section: USAGE }))}
-            >
-              Open Usage
-            </Button>
-          )}
+          <Button
+            ref={openUsage}
+            variant="outline"
+            aria-describedby={label["aria-labelledby"]}
+            onClick={() => void open(settingsTarget({ section: USAGE }))}
+          >
+            Open Usage
+          </Button>
         </div>
       )}
     />

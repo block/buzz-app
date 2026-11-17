@@ -83,11 +83,12 @@ no Bestie to your account: the agent stays, its check-ins stop, and its memory
 section and private channels stay, which its Former Bestie tab can turn off.
 Both need an account to save none to.
 
-**Cost, last 7 days** shows what the agent's sessions on this device cost over
-the last seven days: a bar for each day, today last, the total, and, while the
-Usage plugin is on, **Open Usage**, which opens Settings → Usage (not filtered
-to this agent; Usage keeps its own filters). With Usage off, its settings card
-is not registered, so the row shows the figures without the button. It reads the sessions when the tab opens, through the same
+**Cost, last 7 days** is there only while the Usage plugin is on. It shows
+what the agent's sessions on this device cost over the last seven days: a bar
+for each day, today last, the total, and **Open Usage**, which opens Settings →
+Usage (not filtered to this agent; Usage keeps its own filters). With Usage off,
+its settings card is not registered, so neither tab shows the row and nothing is
+read; turning Usage off stops a read under way. It reads the sessions when the tab opens, through the same
 agent-type `usage` read and the same estimate as the Usage plugin (`stats()`
 and its price data are imported from it), and keeps nothing: no stored state, no
 sync. A cost is an estimate from the harness's own record or its token counts at

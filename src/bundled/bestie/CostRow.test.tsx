@@ -204,30 +204,47 @@ it("shows the total and a daily sparkline, and opens Usage", async () => {
   });
 });
 
-it("shows the cost but offers no Open Usage while Usage is off, until it is on", async () => {
-  const user = userEvent.setup();
-  const open = vi.fn();
+it("shows nothing and reads nothing while Usage is off, until it is on", async () => {
+  const usage = vi.fn(async () => [session("one", [request(0, 0.25)])]);
   const settingsCards = cards(false);
-  render(
+  const { container } = render(
     <CostRow
-      agents={agentsWith(async () => [session("one", [request(0, 0.25)])])}
+      agents={agentsWith(usage)}
       agent={agent}
-      open={open}
+      open={vi.fn()}
       settingsCards={settingsCards}
     />,
   );
-  expect(await screen.findByText("$0.25")).toBeVisible();
-  expect(screen.getByRole("img", { name: /Daily cost/ })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Open Usage" })).toBeNull();
+  expect(container).toBeEmptyDOMElement();
+  expect(usage).not.toHaveBeenCalled();
   act(() => settingsCards.turn(true));
-  await user.click(screen.getByRole("button", { name: "Open Usage" }));
-  expect(open).toHaveBeenCalledWith({
-    version: 1,
-    kind: "settings",
-    section: "buzz.usage/usage",
-  });
+  expect(await screen.findByText("$0.25")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Open Usage" })).toBeVisible();
+  expect(usage).toHaveBeenCalledTimes(1);
   act(() => settingsCards.turn(false));
-  expect(screen.queryByRole("button", { name: "Open Usage" })).toBeNull();
+  expect(container).toBeEmptyDOMElement();
+});
+
+it("stops its read when Usage turns off", async () => {
+  let signal: AbortSignal | undefined;
+  const usage = vi.fn(
+    (_: Agent, options: { signal: AbortSignal }) =>
+      new Promise<SessionUsage[]>(() => {
+        signal = options.signal;
+      }),
+  );
+  const settingsCards = cards(true);
+  render(
+    <CostRow
+      agents={agentsWith(usage)}
+      agent={agent}
+      open={vi.fn()}
+      settingsCards={settingsCards}
+    />,
+  );
+  await vi.waitFor(() => expect(signal).toBeDefined());
+  act(() => settingsCards.turn(false));
+  expect(signal?.aborted).toBe(true);
 });
 
 it("says so when the agent type reports no usage", () => {
@@ -284,11 +301,6 @@ it("shows a quiet error when the read rejects, and reads again on Retry", async 
 
 it.each([
   ["Open Usage", usageOn, { role: "button", name: "Open Usage" }],
-  [
-    "the week while Usage is off",
-    cards(false),
-    { role: "img", name: /Daily cost/ },
-  ],
 ] as const)(
   "keeps a focused Retry while it reads, then hands focus to %s",
   async (_, settingsCards, target) => {

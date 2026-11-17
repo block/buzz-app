@@ -183,6 +183,44 @@ it("shows the Bestie's cost for the week, without a failed read stopping the tab
   stop?.();
 });
 
+it("shows no cost on a Bestie or a Former Bestie, and reads none, while Usage is off", async () => {
+  const usage = vi.fn(async () => []);
+  const agents = {
+    ...host().agents,
+    types: () => [{ key: "test/echo", adopt: () => ({}), usage }],
+  } as unknown as Parameters<typeof bestieTab>[1];
+  const usageOff = { has: () => false, subscribe: () => () => {} };
+  const bestie = community(ada.pubkey);
+  const tab = bestieTab(bestie.relay, agents, navigation, usageOff);
+  const stop = tab.subscribe?.(() => {});
+  await vi.waitFor(() => expect(tab.when?.(ada)).toBe(true));
+  const Tab = tab.component;
+  const { unmount } = render(<Tab agent={ada} />);
+  expect(screen.getByText("This is your Bestie")).toBeVisible();
+  expect(screen.queryByText("Cost, last 7 days")).toBeNull();
+  unmount();
+  stop?.();
+
+  const remembering = {
+    ...ada,
+    config: { instructions: withFeature("Be brief.", memory, true) },
+  } as Agent;
+  const former = formerBestieTab(
+    community(bea.pubkey).relay,
+    agents,
+    navigation,
+    usageOff,
+  );
+  const stopFormer = former.subscribe?.(() => {});
+  await vi.waitFor(() => expect(former.when?.(remembering)).toBe(true));
+  const Former = former.component;
+  render(<Former agent={remembering} />);
+  expect(screen.getByText("Private channels Ada can read")).toBeVisible();
+  expect(screen.queryByText("Cost, last 7 days")).toBeNull();
+  expect(usage).not.toHaveBeenCalled();
+  stopFormer?.();
+});
+
 const deviceChoice = () => readView(SCOPE, "solo:default-agent", null);
 
 /** Opens Change and confirms Bea in place of Ada. */

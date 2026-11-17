@@ -9064,3 +9064,43 @@ it.each(["mention", "attention"] as const)(
       expect(sections.some((part) => part.tag === "buzz-event")).toBe(true);
   },
 );
+
+it("abandons an empty remote binding when a wake is invalidated during history", async () => {
+  const guest = fixture();
+  const f = fixture([], undefined, false, {}, undefined, undefined, async () =>
+    guestTarget(guest),
+  );
+  const gate = deferred<void>();
+  const reading = deferred<void>();
+  f.read.mockImplementationOnce(async () => {
+    reading.resolve();
+    await gate.promise;
+    return [];
+  });
+  let current = true;
+  try {
+    await f.runtime.run({ ...pluginWake(f, root), current: () => current });
+    await reading.promise;
+    current = false;
+    gate.resolve();
+    const d = f.delivery("retry");
+    const agent = { ...d.agent, config: d.config } as unknown as Agent;
+    await vi.waitFor(() =>
+      expect(
+        f.runtime.sessionState(agent, { channelId: "channel", root }),
+      ).toBe("idle"),
+    );
+    expect(guest.starts()).toHaveLength(0);
+    guest.failures.set(
+      "thread/resume",
+      "no rollout found for thread id thread-1",
+    );
+    await f.runtime.run(d);
+    await vi.waitFor(() => expect(guest.starts()).toHaveLength(1));
+    expect(guest.starts()[0]?.params).toMatchObject({ threadId: "thread-2" });
+    await guest.complete();
+  } finally {
+    gate.resolve();
+    f.runtime.dispose();
+  }
+});

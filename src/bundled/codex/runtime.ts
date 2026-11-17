@@ -3325,14 +3325,6 @@ export class CodexRuntime {
           memory,
           this.repositories(request.scope),
         );
-        if (this.target && !resuming)
-          await this.save(request, entry, key, {
-            pending: true,
-            threadId,
-            workspace,
-            at: Date.now(),
-            ...(tools ? { tools } : {}),
-          });
         signal.throwIfAborted();
         if (request.current && !request.current()) {
           restoreNotes(request);
@@ -3342,6 +3334,14 @@ export class CodexRuntime {
           ready();
           return;
         }
+        if (this.target && !resuming)
+          await this.save(request, entry, key, {
+            pending: true,
+            threadId,
+            workspace,
+            at: Date.now(),
+            ...(tools ? { tools } : {}),
+          });
         if (settings.scope === "community")
           request.project =
             [

@@ -5380,3 +5380,46 @@ it("words a thread's draft by its replies even while an activity line hides thei
   ).toHaveTextContent(/^Draft reply$/);
   fresh.unmount();
 });
+
+it.each(["public", "agents"] as const)(
+  "marks the active thread's %s root as current and clears it on deselection",
+  (audience) => {
+    const props = {
+      row:
+        audience === "agents" ? { ...row, audience: "agents" as const } : row,
+      profile: { name: "Author" },
+      media: () => undefined,
+      onOpenLink: () => false,
+      day: false,
+      retry: undefined,
+    };
+    try {
+      const view = renderDom(<MessageRow {...props} threadOpen />);
+      const root = view.container.querySelector('[data-message-id="root"]');
+      expect(root).toHaveAttribute("aria-current", "true");
+      expect(
+        view.container.querySelectorAll('[aria-current="true"]'),
+      ).toHaveLength(1);
+      const surface = root?.matches("[data-highlight-surface]")
+        ? root
+        : root?.querySelector("[data-highlight-surface]");
+      expect(surface).toHaveAttribute("data-thread-open");
+      if (audience === "agents") {
+        const toggle = screen.getByRole("button", { name: "Author: Root" });
+        expect(toggle).toHaveAttribute("aria-expanded", "false");
+        fireEvent.click(toggle);
+        expect(toggle).toHaveAttribute("aria-expanded", "true");
+        expect(root).toHaveAttribute("aria-current", "true");
+        expect(surface).toHaveAttribute("data-thread-open");
+        expect(
+          view.container.querySelectorAll('[aria-current="true"]'),
+        ).toHaveLength(1);
+      }
+      view.rerender(<MessageRow {...props} threadOpen={false} />);
+      expect(root).not.toHaveAttribute("aria-current");
+      expect(surface).not.toHaveAttribute("data-thread-open");
+    } finally {
+      cleanup();
+    }
+  },
+);

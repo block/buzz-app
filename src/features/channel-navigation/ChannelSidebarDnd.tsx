@@ -24,6 +24,7 @@ import {
 import { createPortal } from "react-dom";
 import { frame, motion, useReducedMotion } from "motion/react";
 import { SidebarSection } from "../../bundled/channels/SidebarSection";
+import type { SidebarRowKind } from "../../bundled/channels/sidebar-sections";
 import { PlusIcon } from "../../shared/design-system/icons";
 import styles from "../../bundled/channels/Channels.module.css";
 
@@ -37,7 +38,10 @@ const sidebarCollisions: CollisionDetection = (args) => {
     return pointerWithin({
       ...args,
       droppableContainers: args.droppableContainers.filter(
-        ({ data }) => (data.current?.groupDomain ?? "channels") === domain,
+        ({ data }) =>
+          (data.current?.groupDomain ?? "channels") === domain &&
+          (!data.current?.accepts ||
+            data.current.accepts.includes(args.active.data.current?.rowKind)),
       ),
     });
   const groups = args.droppableContainers
@@ -210,15 +214,17 @@ function CreateSectionDropTarget() {
 export function DraggableChannel({
   channelId,
   sectionKey,
+  rowKind = "channel",
   children,
 }: {
   channelId: string;
   sectionKey: string;
+  rowKind?: SidebarRowKind;
   children: ReactNode;
 }) {
   const { setNodeRef, listeners, isDragging } = useDraggable({
     id: channelId,
-    data: { sectionKey, groupDomain: "channels" },
+    data: { sectionKey, groupDomain: "channels", rowKind },
     disabled: !useContext(Writable),
   });
   return (
@@ -230,6 +236,12 @@ export function DraggableChannel({
       {children}
     </div>
   );
+}
+
+export function DraggableConversation(
+  props: Omit<ComponentProps<typeof DraggableChannel>, "rowKind">,
+) {
+  return <DraggableChannel {...props} rowKind="dm" />;
 }
 
 /** Shared header drag and post-drag click suppression for Team and Solo. */
@@ -302,6 +314,7 @@ export function DroppableSidebarSection({
   reorderable,
   groupIndex,
   groupDomain = "channels",
+  accepts,
   createSectionTarget,
   ...section
 }: ComponentProps<typeof SidebarSection> & {
@@ -309,11 +322,13 @@ export function DroppableSidebarSection({
   reorderable: boolean;
   groupIndex: number;
   groupDomain?: string;
+  /** Row kinds a drop may place here; every row when omitted. */
+  accepts?: readonly SidebarRowKind[];
   createSectionTarget?: boolean;
 }) {
   const { setNodeRef, isOver, active } = useDroppable({
     id: section.sectionKey,
-    data: { group: reorderable, groupIndex, groupDomain },
+    data: { group: reorderable, groupIndex, groupDomain, accepts },
     disabled,
     // dnd-kit queues a re-measure of only the droppable that resized and clears
     // that queue after each render, losing ids queued in between: a section

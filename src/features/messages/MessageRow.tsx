@@ -156,6 +156,7 @@ export type MessageRowProps = {
   onReply?: ((messageId: string) => void) | undefined;
   /** False: existing threads open, but the row offers none to start or reply in. */
   startsThreads?: boolean;
+  threadOpen?: boolean | undefined;
   quickControls?: ReactNode;
   overflowItems?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
@@ -250,6 +251,7 @@ function MessageRowContent({
   onOpenThread,
   onReply,
   startsThreads = true,
+  threadOpen,
   quickControls,
   overflowItems,
   participantProfiles,
@@ -1174,6 +1176,7 @@ function MessageRowContent({
   const message = (
     <div
       data-message-id={renderMessage ? undefined : row.id}
+      aria-current={!renderMessage && threadOpen ? true : undefined}
       data-huddle-row={row.huddle ? "" : undefined}
     >
       {day && <DayDivider createdAt={row.createdAt} />}
@@ -1181,6 +1184,7 @@ function MessageRowContent({
         ref={rowRef}
         className={styles.message}
         data-highlight-surface=""
+        data-thread-open={threadOpen || undefined}
         data-layout={layout}
         data-stack-previous={stackPrevious || undefined}
         data-stack-next={stackNext || undefined}
@@ -1969,6 +1973,8 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
               onOpenChange={setOpen}
               className={styles.audienceEntry}
               data-highlight-surface=""
+              data-thread-open={props.threadOpen || undefined}
+              aria-current={props.threadOpen ? true : undefined}
               // One stable anchor survives both animation directions. Not the
               // button: revealing an anchor takes it out of the Tab order.
               data-message-id={row.id}

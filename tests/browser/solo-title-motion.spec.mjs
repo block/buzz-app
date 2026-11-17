@@ -55,12 +55,16 @@ test("Solo rename animates both titles without interrupting typing or overflowin
       return animation;
     };
   });
-  app.setChannelMetadata(chat, [
-    ["name", title],
-    ["t", "stream"],
-    ["t", "buzz.solo"],
-    ["t", "buzz.session.named"],
-  ]);
+  const rename = (name) =>
+    app.setChannelMetadata(chat, [
+      ["name", name],
+      ["t", "stream"],
+      ["t", "buzz.solo"],
+      ["t", "buzz.session.named"],
+    ]);
+  const titlesFor = (name) =>
+    row.locator(titleSelector).or(header(name).locator(titleSelector));
+  rename(title);
   const renamedHeader = header(title);
   await expect(row).toHaveAccessibleName(title);
   expect(
@@ -68,9 +72,7 @@ test("Solo rename animates both titles without interrupting typing or overflowin
   ).toBe(true);
   await expect(composer).toBeFocused();
 
-  const titles = row
-    .locator(titleSelector)
-    .or(renamedHeader.locator(titleSelector));
+  const titles = titlesFor(title);
   await expect(titles.filter({ hasText: "Alpha" })).toHaveCount(2);
   await expect(titles.locator("> span")).toHaveCount(0);
   await expect
@@ -101,13 +103,13 @@ test("Solo rename animates both titles without interrupting typing or overflowin
         }),
       ),
     );
-  const finishPhase = () =>
-    titles.evaluateAll((nodes) => {
+  const finishPhase = (values) =>
+    values.evaluateAll((nodes) => {
       for (const node of nodes.flatMap((node) => [node, ...node.children]))
         for (const animation of window.titleAnimations.get(node) ?? [])
           animation.finish();
     });
-  await finishPhase();
+  await finishPhase(titles);
 
   const characters = titles.locator("> span");
   await expect(characters).toHaveCount(title.length * 2);
@@ -137,7 +139,7 @@ test("Solo rename animates both titles without interrupting typing or overflowin
       ),
     )
     .toEqual([true, true]);
-  await finishPhase();
+  await finishPhase(titles);
   await expect(characters).toHaveCount(0);
   await expect(row.locator(titleSelector)).toHaveText(title);
   await expect(renamedHeader.locator(titleSelector)).toHaveText(title);
@@ -168,6 +170,66 @@ test("Solo rename animates both titles without interrupting typing or overflowin
       ).toBe(true);
     }
   }
+  // Compare glyph positions without clipping the mixed-direction sample.
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await page.evaluate(() =>
+    document.documentElement.style.removeProperty("--buzz-text-scale"),
+  );
+  let previous = title;
+  for (const name of ["שלום", "Release שלום 2026"]) {
+    rename(name);
+    const values = titlesFor(name);
+    await expect(values).toHaveText([previous, previous]);
+    await expect
+      .poll(() =>
+        values.evaluateAll((nodes) =>
+          nodes.map((node) =>
+            (window.titleAnimations.get(node) ?? []).some(
+              (track) =>
+                track.playState === "paused" &&
+                track.effect.getKeyframes().at(-1)?.opacity === "0",
+            ),
+          ),
+        ),
+      )
+      .toEqual([true, true]);
+    await finishPhase(values);
+    await expect(values).toHaveText([name, name]);
+    await expect(values.locator("> span")).toHaveCount(0);
+    await expect
+      .poll(() =>
+        values.evaluateAll((nodes) =>
+          nodes.map((node) =>
+            (window.titleAnimations.get(node) ?? []).some(
+              (track) =>
+                track.playState === "paused" &&
+                track.effect.getKeyframes()[0]?.opacity === "0" &&
+                track.effect.getKeyframes().at(-1)?.opacity === "1",
+            ),
+          ),
+        ),
+      )
+      .toEqual([true, true]);
+    const hebrewRunIsRTL = () =>
+      values.evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const text = node.firstChild;
+          const range = document.createRange();
+          const left = (character) => {
+            const offset = text.textContent.indexOf(character);
+            range.setStart(text, offset);
+            range.setEnd(text, offset + 1);
+            return range.getBoundingClientRect().left;
+          };
+          return left("ו") < left("ל");
+        }),
+      );
+    expect(await hebrewRunIsRTL()).toEqual([true, true]);
+    await finishPhase(values);
+    expect(await hebrewRunIsRTL()).toEqual([true, true]);
+    previous = name;
+  }
+
   await sidebar.locator(`[data-solo-channel-id="${other}"]`).click();
   const nextTitle = header("Beta").locator(titleSelector);
   await expect(nextTitle).toHaveText("Beta");

@@ -10,13 +10,18 @@ import styles from "./SoloChatTitle.module.css";
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const ease = [0.25, 0.1, 0.25, 1] as const;
+// RTL script blocks (including supplementary planes) and direction controls.
+// These titles need a single text run so the browser can shape and order them.
+const bidiText =
+  /[\u0590-\u08ff\u200f\u202a-\u202e\u2066-\u2069\ufb1d-\ufdff\ufe70-\ufeff\u{10800}-\u{10fff}\u{1e800}-\u{1efff}]/u;
+const revealTransition = { duration: 0.18, ease };
 const character = {
   hidden: { opacity: 0, filter: "blur(3px)", transform: "translateX(-3px)" },
   visible: {
     opacity: 1,
     filter: "blur(0px)",
     transform: "translateX(0px)",
-    transition: { duration: 0.18, ease },
+    transition: revealTransition,
   },
 };
 
@@ -46,7 +51,9 @@ export function SoloChatTitle({ title }: { title: string }) {
 function TitleValue({ title, reveal }: { title: string; reveal: boolean }) {
   const present = useIsPresent();
   const [revealing, setRevealing] = useState(reveal);
-  const characters = revealing ? [...graphemes.segment(title)] : [];
+  const wholeTitle = bidiText.test(title);
+  const characters =
+    revealing && !wholeTitle ? [...graphemes.segment(title)] : [];
   return (
     <motion.span
       className={styles.value}
@@ -56,16 +63,19 @@ function TitleValue({ title, reveal }: { title: string; reveal: boolean }) {
       animate="visible"
       exit="exit"
       variants={{
+        ...(wholeTitle ? { hidden: { opacity: 0, filter: "blur(3px)" } } : {}),
         visible: {
           opacity: 1,
           filter: "blur(0px)",
           transform: "translateX(0px)",
-          transition: {
-            // Bound the full reveal even for long titles.
-            delayChildren: stagger(
-              Math.min(0.025, 0.28 / Math.max(1, characters.length - 1)),
-            ),
-          },
+          transition: wholeTitle
+            ? revealTransition
+            : {
+                // Bound the full reveal even for long titles.
+                delayChildren: stagger(
+                  Math.min(0.025, 0.28 / Math.max(1, characters.length - 1)),
+                ),
+              },
         },
         exit: {
           opacity: 0,
@@ -78,7 +88,7 @@ function TitleValue({ title, reveal }: { title: string; reveal: boolean }) {
         if (phase === "visible" && present) setRevealing(false);
       }}
     >
-      {revealing
+      {characters.length
         ? characters.map(({ segment, index }) => (
             <motion.span
               key={index}

@@ -79,11 +79,9 @@ test("Inbox rows open their conversation in one side tab beside the list", async
   // A tab does not visit the channel; the Inbox page stays in view.
   await expect(page.getByRole("region", { name: "Channels" })).toHaveCount(0);
 
-  // Arrival focuses its target on a frame after mounting. Finish that handoff
-  // before native editing, so it cannot steal the fill's insertion focus.
-  await expect(
-    thread.locator("[data-message-id]").filter({ hasText: "Unread reply 1" }),
-  ).toBeFocused();
+  // An ordinary Inbox thread focuses its reply composer once loaded.
+  // Finish that handoff before editing so arrival cannot steal insertion focus.
+  await expect(reply).toBeFocused();
   await reply.fill("Thread root 1 draft");
   await expect(reply).toHaveText("Thread root 1 draft");
   // Thread root 0's row shows whichever of its replies loaded as newest.

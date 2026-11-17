@@ -8207,14 +8207,30 @@ it.each([true, false])(
   },
 );
 
-it("puts the viewer's Bestie DM right under its new chat, ahead of its chats", async () => {
+/**
+ * Command-K for a viewer whose Bestie is Scout (DM "bestie-dm", chat "Plan the
+ * week") and who also owns Scotia (DM "other-dm", chat "Fix the build").
+ * `humans` adds that many DMs with people whose names match "sco" too, and
+ * `hideBestieDm` hides Bestie's DM from the sidebar by the relay's list.
+ */
+function renderBestieSearch({
+  query,
+  bestieProfile = "Scout",
+  humans = 0,
+  hideBestieDm = false,
+}: {
+  query: string;
+  bestieProfile?: string;
+  humans?: number;
+  hideBestieDm?: boolean;
+}) {
   const relay = keypair(),
     viewer = keypair(),
     bestie = keypair(),
     other = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
-  const dm = (id: string, member: string) => [
-    metadata(relay, id, "opaque", 1700000000, [
+  const dm = (id: string, member: string, at = 1700000000) => [
+    metadata(relay, id, "opaque", at, [
       ["hidden", ""],
       ["t", "dm"],
       ["private", ""],
@@ -8229,13 +8245,21 @@ it("puts the viewer's Bestie DM right under its new chat, ahead of its chats", a
     ]),
     roster(relay, id, [viewer.pubkey, member]),
   ];
+  const people = Array.from({ length: humans }, (_, index) => ({
+    key: keypair(),
+    name: `Scoby ${String.fromCharCode(97 + index)}`,
+  }));
   const discovery = [
     ...dm("bestie-dm", bestie.pubkey),
     ...dm("other-dm", other.pubkey),
     ...chat("bestie-chat", "Plan the week", 1700000002, bestie.pubkey),
     ...chat("other-chat", "Fix the build", 1700000003, other.pubkey),
-    profile(bestie, { name: "Scout", is_agent: true }),
+    profile(bestie, { name: bestieProfile, is_agent: true }),
     profile(other, { name: "Scotia", is_agent: true }),
+    ...people.flatMap(({ key, name }, index) => [
+      ...dm(`human-dm-${index}`, key.pubkey, 1700000010 + index),
+      profile(key, { name }),
+    ]),
   ];
   const owner = createRelaySession({
     ...wire.transport,
@@ -8252,6 +8276,12 @@ it("puts the viewer's Bestie DM right under its new chat, ahead of its chats", a
     { pubkey: other.pubkey, name: "Scotia", managed: true },
   ];
   const choices = { ...source.snapshot(), identities: mine, selectable: mine };
+  const lifecycle = owner.session.channelLifecycle;
+  const visibility = {
+    ...lifecycle.snapshot(),
+    status: "ready" as const,
+    hidden: Object.freeze(["bestie-dm"]),
+  };
   const session = {
     ...owner.session,
     agentChoices: {
@@ -8261,23 +8291,47 @@ it("puts the viewer's Bestie DM right under its new chat, ahead of its chats", a
       retain: () => () => {},
       ensure: () => {},
     },
+    ...(hideBestieDm
+      ? {
+          channelLifecycle: {
+            ...lifecycle,
+            snapshot: () => visibility,
+            subscribe: () => () => {},
+          },
+        }
+      : {}),
   } as typeof owner.session;
   const openAgentSession = vi.fn();
   const openConversation = vi.fn();
+  render(
+    <BestieConversationContext value={{ session, channelId: "bestie-dm" }}>
+      <SearchResults
+        session={session}
+        query={query}
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openNewMessage={() => {}}
+        openConversation={openConversation}
+        openAgentSession={openAgentSession}
+      />
+    </BestieConversationContext>,
+  );
+  return {
+    openAgentSession,
+    openConversation,
+    dispose: () => {
+      cleanup();
+      owner.dispose();
+    },
+  };
+}
+
+it("puts the viewer's Bestie DM right under its new chat, ahead of its chats", async () => {
+  const { openAgentSession, openConversation, dispose } = renderBestieSearch({
+    query: "sco",
+  });
   try {
-    render(
-      <BestieConversationContext value={{ session, channelId: "bestie-dm" }}>
-        <SearchResults
-          session={session}
-          query="sco"
-          onQueryChange={() => {}}
-          input={createRef()}
-          pages={[]}
-          openConversation={openConversation}
-          openAgentSession={openAgentSession}
-        />
-      </BestieConversationContext>,
-    );
     const agents = within(await screen.findByRole("group", { name: "Agents" }));
     await waitFor(() =>
       expect(
@@ -8304,8 +8358,114 @@ it("puts the viewer's Bestie DM right under its new chat, ahead of its chats", a
     expect(openConversation).toHaveBeenCalledExactlyOnceWith("bestie-dm");
     expect(openAgentSession).not.toHaveBeenCalled();
   } finally {
-    cleanup();
-    owner.dispose();
+    dispose();
+  }
+});
+
+it.each([
+  {
+    // "@" finds people, not channel labels, so the DM itself does not match.
+    name: "the @ query @scou",
+    query: "@scou",
+    bestieProfile: "Scout",
+    humans: 0,
+    label: "Scout",
+  },
+  {
+    // Here Scotia's New chat row shows as well.
+    name: "the @ query @sco",
+    query: "@sco",
+    bestieProfile: "Scout",
+    humans: 0,
+    label: "Scout",
+  },
+  {
+    // Bestie's profile name differs from its agent name; "sco" finds the
+    // agent by that name only, and the DM's label does not match.
+    name: "a query that finds Bestie by its agent name only",
+    query: "sco",
+    bestieProfile: "Trail Guide",
+    humans: 0,
+    label: "Trail Guide",
+  },
+  {
+    // Eight matching DMs with people rank ahead of the agents' DMs, so with
+    // Scotia's DM the Bestie DM falls past the eight Direct messages rows.
+    name: "more matching DMs than Direct messages shows",
+    query: "sco",
+    bestieProfile: "Scout",
+    humans: 8,
+    label: "Scout",
+  },
+])(
+  "puts the viewer's Bestie DM under its new chat for $name",
+  async ({ query, bestieProfile, humans, label }) => {
+    const { openAgentSession, openConversation, dispose } = renderBestieSearch({
+      query,
+      bestieProfile,
+      humans,
+    });
+    try {
+      const agents = within(
+        await screen.findByRole("group", { name: "Agents" }),
+      );
+      const newChat = new RegExp(`${label}.*New chat`);
+      const direct = new RegExp(`${label}.*Direct message`);
+      await waitFor(() => {
+        const rows = agents
+          .getAllByRole("option")
+          .map((row) => row.textContent);
+        const at = rows.findIndex((row) => newChat.test(row ?? ""));
+        expect(at).toBeGreaterThanOrEqual(0);
+        expect(rows[at + 1]).toMatch(direct);
+      });
+      const rows = agents.getAllByRole("option");
+      const at = rows.findIndex((row) => newChat.test(row.textContent ?? ""));
+      const [bestieNewChat, bestieDm] = rows.slice(at, at + 2);
+      assert(bestieNewChat && bestieDm);
+      const options = screen.getAllByRole("option");
+      expect(options.indexOf(bestieDm)).toBe(
+        options.indexOf(bestieNewChat) + 1,
+      );
+      // The Bestie DM shows once.
+      expect(
+        screen
+          .getAllByRole("option")
+          .filter((row) => direct.test(row.textContent ?? "")),
+      ).toEqual([bestieDm]);
+      fireEvent.click(bestieDm);
+      expect(openConversation).toHaveBeenCalledExactlyOnceWith("bestie-dm");
+      expect(openAgentSession).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  },
+);
+
+it("promotes no Bestie DM that the sidebar hides", async () => {
+  const { dispose } = renderBestieSearch({ query: "sco", hideBestieDm: true });
+  try {
+    const agents = within(await screen.findByRole("group", { name: "Agents" }));
+    const direct = within(
+      await screen.findByRole("group", { name: "Direct messages" }),
+    );
+    await waitFor(() =>
+      expect(direct.getByRole("option", { name: /Scotia/ })).toBeVisible(),
+    );
+    expect(agents.getAllByRole("option").map((row) => row.textContent)).toEqual(
+      [
+        expect.stringMatching(/Scout.*New chat/),
+        expect.stringMatching(/Scotia.*New chat/),
+      ],
+    );
+    expect(direct.queryByRole("option", { name: /Scout/ })).toBeNull();
+    expect(
+      screen
+        .getAllByRole("option")
+        .filter((row) => /Scout.*Direct message/.test(row.textContent ?? "")),
+    ).toEqual([]);
+  } finally {
+    dispose();
   }
 });
 

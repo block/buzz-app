@@ -1542,9 +1542,17 @@ export function SearchResults({
     .map(personDestination);
   // The viewer's Bestie is reached through its DM, so that DM follows its
   // "New chat" row directly rather than its chats; other agents keep #1471's
-  // order.
-  const bestieDm = directMessageResults.find(
-    (channel) => channel.id === bestieDmId && dmAgent(channel),
+  // order. The row finds Bestie by any of its names (with or without "@"), so
+  // its DM comes from the eligible channels, after the hidden-DM rule but
+  // before the label match and the Direct messages cap, and shows only beside
+  // Bestie's shown "New chat" row.
+  const bestieDm = channels.find(
+    (channel) =>
+      channel.id === bestieDmId &&
+      channel.channelType === "dm" &&
+      !channel.archived &&
+      !sidebarHidden(channel) &&
+      dmAgent(channel),
   );
   const bestieKey = personKey(bestieDm?.participants?.[0] ?? "");
   const agentRows = rankedPeople
@@ -1552,14 +1560,16 @@ export function SearchResults({
     .slice(0, PERSON_ROWS)
     .map(personDestination);
   const bestieShown =
-    !!bestieDm && agentRows.some(({ key }) => key === bestieKey);
+    !!openAgentSession &&
+    !!bestieDm &&
+    agentRows.some(({ key }) => key === bestieKey);
   const agentResults = agentRows.flatMap((row) =>
     bestieShown && bestieDm && row.key === bestieKey
       ? [row, { ...conversationDestination(bestieDm), score: row.score }]
       : [row],
   );
   const dmResults = directMessageResults.filter(
-    (channel) => !bestieShown || channel !== bestieDm,
+    (channel) => !bestieShown || channel.id !== bestieDm?.id,
   );
   const suggestions = channels
     .filter(

@@ -17404,17 +17404,21 @@ it.each([
       },
     });
     await waitFor(() => expect(h.send()).toBeEnabled());
-    const disclosure = screen.queryByText(
+    const composer = within(screen.getByRole("form"));
+    const disclosure = composer.queryByText(
       /will be able to read this message, even if they can’t see where it came from/,
     );
     expect(Boolean(disclosure)).toBe(expected);
     if (expected) {
       expect(disclosure).toHaveTextContent("Everyone in #Random");
-      expect(disclosure?.closest('[role="status"]')).toHaveAttribute(
+      expect(
+        h.input().closest("form")?.previousElementSibling,
+      ).toHaveTextContent(/Everyone in #Random will be able to read/);
+      expect(h.input().closest("form")?.previousElementSibling).toHaveAttribute(
         "aria-live",
         "polite",
       );
-      expect(disclosure?.closest('[role="status"]')).toHaveAttribute(
+      expect(h.input().closest("form")?.previousElementSibling).toHaveAttribute(
         "aria-atomic",
         "true",
       );
@@ -17436,7 +17440,9 @@ it.each([
       h.retargetChannel("channel");
       await waitFor(() => expect(h.send()).toBeEnabled());
       expect(
-        screen.queryByText(/will be able to read this message/),
+        within(screen.getByRole("form")).queryByText(
+          /will be able to read this message/,
+        ),
       ).not.toBeInTheDocument();
       h.retargetChannel("other");
       await waitFor(() =>
@@ -17444,12 +17450,14 @@ it.each([
           /Everyone in #Random will be able to read/,
         ),
       );
-      const region = disclosure?.closest('[role="status"]');
+      const region = h.input().closest("form")?.previousElementSibling;
       fireEvent.click(
         screen.getByRole("button", { name: "Remove forwarded message" }),
       );
       expect(
-        screen.queryByText(/will be able to read this message/),
+        within(screen.getByRole("form")).queryByText(
+          /will be able to read this message/,
+        ),
       ).not.toBeInTheDocument();
       expect(region).toBeInTheDocument();
       expect(region).toBeEmptyDOMElement();
@@ -17462,11 +17470,10 @@ it.each([
         },
       });
       await waitFor(() => expect(h.send()).toBeEnabled());
-      expect(
-        screen
-          .getByText(/will be able to read this message/)
-          .closest('[role="status"]'),
-      ).toBe(region);
+      expect(h.input().closest("form")?.previousElementSibling).toBe(region);
+      expect(region).toHaveTextContent(
+        /Everyone in #Random will be able to read/,
+      );
       expect(h.send()).toHaveAccessibleDescription(
         /Everyone in #Random will be able to read/,
       );

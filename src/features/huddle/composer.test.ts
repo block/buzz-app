@@ -10,6 +10,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { createElement } from "react";
 import { attachmentDraft } from "../messages/attachment-draft";
@@ -859,7 +860,11 @@ it.each(["private", "dm", "solo", "public"] as const)(
       ).toBeEnabled(),
     );
     expect(
-      Boolean(screen.queryByText(/will be able to read this message/)),
+      Boolean(
+        within(screen.getByRole("form")).queryByText(
+          /will be able to read this message/,
+        ),
+      ),
     ).toBe(privacy !== "public");
     view.unmount();
     content = "Current authorized source @Local Agent";

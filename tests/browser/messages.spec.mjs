@@ -1197,8 +1197,22 @@ for (const privateSource of [false, true]) {
           ).toHaveAccessibleDescription(/will be able to read this message/);
           await notice.evaluate((el) => {
             window.messagesFixture.disclosureRegion =
-              el.closest('[role="status"]');
+              el.closest("form").previousElementSibling;
           });
+          expect(
+            await notice.evaluate((el) =>
+              el
+                .closest("form")
+                .previousElementSibling.getAttribute("aria-live"),
+            ),
+          ).toBe("polite");
+          await expect
+            .poll(() =>
+              page.evaluate(
+                () => window.messagesFixture.disclosureRegion.textContent,
+              ),
+            )
+            .toContain("will be able to read this message");
           await form
             .getByRole("button", { name: "Remove forwarded message" })
             .click();
@@ -1222,10 +1236,17 @@ for (const privateSource of [false, true]) {
             );
           });
           await expect(notice).toBeVisible();
+          await expect
+            .poll(() =>
+              page.evaluate(
+                () => window.messagesFixture.disclosureRegion.textContent,
+              ),
+            )
+            .toContain("will be able to read this message");
           expect(
             await notice.evaluate(
               (el) =>
-                el.closest('[role="status"]') ===
+                el.closest("form").previousElementSibling ===
                 window.messagesFixture.disclosureRegion,
             ),
           ).toBe(true);

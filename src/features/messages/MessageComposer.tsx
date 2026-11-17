@@ -3491,6 +3491,16 @@ function Composer({
       )}
     </>
   );
+  const disclosure =
+    !editing.target && forwarded.disclosure ? (
+      <ForwardDisclosure
+        audience={
+          channelType === "dm" || channelType === "solo" || solo
+            ? "The recipients"
+            : `Everyone in #${channelName}`
+        }
+      />
+    ) : null;
   if (readingOnly)
     return (
       <>
@@ -3516,6 +3526,9 @@ function Composer({
           focusComposer={() => input.current?.focus()}
         />
       )}
+      <div aria-live="polite" aria-atomic="true" className="sr-only">
+        {disclosure}
+      </div>
       <form
         ref={form}
         className={styles.composer}
@@ -3949,25 +3962,11 @@ function Composer({
               />
             </div>
           )}
-        <div
-          id={forwardDisclosureId}
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-          className={
-            !editing.target && forwarded.disclosure ? "text-subtle" : "sr-only"
-          }
-        >
-          {!editing.target && forwarded.disclosure && (
-            <ForwardDisclosure
-              audience={
-                channelType === "dm" || channelType === "solo" || solo
-                  ? "The recipients"
-                  : `Everyone in #${channelName}`
-              }
-            />
-          )}
-        </div>
+        {disclosure && (
+          <div id={forwardDisclosureId} className="text-subtle">
+            {disclosure}
+          </div>
+        )}
         {voice.element}
         <div className={styles.composerActions} hidden={voice.capturing}>
           <div className={styles.composerToolRow}>

@@ -13,8 +13,87 @@ test.use({
   soloChannels: [chat],
   ownSoloChannels: [chat],
   soloAgentNames: ["Recovery agent"],
+  soloOutsideAgentNames: ["Shared helper"],
   savedCommunities: ["primary"],
   historyCounts: { [channel]: 0, [chat]: 0 },
+});
+
+// Restored opening intent exercises the production session, broker and signer;
+// the draft's owned subset and workspace selection are covered in SoloDraft.
+test("opening recovery grants a quiet owned default without promoting its shared recipient", async ({
+  page,
+  app,
+}, info) => {
+  const createdAt = Math.floor(Date.now() / 1000);
+  const [owned, shared] = app.soloAgents;
+  const creation = app.sign({
+    kind: 9007,
+    created_at: createdAt,
+    content: "",
+    tags: [
+      ["h", chat],
+      ["p", owned.pubkey],
+      ["p", shared.pubkey],
+    ],
+  });
+  const message = app.sign({
+    kind: 9,
+    created_at: createdAt,
+    content: "Only the shared helper is addressed",
+    tags: [
+      ["h", chat],
+      ["p", shared.pubkey],
+    ],
+  });
+  app.report.setupCreation = creation;
+  app.report.setupReceiverTime = createdAt;
+  await page.addInitScript(
+    ({ scope, creation, message, owned }) => {
+      localStorage.setItem(
+        `buzz-outbox-v1:${scope}`,
+        JSON.stringify([
+          {
+            event: creation,
+            signed: creation,
+            delivery: "accepted",
+            recovery: {
+              key: `solo-initial-admins:${creation.tags[0][1]}`,
+              value: JSON.stringify([owned]),
+            },
+          },
+          { event: message, signed: message, delivery: "failed" },
+        ]),
+      );
+    },
+    {
+      scope: `https://primary.example:${app.viewer}`,
+      creation,
+      message,
+      owned: owned.pubkey,
+    },
+  );
+  const outbox = await openOutbox(page, app.origin);
+  const row = outbox.getByRole("listitem").filter({ hasText: message.content });
+  await row.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect
+    .poll(
+      () =>
+        app.report.publications.filter(({ event }) => event.kind === 9).length,
+    )
+    .toBe(1);
+  const grants = app.report.publications.filter(
+    ({ event }) => event.kind === 9000,
+  );
+  expect(grants).toHaveLength(1);
+  expect(grants[0].event.tags).toContainEqual(["p", owned.pubkey]);
+  expect(grants[0].event.tags).not.toContainEqual(["p", shared.pubkey]);
+  expect(
+    app.report.publications.find(({ event }) => event.kind === 9).event,
+  ).toEqual(message);
+  await expect(outbox.getByRole("alert")).toHaveCount(0);
+  await outbox.screenshot({
+    path: info.outputPath("OWNED_DEFAULT_SHARED_RECIPIENT.png"),
+  });
 });
 
 async function openOutbox(page, origin) {

@@ -284,16 +284,27 @@ export const test = base.extend({
         const key = generateSecretKey();
         soloAgentKeys.push(key);
         const pubkey = getPublicKey(key);
-        // A NIP-OA owner attestation marks a real agent profile; the app reads
-        // only its shape. Outside agents belong to someone else.
-        const owner = soloAgentNames.includes(name)
-          ? viewer
-          : getPublicKey(generateSecretKey());
+        // Real ownership proofs: Admin admission verifies the delegation,
+        // independently of whether the identity appears in the library.
+        const ownerKey = soloAgentNames.includes(name)
+          ? userKey
+          : generateSecretKey();
+        const owner = getPublicKey(ownerKey);
+        const delegation = createHash("sha256")
+          .update(`nostr:agent-auth:${pubkey}:`)
+          .digest();
         servedProfiles.set(
           pubkey,
           sign(
             0,
-            [["auth", owner, "", "0".repeat(128)]],
+            [
+              [
+                "auth",
+                owner,
+                "",
+                bytesToHex(schnorr.sign(delegation, ownerKey)),
+              ],
+            ],
             JSON.stringify({ name, is_agent: true }),
             key,
           ),

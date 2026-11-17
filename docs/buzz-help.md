@@ -420,11 +420,12 @@ and are asked to sign in again in Buzz.
   the full, scrollable list of names. Messages and huddle entries split groups.
 
 - **Solo** organizes your chats with agents. Choose **New chat**, select or tag
-  an agent, and send a message. Every agent addressed in the opening message
-  becomes a chat admin before that message is delivered; you remain owner.
-  Agents you add later to a Solo chat you own also join as admins, whether from
-  the composer or Chat access. Agents included only through workspace defaults
-  keep ordinary participation, and existing members keep their saved roles.
+  an agent, and send a message. Your agents become chat admins before the opening
+  message is delivered, including agents added by workspace defaults; you remain
+  owner. Ownership is verified from their signed profiles. Your agents added
+  later to a Solo chat you own also join as admins, whether from the composer or
+  Chat access. Other people's agents get ordinary participation; later additions
+  use Bot. Existing members keep their saved roles.
   If admin setup is interrupted, Retry on the opening message
   continues it without restoring later demotions or removals. If setup expires,
   choose **Abandon admin setup** in Outbox to keep the chat and current roles.

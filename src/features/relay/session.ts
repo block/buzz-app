@@ -1818,6 +1818,8 @@ export function createRelaySession(
     {
       selectable: () =>
         agentChoices.snapshot().selectable.map((agent) => agent.pubkey),
+      profiles: profiles.queries,
+      viewer: transport?.viewer ?? "",
       archived: (pubkey) =>
         agentUnavailable(
           {

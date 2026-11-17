@@ -1,13 +1,67 @@
 import { assert, expect, it, vi } from "vitest";
 import {
   isExpiredSoloAdminSetup,
+  ownedSoloAgents,
   promoteSoloAdmins,
   soloAdminRecovery,
 } from "./solo-admins";
-import { keypair, signed } from "./testing";
+import { keypair, ownedProfile, signed } from "./testing";
 import { matchesEvent } from "./projection";
 import type { OutgoingEvent } from "./outbox";
-import type { ReadFilter, RelayEvent } from "./events";
+import { eventDto, type ReadFilter, type RelayEvent } from "./events";
+
+it("grants ownership only from the current verified NIP-OA profile, never library hints", async () => {
+  const viewer = keypair(),
+    other = keypair();
+  const own = keypair(),
+    shared = keypair(),
+    unsigned = keypair(),
+    hinted = keypair();
+  const heads = new Map<string, RelayEvent>([
+    [own.pubkey, eventDto(await ownedProfile(own, viewer))],
+    [shared.pubkey, eventDto(await ownedProfile(shared, other))],
+    [unsigned.pubkey, await ownedProfile(unsigned, viewer)],
+    [
+      hinted.pubkey,
+      eventDto(
+        signed(hinted, {
+          kind: 0,
+          content: JSON.stringify({ owner: viewer.pubkey }),
+          tags: [],
+        }),
+      ),
+    ],
+  ]);
+  const ensure = vi.fn(async () => {});
+  expect(
+    await ownedSoloAgents(
+      { ensure, event: (key) => heads.get(key) },
+      viewer.pubkey,
+      [...heads.keys(), own.pubkey],
+    ),
+  ).toEqual(new Set([own.pubkey]));
+  expect(ensure).toHaveBeenCalledExactlyOnceWith([...heads.keys()]);
+});
+
+it("does not grant from an ownership head replaced while its attestation is checked", async () => {
+  const viewer = keypair(),
+    agent = keypair();
+  const previous = eventDto(await ownedProfile(agent, viewer));
+  const changed = eventDto(
+    signed(agent, {
+      kind: 0,
+      content: "{}",
+      tags: [],
+      created_at: previous.created_at + 1,
+    }),
+  );
+  const event = vi.fn().mockReturnValueOnce(previous).mockReturnValue(changed);
+  expect(
+    await ownedSoloAgents({ ensure: async () => {}, event }, viewer.pubkey, [
+      agent.pubkey,
+    ]),
+  ).toEqual(new Set());
+});
 
 function setup() {
   const owner = keypair(),
@@ -54,8 +108,16 @@ function setup() {
     publish,
   };
   const controller = new AbortController();
+  const owned = vi.fn(async () => new Set(agents));
   const run = (saved = creation) =>
-    promoteSoloAdmins(saved, writer, { read }, relay.pubkey, controller.signal);
+    promoteSoloAdmins(
+      saved,
+      writer,
+      { read },
+      relay.pubkey,
+      controller.signal,
+      owned,
+    );
   return {
     agents,
     creation,
@@ -64,6 +126,7 @@ function setup() {
     read,
     writer,
     publish,
+    owned,
     run,
   };
 }
@@ -75,6 +138,25 @@ it("does not restore a removed opening agent when replaying a stale creation rec
   await h.run(structuredClone(h.creation));
   expect(h.publish).toHaveBeenCalledTimes(2);
   expect(h.roles.has(h.agents[0])).toBe(false);
+});
+
+it("refuses an unrecorded opening grant after ownership changes without replacing the saved intent", async () => {
+  const h = setup();
+  const saved = structuredClone(h.creation);
+  h.owned.mockResolvedValue(new Set());
+  await expect(h.run()).rejects.toThrow("not verified as owned");
+  expect(h.writer.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(structuredClone(h.creation)).toEqual(saved);
+});
+
+it("confirms recorded opening grants after an ownership change without issuing new grants", async () => {
+  const h = setup();
+  await h.run();
+  h.owned.mockClear().mockResolvedValue(new Set());
+  await h.run();
+  expect(h.owned).not.toHaveBeenCalled();
+  expect(h.publish).toHaveBeenCalledTimes(2);
 });
 
 it.each(["owner", "guest", "absent"])(

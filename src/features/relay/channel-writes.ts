@@ -8,12 +8,14 @@ import {
   promoteSoloAdmins,
   soloAdminKey,
   soloAdminRecovery,
+  ownedSoloAgents,
 } from "./solo-admins";
 import { isBatchAddition } from "../channel-members/members";
 import { withdraw } from "./withdraw";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
 import type { RelayReader } from "./reader";
 import type { EventData } from "./events";
+import type { ProfileQueries } from "./profile-directory";
 
 export const DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -47,6 +49,8 @@ export function createChannelWrites(
   agents?: {
     selectable: () => readonly string[];
     archived: (pubkey: string) => boolean;
+    profiles?: Pick<ProfileQueries, "ensure" | "event">;
+    viewer?: string;
   },
   relayAuthor?: string,
   /** Signed roster discovery, including channels this viewer cannot open. */
@@ -462,12 +466,6 @@ export function createChannelWrites(
     if (active?.() === false)
       throw new DOMException("Channel addition cancelled", "AbortError");
     const original = await refreshMembership(id);
-    // Owners' new Solo agents get Admin; other Solo additions can still reply
-    // even with a saved Guest admission default. Existing members are untouched.
-    const roleTags =
-      original.channelType === "solo"
-        ? [["role", original.viewerRole === "owner" ? "admin" : "bot"]]
-        : [];
     if (active?.() === false)
       throw new DOMException("Channel addition cancelled", "AbortError");
     const unique = [...new Set(keys)].filter(
@@ -490,6 +488,7 @@ export function createChannelWrites(
       unique.some((key) => !original.members?.includes(key) && !known.has(key))
     )
       throw new Error("Choose an agent from your agent library.");
+    let owned: ReadonlySet<string> | undefined;
     // Additions are published and acknowledged in turn; the roster is then
     // confirmed with one exact read rather than a gate after every command.
     const added: string[] = [];
@@ -514,7 +513,7 @@ export function createChannelWrites(
           item.event.tags.some(
             ([name, value]) => name === "p" && value === key,
           ) &&
-          roles.length === roleTags.length &&
+          roles.length === (original.channelType === "solo" ? 1 : 0) &&
           // Recovery finishes the saved grant even if the viewer's role changed.
           roles.every(
             (tag) =>
@@ -526,6 +525,28 @@ export function createChannelWrites(
         throw new Error(
           `This agent-add request expired. Open Outbox, remove the “Add agent ${key.slice(0, 12)}” item, then add the agent again. Check channel membership first if the request was unconfirmed.`,
         );
+      if (
+        original.channelType === "solo" &&
+        !previous &&
+        original.viewerRole === "owner"
+      ) {
+        owned ??= await ownedSoloAgents(
+          agents?.profiles,
+          agents?.viewer,
+          unique,
+        );
+      }
+      const roleTags =
+        original.channelType === "solo"
+          ? [
+              [
+                "role",
+                original.viewerRole === "owner" && owned?.has(key)
+                  ? "admin"
+                  : "bot",
+              ],
+            ]
+          : [];
       const operation =
         previous?.event.id ??
         writer(!!active).send(
@@ -583,6 +604,7 @@ export function createChannelWrites(
         discovery,
         relayAuthor,
         signal,
+        (keys) => ownedSoloAgents(agents?.profiles, agents?.viewer, keys),
       );
       signal.throwIfAborted();
       await finishRecovery(saved.event.id, recovery);

@@ -38,6 +38,7 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ChatNotStarted, createChannelWrites } from "../relay/channel-writes";
 import { createOutbox } from "../relay/outbox";
 import { keypair, signed } from "../relay/testing";
+import { ownedSoloAgents } from "../relay/solo-admins";
 import { SOLO_LABEL } from "./labels";
 import { attachmentDraft } from "../messages/attachment-draft";
 import type {
@@ -89,6 +90,10 @@ vi.mock("../channel-navigation/solo-navigation", async (original) => ({
 }));
 
 composerDOMFixture();
+vi.mock("../relay/solo-admins", async (original) => ({
+  ...(await original<typeof import("../relay/solo-admins")>()),
+  ownedSoloAgents: vi.fn(),
+}));
 afterEach(cleanup);
 afterEach(() => regionNavigation.set(undefined));
 afterEach(() => {
@@ -97,6 +102,9 @@ afterEach(() => {
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
 beforeEach(() => {
+  vi.mocked(ownedSoloAgents).mockImplementation(
+    async (_profiles, _viewer, keys) => new Set(keys),
+  );
   localStorage.clear();
   Object.defineProperty(navigator, "locks", {
     configurable: true,
@@ -320,6 +328,53 @@ it("uses restored explicit mentions, not a separate picker", async () => {
   expect(test.messages.send).toHaveBeenCalledWith(id, "@Outside agent Help", [
     "b".repeat(64),
   ]);
+});
+
+it.each([true, false])(
+  "applies verified ownership equally to workspace defaults (owned=%s)",
+  async (workspaceOwned) => {
+    const test = await projectSetup(["b".repeat(64)]);
+    const admins = workspaceOwned
+      ? ["a".repeat(64), "b".repeat(64)]
+      : ["a".repeat(64)];
+    vi.mocked(ownedSoloAgents).mockResolvedValueOnce(new Set(admins));
+    writeView(
+      "test",
+      "solo:project:work:new-draft",
+      taggedDraft("Use the workspace"),
+    );
+    render(
+      <SoloDraft
+        session={test.session}
+        scope="test"
+        projectId="work"
+        onStarted={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(test.messages.send).toHaveBeenCalledOnce());
+    expect(test.channelWrites.start.mock.calls[0]?.[2]).toEqual([
+      "a".repeat(64),
+      "b".repeat(64),
+    ]);
+    expect(startOptions(test)).toMatchObject({ admins });
+    expect(test.messages.send.mock.calls[0]?.[2]).toEqual(["a".repeat(64)]);
+  },
+);
+
+it("sends to a shared opening agent without requesting Admin", async () => {
+  const test = setup();
+  vi.mocked(ownedSoloAgents).mockResolvedValueOnce(new Set());
+  writeView(
+    "test",
+    "solo:new-draft",
+    taggedDraft("Help with this", "b".repeat(64), "Outside agent"),
+  );
+  render(<SoloDraft session={test.session} scope="test" onStarted={vi.fn()} />);
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(test.messages.send).toHaveBeenCalledOnce());
+  expect(startOptions(test)).toMatchObject({ admins: [] });
+  expect(test.messages.send.mock.calls[0]?.[2]).toEqual(["b".repeat(64)]);
 });
 type User = ReturnType<typeof userEvent.setup>;
 it.each([
@@ -3806,7 +3861,9 @@ it.each([false, true])(
     expect(test.channelWrites.start.mock.calls[0]?.[2]).toEqual(
       prepareStart.mock.calls[0]?.[1].members,
     );
-    expect(startOptions(test)).toMatchObject({ admins: ["a".repeat(64)] });
+    expect(startOptions(test)).toMatchObject({
+      admins: ["a".repeat(64), "b".repeat(64)],
+    });
     expect(test.messages.send.mock.calls[0]?.[0]).toBe(
       prepareStart.mock.calls[0]?.[1].channelId,
     );

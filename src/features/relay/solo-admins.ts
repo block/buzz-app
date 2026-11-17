@@ -1,4 +1,7 @@
 import { getEventHash } from "nostr-tools";
+import { attestedOwner } from "../agents/owner-attestation";
+import { hasEventProof } from "./events";
+import type { ProfileQueries } from "./profile-directory";
 import { memberAdministrationTemplate } from "../channel-members/administration-protocol";
 import type { OutboxRecovery, OutgoingEvent } from "./outbox";
 import type { RelayReader } from "./reader";
@@ -6,6 +9,33 @@ import type { RelayWriter } from "./transport";
 
 export const soloAdminKey = (channel: string) =>
   `solo-initial-admins:${channel}`;
+
+/** Library inclusion is discovery, never authority to grant chat Admin. */
+export async function ownedSoloAgents(
+  profiles: Pick<ProfileQueries, "ensure" | "event"> | undefined,
+  viewer: string | undefined,
+  keys: readonly string[],
+): Promise<ReadonlySet<string>> {
+  const owned = new Set<string>();
+  if (!profiles || !viewer || !keys.length) return owned;
+  const unique = [...new Set(keys)];
+  await profiles.ensure(unique);
+  await Promise.all(
+    unique.map(async (key) => {
+      const head = profiles.event?.(key);
+      if (
+        head &&
+        hasEventProof(head) &&
+        head.kind === 0 &&
+        head.pubkey === key &&
+        (await attestedOwner(head)) === viewer &&
+        profiles.event?.(key) === head
+      )
+        owned.add(key);
+    }),
+  );
+  return new Set(unique.filter((key) => owned.has(key)));
+}
 
 /** Local recovery only; the relay still receives an ordinary channel create. */
 export function soloAdminRecovery(
@@ -62,6 +92,7 @@ export async function promoteSoloAdmins(
   reader: RelayReader,
   relayAuthor: string,
   signal: AbortSignal,
+  owned?: (keys: readonly string[]) => Promise<ReadonlySet<string>>,
 ) {
   const create = creation.event;
   const channel = create.tags.find(([tag]) => tag === "h")?.[1];
@@ -82,6 +113,7 @@ export async function promoteSoloAdmins(
     throw new Error("The saved chat admin setup is invalid.");
   const read = (filters: Parameters<RelayReader["read"]>[0]) =>
     reader.read(filters, { signal, fresh: true, priority: "foreground" });
+  let ownership: Promise<ReadonlySet<string>> | undefined;
   for (const admin of admins as string[]) {
     signal.throwIfAborted();
     const template = {
@@ -110,6 +142,11 @@ export async function promoteSoloAdmins(
     if (Date.now() / 1000 - create.created_at >= 15 * 60)
       throw new Error(
         "Chat admin setup expired. Abandon setup in Outbox to continue with current roles, or start a new chat.",
+      );
+    ownership ??= owned?.(admins as string[]);
+    if (!(await ownership)?.has(admin))
+      throw new Error(
+        "An opening agent is not verified as owned by the chat creator. Check chat access before retrying.",
       );
     const rosters = await read([
       {

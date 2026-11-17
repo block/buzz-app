@@ -100,14 +100,16 @@ behavior on the label, so a rename touches copy only.
   agents: answer as one channel-scoped, top-level conversation. It is not access
   authority. The in-app agent harness reads it from the channel list; remote
   harnesses that only read `about` need to learn the label.
-- The app promotes every agent addressed in the opening message through the
-  existing member-administration commands before releasing that message to
-  local agents or the relay. Workspace-only agents remain ordinary participants.
-  When the viewer owns the Solo chat, new agents added later through the composer
-  or Chat access receive Admin in the membership command. Existing members keep
+- New Solo chats grant Admin to the creator's agents whose signed profiles verify
+  that ownership, including agents included through workspace defaults. Agents
+  owned by someone else keep ordinary participation. The app uses the existing
+  member-administration commands before releasing the opening message to local
+  agents or the relay. When the viewer owns the Solo chat, their own new agents
+  added later through the composer or Chat access receive Admin; other agents
+  join as Bot. Existing members keep
   their saved roles; retries retain the original addition's role and command ID.
   The create's local Outbox receipt retains the opening
-  recipients across interruptions; retries reconstruct the same grants and
+  admin targets across interruptions; retries reconstruct the same grants and
   confirm their recorded IDs before sending. A recorded grant stays complete
   after a later demotion or removal. Expired, unrecorded grants are never re-dated.
   Outbox offers **Abandon admin setup** for the expired, delivered create: explicit

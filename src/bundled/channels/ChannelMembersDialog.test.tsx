@@ -26,6 +26,7 @@ import type { VerifiedProfileAuthority } from "../../features/relay/verified-pro
 import {
   keypair,
   metadata,
+  ownedProfile,
   profile,
   roster,
   signed,
@@ -114,6 +115,7 @@ async function setup(
     pendingMemberNames?: Promise<void>;
     channelCreation?: boolean;
     memberWrites?: boolean;
+    agentOwner?: "viewer" | "other";
     searchProfiles?: (
       query: string,
       limit: number,
@@ -129,8 +131,9 @@ async function setup(
   const viewer = keypair(),
     relay = options.relay ?? keypair(),
     person = keypair();
+  const agentKey = keypair();
   const agent = {
-    pubkey: "ab".repeat(32),
+    pubkey: agentKey.pubkey,
     name: "Fixture agent",
     relayUrl: "wss://relay.example.test",
     owner: viewer.pubkey,
@@ -167,6 +170,17 @@ async function setup(
   });
   const personProfile = profile(person, { name: "Morgan" });
   const stableEvents = [
+    ...(localAgent
+      ? [
+          eventDto(
+            await ownedProfile(
+              agentKey,
+              options.agentOwner === "other" ? person : viewer,
+              "Fixture agent",
+            ),
+          ),
+        ]
+      : []),
     signed(relay, {
       kind: 39000,
       content: "",
@@ -2034,7 +2048,7 @@ it("shares the identity presentation with invitation rows without assigning a ch
   expect(
     within(row).queryByText("Agent", { exact: true }),
   ).not.toBeInTheDocument();
-  expect(within(row).queryByText(/Managed by/)).not.toBeInTheDocument();
+  expect(within(row).getByText("Managed by Carl (you)")).toBeVisible();
   expect(
     row.querySelector('[data-avatar-shape="squircle"]'),
   ).toBeInTheDocument();
@@ -3270,12 +3284,21 @@ it.each([false, true])(
   },
 );
 
-it.each(["private", "public"] as const)(
-  "adds the Solo owner's agent as Admin in a %s chat with a Guest default",
-  async (visibility) => {
+it.each(
+  (["private", "public"] as const).flatMap((visibility) =>
+    (["viewer", "other"] as const).map((agentOwner) => ({
+      visibility,
+      agentOwner,
+      role: agentOwner === "viewer" ? "admin" : "bot",
+    })),
+  ),
+)(
+  "adds an agent owned by $agentOwner as $role in a $visibility Solo chat with a Guest default",
+  async ({ visibility, agentOwner, role }) => {
     const t = await setup("solo", false, true, undefined, undefined, {
       visibility,
       joinRole: "guest",
+      agentOwner,
     });
     await t.user.type(screen.getByRole("searchbox"), "Fixture agent");
     await t.user.click(
@@ -3283,7 +3306,7 @@ it.each(["private", "public"] as const)(
     );
     await screen.findByText("Fixture agent added.");
     expect(t.publish).toHaveBeenCalledOnce();
-    expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual(["role", "admin"]);
+    expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual(["role", role]);
   },
 );
 

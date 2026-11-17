@@ -1,12 +1,12 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
-import { keypair, metadata, signed } from "./testing";
+import { keypair, metadata, ownedProfile, signed } from "./testing";
 import { matchesEvent } from "./projection";
 import { SOLO_LABEL } from "../solo/labels";
 import { soloAdminKey } from "./solo-admins";
 import { validateMemberAdministrationTemplate } from "../channel-members/administration-protocol";
 import { PublishRejected, type OutgoingEvent } from "./outbox";
-import type { ReadFilter, RelayEvent } from "./events";
+import { eventDto, type ReadFilter, type RelayEvent } from "./events";
 import type { EventTemplate } from "nostr-tools";
 
 const sessions: ReturnType<typeof createRelaySession>[] = [];
@@ -18,8 +18,13 @@ function setup() {
   const viewer = keypair(),
     relay = keypair();
   const channel = crypto.randomUUID();
-  const agents: [string, string] = [keypair().pubkey, keypair().pubkey];
-  const workspaceAgent = keypair().pubkey;
+  const agentKeys = [keypair(), keypair()] as const;
+  const agents: [string, string] = [agentKeys[0].pubkey, agentKeys[1].pubkey];
+  const workspaceKey = keypair();
+  const workspaceAgent = workspaceKey.pubkey;
+  const profiles = Promise.all(
+    [...agentKeys, workspaceKey].map((key) => ownedProfile(key, viewer)),
+  );
   let journal: readonly OutgoingEvent[] = [];
   const events = new Map<string, RelayEvent>();
   const roles = new Map<string, string>();
@@ -56,6 +61,7 @@ function setup() {
         ],
       });
       return [
+        ...(await profiles).map(eventDto),
         ...events.values(),
         ...(roles.size
           ? [
@@ -110,7 +116,7 @@ function setup() {
       undefined,
       false,
       undefined,
-      { admins: agents },
+      { admins: [...agents, workspaceAgent] },
     );
     void creation.ready.catch(() => {});
     const message = owner.session.messages.send(
@@ -172,11 +178,11 @@ it("confirms a lost grant ACK and holds the opening message and local wake until
     release();
     await vi.waitFor(() => expect(h.events.has(message)).toBe(true));
     expect(h.agents.map((key) => h.roles.get(key))).toEqual(["admin", "admin"]);
-    expect(h.roles.get(h.workspaceAgent)).toBe("member");
+    expect(h.roles.get(h.workspaceAgent)).toBe("admin");
     expect(h.roles.get(h.viewer.pubkey)).toBe("owner");
-    expect(h.adminPublish).toHaveBeenCalledTimes(2);
+    expect(h.adminPublish).toHaveBeenCalledTimes(3);
     expect(h.adminPublish.mock.calls.map(([event]) => event.tags)).toEqual(
-      h.agents.map((key) => [
+      [...h.agents, h.workspaceAgent].map((key) => [
         ["h", h.channel],
         ["p", key],
         ["role", "admin"],

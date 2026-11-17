@@ -1,9 +1,9 @@
 import { expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
-import { keypair, roster, signed } from "./testing";
+import { keypair, ownedProfile, roster, signed } from "./testing";
 import { matchesEvent } from "./projection";
-import type { RelayEvent } from "./events";
+import { eventDto, type RelayEvent } from "./events";
 import { SOLO_LABEL } from "../solo/labels";
 
 type ViewerRole = "owner" | "admin" | "member";
@@ -11,6 +11,7 @@ type ViewerRole = "owner" | "admin" | "member";
 function setup(
   visibility: "private" | "public" = "private",
   initialRole: ViewerRole = "member",
+  ownership: "viewer" | "other" | "missing" = "viewer",
 ) {
   let viewerRole = initialRole;
   const viewer = keypair(),
@@ -42,7 +43,20 @@ function setup(
     }
     return signed(viewer, template);
   });
-  const secondAgent = keypair().pubkey;
+  const second = keypair(),
+    other = keypair();
+  const secondAgent = second.pubkey;
+  let agentProfile =
+    ownership === "missing"
+      ? Promise.resolve(
+          signed(agent, {
+            kind: 0,
+            tags: [],
+            content: JSON.stringify({ owner: viewer.pubkey }),
+          }),
+        )
+      : ownedProfile(agent, ownership === "viewer" ? viewer : other);
+  const secondProfile = ownedProfile(second, other);
   const meta = (id: string, type: string, extra: string[][] = []) =>
     signed(relay, {
       kind: 39000,
@@ -64,10 +78,13 @@ function setup(
   const publish = vi.fn(async (_event: RelayEvent) => {
     const target = _event.tags.find(([name]) => name === "h")?.[1];
     if (denied) throw new PublishRejected("Only channel admins can add agents");
+    const added = _event.tags.flatMap(([tag, key]) =>
+      tag === "p" && key ? [key] : [],
+    );
     if (!omitMembership && target === parent)
-      members = [viewer.pubkey, agent.pubkey];
+      members = [...new Set([...members, ...added])];
     if (!omitMembership && target === child)
-      childMembers = [viewer.pubkey, agent.pubkey];
+      childMembers = [...new Set([...childMembers, ...added])];
     clock++;
     afterPublish();
   });
@@ -113,6 +130,8 @@ function setup(
             roster(agent, child, [viewer.pubkey, agent.pubkey], clock + 1),
           ];
         const events = [
+          eventDto(await agentProfile),
+          eventDto(await secondProfile),
           signed(relay, {
             kind: 13535,
             created_at: clock,
@@ -141,6 +160,26 @@ function setup(
     child,
     agent: agent.pubkey,
     secondAgent,
+    async transferAgent() {
+      const profile = await ownedProfile(agent, other);
+      agentProfile = Promise.resolve(
+        signed(agent, {
+          kind: 0,
+          tags: profile.tags,
+          content: profile.content,
+          created_at: clock + 10,
+        }),
+      );
+      await owner.session.read(
+        [{ kinds: [0], authors: [agent.pubkey], limit: 1 }],
+        { fresh: true },
+      );
+      expect(
+        owner.session.profiles
+          .event?.(agent.pubkey)
+          ?.tags.find(([tag]) => tag === "auth")?.[1],
+      ).toBe(other.pubkey);
+    },
     archive: (key: string) => {
       clock++;
       archived.push(key);
@@ -199,6 +238,43 @@ function setup(
     },
   };
 }
+
+it.each(["other", "missing"] as const)(
+  "adds a selectable agent as Bot when its signed ownership is %s",
+  async (ownership) => {
+    const test = setup("private", "owner", ownership);
+    try {
+      await test.ready();
+      await test.owner.session.channelWrites.addAgents(test.child, [
+        test.agent,
+      ]);
+      expect(test.publish.mock.calls[0]?.[0].tags).toContainEqual([
+        "role",
+        "bot",
+      ]);
+    } finally {
+      test.owner.dispose();
+    }
+  },
+);
+
+it("chooses each new agent's role separately in a mixed-ownership Solo addition", async () => {
+  const test = setup("private", "owner");
+  try {
+    await test.ready();
+    await test.owner.session.channelWrites.addAgents(test.child, [
+      test.agent,
+      test.secondAgent,
+    ]);
+    expect(
+      test.publish.mock.calls.map(([event]) =>
+        event.tags.filter(([tag]) => tag === "role"),
+      ),
+    ).toEqual([[["role", "admin"]], [["role", "bot"]]]);
+  } finally {
+    test.owner.dispose();
+  }
+});
 
 it.each(
   (["private", "public"] as const).flatMap((visibility) =>
@@ -310,9 +386,15 @@ it.each([
   { initialRole: "member", retryRole: "member", addedRole: "bot" },
   { initialRole: "member", retryRole: "owner", addedRole: "bot" },
   { initialRole: "owner", retryRole: "member", addedRole: "admin" },
+  {
+    initialRole: "owner",
+    retryRole: "owner",
+    addedRole: "admin",
+    transferred: true,
+  },
 ] as const)(
   "keeps the saved $addedRole invitation when $initialRole retries as $retryRole",
-  async ({ initialRole, retryRole, addedRole }) => {
+  async ({ initialRole, retryRole, addedRole, ...options }) => {
     const test = setup("private", initialRole);
     try {
       await test.ready();
@@ -327,6 +409,7 @@ it.each([
       ).not.toContain(test.agent);
       const first = test.publish.mock.calls[0]?.[0];
       expect(first?.tags).toContainEqual(["role", addedRole]);
+      if ("transferred" in options) await test.transferAgent();
       test.setViewerRole(retryRole);
       test.setDenied(false);
       await test.owner.session.channelWrites.addAgents(test.child, [
